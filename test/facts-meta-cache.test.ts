@@ -190,18 +190,23 @@ describe('meta-hook cache', () => {
 
 describe('meta-hook cache hygiene (bounded, expired-entry eviction)', () => {
   /**
-   * Raw SQL for engine stubs: hot memory reads the withdrawal watermark, the
-   * trust policy generation and each fact's activation verdict (#5575 ENG-11).
+   * Typed reads for engine stubs: each fact's activation verdict (#5575 ENG-11)
+   * is `readRowTrustRows` (`stubTrustRows`), the chat-page quote check (#8042)
+   * is `listFactsFromQuotedPages` (`stubQuotedPages`: none), and the trust
+   * policy generation is `readTrustGeneration` (`stubGeneration`). The stubs
+   * have no `readFactCacheWatermark`, so the TTL alone governs expiry.
    */
-  const stubRaw = async (sql: string, params?: unknown[]) =>
-    sql.includes('trust_policy_state') ? [{ generation: '0' }]
-      : sql.includes('fact_withdrawals') ? [{ n: 0, at: null }]
-        : sql.includes('AS flagged') ? ((params?.[0] as number[]) ?? []).map(id => ({ id, trust_tier: 'unknown', flagged: false }))
-          : [];
+  const stubRaw = async (sql: string) => sql.includes('fact_withdrawals') ? [{ n: 0, at: null }] : [];
+  const stubTrustRows = async ({ ids }: { ids: number[] }) => ids.map(id => ({ id, trust_tier: 'unknown', flagged: false }));
+  const stubQuotedPages = async () => [];
+  const stubGeneration = async () => '0';
   /** Engine stub with no facts — every call takes the payload:undefined cache path. */
   function emptyEngine(): BrainEngine {
     return {
       executeRaw: stubRaw,
+      readRowTrustRows: stubTrustRows,
+      listFactsFromQuotedPages: stubQuotedPages,
+      readTrustGeneration: stubGeneration,
       listFactsBySession: async () => [],
       listFactsSince: async () => [],
     } as unknown as BrainEngine;
@@ -283,6 +288,9 @@ describe('meta-hook cache hygiene (bounded, expired-entry eviction)', () => {
       let n = 0;
       const engine = {
         executeRaw: stubRaw,
+        readRowTrustRows: stubTrustRows,
+        listFactsFromQuotedPages: stubQuotedPages,
+        readTrustGeneration: stubGeneration,
         listFactsBySession: async () => [],
         listFactsSince: async () => { n++; return [factRow(validUntil)]; },
       } as unknown as BrainEngine;

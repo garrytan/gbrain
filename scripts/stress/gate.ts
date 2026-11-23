@@ -163,8 +163,9 @@ export function raceHuntHelperImporters(root: string, since = '26 hours ago'): {
  * iterations nightly and the spare capacity rotates by day so each file still
  * reaches 10 within the week. When even 3 iterations do not fit 12 shards,
  * every file runs 3 in up to 24 shards, the second 12 queued behind the
- * first. Files are never dropped: what does not fit is `unrun` and the job
- * fails "race hunt over budget".
+ * first. Listed files take the floor before helper importers, so a widely
+ * imported helper can never push a listed arm out. Files are never dropped:
+ * what does not fit is `unrun` and the job fails "race hunt over budget".
  */
 export function planRaceHunt(root: string, opts: { day: number; extra?: string[]; diagnostic?: boolean }, weights = loadWeights(root)): Plan {
   const list = readArmsList(root);
@@ -190,7 +191,8 @@ export function planRaceHunt(root: string, opts: { day: number; extra?: string[]
     } else {
       depth = new Map();
       const floor: typeof stress = [];
-      for (const f of stress) {
+      const listed = new Set(list.files);
+      for (const f of [...stress].sort((a, b) => Number(!listed.has(a.file)) - Number(!listed.has(b.file)))) {
         if (planShards([...floor, f], RACE_MIN_ITERATIONS, RACE_SHARD_BUDGET_MS).length <= RACE_FLOOR_MAX_SHARDS) { floor.push(f); depth.set(f.file, RACE_MIN_ITERATIONS); } else unrun.push(f.file);
       }
     }

@@ -1699,7 +1699,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "autocut": {
         "type": "boolean",
-        "description": "Default on (never empty); false: full top-K for breadth.",
+        "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
         "fullSurfaceOnly": true
       },
       "relational": {
@@ -3689,12 +3689,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "outputRedaction": "retrieval",
     "scope": "read",
-    "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+    "description": "Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). Never fuzzy: empty matches means no exact match; ambiguous means several.",
     "params": {
       "query": {
         "type": "string",
         "required": true,
-        "description": "Email address or name, e.g. 'alice@acme-example.com'."
+        "description": "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'."
       },
       "types": {
         "type": "array",

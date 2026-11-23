@@ -1,5 +1,5 @@
 import type { Migration } from './types.ts';
-import { OWNER_ONLY_LINEAGE_FN } from '../access/owner-only.ts';
+import { OWNER_ONLY_HELD, OWNER_ONLY_LINEAGE_FN } from '../access/owner-only.ts';
 import { ownerOnlyTriggersLeftLine } from '../access/owner-only-marks.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
@@ -44,8 +44,7 @@ import { ownerOnlyTriggersLeftLine } from '../access/owner-only-marks.ts';
 // owner-only source pays one guard read per deleted row and stores nothing. No schema.sql mirror, like v320: the table
 // and the functions exist only through migrations.
 const OWNER_ONLY_SOURCE = `config->>'kind' IN ('imessage') OR config->>'owner_only' = 'true'`;
-/** The comment on owner_only_marks that records, once and for good, that the brain has held owner-only data. */
-export const OWNER_ONLY_HELD = 'gbrain:owner_only_held (GST-3032): this brain has held owner-only data, so owner-only lineage stays guarded';
+export { OWNER_ONLY_HELD };
 /** The held flag test, inline: a nested function call per deleted row costs a search_path switch (GST-3032 timing). */
 const HELD_SQL = `EXISTS (SELECT 1 FROM pg_catalog.pg_description d WHERE d.objoid = 'public.owner_only_marks'::pg_catalog.regclass
     AND d.classoid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.objsubid = 0 AND d.description = '${OWNER_ONLY_HELD}')`;

@@ -12,9 +12,17 @@
  * - Read the generation BEFORE the content it caches. The bump commits with
  *   the change, so content read after the generation is never older than it.
  * - Revalidate the generation on every hit, before delivery.
- * - Fail closed: when the generation cannot be read (no executeRaw, a brain
- *   before the migration, any error) `readTrustGeneration` throws, and the
+ * - Fail closed: when the generation cannot be read (no
+ *   `readTrustGeneration` member, a brain before the migration, no
+ *   `trust_policy_state` row, any error) `readTrustGeneration` throws, and the
  *   caller delivers nothing rather than cached content.
+ *
+ * The read is the BrainEngine member `readTrustGeneration`
+ * (engine-sql/trust-withdrawals.ts). The Rust store keeps no
+ * `trust_policy_state` row: it answers its commit sequence, which moves on
+ * every commit, a superset of the trigger events above, so a cache keyed on
+ * it rebuilds after any write and never serves content a trust change made
+ * wrong.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -22,12 +30,9 @@ import type { ReadEligibility } from './policy.ts';
 import { proactiveEligibility, type ProactiveSurface } from './registry.ts';
 
 /** The brain's current trust policy generation, as a decimal string. Throws when it cannot be read. */
-export async function readTrustGeneration(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
-  if (typeof engine.executeRaw !== 'function') throw new Error('trust generation unreadable: engine has no raw SQL');
-  const [row] = await engine.executeRaw<{ generation: string | number | bigint }>(
-    'SELECT generation::text AS generation FROM trust_policy_state WHERE id = 1');
-  if (row?.generation === undefined || row.generation === null) throw new Error('trust generation unreadable: trust_policy_state has no row');
-  return String(row.generation);
+export async function readTrustGeneration(engine: Partial<Pick<BrainEngine, 'readTrustGeneration'>>): Promise<string> {
+  if (typeof engine.readTrustGeneration !== 'function') throw new Error('trust generation unreadable: engine has no readTrustGeneration member');
+  return engine.readTrustGeneration();
 }
 
 /** The eligibility part of a cache identity: effective read floor and activation control. */

@@ -566,6 +566,7 @@ fn finish_in(
             ),
         ));
     }
+    crate::persistence::guard_deferred_transition(&record.state, &finish.state)?;
     let now = env.now_micros();
     record.state = finish.state.clone();
     record.outcome = finish.outcome.clone();
@@ -806,6 +807,11 @@ struct WriterRecord {
     created_at_us: i64,
     #[serde(default)]
     revoked_at_us: Option<i64>,
+}
+
+/// The stored id and lane of the local writer `id` (case-folded key), revoked or not.
+pub(crate) fn read_writer_record(read: &dyn KvRead, id: &str) -> Result<Option<(String, String)>> {
+    Ok(get_json::<WriterRecord>(read, &keys::writer(&id.to_lowercase()))?.map(|w| (w.id, w.lane)))
 }
 
 impl WriterRecord {

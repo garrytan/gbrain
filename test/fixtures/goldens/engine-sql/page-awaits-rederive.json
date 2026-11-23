@@ -1,0 +1,11 @@
+{
+  "golden": [
+    {
+      "params": [
+        "number"
+      ],
+      "text": "SELECT count(*)::int AS n\n      FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'pages' AND elig_nr.derived_id = p.id::text)"
+    }
+  ],
+  "normalizer": "page-awaits-rederive-v1"
+}

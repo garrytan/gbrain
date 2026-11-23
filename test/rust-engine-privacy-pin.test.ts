@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EDGE_WHITESPACE } from '../src/core/edge-whitespace.ts';
-import { OWNER_ONLY_FLAG, OWNER_ONLY_KINDS, ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
+import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_FLAG, OWNER_ONLY_KINDS, ownerOnlyFactSql, ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 import { normalizeConceptInputs, storePagePolicy } from '../src/core/rust-engine/store-members/private-provenance.ts';
 import {
   PRIVACY_ALIASES,
@@ -34,6 +34,10 @@ import {
 const RUST_FILE = 'rust/crates/gbrain-store/src/facts/privacy.rs';
 // test-reads-source-ok[structural]: the Rust policy is hand-written beside the SQL rendering, so its constants are read from the source they must equal.
 const RUST = readFileSync(join(import.meta.dir, '..', RUST_FILE), 'utf8');
+// The owner-only rule itself (flag, kinds, the fact and page tests) lives in owner_only.rs, which privacy.rs calls.
+const OWNER_ONLY_RUST_FILE = 'rust/crates/gbrain-store/src/owner_only.rs';
+// test-reads-source-ok[structural]: the Rust owner-only rule is hand-written beside the SQL rendering, so its constants are read from the source they must equal.
+const OWNER_ONLY_RUST = readFileSync(join(import.meta.dir, '..', OWNER_ONLY_RUST_FILE), 'utf8');
 
 const HOW = `private-visibility.ts (or owner-only.ts) now renders a different private-page rule. Read ${RUST_FILE} against `
   + 'the new text: the Rust arm must hide the same pages, or the member must refuse the new rule with '
@@ -46,9 +50,11 @@ const digest = (text: string): string => createHash('sha256').update(text).diges
 
 /** The digest of what the store implements. Moving it is a statement that privacy.rs was read against the new text. */
 const PINNED = {
-  pages: '1d8a04bd4f8c6692e75a261b6619984d9ac4235805d33a0c5739593237daf90d',
-  facts: '1de0e560461e91ef6198c4e5af85e5fe4d0bec627f87162f611216aba38146bc',
+  pages: '357b40ced0cb33966ec6078d77942ae7e814738d52fbff657820419d90508230',
+  facts: '8b153de1cbd5e3a59ca2ce73a22985e2d1f1c123fb9353c8d2d01bec2f38557b',
   ownerOnlyLineage: digest(`((SELECT gbrain_owner_only_lineage()) AND gbrain_owner_only_lineage('pages', p.id))`),
+  ownerOnlyFactLineage: digest(`((SELECT gbrain_owner_only_lineage()) AND gbrain_owner_only_lineage('facts', facts.id))`),
+  ownerOnlyModeLineage: digest(`((SELECT gbrain_owner_only_lineage()) AND gbrain_owner_only_lineage('pages', p.id, (SELECT gbrain_owner_only_read_mode())))`),
 } as const;
 
 /** The inputs the rendering reads, and whether privacy.rs models each (true) or documents it as empty or absent (false). */
@@ -56,9 +62,10 @@ const TABLES: Record<string, boolean> = {
   pages: true, // read_page / read_page_by_id
   sources: true, // OwnerOnlySources
   access_pending_coverage: false, // the store keeps no access rules or pending coverage: empty
-  slug_aliases: false, // the aliases family is not served: empty
-  slug_rename_history: false, // the aliases family is not served: empty
+  slug_aliases: true, // read_slug_alias (aliases.rs)
+  slug_rename_history: true, // renamed_to (aliases.rs)
   jsonb_array_elements_text: true, // declared_slugs
+  pg_catalog: true, // the held flag (a comment on owner_only_marks): a mark (any_marked, owner_only_marks.rs)
 };
 const FUNCTIONS: Record<string, boolean> = {
   gbrain_access_origin_restricted: true, // origin_restricted
@@ -73,7 +80,13 @@ const found = (text: string, re: RegExp): string[] => [...new Set([...text.match
 
 describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
   test('the rendering is the one the store implements (digest)', () => {
-    const now = { pages: digest(pagesBaseline()), facts: digest(factsBaseline()), ownerOnlyLineage: digest(ownerOnlyPageSql('p', 'fn')) };
+    const now = {
+      pages: digest(pagesBaseline()),
+      facts: digest(factsBaseline()),
+      ownerOnlyLineage: digest(ownerOnlyPageSql('p', 'fn')),
+      ownerOnlyFactLineage: digest(ownerOnlyFactSql('facts', 'fn')),
+      ownerOnlyModeLineage: digest(ownerOnlyPageSql('p', 'mode')),
+    };
     if (JSON.stringify(now) !== JSON.stringify(PINNED)) {
       throw new Error(`${HOW}\nrendered digests: ${JSON.stringify(now, null, 2)}\npinned digests:   ${JSON.stringify(PINNED, null, 2)}`);
     }
@@ -116,16 +129,42 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
   });
 
   test('the owner-only source flag and kinds are the ones privacy.rs reads', () => {
-    expect(RUST).toContain(`"${OWNER_ONLY_FLAG}"`);
-    for (const kind of OWNER_ONLY_KINDS) expect(RUST, `owner-only kind ${kind}. ${HOW}`).toContain(`"${kind}"`);
-    // privacy.rs reads exactly `kind IN (kinds) OR owner_only = 'true'` (a boolean true and the text "true" both read "true").
-    expect(RUST).toContain('text(&source.config, "kind").as_deref() == Some("imessage")');
+    expect(OWNER_ONLY_RUST).toContain(`"${OWNER_ONLY_FLAG}"`);
+    for (const kind of OWNER_ONLY_KINDS) expect(OWNER_ONLY_RUST, `owner-only kind ${kind}. ${HOW}`).toContain(`"${kind}"`);
+    // owner_only.rs reads exactly `kind IN (kinds) OR owner_only = 'true'` (a boolean true and the text "true" both read "true").
+    expect(OWNER_ONLY_RUST).toContain('OWNER_ONLY_KINDS.contains(&kind.as_str())');
+    expect(OWNER_ONLY_RUST).toContain('text("owner_only").as_deref() == Some("true")');
     expect(OWNER_ONLY_KINDS).toEqual(['imessage']);
+  });
+
+  test('a fact read is hidden by the owner-only rule the way privacy.rs applies it', () => {
+    // The fact rule ends the rendering with `AND NOT <owner-only fact form>`: outside an engine scope the closed form (any
+    // owner-only source, or the held flag, hides every fact; the store reads a mark as the flag); in a served brain the
+    // lineage form (the fact's own row). owner_only.rs holds the closed form; privacy.rs has the
+    // fact's own source (`fact_hidden`) and the provenance page's owner-only test (`owner_only_hidden`) for the first
+    // two parts, and models no `derivation_inputs` or `owner_only_marks` row.
+    const closed = factsBaseline();
+    expect(closed, `the fact policy lost its owner-only term. ${HOW}`).toContain(`AND NOT ${normalizeConceptInputs(ownerOnlyFactSql('facts', 'closed'))}`);
+    expect(ownerOnlyFactSql('facts', 'closed')).toStartWith(`(${ANY_OWNER_ONLY_SQL} OR EXISTS (SELECT 1 FROM pg_catalog.pg_description held`);
+    expect(OWNER_ONLY_RUST, 'the closed form in owner_only.rs does not read the marks that stand for the held flag').toContain('OwnerOnlyForm::Closed => self.guarded()');
+    expect(ownerOnlyFactSql('facts', 'fn')).toContain(`gbrain_owner_only_lineage('facts', facts.id)`);
+    const body = RUST.slice(RUST.indexOf('pub(crate) fn hidden_by_private_provenance'));
+    expect(body, 'hidden_by_private_provenance does not apply the owner-only fact rule').toContain('owner_only.fact_hidden(policy.owner_only, &row.source_id)');
+    expect(body, 'hidden_by_private_provenance does not judge the provenance page by the owner-only rule').toContain('hidden_by_provenance_page_with(read, row, policy, true, owner_only)');
+    expect(RUST, 'the page policy does not apply the owner-only page rule').toContain('owner_only.page_hidden(read, page, policy.owner_only)');
   });
 
   test('the flags the member sends follow the rendering (honorAliases, entityPrivacy, ownerOnly)', () => {
     // Outside an engine scope the rendering is the closed owner-only form, with aliases on and the privacy part present.
     expect(storePagePolicy('searchKeyword', true)).toEqual({ honorAliases: true, entityPrivacy: true, ownerOnly: 'closed' });
     expect(storePagePolicy('searchKeyword', false)).toBeUndefined();
+  });
+
+  test('the store reads the lineage form under both member names (the trunk\'s fn and master\'s lineage)', () => {
+    // Master's member (StoreOwnerOnly in its private-provenance.ts) sends the v320 lineage form as `lineage`; the trunk's
+    // sends `fn`. A store that drops either name rejects every privacy-filtered read from that member with
+    // invalid_argument. The behaviour is held by the master-wire case in test/engine-parity/owner-only-reads.test.ts.
+    const form = OWNER_ONLY_RUST.slice(OWNER_ONLY_RUST.indexOf('pub enum OwnerOnlyForm'));
+    expect(form, `owner_only.rs no longer reads master's \`lineage\` as the fn form. ${HOW}`).toMatch(/#\[serde\(alias = "lineage"\)\]\s*Fn,/);
   });
 });

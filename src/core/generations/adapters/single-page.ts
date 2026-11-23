@@ -36,7 +36,7 @@ export const singlePageOwnerKey = (slug: string) => `page:${slug}`;
 const slugOf = (key: GenerationKey) => key.ownerKey.slice('page:'.length);
 
 async function readRow(engine: BrainEngine, sourceId: string, slug: string): Promise<PageRowData | undefined> {
-  return (await readPageRows(engine, sourceId, 'p.slug = $2', [slug]))[0];
+  return (await readPageRows(engine, { sourceId, match: 'slug', slug }))[0];
 }
 
 /** Writes the page: the live page it changes goes to page_versions first; then the derivation's tier and input edges. */
@@ -107,6 +107,6 @@ export async function publishSinglePage(engine: BrainEngine, request: SinglePage
   const outcome = await publishGeneration(engine, ADAPTERS[kind], { key: { kind, sourceId, ownerKey: singlePageOwnerKey(slug) }, items: [{ key: slug, content: '', identityHash }],
     input: { pin: request.expectedRevision ?? 'absent', size: 0 }, context: { page, derivation: request.derivation }, runId: request.runId,
     ...(request.derivation ? { trust: request.derivation.trust } : {}) });
-  const [row] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
+  const row = await engine.getPage(slug, { sourceId });
   return { outcome, pageId: row ? Number(row.id) : null };
 }

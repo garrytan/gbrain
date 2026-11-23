@@ -11,6 +11,7 @@ import { AUDIT_ROW_SOURCES, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE 
 import { ENTITY_LINKABLE_SQL } from '../facts/attribution.ts';
 import { conversationPaidSql, conversationTriedSql } from '../facts/conversation-memo.ts';
 import { eligibleFactEmbedding, partiallyEmbeddedFact, staleFactEmbedding } from '../facts/embedding-identity.ts';
+import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -192,4 +193,49 @@ export async function countFactEmbeddingCoverage(raw: EngineRawRead, opts: { sou
          FROM facts f WHERE ${trustedSql(factSourceScopeSql())} AND ${trustedSql(eligibleFactEmbeddingSql())}
         GROUP BY f.source_id`);
   return raw<FactEmbeddingCoverageRow>(text, [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims]);
+}
+
+/**
+ * The embeddable facts whose vector is not current for `model` and `dims` or the fact text (the `stale` rows of
+ * countFactEmbeddingCoverage), over every source or `sourceId`, with the sum of their lengths in characters. Numbered as
+ * the shared fragments number them: `$1` source, `$2` audit sources, `$3` model, `$4` width.
+ */
+export async function countStaleFactEmbeddings(raw: EngineRawRead, opts: { model: string; dims: number; sourceId?: string | null }): Promise<{ count: number; chars: number }> {
+  const { text } = renderFragment(sqlFragment`SELECT count(*)::int AS count,
+    COALESCE(sum(length(f.fact)),0)::text AS chars FROM facts f
+    WHERE ${trustedSql(factSourceScopeSql())} AND ${trustedSql(eligibleFactEmbeddingSql())} AND ${trustedSql(staleFactEmbeddingSql())}`);
+  const [row] = await raw<{ count: number; chars: string }>(text, [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims]);
+  return { count: Number(row.count), chars: Number(row.chars) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Doctor check statements (commands/doctor/checks/fence-integrity.ts, facts-pages.ts, unlinked-facts.ts)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * fence_integrity: how many live markdown pages of `sourceIds` are stored in segments and have no checkout file walked (no
+ * `source_path`, or a source outside `checkedOutSourceIds`): the census judges a stored page by its body columns, which are NULL
+ * on such a page. Null when no row answers; the caller treats a refused read as none skipped.
+ */
+export async function countSegmentedCensusPages(raw: EngineRawRead, sourceIds: string[], checkedOutSourceIds: string[]): Promise<{ n: number } | null> {
+  const [row] = await raw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages
+    WHERE deleted_at IS NULL AND page_kind = 'markdown' AND body_storage = 'segmented' AND source_id = ANY($1::text[])
+      AND (source_path IS NULL OR NOT (source_id = ANY($2::text[])))`, [sourceIds, checkedOutSourceIds]);
+  return row ?? null;
+}
+
+export interface FactsPageBodyRow { slug: string; source_id: string; segmented: boolean; body: string | null }
+
+/** facts_undated_lines: every live `type: facts` page with whether it is stored in segments and the bounded prefix of its body, by source and slug. */
+export async function listFactsPageBodies(raw: EngineRawRead): Promise<FactsPageBodyRow[]> {
+  const { text } = renderFragment(sqlFragment`SELECT p.slug, p.source_id, p.body_storage = 'segmented' AS segmented, ${trustedSql(boundedBodyPrefixSql('p'))} AS body
+         FROM pages p WHERE p.type = 'facts' AND p.deleted_at IS NULL ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`);
+  return raw<FactsPageBodyRow>(text);
+}
+
+/** unlinked_facts: the `facts` and `fact_relink_attempts` table names the brain has (null for one it lacks), or null when no row answers. */
+export async function readFactTableCatalog(raw: EngineRawRead): Promise<{ facts: string | null; attempts: string | null } | null> {
+  const [tables] = await raw<{ facts: string | null; attempts: string | null }>(
+    `SELECT to_regclass('facts')::text AS facts, to_regclass('fact_relink_attempts')::text AS attempts`);
+  return tables ?? null;
 }

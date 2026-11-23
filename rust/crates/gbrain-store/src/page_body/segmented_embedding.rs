@@ -20,31 +20,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Which page `readSegmentedEmbedPage` reads: by id, or the page at a source and slug.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum SegmentedEmbedRef {
-    Id {
-        id: i64,
-    },
-    Key {
-        #[serde(rename = "sourceId")]
-        source_id: String,
-        slug: String,
-    },
-}
-
-/// `readSegmentedEmbedPage(ref)`: the page fields a segmented embed reads.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct SegmentedEmbedPageRow {
-    pub id: i64,
-    pub slug: String,
-    pub source_id: String,
-    pub title: String,
-    pub contextual_retrieval_mode: Option<String>,
-    pub body_bytes: Option<i64>,
-}
-
 /// `countSegmentedEmbedRows(pageId, column)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SegmentedEmbedCounts {
@@ -189,32 +164,6 @@ fn occurrence_of(chunk: &ChunkRecord) -> Option<i64> {
 }
 
 impl Store {
-    /// `readSegmentedEmbedPage(ref)`: a segmented page that is live, sealed and in a live source,
-    /// by id or by source and slug; None otherwise (an inline page included).
-    pub fn read_segmented_embed_page(
-        &self,
-        reference: &SegmentedEmbedRef,
-    ) -> Result<Option<SegmentedEmbedPageRow>> {
-        let read = self.read()?;
-        let page = match reference {
-            SegmentedEmbedRef::Id { id } => page_by_id(&*read, *id)?,
-            SegmentedEmbedRef::Key { source_id, slug } => read_page(&*read, source_id, slug)?,
-        };
-        let Some(page) = page else { return Ok(None) };
-        if !sealed(&page) || !live_segmented(&*read, &page)? {
-            return Ok(None);
-        }
-        let id = i64::try_from(page.id).map_err(|_| StoreError::invalid("page id out of range"))?;
-        Ok(Some(SegmentedEmbedPageRow {
-            id,
-            contextual_retrieval_mode: crate::aliases::contextual_retrieval_mode(&*read, page.id)?,
-            body_bytes: read_body_state(&*read, page.id)?.and_then(|s| s.body_bytes),
-            slug: page.slug,
-            source_id: page.source_id,
-            title: page.title,
-        }))
-    }
-
     /// `hasLiveSegmentedPage(sourceId, slug)`: whether the page at the source and slug is
     /// segmented, not deleted and in a live source, sealed or not.
     pub fn has_live_segmented_page(&self, source_id: &str, slug: &str) -> Result<bool> {
@@ -507,34 +456,15 @@ mod tests {
     }
 
     #[test]
-    fn the_embed_page_reads_only_a_live_sealed_segmented_page() {
+    fn the_live_segmented_probe_reads_only_a_live_segmented_page() {
         let store = crate::test_support::store();
         let id = sealed_page(&store);
-        let by_id = store
-            .read_segmented_embed_page(&SegmentedEmbedRef::Id { id })
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            (by_id.slug.as_str(), by_id.body_bytes),
-            ("notes/a", Some(8))
-        );
-        let by_key: SegmentedEmbedRef =
-            serde_json::from_value(json!({"sourceId": "default", "slug": "notes/a"})).unwrap();
-        assert_eq!(
-            store.read_segmented_embed_page(&by_key).unwrap(),
-            Some(by_id)
-        );
+        let _ = id;
         assert!(store.has_live_segmented_page("default", "notes/a").unwrap());
         assert!(
             !store
                 .has_live_segmented_page("default", "notes/none")
                 .unwrap()
-        );
-        assert_eq!(
-            store
-                .read_segmented_embed_page(&SegmentedEmbedRef::Id { id: 987_654 })
-                .unwrap(),
-            None
         );
     }
 

@@ -30,7 +30,8 @@ export function segmentedOutcome(segmented: { complete: boolean } | undefined, q
 
 /** Whether search sees a segmented page now: its text projection is sealed at its current revision. */
 export async function segmentedPageSearchable(engine: OperationContext['engine'], sourceId: string, slug: string): Promise<true | 'pending'> {
-  return await engine.readSegmentedSealed(sourceId, slug) ? true : 'pending';
+  const [page] = await engine.readSegmentedPageSealed(sourceId, slug);
+  return page?.sealed ? true : 'pending';
 }
 
 /**

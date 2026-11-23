@@ -21,6 +21,21 @@
       "raw": 1
     },
     "addTimelineEntry#default": {},
+    "advanceSourceCommit#clearNewest": {
+      "raw": 1
+    },
+    "advanceSourceCommit#default": {
+      "raw": 1
+    },
+    "advanceSourceCommit#newest": {
+      "raw": 1
+    },
+    "advanceSourcePurgeEpoch#default": {
+      "raw": 1
+    },
+    "advanceSyncCheckpoint#default": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeTraversalCache#allSources": {
@@ -37,6 +52,9 @@
     },
     "countPagesBy#grouped+since+remote": {},
     "countPagesBy#totals": {},
+    "countRepoBoundSources#default": {
+      "raw": 1
+    },
     "countSourcePages#default": {
       "raw": 1
     },
@@ -69,6 +87,8 @@
     "deleteFactsForPage#excludeSourcePrefixes+preserveExpiredLegacy": {},
     "deletePage#default": {},
     "deletePages#default": {},
+    "deleteSourceRecord#default": {},
+    "deleteSourceRecord#expiredArchiveOnly": {},
     "discoverOntologyDimensions#default": {},
     "discoverOntologyDimensions#sourceIds": {},
     "expireFact#default": {},
@@ -197,6 +217,9 @@
     "getVersions#metadataOnly": {},
     "getVersions#sourceId": {},
     "getVersions#sourceIds": {},
+    "holdPageEmbedding#default": {
+      "raw": 1
+    },
     "insertFact#default": {},
     "insertFact#noEntity": {},
     "insertFact#supersedeId+embedding": {},
@@ -218,6 +241,9 @@
     "invalidateStaleSignatureEmbeddings#sourceId+includeNullSignature": {
       "raw": 3,
       "tx": 1
+    },
+    "isSourceClaimed#default": {
+      "raw": 1
     },
     "listActiveTakesForPages#allowList": {},
     "listActiveTakesForPages#default": {},
@@ -249,6 +275,8 @@
     "listFactsKeyset#strictTime": {},
     "listFactsSince#allFilters": {},
     "listFactsSince#default": {},
+    "listFiles#default": {},
+    "listFiles#page_slug": {},
     "listFilesForPage#default": {},
     "listLinkSources#default": {},
     "listLinkSources#sourceId": {},
@@ -271,7 +299,16 @@
     "listPages#updated_after": {},
     "listPrefixSampledPages#default": {},
     "listPrefixSampledPages#sourceIds": {},
+    "listQuarantinedSlugs#default": {
+      "raw": 1
+    },
+    "listSourceIds#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
+    "listSourcePathPages#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
@@ -306,6 +343,12 @@
     "listTakes#sourceId": {},
     "listTakes#sourceIds+excludePrivate": {},
     "loadContradictionsTrend#default": {},
+    "lockAllSourceRows#share": {
+      "raw": 1
+    },
+    "lockAllSourceRows#update": {
+      "raw": 1
+    },
     "lockPageKeys#default": {
       "raw": 4,
       "tx": 1
@@ -315,6 +358,9 @@
     },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
+    "markSourceSynced#default": {
+      "raw": 1
+    },
     "mergeOntologyFact#corroborate": {},
     "mergeOntologyFact#insert": {},
     "mergeOntologyFact#supersede": {},
@@ -348,10 +394,41 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readFirstSourceId#default": {
+      "raw": 1
+    },
+    "readLiveIdentityHolders#default": {
+      "raw": 1
+    },
+    "readPageIdentity#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#default": {
+      "raw": 1
+    },
+    "readPageSizeRows#slugs": {
+      "raw": 1
+    },
     "readPageSnapshot#default": {},
     "readPageSnapshot#sourceId": {},
     "readPageSnapshotsBatch#default": {},
+    "readReasonPurgeTombstones#default": {
+      "raw": 1
+    },
+    "readReasonPurgeTombstones#pair": {
+      "raw": 1
+    },
+    "readRenameIdentityRows#default": {
+      "raw": 1
+    },
+    "readSoleSourceId#default": {
+      "raw": 1
+    },
     "readSourceChunkerVersion#default": {
+      "raw": 1
+    },
+    "readSourceDeleteImpact#default": {},
+    "readSourceLastCommit#default": {
       "raw": 1
     },
     "readSourceRow#default": {
@@ -466,7 +543,7 @@
     "traversePathsDetailed#out+sourceId+linkType": {},
     "updatePageContextualRetrievalState#default": {},
     "updateSlug#moved": {
-      "raw": 17,
+      "raw": 18,
       "tx": 1
     },
     "updateSlug#noop": {
@@ -501,7 +578,16 @@
     },
     "upsertEventProjection#default": {},
     "upsertFile#default": {},
-    "writeContradictionsRun#default": {}
+    "writeContradictionsRun#default": {},
+    "writeReasonPurgeTombstones#default": {
+      "raw": 1
+    },
+    "writeSourceSyncHeartbeat#default": {
+      "raw": 1
+    },
+    "writeSourceUpstreamObservation#default": {
+      "raw": 1
+    }
   },
   "normalizer": "gauge-acquires-by-case-v1"
 }

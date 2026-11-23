@@ -95,10 +95,25 @@ describe('protected fence text and the search members', () => {
     (engine, backend) => noLeak(engine, backend, (q) => engine.searchKeywordPages(q, { limit: 20, excludePrivate: true }, { limit: 20 })),
   );
 
+  // The Rust store serves searchTitles under `excludePrivate`, as it does searchKeyword, so this case ends on an answer
+  // there and not on a refusal. Like the searchKeyword case it seeds a sealed control page through the typed put, which
+  // is also what puts `putPage` among the calls the Rust arm records.
   parityTest(
     'searchTitles under excludePrivate never returns the fenced secret of a default-put page',
-    { methods: ['searchTitles'] },
-    (engine, backend) => noLeak(engine, backend, (q) => engine.searchTitles(q, { limit: 20, excludePrivate: true })),
+    { methods: ['putPage', 'sealChunks', 'searchTitles'] },
+    async (engine, backend) => {
+      await seedPage(engine, {
+        slug: CLEAN,
+        input: { type: 'note', title: 'Heron Field Notes', compiled_truth: 'heron field notes', timeline: '' },
+        chunks: [chunk(0, 'heron field notes')],
+      });
+      await defaultPut(engine, backend);
+      const search = (q: string) => served(backend, () => engine.searchTitles(q, { limit: 20, excludePrivate: true }));
+      const byPage = await search('heron');
+      const bySecret = await search(FENCED_WORD);
+      expect({ byPage: leaks(byPage), bySecret: leaks(bySecret) }).toEqual({ byPage: false, bySecret: false });
+      return { byPage: byPage.map((r) => r.slug), bySecret: bySecret.map((r) => r.slug) };
+    },
   );
 
   parityTest(

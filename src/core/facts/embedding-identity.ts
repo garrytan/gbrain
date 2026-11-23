@@ -1,5 +1,4 @@
 import type { BrainEngine } from '../engine.ts';
-import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { EMBED_MAX_CHARS } from '../ai/embed-batch-plan.ts';
 import { estimateTokens } from '../chunkers/token-estimate.ts';
 
@@ -41,17 +40,14 @@ export const staleFactEmbedding = `(f.embedding IS NULL OR f.embedding_model IS 
 export const partiallyEmbeddedFact = `(octet_length(f.fact) > ${EMBED_MAX_CHARS}
   AND length(f.fact) + length(regexp_replace(f.fact, '[^\\U00010000-\\U0010FFFF]', '', 'g')) > ${EMBED_MAX_CHARS})`;
 
-export async function countStaleFactEmbeddings(engine: Pick<BrainEngine, 'executeRaw'>, model: string, dimensions: number, sourceId?: string) {
-  const [row] = await engine.executeRaw<{ count: number; chars: string }>(`SELECT count(*)::int AS count,
-    COALESCE(sum(length(f.fact)),0)::text AS chars FROM facts f
-    WHERE ($1::text IS NULL OR f.source_id=$1) AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}`,
-  [sourceId ?? null, [...AUDIT_ROW_SOURCES], model, dimensions]);
-  return { count: Number(row.count), chars: Number(row.chars) };
+/** The stale, embeddable facts for `model` and `dimensions` and their length in characters (engine member, engine-sql/facts-doctor.ts). */
+export async function countStaleFactEmbeddings(engine: Pick<BrainEngine, 'countStaleFactEmbeddings'>, model: string, dimensions: number, sourceId?: string) {
+  return engine.countStaleFactEmbeddings({ model, dims: dimensions, sourceId });
 }
 
 export interface OversizedFact { id: string; source_id: string; slug: string | null; tokens: number }
 
-const OVERSIZED_SCAN_CAP = 10_000;
+export const OVERSIZED_SCAN_CAP = 10_000;
 export const OVERSIZED_FACT_FIX = 'A skipped fact stays stale, with its text unchanged, until it fits: shorten or split it (edit its row in the page\'s ## Facts fence, then sync), or withdraw it with gbrain forget <fact-id>.';
 
 /**
@@ -61,13 +57,9 @@ export const OVERSIZED_FACT_FIX = 'A skipped fact stays stale, with its text unc
  * byte), so only facts longer than `maxTokens` bytes are read and measured,
  * at most OVERSIZED_SCAN_CAP of them.
  */
-export async function readOversizedStaleFacts(engine: Pick<BrainEngine, 'executeRaw'>,
+export async function readOversizedStaleFacts(engine: Pick<BrainEngine, 'listOversizedStaleFacts'>,
   opts: { sourceId?: string; model: string; dims: number; maxTokens: number }): Promise<OversizedFact[]> {
-  const rows = await engine.executeRaw<{ id: string; source_id: string; slug: string | null; fact: string }>(
-    `SELECT f.id::text, f.source_id, f.source_markdown_slug AS slug, f.fact FROM facts f
-      WHERE ($1::text IS NULL OR f.source_id = $1) AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}
-        AND octet_length(f.fact) > $5::int ORDER BY f.id LIMIT ${OVERSIZED_SCAN_CAP}`,
-    [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims, opts.maxTokens]);
+  const rows = await engine.listOversizedStaleFacts(opts);
   return rows.map(row => ({ id: row.id, source_id: row.source_id, slug: row.slug, tokens: estimateTokens(row.fact) }))
     .filter(row => row.tokens > opts.maxTokens);
 }

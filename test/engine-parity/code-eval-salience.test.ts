@@ -14,6 +14,11 @@
  *  - Why existing coverage misses it: test/e2e/engine-parity.test.ts skips
  *    entirely without Postgres and covers none of these; the per-engine unit
  *    tests (test/code-edges.test.ts etc.) never compare two engines.
+ *  - Owner-only sources: the last describe adds a source of kind imessage and one with owner_only set, then reads
+ *    getRecentSalience, getSalienceScores and findAnomalies under `excludePrivate` as a non-owner. Every page is
+ *    hidden while one exists (the closed form, no schema version in context); at schema 320 (the fn form) only the
+ *    pages in those sources and the concepts synthesized from them are (`ownerOnlyAllowedSql`,
+ *    src/core/search/private-visibility.ts).
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
  *    Chunk and row ids are sequence-generated and never returned: edges are
  *    mapped to `slug#chunk_index` labels, eval rows drop id/created_at.
@@ -24,6 +29,10 @@ import type { CodeEdgeResult, EvalCandidateInput } from '../../src/core/types.ts
 import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { installChunks } from './chunk-fixtures.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -483,6 +492,74 @@ describe('engine parity: salience and code-edge reads (group D)', () => {
       };
       expect(out).toEqual({ before: false, resolvedOnly: false, owner: true, otherSource: false, emptySource: false, unknownSource: false });
       return out;
+    },
+  );
+});
+
+describe('engine parity: owner-only sources on excludePrivate salience and anomaly reads', () => {
+  parityTest(
+    'getRecentSalience, getSalienceScores and findAnomalies under excludePrivate hide every page while a source is owner-only (closed form) and only owner-only pages and their concepts at schema 320 (fn form)',
+    { methods: ['putPage', 'addTag', 'addLink', 'getPage', 'setEmotionalWeightBatch', 'getRecentSalience', 'getSalienceScores', 'findAnomalies'] },
+    async (engine, backend) => {
+      const refs: Array<{ slug: string; source_id: string }> = [];
+      const seed = async (slug: string, sourceId: string, type = 'note', frontmatter: Record<string, unknown> = {}) => {
+        const opts = sourceId === 'default' ? undefined : { sourceId };
+        await engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '', frontmatter }, opts);
+        await engine.addTag(slug, 'probe', opts);
+        await engine.setEmotionalWeightBatch([{ slug, source_id: sourceId, weight: sourceId === 'default' ? 0.5 : 1 }]);
+        refs.push({ slug, source_id: sourceId });
+      };
+      const concept = { visibility: 'world', synthesized_by: 'dream' };
+      for (const slug of ['notes/open-a', 'notes/open-b', 'notes/open-c']) await seed(slug, 'default');
+      await seed('concepts/from-open', 'default', 'concept', concept);
+      await engine.addLink('concepts/from-open', 'notes/open-a', '', 'synthesized_from', 'concept-provenance');
+      const today = new Date((await engine.getPage('notes/open-a'))!.updated_at).toISOString().slice(0, 10);
+
+      const run = async () => {
+        const recent = await engine.getRecentSalience({ days: 7, limit: 100, excludePrivate: true });
+        const scores = await engine.getSalienceScores(refs, { sourceIds: ['default', 'chat', 'vault'], excludePrivate: true });
+        const anomalies = await engine.findAnomalies({ since: today, lookback_days: 1, excludePrivate: true });
+        return {
+          recent: sorted(recent.map((r) => `${r.source_id}:${r.slug}=${Math.round(r.emotional_weight * 100) / 100}`)),
+          scores: sorted([...scores].map(([key, score]) => `${key}=${Math.round(score * 1000) / 1000}`)),
+          anomalies: sorted(anomalies.map((r) => `${r.cohort_kind}:${r.cohort_value}:${r.count}:${sorted(r.page_slugs).join(',')}`)),
+        };
+      };
+      const read = async () => ({
+        none: await run(),
+        reader: await withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, run),
+      });
+
+      // Before an owner-only source exists the default pages read: the case is not vacuous.
+      const before = await read();
+      expect(before.none.recent.map((r) => r.split('=')[0])).toEqual(['default:concepts/from-open', 'default:notes/open-a', 'default:notes/open-b', 'default:notes/open-c']);
+      expect(before.none.scores).toHaveLength(4);
+      expect(before.none.anomalies).toContain('tag:probe:4:concepts/from-open,notes/open-a,notes/open-b,notes/open-c');
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await seed('notes/chat-a', 'chat');
+      await seed('notes/chat-b', 'chat');
+      await seed('notes/vault-a', 'vault');
+      await seed('concepts/from-chat', 'default', 'concept', concept);
+      await engine.addLink('concepts/from-chat', 'notes/chat-a', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // Closed form: no schema version in context. A non-owner reads nothing while any source is owner-only.
+      const closed = await read();
+      expect(closed.none).toEqual({ recent: [], scores: [], anomalies: [] });
+      expect(closed.reader).toEqual({ recent: [], scores: [], anomalies: [] });
+
+      // Fn form (schema 320): only owner-only pages, and the concept synthesized from one, are left out.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      let fn;
+      try {
+        fn = await withEngineScope(engine, read);
+      } finally {
+        noteSchemaVersion(engine, Number.NaN);
+      }
+      expect(fn.none).toEqual(before.none);
+      expect(fn.reader).toEqual(before.none);
+      return { before, closed, fn };
     },
   );
 });

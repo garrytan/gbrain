@@ -49,26 +49,12 @@ export interface RetiredChunkVectorRow {
   embedding_input_hash: string | null; contextual_retrieval_mode: string | null; slug: string; source_id: string; corpus_generation: string | null;
 }
 
-/** A page's trust tier and write origin, as a fence append keeps them. */
-export interface PageTrustStamp { id: number; trust_tier: string; write_origin: unknown }
 
-/** Which page a trust stamp reads: the live page at a source and slug, or a page by id. */
-export type PageTrustRef = { sourceId: string; slug: string } | { id: number };
 
 /** The scope of a re-chunk run: one source, one slug, both or neither. */
 export interface RechunkCandidateScope { sourceId?: string; slug?: string }
 
-/** The state of body staging `stagingId`, row-locked for the rest of the transaction; null when there is none. */
-export async function lockBodyStagingState(tx: Raw, stagingId: string): Promise<string | null> {
-  const [staging] = await tx.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id=$1::uuid FOR UPDATE', [stagingId]);
-  return staging?.state ?? null;
-}
 
-/** Delete page `pageId`'s chunk rows at `generation` whose chunk_index is not among `keepIndexes` (a dead preparation's rows). */
-export async function deleteUnstagedSegmentChunks(tx: Raw, pageId: number, generation: number, keepIndexes: readonly number[]): Promise<void> {
-  await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND body_generation=$2 AND NOT (chunk_index = ANY($3::int[]))',
-    [pageId, generation, keepIndexes]);
-}
 
 /** Page `pageId`'s storage class, generation, title, type and body flags, deleted or not; null when there is no such page. */
 export async function readSegmentedLivePage(tx: Raw, pageId: number): Promise<SegmentedLivePageRow | null> {
@@ -77,12 +63,6 @@ export async function readSegmentedLivePage(tx: Raw, pageId: number): Promise<Se
   return row ?? null;
 }
 
-/** Whether the live page at `sourceId`/`slug` has its text projection sealed at its knowledge revision. */
-export async function readSegmentedSealed(tx: Raw, sourceId: string, slug: string): Promise<boolean> {
-  const [page] = await tx.executeRaw<{ sealed: boolean }>(`SELECT text_projection_revision=knowledge_revision AS sealed FROM pages
-    WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId, slug]);
-  return page?.sealed === true;
-}
 
 /** The members of `occurrenceIds`, in their order, that have a chunk row of page `pageId` at or below `generation`. */
 export async function listChunkedOccurrences(tx: Raw, pageId: number, occurrenceIds: readonly number[], generation: number): Promise<number[]> {
@@ -214,45 +194,8 @@ export async function restorePageUpdatedAt(tx: Raw, pageId: number, updatedUs: s
   await tx.executeRaw(`UPDATE pages SET updated_at = 'epoch'::timestamptz + $2::bigint * interval '1 microsecond' WHERE id=$1`, [pageId, updatedUs]);
 }
 
-/** The trust tier and write origin of the live page at a source and slug, or of a page by id; null when there is none. */
-export async function readPageTrustStamp(tx: Raw, page: PageTrustRef): Promise<PageTrustStamp | null> {
-  const [row] = 'id' in page
-    ? await tx.executeRaw<PageTrustStamp>('SELECT id, trust_tier, write_origin FROM pages WHERE id=$1', [page.id])
-    : await tx.executeRaw<PageTrustStamp>(
-      'SELECT id, trust_tier, write_origin FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [page.sourceId, page.slug]);
-  return row ?? null;
-}
 
-/**
- * Set page `pageId`'s trust_tier and write_origin back to a stamp read before a fence append's page write
- * (trust/fence-append.ts withPageTierKept). The tier trigger runs on it: a lowering holds, a raise needs a covering
- * promotion. A JSON string origin is stored as given (it is the jsonb text), any other as its JSON text.
- */
-export async function restorePageTrustStamp(tx: Raw, pageId: number, trustTier: string, writeOrigin: unknown): Promise<void> {
-  const origin = writeOrigin === null || writeOrigin === undefined ? null : typeof writeOrigin === 'string' ? writeOrigin : JSON.stringify(writeOrigin);
-  await tx.executeRaw('UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1', [pageId, trustTier, origin]);
-}
 
-/**
- * Store a derivation driver's rows on page `pageId` (page-body/segment-derive.ts storeRuns), inserting or replacing
- * each as upsertSegmentDerivations does, only while the page is segmented at `generation`. One statement reads the
- * page row FOR SHARE, so a purge, fence rewrite or demotion holding it FOR UPDATE is waited for, and once it has moved
- * the generation nothing is written. True when the statement wrote a row. The rows' own pageId is ignored.
- */
-export async function storeSegmentDerivationRuns(tx: Raw, pageId: number, generation: number, rows: readonly SegmentDerivationInput[]): Promise<boolean> {
-  const hex = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
-  const json = JSON.stringify(rows.map(row => ({ pipeline: row.kind, occurrence_id: row.occurrenceId, pipeline_version: row.version,
-    segment_sha256: hex(row.segmentSha256), context_hash: hex(row.contextHash), state: row.state, output: row.output ?? null, receipt: row.receipt ?? null })));
-  const written = await tx.executeRaw(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)
-      INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, output, receipt)
-      SELECT live.id, d.pipeline, d.occurrence_id, d.pipeline_version, decode(d.segment_sha256, 'hex'), decode(d.context_hash, 'hex'), d.state, d.output, d.receipt
-      FROM live, jsonb_to_recordset($3::text::jsonb) AS d(pipeline text, occurrence_id bigint, pipeline_version int, segment_sha256 text, context_hash text,
-        state text, output jsonb, receipt jsonb)
-      ON CONFLICT (page_id, pipeline, occurrence_id) DO UPDATE SET pipeline_version = EXCLUDED.pipeline_version, segment_sha256 = EXCLUDED.segment_sha256,
-        context_hash = EXCLUDED.context_hash, state = EXCLUDED.state, output = EXCLUDED.output, receipt = EXCLUDED.receipt, updated_at = now()
-      RETURNING 1`, [pageId, generation, json]);
-  return written.length > 0;
-}
 
 /** The page a live fence rewrite reads (page-body/segment-rewrite.ts), deleted or not, with its tags in order. */
 export interface SegmentedRewritePageRow {
@@ -325,21 +268,8 @@ export async function setSegmentedVersionHash(tx: Raw, pageId: number, generatio
     [pageId, generation, contentHash, bodyBytes]);
 }
 
-/** Delete page `pageId`'s derivation rows a fence rewrite may have left holding replaced text; returns how many it deleted. */
-export async function deleteRewrittenDerivationRows(tx: Raw, pageId: number, scope: RewrittenDerivationScope): Promise<number> {
-  return (await tx.executeRaw(`DELETE FROM page_segment_derivations WHERE page_id=$1
-    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
-      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`,
-  [pageId, [...scope.touched], [...scope.reach], [...scope.unpaidKinds], [...scope.live]])).length;
-}
 
-/** The page fields a segmented embed reads (metadata only, never the body). */
-export interface SegmentedEmbedPageRow {
-  id: number; slug: string; source_id: string; title: string; contextual_retrieval_mode: string | null; body_bytes: number | string;
-}
 
-/** Which page a segmented embed reads: by id, or the page at a source and slug. */
-export type SegmentedEmbedRef = { id: number } | { sourceId: string; slug: string };
 
 /** A segmented page's live row in keyset order, as an embed lists it. */
 export interface SegmentedStaleRowRow { chunk_index: number; chunk_text: string; chunk_source: string }
@@ -356,15 +286,6 @@ export interface LiveEmbedSegmentRow { occurrence_id: number | string; sha256: U
 /** One live chunk row of a segment with its recorded embedding input. */
 export interface SegmentChunkRowRow { chunk_index: number; chunk_text: string; chunk_source: string; embedding_input_hash: string | null }
 
-/** A segmented page that is live, sealed and in a live source, by id or by source and slug; null otherwise. */
-export async function readSegmentedEmbedPage(tx: Raw, ref: SegmentedEmbedRef): Promise<SegmentedEmbedPageRow | null> {
-  const where = 'id' in ref ? sqlFragment`p.id = ${ref.id}` : sqlFragment`p.source_id = ${ref.sourceId} AND p.slug = ${ref.slug}`;
-  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.slug, p.source_id, p.title, p.contextual_retrieval_mode, p.body_bytes
-       FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE ${where} AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${trustedSql(currentTextProjectionFilter('p'))}`);
-  const [row] = await tx.executeRaw<SegmentedEmbedPageRow>(text, params);
-  return row ?? null;
-}
 
 /** Whether the page at `sourceId`/`slug` is segmented, not deleted and in a live source, sealed or not. */
 export async function hasLiveSegmentedPage(tx: Raw, sourceId: string, slug: string): Promise<boolean> {

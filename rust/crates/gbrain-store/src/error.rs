@@ -27,6 +27,9 @@ pub const REVISION_CONFLICT: &str = "revision_conflict";
 pub const REVISION_REQUIRED: &str = "revision_required";
 /// The named page does not exist (only where PGLite throws instead of returning null).
 pub const PAGE_NOT_FOUND: &str = "page_not_found";
+/// `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the
+/// identifier (PGLite's `PageSnapshotAmbiguousError`).
+pub const PAGE_AMBIGUOUS: &str = "page_ambiguous";
 /// The write breaks a table constraint that PGLite enforces (a CHECK list or a unique key). The
 /// whole write rolls back.
 pub const CONSTRAINT_VIOLATION: &str = "constraint_violation";

@@ -299,3 +299,59 @@ export async function countOnboardSignal(
   const rows = await exec.executeRaw<{ count: string | number }>(text, params, { signal: opts.signal });
   return rows.length > 0 ? Number(rows[0].count) : 0;
 }
+
+/** Live pages brain-wide, no source scope (backup coverage). Null when the row or its count is missing. */
+export async function countBrainLivePages(exec: LegacyUnscopedRead): Promise<number | null> {
+  const rows = await exec.executeRaw<{ n: number }>(
+    'SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL',
+  );
+  const n = rows[0]?.n;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/** Live pages per source (`gbrain sources status`); a source with none has no row. */
+export interface LivePagesBySourceRow { source_id: string; n: number }
+/** Chunks of live pages per source and how many have a vector in the active column; a source with none has no row. */
+export interface ChunksBySourceRow { source_id: string; total: number; embedded: number }
+
+/** Live pages per source (source-health.ts pageCountsBySource). */
+export async function countLivePagesBySource(exec: LegacyUnscopedRead): Promise<LivePagesBySourceRow[]> {
+  return exec.executeRaw<LivePagesBySourceRow>(
+    `SELECT source_id, COUNT(*)::int AS n
+       FROM pages
+      WHERE deleted_at IS NULL
+      GROUP BY source_id`,
+  );
+}
+
+/** Chunks of live pages per source, and those with a vector in `column`, the active embedding column (source-health.ts chunkCountsBySource). */
+export async function countChunksBySource(exec: LegacyUnscopedRead, column: string): Promise<ChunksBySourceRow[]> {
+  const col = quoteIdentifier(column);
+  return exec.executeRaw<ChunksBySourceRow>(
+    `SELECT p.source_id,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE c.${col} IS NOT NULL)::int AS embedded
+       FROM content_chunks c
+       JOIN pages p ON p.id = c.page_id
+      WHERE p.deleted_at IS NULL
+      GROUP BY p.source_id`,
+  );
+}
+
+/** Backup coverage's young-brain row: live pages, active facts, and the earliest source or page timestamp. */
+export interface BrainMaturityRow { pages: number; facts: number; since: string | Date | null }
+
+/** The young-brain row brain-wide (backup coverage), or null when the read returns no row. */
+export async function readBrainMaturity(exec: LegacyUnscopedRead): Promise<BrainMaturityRow | null> {
+  const [row] = await exec.executeRaw<BrainMaturityRow>(
+      `SELECT (SELECT COUNT(*)::int FROM pages WHERE deleted_at IS NULL) AS pages,
+              (SELECT COUNT(*)::int FROM facts WHERE expired_at IS NULL) AS facts,
+              LEAST((SELECT MIN(created_at) FROM sources), (SELECT MIN(created_at) FROM pages)) AS since`,
+  );
+  return row ?? null;
+}
+
+/** The liveness round trip (`SELECT 1`): resolves when the store answers, rejects as executeRaw does (an aborted `signal` included). */
+export async function pingStore(exec: { executeRaw(sql: string, params?: unknown[], opts?: { signal?: AbortSignal }): Promise<unknown[]> }, opts: { signal?: AbortSignal } = {}): Promise<void> {
+  await exec.executeRaw('SELECT 1', undefined, { signal: opts.signal });
+}

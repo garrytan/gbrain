@@ -44,6 +44,7 @@ import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from '
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
 import { releaseHiddenMoment } from '../facts/derivation-inputs.ts';
+import { tombstoneWindow } from './concept-rebuild.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
@@ -73,10 +74,11 @@ import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemo
 import { assertTimelineNotOmitted, timelineWritePolicy } from './timeline-omission.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
+import { assertReadersKeyCanonical } from './readers-request.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { preparePageAdvisories, remoteLinkHint, pageNoopAdvisories, timelineRowsRemovedAdvisory } from './page-advisories.ts';
+import { preparePageAdvisories, privateRowsKeptAdvisory, remoteLinkHint, pageNoopAdvisories, timelineRowsRemovedAdvisory } from './page-advisories.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget, nativeFileTarget } from './native-file-target.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
@@ -528,10 +530,8 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
   // same import (holdForImport) and both are released, in admission order, at its checkpoint; it never commits before the held one.
   // GST-1623: only a journaled request (one with a sequence) waits, and only on a write admitted before it; an effect or a
   // maintenance read of the file (Git and withdrawal-mirror effects, lint, drift checks) is never refused by another request's hold.
-  const [heldFirst] = row.sequence == null ? [] : await engine.executeRaw<{ deferred_import_from: string }>(`SELECT r.deferred_import_from FROM persistence_requests r
-    JOIN sources s ON s.id=r.source_id WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence<$3 AND r.state='deferred' AND r.deferred_import_from IS NOT NULL
-      AND COALESCE(s.last_commit,'')=r.deferred_import_from ORDER BY r.sequence LIMIT 1`, [row.source_id, row.slug, String(row.sequence)]);
-  if (heldFirst) throw pendingImportRefusal(row, options.remote === true, heldFirst.deferred_import_from, { root, path });
+  const heldFirst = row.sequence == null ? null : await (await engine.publicationJournalStore()).heldBehindImport(row.source_id, row.slug, row.sequence);
+  if (heldFirst) throw pendingImportRefusal(row, options.remote === true, heldFirst, { root, path });
   const beforeHash = () => before instanceof FileBytes ? before.hash() : sha256(before!);
   if (options.deleting === true && options.sharedOrigin && snapshot && before) {
     const target: FileClaimTarget = { sourceId: row.source_id, slug: row.slug, pageId: snapshot.page.id, root, path, canonicalPath: realpathSync(path),
@@ -667,7 +667,7 @@ export async function preparePrivateTransition(engine: BrainEngine, row: Pick<Wr
   if (!row.worktree_id || !await sourceCanonicalGit(engine, row.source_id)) return undefined;
   return prepareFileTarget(engine, row, snapshot, null, undefined, { ...options, deleting: true });
 }
-export async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
+export async function pageDatabaseOnlyPublication(engine: SqlEngine & Pick<BrainEngine, 'readPageDatabaseOnlyReason'>, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
   const reason = databaseOnlyPublication(row, file);
   if (reason.databaseOnlyReason && (await sourceMirrorReadOnly(engine, row.source_id) || await isMirrorOnlyPage(engine, row.source_id, row.slug))) {
     return { databaseOnlyReason: 'mirror_read_only' };
@@ -755,6 +755,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   const observedRevision = snapshot.revision;
   const purge = p.purge === true;
   const noop = !purge && snapshot.page.deleted_at != null;
+  const retentionHours = purge ? 0 : await (await import('../sync-reconcile.ts')).readPurgeRetentionHours(engine);
   // Always-loaded core pages: a remote caller cannot delete one (owner-only).
   if (!noop) { enterClaimStep(clock, 'core_guard', undefined, 'db'); await prepareCoreGuard(engine, { row, snapshot, incoming: null }); }
   enterClaimStep(clock, 'file_target', undefined, 'fs');
@@ -820,14 +821,22 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     apply: async tx => {
       if (row.authority.remote) await refuseRemoteGuestDelete(tx, row.source_id, row.slug, requestPrincipal(row));
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
+      // GST-3179: a concept rebuild's purge runs only while the tombstone is still held at the delete synthesis read.
+      const unheld = preparedPurge && p.concept_hold !== undefined
+        ? await (await import('./concept-rebuild.ts')).conceptPurgeRefusal(tx, row.source_id, row.slug, p.concept_hold) : null;
+      if (unheld) throw pageRefusal('revision_conflict', `The concept rebuild's purge left the page alone: ${unheld}.`, row,
+        `Page ${row.slug} of source ${row.source_id} changed after concept synthesis read it.`, pageFix(row.source_id, row.slug));
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...(bodyUnread(snapshot.page) ? withoutBody(snapshot.page) : snapshot.page), source_path: null, source_uri: null } as Page }, preparedPurge);
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
       // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
       if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
       else await releaseHiddenMoment(tx, Number(snapshot.page.id));
+      // #9653: a page already deleted keeps its tombstone's date, so its window runs from that date (a released hold included).
+      const window = noop ? await tombstoneWindow(tx, Number(snapshot.page.id), retentionHours) : null;
+      const until = !window ? `now + ${retentionHours}h` : window.past ? `the next purge (its ${retentionHours}h window ended ${window.until})` : window.until;
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
-        recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
+        recoverable_until: `${until} via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)` };
     } };
   return prepared;
 }
@@ -1011,6 +1020,18 @@ const frontmatterRefusalError = (refusal: ContentRefusal) => contentRefusalError
   `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
   { legacy_error: 'invalid_params' });
 
+/**
+ * The private request an authored put, edit or capture carries (null for a derived write). A readers key spelled any way but
+ * `readable_by` is ignored by page access, so it refuses here rather than publish the page to every member.
+ */
+function authoredRequests(row: WriteRequest, kind: unknown, content: unknown, activePack: ParseOpts['activePack']): ReturnType<typeof readPrivateRequest> {
+  if (!privateRequestGuarded(row.operation, kind) || typeof content !== 'string') return null;
+  const parse = () => parseMarkdown(content, row.slug, { activePack }).frontmatter;
+  const request = readPrivateRequest(content, parse);
+  assertReadersKeyCanonical(row, content, request ? request.frontmatter : parse(), !row.authority.remote);
+  return request;
+}
+
 /** A private request the importer would hold keeps the importer's typed refusal; any other must be kept as written. */
 function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontmatter: Record<string, unknown> | null | undefined): void {
   const hold = classifyImportHold(parseMarkdown(content, row.slug, { validate: true }));
@@ -1029,6 +1050,14 @@ function remoteCoreMarkingKept(row: WriteRequest, snapshot: PageSnapshot | null,
   const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
   if (carried.always_load === parsed.frontmatter?.always_load && carried.core_priority === parsed.frontmatter?.core_priority) return content;
   return serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
+}
+
+/** GST-3179: a concept rebuild publishes only while every member is live at the revision its narrative read. */
+async function assertRebuildMembersUnchanged(tx: BrainEngine, row: WriteRequest, p: Record<string, unknown>): Promise<void> {
+  if (row.operation !== 'submit_job' || p.kind !== 'managed_maintenance_page' || p.rebuild_members === undefined) return;
+  if (Array.isArray(p.rebuild_members) && await (await import('./concept-rebuild.ts')).membersUnchanged(tx, row.source_id, p.rebuild_members as Array<{ slug: string; revision: string }>)) return;
+  throw pageRefusal('revision_conflict', 'A member the rebuilt concept was built from changed or was removed during synthesis, so nothing was published; the next run writes the concept again.', row,
+    `A member of concept ${row.slug} in source ${row.source_id} moved after synthesis read it.`, pageFix(row.source_id, row.slug));
 }
 
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
@@ -1078,7 +1107,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // #5616: edits apply to the caller's view of the locked snapshot (revision checked above).
   const edited = row.operation === 'edit_page' ? await editLockedPage(engine, row, snapshot) : undefined;
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
-  const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
+  const privateRequest = authoredRequests(row, p.kind, content, activePack);
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
   let versionTags: string[] | undefined = replacesTombstone && typeof content === 'string' ? parseMarkdown(content, row.slug, { activePack }).tags : preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
@@ -1255,7 +1284,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
   const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
-    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, incoming, labelGuard); },
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, incoming, labelGuard); await assertRebuildMembersUnchanged(tx, row, p); },
     apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;
@@ -1316,7 +1345,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     // #6722: a large or embed_skip page says what this write left its embedding in.
     const sizeState = noop ? {} : await sizeStateField(tx, row.source_id, row.slug, ready.parsedPage);
     return { ...advisories, ...(autoLinks ? {auto_links:autoLinks} : {}), ...(coreUsage ? { core: coreUsage } : {}),
-      ...(removedTimeline ? { timeline_rows_removed: timelineRowsRemovedAdvisory(row, removedTimeline) } : {}),
+      ...(removedTimeline ? { timeline_rows_removed: timelineRowsRemovedAdvisory(row, removedTimeline) } : {}), ...(ownerRewrite && ready.result.privateRowsKept ? { private_rows_kept: privateRowsKeptAdvisory(row, ready.result.privateRowsKept) } : {}),
       status: noop ? 'skipped' : row.operation === 'restore_page' ? 'restored' : row.operation === 'revert_version' ? 'reverted' : 'created_or_updated',
       slug: row.slug, source_id: row.source_id, chunks: ready.result.chunks, noop, ...(projectionPending ? { projection: 'pending' } : {}),
       // Wave B: whether search sees a segmented write at commit; a pending one is re-read whenever its receipt is served (searchable.ts).

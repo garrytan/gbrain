@@ -34,5 +34,8 @@ export const readWedgeSignals: StoreMember<[queue: string, handlerNames: readonl
 export const readOldestWaitingAge: StoreMember<[queue: string, opts?: { signal?: AbortSignal }], number | null> =
   (brain, queue) => call('readOldestWaitingAge', () => brain.readOldestWaitingAge(queue));
 
+export const countWaitingJobs: StoreMember<[excludeFactsAbsorb: boolean], number> =
+  (brain, excludeFactsAbsorb) => call('countWaitingJobs', () => brain.countWaitingJobs(excludeFactsAbsorb));
+
 export const listStuckActiveJobsByName: StoreMember<[], Array<{ name: string; n: number }>> =
   (brain) => call('listStuckActiveJobsByName', () => brain.listStuckActiveJobsByName());

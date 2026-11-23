@@ -177,6 +177,19 @@ describe('race hunt plan', () => {
     expect(report.errors.join('\n')).toContain('race hunt over budget');
     for (const f of plan.unrun) expect(report.summary).toContain(f);
   });
+
+  // Test run 44479724268: 1,078 importers of changed helpers joined the 837
+  // listed arms, the floor filled alphabetically and 193 listed arms never ran.
+  test('listed arms take the 3-iteration floor before helper importers that sort ahead of them', () => {
+    const extras = Array.from({ length: 30 }, (_, i) => `test/aa-importer-${String(i).padStart(2, '0')}.test.ts`);
+    const files: Record<string, string> = { 'test/postgres-unit-arms.txt': `${list(20).join('\n')}\n` };
+    for (const f of [...list(20), ...extras]) files[f] = "for (const b of testBackends()) describe(b, () => { test('x', () => {}); });\n";
+    const root = repo(files).root;
+    const plan = planRaceHunt(root, { day: 0, extra: extras }, weights(Object.fromEntries([...list(20), ...extras].map(f => [f, 15 * 60_000]))));
+    expect(plan.unrun.length).toBeGreaterThan(0);
+    expect(plan.unrun.every(f => extras.includes(f))).toBe(true);
+    for (const f of list(20)) expect(plan.files.map(x => x.file)).toContain(f);
+  });
 });
 
 const failure = (over: Partial<StressFailure> = {}): StressFailure => ({

@@ -6,6 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from './saved-facts-notice.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -24,6 +25,7 @@ import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, pa
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, scopeReadAccess, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
 import { attestedReadScope } from '../core/access/member-sources.ts';
+import { collectReturnedPages, readLogged, readLogMember, recordAccessRead, resultCode } from '../core/access/read-log.ts';
 import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
@@ -40,7 +42,7 @@ import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNoti
 import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
-import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
+import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, itemParamKeys, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
 import { opAllowedForBoundClient } from '../core/ops/context.ts';
 import { takePostUpgradeMcpNotice } from '../core/post-upgrade-notice.ts';
 import { takeHttpBehaviorNotice, takeLocalBehaviorNotice } from '../core/behavior-change-notice.ts';
@@ -67,6 +69,7 @@ import { isEngineDegraded } from '../core/degraded-marker.ts';
 import { admittedPendingReceipt, isWriteReceipt, publicWriteReceipt, type WriteReceipt } from '../core/persistence/types.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, verifyLocalWriter, withRequestIdentityMemo, withVerifiedLocalRegistration } from '../core/persistence/identity.ts';
 import { frameOverCap, resultTooLargeError } from '../core/egress-budget.ts';
+import { withRemoteCaller } from '../core/remote-caller.ts';
 import { isAIInvocationPolicyError } from '../core/ai/invocation-guard.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
@@ -246,7 +249,7 @@ export interface DispatchOpts {
    */
   localFederatedSourceIds?: string[];
   /** GBRA-585: the trusted local CLI named no source (OperationContext.localSourceImplicit); ignored unless remote is false. */
-  localSourceImplicit?: boolean;
+  localSourceImplicit?: boolean; localSourceFromCheckout?: boolean; // the implicit source came from the cwd checkout (OperationContext.localSourceFromCheckout)
   /**
    * #5081: explicit-read admission for a stdio connection bound by
    * GBRAIN_SOURCE or a .gbrain-source pin. Stdio transport only; see
@@ -456,7 +459,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } }>;
+    saved_facts?: SavedFactNotice[];
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -467,12 +470,8 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
       r.other_names.map(n => `${n.alias} = ${n.name} (declared in ${n.slug})`), '; ', OTHER_NAMES_NOTICE_MAX_CHARS);
     blocks.push(`${text}${more ? ` (+${more} more)` : ''}.`);
   }
-  if (r.saved_facts?.length) {
-    const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
-      '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
-    blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
-  }
+  const factsBlock = savedFactsNoticeBlock(r.saved_facts);
+  if (factsBlock) blocks.push(factsBlock);
   // F2: which set the rows are and which set the keyword count covers, on every search call.
   const countLine = searchCountLine(result, retrieval);
   if (countLine) blocks.push(countLine);
@@ -496,21 +495,9 @@ function rateLine(answerId: string, coach: boolean): string {
 }
 
 /** C4: character ceilings for the model-visible notice blocks (header included). */
-export const SAVED_FACTS_NOTICE_MAX_CHARS = 1_500;
+export { SAVED_FACTS_NOTICE_MAX_CHARS } from './saved-facts-notice.ts';
 export const OTHER_NAMES_NOTICE_MAX_CHARS = 400;
 export const RATE_LINE_MAX_CHARS = 160;
-
-/**
- * Whole items after `head` while the block stays within `max` characters;
- * an item is never cut, so its provenance stays intact. The first item is
- * always shown, even alone over the ceiling. `more` counts the items left out.
- */
-function wholeItemsWithin(head: string, items: string[], sep: string, max: number): { text: string; more: number } {
-  let text = head + items[0];
-  let shown = 1;
-  while (shown < items.length && text.length + sep.length + items[shown].length <= max) text += sep + items[shown++];
-  return { text, more: items.length - shown };
-}
 
 /**
  * D8: render the second (model-visible) content block for an empty retrieval
@@ -672,7 +659,7 @@ export function dispatchRenderContext(opts: DispatchOpts): RenderContext {
       const op = byName.get(opName);
       return !!op && isCallable(op, {
         transport, surface, scopes: opts.auth?.scopes ?? [], publishGates: {}, allowedOps: opts.allowedOps,
-      }) && (transport === 'cli' || (opAllowedForBoundClient(opts.auth, op) && Object.keys(args ?? {}).every(key => paramCallable(op, key, surface))));
+      }) && (transport === 'cli' || (opAllowedForBoundClient(opts.auth, op) && [...Object.keys(args ?? {}), ...itemParamKeys(op, args ?? {})].every(key => paramCallable(op, key, surface))));
     },
     preapproved: () => false,
     ...(opts.auth?.clientId ? { principal: opts.auth.clientId } : {}),
@@ -981,7 +968,7 @@ export function buildOperationContext(
     sourceId: opts.sourceId ?? 'default',
     ...(sessionId ? { sessionId } : {}),
     ...(opts.localFederatedSourceIds ? { localFederatedSourceIds: opts.localFederatedSourceIds } : {}),
-    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true } : {}),
+    ...(opts.localSourceImplicit && opts.remote === false ? { localSourceImplicit: true, ...(opts.localSourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}), ...(opts.surface ? { surface: opts.surface } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
@@ -1094,7 +1081,10 @@ export async function dispatchToolCall(
     if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : args;
     return withCallerAccess({ ...access, privateFactSources: privateFactSources && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? privateFactSources : [], ...(access.owner && opts.auth && opts.transport !== 'stdio' && !roomDeclaration && !audience && !attested?.actor && readMode === null && !opts.enforcedMember ? { ownerReads: true } : {}) }, async () => {
-      const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
+      // GST-2476 gap 1: a member's or audience's read is logged after the response (access/read-log.ts); every other read only pays the test.
+      const logged = readOnly && readLogged(access, opts.enforcedMember);
+      const { value: out, pageIds } = await collectReturnedPages(logged, () => withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped))));
+      if (logged) recordAccessRead(engine, { member: readLogMember(access), audience: access.audience ? [...access.audience] : null, operation: name, transport: opts.enforcedMember ? 'cli' : opts.transport ?? 'unknown', result_code: resultCode(out), page_ids: pageIds });
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
       if (scopeNotice) {
@@ -1405,7 +1395,7 @@ async function dispatchResolvedCall(
         if (!(error instanceof OperationError) || error.code !== 'writer_registration_required' || op.requiredScopes?.length) throw error;
       }
     }
-    const result = registration
+    const result = await withRemoteCaller(ctx.remote !== false, async () => registration
       ? await withVerifiedLocalRegistration(engine, registration, async verified => {
         if (!verified.remote) throw opError('permission_denied', 'This registration is not an agent-facing connection.',
           `${name} on this stdio connection needs the agent-facing stdio writer registration, which only the user can create in a terminal on the brain host.`,
@@ -1413,7 +1403,7 @@ async function dispatchResolvedCall(
             'Previews the agent-facing stdio registration; the user reruns it without --dry-run (with --replace and the complete grant when a registration exists).') });
         return op.handler(ctx, safeParams);
       })
-      : await op.handler(ctx, safeParams);
+      : await op.handler(ctx, safeParams));
     if (emptyRead(name, result)) await assertUnscopedReadReachesPages(name, safeParams, ctx);
     // Hot memory built before a write (forget, remember, …) is never served after it, on every transport;
     // #6696 (A4): the write's receipt carries the capacity notices (60 s snapshot, at most hourly per scope).

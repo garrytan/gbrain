@@ -3,8 +3,13 @@
 //! stages ran through `engine.executeRaw`.
 //!
 //! Members: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages, and the
+//! search type-filter probe probePageTypes and the long-page size preflight readLongPageSizes
+//! (src/core/engine-sql/cli-reads-ops.ts).
+//! readEntityInboundEdges reads the links countInboundLinks counts (`kept_inbound_links`), with
+//! their temporal columns, in link_temporal.rs.
 //!
 //! Each method reads what its statement reads and keeps the statement's tests: a "live" page here
 //! is `deleted_at IS NULL` alone unless the statement also asks for `pageReadFilter(.., live)`.
@@ -12,13 +17,15 @@
 
 use super::{GraphScope, Pages, QUARANTINE_KEY, all_links, not_mentions, touching};
 use crate::Store;
+use crate::chunk_queries::safe_chunks;
 use crate::chunks::read_chunks;
-use crate::error::Result;
+use crate::cli_reads::pg_text::is_pg_space;
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::links::in_links;
-use crate::pages::{PageRecord, all_pages, read_page};
+use crate::links::{LinkRecord, in_links, out_links};
+use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
 use crate::sources::{SourceRecord, all_sources};
 use crate::stats::EntityTypeFilter;
 use crate::timeline_queries::jsonb_field_text;
@@ -57,6 +64,15 @@ pub struct EntityPagesInput {
     pub exclude_quarantined: bool,
 }
 
+/// `entityFeatureCoverage(filter, feature)`: `feature` is `links` (an inbound link) or `timeline`
+/// (a timeline entry). The store has no TABLESAMPLE; the TypeScript member refuses a sample.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FeatureCoverageInput {
+    pub filter: EntityTypeFilter,
+    pub feature: String,
+}
+
 /// `countForeignEdges(slug, sourceId, direction)`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -93,6 +109,72 @@ pub struct TitledInput {
     pub scope: GraphScope,
 }
 
+/// `probePageTypes(sets, scope)`: one type set per requested type.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TypeProbeInput {
+    pub sets: Vec<Vec<String>>,
+    pub scope: GraphScope,
+}
+
+/// The input of `readLongPageSizes(ids, scope, { includeTimeline })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LongPageSizeInput {
+    pub ids: Vec<i64>,
+    pub scope: GraphScope,
+    /// `requiresSafeChunks(scope)`: the page must pass `safeChunksFilter`.
+    pub safe_chunks: bool,
+    /// The timeline counts (every detail but `low`).
+    pub include_timeline: bool,
+}
+
+/// `TIMELINE_SEPARATOR.length` of `src/core/page-window/document.ts` (ASCII, so also its bytes).
+const TIMELINE_SEPARATOR_LEN: usize = "\n\n<!-- timeline -->\n\n".len();
+/// `ACTIVATION_SERVED_REVISION` of `src/core/search/safe-chunks.ts`.
+const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
+
+/// `servedTextProjectionFilter`: the current projection, or the pre-activation marker.
+fn served(page: &PageRecord) -> bool {
+    page.text_projection_revision
+        .as_deref()
+        .is_some_and(|rev| rev == page.knowledge_revision || rev == ACTIVATION_SERVED_REVISION)
+}
+
+/// The most distinct types the probe lists (`LIMIT 500`).
+const PROBE_TYPE_LIMIT: usize = 500;
+
+/// One ask of `readLinkContextMatches(asks)`: a returned link context, its row index and the
+/// stored edge it came from.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LinkContextAsk {
+    pub i: i64,
+    pub from_source_id: String,
+    pub from_slug: String,
+    pub to_source_id: String,
+    pub to_slug: String,
+    pub link_type: String,
+    pub context: String,
+}
+
+/// The ellipsis a read appends to a truncated link context.
+const ELLIPSIS: char = '\u{2026}';
+
+/// The context test of `readLinkContextMatches`: `l.context = ctx`, or, for a `ctx` that ends in
+/// the ellipsis, `left(l.context, n - 1) = left(ctx, n - 1)` with `n` the length of `ctx` in
+/// characters.
+fn context_matches(stored: &str, ctx: &str) -> bool {
+    if stored == ctx {
+        return true;
+    }
+    if !ctx.ends_with(ELLIPSIS) {
+        return false;
+    }
+    let n = ctx.chars().count() - 1;
+    stored.chars().take(n).eq(ctx.chars().take(n))
+}
+
 /// `->>` of a frontmatter key.
 fn field_text(page: &PageRecord, key: &str) -> Option<String> {
     page.frontmatter.get(key).and_then(jsonb_field_text)
@@ -113,6 +195,55 @@ fn is_entity(filter: &EntityTypeFilter, page: &PageRecord) -> bool {
         .find(|b| b.source_id == page.source_id)
         .map_or(&filter.types, |b| &b.types)
         .contains(&page.page_type)
+}
+
+/// The inbound links `countInboundLinks` counts and `readEntityInboundEdges` reads, each with its
+/// referrer's slug, in link id order.
+pub(super) fn kept_inbound_links(
+    read: &dyn KvRead,
+    input: &InboundCountInput,
+) -> Result<Vec<(LinkRecord, String)>> {
+    let Some(target) = read_page(read, &input.source_id, &input.slug)? else {
+        return Ok(Vec::new());
+    };
+    let mut pages = Pages::new(read);
+    let mut kept = Vec::new();
+    for link in in_links(read, target.id)? {
+        if !not_mentions(&link) {
+            continue;
+        }
+        let Some(from) = pages.get(link.from_page_id)? else {
+            continue;
+        };
+        if from.source_id != input.source_id || !live(&from) {
+            continue;
+        }
+        let origin = match link.origin_page_id {
+            Some(id) => match pages.get(id)? {
+                Some(origin) => Some(origin),
+                None => continue,
+            },
+            None => None,
+        };
+        if let Some(policy) = &input.exclude_private {
+            if page_hidden(read, &from, policy)? {
+                continue;
+            }
+            if let Some(origin) = &origin
+                && page_hidden(read, origin, policy)?
+            {
+                continue;
+            }
+        }
+        if let Some(origin) = &origin
+            && (!live(origin) || (input.origin_same_source && origin.source_id != input.source_id))
+        {
+            continue;
+        }
+        kept.push((link, from.slug.clone()));
+    }
+    kept.sort_by_key(|(link, _)| link.id);
+    Ok(kept)
 }
 
 fn live(page: &PageRecord) -> bool {
@@ -268,6 +399,50 @@ impl Store {
         Ok(json!({"entities": entities, "connected": connected, "withTimeline": timeline}))
     }
 
+    /// `entityFeatureCoverage`: `{ sampleSize, matched }` over the live unquarantined entity
+    /// pages: how many there are and how many are the target of a link (`links`) or have a
+    /// timeline entry (`timeline`). Any other feature is invalid.
+    pub fn entity_feature_coverage(&self, input: &FeatureCoverageInput) -> Result<Value> {
+        let links = match input.feature.as_str() {
+            "links" => true,
+            "timeline" => false,
+            other => {
+                return Err(StoreError::invalid(format!(
+                    "entityFeatureCoverage: unknown feature {other:?}"
+                )));
+            }
+        };
+        let read = self.read()?;
+        let (mut sample_size, mut matched) = (0u64, 0u64);
+        for page in all_pages(&*read)? {
+            if !live(&page)
+                || !is_entity(&input.filter, &page)
+                || page.frontmatter.contains_key(QUARANTINE_KEY)
+            {
+                continue;
+            }
+            sample_size += 1;
+            let has = if links {
+                !in_links(&*read, page.id)?.is_empty()
+            } else {
+                has_timeline(&*read, page.id)?
+            };
+            if has {
+                matched += 1;
+            }
+        }
+        Ok(json!({"sampleSize": sample_size, "matched": matched}))
+    }
+
+    /// `countDatedMeetingPages`: live pages of type `meeting` with an effective date.
+    pub fn count_dated_meeting_pages(&self) -> Result<u64> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .iter()
+            .filter(|p| live(p) && p.page_type == "meeting" && p.effective_date_us.is_some())
+            .count() as u64)
+    }
+
     /// `countForeignEdges`: the links of the page (`sourceId`, `slug`), soft-deleted or not,
     /// whose other end is in another source; `in`, `out` or `both` (each link once).
     pub fn count_foreign_edges(&self, input: &ForeignEdgesInput) -> Result<u64> {
@@ -327,47 +502,7 @@ impl Store {
     /// the origin must be readable; an origin must be live, in `sourceId` with `originSameSource`.
     pub fn count_inbound_links(&self, input: &InboundCountInput) -> Result<u64> {
         let read = self.read()?;
-        let Some(target) = read_page(&*read, &input.source_id, &input.slug)? else {
-            return Ok(0);
-        };
-        let mut pages = Pages::new(&*read);
-        let mut n = 0u64;
-        for link in in_links(&*read, target.id)? {
-            if !not_mentions(&link) {
-                continue;
-            }
-            let Some(from) = pages.get(link.from_page_id)? else {
-                continue;
-            };
-            if from.source_id != input.source_id || !live(&from) {
-                continue;
-            }
-            let origin = match link.origin_page_id {
-                Some(id) => match pages.get(id)? {
-                    Some(origin) => Some(origin),
-                    None => continue,
-                },
-                None => None,
-            };
-            if let Some(policy) = &input.exclude_private {
-                if page_hidden(&*read, &from, policy)? {
-                    continue;
-                }
-                if let Some(origin) = &origin
-                    && page_hidden(&*read, origin, policy)?
-                {
-                    continue;
-                }
-            }
-            if let Some(origin) = &origin
-                && (!live(origin)
-                    || (input.origin_same_source && origin.source_id != input.source_id))
-            {
-                continue;
-            }
-            n += 1;
-        }
-        Ok(n)
+        Ok(kept_inbound_links(&*read, input)?.len() as u64)
     }
 
     /// `listLinkEndpointPages`: `[{ slug, source_id, type, knowledge_revision }]`, the live pages of
@@ -461,6 +596,137 @@ impl Store {
                 })
             })
             .collect())
+    }
+
+    /// `probePageTypes(sets, scope)`: `{ present, available }`. `present[i]` is whether a page that
+    /// passes `pageReadFilter(.., scope, live)` has a type in `sets[i]` (false for an empty set).
+    /// `available` is null when no set is empty-handed, else the distinct types of such pages, at
+    /// most 500; the SQL leaves which 500 and their order to the plan, here they are the first 500
+    /// in byte order.
+    pub fn probe_page_types(&self, input: &TypeProbeInput) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = Pages::new(&*read);
+        let mut types: BTreeSet<String> = BTreeSet::new();
+        for page in all_pages(&*read)? {
+            if pages.passes(&page, &input.scope, true)? {
+                types.insert(page.page_type.clone());
+            }
+        }
+        let present: Vec<bool> = input
+            .sets
+            .iter()
+            .map(|set| set.iter().any(|t| types.contains(t)))
+            .collect();
+        let probed = input.sets.iter().any(|set| !set.is_empty());
+        let all_found = input
+            .sets
+            .iter()
+            .zip(&present)
+            .all(|(set, found)| set.is_empty() || *found);
+        let available = if !probed || all_found {
+            Value::Null
+        } else {
+            json!(types.into_iter().take(PROBE_TYPE_LIMIT).collect::<Vec<_>>())
+        };
+        Ok(json!({ "present": present, "available": available }))
+    }
+
+    /// `readLongPageSizes(ids, scope, { includeTimeline })`: `[{ id, chars, bytes }]`, one row per page in
+    /// `ids` that passes `pageReadFilter(.., scope, live)` and `servedTextProjectionFilter` (and
+    /// `safeChunksFilter` with `safe_chunks`). `chars` is `char_length` (code points) and `bytes`
+    /// `octet_length` of the compiled truth (NULL counts 0); with `timeline`, a timeline holding a
+    /// character outside `[[:space:]]` adds the separator and its own length. The SQL leaves the
+    /// row order to the plan; here it is the order of `ids`, each page once.
+    pub fn read_long_page_sizes(&self, input: &LongPageSizeInput) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut pages = Pages::new(&*read);
+        let mut seen = HashSet::new();
+        let mut rows = Vec::new();
+        for &id in &input.ids {
+            let Ok(id) = u64::try_from(id) else {
+                continue;
+            };
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(page) = pages.readable(id, &input.scope, true)? else {
+                continue;
+            };
+            if !served(&page) || (input.safe_chunks && !safe_chunks(&page)) {
+                continue;
+            }
+            let body = page.compiled_truth.as_deref().unwrap_or("");
+            let (mut chars, mut bytes) = (body.chars().count(), body.len());
+            if input.include_timeline
+                && let Some(timeline) = page.timeline.as_deref()
+                && timeline.chars().any(|c| !is_pg_space(c))
+            {
+                chars += TIMELINE_SEPARATOR_LEN + timeline.chars().count();
+                bytes += TIMELINE_SEPARATOR_LEN + timeline.len();
+            }
+            rows.push(json!({ "id": id, "chars": chars, "bytes": bytes }));
+        }
+        Ok(rows)
+    }
+
+    /// `readLinkContextMatches(asks)`: `[{ i, link_source, context, page_id }]`, for each ask the
+    /// links of its edge (from page, to page and link type; the pages deleted or not) whose context
+    /// passes [`context_matches`], with `page_id` the link's origin page (its from page when it has
+    /// none) when that page is live, else null. In ask order, then link id order; the SQL leaves
+    /// the row order to the plan.
+    pub fn read_link_context_matches(&self, asks: &[LinkContextAsk]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for ask in asks {
+            let (Some(from), Some(to)) = (
+                read_page(&*read, &ask.from_source_id, &ask.from_slug)?,
+                read_page(&*read, &ask.to_source_id, &ask.to_slug)?,
+            ) else {
+                continue;
+            };
+            for link in out_links(&*read, from.id)? {
+                if link.to_page_id != to.id
+                    || link.link_type != ask.link_type
+                    || !context_matches(&link.context, &ask.context)
+                {
+                    continue;
+                }
+                let origin = link.origin_page_id.unwrap_or(link.from_page_id);
+                let page_id = read_page_by_id(&*read, origin)?.filter(live).map(|p| p.id);
+                out.push(json!({
+                    "i": ask.i,
+                    "link_source": link.link_source,
+                    "context": link.context,
+                    "page_id": page_id,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `readLinkContextOriginPages(ids)`: `[{ id, source_id, slug, compiled_truth, timeline }]`
+    /// for the pages in `ids` (deleted or not) that are not segmented shells, by id. The SQL leaves
+    /// the row order to the plan.
+    pub fn read_link_context_origin_pages(&self, ids: &[u64]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = ids.iter().copied().collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            let Some(page) = read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            if page.compiled_truth.is_null() {
+                continue;
+            }
+            out.push(json!({
+                "id": page.id,
+                "source_id": page.source_id,
+                "slug": page.slug,
+                "compiled_truth": page.compiled_truth.as_deref(),
+                "timeline": page.timeline.as_deref(),
+            }));
+        }
+        Ok(out)
     }
 
     /// `wordLexemes(words)` under the English configuration: `[{ w, lexemes }]`, each word's

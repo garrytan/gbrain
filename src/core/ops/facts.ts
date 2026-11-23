@@ -57,6 +57,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
 import { callerSessionKey } from '../access/member-facts.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 import { groupFactsByEntity, parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, namesakesOrMerge, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
@@ -370,6 +371,7 @@ const recall: Operation = {
     const visibility = worldOnly ? ['world'] as ('private' | 'world')[] : undefined;
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote); // #4352: fact and page arms alike
     const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust }); // #5575 floor + quarantine/rederive hiding
+    const factScope = { sourceIds: factSources, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged };
 
     type FactRows = Array<Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>>[number] & { entity_slugs?: string[]; collapsed_count?: number; quoted?: 'transcript' }>;
     type FactRowItem = FactRows[number];
@@ -422,16 +424,14 @@ const recall: Operation = {
     // audit exclusion all filter at the ENGINE level, before each source's
     // LIMIT, so a hidden newest row never consumes a slot).
     const listOpts = {
-      activeOnly: !includeExpired,
-      limit: MAX_SEARCH_LIMIT,
+      activeOnly: !includeExpired, limit: MAX_SEARCH_LIMIT,
       visibility, excludePrivate,
       grep: grep ?? undefined,
       excludeAuditRows: true, eligibility,
     };
 
     if (question !== null && !readsNoSource) {
-      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired,
-        scope: { sourceIds: factSources, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
+      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired, scope: factScope });
       ({ rows, ambiguousEntity } = ranking); mergedSources = ranking.mergedSources ?? null;
       for (const notice of questionRecallNotices(ranking, ctx.brainId)) ctx.emitNotice?.(notice);
     } else if (p.supersessions === true) {
@@ -494,6 +494,7 @@ const recall: Operation = {
     // engines, keyed on `source` not `fact` text) — this client-side
     // filter is belt-and-braces defense in depth, not the primary guard.
     rows = rows.filter((r) => !(AUDIT_ROW_SOURCES as readonly string[]).includes(r.source));
+    if (p.supersessions !== true && !ranking) rows = await applySlotEnds(ctx.engine, factScope, rows, { activeOnly: !includeExpired, entities: entityParam ? factSources.map(src => ({ source_id: src, slugs: [...new Set(rows.flatMap(r => (r.source_id === src && r.entity_slug ? [r.entity_slug] : [])))] })) : undefined }); // GST-3170: read-time slot ends
 
     // Engines apply grep in SQL (pre-limit). This client-side pass stays only
     // as the filter for the supersessions branch, which bypasses FactListOpts.
@@ -700,12 +701,11 @@ const dropAll = <T>(items: T[]) => ({ items: [] as T[], meta: { budget: 0, used:
  * wrote) of the facts a pack or delta delivers, in one batched read keyed by
  * the facts' own ids, so hot memory (and every MCP `_meta`) stays unchanged.
  * Fail-soft like the rest of the pack: a failed read leaves `provenance` null.
+ * Exported for test/engine-parity/fact-provenance.test.ts.
  */
-async function withProvenance<T extends { id: number }>(engine: BrainEngine, sourceId: string, facts: T[]): Promise<Array<T & { provenance: string | null }>> {
+export async function withProvenance<T extends { id: number }>(engine: BrainEngine, sourceId: string, facts: T[]): Promise<Array<T & { provenance: string | null }>> {
   if (facts.length === 0) return [];
-  const rows = await engine.executeRaw<{ id: number | string; source: string | null }>(
-    'SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [sourceId, facts.map((f) => f.id)],
-  ).catch(() => []);
+  const rows = await engine.listFactProvenance(sourceId, facts.map((f) => f.id)).catch(() => []);
   const byId = new Map(rows.map((r) => [Number(r.id), r.source]));
   return facts.map((f) => ({ ...f, provenance: byId.get(f.id) ?? null }));
 }

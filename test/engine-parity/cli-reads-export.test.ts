@@ -128,6 +128,22 @@ describe('engine parity: export reads', () => {
     };
   });
 
+  // A purge tombstone is a ledger row too (`purged` true, its time the purge's): the export drops the purged fact's row.
+  parityTest('listExportWithdrawals lists purge tombstones beside withdrawals', {
+    methods: ['listExportWithdrawals', 'insertFactWithdrawal', 'insertFactPurge'],
+  }, async (engine) => {
+    await engine.insertFactWithdrawal('default', 'world', 'Alice founded Acme', '*', '2026-01-03T00:00:00.000Z');
+    const before = Date.now() - 60_000;
+    await engine.insertFactPurge({ sourceId: 'default', visibility: 'private', subject: 'people/bob', factHash: 'a1b2c3',
+      requestId: null, actor: 'owner:local', reason: 'parity' });
+    await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: '*', factHash: 'ffff', requestId: null, actor: null, reason: null });
+    const rows = await engine.listExportWithdrawals('default');
+    for (const row of rows) expect(row.withdrawn_at).toBeInstanceOf(Date);
+    return rows.map(r => ({ ...r,
+      // A tombstone's time is the engine's clock at the purge, so it is compared by relation, not value.
+      withdrawn_at: r.purged ? r.withdrawn_at.getTime() >= before : r.withdrawn_at.toISOString() }));
+  });
+
   // The pages the export writes, looked up by id: live ones only, with their tags in tag order.
   parityTest('readExportPageRows reads live pages by id with their tags', {
     methods: ['readExportPageRows', 'putPage', 'addTag', 'softDeletePage', 'getPage'],
@@ -339,13 +355,12 @@ describe('engine parity: export reads', () => {
       row: seq => ({ outline: [{ level: seq + 1, text: titles[seq]!, proj_byte: 0 }], factsSlots: [] }),
     });
     const body = await openSegmentedBody(engine, { pageId });
-    // The member itself, by occurrence position (ids differ by arm): the last occurrence only, then none past the generation.
-    const rows = (await engine.readBodyManifestOutline(pageId, occurrences.slice(1), 1))
-      .map(row => ({ seq: occurrences.indexOf(Number(row.occurrence_id)), facts_slots: row.facts_slots, outline: row.outline }));
-    expect(rows.map(row => row.seq)).toEqual([1]);
+    const toJson = (v: unknown) => typeof v === 'string' ? JSON.parse(v) as unknown : v;
+    const stored = (await engine.readBodyManifestOutline(pageId, occurrences, 1))
+      .map(r => ({ occurrence: occurrences.indexOf(Number(r.occurrence_id)), outline: toJson(r.outline), facts_slots: toJson(r.facts_slots) }))
+      .sort((a, b) => a.occurrence - b.occurrence);
     return {
-      rows,
-      unpublished: await engine.readBodyManifestOutline(pageId, occurrences, 0),
+      stored,
       all: await projectedOutline(engine, body, 0, 10),
       second: await projectedOutline(engine, body, 1, 1),
       past: await projectedOutline(engine, body, 5, 1),

@@ -15,8 +15,7 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served.
  */
 import type { RustEngine } from '../../rust-engine.ts';
-import type { LiveEmbedSegmentRow, OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, RetiredChunkVectorRow, RewrittenDerivationScope,
-  SegmentChunkRowRow, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage,
+import type { LiveEmbedSegmentRow, OccurrenceChunkRow, RechunkCandidateScope, RetiredChunkVectorRow, SegmentChunkRowRow, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage,
   SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from '../../engine-sql/segmented-writes.ts';
 import type { SegmentDerivationInput } from '../../page-body/derivations.ts';
 import type { ResolvedColumn } from '../../types.ts';
@@ -27,19 +26,11 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 /** The transaction setting a re-chunk sets so its flip keeps the page's revision. */
 const MATERIALIZING_REVISION = 'gbrain.materializing_revision';
 
-export const lockBodyStagingState: StoreMember<[stagingId: string], string | null> = (brain, stagingId) =>
-  storeCall({ member: 'lockBodyStagingState' }, () => brain.lockBodyStagingState(stagingId));
 
-export const deleteUnstagedSegmentChunks: StoreMember<[pageId: number, generation: number, keepIndexes: readonly number[]], void> =
-  async (brain, pageId, generation, keepIndexes) => {
-    await storeCall({ member: 'deleteUnstagedSegmentChunks' }, () => brain.deleteUnstagedSegmentChunks(pageId, generation, [...keepIndexes]));
-  };
 
 export const readSegmentedLivePage: StoreMember<[pageId: number], SegmentedLivePageRow | null> = (brain, pageId) =>
   storeCall({ member: 'readSegmentedLivePage' }, () => brain.readSegmentedLivePage(pageId));
 
-export const readSegmentedSealed: StoreMember<[sourceId: string, slug: string], boolean> = (brain, sourceId, slug) =>
-  storeCall({ member: 'readSegmentedSealed', sourceId, slug }, () => brain.readSegmentedSealed(sourceId, slug));
 
 export const listChunkedOccurrences: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], number[]> =
   (brain, pageId, occurrenceIds, generation) =>
@@ -83,20 +74,8 @@ export const restorePageUpdatedAt: StoreMember<[pageId: number, updatedUs: strin
   await storeCall({ member: 'restorePageUpdatedAt' }, () => brain.restorePageUpdatedAt(pageId, updatedUs));
 };
 
-export const readPageTrustStamp: StoreMember<[page: PageTrustRef], PageTrustStamp | null> = (brain, page) =>
-  storeCall({ member: 'readPageTrustStamp' }, () => brain.readPageTrustStamp('id' in page ? { id: page.id } : { sourceId: page.sourceId, slug: page.slug }));
 
-export const restorePageTrustStamp: StoreMember<[pageId: number, trustTier: string, writeOrigin: unknown], void> = async (brain, pageId, trustTier, writeOrigin) => {
-  await storeCall({ member: 'restorePageTrustStamp' }, () => brain.restorePageTrustStamp(pageId, trustTier, writeOrigin ?? null));
-};
 
-export const storeSegmentDerivationRuns: StoreMember<[pageId: number, generation: number, rows: readonly SegmentDerivationInput[]], boolean> =
-  (brain, pageId, generation, rows) => {
-    const hex = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
-    const sent = rows.map(row => ({ ...row, pageId, segmentSha256: hex(row.segmentSha256), contextHash: hex(row.contextHash),
-      output: row.output ?? null, receipt: row.receipt ?? null }));
-    return storeCall({ member: 'storeSegmentDerivationRuns' }, () => brain.storeSegmentDerivationRuns(pageId, generation, sent));
-  };
 
 export const readSegmentedRewritePage: StoreMember<[pageId: number], SegmentedRewritePageRow | null> = (brain, pageId) =>
   storeCall({ member: 'readSegmentedRewritePage' }, () => brain.readSegmentedRewritePage(pageId));
@@ -124,9 +103,6 @@ export const setSegmentedVersionHash: StoreMember<[pageId: number, generation: n
     await storeCall({ member: 'setSegmentedVersionHash' }, () => brain.setSegmentedVersionHash(pageId, generation, contentHash, bodyBytes));
   };
 
-export const deleteRewrittenDerivationRows: StoreMember<[pageId: number, scope: RewrittenDerivationScope], number> = (brain, pageId, scope) =>
-  storeCall({ member: 'deleteRewrittenDerivationRows' }, () => brain.deleteRewrittenDerivationRows(pageId, {
-    touched: [...scope.touched], reach: [...scope.reach], unpaidKinds: [...scope.unpaidKinds], live: [...scope.live] }));
 
 /** `current_setting('gbrain.materializing_revision', true)`: the transaction's value, null when never set in it. */
 export const readMaterializingRevision = async function readMaterializingRevision(this: RustEngine, _brain: StoreBrain): Promise<string | null> {
@@ -142,8 +118,6 @@ export const setMaterializingRevision = async function setMaterializingRevision(
   scope?.settings.set(MATERIALIZING_REVISION, revision);
 };
 
-export const readSegmentedEmbedPage: StoreMember<[ref: SegmentedEmbedRef], SegmentedEmbedPageRow | null> = (brain, ref) =>
-  storeCall({ member: 'readSegmentedEmbedPage' }, () => brain.readSegmentedEmbedPage('id' in ref ? { id: ref.id } : { sourceId: ref.sourceId, slug: ref.slug }));
 
 export const hasLiveSegmentedPage: StoreMember<[sourceId: string, slug: string], boolean> = (brain, sourceId, slug) =>
   storeCall({ member: 'hasLiveSegmentedPage', sourceId, slug }, () => brain.hasLiveSegmentedPage(sourceId, slug));

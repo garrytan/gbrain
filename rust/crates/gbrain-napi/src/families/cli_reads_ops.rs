@@ -1,5 +1,7 @@
 //! The CLI search and graph reads (gbrain-store `cli_reads::reads`): the exact-phrase scan, the
-//! next live page, exact identity candidates, the entity ranking and the extraction review queue.
+//! next live page, exact identity candidates, the entity ranking and the extraction review queue,
+//! plus the remote-caller reads around them (gbrain-store `cli_reads::remote_reads`): one source's
+//! rank coverage and the stored chunks search_exact reads again.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
@@ -66,6 +68,44 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.list_extraction_pending_pages(&required(input, "listExtractionPendingPages opts")?)
+        })
+    }
+
+    /// `readRankCoverage(opts)`: whether a page of the source the caller may read still owes link
+    /// extraction or a mention pass.
+    #[napi]
+    pub fn read_rank_coverage<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_rank_coverage(&required(input, "readRankCoverage opts")?)
+        })
+    }
+
+    /// `readExactSnippetChunks(keys, opts)`: per snippet key, its visible stored chunk when it holds
+    /// the snippet.
+    #[napi]
+    pub fn read_exact_snippet_chunks<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_exact_snippet_chunks(&required(input, "readExactSnippetChunks input")?)
+        })
+    }
+
+    /// `listExactRescanChunks(pageIds, opts)`: the visible safe-fenced chunks of the pages.
+    #[napi]
+    pub fn list_exact_rescan_chunks<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_exact_rescan_chunks(&required(input, "listExactRescanChunks input")?)
         })
     }
 }

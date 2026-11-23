@@ -1,8 +1,8 @@
 /**
  * Open loops (`open_loops`, src/schema.sql): the upsert, list and close statements loops-store.ts ran through
  * `executeRaw`, with the same text and parameters, on the engine's own raw path; only their home moved. The members
- * return the raw rows; loops-store.ts still normalizes them. The other loop statements (thread auto-close, the
- * staleness pass, mutes, the loop-fact reads) stay with their callers.
+ * return the raw rows; loops-store.ts still normalizes them. Mutes and the thread auto-close are in loop-mutes.ts; the
+ * staleness pass and the loop-fact reads stay with their callers.
  *
  * `'mute_recheck'` and `'muted'` are `MUTE_RECHECK` and `MUTED` in loops-store.ts, written here as literals so this
  * module needs no runtime import of the store.
@@ -10,6 +10,8 @@
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { ListLoopsOpts, LoopStatus, OpenLoopUpsert } from '../loops/loops-store.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
+import { rows } from './search-reads.ts';
 
 /** What `upsertOpenLoop` resolves: the row id, whether the row is new, and whether the write landed. */
 export interface OpenLoopUpsertResult { id: number; created: boolean; applied: boolean }
@@ -104,6 +106,32 @@ export async function closeOpenLoop(
     [status, closedBy, id, sourceId],
   );
   return rows[0] ?? null;
+}
+
+/** An open loop on an entity card, as `readEntityOpenLoops` returns it (times are Dates on the SQL engines). */
+export interface EntityOpenLoopRow {
+  id: number;
+  loop_type: string;
+  summary: string;
+  due_at: Date | string | null;
+  last_activity_at: Date | string;
+  fact_id: number | null;
+}
+
+/**
+ * entity-card.ts assembleCard's open-loop read: the open loops whose counterparty page is (sourceId, slug), a row with
+ * no counterparty source counting as its own source's, newest activity first and then the newest loop id, at most
+ * `limit`. The caller's text and parameters, plus the `id DESC` tie-break; `limit` is the integer literal it
+ * interpolated.
+ */
+export async function readEntityOpenLoops(exec: LegacyUnscopedRead, slug: string, sourceId: string, limit: number): Promise<EntityOpenLoopRow[]> {
+  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1) throw new Error(`readEntityOpenLoops: limit must be a positive integer, got ${limit}`);
+  return rows<EntityOpenLoopRow>(exec, sqlFragment`SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = ${slug}
+         AND COALESCE(counterparty_source_id, source_id) = ${sourceId}
+       ORDER BY last_activity_at DESC, id DESC
+       LIMIT ${trustedSql(`${limit}`)}`);
 }
 
 export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpts = {}): Promise<OpenLoopDbRow[]> {

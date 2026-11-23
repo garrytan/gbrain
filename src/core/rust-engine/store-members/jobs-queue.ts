@@ -3,7 +3,6 @@
  * the inbox, private-queue recovery reads, the stats and list reads, and attachments. The store keeps the rows
  * (rust/docs/store/jobs.md); timestamps cross the binding as ISO strings and come back as `Date`s, as PGLite returns them.
  */
-import type { BrainEngine } from '../../engine.ts';
 import type { JobRow } from '../../engine-sql/jobs.ts';
 import {
   DREAM_INLINE_PRIVATE_QUEUE_PREFIX,
@@ -12,9 +11,10 @@ import {
   type JobSourceState, type SynthesisCompletion, type SynthesisCompletionPrefix,
 } from '../../engine-sql/jobs-queue.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
-import { delegatedPolicyHandle } from '../delegated-policy-handle.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 import { withDates } from '../store-codec.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { StoreBrain } from '../store.ts';
+import { storeCall, type StoreMember } from './common.ts';
 
 /** The `timestamptz` columns of `minion_jobs`, `minion_inbox` and `minion_attachments`. */
 const JOB_DATES = ['lock_until', 'delay_until', 'timeout_at', 'private_queue_lease_until', 'created_at', 'started_at', 'finished_at', 'updated_at'] as const;
@@ -101,19 +101,26 @@ export const listRecentSynthesisCompletions: StoreMember<[sourceId: string, hour
     .map(r => withDates(r, ['at']));
 
 /**
- * The retry policy runs on the delegated policy handle (../delegated-policy-handle.ts): the job reads and the client's
- * open-job count; a delegated client's grant read, and anything else, refuses before the store writes. A policy that
- * took the client lock refuses too, since the lock holds nothing across store calls. The store's UPDATE re-checks that
+ * The retry runs in one engine transaction, as PGLite's does: the job read, the policy on the transaction (a delegated
+ * client's lock, grant read and open-job count, or any other engine read), then the store's UPDATE, which re-checks that
  * the job is still failed or dead.
  */
-export const retryJob: StoreMember<[id: number, policy: RetryJobPolicy], JobRow | null> = async (brain, id, policy) => {
-  const prior = jobRow(await call('retryJob', () => brain.getJob(id)));
-  if (!prior) return null;
-  const handle = delegatedPolicyHandle(brain, 'retryJob');
-  if (!await policy.admit(handle.tx, prior)) return null;
-  if (handle.locked()) refuseMember('retryJob', 'delegated client admission across store calls');
-  return jobRow(await call('retryJob', () => brain.retryJobUpdate(id)));
+export const retryJob = async function retryJob(this: RustEngine, _brain: StoreBrain, id: number, policy: RetryJobPolicy): Promise<JobRow | null> {
+  return this.transaction(async (tx) => {
+    const txBrain = (await (tx as unknown as RustEngine).storeFor('retryJob')).brain;
+    const prior = jobRow(await call('retryJob', () => txBrain.getJob(id)));
+    if (!prior) return null;
+    if (!await policy.admit(tx, prior)) return null;
+    return jobRow(await call('retryJob', () => txBrain.retryJobUpdate(id)));
+  });
 };
+
+/**
+ * Locks a delegated client's `oauth_clients` row until the transaction ends on the SQL engines. The store admits one
+ * write transaction at a time, so inside one the lock is already held, and outside one Postgres releases it at once:
+ * the member resolves with nothing to do on every engine. It waits for an open transaction, as a write does.
+ */
+export const lockOAuthClient: StoreMember<[clientId: string], void> = async () => undefined;
 
 // ---------------------------------------------------------------- inbox
 
@@ -164,14 +171,11 @@ export const listUnreviewedJobs: StoreMember<[], Array<{ id: number; submission_
 export const getFailedJobForRetry: StoreMember<[id: number], { name: string; data: Record<string, unknown> } | null> = (brain, id) =>
   call('getFailedJobForRetry', () => brain.getFailedJobForRetry(id));
 
-/**
- * A delegated client's open `subagent` jobs. Its pair `lockOAuthClient` is not served: the store keeps no
- * `oauth_clients` rows to lock, so a direct call refuses.
- */
+/** A delegated client's open `subagent` jobs (its pair is `lockOAuthClient`, above). */
 export const countOpenJobsByOwner: StoreMember<[clientId: string], number> = (brain, clientId) =>
   call('countOpenJobsByOwner', () => brain.countOpenJobsByOwner(clientId));
 
-/** An agent job's source (archived, created_at), or null; the store reads the source record. */
+/** A remote job's source (archived, created_at, local_path, config), or null; the store reads the source record. */
 export const readJobSourceState: StoreMember<[sourceId: string], JobSourceState | null> = async (brain, sourceId) => {
   const row: JobSourceState | null = await call('readJobSourceState', () => brain.readJobSourceState(sourceId));
   return row ? withDates(row, ['created_at']) : null;

@@ -64,11 +64,7 @@ const describe = (g: ReceiptGroup): string =>
 async function runExtractionInputTruncatedCheck(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
-    const held = await connectedEngine(ctx).executeRaw<{ page: string; grammars: Record<string, number> | string | null; total: number }>(
-      `SELECT p.source_id || ':' || p.slug AS page, s.input_truncated->'grammars' AS grammars, count(*) OVER ()::int AS total
-         FROM page_extraction_state s JOIN pages p ON p.id = s.page_id AND p.deleted_at IS NULL
-        WHERE s.pipeline = 'conversation_facts' AND s.input_truncated->>'kind' = '${AMBIGUOUS}'
-        ORDER BY s.updated_at DESC LIMIT 20`);
+    const held = await connectedEngine(ctx).listAmbiguousExtractionInputs();
     const pages = held.map(r => ({ page: r.page, grammars: (typeof r.grammars === 'string' ? JSON.parse(r.grammars) : r.grammars ?? {}) as Record<string, number> }));
     if (!pages.length) {
       checks.push({ name: 'conversation_detection_ambiguous', status: 'ok', message: 'No conversation page is held for an undetected format.', details: { pages: 0, samples: [] } });
@@ -90,22 +86,7 @@ async function runExtractionInputTruncatedCheck(ctx: DoctorContext): Promise<Che
     checks.push(checkError('conversation_detection_ambiguous', 'read the held conversation pages', error, { details: { health: 'unknown' } }));
   }
   try {
-    const rows = await connectedEngine(ctx).executeRaw<{ pipeline: string; kind: string; pages: number; samples: string[] }>(
-      `WITH receipts AS (
-         SELECT s.page_id, s.pipeline, COALESCE(s.input_truncated->>'kind', 'unknown') AS kind, s.updated_at, NULL::text AS detail
-           FROM page_extraction_state s WHERE s.input_truncated IS NOT NULL AND COALESCE(s.input_truncated->>'kind', '') NOT IN ('${AMBIGUOUS}', '${CHOSEN}')
-         UNION ALL
-         SELECT d.page_id, d.pipeline, CASE WHEN d.receipt->>'reason' = '${PURGE_SWEEP}' THEN '${PURGE_SWEEP}' ELSE COALESCE(d.receipt->>'kind', 'unknown') END AS kind,
-                max(d.updated_at) AS updated_at,
-                min(CASE WHEN d.receipt->>'kind' = '${FAILED_WINDOWS}' THEN ' window ' || (d.receipt->'windows'->0->>'ordinal') || ' of occurrence ' || d.occurrence_id END) AS detail
-           FROM page_segment_derivations d
-          WHERE ((d.receipt->>'kind' IS NOT NULL AND d.receipt->>'kind' <> 'unpriced_model') OR d.receipt->>'reason' = '${PURGE_SWEEP}')
-            AND NOT EXISTS (SELECT 1 FROM page_extraction_state h WHERE h.page_id = d.page_id AND h.pipeline = d.pipeline AND h.input_truncated->>'kind' = '${AMBIGUOUS}')
-          GROUP BY 1, 2, 3)
-       SELECT r.pipeline, r.kind, count(DISTINCT r.page_id)::int AS pages,
-              (array_agg(p.source_id || ':' || p.slug || COALESCE(r.detail, '') ORDER BY r.updated_at DESC))[1:3] AS samples
-         FROM receipts r JOIN pages p ON p.id = r.page_id AND p.deleted_at IS NULL
-        GROUP BY 1, 2 ORDER BY 1, 2`);
+    const rows = await connectedEngine(ctx).listExtractionInputReceipts();
     const groups: ReceiptGroup[] = rows.map(r => ({ pipeline: r.pipeline, kind: r.kind, pages: Number(r.pages), samples: r.samples ?? [] }));
     const details = { groups: groups.map(g => ({ ...g, remedy: remedy(g) })) };
     if (!groups.length) {

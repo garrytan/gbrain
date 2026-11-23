@@ -11,7 +11,7 @@
  *  - Regression: an engine that refuses one statement of the staging path, the generation flip, the projection or the
  *    re-chunk flip (the Rust engine has no SQL dialect, so each statement must be a typed member) stops a segmented
  *    import or re-chunk on that engine; a member that answers differently leaves different chunks or receipts. The
- *    derivation driver's guarded store (storeSegmentDerivationRuns) ran as raw SQL, so the Rust arm refused it.
+ *    derivation driver's guarded store (storeSegmentDerivationsIfLive) ran as raw SQL, so the Rust arm refused it.
  *  - Why existing coverage misses it: test/engine-parity/segmented-body.test.ts compares the staging members one by
  *    one; test/large-pages/ runs these callers on PGLite only and test/e2e/ on Postgres only, never compared.
  *  - Seam: none in the callers. The "sealed at an older chunker" fixture is built with typed members
@@ -101,7 +101,7 @@ const receiptView = (r: Awaited<ReturnType<typeof runSegmentedRechunk>>) => ({
 describe('engine parity: segmented callers', () => {
   parityTest('a streamed segmented import creates a sealed page, replaces it and creates a page over the seal limit whose projection builds its chunks',
     { methods: ['setConfig', 'getPage', 'getChunks', 'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'readSegmentedLivePage',
-      'readSegmentedSealed', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks',
+      'readSegmentedPageSealed', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks',
       'readSegmentedProjectionPage'], timeout: 600_000 }, async (engine, backend) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       const first = conversationBody(256 * 1024, { seed: 5 });
@@ -123,7 +123,7 @@ describe('engine parity: segmented callers', () => {
   parityTest('an applied segmented re-chunk flips the changed occurrences of a page sealed at an older chunker and stamps the current version',
     { methods: ['setConfig', 'getPage', 'getChunks', 'readSegmentedPageHead', 'readManifest', 'readSegmentTexts', 'deleteChunks',
       'stageSegmentChunks', 'sealSegmentedPage', 'setChunkerVersion', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage',
-      'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustStamp'], timeout: 600_000 },
+      'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readPageTrustRows'], timeout: 600_000 },
     async (engine, backend) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       expect((await streamed(engine, backend, 'chats/rechunk', needleBody(200_000))).status).toBe('imported');
@@ -141,7 +141,7 @@ describe('engine parity: segmented callers', () => {
     });
 
   parityTest('an incremental link derivation stores a row per live occurrence, then reuses every run on a second pass',
-    { methods: ['setConfig', 'getPage', 'readSegmentedPageHead', 'readManifest', 'readSegmentDerivations', 'storeSegmentDerivationRuns',
+    { methods: ['setConfig', 'getPage', 'readSegmentedPageHead', 'readManifest', 'readSegmentDerivations', 'storeSegmentDerivationsIfLive',
       'readPageSnapshot'], timeout: 600_000 }, async (engine, backend) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       const days = conversationBody(256 * 1024, { seed: 8 }).split('\n\n');

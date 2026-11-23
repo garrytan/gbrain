@@ -7,8 +7,7 @@
  * in that order. CLI `get --json` and MCP get_page read through readPageSnapshot with resolveAlias, which the Rust
  * engine refuses today, so those two cases pass on a typed refusal and compare bytes once the read answers; the
  * engine reads under them (getPage, readPageSnapshot, listPages, getVersions) are compared exactly.
- * Takes are a named gap: the Rust store keeps no `write_origin` (or `trust_tier`) on a take, so a take written under
- * a trust origin reads with none on Rust (its trust read refuses) while PGLite returns the origin it stored.
+ * A take's write origin is stored in `RowTrust` (rust/crates/gbrain-store/src/trust/row_trust.rs) and reads in jsonb order too.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -183,8 +182,5 @@ describe.skipIf(!HAVE_ADDON)('a Rust brain returns jsonb keys in jsonb order', (
   test('export writes the frontmatter keys in jsonb order', () => { expect(rust.exported).toBe(pglite.exported); });
   test("a fact's write origin reads in jsonb order", () => { expect(rust.fact).toBe(pglite.fact); });
   test("a timeline entry's write origin reads in jsonb order", () => { expect(rust.timeline).toBe(pglite.timeline); });
-  // Named gap (lane 5 owns takes): the Rust store keeps no write_origin on a take, so its trust read refuses.
-  test('gap: a take written under a trust origin reads with no write_origin on Rust', () => {
-    expect(rust.take).toBe(order({ refused: 'engine_capability_missing' }));
-  });
+  test("a take's write origin reads in jsonb order", () => { expect(rust.take).toBe(pglite.take); });
 });

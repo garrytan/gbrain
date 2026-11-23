@@ -21,6 +21,7 @@
  * version per tombstone.
  */
 import { VERSION } from '../../version.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 
 export const PURGE_PARK_OP = 'purge-deleted-park';
@@ -40,14 +41,12 @@ export function purgeParkKey(sourceId: string, slug: string, deletedUs: string):
 }
 
 /** The record's tombstone still exists as recorded (same source, slug and deleted_at). */
-const LIVE_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.source_id=o.completed_keys->0->>'source_id' AND p.slug=o.completed_keys->0->>'slug'
+export const LIVE_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.source_id=o.completed_keys->0->>'source_id' AND p.slug=o.completed_keys->0->>'slug'
   AND p.deleted_at IS NOT NULL AND floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text=o.completed_keys->0->>'deleted_us')`;
 
 /** Read-only: every failure record whose tombstone still exists as recorded, keyed by purgeParkKey. */
-export async function readPurgeParks(engine: SqlEngine): Promise<Map<string, PurgePark>> {
-  const rows = await engine.executeRaw<{ fingerprint: string; park: PurgePark | string }>(
-    `SELECT o.fingerprint, o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${LIVE_TOMBSTONE} ORDER BY o.fingerprint`, [PURGE_PARK_OP]);
-  return new Map(rows.map(row => [row.fingerprint, typeof row.park === 'string' ? JSON.parse(row.park) as PurgePark : row.park]));
+export async function readPurgeParks(engine: Pick<BrainEngine, 'listPurgeParks'>): Promise<Map<string, PurgePark>> {
+  return new Map((await engine.listPurgeParks(PURGE_PARK_OP)).map(row => [row.fingerprint, row.park]));
 }
 
 /** Drops the records of tombstones that were purged, restored or deleted again; the purge runs it before it reads. */

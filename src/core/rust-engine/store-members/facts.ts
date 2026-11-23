@@ -1,15 +1,19 @@
 /**
- * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
+ * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact, expireFactSuperseded, expireFactAtDate,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
- * pageCollapseFacts, listFenceRetireCandidates).
+ * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages, restoreFactPreimage, listFactIdsBySourcePrefix,
+ * expireFactRows).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
- * store cannot answer exactly refuses with `engine_capability_missing`: a read eligibility policy (except on
- * `listSupersessions`, which sends it to the store), `excludePrivate` for a
+ * store cannot answer exactly refuses with `engine_capability_missing` (a read eligibility policy goes to the store on
+ * the four list reads and `listSupersessions`): `excludePrivate` for a
  * caller other than the one the store's policy models (private-provenance.ts), the keyword arm in an FTS language other
- * than `english`, a visibility list that the member-page or grant rules widen, and inputs whose PGLite outcome the store cannot reproduce (a non-finite
+ * than `english`, a visibility list widened for a caller the store does not model (fact-visibility.ts), and inputs whose PGLite outcome the store cannot reproduce (a non-finite
  * `claim_value`, `row_num` or `superseded_by_row`, a fractional offset, a keyset time in another text form).
+ *
+ * A read eligibility policy goes to the store on the list reads and `listSupersessions`: it hides the facts of a
+ * quarantined provenance page and applies the trust floor and flag suppression (`projectionEligibleSql('facts')`).
  *
  * A vector travels as the literal PGLite inlines (`'[a,b,...]'`); the store casts it to the column's `halfvec` and
  * returns stored vectors as number lists, which become `Float32Array`s here.
@@ -17,23 +21,21 @@
 import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts, type RecallFactReadOpts } from '../../engine.ts';
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
-import { factVisibilitySql } from '../../access/member-facts.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
+import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { FACT_DATES, withVector } from './fact-codec.ts';
+import { checkFactIds, checkFactSourcePrefix, type FactPreimage } from '../../engine-sql/facts.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
 type TrajectoryPoint = Awaited<ReturnType<BrainEngine['findTrajectory']>>[number];
 type Row = Record<string, unknown>;
 
-const FACT_DATES = ['valid_from', 'valid_until', 'expired_at', 'consolidated_at', 'embedded_at', 'created_at'] as const;
-/** A returned vector (a number list or null) as the `Float32Array` PGLite hands back. */
-const withVector = (row: Row): Row =>
-  Array.isArray(row.embedding) ? { ...row, embedding: new Float32Array(row.embedding as number[]) } : row;
 const facts = (rows: Row[]): FactRow[] => rows.map((row) => withDates(withVector(row), FACT_DATES) as unknown as FactRow);
 
 /** PGLite's inlined vector literal (engine-sql/facts.ts `toPgVectorLiteral`). */
@@ -41,7 +43,7 @@ const vectorLiteral = (v: Float32Array | number[]): string => '[' + Array.from(v
 
 /** The options every list read declares; each member reads its own subset and ignores the rest, as PGLite does. */
 const LIST_OPTIONS = ['activeOnly', 'unconsolidatedOnly', 'limit', 'offset', 'kinds', 'visibility', 'grep', 'sessionId',
-  'eventTime', 'excludeAuditRows', 'fingerprint', 'excludePrivate'] as const;
+  'eventTime', 'excludeAuditRows', 'fingerprint', 'excludePrivate', 'eligibility'] as const;
 
 /**
  * `privacyClause` (engine-sql/facts.ts): the policy as the store reads it, or undefined without `excludePrivate`. A
@@ -55,18 +57,6 @@ const RECALL_OPTIONS = [...LIST_OPTIONS, 'entitySlug', 'sourceMarkdownSlug'] as 
 const wellFormed = <T>(s: T): T => (typeof s === 'string' ? ensureWellFormed(s) as T : s);
 const iso = (d: Date | null | undefined): string | null | undefined => (d == null ? d : d.toISOString());
 
-/**
- * `visibility` as the store reads it: null for no filter (an empty list), else the list. A list without 'private'
- * that the caller's member pages or grants widen (access/member-facts.ts) refuses: the store has no such rule.
- */
-function visibilityFilter(member: string, visibility: readonly string[] | undefined): string[] | undefined {
-  if (!visibility || visibility.length === 0) return undefined;
-  const known = (['world', 'private'] as const).filter((v) => visibility.includes(v));
-  const listed = known.length ? `facts.visibility IN (${known.map((v) => `'${v}'`).join(', ')})` : 'FALSE';
-  if (factVisibilitySql('facts', visibility) !== listed) refuseMember(member, 'visibility widened by member pages or grants');
-  return [...visibility];
-}
-
 function grepPattern(grep: unknown): string | undefined {
   return typeof grep === 'string' && grep.trim() ? '%' + escapeLikePattern(grep.trim()) + '%' : undefined;
 }
@@ -79,6 +69,16 @@ function offsetOf(member: string, offset: unknown): number {
 
 const kindsOf = (kinds: unknown): string[] | undefined => (Array.isArray(kinds) && kinds.length > 0 ? kinds : undefined);
 
+/**
+ * A read eligibility as the store reads it (`eligibilityClause`, engine-sql/facts.ts): any policy adds the quarantine
+ * clause (`projectionEligibleSql('facts')`), then the floor and the flag suppression it names.
+ */
+const eligibilityOf = (eligibility: FactListOpts['eligibility']) => ({
+  eligible: eligibility !== undefined,
+  minTrust: eligibility?.floor || null,
+  suppressFlagged: eligibility?.suppressFlagged === true,
+});
+
 function listQuery(member: string, sourceId: string, opts: FactListOpts | RecallFactReadOpts | undefined, recall: boolean): Row {
   const o = takeOptions(member, opts, recall ? RECALL_OPTIONS : LIST_OPTIONS) as RecallFactReadOpts;
   return {
@@ -86,12 +86,13 @@ function listQuery(member: string, sourceId: string, opts: FactListOpts | Recall
     activeOnly: o.activeOnly !== false,
     unconsolidatedOnly: o.unconsolidatedOnly === true,
     kinds: kindsOf(o.kinds),
-    visibility: visibilityFilter(member, o.visibility),
+    ...storeVisibility(member, o.visibility),
     excludeAuditRows: o.excludeAuditRows === true,
     grep: grepPattern(o.grep),
     fingerprint: o.fingerprint === true,
     limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
     excludePrivate: factPolicy(member, o.excludePrivate),
+    ...eligibilityOf(o.eligibility),
     ...(recall ? {
       entitySlug: o.entitySlug ?? undefined,
       sourceMarkdownSlug: o.sourceMarkdownSlug ?? undefined,
@@ -171,6 +172,16 @@ export const expireFact: Member<'expireFact'> = (brain, id, opts) => {
   }));
 };
 
+/** forget's supersession or retirement expiry (engine-sql/facts-trust.ts): ends the fact at `validUntil`, else at its own earlier end or now. */
+export const expireFactSuperseded: Member<'expireFactSuperseded'> = async (brain, factId, validUntil) => {
+  await storeCall({ member: 'expireFactSuperseded' }, () => brain.expireFactUntil({ id: factId, until: validUntil }));
+};
+
+/** forget's file-mirror stamp (engine-sql/facts-trust.ts): ends the fact at the day text, which the store reads as UTC midnight. */
+export const expireFactAtDate: Member<'expireFactAtDate'> = async (brain, factId, today) => {
+  await storeCall({ member: 'expireFactAtDate' }, () => brain.expireFactUntil({ id: factId, until: today }));
+};
+
 export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sourceId, entitySlug, opts) => {
   const q = listQuery('listFactsByEntity', sourceId, opts, false);
   const rows: Row[] = await storeCall({ member: 'listFactsByEntity' }, () => brain.listFactsByEntity({
@@ -212,12 +223,9 @@ export const listSupersessions: Member<'listSupersessions'> = async (brain, sour
   const o = takeOptions('listSupersessions', opts, ['since', 'limit', 'visibility', 'excludePrivate', 'eligibility']) as NonNullable<typeof opts>;
   const rows: Row[] = await storeCall({ member: 'listSupersessions' }, () => brain.listSupersessions({
     sourceId, since: o.since ? o.since.toISOString() : undefined, limit: clampSearchLimit(o.limit, 50, MAX_SEARCH_LIMIT),
-    visibility: visibilityFilter('listSupersessions', o.visibility),
+    ...storeVisibility('listSupersessions', o.visibility),
     excludePrivate: factPolicy('listSupersessions', o.excludePrivate),
-    // projectionEligibleSql('facts') (engine-sql/facts.ts eligibilityClause): any policy adds the quarantine clause.
-    eligible: o.eligibility !== undefined,
-    minTrust: o.eligibility?.floor || null,
-    suppressFlagged: o.eligibility?.suppressFlagged === true,
+    ...eligibilityOf(o.eligibility),
   }));
   return facts(rows);
 };
@@ -252,14 +260,38 @@ export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (bra
   storeCall({ member: 'countUnconsolidatedFacts' }, () => brain.countUnconsolidatedFacts(sourceId));
 
 /** The store reads the page's rows by number; ids come back as numbers, and the times as the `jsonb` text PGLite's statement gives. */
-export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) => {
-  const rows = await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
-    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[];
-  return rows.map((row) => ({
-    ...row, id: Number(row.id),
-    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
-    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
-  })) as unknown as Awaited<ReturnType<BrainEngine['listFenceRetireCandidates']>>;
+/** A before-state row as the store returns it: ids as numbers, the times as the `jsonb` text PGLite's statement gives. */
+const preimageRows = (rows: Row[]): FactPreimage[] => rows.map((row) => ({
+  ...row, id: Number(row.id),
+  superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+  consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+})) as unknown as FactPreimage[];
+
+export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) =>
+  preimageRows(await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
+    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[]);
+
+/** The store reads each fact by id and keeps those of the source; ids that are not whole numbers refuse as on PGLite. */
+export const readFactPreimages: Member<'readFactPreimages'> = async (brain, sourceId, ids) => {
+  checkFactIds('readFactPreimages', ids);
+  if (!ids.length) return [];
+  return preimageRows(await storeCall({ member: 'readFactPreimages', sourceId }, () => brain.readFactPreimages(sourceId, [...ids])) as Row[]);
+};
+
+/** The store checks every argument as Postgres casts it, then rewrites the row when its source, claim and visibility match. */
+export const restoreFactPreimage: Member<'restoreFactPreimage'> = (brain, sourceId, preimage) =>
+  storeCall({ member: 'restoreFactPreimage', sourceId }, () => brain.restoreFactPreimage(sourceId, preimage));
+
+/** The prefix is matched literally (`starts_with`), so a LIKE wildcard refuses here as it does on every engine. */
+export const listFactIdsBySourcePrefix: Member<'listFactIdsBySourcePrefix'> = async (brain, sourceId, slug, sourcePrefix) => {
+  checkFactSourcePrefix('listFactIdsBySourcePrefix', sourcePrefix);
+  return (await storeCall({ member: 'listFactIdsBySourcePrefix', sourceId }, () => brain.listFactIdsBySourcePrefix({ sourceId, slug, sourcePrefix })) as number[]).map(Number);
+};
+
+export const expireFactRows: Member<'expireFactRows'> = async (brain, sourceId, ids) => {
+  checkFactIds('expireFactRows', ids);
+  if (!ids.length) return;
+  await storeCall({ member: 'expireFactRows', sourceId }, () => brain.expireFactRows(sourceId, [...ids]));
 };
 
 export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, factText, opts) => {
@@ -286,12 +318,11 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const o = takeOptions('findTrajectory', opts,
     ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit', 'excludePrivate']) as unknown as typeof opts;
   const worldOnly = opts.remote !== false;
-  if (worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
-    refuseMember('findTrajectory', 'visibility widened by member pages or grants');
-  }
+  // A world-only read is widened per row for the caller's member page and private-facts grant, as the lists are.
+  const widen = worldOnly ? storeVisibility('findTrajectory', ['world']).widen : undefined;
   const sourceIds = Array.isArray(o.sourceIds) && o.sourceIds.length > 0 ? [...new Set(o.sourceIds)] : [o.sourceId ?? 'default'];
   const rows: Row[] = await storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
-    sourceIds, entitySlug: o.entitySlug, worldOnly, metric: o.metric ?? undefined, kind: o.kind ?? 'all',
+    sourceIds, entitySlug: o.entitySlug, worldOnly, ...(widen ? { widen } : {}), metric: o.metric ?? undefined, kind: o.kind ?? 'all',
     since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
     limit: clampSearchLimit(o.limit, 100, 500),
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),

@@ -42,7 +42,9 @@
  *      that register their own sources don't leak rows into the next test).
  *   2. Re-seed the default source row that pages.source_id's DEFAULT FKs
  *      against. Without this, the next page insert would fail FK validation.
- *   3. Preserve `schema_version` — it carries the migration ledger that
+ *   3. Clear the one-way "has held owner-only data" flag (the comment on
+ *      owner_only_marks), which a fresh brain does not carry.
+ *   4. Preserve `schema_version` — it carries the migration ledger that
  *      initSchema() populates; wiping it would make migration helpers think
  *      the brain is on v0.
  *
@@ -124,6 +126,9 @@ export async function resetPgliteState(engine: PGLiteEngine): Promise<void> {
         PERFORM set_config('session_replication_role', original_role, true);
       END IF;
       UPDATE persistence_brain SET brain_id = gen_random_uuid(), enabled = false, activated_at = NULL WHERE singleton = 1;
+      IF to_regclass('public.owner_only_marks') IS NOT NULL THEN
+        COMMENT ON TABLE public.owner_only_marks IS NULL;
+      END IF;
       INSERT INTO sources (id, name, config)
         VALUES ('default', 'default', '{"federated": true}'::jsonb)
         ON CONFLICT (id) DO NOTHING;

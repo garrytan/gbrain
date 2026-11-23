@@ -32,7 +32,7 @@ import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/fold
 import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../access/owner-only.ts';
 import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -151,13 +151,18 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
   return `(${alias}.folder_rule_ids IS NULL${listed}${lineage})${coverageSql(alias)}`;
 }
 
+/** A page under a pending prefix, or any page while the folder-rule state is unreadable, read live from the database. */
+export function liveCoverageSql(alias: string): string {
+  return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
+}
+
 /**
  * The pending or invalid prefixes of the current record as a conjunct (empty when none); an ill-formed entry hides
  * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden;
  * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
+  if (!callerAccessStore.getStore()) return liveCoverageSql(alias);
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
@@ -456,6 +461,11 @@ function lineageReads(owner: boolean, single: boolean, lineage: boolean, readsRe
     audienceKindMembers: Object.freeze(ownerRead && audienceKind.every(id => ACCESS_ID_RE.test(id)) ? [...new Set(audienceKind)].sort() : []) };
 }
 
+/** The current read's own caller-access record, or null outside one (currentCallerAccess fills in a default instead). */
+export function callerAccessRecord(): CallerAccess | null {
+  return callerAccessStore.getStore() ?? null;
+}
+
 /** Runs `fn` outside any caller's record, for work a request spawns that must not inherit its view. */
 export function withoutCallerAccess<T>(fn: () => T): T {
   return callerAccessStore.exit(fn);
@@ -485,6 +495,24 @@ export function callerIsOwner(): boolean {
 export function ownerWidened(): boolean {
   const access = currentCallerAccess();
   return access.owner && access.ownerReads === true;
+}
+
+/**
+ * GST-3064: whether a full-body read by this caller (reading these take holders, readHolders(ctx)) shows the Facts fence
+ * as stored, private and held rows included: to the owner's widened read (ownerWidened) on an inline page, and on a
+ * segmented page only when it reads every holder (that page's markdown view is paged from the stored body only then).
+ */
+export function storedFactsShown(holders: readonly string[] | undefined, segmented: boolean): boolean {
+  return ownerWidened() && (!segmented || holders === undefined);
+}
+
+/**
+ * GST-3064: sanitizeRemoteBody's `owner` option for an inline body this caller reads (storedFactsShown), keeping takes
+ * only for a caller that reads every holder. get_page, fetch and get_page as_of read an inline body through it, so
+ * they show the owner the same rows.
+ */
+export function ownerFenceView(holders: readonly string[] | undefined): { keepTakes: boolean } | undefined {
+  return storedFactsShown(holders, false) ? { keepTakes: holders === undefined } : undefined;
 }
 
 /**
@@ -960,11 +988,24 @@ export function privateLinkOriginFilterForCaller(linkAlias: string): string {
 
 /** privateTimelineEventFilterFragment for a remote read. */
 export function privateTimelineEventFilterForCaller(timelineAlias: string): string {
-  return `(${timelineAlias}.event_page_id IS NULL OR EXISTS (
+  return `((${timelineAlias}.event_page_id IS NULL OR EXISTS (
     SELECT 1 FROM pages event_private
     WHERE event_private.id = ${timelineAlias}.event_page_id
       AND ${privatePagesFilterForCaller('event_private')}
-  ))`;
+  ))${ownerOnlyTimelineAllowedSql(timelineAlias)})`;
+}
+
+/**
+ * A timeline row whose own recorded inputs reach owner-only data (a meeting in an owner-only source fanned onto an
+ * attendee page in another source) passes only for an owner read; its page is tested apart. Empty for the owner.
+ */
+export function ownerOnlyTimelineAllowedSql(timelineAlias: string): string {
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyTimelineSql(timelineAlias, ownerOnlyForm(readSchemaVersion()))}`;
+}
+
+/** A take whose own recorded inputs reach owner-only data passes only for an owner read; its page is tested apart. Empty for the owner. */
+export function ownerOnlyTakeAllowedSql(takeAlias: string): string {
+  return currentCallerAccess().owner ? '' : ` AND NOT ${ownerOnlyTakeSql(takeAlias, ownerOnlyForm(readSchemaVersion()))}`;
 }
 
 /**
@@ -1211,7 +1252,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-/** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds. */
+/** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds, with the fraction access.serves_since records since v329 (GST-3199). */
 export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
 
 /** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
@@ -1226,7 +1267,7 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
   return {
     several: (fromConfig ? explicit : config[SERVES_DERIVED_KEY]?.trim()) === 'several',
     from: fromConfig ? 'config' : 'members',
-    since: Number.isFinite(since) ? Math.floor(since / 1000) : null,
+    since: Number.isFinite(since) ? since / 1000 : null,
     enforce: !['false', '0', 'off', 'no'].includes(config[REQUESTER_SCOPE_ENFORCE_KEY]?.trim().toLowerCase() ?? ''),
   };
 }
@@ -1234,18 +1275,20 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
- * the brain holds member-access restrictions. Takes any executeRaw engine (a
- * transaction included). An unreadable config counts as not opted out and
+ * the brain holds member-access restrictions. Reads through the typed keyed
+ * config read (getConfigValues) when the engine has it, so the Rust engine
+ * serves it, and through executeRaw otherwise (a bare transaction handle
+ * included; readConfigRows). An unreadable config counts as not opted out and
  * restricted (fail closed); the env hatch needs no read. Whom the brain serves
  * is then unknown (servesUnknown, GST-363): the requester-scope gate reads the
  * serves keys once more (readServesPolicy) and refuses an unbound read when that
  * fails too, because a timeout or a dropped pooled connection can fail this one
  * statement while the next read succeeds.
  */
-export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
+export async function readRemotePolicyNow(engine: ConfigReader): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
-      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]]);
+    const rows = await readConfigRows(engine, [REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
+      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
     return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
@@ -1253,7 +1296,7 @@ export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'
 }
 
 /** GST-2687: the schema version a scope or attested caller record carries, read now; absent when unreadable, so the read rule stays inline. */
-export async function schemaVersionNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
+export async function schemaVersionNow(engine: ConfigReader): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
   const { schemaVersion } = await readRemotePolicyNow(engine);
   return schemaVersion === undefined ? {} : { schemaVersion };
 }

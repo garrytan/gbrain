@@ -16,6 +16,7 @@ import { privateLinkOriginFilterForCaller, privatePagesFilterForCaller } from '.
 import { quarantineFilterFragment } from '../quarantine.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-kinds.ts';
 import { getFtsLanguage } from '../fts-language.ts';
+import { TEMPORAL_LINK_SELECT_SQL, temporalLinkJoinSql } from '../link-validity.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { readFilter, rows } from './search-reads.ts';
@@ -74,14 +75,14 @@ export async function listJunkEntityHubs(exec: LegacyUnscopedRead, opts: { edgeT
               WHERE t.slug = p.slug AND t.source_id <> p.source_id AND t.deleted_at IS NULL
                 AND (t.frontmatter ->> 'google_contact_id') IS NULL
                 AND COALESCE(ts.config ->> 'kind', '') <> ALL(${[...CONNECTOR_SOURCE_KINDS]}::text[])
-              ORDER BY (t.source_id = 'default') DESC, t.source_id LIMIT 1) AS canonical_twin_source
+              ORDER BY (t.source_id = 'default') DESC, t.source_id COLLATE "C" LIMIT 1) AS canonical_twin_source
      FROM edge_counts ec
      JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL
      LEFT JOIN sources s ON s.id = p.source_id
      LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
      WHERE COALESCE(cc.chunks, 0) <= ${opts.maxChunks}
        AND COALESCE(p.frontmatter ->> 'junk_hub_exempt', 'false') <> 'true'
-     ORDER BY ec.edges DESC
+     ORDER BY ec.edges DESC, ec.page_id
      LIMIT ${opts.limit}`);
 }
 
@@ -97,6 +98,52 @@ export async function countEntityPages(exec: LegacyUnscopedRead, filter: EntityT
       WHERE ${isEntity} AND pages.deleted_at IS NULL
         ${opts?.sourceId ? sqlFragment`AND pages.source_id = ${opts.sourceId}::text` : sqlFragment``}`);
   return Number((await exec.executeRaw<{ count: number }>(text, params))[0]?.count ?? 0);
+}
+
+/** The page feature `entityFeatureCoverage` looks for: an inbound link, or a timeline entry. */
+export type EntityCoverageFeature = 'links' | 'timeline';
+
+/** The row that marks a sampled entity `s` as having each feature. */
+const COVERAGE_FEATURE_MATCH = {
+  links: 'SELECT 1 FROM links f WHERE f.to_page_id = s.id',
+  timeline: 'SELECT 1 FROM timeline_entries f WHERE f.page_id = s.id',
+} as const;
+
+/**
+ * `{ sampleSize, matched }` over the live unquarantined entity pages under `filter`: how many there are (or how
+ * many a TABLESAMPLE BERNOULLI of `samplePercent` drew) and how many of them have `feature` (doctor
+ * entity_link_coverage and timeline_coverage, onboard impact capture). Both counts come from the same sampled
+ * rows, so the ratio never exceeds 100%.
+ */
+export async function entityFeatureCoverage(exec: LegacyUnscopedRead, filter: EntityTypeFilter, feature: EntityCoverageFeature, opts?: { samplePercent?: number }): Promise<{ sampleSize: number; matched: number }> {
+  if (!Object.hasOwn(COVERAGE_FEATURE_MATCH, feature)) throw new Error(`entityFeatureCoverage: unknown feature ${String(feature)}`);
+  const pct = opts?.samplePercent;
+  if (pct !== undefined && !(Number.isFinite(pct) && pct > 0 && pct <= 100)) {
+    throw new Error(`entityFeatureCoverage: samplePercent must be a number in (0, 100], got ${String(pct)}`);
+  }
+  const sample = pct === undefined ? '' : `TABLESAMPLE BERNOULLI (${pct})`;
+  const { text, params } = renderFragment(sqlFragment`WITH sampled_entities AS (
+         SELECT p.id
+           FROM pages p ${trustedSql(sample)}
+          WHERE ${entityTypePredicateSql('p', filter)} AND p.deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('p'))}
+       )
+       SELECT
+         COUNT(*)::int AS sample_size,
+         COUNT(*) FILTER (
+           WHERE EXISTS (${trustedSql(COVERAGE_FEATURE_MATCH[feature])})
+         )::int AS matched
+         FROM sampled_entities s`);
+  const row = (await exec.executeRaw<{ sample_size: number; matched: number }>(text, params))[0];
+  return { sampleSize: Number(row?.sample_size ?? 0), matched: Number(row?.matched ?? 0) };
+}
+
+/** Live meeting pages with an effective date: what extract-timeline-from-meetings can read (doctor timeline_coverage). */
+export async function countDatedMeetingPages(exec: LegacyUnscopedRead): Promise<number> {
+  const rows = await exec.executeRaw<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM pages
+         WHERE type = 'meeting' AND effective_date IS NOT NULL AND deleted_at IS NULL`,
+  );
+  return Number(rows[0]?.count ?? 0);
 }
 
 /**
@@ -186,6 +233,39 @@ export async function countInboundLinks(exec: LegacyUnscopedRead, slug: string, 
   return Number(found[0]?.n ?? 0);
 }
 
+/** One inbound edge of the entity card, with the raw temporal columns of `TEMPORAL_LINK_SELECT_SQL` (annotateTemporalRow). */
+export interface EntityInboundEdgeRow {
+  from_slug: string;
+  link_type: string;
+  context: string | null;
+  temporal_ranges: string | null;
+  temporal_semantics: string | null;
+  temporal_disputed: boolean | null;
+  temporal_undated_past: number | null;
+  temporal_first_start: string | null;
+  temporal_recorded_at: Date | string | null;
+  temporal_retired_at: Date | string | null;
+}
+
+/**
+ * The links countInboundLinks counts, by link id, each with its referrer's slug and its relationship's temporal
+ * columns in the `world` scope with `excludePrivate`, else `all` (the entity card's incoming edges).
+ */
+export async function readEntityInboundEdges(exec: LegacyUnscopedRead, slug: string, sourceId: string, opts: { excludePrivate: boolean; originSameSource: boolean }): Promise<EntityInboundEdgeRow[]> {
+  const privacy = opts.excludePrivate
+    ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('f'))} AND ${trustedSql(privateLinkOriginFilterForCaller('l'))}`
+    : sqlFragment``;
+  const originSource = opts.originSameSource ? sqlFragment` AND lo.source_id = ${sourceId}` : sqlFragment``;
+  return rows<EntityInboundEdgeRow>(exec, sqlFragment`SELECT f.slug AS from_slug, l.link_type, l.context${trustedSql(TEMPORAL_LINK_SELECT_SQL)}
+           FROM links l
+           JOIN pages f ON f.id = l.from_page_id
+           JOIN pages t ON t.id = l.to_page_id
+           ${trustedSql(temporalLinkJoinSql('l', opts.excludePrivate))}
+          WHERE t.slug = ${slug} AND t.source_id = ${sourceId} AND f.source_id = ${sourceId} AND f.deleted_at IS NULL
+            AND COALESCE(l.link_source, '') <> 'mentions'${privacy} AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${originSource}))
+          ORDER BY l.id`);
+}
+
 /**
  * Link endpoints by slug: every live page in the origin source, plus other
  * sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
@@ -227,4 +307,41 @@ export async function wordLexemes(exec: LegacyUnscopedRead, words: string[]): Pr
     sqlFragment`SELECT w, tsvector_to_array(to_tsvector(${getFtsLanguage()}::regconfig, w)) AS lexemes FROM unnest(${words}::text[]) AS w`);
   return new Map(found.map(r => [r.w,
     Array.isArray(r.lexemes) ? r.lexemes : typeof r.lexemes === 'string' ? r.lexemes.replace(/^\{|\}$/g, '').split(',').filter(Boolean) : []]));
+}
+
+/** One returned link context worldLinkContexts checks (eligibility/fence-overlay.ts): its row index, stored edge and text. */
+export interface LinkContextAsk { i: number; fromSourceId: string; fromSlug: string; toSourceId: string; toSlug: string; linkType: string; context: string }
+/** A stored link row whose context is an ask's text or a read's truncation of it, with its live origin page (null when gone). */
+export interface LinkContextMatch { i: number; link_source: string | null; context: string; page_id: number | null }
+/** An origin page body worldLinkContexts reads; a segmented page is never returned. */
+export interface LinkContextOriginPage { id: number; source_id: string; slug: string; compiled_truth: string | null; timeline: string | null }
+
+const LINK_CONTEXT_MATCH_SQL = `SELECT u.i, l.link_source, l.context, e.id AS page_id
+       FROM unnest($1::int[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[]) AS u(i, fs, fslug, ts, tslug, lt, ctx)
+       JOIN pages f ON f.source_id = u.fs AND f.slug = u.fslug
+       JOIN pages t ON t.source_id = u.ts AND t.slug = u.tslug
+       JOIN links l ON l.from_page_id = f.id AND l.to_page_id = t.id AND l.link_type = u.lt
+         AND (l.context = u.ctx OR (right(u.ctx, 1) = '…' AND left(l.context, char_length(u.ctx) - 1) = left(u.ctx, char_length(u.ctx) - 1)))
+       LEFT JOIN pages e ON e.id = COALESCE(l.origin_page_id, l.from_page_id) AND e.deleted_at IS NULL`;
+
+const LINK_CONTEXT_ORIGIN_SQL = `SELECT id, source_id, slug, compiled_truth, timeline FROM pages
+       WHERE id = ANY($1::bigint[]) AND body_storage IS DISTINCT FROM 'segmented'`;
+
+/**
+ * The stored link rows behind each ask (worldLinkContexts): every row of the ask's edge whose context is the ask's text,
+ * or, for a text ending in `…`, starts with the text before it. The SQL leaves the row order to the plan.
+ */
+export async function readLinkContextMatches(exec: LegacyUnscopedRead, asks: readonly LinkContextAsk[]): Promise<LinkContextMatch[]> {
+  if (asks.length === 0) return [];
+  const rows = await exec.executeRaw<LinkContextMatch>(LINK_CONTEXT_MATCH_SQL,
+    [asks.map(a => a.i), asks.map(a => a.fromSourceId), asks.map(a => a.fromSlug), asks.map(a => a.toSourceId),
+      asks.map(a => a.toSlug), asks.map(a => a.linkType), asks.map(a => a.context)]);
+  return rows.map(r => ({ ...r, i: Number(r.i), page_id: r.page_id == null ? null : Number(r.page_id) }));
+}
+
+/** The bodies of the pages in `ids` that are not stored in segments, deleted or not (worldLinkContexts). */
+export async function readLinkContextOriginPages(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<LinkContextOriginPage[]> {
+  if (ids.length === 0) return [];
+  const rows = await exec.executeRaw<LinkContextOriginPage>(LINK_CONTEXT_ORIGIN_SQL, [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
 }

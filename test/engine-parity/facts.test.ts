@@ -18,7 +18,11 @@
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
-import { basisEmbedding, parityArms, sorted } from './harness.ts';
+import { basisEmbedding, createSource, parityArms, sorted } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { OPEN_ENTITY, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
 
@@ -1150,6 +1154,68 @@ describe('engine parity: facts', () => {
       expect(kept.member.byEntity).toEqual(sorted([...open, member]));
       expect(kept.granted.byEntity).toEqual(kept.member.byEntity);
       return kept;
+    },
+  );
+
+  parityTest(
+    'excludePrivate on the fact reads hides the facts of an owner-only source: every fact while one exists with no schema version, only that source\'s and its concept lineage under the function form',
+    { methods: ['putPage', 'addLink', 'insertFacts', 'listFactsSince', 'listFactsByEntity', 'listFactsBySession'] },
+    async (engine, backend) => {
+      const since = at('2020-01-01T00:00:00Z');
+      const entity = 'people/owner-only-subject-example';
+      const put = (slug: string, type: string, sourceId: string) =>
+        engine.putPage(slug, { type: type as never, title: slug, compiled_truth: `About ${slug}.`, timeline: '' }, { sourceId });
+      const remember = (sourceId: string, list: Array<[string, string | null]>) =>
+        engine.insertFacts(list.map(([fact, slug], i) => ({
+          fact, entity_slug: entity, source_markdown_slug: slug, row_num: i + 1, kind: 'fact' as const, visibility: 'world' as const,
+          source: 'fence', source_session: 'sess-owner-only', valid_from: at('2026-03-01T00:00:00Z'), value: fact,
+        })) as never, { source_id: sourceId });
+      const reads = async () => {
+        const out: Record<string, string[]> = {};
+        for (const src of ['default', 'work', 'chat']) {
+          out[`since:${src}`] = sorted(texts(await engine.listFactsSince(src, since, { limit: 500, excludePrivate: true })));
+          out[`entity:${src}`] = sorted(texts(await engine.listFactsByEntity(src, entity, { limit: 500, excludePrivate: true })));
+          out[`session:${src}`] = sorted(texts(await engine.listFactsBySession(src, 'sess-owner-only', { limit: 500, excludePrivate: true })));
+        }
+        return out;
+      };
+      const asReader = <T>(read: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'], hidePrivate: true }, read);
+
+      await createSource(engine, backend, 'work');
+      await put('notes/open', 'note', 'default');
+      await put('concepts/from-chat', 'concept', 'default');
+      await put('notes/work', 'note', 'work');
+      await remember('default', [['default:open', 'notes/open'], ['default:concept', 'concepts/from-chat'], ['default:unattributed', null]]);
+      await remember('work', [['work:open', 'notes/work']]);
+      // Before any owner-only source exists every fact is readable: the case is not vacuous.
+      const before = await reads();
+      expect(before['since:default']).toEqual(['default:concept', 'default:open', 'default:unattributed']);
+      expect(before['since:work']).toEqual(['work:open']);
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await put('chat/thread', 'note', 'chat');
+      await engine.addLink('concepts/from-chat', 'chat/thread', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+      await remember('chat', [['chat:thread', 'chat/thread'], ['chat:unattributed', null]]);
+
+      // No schema version in context: while an owner-only source exists the non-owner policy hides every fact.
+      const closed = await reads();
+      const closedReader = await asReader(reads);
+      for (const read of [closed, closedReader]) for (const rows of Object.values(read)) expect(rows).toEqual([]);
+
+      // Schema version 320 or later: only the owner-only source's facts, and a concept synthesized from it, are hidden.
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, reads);
+      const fnReader = await withEngineScope(engine, () => asReader(reads));
+      for (const read of [fn, fnReader]) {
+        expect(read['since:default']).toEqual(['default:open', 'default:unattributed']);
+        expect(read['entity:default']).toEqual(['default:open', 'default:unattributed']);
+        expect(read['session:default']).toEqual(['default:open', 'default:unattributed']);
+        expect(read['since:work']).toEqual(['work:open']);
+        expect(read['since:chat']).toEqual([]);
+        expect(read['entity:chat']).toEqual([]);
+        expect(read['session:chat']).toEqual([]);
+      }
+      return { before, closed, closedReader, fn, fnReader };
     },
   );
 

@@ -18,7 +18,7 @@ export async function rethrowNamingRevisionSource(ctx: OperationContext, writeSo
   try {
     const candidates = await ctx.engine.executeRaw<{ source_id: string }>(
       `SELECT p.source_id FROM pages p JOIN sources s ON s.id = p.source_id
-        WHERE p.slug = $1 AND p.source_id <> $2 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE ORDER BY p.source_id`, [slug, writeSource]);
+        WHERE p.slug = $1 AND p.source_id <> $2 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE ORDER BY p.source_id COLLATE "C"`, [slug, writeSource]);
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     for (const { source_id: other } of candidates) {
       try { federatedSearchScope(ctx, other); } catch { continue; }

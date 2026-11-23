@@ -18,11 +18,10 @@
 
 import type { BrainEngine } from './engine.ts';
 import { ALLOWED_SCOPES_LIST, assertAllowedScopes } from './scope.ts';
-import type { SqlQuery } from './sql-query.ts';
 import { forgetWakePrincipal } from './wakeshift/forget.ts';
 import { opError } from './ops/contract.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
-import { GrantError, permissionsMirror, privatePagesFromColumn, tokenGrantColumnValues, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
+import { GrantError, permissionsMirror, privatePagesFromColumn, tokenGrantColumnArrays, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
 
 /** Canonical token-id shape — shared with the `auth revoke --id` CLI gate. */
 export const TOKEN_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -114,15 +113,13 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
     throw new GrantError('invalid_grant', 'The read-shared switch needs a write source (a key with no source list already reads every shared source, and a --sources none key reads nothing). '
       + 'Ask the user which source the key writes to, then mint it with --sources <write-source> --read-shared on.', ['read_shared_needs_source']);
   }
-  const scopes = opts.scopes === undefined ? null : `{${opts.scopes.join(',')}}`;
   const { assertScopeSourceGrant, sourcesOf } = await import('./access/attest-sources.ts');
   const reads = sourcesOf(opts.grant.sources).reads;
-  const insert = (db: BrainEngine) => db.executeRaw<{ id: string }>(
-    `INSERT INTO access_tokens (name, token_hash, scopes, permissions, ${TOKEN_GRANT_COLUMNS.join(', ')}, grant_revision${opts.readShared ? ', read_shared_revision' : ''})
-     VALUES ($1, $2, $3::text[], $4::jsonb, $5, $6, $7::text[], $8::text[], $9::text[], 1${opts.readShared ? ', 1' : ''})
-     RETURNING id`,
-    [opts.name, opts.tokenHash, scopes, permissionsMirror(opts.grant, {}), ...tokenGrantColumnValues(opts.grant)],
-  );
+  const insert = async (db: BrainEngine) => [await db.insertAccessToken({
+    name: opts.name, token_hash: opts.tokenHash, scopes: opts.scopes === undefined ? null : [...opts.scopes],
+    permissions: permissionsMirror(opts.grant, {}), ...tokenGrantColumnArrays(opts.grant),
+    ...(opts.readShared ? { read_shared: true } : {}),
+  })];
   try {
     // GST-1113: a grant reading a named source checks it and inserts in one transaction, under the source row locks.
     if (!reads.some(s => s !== 'default')) return await insert(engine);
@@ -150,17 +147,13 @@ export async function insertUnifiedToken(engine: BrainEngine, opts: {
  * that id exists (already revoked or never existed) — callers treat that as
  * already-done, not failure.
  */
-export async function revokeLegacyTokenById(sql: SqlQuery, id: string): Promise<boolean> {
+export async function revokeLegacyTokenById(engine: BrainEngine, id: string): Promise<boolean> {
   if (!TOKEN_ID_RE.test(id)) {
     throw new Error(`not a token id (expected a UUID): ${id}`);
   }
-  const rows = await sql`
-    UPDATE access_tokens SET revoked_at = now()
-    WHERE id = ${id}::uuid AND revoked_at IS NULL
-    RETURNING 1 AS ok
-  `;
-  if (rows.length > 0) await forgetWakePrincipal(sql, { kind: 'legacy_token', id });
-  return rows.length > 0;
+  const revoked = await engine.revokeAccessToken(id) !== null;
+  if (revoked) await forgetWakePrincipal(engine, { kind: 'legacy_token', id });
+  return revoked;
 }
 
 /**
@@ -205,9 +198,8 @@ export function carryLegacyGrant(priorRaw: unknown, fresh: {
 export async function readActiveTokenPrivatePages(engine: BrainEngine, id: string): Promise<PrivatePagesGrant> {
   if (!TOKEN_ID_RE.test(id)) return 'none';
   try {
-    const [row] = await engine.executeRaw<{ private_pages: unknown }>(
-      'SELECT private_pages FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL', [id]);
-    return privatePagesFromColumn(row?.private_pages);
+    const row = await engine.readActiveAccessTokenGrant(id, 'private_pages');
+    return privatePagesFromColumn(row?.value);
   } catch (e) {
     if (isUndefinedColumnError(e, 'private_pages')) return 'none';
     throw e;
@@ -222,7 +214,6 @@ export function uncarriedPrivatePagesNote(name: string, mode: Exclude<PrivatePag
 /** The stored grant of an active token, or undefined when it is gone or revoked. */
 export async function readActiveTokenPermissions(engine: BrainEngine, id: string): Promise<unknown> {
   if (!TOKEN_ID_RE.test(id)) return undefined;
-  const [row] = await engine.executeRaw<{ permissions: unknown }>(
-    'SELECT permissions FROM access_tokens WHERE id = $1::uuid AND revoked_at IS NULL', [id]);
-  return row ? row.permissions ?? {} : undefined;
+  const row = await engine.readActiveAccessTokenGrant(id, 'permissions');
+  return row ? row.value ?? {} : undefined;
 }

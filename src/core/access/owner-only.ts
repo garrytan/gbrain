@@ -18,6 +18,13 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { schemaVersionSeen } from '../migrate-pending.ts';
+import { readOwnerOnlySourceConfig as readOwnerOnlySourceConfigOver, readOwnerOnlySourcesPresent as readOwnerOnlySourcesPresentOver } from '../engine-sql/sources.ts';
+
+/**
+ * An engine (the typed members, which a Rust brain answers) or an executeRaw-only view of one (persistence SqlEngine),
+ * which runs the same statement over that view's executeRaw.
+ */
+export type OwnerOnlyEngine = Pick<BrainEngine, 'readOwnerOnlySourcesPresent' | 'readOwnerOnlySourceConfig'> | Pick<BrainEngine, 'executeRaw'>;
 
 /** The `sources.config` flag that makes a source owner-only. */
 export const OWNER_ONLY_FLAG = 'owner_only';
@@ -39,8 +46,11 @@ export const ANY_OWNER_ONLY_SQL = `EXISTS (SELECT 1 FROM sources read_source WHE
 
 /** The source whose id is the SQL expression `sourceId` is owner-only (the SQL twin of sourceIsOwnerOnly). */
 export function ownerOnlySourceSql(sourceId: string): string {
-  return `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${ownerOnlySourceRowSql('read_source')})`;
+  return `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${sourceId} AND ${READ_SOURCE_OWNER_ONLY_SQL})`;
 }
+
+/** The `sources` row `read_source` is owner-only (the row test ownerOnlySourceSql and ANY_OWNER_ONLY_SQL apply). */
+export const READ_SOURCE_OWNER_ONLY_SQL = ownerOnlySourceRowSql('read_source');
 
 /** A parsed `sources.config` is owner-only. */
 export function isOwnerOnlySourceConfig(config: unknown): boolean {
@@ -54,10 +64,10 @@ function safeParse(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-/** The SQL test behind ownerOnlySourcesPresent, for a statement that folds it into other work. */
-export function ownerOnlyPresentSql(engine: object): string {
+/** Does the engine's schema carry the lineage function (v320)? Unknown counts as yes; below it only the source test answers. */
+export function ownerOnlyLineageReadable(engine: object): boolean {
   const version = schemaVersionSeen(engine);
-  return version !== undefined && version < OWNER_ONLY_LINEAGE_SINCE ? ANY_OWNER_ONLY_SQL : `${OWNER_ONLY_LINEAGE_FN}()`;
+  return !(version !== undefined && version < OWNER_ONLY_LINEAGE_SINCE);
 }
 
 /**
@@ -65,20 +75,19 @@ export function ownerOnlyPresentSql(engine: object): string {
  * through gbrain_owner_only_lineage() unless the engine recorded a schema below v320, where the source test alone
  * answers (no marks exist there). An unreadable answer counts as yes (fail closed).
  */
-export async function ownerOnlySourcesPresent(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
+export async function ownerOnlySourcesPresent(engine: OwnerOnlyEngine): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT ${ownerOnlyPresentSql(engine)} AS present`);
-    return row?.present !== false;
+    return 'readOwnerOnlySourcesPresent' in engine ? await engine.readOwnerOnlySourcesPresent() : await readOwnerOnlySourcesPresentOver(engine, ownerOnlyLineageReadable(engine));
   } catch {
     return true;
   }
 }
 
 /** Is this source owner-only? An unreadable answer counts as yes (fail closed). */
-export async function sourceIsOwnerOnly(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
+export async function sourceIsOwnerOnly(engine: OwnerOnlyEngine, sourceId: string): Promise<boolean> {
   try {
-    const rows = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
-    return rows.length > 0 && isOwnerOnlySourceConfig(rows[0]!.config);
+    const row = 'readOwnerOnlySourceConfig' in engine ? await engine.readOwnerOnlySourceConfig(sourceId) : await readOwnerOnlySourceConfigOver(engine, sourceId);
+    return row !== null && isOwnerOnlySourceConfig(row.config);
   } catch {
     return true;
   }
@@ -86,31 +95,67 @@ export async function sourceIsOwnerOnly(engine: Pick<BrainEngine, 'executeRaw'>,
 
 /** The read-time function (schema migration v320) that answers whether a page or fact row is owner-only. */
 export const OWNER_ONLY_LINEAGE_FN = 'gbrain_owner_only_lineage';
+
+/** The lineage test of an owner-only row: the v320 function, called with no arguments (no input). */
+export const OWNER_ONLY_LINEAGE_PRESENT_SQL = `${OWNER_ONLY_LINEAGE_FN}()`;
 /** The schema version (migration v320) that creates it; a literal so a read never loads a migration module. */
 export const OWNER_ONLY_LINEAGE_SINCE = 320;
+/** The read-time function (schema migration v328) that answers once per statement how this login reads owner-only lineage. */
+export const OWNER_ONLY_READ_MODE_FN = 'gbrain_owner_only_read_mode';
+/** The schema version (migration v328) that creates it and the three-argument lineage function. */
+export const OWNER_ONLY_READ_MODE_SINCE = 328;
+/** The comment on owner_only_marks (v322) that records, once and for good, that the brain has held owner-only data. */
+export const OWNER_ONLY_HELD = 'gbrain:owner_only_held (GST-3032): this brain has held owner-only data, so owner-only lineage stays guarded';
 
 /**
- * Which form of the owner-only test a read emits, by its schema version. `fn` at or above OWNER_ONLY_LINEAGE_SINCE: the
- * v320 functions, so the planner sees the guard as one Result node and the test as one call that the guard keeps from
- * running on a brain with no owner-only source. `closed` below it or when the version is unknown: the functions may not
- * exist, so on a brain that holds an owner-only source every row counts as owner-only (fail closed); a brain without one
- * pays one InitPlan. Remote reads carry the version in their request record, so they take the `fn` form.
+ * The closed test: the brain holds an owner-only source, or has held owner-only data (the v322 flag, a catalog read that
+ * no grant hides and that is false on a brain without owner_only_marks). Every row then counts as owner-only.
  */
-export type OwnerOnlyForm = 'fn' | 'closed';
+const CLOSED_SQL = `(${ANY_OWNER_ONLY_SQL} OR EXISTS (SELECT 1 FROM pg_catalog.pg_description held
+  WHERE held.objoid = pg_catalog.to_regclass('public.owner_only_marks') AND held.classoid = 'pg_catalog.pg_class'::pg_catalog.regclass
+    AND held.objsubid = 0 AND held.description = '${OWNER_ONLY_HELD}'))`;
+
+/**
+ * Which form of the owner-only test a read emits, by its schema version. `mode` at or above OWNER_ONLY_READ_MODE_SINCE: the
+ * v328 function, given the login's read mode once per statement as an InitPlan. `fn` from OWNER_ONLY_LINEAGE_SINCE: the
+ * two-argument function. Both sit behind the guard, one Result node that keeps the test from running on a brain that never
+ * held owner-only data. `closed` below v320 or when the version is unknown: the functions may not exist, so on a brain
+ * that holds an owner-only source or has held owner-only data every row counts as owner-only (fail closed); a brain
+ * without either pays one InitPlan.
+ */
+export type OwnerOnlyForm = 'mode' | 'fn' | 'closed';
 
 export function ownerOnlyForm(schemaVersion: number | undefined): OwnerOnlyForm {
-  return schemaVersion !== undefined && schemaVersion >= OWNER_ONLY_LINEAGE_SINCE ? 'fn' : 'closed';
+  if (schemaVersion === undefined || schemaVersion < OWNER_ONLY_LINEAGE_SINCE) return 'closed';
+  return schemaVersion >= OWNER_ONLY_READ_MODE_SINCE ? 'mode' : 'fn';
+}
+
+/** The `table` row `alias` is owner-only by its own lineage. `alias` is a code-provided literal. */
+function ownerOnlyRowSql(table: 'pages' | 'facts' | 'takes' | 'timeline_entries', alias: string, form: OwnerOnlyForm): string {
+  if (form === 'closed') return CLOSED_SQL;
+  const mode = form === 'mode' ? `, (SELECT ${OWNER_ONLY_READ_MODE_FN}())` : '';
+  return `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('${table}', ${alias}.id${mode}))`;
 }
 
 /**
  * The page row `alias` is owner-only: held in an owner-only source, a synthesized concept or question with an input page
- * there, or derived (by its recorded inputs, transitively) from a row there. `alias` is a code-provided literal.
+ * there, or derived (by its recorded inputs, transitively) from a row there.
  */
 export function ownerOnlyPageSql(alias: string, form: OwnerOnlyForm): string {
-  return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('pages', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
+  return ownerOnlyRowSql('pages', alias, form);
 }
 
 /** The fact row `alias` is owner-only: held in an owner-only source, or derived (by its recorded inputs) from a row there. */
 export function ownerOnlyFactSql(alias: string, form: OwnerOnlyForm): string {
-  return form === 'fn' ? `((SELECT ${OWNER_ONLY_LINEAGE_FN}()) AND ${OWNER_ONLY_LINEAGE_FN}('facts', ${alias}.id))` : ANY_OWNER_ONLY_SQL;
+  return ownerOnlyRowSql('facts', alias, form);
+}
+
+/** The take row `alias` is owner-only by its own recorded inputs; its page is tested apart, by ownerOnlyPageSql. */
+export function ownerOnlyTakeSql(alias: string, form: OwnerOnlyForm): string {
+  return ownerOnlyRowSql('takes', alias, form);
+}
+
+/** The timeline row `alias` is owner-only by its own recorded inputs (a meeting's row on an attendee page); its page apart. */
+export function ownerOnlyTimelineSql(alias: string, form: OwnerOnlyForm): string {
+  return ownerOnlyRowSql('timeline_entries', alias, form);
 }

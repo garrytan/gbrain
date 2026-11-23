@@ -4,10 +4,16 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::cli_reads::import::{PageAtRevisionRef, PageTrustKey, PageTrustLookup};
+use gbrain_store::cli_reads::import::{
+    PageAtRevisionRef, PageTrustKey, PageTrustLookup, RowTrustLookup,
+};
+use gbrain_store::facts::InsertFactArgs;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
+use gbrain_store::takes::{ListTakesOptions, SupersedeTakeInput, TakeInput, UpdateTakeInput};
 use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
+use gbrain_store::trust::proposals::NewProposal;
+use gbrain_store::trust::write_gate::ReceiptInput;
 use serde_json::{Value, json};
 
 fn source(store: &Store, id: &str, config: Value) {
@@ -280,4 +286,215 @@ fn a_page_write_stamps_the_tier_and_origin_of_the_write_trust_context() {
     page(&store, "default", "plain", json!({}));
     assert_eq!(stamped(&store, "plain"), ("unknown".to_string(), None));
     assert_eq!(stamped(&store, "curated"), owner);
+}
+
+fn takes(store: &Store, rows: Value) {
+    let rows: Vec<TakeInput> = serde_json::from_value(rows).unwrap();
+    store.add_takes_batch(&rows).unwrap();
+}
+
+fn take_ids(store: &Store, page_id: u64) -> Vec<u64> {
+    let options: ListTakesOptions =
+        serde_json::from_value(json!({ "page_id": page_id, "limit": 50 })).unwrap();
+    let mut rows = store.list_takes(&options).unwrap();
+    rows.sort_by_key(|r| r["row_num"].as_i64());
+    rows.iter().map(|r| r["id"].as_u64().unwrap()).collect()
+}
+
+fn row_trust(
+    store: &Store,
+    table: &str,
+    ids: &[u64],
+) -> Vec<(String, Value, bool, Option<String>)> {
+    store
+        .read_row_trust_rows(&RowTrustLookup {
+            table: table.into(),
+            ids: ids.to_vec(),
+        })
+        .unwrap()
+        .into_iter()
+        .map(|r| {
+            (
+                r.trust_tier,
+                r.write_origin.unwrap_or(Value::Null),
+                r.flagged,
+                r.contested,
+            )
+        })
+        .collect()
+}
+
+fn take(page: u64, row: i32, claim: &str, weight: f64) -> Value {
+    json!({ "page_id": page, "row_num": row, "claim": claim, "kind": "take", "holder": "h",
+            "weight": weight, "active": true })
+}
+
+#[test]
+fn take_writes_stamp_trust_and_fact_and_take_rows_read_it_with_contested_refs() {
+    let dir = TempDir::new("cli-reads-row-trust");
+    let store = open(&dir);
+    let tx = store.begin_transaction(false).unwrap();
+    declare(&tx, "operator_curated", r#"{"channel":"import"}"#);
+    let page_id = page(&tx, "default", "p", json!({}))["id"].as_u64().unwrap();
+    takes(
+        &tx,
+        json!([take(page_id, 1, "a", 0.5), take(page_id, 2, "b", 0.5)]),
+    );
+    let curated = (
+        "operator_curated".to_string(),
+        json!({ "channel": "import" }),
+    );
+    let agent = ("agent_written".to_string(), json!({ "channel": "agent" }));
+
+    declare(&tx, "agent_written", r#"{"channel":"agent"}"#);
+    // A claim rewrite lowers the tier; a weight-only rewrite and updateTake keep it.
+    takes(
+        &tx,
+        json!([take(page_id, 1, "a2", 0.5), take(page_id, 2, "b", 0.9)]),
+    );
+    let update: UpdateTakeInput =
+        serde_json::from_value(json!({ "page_id": page_id, "row_num": 2, "weight": 0.7 })).unwrap();
+    assert!(tx.update_take(&update).unwrap());
+    // supersedeTake inserts the new row under the write's tier and keeps the old row's.
+    let supersede: SupersedeTakeInput = serde_json::from_value(json!({
+        "page_id": page_id, "old_row": 2, "claim": "b2", "kind": "take", "holder": "h",
+        "weight": 0.5, "active": true,
+    }))
+    .unwrap();
+    assert_eq!(tx.supersede_take(&supersede).unwrap()["status"], "ok");
+    // An undeclared insert reads unknown with no origin.
+    tx.clear_write_trust();
+    takes(&tx, json!([take(page_id, 4, "d", 0.5)]));
+
+    let ids = take_ids(&tx, page_id);
+    assert_eq!(ids.len(), 4);
+    let proposal: NewProposal = serde_json::from_value(json!({
+        "action": "supersede_take", "sourceId": "default",
+        "target": { "table": "takes", "id": ids[1] },
+        "related": { "table": "takes", "id": ids[2] },
+        "before": {}, "proposer": "test",
+    }))
+    .unwrap();
+    let tp = tx.insert_trust_proposal(&proposal).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let rows = row_trust(&tx, "takes", &[ids[3], ids[0], ids[2], ids[1], 999_999]);
+    let row = |t: &(String, Value), contested: Option<String>| {
+        (t.0.clone(), t.1.clone(), false, contested)
+    };
+    assert_eq!(
+        rows,
+        [
+            row(&agent, None),
+            row(&curated, Some(format!("tp{tp}:challenged"))),
+            row(&agent, Some(format!("tp{tp}:challenger"))),
+            row(&("unknown".to_string(), Value::Null), None),
+        ]
+    );
+
+    // Facts read the tier their insert stamped and the same contested reference.
+    declare(&tx, "operator_curated", r#"{"channel":"import"}"#);
+    let fact = |text: &str| {
+        let args: InsertFactArgs = serde_json::from_value(
+            json!({ "input": { "fact": text, "source": "s" }, "sourceId": "default" }),
+        )
+        .unwrap();
+        tx.insert_fact(&args).unwrap()["id"].as_u64().unwrap()
+    };
+    let (f1, f2) = (fact("one"), fact("two"));
+    let proposal: NewProposal = serde_json::from_value(json!({
+        "action": "supersede_fact", "sourceId": "default",
+        "target": { "table": "facts", "id": f1 }, "related": { "table": "facts", "id": f2 },
+        "before": {}, "proposer": "test",
+    }))
+    .unwrap();
+    let fp = tx.insert_trust_proposal(&proposal).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(
+        row_trust(&tx, "facts", &[f2, f1]),
+        [
+            row(&curated, Some(format!("tp{fp}:challenged"))),
+            row(&curated, Some(format!("tp{fp}:challenger"))),
+        ]
+    );
+    // A decided proposal no longer contests its rows, and a pending proposal of another action
+    // never does.
+    assert!(
+        tx.transition_trust_proposal(fp as i64, "pending", "rejected", None, None)
+            .unwrap()
+    );
+    let forget: NewProposal = serde_json::from_value(json!({
+        "action": "forget", "sourceId": "default",
+        "target": { "table": "facts", "id": f1 }, "before": {}, "proposer": "test",
+    }))
+    .unwrap();
+    tx.insert_trust_proposal(&forget).unwrap();
+    // An agent-written fact with an instruction-family flag receipt reads flagged.
+    declare(&tx, "agent_written", r#"{"channel":"agent"}"#);
+    let f3 = fact("three");
+    tx.upsert_write_gate_receipt(ReceiptInput {
+        target_table: "facts".into(),
+        target_id: f3.to_string(),
+        source_id: Some("default".into()),
+        content_hash: "h".into(),
+        tier: "agent_written".into(),
+        detector_version: 1,
+        verdict: "flag".into(),
+        reason_families: vec!["override".into()],
+        reasons: vec!["a reason".into()],
+        detector_error: false,
+        request_id: None,
+    })
+    .unwrap();
+    assert_eq!(
+        row_trust(&tx, "facts", &[f1, f2, f3]),
+        [
+            row(&curated, None),
+            row(&curated, None),
+            (agent.0.clone(), agent.1.clone(), true, None),
+        ]
+    );
+    assert!(row_trust(&tx, "facts", &[]).is_empty());
+    let refused = tx
+        .read_row_trust_rows(&RowTrustLookup {
+            table: "pages".into(),
+            ids: vec![1],
+        })
+        .unwrap_err();
+    assert!(refused.message.contains("unknown table"));
+}
+
+#[test]
+fn link_page_metadata_for_slugs_reads_the_named_live_pages_of_one_source_by_slug() {
+    let dir = TempDir::new("link-metadata-for-slugs");
+    let store = open(&dir);
+    source(&store, "work", json!({}));
+    for (slug, src) in [
+        ("b", "default"),
+        ("a", "default"),
+        ("gone", "default"),
+        ("b", "work"),
+    ] {
+        page(&store, src, slug, json!({"aliases": ["Bee"]}));
+    }
+    store.soft_delete_page("gone", None).unwrap();
+    let slugs: Vec<String> = ["b", "a", "gone", "missing", "a"]
+        .map(String::from)
+        .to_vec();
+    let rows = store
+        .read_link_page_metadata_for_slugs("default", &slugs)
+        .unwrap();
+    let keys: Vec<(&str, &str)> = rows
+        .iter()
+        .map(|r| (r.source_id.as_str(), r.slug.as_str()))
+        .collect();
+    assert_eq!(keys, [("default", "a"), ("default", "b")]);
+    assert_eq!(rows[1].aliases, json!(["Bee"]));
+    assert!(
+        store
+            .read_link_page_metadata_for_slugs("default", &[])
+            .unwrap()
+            .is_empty()
+    );
 }

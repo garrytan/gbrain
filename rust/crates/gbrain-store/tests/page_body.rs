@@ -441,6 +441,62 @@ fn a_flip_retires_inline_chunks_or_defers_past_the_cap() {
     );
 }
 
+/// Minder's row 1 on #9730: after a deferred retirement and a seal, a title hit must not carry a retired chunk's text.
+/// PGLite picks the representative chunk with `chunkGenerationFilter` (title-statement.ts), which drops an inline chunk
+/// left on a segmented page; the hit then has no chunk (`chunk_id` 0, empty text).
+#[test]
+fn a_title_hit_does_not_show_a_chunk_a_deferred_retire_left() {
+    use gbrain_store::keyword::{KeywordOptions, TitleAttempt, TitleAttemptKind};
+    let dir = TempDir::new("pb-title-retired");
+    let store = open(&dir);
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": "A", "compiled_truth": "retired inline body"}),
+    )
+    .unwrap();
+    store
+        .put_page("notes/b", &input, &PutPageOptions::default())
+        .unwrap();
+    let id = page(&store, "notes/b")["id"].as_i64().unwrap();
+    let mut s = staging(STAGING, Some(id), "66666666-6666-4666-8666-666666666666");
+    s.slug = "notes/b".into();
+    store.open_body_staging(&s).unwrap();
+    store
+        .stage_segment_texts(
+            "default",
+            &[text("one\n")],
+            &serde_json::from_value(json!({"stagingId": STAGING})).unwrap(),
+        )
+        .unwrap();
+    store
+        .stage_manifest_rows(&[row(id, 1, 0, 0, "one\n", Some(STAGING))])
+        .unwrap();
+    let deferred = store
+        .flip_body_generation(&flip(
+            id,
+            0,
+            STAGING,
+            4,
+            json!({"retireInlineChunks": true, "retireMaxRows": 0}),
+        ))
+        .unwrap();
+    assert!(deferred.retire_deferred);
+    store.seal_segmented_page(id, "", None).unwrap();
+    let attempts = [TitleAttempt {
+        texts: vec!["Flipped".into()],
+        kind: TitleAttemptKind::Title,
+        limit: 10.0,
+        offset: 0.0,
+    }];
+    let result = store
+        .search_titles_attempts(&attempts, "flipped", 100.0, &KeywordOptions::default())
+        .unwrap();
+    let rows = result[0]["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{result:?}");
+    assert_eq!(rows[0]["slug"], json!("notes/b"));
+    assert_eq!(rows[0]["chunk_text"], json!(""), "{result:?}");
+    assert_eq!(rows[0]["chunk_id"], json!(0));
+}
+
 #[test]
 fn manifest_rows_refuse_broken_checks_and_keys() {
     let dir = TempDir::new("pb-manifest");
@@ -864,4 +920,123 @@ fn a_segmented_version_pinning_more_than_the_byte_cap_is_pruned_and_its_rows_swe
     assert_eq!(version_ids(&store, "notes/a"), vec![new]);
     assert!(store.read_manifest(id, &generation_one).unwrap().is_empty());
     assert_ne!(old, new);
+}
+
+#[test]
+fn the_purge_flip_locks_its_staging_and_drops_unstaged_chunks() {
+    let dir = TempDir::new("pb-purge-flip");
+    let store = open(&dir);
+    let id = published(&store);
+    assert_eq!(
+        store.lock_body_staging_state(STAGING).unwrap().as_deref(),
+        Some("open")
+    );
+    assert_eq!(store.lock_body_staging_state(STAGING_2).unwrap(), None);
+    assert_eq!(
+        store
+            .lock_body_staging_state("not-a-uuid")
+            .unwrap_err()
+            .code,
+        INVALID_ARGUMENT
+    );
+    // Generation 2: the replace's staging, its manifest rows, the chunks it staged and one a dead preparation left.
+    store
+        .open_body_staging(&staging(
+            STAGING_2,
+            Some(id),
+            "55555555-5555-4555-8555-555555555555",
+        ))
+        .unwrap();
+    store
+        .stage_segment_texts(
+            "default",
+            &[text("one\n"), text("two\n")],
+            &serde_json::from_value(json!({"stagingId": STAGING_2})).unwrap(),
+        )
+        .unwrap();
+    let mut rows = vec![
+        row(id, 3, 0, 0, "one\n", Some(STAGING_2)),
+        row(id, 4, 1, 4, "two\n", Some(STAGING_2)),
+    ];
+    for r in &mut rows {
+        let mut v = serde_json::to_value(&*r).unwrap();
+        v["genFrom"] = json!(2);
+        *r = serde_json::from_value(v).unwrap();
+    }
+    store.stage_manifest_rows(&rows).unwrap();
+    let kept = store
+        .stage_segment_chunks(
+            id,
+            2,
+            &[seg_chunk(3, 0, "kept one"), seg_chunk(4, 0, "kept two")],
+        )
+        .unwrap();
+    store
+        .stage_segment_chunks(id, 2, &[seg_chunk(3, 1, "stale")])
+        .unwrap();
+    let kept: Vec<i64> = serde_json::from_value(serde_json::to_value(kept).unwrap()).unwrap();
+    store.delete_unstaged_segment_chunks(id, 2, &kept).unwrap();
+    store
+        .flip_body_generation(&flip(
+            id,
+            1,
+            STAGING_2,
+            8,
+            json!({"closeOccurrences": [1, 2], "retireChunkOccurrences": [1, 2]}),
+        ))
+        .unwrap();
+    let mut all: Vec<String> = store
+        .get_chunks_with(
+            "notes/a",
+            &serde_json::from_value(json!({"includeUnsealed": true})).unwrap(),
+        )
+        .unwrap()
+        .iter()
+        .map(|c| c["chunk_text"].as_str().unwrap().to_string())
+        .collect();
+    all.sort();
+    assert_eq!(all, vec!["kept one", "kept two"]);
+}
+
+#[test]
+fn the_purge_rewrite_deletes_touched_reached_and_unbacked_derivations() {
+    let dir = TempDir::new("pb-purge-deriv");
+    let store = open(&dir);
+    let id = shell(&store, "notes/a");
+    let d = |kind: &str, occurrence: i64| -> SegmentDerivationInput {
+        serde_json::from_value(json!({
+            "pageId": id, "kind": kind, "occurrenceId": occurrence, "version": 1,
+            "segmentSha256": sha("s"), "contextHash": sha("c"), "state": "done",
+            "output": {}, "receipt": null,
+        }))
+        .unwrap()
+    };
+    store
+        .upsert_segment_derivations(&[
+            d("links", 1),
+            d("timeline", 1),
+            d("links", 2),
+            d("timeline", 2),
+            d("links", 3),
+            d("timeline", 3),
+            d("timeline", 9),
+            d("synopsis", 9),
+        ])
+        .unwrap();
+    let spec: RewrittenDerivationsDelete = serde_json::from_value(json!({
+        "pageId": id, "touchedOccurrenceIds": [2], "linkReachOccurrenceIds": [1, 3],
+        "pipelines": ["links", "mentions", "timeline", "fences"], "liveOccurrenceIds": [1, 2, 3],
+    }))
+    .unwrap();
+    assert_eq!(
+        store.delete_rewritten_segment_derivations(&spec).unwrap(),
+        5
+    );
+    let left: Vec<String> = store
+        .read_segment_derivations(id, &DerivationReadOptions::default())
+        .unwrap()
+        .iter()
+        .map(|r| format!("{}:{}", r["kind"].as_str().unwrap(), r["occurrenceId"]))
+        .collect();
+    assert_eq!(left, vec!["synopsis:9", "timeline:1", "timeline:3"]);
 }

@@ -32,7 +32,7 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
 
 async function checkRecordedSyncFailures(engine: BrainEngine | null, opts: { sourceIds?: string[]; remote?: boolean }): Promise<Check | null> {
   // #5452: sync refuses an archived source, so its failures cannot be cleared and are not a live health signal.
-  const sources = engine ? await engine.executeRaw<{ id: string; local_path: string | null; archived: boolean }>('SELECT id, local_path, archived FROM sources') : [];
+  const sources = engine ? await engine.readDoctorSources('local_path_state') : [];
   const archived = new Set(sources.filter(row => row.archived).map(row => row.id));
   const allManaged = engine ? await readManagedSyncFailures(engine, opts.sourceIds) : [];
   let ledger: SyncFailure[] = [];

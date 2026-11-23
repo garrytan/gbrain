@@ -1,5 +1,6 @@
 /**
- * Open loops: the upsert, list and close members (BrainEngine upsertOpenLoop, listOpenLoops, closeOpenLoop) and the
+ * Open loops: the upsert, list and close members (BrainEngine upsertOpenLoop, listOpenLoops, closeOpenLoop), the entity
+ * card's open-loop read (readEntityOpenLoops, over the list read), and the
  * `loops_close` retry read closedLoopWithActiveFact and the loop-fact retirement scan loopFactDrift (engine-sql/facts-repair.ts), over
  * `rust/crates/gbrain-store/src/facts/loops.rs`. The store returns times as ISO text; these members turn them into
  * Dates, as the SQL engines return them, and loops-store.ts normalizes the rows the same way on every engine.
@@ -78,6 +79,22 @@ export const listOpenLoops: Member<'listOpenLoops'> = async (brain, opts = {}) =
   };
   const rows: Record<string, unknown>[] = await storeCall({ member: 'listOpenLoops' }, () => brain.listOpenLoops(query));
   return rows.map(toRow);
+};
+
+/**
+ * `readEntityOpenLoops` over the store's list read: the open loops for the counterparty slug in the source. The list
+ * read also matches a counterparty email equal to the slug, so the shim keeps only slug matches before the limit, and
+ * it orders ties on activity by id descending where the SQL engines leave them unordered.
+ */
+export const readEntityOpenLoops: Member<'readEntityOpenLoops'> = async (brain, slug, sourceId, limit) => {
+  const m = 'readEntityOpenLoops';
+  if (!Number.isSafeInteger(limit) || limit < 1) refuseMember(m, 'a limit that is not a positive integer');
+  const query = { sourceIds: null, status: 'open', loopType: null, counterparty: slug, counterpartySourceId: sourceId, loopId: null, limit: 1000 };
+  const rows: Record<string, unknown>[] = await storeCall({ member: m, sourceId }, () => brain.listOpenLoops(query));
+  return rows.filter(r => r.counterparty_slug === slug).slice(0, limit).map(toRow).map(r => ({
+    id: r.id as number, loop_type: r.loop_type as string, summary: r.summary as string,
+    due_at: r.due_at as Date | null, last_activity_at: r.last_activity_at as Date, fact_id: r.fact_id as number | null,
+  }));
 };
 
 /** `closedLoopWithActiveFact`: the closed loop whose commitment fact is still active, or null. The id binds as `bigint`. */

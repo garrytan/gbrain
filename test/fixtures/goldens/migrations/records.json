@@ -1,11 +1,12 @@
 {
   "golden": {
-    "count": 321,
+    "count": 329,
     "gaps": [
       17,
       18,
       19,
-      100
+      100,
+      332
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -27,16 +28,19 @@
       "INGEST_LOG_MARKED_INDEX": "1099f19af7873878974239a9a6f1a627827221eebd75aea01896246e0809e91c",
       "INGEST_LOG_UNMARKED_INDEX": "c94e6b009f830527d2f1d6af1683bee94189474e8e67aa4c60165ab4abbd8726",
       "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
+      "LEGACY_TITLE_BTREE_INDEX": "e686c5cb1a0f1773e0f925e35f477f20f7709e745b0e0e41092c4301bd1b65ea",
       "LINKS_SUPERSEDES_INDEX": "a1353995111ef65c1347f295081cf8336dd5da955db7e0e330558d34fd21a4c6",
       "LINK_TRANSITIONS_IDENTITY_INDEX": "2d5e1c6cc9cf17721591e55a364017be841c85022d300e8dbc3e4109353ebf96",
       "LINK_TRANSITIONS_IDENTITY_NEXT_INDEX": "d83de92fbee21a623b16f8ba4cfb35d4f51478717265323962920133ea029139",
       "OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX": "e9b472d9db37733e908ea40512ad3f9520d7a6729ce207b0d279d43d3beb5b2f",
       "PAGES_FOLDER_RULE_IDS_INDEX": "f0929fed2e69d1045a1e3a6e8b4267e4323d658c6305e5ae1f568fc71195f684",
-      "PAGES_NAME_LOOKUP_INDEXES": "1ca830342164b5606e96cf0090645364f9145d36178d90f166230189fe8d2705",
+      "PAGES_NAME_LOOKUP_INDEXES": "6095ac01105dc3f441ba85d6a3f8fd4fdf5b224b963e38fb1de9bfd98edb2866",
       "PAGES_PAGE_READERS_INDEX": "01a92fc19f866e0791bde647e7220a4666561b94888dccaa1643276c384ba057",
+      "PAGES_PROJECTION_WAITING_WORDS_INDEX": "ed8676df69c7e974495cd01ca3fce7bc2665aa187b54b7f38a422a29307987ad",
       "PAGES_RECONCILE_NAME_INDEXES": "8805e35341b22324b932b1cc05030cc8f2bfc95532bf810ec35330783f29c59a",
       "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
       "PAGES_SOURCE_CREATED_INDEX": "33411b4d6fc2287ee8fa37b1ebf2cc36a076101dbd3f3f6ac492aed06288513a",
+      "PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX": "ebd5d8a2fa256c980f5342bc93ab7370eaeac958acaa945d62aea79aff6c2b00",
       "PAGES_TITLE_SEARCH_INDEX": "27e8e1a6c9a2069ee6c6af6fa99b9a7e9e9c118c7a933ffa80ba1864bf68baa3",
       "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX": "92ba3b31896201b4f1cd61fafe7035d84020efb904d14b95531528e212325d22",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
@@ -48,6 +52,7 @@
       "PERSISTENCE_OPEN_INDEX": "7760f2e16960b587e041b19e2eb0b2688831f4a7ca509968a1acc0ca710fcc9c",
       "PERSISTENCE_REQUEST_ID_INDEX": "2c5325e86cf395f617d93a39a45593931639cd8b14fd513b6d9e7d125f16c78f",
       "PERSISTENCE_REQUEST_REPLAY_ID_INDEX": "b9ee7e914c0a8370a9aee053c68d78cdd83a20ffe30c5513d81acf04a3a91761",
+      "PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX": "bd7a4bb42d8782306bc1152b52cefafbfea5b871421345c824d6164ec5853104",
       "PERSISTENCE_REQUEST_SLUG_INTENT_INDEX": "5f2e4a3dde452e610fe7eaae949642c00d7c61a363b1cd344d7f0917db233aa5",
       "PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX": "4759eaf319a6ad8d99aae7648acb6556745ed7cba051175273e2f46927c77d52",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
@@ -62,6 +67,7 @@
       "analyzeYieldingToVacuum": "edba1beff1547ea5c2e9f902efe44ab24e8d7016b2253603dcbba92d4137ca9a",
       "backfillChunkVectors": "1c8cc09a28aa3e906fe2f112b71cd3aa61f750a99984e35a029cff9458272aa1",
       "backfillPageVectors": "a325a5eee3bab49723af311f21b38a1ee4a0eaff1fb3c7e1539aa4dcb287ed66",
+      "buildHashIndex": "c34dfce66c3ac9d323ba298220dcad7c507a9481c663053f4833dbe158dfabe5",
       "buildIndexOnline": "aea86be06da261a76f6fad15def8f417cb5318c7991d2ded3cd86aeed82fb2cc",
       "buildOriginIndexIfClean": "cc6d16f50a4b5e303b87338700b9cded9784fc9cc9391c795bdd755e32385e6c",
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
@@ -70,7 +76,7 @@
       "drainConcurrency": "cc9ad7c1c52f503c765eff106f9ac06ab3cb926d2dbced37ebc9a8682cdbada7",
       "dropInvalidConcurrentIndex": "6864d844b7dfb2fbecdd0fb9c73e06248473376feb794b3fe58f036c70d2d44c",
       "enableRlsSql": "b7901b3d5231fcfacd3260ce0f59d4701d8c0bee902808ff48b1d8affbd444b6",
-      "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
+      "ensureFactsFtsIndex": "d7f6e213d96e27ef89a54fc57d0c68cf5e34a3604fbf36783c79f9c67246986a",
       "failClosedLedgerGuards": "8a095ef92247a83e7d569c0a721facf0bb4c4213bd2ed5149a81947469bbd5e6",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "5e476f2df993a1de223727c72ddad3351462a1981c9a02285a2d847f7c29188d",
@@ -82,7 +88,7 @@
       "measuredRoundTripMs": "8a51ca0f3fe1b930929b64efe81541160bfc3fedc24f90c2af35dfd74ab1687d",
       "migrateAutoThinkToPins": "34267fe3b1cc4ab2850ddcf9ba18ce73d959678233a53de238c85231e6b71470",
       "migrateConnectorCheckpoints": "5c13e69a334bfc5275c7d555c4e7b28e034569f086dd4bd70b4b78fa4770dc7a",
-      "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
+      "migrateLegacyTokens": "129b22ce1f5b0f88add515d698fd401b082da67ec0e08b18d4ee96e3b7bfc8f2",
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
       "migrationStatementTimeoutMs": "2883be5073d2cd96cc17136e2f7d3223c6bdafebe3ef3c7a6836be320867251d",
       "originTwinsRepairCommand": "fb3c721e48d9f2a98845ef91231836d4a37eb5929e9a9b62f8dfab5ce395c462",
@@ -107,7 +113,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 326,
+    "latest": 335,
     "records": [
       {
         "handler": {
@@ -2301,8 +2307,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 15752,
-          "sha256": "314bf96b5ab6f3311a1350a2f15fc47990cfeb60d4b8c4d7115c61c7715ceedb"
+          "length": 15869,
+          "sha256": "d0b1075dace5e6e8f3b487591986a2b201ae243ab763c3b5996f1c7dbf7d691d"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5313,6 +5319,135 @@
         "handler": {
           "form": "arrow",
           "helpers": [
+            "LEGACY_TITLE_BTREE_INDEX",
+            "PAGES_NAME_LOOKUP_INDEXES",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildHashIndex",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "migrationStatementTimeoutMs",
+            "quietMigrationNotices",
+            "runMigrationStatement",
+            "tableRows",
+            "withSchemaLockTimeout"
+          ],
+          "sha256": "87148f1195d5caf8077eb0e9a6abf7380ac4412a37a5ab99dbbeb2c237cbfa59"
+        },
+        "idempotent": true,
+        "name": "pages_title_lower_hash_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 326
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_handovers",
+        "sql": {
+          "length": 936,
+          "sha256": "6fabcd3509232e6cadf252a3b5797f72a3835f71b5cb7a68db8389b1deb52fe8"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 327
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "owner_only_reads_complete",
+        "sql": {
+          "length": 4368,
+          "sha256": "be7268671a0dae503f88067a019c7f7af2181566b695b85f1fd9a241cbf25c6c"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 328
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "serves_since_subsecond",
+        "sql": {
+          "length": 1208,
+          "sha256": "eb377bc3f69f25e3ccdbd89318c6983e8e3cc4481c6a6e0f1dfd9eac8ff2d387"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 329
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "entity_identity_reviews_evidence",
+        "sql": {
+          "length": 76,
+          "sha256": "cfd412d76b130532bedb41fc3e13f315be7f0b853c7306cc73a339a4c1059524"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 330
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_read_log",
+        "sql": {
+          "length": 796,
+          "sha256": "f6f4eedb7a8b84ae342f434d490c4481f3b99ca67eff4d2e9e91ca56276030fc"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 331
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX",
+            "PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "03c272d8b214211016fdbae00ed1deb83b7f90507b4f0b7f7c61262e86be1dc2"
+        },
+        "idempotent": true,
+        "name": "byte_order_slug_indexes",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 333
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
             "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX",
             "PLANNER_REPAIR_TABLES",
             "analyzeAfterIndexBuild",
@@ -5325,7 +5460,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "f12a4b515ea944cc28d225a4268b75420db4a547bb458967bc86c3f25e856107"
+          "sha256": "2e16df2908e35c24e05f5127088d917ae5b64fc964855130c1ed30e393fea07c"
         },
         "idempotent": true,
         "name": "projection_jobs_byte_order_index",
@@ -5336,7 +5471,37 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 326
+        "version": 334
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "ACTIVATION_SERVED_REVISION",
+            "PAGES_PROJECTION_WAITING_WORDS_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "b264cb1d0f8eda37d0d5ec977e737722a6ce6c1689dfad788d3226dfda243cfc"
+        },
+        "idempotent": true,
+        "name": "pages_projection_waiting_haystack_trgm",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 335
       }
     ],
     "versions": [
@@ -5660,7 +5825,15 @@
       323,
       324,
       325,
-      326
+      326,
+      327,
+      328,
+      329,
+      330,
+      331,
+      333,
+      334,
+      335
     ]
   },
   "normalizer": "migrations-record-v1"

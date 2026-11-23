@@ -6,12 +6,14 @@
  * Authoring gate (docs/TESTING.md):
  * 1. Protects: a rust brain with no or a relative database_path is config_error; a missing or wrong addon is
  *    rust_engine_addon_missing or rust_engine_addon_mismatch from constructEngine, before any engine exists and with
- *    nothing written to the gbrain home; servePersistenceIpcProvider touches nothing on an engine without
- *    persistence_journal and returns no provider, and goes on to the provider on an engine that has it.
+ *    nothing written to the gbrain home; servePersistenceIpcProvider returns no provider on an engine without
+ *    persistence_journal, after registering the cli and stdio local writers through the typed registration members
+ *    alone, and goes on to the provider on an engine that has it.
  * 2. Credible regressions: constructEngine still rejecting `rust` as an unknown engine; opening the shell with a
  *    relative store path; swallowing a loader refusal; a serve path calling createPersistenceIpcProvider on a Rust
- *    engine, whose writer registration and persistence_brain read are SQL the shell refuses; the gate skipping the
- *    provider on PGLite or Postgres too.
+ *    engine, which starts a SQL consumer the store refuses; a Rust serve that registers no local writer, so every
+ *    remote write-request read answers writer_registration_required; the gate skipping the provider on PGLite or
+ *    Postgres too.
  * 3. Why not already covered: rust-engine-addon-loader.test.ts calls the loader directly and rust-engine-shell.test.ts
  *    calls openRustEngine directly; neither goes through constructEngine or the serve wiring.
  * 4. Production seam: GBRAIN_HOME and GBRAIN_RUST_ENGINE_ADDON (the loader's defaults read them); no new seam.
@@ -24,7 +26,9 @@ import { constructEngine } from '../src/core/engine-construct.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { servePersistenceIpcProvider } from '../src/core/persistence/provider.ts';
+import { readLocalWriter } from '../src/core/persistence/identity.ts';
 import { openRustEngine } from '../src/core/rust-engine.ts';
+import { HELD_FOR_CALLERS } from '../src/core/rust-engine/store-capabilities.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let dirs: string[] = [];
@@ -101,13 +105,68 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
     return { engine, touched };
   }
 
-  test('the Rust engine shell gets no provider and none of its members is called', async () => {
+  /**
+   * An engine that serves only the three typed writer-registration members, from memory, and records every other member
+   * read (each of which fails): a serve that reaches for SQL or any other member shows up in `touched`.
+   */
+  function registrationEngine(capabilities: ReadonlySet<string>): { engine: BrainEngine; touched: string[]; rows: Map<string, { lane: string }> } {
+    const touched: string[] = [];
+    const rows = new Map<string, { lane: string; credential_hash: string; grant_ceiling: unknown; revoked_at: null }>();
+    const members: Record<string, unknown> = {
+      capabilities,
+      readPersistenceBrainId: async () => 'b0000000-0000-4000-8000-0000000000aa',
+      readLocalWriterRow: async (id: string) => rows.get(id),
+      insertLocalWriterRow: async (row: { id: string; lane: string; credentialHash: string; grant: unknown }) => {
+        if (rows.has(row.id)) return false;
+        rows.set(row.id, { lane: row.lane, credential_hash: row.credentialHash, grant_ceiling: row.grant, revoked_at: null });
+        return true;
+      },
+    };
+    const engine = new Proxy(members, {
+      get(target, prop) {
+        if (prop in target) return target[prop as string];
+        // Symbol keys are the per-engine cache lookups (engine-key.ts), not engine members.
+        if (prop === 'then' || typeof prop === 'symbol') return undefined;
+        touched.push(String(prop));
+        throw new Error('engine member touched');
+      },
+    }) as unknown as BrainEngine;
+    return { engine, touched, rows };
+  }
+
+  test('an engine without the persistence journal gets no provider, and its local writers are registered through the typed members only', async () => {
+    // The explicit no-journal fixture: the store reports the journal now, so this instance takes it off.
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
+    for (const capability of ['persistence_journal', 'managed_persistence'] as const) (rust.capabilities as Set<string>).delete(capability);
     expect(rust.capabilities.has('persistence_journal')).toBe(false);
-    expect(await servePersistenceIpcProvider(rust, { engine: 'rust' })).toBeUndefined();
-    const { engine, touched } = recordingEngine(rust.capabilities);
-    expect(await servePersistenceIpcProvider(engine, { engine: 'rust' })).toBeUndefined();
-    expect(touched).toEqual([]);
+    const home = tempDir('gbrain-rust-serve-writers-');
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const { engine, touched, rows } = registrationEngine(rust.capabilities);
+      expect(await servePersistenceIpcProvider(engine, { engine: 'rust' })).toBeUndefined();
+      // A second serve start finds both registrations and leaves them as they are.
+      expect(await servePersistenceIpcProvider(engine, { engine: 'rust' })).toBeUndefined();
+      expect(touched).toEqual([]);
+      expect([...rows.values()].map(row => row.lane).sort()).toEqual(['cli', 'stdio']);
+      const brain = 'b0000000-0000-4000-8000-0000000000aa';
+      // The registration lock directory (persistence/locks) sits next to the credential files.
+      expect(readdirSync(join(home, '.gbrain', 'persistence')).filter(name => name !== 'locks').sort()).toEqual([`${brain}.cli.json`, `${brain}.stdio.json`]);
+      // The registration a remote caller's write and receipt reads run under: readLocalWriter finds it.
+      const local = await readLocalWriter(engine, 'stdio');
+      expect(rows.has(local.id)).toBe(true);
+    });
+  });
+
+  // The flip released persistence_journal; managed_persistence stays held (store-capabilities.ts HELD_FOR_CALLERS) until the
+  // managed-persistence program is done: a Rust brain refuses managed mode with the typed refusal.
+  test('the Rust engine reports persistence_journal', () => {
+    const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
+    expect(rust.capabilities.has('persistence_journal')).toBe(true);
+  });
+
+  test('the Rust engine holds managed_persistence back, naming the bound-write sites that are typed but held with managed mode', () => {
+    const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
+    expect(rust.capabilities.has('managed_persistence')).toBe(false);
+    expect((HELD_FOR_CALLERS.managed_persistence ?? []).map(site => site.split(' ')[0])).toEqual(['compareFileTarget', 'guardOwnership', 'publication', 'withTopologyLocks']);
   });
 
   test('an engine with the persistence journal goes on to the provider', async () => {

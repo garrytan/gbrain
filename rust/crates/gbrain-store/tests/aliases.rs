@@ -178,6 +178,77 @@ fn resolve_aliases_is_source_scoped_and_hides_pages_that_are_not_live() {
 }
 
 #[test]
+fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
+    let dir = TempDir::new("aliases-private");
+    let store = open(&dir);
+    source(&store, "other");
+    put(&store, "people/open");
+    put_in(
+        &store,
+        "people/hidden",
+        "hidden",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(
+        &store,
+        "people/by-access",
+        "access",
+        json!({ "access": "private" }),
+        None,
+    );
+    put_in(&store, "people/b", "b", json!({}), Some("other"));
+    set(&store, "people/open", "default", &["shared", "open"]).unwrap();
+    set(&store, "people/hidden", "default", &["shared", "hid"]).unwrap();
+    set(&store, "people/by-access", "default", &["acc"]).unwrap();
+    set(&store, "people/b", "other", &["shared"]).unwrap();
+    let names = ["shared", "open", "hid", "acc"];
+    let everything = vec![
+        pair("acc", &["default/people/by-access"]),
+        pair("hid", &["default/people/hidden"]),
+        pair("open", &["default/people/open"]),
+        pair(
+            "shared",
+            &[
+                "default/people/hidden",
+                "default/people/open",
+                "other/people/b",
+            ],
+        ),
+    ];
+    assert_eq!(resolve(&store, &names, json!({})), everything);
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": policy })),
+        vec![
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open", "other/people/b"]),
+        ]
+    );
+    // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
+        vec![
+            pair("acc", &["default/people/by-access"]),
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open", "other/people/b"]),
+        ]
+    );
+    assert_eq!(
+        resolve(
+            &store,
+            &names,
+            json!({ "sourceId": "default", "excludePrivate": policy })
+        ),
+        vec![
+            pair("open", &["default/people/open"]),
+            pair("shared", &["default/people/open"]),
+        ]
+    );
+}
+
+#[test]
 fn alias_rows_outlive_a_hard_delete_and_answer_for_a_new_page() {
     let dir = TempDir::new("aliases-hard-delete");
     let store = open(&dir);
@@ -488,7 +559,7 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         canonical_refs(&store, &refs, json!({ "live": true })),
         strings(&["default/c/open", "default/c/private", "other/c/away"])
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         canonical_refs(
             &store,
@@ -665,7 +736,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("restricted", &["default/c/restricted"]),
         ]
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -673,8 +744,7 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("open", &["default/c/open"]),
         ]
     );
-    let no_aliases =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage" });
+    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
         vec![
@@ -683,4 +753,135 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("restricted", &["default/c/restricted"]),
         ]
     );
+}
+
+/// `listAliasTargets` as `(source/slug, page, page_aliases, slug_redirects)`.
+fn targets(store: &Store, sources: Option<&[&str]>) -> Vec<(String, &'static str, u64, u64)> {
+    let ids = sources.map(strings);
+    store
+        .list_alias_targets(ids.as_deref())
+        .unwrap()
+        .into_iter()
+        .map(|t| {
+            (
+                format!("{}/{}", t.source_id, t.slug),
+                t.page,
+                t.page_aliases,
+                t.slug_redirects,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn alias_targets_name_missing_and_soft_deleted_pages_and_the_delete_takes_only_missing_ones() {
+    let dir = TempDir::new("aliases-orphans");
+    let store = open(&dir);
+    source(&store, "work");
+    // notes/b: renamed away to notes/c, so notes/b is a rename redirect (alias) pointing at notes/c.
+    put(&store, "notes/b");
+    store.update_slug("notes/b", "notes/c", None).unwrap();
+    set(&store, "notes/c", "default", &["see", "cee"]).unwrap();
+    put(&store, "notes/live");
+    set(&store, "notes/live", "default", &["alive"]).unwrap();
+    put(&store, "notes/soft");
+    set(&store, "notes/soft", "default", &["soft"]).unwrap();
+    store.soft_delete_page("notes/soft", None).unwrap();
+    put_in(&store, "notes/w", "w", json!({}), Some("work"));
+    set(&store, "notes/w", "work", &["dub"]).unwrap();
+    store.delete_page("notes/c", None).unwrap();
+    store.delete_page("notes/w", Some("work")).unwrap();
+    assert!(store.list_alias_targets(Some(&[])).unwrap().is_empty());
+    assert_eq!(
+        targets(&store, None),
+        vec![
+            ("default/notes/c".into(), "missing", 2, 1),
+            ("default/notes/soft".into(), "soft_deleted", 1, 0),
+            ("work/notes/w".into(), "missing", 1, 0),
+        ]
+    );
+    assert_eq!(
+        targets(&store, Some(&["work"])),
+        vec![("work/notes/w".into(), "missing", 1, 0)]
+    );
+    // A soft-deleted page keeps its rows; a live page keeps its rows; a missing one loses both tables'.
+    assert_eq!(
+        store
+            .delete_orphaned_aliases("default", "notes/soft")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .delete_orphaned_aliases("default", "notes/live")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store.delete_orphaned_aliases("default", "notes/c").unwrap(),
+        3
+    );
+    assert_eq!(
+        store.delete_orphaned_aliases("default", "notes/c").unwrap(),
+        0
+    );
+    assert_eq!(
+        targets(&store, None),
+        vec![
+            ("default/notes/soft".into(), "soft_deleted", 1, 0),
+            ("work/notes/w".into(), "missing", 1, 0)
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &["alive"], json!({})),
+        vec![pair("alive", &["default/notes/live"])]
+    );
+    let err = store
+        .delete_orphaned_aliases("default", "a\0b")
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn list_slug_aliases_reads_one_source_in_alias_order_and_survives_a_reopen() {
+    let dir = TempDir::new("aliases-list");
+    {
+        let store = open(&dir);
+        source(&store, "other");
+        put(&store, "notes/m");
+        put(&store, "notes/a");
+        put_in(&store, "notes/a", "notes/a", json!({}), Some("other"));
+        store.update_slug("notes/m", "notes/n", None).unwrap();
+        store.update_slug("notes/a", "notes/b", None).unwrap();
+        store.update_slug("notes/b", "notes/c", None).unwrap();
+        store
+            .update_slug("notes/a", "notes/z", Some("other"))
+            .unwrap();
+    }
+    let store = open(&dir);
+    let rows = |source: &str| -> Vec<(String, String)> {
+        store
+            .list_slug_aliases(source)
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r["alias_slug"].as_str().unwrap().to_string(),
+                    r["canonical_slug"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let pair = |a: &str, c: &str| (a.to_string(), c.to_string());
+    assert_eq!(
+        rows("default"),
+        vec![
+            pair("notes/a", "notes/c"),
+            pair("notes/b", "notes/c"),
+            pair("notes/m", "notes/n"),
+        ]
+    );
+    assert_eq!(rows("other"), vec![pair("notes/a", "notes/z")]);
+    assert!(rows("missing").is_empty());
+    assert!(rows("bad\0id").is_empty());
 }

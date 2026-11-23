@@ -28,14 +28,11 @@ const sizeFix = (slug: string, sourceId: string) => ({ argv: ['gbrain', 'get', '
  * included), or a committed upload's (`body_ref.bytes`), are measured here;
  * preparation re-checks the parsed body.
  */
-export async function assertLargePageAdmission(engine: Pick<BrainEngine, 'executeRaw'>, slug: string, sourceId: string, intent: Record<string, unknown>): Promise<void> {
+export async function assertLargePageAdmission(engine: Pick<BrainEngine, 'readStoredBodyBytes'>, slug: string, sourceId: string, intent: Record<string, unknown>): Promise<void> {
   const ref = intent.body_ref as { bytes?: unknown } | undefined;
   const next = typeof intent.content === 'string' ? Buffer.byteLength(intent.content, 'utf8') : Number.isSafeInteger(ref?.bytes) ? Number(ref!.bytes) : null;
   if (next === null) return;
-  const [row] = await engine.executeRaw<{ bytes: unknown }>(
-    `SELECT CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(compiled_truth) + COALESCE(octet_length(timeline), 0) END AS bytes
-      FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL`, [slug, sourceId]);
-  const stored = Number(row?.bytes ?? 0);
+  const stored = (await engine.readStoredBodyBytes(slug, sourceId)) ?? 0;
   if (stored <= DEFAULT_INLINE_BODY_BYTES) return;
   if (intent.expected_revision === undefined && intent.force === true) {
     const e = new OperationError('revision_required', `Page ${slug} is ${stored} bytes, over the ${DEFAULT_INLINE_BODY_BYTES}-byte inline read size; replacing it needs expected_revision (force does not apply). Nothing was written.`,

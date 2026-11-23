@@ -55,19 +55,21 @@ pub use segment_rewrite::{
 };
 pub use segmented_embedding::{
     LiveEmbedSegment, RetiredChunkVector, SegmentChunkInputHash, SegmentChunkRow,
-    SegmentedEmbedCounts, SegmentedEmbedPageRow, SegmentedEmbedRef, SegmentedStaleRow,
-    SegmentedStaleRowsOpts, SegmentedVectorInput,
+    SegmentedEmbedCounts, SegmentedStaleRow, SegmentedStaleRowsOpts, SegmentedVectorInput,
 };
 pub use segmented_writes::{
-    OccurrenceChunkRow, PageTrustRef, PageTrustStamp, RechunkCandidateScope, SegmentedLivePageRow,
-    SegmentedProjectionPage, SegmentedRechunkPage,
+    OccurrenceChunkRow, RechunkCandidateScope, SegmentedLivePageRow, SegmentedProjectionPage,
+    SegmentedRechunkPage,
 };
+
+pub(crate) mod health;
+pub(crate) mod purge_scan;
 
 const TEXT: u8 = 0x01;
 const MANIFEST: u8 = 0x02;
 const STAGING: u8 = 0x03;
 const DERIVATION: u8 = 0x04;
-const BODY: u8 = 0x05;
+pub(crate) const BODY: u8 = 0x05;
 const STAGING_CLIENT: u8 = 0x06;
 const STAGING_TEXT: u8 = 0x07;
 const STAGING_BY_PAGE: u8 = 0x08;
@@ -386,6 +388,32 @@ pub struct ReadManifestOptions {
     pub last_n: Option<i64>,
 }
 
+/// `readSegmentedEmbedPage(ref)`: a page by id, or by source and slug.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SegmentedEmbedRef {
+    Id {
+        id: i64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Slug {
+        source_id: String,
+        slug: String,
+    },
+}
+
+/// The page fields a segmented embed reads (`SegmentedEmbedPage`): metadata only, never the body.
+/// `body_bytes` is the stored count, `None` when the shell recorded none (PGLite's NULL column).
+#[derive(Debug, Clone, Serialize)]
+pub struct SegmentedEmbedPage {
+    pub id: u64,
+    pub slug: String,
+    pub source_id: String,
+    pub title: String,
+    pub contextual_retrieval_mode: Option<String>,
+    pub body_bytes: Option<i64>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ShellOptions {
@@ -411,6 +439,17 @@ pub struct DerivationRetireOptions {
     pub kind: Option<String>,
 }
 
+/// `deleteRewrittenSegmentDerivations`' argument (engine-sql/segmented-purge-writes.ts).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RewrittenDerivationsDelete {
+    pub page_id: i64,
+    pub touched_occurrence_ids: Vec<i64>,
+    pub link_reach_occurrence_ids: Vec<i64>,
+    pub pipelines: Vec<String>,
+    pub live_occurrence_ids: Vec<i64>,
+}
+
 /// `SegmentSweepOptions`; `now` as an ISO string.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -423,6 +462,18 @@ pub struct SegmentSweepOptions {
 }
 
 /// `SegmentSweepResult`.
+/// What `sealSegmentedPage` reads before it seals ([`Store::read_segmented_seal_lead`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SealLead {
+    /// The stored timeline lead, `""` when none was published.
+    pub lead: String,
+    /// The page's `knowledge_revision`.
+    pub revision: String,
+    pub slug: String,
+    pub source_id: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SegmentSweepResult {
@@ -608,7 +659,7 @@ fn derivation_key(page_id: u64, kind: &str, occurrence: i64) -> Vec<u8> {
     key
 }
 
-fn body_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn body_key(page_id: u64) -> Vec<u8> {
     let mut key = kind_key(BODY);
     key.extend_from_slice(&page_id.to_be_bytes());
     key
@@ -664,21 +715,6 @@ fn delete_prefix(tx: &mut dyn KvWrite, prefix: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Every page whose body record says `segmented`, by page id, with that record.
-pub(crate) fn segmented_body_states(read: &dyn KvRead) -> Result<Vec<(u64, BodyState)>> {
-    let prefix = kind_key(BODY);
-    let mut out = Vec::new();
-    for (key, state) in collect::<BodyState>(read, &prefix)? {
-        let id: [u8; 8] = key[prefix.len()..]
-            .try_into()
-            .map_err(|_| StoreError::invalid("page body: corrupt body key"))?;
-        if state.body_storage == "segmented" {
-            out.push((u64::from_be_bytes(id), state));
-        }
-    }
-    Ok(out)
-}
-
 pub(crate) fn read_body_state(read: &dyn KvRead, page_id: u64) -> Result<Option<BodyState>> {
     get_json(read, &body_key(page_id))
 }
@@ -691,6 +727,14 @@ pub(crate) fn timeline_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<St
     Ok(read_body_state(read, page_id)?.and_then(|state| state.timeline_lead))
 }
 
+/// The `truth_lead` of segmented page `page_id`: the raw prefix of its compiled truth that the last flip stored, `None`
+/// for an inline page, a shell no flip has published or a missing page (PGLite's NULL column). The bounded body prefix
+/// reads (`left(coalesce(compiled_truth, truth_lead), ..)`, page-window/bounded-lead.ts) and the entity card
+/// (`coalesce(compiled_truth, truth_lead)`) take it for a segmented page, whose `compiled_truth` is NULL.
+pub(crate) fn truth_lead(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
+    Ok(read_body_state(read, page_id)?.and_then(|state| state.truth_lead))
+}
+
 /// The `body_bytes` of segmented page `page_id`: the size a flip published, `Some(0)` for a shell no flip has
 /// published, `None` for an inline page, a missing page or a segmented page whose column is NULL (PGLite's NULL
 /// column). The chunk_queries family reads it for its `body_storage = 'segmented' AND body_bytes > 0` test.
@@ -698,6 +742,17 @@ pub(crate) fn segmented_body_bytes(read: &dyn KvRead, page_id: u64) -> Result<Op
     Ok(read_body_state(read, page_id)?
         .filter(|state| state.body_storage == "segmented")
         .and_then(|state| state.body_bytes))
+}
+
+/// The `body_flags` of segmented page `page_id`: `Some(flags)` for a segmented page (`Some(None)` when its column is
+/// NULL), `None` for an inline page or a missing page. The link reads test `body_flags->>'has_protected'` on it.
+pub(crate) fn segmented_body_flags(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<Option<Value>>> {
+    Ok(read_body_state(read, page_id)?
+        .filter(|state| state.body_storage == "segmented")
+        .map(|state| state.body_flags))
 }
 
 fn is_segmented(state: Option<&BodyState>) -> bool {
@@ -829,6 +884,69 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
+/// The `(source id, sha256)` of every text a page's manifest rows name. A retention purge reads
+/// them before `remove_page` deletes the rows, as PGLite's `purgeDeletedPages` selects them first.
+pub(crate) fn page_text_refs(read: &dyn KvRead, page_id: u64) -> Result<Vec<(String, Vec<u8>)>> {
+    manifest_rows(read, page_id)?
+        .into_iter()
+        .map(|(_, row)| Ok((row.source_id, from_hex(&row.sha256, "manifest sha256")?)))
+        .collect()
+}
+
+/// Retention purge: deletes every staging at a purged `(source id, slug)`, whatever page id it
+/// names (a create staging names none), with its client key and recorded texts, as PGLite's
+/// `purgeDeletedPages` deletes them by source and slug before it deletes the texts.
+pub(crate) fn delete_slug_stagings(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &[String],
+) -> Result<()> {
+    let gone: Vec<StagingRecord> = collect::<StagingRecord>(&*tx, &kind_key(STAGING))?
+        .into_iter()
+        .map(|(_, staging)| staging)
+        .filter(|staging| staging.source_id == source_id && slugs.contains(&staging.slug))
+        .collect();
+    for staging in &gone {
+        delete_staging(tx, staging)?;
+    }
+    Ok(())
+}
+
+/// Retention purge: deletes each text in `refs` that no manifest row still names and no live
+/// staging recorded, in the purge's transaction, as PGLite's `purgeDeletedPages` deletes them
+/// (`NOT EXISTS` a manifest row, `NOT stagingNeedsTextSql`). A text another page shares stays.
+/// This store has no persistence requests, so a staging is live by its state alone.
+pub(crate) fn delete_purged_texts(
+    tx: &mut dyn KvWrite,
+    refs: &BTreeSet<(String, Vec<u8>)>,
+) -> Result<()> {
+    if refs.is_empty() {
+        return Ok(());
+    }
+    let mut needed: HashSet<(String, Vec<u8>)> = HashSet::new();
+    for (_, row) in collect::<ManifestRow>(&*tx, &kind_key(MANIFEST))? {
+        needed.insert((row.source_id, from_hex(&row.sha256, "manifest sha256")?));
+    }
+    let prefix = kind_key(STAGING_TEXT);
+    for (key, source_id) in collect::<String>(&*tx, &prefix)? {
+        let Some(split) = key.len().checked_sub(32).filter(|s| *s >= prefix.len()) else {
+            continue;
+        };
+        let staging = String::from_utf8_lossy(&key[prefix.len()..split]).into_owned();
+        let live = get_json::<StagingRecord>(&*tx, &staging_key(&staging))?
+            .is_some_and(|s| LIVE_STAGING_STATES.contains(&s.state.as_str()));
+        if live {
+            needed.insert((source_id, key[split..].to_vec()));
+        }
+    }
+    for (source_id, sha) in refs {
+        if !needed.contains(&(source_id.clone(), sha.clone())) {
+            tx.delete(&text_key(source_id, sha))?;
+        }
+    }
+    Ok(())
+}
+
 /// Deletes a staging with its client key, recorded texts and page index entry.
 fn delete_staging(tx: &mut dyn KvWrite, staging: &StagingRecord) -> Result<()> {
     tx.delete(&client_key(
@@ -902,6 +1020,28 @@ pub(crate) fn page_columns(
     Ok(())
 }
 
+/// A page's `body_storage` and `body_bytes` columns: `('inline', None)` for a page with no body state, as the column
+/// default reads.
+pub(crate) fn body_storage_columns(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<(String, Option<i64>)> {
+    Ok(read_body_state(read, page_id)?.map_or_else(
+        || ("inline".to_string(), None),
+        |s| (s.body_storage, s.body_bytes),
+    ))
+}
+
+/// Whether a published manifest row of the page (`gen_to IS NULL AND staging_id IS NULL`) has a facts slot
+/// (`facts_slots <> '[]'::jsonb`; a NULL `facts_slots` compares as unknown, so it does not).
+pub(crate) fn has_published_facts_slot(read: &dyn KvRead, page_id: u64) -> Result<bool> {
+    Ok(manifest_rows(read, page_id)?.iter().any(|(_, row)| {
+        live_published(row)
+            && !row.facts_slots.is_null()
+            && row.facts_slots != Value::Array(Vec::new())
+    }))
+}
+
 /// The live body generation and `body_bytes` of a segmented page, which its version snapshot
 /// references (`insertSegmentedVersion`); `None` for an inline page or a missing one.
 pub(crate) fn segmented_reference(
@@ -911,6 +1051,21 @@ pub(crate) fn segmented_reference(
     Ok(read_body_state(read, page_id)?
         .filter(|state| state.body_storage == "segmented")
         .map(|state| (state.body_generation, state.body_bytes)))
+}
+
+/// Whether a page body is segmented, its `body_bytes` and its `truth_bytes`.
+pub(crate) type BodySizes = (bool, Option<i64>, Option<i64>);
+
+/// The size columns of page `page_id`'s body state: whether it is segmented, `body_bytes` and
+/// `truth_bytes`. `None` when the page has no body state (an inline page that was never segmented).
+pub(crate) fn body_sizes(read: &dyn KvRead, page_id: u64) -> Result<Option<BodySizes>> {
+    Ok(read_body_state(read, page_id)?.map(|state| {
+        (
+            state.body_storage == "segmented",
+            state.body_bytes,
+            state.truth_bytes,
+        )
+    }))
 }
 
 /// PGLite's `liveStagingIds`: stagings in a live state, plus the stagings an outstanding request
@@ -1194,6 +1349,47 @@ impl Store {
         })
     }
 
+    /// `readSegmentedEmbedPage(ref)`: the page `ref` names when it is segmented, not deleted, in a
+    /// source that exists and is not archived, and sealed (its text projection is at its knowledge
+    /// revision, `currentTextProjectionFilter`); `None` otherwise, an inline page included. The
+    /// same tests as the `pages JOIN sources` read PGLite sends.
+    pub fn read_segmented_embed_page(
+        &self,
+        reference: &SegmentedEmbedRef,
+    ) -> Result<Option<SegmentedEmbedPage>> {
+        let read = self.read()?;
+        let page = match reference {
+            SegmentedEmbedRef::Id { id } => match page_u64(*id) {
+                Some(id) => read_page_by_id(&*read, id)?,
+                None => None,
+            },
+            SegmentedEmbedRef::Slug { source_id, slug } => read_page(&*read, source_id, slug)?,
+        };
+        let Some(page) = page else {
+            return Ok(None);
+        };
+        let Some((_, body_bytes)) = segmented_reference(&*read, page.id)? else {
+            return Ok(None);
+        };
+        let sealed =
+            page.text_projection_revision.as_deref() == Some(page.knowledge_revision.as_str());
+        if page.deleted_at_us.is_some() || !sealed {
+            return Ok(None);
+        }
+        match crate::sources::read_source(&*read, &page.source_id)? {
+            Some(source) if !source.archived => {}
+            _ => return Ok(None),
+        }
+        Ok(Some(SegmentedEmbedPage {
+            id: page.id,
+            contextual_retrieval_mode: crate::aliases::contextual_retrieval_mode(&*read, page.id)?,
+            slug: page.slug,
+            source_id: page.source_id,
+            title: page.title,
+            body_bytes,
+        }))
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? })`: with `stagingId`, that
     /// staging's rows; otherwise the published rows of `generation` (default: the page's body
     /// generation; none for a page that does not exist). By seq; `lastN` keeps the last n.
@@ -1304,6 +1500,7 @@ impl Store {
                 import_filename: meta.import_filename.clone(),
                 source_kind: meta.source_kind.clone(),
                 source_uri: meta.source_uri.clone(),
+                database_only_reason: None,
                 ingested_via: meta.ingested_via.clone(),
                 ingested_at_us: meta_ingested(meta).then_some(now),
                 tags: Vec::new(),
@@ -1311,6 +1508,7 @@ impl Store {
                 trust_tier: None,
                 write_origin: None,
                 version_history_gap_at_us: None,
+                revision_receipt: Default::default(),
             };
             write_page(tx, &record)?;
             let state = BodyState {
@@ -1580,10 +1778,11 @@ impl Store {
     }
 
     /// The stored timeline lead of page `page_id` (`""` when none was published) with the page's
-    /// `knowledge_revision`, or `None` for a missing page. Not a member: `sealSegmentedPage`'s
-    /// TypeScript side reads it, sanitizes the lead, and passes the revision back to
+    /// `knowledge_revision`, slug and source, or `None` for a missing page. Not a member:
+    /// `sealSegmentedPage`'s TypeScript side reads it, overlays the lead with the page's ledger rows
+    /// (read by slug and source), sanitizes it, and passes the revision back to
     /// [`Store::seal_segmented_page`].
-    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<(String, String)>> {
+    pub fn read_segmented_seal_lead(&self, page_id: i64) -> Result<Option<SealLead>> {
         let read = self.read()?;
         let Some(page) = page_u64(page_id)
             .map(|id| read_page_by_id(&*read, id))
@@ -1593,7 +1792,12 @@ impl Store {
             return Ok(None);
         };
         let lead = timeline_lead(&*read, page.id)?.unwrap_or_default();
-        Ok(Some((lead, page.knowledge_revision)))
+        Ok(Some(SealLead {
+            lead,
+            revision: page.knowledge_revision,
+            slug: page.slug,
+            source_id: page.source_id,
+        }))
     }
 
     /// `sealSegmentedPage(pageId, opts)`: seals the page's text projection at its current revision
@@ -1919,6 +2123,38 @@ impl Store {
         self.write(|tx| put_derivations(tx, &prepared, now))
     }
 
+    /// `storeSegmentDerivationsIfLive(pageId, generation, rows)`: the derive pass's conditional store
+    /// (`segment-derive.ts` storeRuns): the rows are upserted as `upsertSegmentDerivations` does only
+    /// while the page is live, segmented and at body `generation`; returns how many rows were written
+    /// (0 when the page moved, as the SQL's `RETURNING 1` over an empty `live` set).
+    pub fn store_segment_derivations_if_live(
+        &self,
+        page_id: i64,
+        generation: i64,
+        rows: &[SegmentDerivationInput],
+    ) -> Result<u64> {
+        let prepared = prepare_derivations(rows)?;
+        if prepared.is_empty() {
+            return Ok(0);
+        }
+        let Some(id) = page_u64(page_id) else {
+            return Ok(0);
+        };
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let live = read_page_by_id(&*tx, id)?.is_some_and(|p| p.deleted_at_us.is_none());
+            let state = read_body_state(&*tx, id)?;
+            if !live
+                || !is_segmented(state.as_ref())
+                || state.is_none_or(|s| s.body_generation != generation)
+            {
+                return Ok(0);
+            }
+            put_derivations(tx, &prepared, now)?;
+            Ok(prepared.len() as u64)
+        })
+    }
+
     /// `retireSegmentDerivations(pageId, liveOccurrenceIds, { kind? })`: deletes the page's rows
     /// (every kind, or `kind`) whose occurrence is not live; returns how many.
     pub fn retire_segment_derivations(
@@ -1945,6 +2181,79 @@ impl Store {
                         .as_deref()
                         .is_none_or(|want| want.as_bytes() == kind);
                     if kind_matches && occurrence.is_some_and(|o| !live.contains(&o)) {
+                        doomed.push(k.to_vec());
+                    }
+                }
+                true
+            })?;
+            for key in &doomed {
+                tx.delete(key)?;
+            }
+            Ok(doomed.len() as u64)
+        })
+    }
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `None` when no staging has that
+    /// id (PGLite's `SELECT state ... FOR UPDATE`; a store write already holds the brain). A value
+    /// that is not a uuid is refused, as the `::uuid` cast refuses it.
+    pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
+        let id = staging_id_arg(staging_id)?;
+        let read = self.read()?;
+        let record: Option<StagingRecord> = get_json(&*read, &staging_key(&id))?;
+        Ok(record.map(|r| r.state))
+    }
+
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: deletes the page's
+    /// chunk rows at `generation` whose chunk index is not kept (the rows a dead preparation
+    /// staged), with their postings and the rows that hang off them.
+    pub fn delete_unstaged_segment_chunks(
+        &self,
+        page_id: i64,
+        generation: i64,
+        keep_chunk_indexes: &[i64],
+    ) -> Result<()> {
+        let (Some(page), Ok(generation)) = (page_u64(page_id), u64::try_from(generation)) else {
+            return Ok(());
+        };
+        let keep: HashSet<i64> = keep_chunk_indexes.iter().copied().collect();
+        self.write(|tx| {
+            crate::chunks::delete_chunks_matching(tx, page, &|c| {
+                c.segment
+                    .is_some_and(|place| place.body_generation == generation)
+                    && !keep.contains(&i64::from(c.chunk_index))
+            })?;
+            Ok(())
+        })
+    }
+
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: deletes the page's rows of a touched occurrence, its
+    /// `links` rows of an occurrence in reach, and its rows of a listed pipeline whose occurrence
+    /// is not live; returns how many.
+    pub fn delete_rewritten_segment_derivations(
+        &self,
+        spec: &RewrittenDerivationsDelete,
+    ) -> Result<u64> {
+        let Some(page) = page_u64(spec.page_id) else {
+            return Ok(0);
+        };
+        let touched: HashSet<i64> = spec.touched_occurrence_ids.iter().copied().collect();
+        let reach: HashSet<i64> = spec.link_reach_occurrence_ids.iter().copied().collect();
+        let live: HashSet<i64> = spec.live_occurrence_ids.iter().copied().collect();
+        self.write(|tx| {
+            let prefix = derivation_prefix(page);
+            let mut doomed = Vec::new();
+            scan_prefix(&*tx, &prefix, false, &mut |k, _| {
+                let rest = &k[prefix.len()..];
+                if let Some(split) = rest.iter().position(|b| *b == 0) {
+                    let kind = &rest[..split];
+                    if let Some(o) =
+                        keys::be8(&rest[split + 1..]).map(|v| (v ^ (1u64 << 63)) as i64)
+                        && (touched.contains(&o)
+                            || (kind == b"links" && reach.contains(&o))
+                            || (spec.pipelines.iter().any(|p| p.as_bytes() == kind)
+                                && !live.contains(&o)))
+                    {
                         doomed.push(k.to_vec());
                     }
                 }
@@ -2079,6 +2388,31 @@ pub(crate) fn closed_manifest_rows(read: &dyn KvRead, page_id: u64) -> Result<Ve
         .map(|(_, row)| row)
         .filter(|row| row.gen_to.is_some() && row.staging_id.is_none())
         .collect())
+}
+
+/// The live published manifest rows of segmented page `page_id` that carry facts slots
+/// (`gen_to IS NULL AND staging_id IS NULL AND facts_slots <> '[]'`), each with the bytes of its
+/// segment text (`None` when the source holds no text of that sha). An inline or missing page has
+/// none. Withdrawal discovery (facts/withdrawal_discovery.rs) scans them for facts fences.
+pub(crate) fn live_facts_slot_rows(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(ManifestRow, Option<Vec<u8>>)>> {
+    if !is_segmented(read_body_state(read, page_id)?.as_ref()) {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (_, row) in manifest_rows(read, page_id)? {
+        if !live_published(&row) || row.facts_slots.as_array().is_none_or(Vec::is_empty) {
+            continue;
+        }
+        let sha = from_hex(&row.sha256, "sha256")?;
+        let text = get_json::<TextRecord>(read, &text_key(&row.source_id, &sha))?
+            .map(|t| from_hex(&t.body, "body"))
+            .transpose()?;
+        out.push((row, text));
+    }
+    Ok(out)
 }
 
 /// The body of `sweepSegments`, run in the open write `tx`: `prune_versions` calls it after a
@@ -2303,116 +2637,6 @@ mod tests {
             .clone();
         assert!(inline.get("body_storage").is_none());
         assert!(inline.get("body_bytes").is_none());
-    }
-
-    #[test]
-    fn untiled_pages_list_a_short_or_gapped_live_generation() {
-        use crate::cli_reads::export::UntiledPagesQuery;
-        let store = crate::test_support::store();
-        let shell = |slug: &str| {
-            store
-                .create_segmented_page_shell(
-                    slug,
-                    &meta("Seg"),
-                    &ShellOptions {
-                        source_id: Some("default".into()),
-                    },
-                )
-                .unwrap()["id"]
-                .as_u64()
-                .unwrap()
-        };
-        let (short, gapped, whole) = (
-            shell("notes/short"),
-            shell("notes/gapped"),
-            shell("notes/whole"),
-        );
-        let all = UntiledPagesQuery::default();
-        assert!(store.list_untiled_segmented_pages(&all).unwrap().is_empty());
-        let row = |page: u64, start: i64| ManifestRow {
-            page_id: page as i64,
-            occurrence_id: 1,
-            gen_from: 0,
-            gen_to: None,
-            seq: 0,
-            region: "truth".into(),
-            source_id: "default".into(),
-            sha256: "00".repeat(32),
-            byte_start: start,
-            byte_len: 4,
-            line_start: 0,
-            line_count: 1,
-            cut_kind: "eof".into(),
-            entry_state: json!({}),
-            protected_regions: json!([]),
-            facts_slots: json!([]),
-            static_proj_bytes: 4,
-            static_proj_lines: 1,
-            outline: json!([]),
-            date_min: None,
-            date_max: None,
-            hash_state: "".into(),
-            staging_id: None,
-        };
-        store
-            .write(|tx| {
-                for (page, bytes) in [(short, Some(9)), (gapped, Some(7)), (whole, None)] {
-                    let mut state = read_body_state(tx, page)?.unwrap();
-                    state.body_bytes = bytes;
-                    put_json(tx, &body_key(page), &state)?;
-                }
-                put_json(tx, &manifest_key(short, 1, 0, &[0; 16]), &row(short, 0))?;
-                put_json(tx, &manifest_key(gapped, 1, 0, &[0; 16]), &row(gapped, 3))?;
-                put_json(tx, &manifest_key(whole, 1, 0, &[0; 16]), &row(whole, 3))?;
-                Ok(())
-            })
-            .unwrap();
-        let listed = store.list_untiled_segmented_pages(&all).unwrap();
-        let got: Vec<(&str, i64, i64, Option<i64>)> = listed
-            .iter()
-            .map(|p| (p.slug.as_str(), p.body_bytes, p.rows, p.covered_bytes))
-            .collect();
-        // notes/short covers 4 of 9 bytes; the gapped rows start at 3; a NULL size counts only the gap.
-        assert_eq!(
-            got,
-            vec![
-                ("notes/gapped", 7, 1, None),
-                ("notes/short", 9, 1, Some(4)),
-                ("notes/whole", 0, 1, None)
-            ]
-        );
-        let narrowed = UntiledPagesQuery {
-            slugs: Some(vec!["notes/short".into()]),
-            limit: Some(5),
-            ..UntiledPagesQuery::default()
-        };
-        assert_eq!(
-            store.list_untiled_segmented_pages(&narrowed).unwrap().len(),
-            1
-        );
-        let limited = UntiledPagesQuery {
-            limit: Some(1),
-            ..UntiledPagesQuery::default()
-        };
-        assert_eq!(
-            store.list_untiled_segmented_pages(&limited).unwrap()[0].slug,
-            "notes/gapped"
-        );
-        let elsewhere = UntiledPagesQuery {
-            source_ids: Some(vec!["other".into()]),
-            ..UntiledPagesQuery::default()
-        };
-        assert!(
-            store
-                .list_untiled_segmented_pages(&elsewhere)
-                .unwrap()
-                .is_empty()
-        );
-        let negative = UntiledPagesQuery {
-            limit: Some(-1),
-            ..UntiledPagesQuery::default()
-        };
-        assert!(store.list_untiled_segmented_pages(&negative).is_err());
     }
 
     #[test]
@@ -2647,6 +2871,13 @@ mod segment_chunk_tests {
         .unwrap()
     }
 
+    /// A live staging of the page `notes/b`, which a purge of `notes/a` must keep.
+    fn other_page_staging(page_id: i64) -> BodyStagingInput {
+        let mut input = staging(STAGING_2, page_id, "55555555-5555-4555-8555-555555555555");
+        input.slug = "notes/b".into();
+        input
+    }
+
     pub(super) fn row(
         page_id: i64,
         occurrence: i64,
@@ -2751,6 +2982,166 @@ mod segment_chunk_tests {
             .flip_body_generation(&flip(id, 0, STAGING, 8, extra))
             .unwrap();
         id
+    }
+
+    /// A published segmented page renames: its version references the live generation and keeps no
+    /// body copy, and the moved page reads the same body under its new slug.
+    #[test]
+    fn update_slug_moves_a_segmented_page_and_versions_it_by_reference() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(store.update_slug("notes/a", "notes/b", None).unwrap(), 1);
+        let read = store.read().unwrap();
+        let page = read_page_by_id(&*read, id as u64).unwrap().unwrap();
+        assert_eq!(page.slug, "notes/b");
+        assert!(page.compiled_truth.is_null());
+        assert_eq!(
+            segmented_reference(&*read, id as u64).unwrap(),
+            Some((1, Some(8)))
+        );
+        drop(read);
+        let versions = store
+            .get_versions("notes/b", &crate::pages::VersionsOptions::default())
+            .unwrap();
+        assert_eq!(versions.len(), 1);
+        let v = &versions[0];
+        assert_eq!(
+            (
+                &v["body_storage"],
+                &v["body_generation"],
+                &v["body_bytes"],
+                &v["compiled_truth"]
+            ),
+            (&json!("segmented"), &json!(1), &json!(8), &Value::Null)
+        );
+    }
+
+    #[test]
+    fn a_retention_purge_deletes_the_texts_only_the_purged_page_needed() {
+        // PGLite's purgeDeletedPages deletes the purged pages' segment texts in the same
+        // transaction, keeping a text a live staging still recorded.
+        let store = crate::test_support::store();
+        let id = published(&store);
+        let other = store
+            .create_segmented_page_shell(
+                "notes/b",
+                &serde_json::from_value(json!({"type": "note", "title": "B"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        store.open_body_staging(&other_page_staging(other)).unwrap();
+        store
+            .stage_segment_texts(
+                "default",
+                &[text("two\n")],
+                &StageTextsOptions {
+                    staging_id: Some(STAGING_2.into()),
+                },
+            )
+            .unwrap();
+        let texts = |store: &Store| -> Vec<String> {
+            store
+                .read_segment_texts("default", &[sha("one\n"), sha("two\n")])
+                .unwrap()
+                .into_iter()
+                .map(|(s, _)| s)
+                .collect()
+        };
+        assert_eq!(texts(&store), vec![sha("one\n"), sha("two\n")]);
+        let at = store.env.now_micros() - 3_600_000_000;
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "notes/a")?.unwrap();
+                page.deleted_at_us = Some(at);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let out = store
+            .purge_deleted_pages(0.0, &serde_json::from_value(json!({})).unwrap())
+            .unwrap();
+        assert_eq!(out["slugs"], json!(["notes/a"]));
+        assert!(
+            read_page_by_id(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(texts(&store), vec![sha("two\n")]);
+    }
+
+    #[test]
+    fn a_retention_purge_deletes_a_create_staging_at_the_purged_slug_and_its_texts() {
+        // PGLite's purgeDeletedPages deletes every staging at the purged source and slug, also one
+        // with no page id, before it deletes the texts; a staging of another page keeps its text.
+        let store = crate::test_support::store();
+        published(&store);
+        let other = store
+            .create_segmented_page_shell(
+                "notes/b",
+                &serde_json::from_value(json!({"type": "note", "title": "B"})).unwrap(),
+                &ShellOptions {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        let create = "44444444-4444-4444-8444-444444444444";
+        let input: BodyStagingInput = serde_json::from_value(json!({
+            "id": create, "kind": "put", "principalKind": "local", "principalId": "cli",
+            "clientRequestId": "66666666-6666-4666-8666-666666666666", "sourceId": "default",
+            "sourceIncarnation": "33333333-3333-4333-8333-333333333333", "slug": "notes/a",
+            "pageId": null, "mode": "create", "declaredBytes": 1, "reservedBytes": 1,
+            "idleExpiresAt": "2099-01-01T00:00:00Z", "hardExpiresAt": "2099-01-02T00:00:00Z",
+        }))
+        .unwrap();
+        store.open_body_staging(&input).unwrap();
+        store.open_body_staging(&other_page_staging(other)).unwrap();
+        for (id, body) in [(create, "one\n"), (STAGING_2, "two\n")] {
+            store
+                .stage_segment_texts(
+                    "default",
+                    &[text(body)],
+                    &StageTextsOptions {
+                        staging_id: Some(id.into()),
+                    },
+                )
+                .unwrap();
+        }
+        let at = store.env.now_micros() - 3_600_000_000;
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "notes/a")?.unwrap();
+                page.deleted_at_us = Some(at);
+                write_page(tx, &page)
+            })
+            .unwrap();
+        let out = store
+            .purge_deleted_pages(0.0, &serde_json::from_value(json!({})).unwrap())
+            .unwrap();
+        assert_eq!(out["slugs"], json!(["notes/a"]));
+        let read = store.read().unwrap();
+        assert!(
+            get_json::<StagingRecord>(&*read, &staging_key(create))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            get_json::<StagingRecord>(&*read, &staging_key(STAGING_2))
+                .unwrap()
+                .is_some()
+        );
+        drop(read);
+        let texts: Vec<String> = store
+            .read_segment_texts("default", &[sha("one\n"), sha("two\n")])
+            .unwrap()
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
+        assert_eq!(texts, vec![sha("two\n")]);
     }
 
     #[test]
@@ -3066,8 +3457,14 @@ mod segment_chunk_tests {
             .unwrap();
         assert!(sealed_texts(&store).is_empty());
         // The fixture flip publishes an empty lead.
-        let (lead, revision) = store.read_segmented_seal_lead(id).unwrap().unwrap();
+        let SealLead {
+            lead,
+            revision,
+            slug,
+            source_id,
+        } = store.read_segmented_seal_lead(id).unwrap().unwrap();
         assert_eq!(lead, "");
+        assert_eq!((slug.as_str(), source_id.as_str()), ("notes/a", "default"));
         store
             .seal_segmented_page(id, "lead\0 text", Some(&revision))
             .unwrap();
@@ -3171,6 +3568,60 @@ mod segment_chunk_tests {
         );
         // Deferred rows stay until a later delete. Rows without a live offset read last.
         assert_eq!(visible(&store, id), vec!["one", "TWO!", "two", "orphan"]);
+    }
+
+    #[test]
+    fn a_frozen_hit_on_a_chunk_a_deferred_retire_left_reads_no_chunk() {
+        use crate::chunk_queries::{ChunkReadScope, FrozenHit, FrozenHitsInput};
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        second_generation(&store, id);
+        let result = store
+            .flip_body_generation(&flip(
+                id,
+                1,
+                STAGING_2,
+                9,
+                json!({"closeOccurrences": [2], "retireChunkOccurrences": [2], "retireMaxRows": 1}),
+            ))
+            .unwrap();
+        assert!(result.retire_deferred);
+        // The page serves its projection, so a frozen hit on it resolves.
+        store
+            .write(|tx| {
+                let mut page = crate::pages::read_page_by_id(&*tx, id as u64)?.unwrap();
+                page.text_projection_revision = Some(page.knowledge_revision.clone());
+                crate::pages::write_page(tx, &page)
+            })
+            .unwrap();
+        let chunk_id = |text: &str| {
+            crate::chunks::read_chunks(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.chunk_text == text)
+                .unwrap()
+                .id as i64
+        };
+        let hit = |chunk_id: i64, ord: i64| FrozenHit {
+            source_id: "default".into(),
+            slug: "notes/a".into(),
+            chunk_id,
+            ord,
+        };
+        let rows = store
+            .resolve_frozen_hits(&FrozenHitsInput {
+                hits: vec![hit(chunk_id("two"), 1), hit(chunk_id("one"), 2)],
+                scope: ChunkReadScope::default(),
+            })
+            .unwrap();
+        // The retired occurrence's chunk is not part of the live body: its hit keeps the page row with no chunk.
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["ord"], json!(1));
+        assert_eq!(rows[0]["chunk_text"], Value::Null);
+        assert_eq!(rows[1]["chunk_text"], json!("one"));
     }
 
     #[test]
@@ -3607,18 +4058,10 @@ mod segment_chunk_tests {
     }
 }
 
-/// A derivation row checked for `upsertSegmentDerivations`, with its hashes as lowercase hex.
-pub(crate) struct PreparedDerivation<'a> {
-    row: &'a SegmentDerivationInput,
-    segment: String,
-    context: String,
-}
+type PreparedDerivation<'a> = (&'a SegmentDerivationInput, String, String);
 
-/// Checks each row as the `page_segment_derivations` constraints do: a known kind and state, a
-/// version that fits `int4` and is not negative, and 32-byte hashes.
-pub(crate) fn prepare_derivations(
-    rows: &[SegmentDerivationInput],
-) -> Result<Vec<PreparedDerivation<'_>>> {
+/// The rows of `upsertSegmentDerivations`, checked: each hash decoded, kind, state and version valid.
+fn prepare_derivations(rows: &[SegmentDerivationInput]) -> Result<Vec<PreparedDerivation<'_>>> {
     let mut prepared = Vec::with_capacity(rows.len());
     for row in rows {
         let segment = from_hex(
@@ -3638,29 +4081,19 @@ pub(crate) fn prepare_derivations(
                 row.page_id, row.kind, row.occurrence_id
             )));
         }
-        prepared.push(PreparedDerivation {
-            row,
-            segment: to_hex(&segment),
-            context: to_hex(&context),
-        });
+        prepared.push((row, to_hex(&segment), to_hex(&context)));
     }
     Ok(prepared)
 }
 
-/// Inserts or replaces each prepared row in `tx`; a replaced row keeps its `createdAt`. Refuses a
-/// row whose page does not exist and a key repeated in the batch.
-pub(crate) fn put_derivations(
+/// Upserts checked derivation rows in the caller's write transaction; a replaced row keeps its `created_at`.
+fn put_derivations(
     tx: &mut dyn KvWrite,
     prepared: &[PreparedDerivation<'_>],
     now: i64,
 ) -> Result<()> {
     let mut seen = HashSet::new();
-    for PreparedDerivation {
-        row,
-        segment,
-        context,
-    } in prepared
-    {
+    for (row, segment, context) in prepared {
         let Some(page_id) =
             page_u64(row.page_id).filter(|id| matches!(read_page_by_id(&*tx, *id), Ok(Some(_))))
         else {

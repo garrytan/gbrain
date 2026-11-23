@@ -118,6 +118,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_members_read_lineage',
   // GBRA-108 design 1: labelled-only members (doctor/checks/access-labelled-only.ts).
   'access_labelled_only_members',
+  // GBRA-582 item 9: pages no enabled member reads (doctor/checks/access-pages-read-by-nobody.ts).
+  'access_pages_read_by_nobody',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).
@@ -290,6 +292,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'timeline_history',
   // #6147: imported conversation pages that may still carry a typed credential (cached audit).
   'transcript_secret_exposure',
+  // GST-2988 PR 3: the secret store's entries, backups, keys, spool and held-back commits (doctor/checks/secret-store.ts).
+  'secret_store',
   // GST-2768: the conversation archive keeping up with the harness sessions (doctor/checks/transcript-archive.ts).
   'transcript_archive_freshness',
   // GST-2731: facts pages with undated fact lines (doctor/checks/facts-pages.ts).
@@ -441,6 +445,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'host_identity_mismatch',
   // GBRA-248 W0a: managed writes waiting on an owner host quiet past the stale window (doctor/checks/owner-host-stale.ts).
   'owner_host_stale',
+  // A topology change recovering on this host that the Rust engine stops by name (doctor/checks/topology-recovery-stopped.ts).
+  'topology_recovery_stopped',
   // #6696 C6: a live serve or worker on an older build than this checkout (doctor/checks/persistence-consumers.ts).
   'serve_build_drift',
   // #7245: serve, the jobs supervisor, worker parents and job children on different builds (doctor/checks/runtime-build-skew.ts).
@@ -484,6 +490,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #7117: the content-drift sweep's latest batch failed.
   'content_drift_sweep',
   'connector_account_mismatch',
+  // GST-3216: owner identifiers and the owner page (doctor/checks/owner-identity.ts).
+  'owner_identity',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.
   'legacy_job_authority',
   // F3: legacy tokens on the JSONB-only grant shape (info) and grant drift (warn).

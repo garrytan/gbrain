@@ -13,20 +13,15 @@
 //! is stale when its generation is at or below `g` (a later one is a staged write's). An inline chunk
 //! (no segment) is always stale, as its NULL `body_generation` is in SQL.
 
-use super::{
-    BodyState, SegmentDerivationInput, StagingRecord, in_generation, manifest_rows, page_u64,
-    prepare_derivations, put_derivations, read_body_state, staging_id_arg, staging_key,
-};
+use super::{BodyState, in_generation, manifest_rows, page_u64, read_body_state};
 use crate::chunks::{ChunkRecord, delete_chunks_matching, read_chunks};
 use crate::env::iso;
 use crate::kv::KvRead;
-use crate::pages::{
-    PageRecord, all_pages, read_page, read_page_by_id, write_page, write_page_setting_trust,
-};
-use crate::{Result, Store, StoreError, get_json};
+use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id, write_page};
+use crate::{Result, Store, StoreError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 /// `readSegmentedLivePage(pageId)`: the live page a segmented write diffs against.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -94,26 +89,6 @@ pub struct OccurrenceChunkRow {
     pub raw_byte_end: u64,
     pub projected_byte_start: Option<Value>,
     pub projected_byte_end: Option<Value>,
-}
-
-/// `readPageTrustStamp(ref)`: the page's tier and write origin.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct PageTrustStamp {
-    pub id: u64,
-    pub trust_tier: String,
-    pub write_origin: Option<Value>,
-}
-
-/// The page `readPageTrustStamp` names: a live page by `{ sourceId, slug }`, or any page by `{ id }`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PageTrustRef {
-    #[serde(default)]
-    pub source_id: Option<String>,
-    #[serde(default)]
-    pub slug: Option<String>,
-    #[serde(default)]
-    pub id: Option<i64>,
 }
 
 /// The scope of `listSegmentedRechunkCandidates`.
@@ -188,38 +163,6 @@ fn stale_chunk_ids(chunks: &[ChunkRecord], generation: i64, live: &[i64]) -> Vec
 }
 
 impl Store {
-    /// `lockBodyStagingState(stagingId)`: the staging's state, `None` when no staging has that id.
-    /// The store's writes are serialized, so the read needs no row lock.
-    pub fn lock_body_staging_state(&self, staging_id: &str) -> Result<Option<String>> {
-        let id = staging_id_arg(staging_id)?;
-        let read = self.read()?;
-        let staging: Option<StagingRecord> = get_json(&*read, &staging_key(&id))?;
-        Ok(staging.map(|s| s.state))
-    }
-
-    /// `deleteUnstagedSegmentChunks(pageId, generation, keepIndexes)`: deletes the page's segment
-    /// chunk rows of `generation` whose `chunk_index` is not in `keep_indexes` (a dead preparation's
-    /// rows) and returns how many went.
-    pub fn delete_unstaged_segment_chunks(
-        &self,
-        page_id: i64,
-        generation: i64,
-        keep_indexes: &[i64],
-    ) -> Result<usize> {
-        let Some(page) = page_u64(page_id) else {
-            return Ok(0);
-        };
-        let keep: BTreeSet<i64> = keep_indexes.iter().copied().collect();
-        self.write(|tx| {
-            Ok(delete_chunks_matching(tx, page, &|c| {
-                c.segment.is_some_and(|p| {
-                    i64::try_from(p.body_generation).is_ok_and(|g| g == generation)
-                }) && !keep.contains(&i64::from(c.chunk_index))
-            })?
-            .len())
-        })
-    }
-
     /// `readSegmentedLivePage(pageId)`: `None` when no page has that id (deleted pages included).
     pub fn read_segmented_live_page(&self, page_id: i64) -> Result<Option<SegmentedLivePageRow>> {
         let read = self.read()?;
@@ -236,13 +179,6 @@ impl Store {
             page_type: page.page_type,
             body_flags: state.and_then(|s| s.body_flags.clone()),
         }))
-    }
-
-    /// `readSegmentedSealed(sourceId, slug)`: whether the live page's text projection is sealed at
-    /// its revision; false when there is no live page.
-    pub fn read_segmented_sealed(&self, source_id: &str, slug: &str) -> Result<bool> {
-        let read = self.read()?;
-        Ok(live_page(&*read, source_id, slug)?.is_some_and(|p| sealed(&p)))
     }
 
     /// `listChunkedOccurrences(pageId, occurrences, generation)`: the occurrences (input order,
@@ -488,89 +424,6 @@ impl Store {
             write_page(tx, &page)
         })
     }
-
-    /// `storeSegmentDerivationRuns(pageId, generation, rows)`: the derivation driver's guarded
-    /// store (`storeRuns` in `segment-derive.ts`). Inserts or replaces every row on `page_id` as
-    /// `upsertSegmentDerivations` does, only while the page is segmented at `generation`; otherwise
-    /// writes nothing and returns false. Postgres reads the page row `FOR SHARE` in the insert, so
-    /// a purge, rewrite or demotion that moves the generation first leaves nothing written; one
-    /// `Store::write` gives the same order. A missing page returns false.
-    pub fn store_segment_derivation_runs(
-        &self,
-        page_id: i64,
-        generation: i64,
-        rows: &[SegmentDerivationInput],
-    ) -> Result<bool> {
-        let rows: Vec<SegmentDerivationInput> = rows
-            .iter()
-            .map(|row| SegmentDerivationInput {
-                page_id,
-                ..row.clone()
-            })
-            .collect();
-        let prepared = prepare_derivations(&rows)?;
-        let now = self.env.now_micros();
-        self.write(|tx| {
-            let Some(page) = page_by_id(&*tx, page_id)? else {
-                return Ok(false);
-            };
-            let live = read_body_state(&*tx, page.id)?
-                .is_some_and(|s| s.body_storage == "segmented" && s.body_generation == generation);
-            if !live || prepared.is_empty() {
-                return Ok(live);
-            }
-            put_derivations(tx, &prepared, now)?;
-            Ok(true)
-        })
-    }
-
-    /// `readPageTrustStamp(ref)`: the page's `trust_tier` (`unknown` when none is stored) and
-    /// `write_origin`. `{ sourceId, slug }` names a live page, `{ id }` any page.
-    pub fn read_page_trust_stamp(&self, page: &PageTrustRef) -> Result<Option<PageTrustStamp>> {
-        let read = self.read()?;
-        let record = match (page.id, page.source_id.as_deref(), page.slug.as_deref()) {
-            (Some(id), _, _) => page_by_id(&*read, id)?,
-            (None, Some(source_id), Some(slug)) => live_page(&*read, source_id, slug)?,
-            _ => {
-                return Err(StoreError::invalid(
-                    "readPageTrustStamp: name the page by id or by sourceId and slug",
-                ));
-            }
-        };
-        Ok(record.map(|p| PageTrustStamp {
-            id: p.id,
-            trust_tier: p.trust_tier.unwrap_or_else(|| "unknown".into()),
-            write_origin: p.write_origin,
-        }))
-    }
-
-    /// `restorePageTrustStamp(pageId, trustTier, writeOrigin)`: sets the page's tier and origin
-    /// back to what a fence append read before its page write (`withPageTierKept`), through the
-    /// trust stamp as PGLite's trigger runs it on that `UPDATE`: a lowering always holds, a raise
-    /// holds only under a promotion that covers it (`gbrain.write_trust_promotion`) and is refused
-    /// with no write trust declared. Nothing else of the page changes. A missing page is a no-op.
-    pub fn restore_page_trust_stamp(
-        &self,
-        page_id: i64,
-        trust_tier: &str,
-        write_origin: Option<Value>,
-    ) -> Result<()> {
-        use crate::trust::TrustTier;
-        let tier = TrustTier::parse(trust_tier).ok_or_else(|| {
-            StoreError::invalid(format!(
-                "restorePageTrustStamp trustTier: {trust_tier:?} is not a trust tier"
-            ))
-        })?;
-        let write_origin = write_origin.filter(|origin| !origin.is_null());
-        self.write(|tx| {
-            let Some(mut page) = page_by_id(&*tx, page_id)? else {
-                return Ok(());
-            };
-            page.trust_tier = (tier != TrustTier::Unknown).then(|| tier.as_str().to_owned());
-            page.write_origin = write_origin.clone();
-            write_page_setting_trust(tx, &page)
-        })
-    }
 }
 
 fn page_id_i64(id: u64) -> Result<i64> {
@@ -619,15 +472,8 @@ mod tests {
             (1, "segmented", "Flipped")
         );
         assert_eq!(store.read_segmented_live_page(9_999).unwrap(), None);
-        assert!(!store.read_segmented_sealed("default", "notes/a").unwrap());
         let (rev, _) = revision(&store, id);
         store.seal_segmented_page(id, "", Some(&rev)).unwrap();
-        assert!(store.read_segmented_sealed("default", "notes/a").unwrap());
-        assert!(
-            !store
-                .read_segmented_sealed("default", "notes/none")
-                .unwrap()
-        );
         let page = store
             .read_segmented_projection_page("default", "notes/a")
             .unwrap()
@@ -705,12 +551,9 @@ mod tests {
             .map(|c| i64::from(c.chunk_index))
             .collect();
         assert_eq!(staged.len(), 1);
-        assert_eq!(
-            store
-                .delete_unstaged_segment_chunks(id, 2, &indexes)
-                .unwrap(),
-            2
-        );
+        store
+            .delete_unstaged_segment_chunks(id, 2, &indexes)
+            .unwrap();
         let left: Vec<u64> = read_chunks(&*store.read().unwrap(), id as u64)
             .unwrap()
             .iter()
@@ -826,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn updated_at_restores_and_the_trust_stamp_reads_back() {
+    fn updated_at_restores_exactly() {
         let store = crate::test_support::store();
         let id = published(&store);
         store
@@ -835,148 +678,5 @@ mod tests {
         let page = store.read_segmented_rechunk_page(id).unwrap().unwrap();
         assert_eq!(page.updated_us, "1700000000123456");
         assert!(store.restore_page_updated_at(id, "x").is_err());
-        let by_slug = PageTrustRef {
-            source_id: Some("default".into()),
-            slug: Some("notes/a".into()),
-            id: None,
-        };
-        let by_id = PageTrustRef {
-            source_id: None,
-            slug: None,
-            id: Some(id),
-        };
-        let stamp = store.read_page_trust_stamp(&by_slug).unwrap().unwrap();
-        assert_eq!(stamp.id, id as u64);
-        assert_eq!(store.read_page_trust_stamp(&by_id).unwrap(), Some(stamp));
-        assert!(
-            store
-                .read_page_trust_stamp(&PageTrustRef {
-                    source_id: None,
-                    slug: None,
-                    id: None
-                })
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn a_trust_restore_lowers_freely_raises_only_under_a_promotion_and_changes_nothing_else() {
-        let store = crate::test_support::store();
-        let id = published(&store);
-        let by_id = PageTrustRef {
-            source_id: None,
-            slug: None,
-            id: Some(id),
-        };
-        let stamp = |store: &Store| store.read_page_trust_stamp(&by_id).unwrap().unwrap();
-        let page = store.read_segmented_rechunk_page(id).unwrap().unwrap();
-        assert_eq!(stamp(&store).trust_tier, "unknown");
-        // A raise with no write trust declared is refused and leaves the page alone.
-        let err = store
-            .restore_page_trust_stamp(id, "operator_curated", Some(json!({"channel": "owner"})))
-            .unwrap_err();
-        assert_eq!(err.code, crate::trust::TRUST_RAISE_REFUSED);
-        assert_eq!(stamp(&store).trust_tier, "unknown");
-        // Under a promotion that covers it, the raise holds with the restored origin.
-        store
-            .apply_write_trust(
-                &["gbrain.write_trust_promotion".into()],
-                &["operator_curated".into()],
-            )
-            .unwrap();
-        store
-            .restore_page_trust_stamp(id, "operator_curated", Some(json!({"channel": "owner"})))
-            .unwrap();
-        let raised = stamp(&store);
-        assert_eq!(raised.trust_tier, "operator_curated");
-        assert_eq!(raised.write_origin, Some(json!({"channel": "owner"})));
-        store.clear_write_trust();
-        // A lowering needs nothing; a null origin is stored as none.
-        store
-            .restore_page_trust_stamp(id, "agent_written", Some(Value::Null))
-            .unwrap();
-        let lowered = stamp(&store);
-        assert_eq!(lowered.trust_tier, "agent_written");
-        assert_eq!(lowered.write_origin, None);
-        // Nothing else of the page moved: not its revision, its seal or its updated_at.
-        assert_eq!(
-            store.read_segmented_rechunk_page(id).unwrap().unwrap(),
-            page
-        );
-        assert!(store.restore_page_trust_stamp(id, "nope", None).is_err());
-        store
-            .restore_page_trust_stamp(999_999, "agent_written", None)
-            .unwrap();
-    }
-
-    #[test]
-    fn a_guarded_derivation_store_writes_only_at_the_live_generation() {
-        let store = crate::test_support::store();
-        let id = published(&store);
-        let row = |occ: i64, output: Value| -> SegmentDerivationInput {
-            serde_json::from_value(json!({
-                "pageId": 0, "kind": "links", "occurrenceId": occ, "version": 1,
-                "segmentSha256": "ab".repeat(32), "contextHash": "cd".repeat(32), "state": "done",
-                "output": output, "receipt": null,
-            }))
-            .unwrap()
-        };
-        let stored = |store: &Store| -> Vec<(i64, Value)> {
-            store
-                .read_segment_derivations(id, &Default::default())
-                .unwrap()
-                .into_iter()
-                .map(|r| (r["occurrenceId"].as_i64().unwrap(), r["output"].clone()))
-                .collect()
-        };
-        assert!(
-            store
-                .store_segment_derivation_runs(
-                    id,
-                    1,
-                    &[row(1, json!({ "a": 1 })), row(2, json!({ "run": 1 }))]
-                )
-                .unwrap()
-        );
-        assert_eq!(
-            stored(&store),
-            vec![(1, json!({ "a": 1 })), (2, json!({ "run": 1 }))]
-        );
-        assert!(
-            store
-                .store_segment_derivation_runs(id, 1, &[row(1, json!({ "a": 2 }))])
-                .unwrap()
-        );
-        assert_eq!(stored(&store)[0], (1, json!({ "a": 2 })));
-        assert!(
-            !store
-                .store_segment_derivation_runs(id, 2, &[row(3, json!({}))])
-                .unwrap()
-        );
-        assert!(
-            !store
-                .store_segment_derivation_runs(9_999, 1, &[row(3, json!({}))])
-                .unwrap()
-        );
-        assert_eq!(stored(&store).len(), 2);
-        second_generation(&store, id);
-        store
-            .flip_body_generation(&flip(id, 1, STAGING_2, 9, json!({"closeOccurrences": [2]})))
-            .unwrap();
-        assert!(
-            !store
-                .store_segment_derivation_runs(id, 1, &[row(3, json!({}))])
-                .unwrap()
-        );
-        assert_eq!(stored(&store).len(), 2);
-        let mut bad = row(4, json!({}));
-        bad.kind = "nope".into();
-        assert_eq!(
-            store
-                .store_segment_derivation_runs(id, 2, &[bad])
-                .unwrap_err()
-                .code,
-            crate::error::CONSTRAINT_VIOLATION
-        );
     }
 }

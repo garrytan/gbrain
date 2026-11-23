@@ -201,3 +201,17 @@ export async function decideWriteGateHold(exec: SqlExecutor, id: number, status:
     [id, status, decidedBy]);
   return rows.length > 0;
 }
+
+/** The filter of `listTrustAllowRuleRows`: the sources to read (all when absent or empty), and whether removed rules count. */
+export interface TrustAllowRuleListOpts { sourceIds?: string[]; includeRemoved?: boolean }
+
+/**
+ * The owner's write-gate allow rules (`trust_allow_rules`, trust/allow-rules.ts), as stored, by id. Active rules only
+ * unless `includeRemoved`. trust/allow-rules.ts normalizes each row.
+ */
+export async function listTrustAllowRuleRows(exec: LegacyUnscopedRead, opts: TrustAllowRuleListOpts = {}): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>(
+    `SELECT * FROM trust_allow_rules WHERE ($1::boolean OR removed_at IS NULL) AND ($2::text[] IS NULL OR source_id = ANY($2::text[])) ORDER BY id`,
+    [opts.includeRemoved === true, opts.sourceIds?.length ? opts.sourceIds : null]);
+}
+

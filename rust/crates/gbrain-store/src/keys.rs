@@ -59,7 +59,10 @@ pub const RAW_FILES: u8 = b'r';
 pub const LINK_QUERIES: u8 = b'q';
 /// Family `timeline_queries` (`timeline_queries.rs`).
 pub const TIMELINE_QUERIES: u8 = b'u';
-/// Family `keyword` (`keyword.rs`).
+/// Family `keyword` (`keyword.rs`): the keyword index of store format 4. Kind byte after the tag:
+/// `0x00` the index state, `0x01` chunk and `0x02` page lexeme postings, `0x03` title trigrams,
+/// `0x04` slug basenames, `0x05` and `0x06` the chunk and page forward records (the `KW_*`
+/// constants and builders below; `rust/docs/store/keyword.md`, "Keys").
 pub const TRIGRAM: u8 = b'R';
 /// Family `chunk_queries` (`chunk_queries.rs`).
 pub const CHUNK_QUERIES: u8 = b'c';
@@ -73,7 +76,10 @@ pub const LOCK_QUEUE: u8 = b'w';
 pub const RELATION_CATALOG: u8 = b'v';
 /// Family `persistence` (`persistence.rs`): effects, checkpoints, bindings and the page
 /// projection queue. Its write requests stay under `REQUEST` and `REQUEST_ID`, and its local
-/// writers under `WRITER`.
+/// writers under `WRITER`. The byte after `d`: `0x01` counters, `0x02` housekeeping
+/// checkpoints, `0x03` topology changes, `0x04` page projection jobs, `0x05` to `0x07` effect
+/// rows, effect order and operation checkpoint paths, `0x08` the commit notifier
+/// (`persistence/notifier.rs`; `d 0x08 0x01 <host_id>` is the host lease).
 pub const PERSISTENCE: u8 = b'd';
 /// Family `jobs` (`jobs.rs`).
 pub const JOBS: u8 = b'm';
@@ -96,6 +102,25 @@ pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
 pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
+/// Family `entity_identities` (`entity_identities.rs`).
+pub const ENTITY_IDENTITY: u8 = b'i';
+/// Family `session_state` (`session_state.rs`).
+pub const SESSION_STATE: u8 = b'y';
+/// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
+pub const DERIVED_GENERATION: u8 = b'h';
+/// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03, member links 0x04
+/// (access_member_links.rs).
+pub const ACCESS_MEMBERS: u8 = b'x';
+/// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
+/// revisions. The byte after the tag names the table; the module owns the sub-tags.
+pub const ACCESS_RULES: u8 = b'z';
+/// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
+/// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
+/// uses a digit; `y` is `SESSION_STATE`.
+pub const REASON_TOMBSTONE: u8 = b'1';
+// Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
+// at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
+// record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
@@ -110,6 +135,76 @@ pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
 
 pub fn meta(name: &str) -> Vec<u8> {
     text(META, &[name])
+}
+
+/// `R 0x00`: the keyword index state (`keyword/index.rs`). Kind byte 0x00 of the `keyword`
+/// family; its later kinds are listed in `keyword.rs`.
+pub fn keyword_index_state() -> Vec<u8> {
+    vec![TRIGRAM, KW_STATE]
+}
+
+/// The kind bytes of the keyword index records (`keyword.rs` lists them).
+pub const KW_STATE: u8 = 0x00;
+pub const KW_CHUNK_POSTING: u8 = 0x01;
+pub const KW_PAGE_POSTING: u8 = 0x02;
+pub const KW_TITLE_TRIGRAM: u8 = 0x03;
+pub const KW_BASENAME: u8 = 0x04;
+pub const KW_CHUNK_FORWARD: u8 = 0x05;
+pub const KW_PAGE_FORWARD: u8 = 0x06;
+
+/// `R kind len(2) text`: the start of the postings of one lexeme or basename. The length prefix
+/// keeps one text's range apart from a longer text that starts with it.
+pub fn keyword_term_prefix(kind: u8, term: &[u8]) -> Vec<u8> {
+    let len = u16::try_from(term.len()).unwrap_or(u16::MAX);
+    let mut key = Vec::with_capacity(4 + term.len() + 12);
+    key.extend_from_slice(&[TRIGRAM, kind]);
+    key.extend_from_slice(&len.to_be_bytes());
+    key.extend_from_slice(term);
+    key
+}
+
+/// `R 0x01 len(2) lexeme page_id chunk_index`: a chunk's entry for one lexeme.
+pub fn chunk_posting(lexeme: &str, page_id: u64, index: u32) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_CHUNK_POSTING, lexeme.as_bytes());
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
+/// `R 0x02 len(2) lexeme page_id`: a page vector's entry for one lexeme.
+pub fn page_posting(lexeme: &str, page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_PAGE_POSTING, lexeme.as_bytes());
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x03 len(2) trigram page_id`: a page whose title has the raw pg_trgm trigram (`trgm.rs`).
+pub fn title_trigram_posting(trigram: [u8; 3], page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_TITLE_TRIGRAM, &trigram);
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x04 len(2) basename page_id`: a page whose slug ends in `basename`.
+pub fn basename_posting(basename: &str, page_id: u64) -> Vec<u8> {
+    let mut key = keyword_term_prefix(KW_BASENAME, basename.as_bytes());
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
+}
+
+/// `R 0x05 page_id chunk_index`: the lexemes a chunk has postings for.
+pub fn chunk_forward(page_id: u64, index: u32) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_CHUNK_FORWARD];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
+}
+
+/// `R 0x06 page_id`: the lexemes, title trigrams and basename a page has postings for.
+pub fn page_forward(page_id: u64) -> Vec<u8> {
+    let mut key = vec![TRIGRAM, KW_PAGE_FORWARD];
+    key.extend_from_slice(&page_id.to_be_bytes());
+    key
 }
 
 /// `P source \0 slug`

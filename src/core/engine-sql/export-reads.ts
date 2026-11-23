@@ -56,10 +56,10 @@ export interface ExportWithdrawalRow { visibility: string; fact_hash: string; wi
 
 /** The source's withdrawals and purge tombstones, by visibility, fact hash and subject. */
 export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<ExportWithdrawalRow[]> {
-  return tx.executeRaw<ExportWithdrawalRow>(`SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
+  return tx.executeRaw<ExportWithdrawalRow>(`SELECT * FROM (SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
     FROM fact_withdrawals WHERE source_id=$1
-    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1
-    ORDER BY visibility,fact_hash,subject`, [sourceId]);
+    UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1) w
+    ORDER BY visibility COLLATE "C",fact_hash COLLATE "C",subject COLLATE "C"`, [sourceId]);
 }
 
 /** A page the export writes, with its tags in tag order. */
@@ -73,7 +73,7 @@ export async function readExportPageRows(tx: Raw, ids: readonly string[]): Promi
   const rows = await tx.executeRaw<Record<string, unknown>>(`WITH export_page AS MATERIALIZED (
     SELECT * FROM pages WHERE id = ANY($1::bigint[])
   ) SELECT p.*,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS export_tags
     FROM export_page p WHERE p.deleted_at IS NULL`,
   [ids]);
   return rows.map(row => ({ page: rowToPage(row), tags: row.export_tags as string[] }));
@@ -194,39 +194,10 @@ export async function readSegmentedVersionBodyBytes(tx: Raw, pageId: number, gen
   return row ? Number(row.body_bytes) : null;
 }
 
-/** GST-1209: a live page stored in segments whose live generation's rows do not tile its body (`listUntiledSegmentedPages`). */
-export interface UntiledPage {
-  source_id: string; slug: string; page_id: number; revision: string; body_generation: number; body_bytes: number;
-  segment_count: number | null; source_path: string | null;
-  /** The live generation's rows, and the bytes they cover gapless from 0 (null: they leave a gap). */
-  rows: number; covered_bytes: number | null;
-}
 
-export interface UntiledPagesQuery { sourceIds?: readonly string[]; slugs?: readonly string[]; limit?: number }
 
-/**
- * GST-1209: the live (not deleted) pages of unarchived sources stored in segments whose live generation's rows do not cover
- * body_bytes gapless from 0, so every read of them refuses page_body_rows_unreadable. One aggregate per page over its live
- * rows, read-only; `sourceIds` and `slugs` narrow the scan, `limit` (default 1,000) bounds the list, ordered by source id
- * then slug in byte order.
- */
-export async function listUntiledSegmentedPages(tx: Raw, q: UntiledPagesQuery = {}): Promise<UntiledPage[]> {
-  const sourceIds = q.sourceIds ? [...q.sourceIds] : null;
-  const slugs = q.slugs ? [...q.slugs] : null;
-  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.source_id, p.slug, p.knowledge_revision::text AS revision, p.body_generation, p.body_bytes,
-      p.segment_count, p.source_path, t.n, t.covered, t.gapless
-       FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE CROSS JOIN LATERAL (${trustedSql(liveTilingSql('p'))}) t
-      WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL AND (${sourceIds}::text[] IS NULL OR p.source_id = ANY(${sourceIds}::text[]))
-        AND (${slugs}::text[] IS NULL OR p.slug = ANY(${slugs}::text[])) AND ${trustedSql(untiledSql('p', 't'))}
-      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C" LIMIT ${q.limit ?? 1000}`);
-  const rows = await tx.executeRaw<{ id: number; source_id: string; slug: string; revision: string; body_generation: unknown; body_bytes: unknown;
-    segment_count: number | null; source_path: string | null; n: unknown; covered: unknown; gapless: boolean }>(text, params);
-  return rows.map(row => ({ source_id: row.source_id, slug: row.slug, page_id: Number(row.id), revision: row.revision, body_generation: Number(row.body_generation),
-    body_bytes: Number(row.body_bytes), segment_count: row.segment_count === null ? null : Number(row.segment_count), source_path: row.source_path,
-    rows: Number(row.n), covered_bytes: row.gapless ? Number(row.covered) : null }));
-}
 
 /** The sources with an access policy (folder rules or pending coverage), in id order: the rulebooks an export of every source carries. */
 export async function listAccessPolicySourceIds(tx: Raw): Promise<string[]> {
-  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return (await tx.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id COLLATE "C"')).map(r => r.source_id);
 }

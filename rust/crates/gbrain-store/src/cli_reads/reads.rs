@@ -18,8 +18,10 @@ use super::pg_text::{
 };
 use crate::alias_fanout_reads::reject_nul;
 use crate::aliases::alias_row_slugs;
+use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::chunks::{read_chunks, read_segment_view};
 use crate::error::{INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::KvRead;
 use crate::links::out_links;
 use crate::pages::{PageRecord, all_pages, read_page, read_page_by_id};
@@ -44,14 +46,14 @@ const NON_RANKING_LINK_TYPES: &[&str] = &["amends"];
 // ---------------------------------------------------------------------------------------------
 
 /// `servedTextProjectionFilter`: the current projection, or the pre-activation marker.
-fn served(page: &PageRecord) -> bool {
+pub(super) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(rev) => rev == page.knowledge_revision || rev == ACTIVATION_SERVED_REVISION,
         None => false,
     }
 }
 
-fn has_key(page: &PageRecord, key: &str) -> bool {
+pub(super) fn has_key(page: &PageRecord, key: &str) -> bool {
     page.frontmatter.contains_key(key)
 }
 
@@ -62,13 +64,13 @@ fn row_count(value: i64, what: &str) -> Result<usize> {
 }
 
 /// Source archive flags, read once per source. A page whose source is missing is not joined.
-struct Sources<'a> {
+pub(super) struct Sources<'a> {
     read: &'a dyn KvRead,
     archived: HashMap<String, Option<bool>>,
 }
 
 impl<'a> Sources<'a> {
-    fn new(read: &'a dyn KvRead) -> Self {
+    pub(super) fn new(read: &'a dyn KvRead) -> Self {
         Self {
             read,
             archived: HashMap::new(),
@@ -86,7 +88,7 @@ impl<'a> Sources<'a> {
     }
 
     /// `JOIN sources s ... AND NOT s.archived`.
-    fn live(&mut self, id: &str) -> Result<bool> {
+    pub(super) fn live(&mut self, id: &str) -> Result<bool> {
         Ok(self.archived(id)? == Some(false))
     }
 }
@@ -168,21 +170,33 @@ impl EntityTypeFilter {
     }
 }
 
-/// `remote: { excludePrivate }` of the whois and rank_entities statements.
+/// `remote: { excludePrivate, policy }` of the whois and rank_entities statements. With
+/// `exclude_private`, `policy` is the page policy the TypeScript member read from the rendered
+/// `privatePagesFilterForCaller` fragment (private-provenance.ts `storePagePolicy`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RemoteCaller {
     pub exclude_private: bool,
+    /// The caller's page policy (`privatePagesFilterForCaller('p')`) when the member serves
+    /// `excludePrivate`. `exclude_private` with no policy refuses.
+    pub policy: Option<PrivacyPolicy>,
 }
 
-fn refuse_private(remote: &Option<RemoteCaller>, member: &str) -> Result<()> {
-    if remote.as_ref().is_some_and(|r| r.exclude_private) {
-        return Err(StoreError::new(
-            INVALID_ARGUMENT,
-            format!("{member}: excludePrivate is not supported by the rust engine"),
-        ));
+/// The page policy a remote read applies, or None when it reads no private filter. A read that
+/// asks for `exclude_private` with no policy is refused: the store never guesses the caller.
+fn private_policy<'a>(
+    remote: &'a Option<RemoteCaller>,
+    member: &str,
+) -> Result<Option<&'a PrivacyPolicy>> {
+    match remote {
+        Some(r) if r.exclude_private => r.policy.as_ref().map(Some).ok_or_else(|| {
+            StoreError::new(
+                INVALID_ARGUMENT,
+                format!("{member}: excludePrivate needs the caller's page policy"),
+            )
+        }),
+        _ => Ok(None),
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -204,6 +218,11 @@ pub struct ExactBatchInput {
     pub exclude_slug_prefixes: Vec<String>,
     pub after: i64,
     pub batch_pages: i64,
+    /// `remote`: match only chunks past the chunker-version fence (`safeChunksFilter(p)`), and
+    /// report a page below it with no match as `unsealed`.
+    pub remote: bool,
+    /// `excludePrivate`: the caller's page policy (`storePagePolicy` with caller readers).
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -312,6 +331,8 @@ pub struct ExactIdentityProbes {
     pub basenames: Vec<String>,
     pub alias_keys: Vec<String>,
     pub emails: Vec<String>,
+    /// Digit strings a stored `phone` / `phones` value may reduce to.
+    pub phones: Vec<String>,
 }
 
 /// `ExactIdentityStatementOpts`.
@@ -322,6 +343,8 @@ pub struct ExactIdentityInput {
     pub source_ids: Vec<String>,
     pub types: EntityTypeFilter,
     pub remote: Option<RemoteCaller>,
+    /// Probe only the email, basename and alias arms: no title arm, no phone arm.
+    pub emails_only: bool,
     pub limit: i64,
 }
 
@@ -335,7 +358,31 @@ pub struct ExactIdentityRow {
     pub page_type: String,
     pub email: Value,
     pub emails: Value,
+    pub phone: Value,
+    pub phones: Value,
     pub aliases: Value,
+}
+
+/// The phone arm: `frontmatter ? key`, then each element of the value (a scalar counts as a list
+/// of one) as `jsonb_array_elements_text` writes it, reduced to its digits, equals a probe.
+fn holds_phone(frontmatter: &Map<String, Value>, key: &str, digits: &[String]) -> bool {
+    let reduce = |v: &Value| -> Option<String> {
+        let text = match v {
+            Value::Null => return None,
+            Value::String(s) => s.clone(),
+            other => crate::jsonb::order(other.clone()).to_string(),
+        };
+        Some(text.chars().filter(char::is_ascii_digit).collect())
+    };
+    let elements: Vec<&Value> = match frontmatter.get(key) {
+        None => return false,
+        Some(Value::Array(items)) => items.iter().collect(),
+        Some(v) => vec![v],
+    };
+    elements
+        .into_iter()
+        .filter_map(reduce)
+        .any(|d| digits.contains(&d))
 }
 
 /// `frontmatter @> {key: v}` or `frontmatter @> {key: [v]}`.
@@ -388,7 +435,7 @@ pub struct RankEntityRow {
 
 /// `retiredPageSql`: canonical false/no, a superseded_by or merged_into value, or an alias /
 /// redirect status word.
-fn retired(fm: &Map<String, Value>) -> bool {
+pub(crate) fn retired(fm: &Map<String, Value>) -> bool {
     let canonical = pg_lower(&fm_text(fm, "canonical").unwrap_or_default());
     canonical == "false"
         || canonical == "no"
@@ -508,7 +555,13 @@ impl Store {
                         .exclude_slug_prefixes
                         .iter()
                         .any(|p| !p.is_empty() && page.slug.starts_with(p.as_str()));
-                if in_scope && sources.live(&page.source_id)? {
+                if in_scope
+                    && sources.live(&page.source_id)?
+                    && match &input.exclude_private {
+                        Some(policy) => !page_hidden(&*read, &page, policy)?,
+                        None => true,
+                    }
+                {
                     batch.push(page);
                 }
                 Ok(batch.len() < limit)
@@ -526,9 +579,11 @@ impl Store {
             } else {
                 Vec::new()
             };
+            // `safeChunksFilter(p)`; a record with no version is below the fence (Postgres stores 1).
+            let sealed = page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION;
             let mut count = 0u32;
             let mut snippets = Vec::new();
-            for chunk in &visible {
+            for chunk in visible.iter().filter(|_| sealed || !input.remote) {
                 if !like_contains(&chunk.chunk_text, &input.longest, input.case_sensitive) {
                     continue;
                 }
@@ -547,6 +602,8 @@ impl Store {
             let has_body = !page.compiled_truth.is_empty() || !page.timeline.is_empty();
             let gap = if count > 0 {
                 None
+            } else if input.remote && !sealed {
+                Some("unsealed")
             } else if !served(&page) {
                 Some("projection_pending")
             } else if visible.is_empty() && has_body {
@@ -594,7 +651,7 @@ impl Store {
         input: &ExactIdentityInput,
     ) -> Result<Vec<ExactIdentityRow>> {
         const MEMBER: &str = "listExactIdentityCandidates";
-        refuse_private(&input.remote, MEMBER)?;
+        let policy = private_policy(&input.remote, MEMBER)?;
         let limit = row_count(input.limit, "LIMIT")?;
         let probes = &input.probes;
         reject_nul(
@@ -605,12 +662,17 @@ impl Store {
                 .chain(&probes.basenames)
                 .chain(&probes.alias_keys)
                 .chain(&probes.emails)
+                .chain(&probes.phones)
                 .chain(&input.source_ids)
                 .map(String::as_str),
         )?;
         let read = self.read()?;
         let mut sources = Sources::new(&*read);
         let raw_key = pg_lower(&probes.title_raw);
+        // The title arm runs only with a title key or a raw title; a contact match never matches names.
+        let title_arm =
+            !input.emails_only && (!probes.title_keys.is_empty() || !probes.title_raw.is_empty());
+        let phone_arm = !input.emails_only && !probes.phones.is_empty();
         // The alias arm: `page_aliases.alias_norm = key` joined to the page at the row's slug.
         let mut aliased: BTreeSet<(String, String)> = BTreeSet::new();
         for source in &input.source_ids {
@@ -627,8 +689,10 @@ impl Store {
             }
             let title = pg_lower(&page.title);
             let basename = page.slug.rsplit('/').next().unwrap_or("");
-            let hit = title == raw_key
-                || probes.title_keys.contains(&title)
+            let hit = (title_arm && (title == raw_key || probes.title_keys.contains(&title)))
+                || (phone_arm
+                    && (holds_phone(&page.frontmatter, "phone", &probes.phones)
+                        || holds_phone(&page.frontmatter, "phones", &probes.phones)))
                 || probes.basenames.iter().any(|b| b == basename)
                 || aliased.contains(&(page.source_id.clone(), page.slug.clone()))
                 || probes.emails.iter().any(|e| {
@@ -643,6 +707,12 @@ impl Store {
             {
                 continue;
             }
+            // The privacy filter is a WHERE clause: it runs before LIMIT.
+            if let Some(policy) = policy
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             let key = (
                 page.source_id.clone().into_bytes(),
                 page.slug.clone().into_bytes(),
@@ -652,6 +722,8 @@ impl Store {
                 ExactIdentityRow {
                     email: fm_value(&page.frontmatter, "email"),
                     emails: fm_value(&page.frontmatter, "emails"),
+                    phone: fm_value(&page.frontmatter, "phone"),
+                    phones: fm_value(&page.frontmatter, "phones"),
                     aliases: fm_value(&page.frontmatter, "aliases"),
                     slug: page.slug,
                     source_id: page.source_id,
@@ -666,7 +738,7 @@ impl Store {
     /// `rankEntities`: entity pages ranked by distinct in-scope edges, retired pages folded into the
     /// live page their redirect chain reaches.
     pub fn rank_entities(&self, input: &RankEntitiesInput) -> Result<Vec<RankEntityRow>> {
-        refuse_private(&input.remote, "rankEntities")?;
+        let policy = private_policy(&input.remote, "rankEntities")?;
         let limit = row_count(input.limit, "LIMIT")?;
         let folded_cap = row_count(input.folded_cap, "LIMIT")?;
         let key_of: fn(i64, i64) -> i64 = match input.direction.as_str() {
@@ -690,7 +762,11 @@ impl Store {
                     .as_ref()
                     .is_none_or(|ids| ids.contains(&page.source_id))
                 && (input.remote.is_none()
-                    || (!has_key(&page, "quarantine") && sources.live(&page.source_id)?));
+                    || (!has_key(&page, "quarantine") && sources.live(&page.source_id)?))
+                && match policy {
+                    Some(policy) => !page_hidden(&*read, &page, policy)?,
+                    None => true,
+                };
             if readable {
                 pages.insert(page.id, page);
             }

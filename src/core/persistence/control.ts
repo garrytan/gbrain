@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest } from './authority.ts';
-import { completeWrite, getWriteRequest, lockCounters } from './journal.ts';
+import { cancelLockedWrite, getWriteRequest, lockCounters } from './journal.ts';
 import { isTerminal, principalKey, type Principal, type WriteRequest } from './model.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 
@@ -16,20 +16,8 @@ export async function listWriteRequests(engine: BrainEngine, principal: Principa
   let before = opts.before;
   let examined = 0;
   for (;;) {
-    const rows = await engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-      JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation AND NOT s.archived
-      WHERE r.principal_kind=$1 AND r.principal_id=$2 AND r.source_id=$3
-      AND ($4::bigint IS NULL OR r.sequence<$4::bigint)
-      AND ($6::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($6::text[]) AS p(prefix)
-        WHERE length(p.prefix)>0 AND (CASE WHEN right(p.prefix,1)='/'
-          THEN left(lower(r.slug),length(p.prefix))=p.prefix
-          ELSE lower(r.slug)=p.prefix OR left(lower(r.slug),length(p.prefix)+1)=p.prefix||'/' END)))
-      AND ($7::text[] IS NULL OR COALESCE(r.authority->>'attestedOp', r.operation)=ANY($7::text[]))
-      AND ($8::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($8::text[]) AS a(pattern)
-        WHERE CASE WHEN right(a.pattern,2)='/*' THEN left(r.slug,length(a.pattern)-1)=left(a.pattern,length(a.pattern)-1)
-          ELSE r.slug=a.pattern END))
-      ORDER BY r.sequence DESC LIMIT $5`,
-    [principal.kind, principal.id, opts.sourceId, before ?? null, limit + 1, opts.slugPrefixes ?? null, opts.operations ?? null, opts.slugAllowList ?? null]);
+    const rows = await engine.listWriteRequestRows(principal.kind, principal.id, opts.sourceId, { before: before ?? null, limit: limit + 1,
+      slugPrefixes: opts.slugPrefixes ?? null, operations: opts.operations ?? null, slugAllowList: opts.slugAllowList ?? null });
     if (!rows.length) return { requests: visible, next: null };
     for (const row of rows) {
       if (++examined > 1000) throw new OperationError('unavailable', 'Receipt listing exceeded its authorization scan budget.',
@@ -52,14 +40,16 @@ export async function cancelWriteRequest(engine: BrainEngine, principal: Princip
     await declarePersistenceProtocol(tx);
     await authorizeStoredRequest(tx, row, true);
     await lockCounters(tx, ['brain', principalKey(principal), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
-    const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+    // The row lock through the typed member every engine serves (engine-sql/persistence-journal.ts: the same FOR UPDATE).
+    const current = await tx.lockWriteRequest(row.id);
     if (!current) return null;
     await opts.authorize?.(tx, current);
     if (isTerminal(current)) return current;
     // A persisted recovery record means publication may have begun even when
     // the final transaction's publication_started flag was rolled back.
     if (current.publication_started || current.recovery) return current;
-    return completeWrite(tx, current, 'cancelled', {}, { code: 'cancelled', message: 'Cancelled before publication.' });
+    // The engine re-checks and completes the row in one step (cancelWriteRow): exactly one of two racing cancels ends it.
+    return cancelLockedWrite(tx, current, current);
   });
 }
 export { readWriterDiagnostics as writerDiagnostics } from './diagnostics.ts';

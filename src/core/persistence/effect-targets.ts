@@ -34,6 +34,7 @@ export async function upgradeWithdrawalEffect(engine: BrainEngine, effect: Persi
     await guardEffectSource(tx, effect, hostId);
     // Key discovery on the request's own forgotten fact; fall back to the
     // whole ledger only when that fact row no longer exists.
+    // The claim order never reaches output: every claim of the one withdrawal is read (no LIMIT) and only feeds target discovery, which keys its result by page.
     const requested = await tx.executeRaw<WithdrawalClaim>(`SELECT w.visibility,w.fact_hash,w.subject,f.fact AS claim
       FROM persistence_requests r JOIN facts f ON r.intent->>'id' ~ '^[0-9]+$' AND f.id=(r.intent->>'id')::bigint AND f.source_id=$1
       JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility

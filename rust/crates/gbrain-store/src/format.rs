@@ -20,9 +20,17 @@ use std::path::Path;
 ///   sequence beside the id counters (`redb_kv::SEQ_KEY`). A format-2 brain is upgraded when it
 ///   opens; a build that reads only formats 1 and 2 refuses a format-3 brain instead of failing
 ///   on its jobs.
-pub const FORMAT_VERSION: u32 = 3;
+/// - 4: the store keeps keyword postings (`keyword/index.rs`) and every write keeps them in step.
+///   The upgrade clears them and marks the index incomplete in the same transaction; a background
+///   build fills them (`keyword/index_build.rs`). A build without the index refuses a format-4
+///   brain, as its writes would leave the postings stale.
+/// - 5: a take record carries its `trust_tier` and `write_origin` (`trust/row_trust.rs`), stamped
+///   by every takes writer (`takes::store_take`). Nothing is rewritten: a take stored before reads
+///   `unknown`, the column default. A build without the field refuses a format-5 brain, as a take it
+///   rewrote would lose its tier.
+pub const FORMAT_VERSION: u32 = 5;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

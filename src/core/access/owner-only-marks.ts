@@ -31,6 +31,11 @@ export interface OwnerOnlyTriggerState {
   unflagged: boolean;
   /** Logins that read `sources` but cannot read and add marks, quoted, with the quoted names of the policies doctor prints; empty unless `held`. */
   deniedLogins: Array<{ login: string; readPolicy: string; addPolicy: string }>;
+  /**
+   * Logins that read `sources` but not every row of each owner-only lineage table (v328): on a held brain they read
+   * owner-only lineage closed. `tables` lists the tables to open, `policy` the quoted policy name the doctor fix uses.
+   */
+  closedLogins: Array<{ login: string; policy: string; tables: string[] }>;
 }
 
 /** Every migration run: create each delete trigger a role that owns its table can now create; name what is left. Never throws. */

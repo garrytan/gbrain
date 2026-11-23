@@ -124,11 +124,11 @@ export async function dailyDecideSpend(tx: Raw, since: Date): Promise<{ total: n
 
 export interface DecideSpendSlotTotals { slot: string; input_tokens: number; cost_usd: number; requests: number }
 
-/** Spend totals per slot over the whole ledger, in slot order (byte order, so every engine lists them alike). */
+/** Spend totals per slot over the whole ledger, one row per slot, in the database's own order, as master read them. */
 export async function listDecideSpendBySlot(tx: Raw): Promise<DecideSpendSlotTotals[]> {
   const rows = await tx.executeRaw<{ slot: string; tokens: number | string; cost: number | string; n: number | string }>(
     `SELECT slot, COALESCE(SUM(input_tokens), 0) AS tokens, COALESCE(SUM(cost_usd), 0) AS cost, COUNT(*) AS n
-       FROM decide_spend GROUP BY slot ORDER BY slot COLLATE "C"`,
+       FROM decide_spend GROUP BY slot`,
   );
   return rows.map((r) => ({ slot: String(r.slot), input_tokens: Number(r.tokens), cost_usd: Number(r.cost), requests: Number(r.n) }));
 }
@@ -237,7 +237,7 @@ const numOrNull = (v: unknown): number | null => (v === null || v === undefined 
 
 /**
  * Receipt counts over the last `sinceHours` hours, per slot, mode, outcome and error reason (aggregates only, never text),
- * in that order (byte order, a null error reason last).
+ * in that order, by byte (`COLLATE "C"`, as PGLite sorts).
  */
 export async function listDecideReceiptStats(tx: Raw, opts: { slot?: string; sinceHours: number }): Promise<DecideReceiptStat[]> {
   const rows = await tx.executeRaw<Record<string, unknown>>(
@@ -294,12 +294,12 @@ export interface DecideReplayReceipt {
   outcome: string;
 }
 
-/** The decision rows of `slot` over the last `sinceHours` hours that a replay reads, by decision id, then rank (null last), then insertion order. */
+/** The decision rows of `slot` over the last `sinceHours` hours that a replay reads, by decision id (byte order), then rank (null last), then insertion order. */
 export async function listDecideReplayReceipts(tx: Raw, slot: string, sinceHours: number): Promise<DecideReplayReceipt[]> {
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT decision_id, answer_value, protected, rank, min_keep, outcome FROM decision_receipts
       WHERE slot = $1 AND created_at >= now() - ($2::int * interval '1 hour') AND outcome IN ('kept','pruned','margin_hold','pass','reject','quarantine','insufficient_context')
-      ORDER BY decision_id COLLATE "C", rank, id`,
+      ORDER BY decision_id COLLATE "C", rank`,
     [slot, sinceHours],
   );
   return rows.map((r) => ({
@@ -316,7 +316,7 @@ export async function listDecideResolvedModels(tx: Raw, sinceHours: number): Pro
     `SELECT slot, provider, model_resolved, COUNT(*)::int AS n, MAX(created_at) AS last_at FROM decision_receipts
       WHERE model_resolved IS NOT NULL AND created_at >= now() - ($1::int * interval '1 hour')
       GROUP BY slot, provider, model_resolved
-      ORDER BY MAX(created_at) DESC, slot COLLATE "C", provider COLLATE "C", model_resolved COLLATE "C"`,
+      ORDER BY MAX(created_at) DESC`,
     [sinceHours],
   );
   return rows.map((r) => ({
@@ -330,7 +330,7 @@ export async function listDecideMixedModelDecisions(tx: Raw, sinceHours: number)
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT slot, COUNT(*)::int AS n FROM decision_receipts
       WHERE created_at >= now() - ($1::int * interval '1 hour') AND error_reason = 'mixed_model'
-      GROUP BY slot ORDER BY slot COLLATE "C"`,
+      GROUP BY slot`,
     [sinceHours],
   );
   return rows.map((r) => ({ slot: String(r.slot), n: Number(r.n) }));
@@ -437,7 +437,7 @@ export async function storeDecideQualification(tx: Raw, id: number, q: DecideQua
   );
 }
 
-/** The calibrations (retired ones only when asked for), by slot in byte order, then newest first, then highest id first. */
+/** The calibrations (retired ones only when asked for), by slot, then newest first, then highest id first. */
 export async function listDecideCalibrations(tx: Raw, opts: { slot?: string; includeRetired?: boolean } = {}): Promise<DecideCalibration[]> {
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT * FROM decide_calibrations

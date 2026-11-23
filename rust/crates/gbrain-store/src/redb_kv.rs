@@ -4,11 +4,13 @@
 //! kept under key `M\0seq` and is bumped inside every write transaction, so it commits atomically
 //! with the records it counts.
 
-use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, STORE_LOCKED, StoreError};
+use crate::error::{
+    READ_ONLY_TRANSACTION, Result, STORE_CLOSED, STORE_CORRUPT, STORE_IO, STORE_LOCKED, StoreError,
+};
 use crate::kv::{FileBackend, Kv, KvRead, KvWrite};
 use redb::{
-    Database, Durability, ReadTransaction, ReadableDatabase, ReadableTable, StorageBackend,
-    TableDefinition, WriteTransaction,
+    Database, Durability, ReadOnlyDatabase, ReadTransaction, ReadableDatabase, ReadableTable,
+    StorageBackend, TableDefinition, WriteTransaction,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -35,6 +37,10 @@ fn map<E: Into<redb::Error>>(error: E) -> StoreError {
             format!("the record file failed its integrity check: {why}"),
         ),
         redb::Error::DatabaseClosed => StoreError::new(STORE_CLOSED, "the record file is closed"),
+        redb::Error::RepairAborted => StoreError::new(
+            STORE_IO,
+            "the record file was not closed cleanly and a read-only open does not repair it; open it once for writing first",
+        ),
         other => StoreError::io(format!("record store: {other}")),
     }
 }
@@ -91,6 +97,51 @@ impl RedbKv {
             tx.commit().map_err(map)?;
         }
         Ok(Self { db: Arc::new(db) })
+    }
+}
+
+/// The record file opened only to read (`Store::open_dir_read_only`). redb takes no write lock,
+/// runs no recovery and commits nothing on close, so the file keeps every byte; a plain
+/// `RedbKv` open commits redb's allocator state when it closes, even when nothing was written.
+/// Every write is refused with `read_only_transaction`.
+pub struct RedbReadOnlyKv {
+    db: ReadOnlyDatabase,
+}
+
+impl RedbReadOnlyKv {
+    /// Opens the existing record file at `path`. Errors: `store_io` when the file is missing,
+    /// cannot be read or was not closed cleanly, `store_locked` when a writable handle has it
+    /// open, `store_corrupt`.
+    pub fn open_path(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            return Err(StoreError::new(
+                STORE_IO,
+                format!("{} holds no record file to read", path.display()),
+            ));
+        }
+        let db = Database::builder().open_read_only(path).map_err(map)?;
+        Ok(Self { db })
+    }
+}
+
+impl Kv for RedbReadOnlyKv {
+    fn snapshot(&self) -> Result<Box<dyn KvRead>> {
+        let tx = self.db.begin_read().map_err(map)?;
+        Ok(Box::new(Snapshot { tx }))
+    }
+
+    fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
+        Err(StoreError::new(
+            READ_ONLY_TRANSACTION,
+            "this brain was opened read-only; nothing was written",
+        ))
+    }
+
+    fn version(&self) -> Result<u64> {
+        let snapshot = Snapshot {
+            tx: self.db.begin_read().map_err(map)?,
+        };
+        Ok(read_seq(&mut |key| snapshot.get(key))?.0)
     }
 }
 

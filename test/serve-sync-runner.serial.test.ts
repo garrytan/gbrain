@@ -161,13 +161,14 @@ describe('serve-sync-runner delegated jobs', () => {
   }, 60_000);
 
   test('#8354: done is published only after the run settles its markers and schedules the deferred embeds', async () => {
-    // The post-run marker re-check is slowed so a status poll lands inside it: done must not be visible yet.
+    // The post-run marker re-check (the typed readDueWantedMarkers member) is slowed so a status poll lands inside it: done must not be visible yet.
     let markerReads = 0;
     const slowSettle = new Proxy(engine, { get(target, key) {
       const value = Reflect.get(target, key, target);
-      if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql.includes('FROM sync_wanted_markers m JOIN sources') && ++markerReads > 1) await new Promise((r) => setTimeout(r, 400));
-        return target.executeRaw(sql, params);
+      // The due-marker read is the typed member readDueWantedMarkers (engine-sql/notifier.ts).
+      if (key === 'readDueWantedMarkers') return async (ids: string[] | null) => {
+        if (++markerReads > 1) await new Promise((r) => setTimeout(r, 400));
+        return target.readDueWantedMarkers(ids);
       };
       return typeof value === 'function' ? value.bind(target) : value;
     } });
@@ -196,9 +197,9 @@ describe('serve-sync-runner delegated jobs', () => {
     const entered = new Promise<void>((r) => { inSettle = r; });
     const slowSettle = new Proxy(engine, { get(target, key) {
       const value = Reflect.get(target, key, target);
-      if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql.includes('FROM sync_wanted_markers m JOIN sources') && ++markerReads > 1) { inSettle(); await settling; }
-        return target.executeRaw(sql, params);
+      if (key === 'readDueWantedMarkers') return async (ids: string[] | null) => {
+        if (++markerReads > 1) { inSettle(); await settling; }
+        return target.readDueWantedMarkers(ids);
       };
       return typeof value === 'function' ? value.bind(target) : value;
     } });

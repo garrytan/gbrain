@@ -22,7 +22,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { runMigrations } from '../../src/core/migrate.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
-import { ownerOnlyPageSql } from '../../src/core/access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql } from '../../src/core/access/owner-only.ts';
 import { v320 } from '../../src/core/schema-migrations/v320-owner-only-lineage.ts';
 import { ownerOnlyMarksTriggersEntry } from '../../src/commands/doctor/checks/owner-only-marks-triggers.ts';
 import { finalizeCheckFixes } from '../../src/commands/doctor/check-fix.ts';
@@ -37,6 +37,7 @@ const WRITER = `gbrain_oom_writer_${suffix}`;
 const READER = `gbrain_oom_reader_${suffix}`;
 const ANON = `gbrain_oom_anon_${suffix}`;
 const OWNER2 = `gbrain_oom_owner_${suffix}`;
+const HIDER = `gbrain_oom_hider_${suffix}`;
 const OPEN = 'open-src';
 const CHATS = 'messages-x';
 const LINEAGE_TABLES = ['sources', 'facts', 'derivation_inputs', 'links', 'pages', 'takes', 'timeline_entries'];
@@ -78,13 +79,15 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     [String(derived), String(input), OPEN]);
   /** The page ids among `ids` that a non-owner caller served by `engine` reads: the guarded predicate every page read embeds. */
   async function openTo(engine: BrainEngine, ids: number[]): Promise<number[]> {
+    const version = Number((await admin.executeRaw<{ v: string }>(`SELECT value AS v FROM config WHERE key = 'version'`))[0]!.v);
     const rows = await engine.executeRaw<{ id: number }>(
-      `SELECT p.id FROM pages p WHERE p.id = ANY($1::bigint[]) AND NOT ${ownerOnlyPageSql('p', 'fn')} ORDER BY p.id`, [ids]);
+      `SELECT p.id FROM pages p WHERE p.id = ANY($1::bigint[]) AND NOT ${ownerOnlyPageSql('p', ownerOnlyForm(version))} ORDER BY p.id`, [ids]);
     return rows.map(r => Number(r.id));
   }
   const marks = async () => (await admin.executeRaw<{ m: string }>(`SELECT row_table || ':' || row_id AS m FROM owner_only_marks`))
     .map(r => r.m).sort();
   const held = async () => (await admin.executeRaw<{ held: boolean }>('SELECT gbrain_owner_only_held() AS held'))[0]!.held;
+  const readMode = async (engine: BrainEngine) => (await engine.executeRaw<{ mode: string }>('SELECT gbrain_owner_only_read_mode() AS mode'))[0]!.mode;
   async function doctor(): Promise<Check> {
     const [check] = await ownerOnlyMarksTriggersEntry.run({ engine: admin, progress: { heartbeat() {} } } as never) as Check[];
     return check!;
@@ -99,7 +102,8 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     for (const table of ['pages', 'facts', 'takes', 'timeline_entries']) await admin.executeRaw(`DROP TRIGGER IF EXISTS gbrain_owner_only_row_deleted_trg ON ${table}`);
     await admin.executeRaw('DROP TRIGGER IF EXISTS gbrain_owner_only_source_changed_trg ON sources');
     await admin.executeRaw(`DROP FUNCTION IF EXISTS gbrain_owner_only_row_deleted(), gbrain_owner_only_source_changed(), gbrain_owner_only_mark_derived(text, bigint[]),
-      gbrain_owner_only_lineage_strict(text, bigint), gbrain_owner_only_hold(), gbrain_owner_only_held(), gbrain_owner_only_marks_denied(text)`);
+      gbrain_owner_only_lineage_strict(text, bigint), gbrain_owner_only_hold(), gbrain_owner_only_held(), gbrain_owner_only_marks_denied(text),
+      gbrain_owner_only_lineage(text, bigint, text), gbrain_owner_only_read_mode(), gbrain_owner_only_reads_complete(regclass, text)`);
     await admin.executeRaw('DROP TABLE owner_only_marks');
     await admin.executeRaw(v320.sql);
     await admin.executeRaw(`UPDATE config SET value = '321' WHERE key = 'version'`);
@@ -136,14 +140,14 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     for (const engine of logins) await engine.disconnect().catch(() => undefined);
     if (!admin) return;
     const me = (await admin.executeRaw<{ u: string }>('SELECT current_user AS u'))[0]!.u;
-    for (const role of [WRITER, READER, ANON, OWNER2]) {
+    for (const role of [WRITER, READER, ANON, OWNER2, HIDER]) {
       await admin.executeRaw(`REASSIGN OWNED BY ${role} TO ${me}`).catch(() => undefined);
       await admin.executeRaw(`DROP OWNED BY ${role}`).catch(() => undefined);
     }
     await close();
     const { default: postgres } = await import('#postgres');
     const sql = postgres(DATABASE_URL!, { max: 1, prepare: false });
-    for (const role of [WRITER, READER, ANON, OWNER2]) await sql.unsafe(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+    for (const role of [WRITER, READER, ANON, OWNER2, HIDER]) await sql.unsafe(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
     await sql.end();
   }, 120_000);
 
@@ -206,7 +210,11 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     const writer = await connectAs(WRITER);
     const chat = await pageId('imessage/chat/2026-06-14', CHATS);
     const [fromChat, plain, fromPlain] = [await pageId('notes/from-chat'), await pageId('notes/plain'), await pageId('notes/from-plain')];
-    expect(await openTo(writer, [chat, fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
+    // The writer's pages and sources policies read by app.scopes (the maintainer recipe), so its reads of the lineage are
+    // not complete: every derived row reads closed for it (v328), while the owner reads the exact lineage.
+    expect(await readMode(writer)).toBe('closed');
+    expect(await openTo(writer, [chat, fromChat, plain, fromPlain])).toEqual([plain]);
+    expect(await openTo(admin, [chat, fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
     expect(await openTo(await connectAs(READER), [chat, fromChat, plain, fromPlain])).toEqual([]);
 
     // The writer's open deletes, a take and a timeline rewrite and a coordinated purge all go through.
@@ -231,7 +239,7 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
 
     // Cleared, it comes back with the writer's next permanent delete.
     await admin.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
-    expect(await openTo(writer, [plain, fromPlain])).toEqual([plain, fromPlain]);
+    expect(await marks()).toEqual([]);
     await page('notes/victim-2');
     await writer.deletePage('notes/victim-2', { sourceId: OPEN });
     expect(await marks()).toEqual(['*:row_security']);
@@ -242,8 +250,64 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     await admin.deletePage('imessage/chat/2026-06-14', { sourceId: CHATS });
     expect(await marks()).toEqual(['*:row_security', `pages:${chat}`, `pages:${fromChat}`].sort());
     await admin.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
-    expect(await openTo(writer, [fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
+    expect(await openTo(admin, [fromChat, plain, fromPlain])).toEqual([plain, fromPlain]);
+    expect(await openTo(writer, [fromChat, plain, fromPlain])).toEqual([plain]);
   }, 240_000);
+
+  test('(e) a policy on owner_only_marks counts only in the shape doctor prints: any other USING, or a restrictive policy beside it, reads closed and refuses deletes', async () => {
+    const writer = await connectAs(WRITER);
+    const read = `owner_only_marks_read_${WRITER}`;
+    expect(await readMode(writer)).toBe('closed');
+    await admin.executeRaw(`DROP POLICY ${read} ON owner_only_marks`);
+    await admin.executeRaw(`CREATE POLICY ${read} ON owner_only_marks FOR SELECT TO ${WRITER} USING (row_table <> '*')`);
+    try {
+      expect(await readMode(writer)).toBe('source');
+      await page('notes/shape-victim');
+      await expect(writer.deletePage('notes/shape-victim', { sourceId: OPEN })).rejects.toThrow(/owner_only_marks_unwritable/);
+      expect(((await doctor()).details as { denied_logins: string[] }).denied_logins).toContain(WRITER);
+    } finally {
+      await admin.executeRaw(`DROP POLICY ${read} ON owner_only_marks`);
+      await admin.executeRaw(`CREATE POLICY ${read} ON owner_only_marks FOR SELECT TO ${WRITER} USING (true)`);
+    }
+    expect(await readMode(writer)).toBe('closed');
+    await admin.executeRaw(`CREATE POLICY ${WRITER}_narrow ON owner_only_marks AS RESTRICTIVE FOR SELECT TO ${WRITER} USING (row_table <> '*')`);
+    try {
+      expect(await readMode(writer)).toBe('source');
+      await expect(writer.deletePage('notes/shape-victim', { sourceId: OPEN })).rejects.toThrow(/owner_only_marks_unwritable/);
+      expect(((await doctor()).details as { denied_logins: string[] }).denied_logins).toContain(WRITER);
+    } finally {
+      await admin.executeRaw(`DROP POLICY ${WRITER}_narrow ON owner_only_marks`);
+    }
+    expect(((await doctor()).details as { denied_logins?: string[] }).denied_logins ?? []).not.toContain(WRITER);
+  }, 240_000);
+
+  test('(f) two sessions that record the held flag at once both commit, under READ COMMITTED and REPEATABLE READ', async () => {
+    const { default: postgres } = await import('#postgres');
+    for (const isolation of ['read committed', 'repeatable read']) {
+      await admin.executeRaw('COMMENT ON TABLE owner_only_marks IS NULL');
+      expect(await held()).toBe(false);
+      const [a, b] = [postgres(databaseUrl, { max: 1, prepare: false, onnotice: () => {} }), postgres(databaseUrl, { max: 1, prepare: false, onnotice: () => {} })];
+      try {
+        let second: Promise<unknown> | undefined;
+        await a.begin(async sql => {
+          await sql.unsafe(`INSERT INTO sources (id, name, config) VALUES ('race-a', 'race-a', '{"kind":"imessage"}'::jsonb)`);
+          // The second session takes its snapshot while the first has not committed, then records the flag too.
+          second = b.begin(`isolation level ${isolation}`, async sql2 => {
+            await sql2.unsafe('SELECT 1');
+            await sql2.unsafe(`INSERT INTO sources (id, name, config) VALUES ('race-b', 'race-b', '{"owner_only":true}'::jsonb)`);
+          });
+          await new Promise(resolve => setTimeout(resolve, 500));
+        });
+        await second;
+      } finally {
+        await a.end(); await b.end();
+      }
+      expect({ isolation, rows: (await admin.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE id LIKE 'race-%' ORDER BY id`)).map(r => r.id) })
+        .toEqual({ isolation, rows: ['race-a', 'race-b'] });
+      expect(await held()).toBe(true);
+      await admin.executeRaw(`DELETE FROM sources WHERE id LIKE 'race-%'`);
+    }
+  }, 120_000);
 
   test('FORCE ROW LEVEL SECURITY on a lineage table the deleting owner owns: an open delete closes lineage, an owner-only one is refused', async () => {
     await admin.executeRaw(`CREATE ROLE ${OWNER2} LOGIN PASSWORD 'oom-example' NOSUPERUSER NOBYPASSRLS`);
@@ -271,6 +335,32 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     }
   }, 240_000);
 
+  test('(h) a login whose sources policy hides an owner-only source reads the pages and facts in it as owner-only, with or without the marks', async () => {
+    const secret = await page('notes/vault-secret', CHATS);
+    const secretFact = await fact(CHATS, 'a fact in the hidden owner-only source');
+    const plain = await pageId('notes/plain');
+    await admin.executeRaw(`CREATE ROLE ${HIDER} LOGIN PASSWORD 'oom-example' NOSUPERUSER NOBYPASSRLS`);
+    await admin.executeRaw(`GRANT USAGE ON SCHEMA public TO ${HIDER}`);
+    await admin.executeRaw(`GRANT SELECT ON config, ${LINEAGE_TABLES.join(', ')} TO ${HIDER}`);
+    await admin.executeRaw(`CREATE POLICY ${HIDER}_read ON config FOR SELECT TO ${HIDER} USING (true)`);
+    for (const table of LINEAGE_TABLES.filter(t => t !== 'sources')) await admin.executeRaw(`CREATE POLICY ${HIDER}_read ON ${table} FOR SELECT TO ${HIDER} USING (true)`);
+    await admin.executeRaw(`CREATE POLICY ${HIDER}_read ON sources FOR SELECT TO ${HIDER} USING (id <> '${CHATS}')`);
+    const facts = (engine: BrainEngine) => engine.executeRaw<{ owner_only: boolean }>(`SELECT ${ownerOnlyFactSql('f', ownerOnlyForm(328))} AS owner_only FROM facts f WHERE f.id = $1`, [secretFact]);
+
+    const hider = await connectAs(HIDER);
+    expect(await readMode(hider)).toBe('source');
+    expect(await openTo(hider, [secret, plain])).toEqual([plain]);
+    expect((await facts(hider))[0]!.owner_only).toBe(true);
+
+    await admin.executeRaw(`GRANT SELECT ON owner_only_marks TO ${HIDER}`);
+    await admin.executeRaw(`CREATE POLICY owner_only_marks_read_${HIDER} ON owner_only_marks FOR SELECT TO ${HIDER} USING (true)`);
+    const withMarks = await connectAs(HIDER);
+    expect(await readMode(withMarks)).toBe('closed');
+    expect(await openTo(withMarks, [secret, plain])).toEqual([plain]);
+    expect((await facts(withMarks))[0]!.owner_only).toBe(true);
+    expect(await openTo(admin, [secret, plain])).toEqual([plain]);
+  }, 120_000);
+
   test('the reader role, which cannot read the lineage tables, reads every row closed and never an error, also after the last owner-only source is removed', async () => {
     const reader = await connectAs(READER);
     const plain = await pageId('notes/plain');
@@ -279,5 +369,31 @@ describeE2E('owner_only_marks for a non-owner login, upgraded from v321 (Postgre
     expect(await held()).toBe(true);
     expect(await openTo(reader, [plain])).toEqual([]);
     expect(await openTo(admin, [plain])).toEqual([plain]);
+  }, 120_000);
+
+  test('(g) doctor names each login that reads owner-only lineage closed, with the statements that open its reads; after them the scoped writer reads the exact lineage', async () => {
+    await admin.executeRaw(`DELETE FROM owner_only_marks WHERE row_table = '*'`);
+    const [plain, fromPlain] = [await pageId('notes/plain'), await pageId('notes/from-plain')];
+    const writer = await connectAs(WRITER);
+    expect(await readMode(writer)).toBe('closed');
+    expect(await openTo(writer, [plain, fromPlain])).toEqual([plain]);
+
+    const denied = (await doctor()).details as { sql?: string[] };
+    if (denied.sql?.length) await admin.executeRaw(denied.sql.join('\n'));
+    const check = await doctor();
+    const details = check.details as { closed_logins: string[]; lineage_sql: string[] };
+    expect({ status: check.status, logins: details.closed_logins }).toEqual({ status: 'warn', logins: [HIDER, READER, WRITER].sort() });
+    expect(check.message).toContain('needs no action');
+    expect(details.lineage_sql).toContain(`CREATE POLICY gbrain_lineage_read_${READER} ON public.derivation_inputs FOR SELECT TO ${READER} USING (true);`);
+    expect(details.lineage_sql).toContain(`GRANT SELECT ON public.pages TO ${WRITER};`);
+    expect(details.lineage_sql.every(s => [HIDER, READER, WRITER].some(l => s.includes(`TO ${l}`)) || s.startsWith('DROP POLICY IF EXISTS gbrain_lineage_read_'))).toBe(true);
+
+    // Nothing is granted automatically: the operator runs the writer's statements, and only then does it read exactly.
+    await admin.executeRaw(details.lineage_sql.filter(s => s.includes(WRITER)).join('\n'));
+    const opened = await connectAs(WRITER);
+    expect(await readMode(opened)).toBe('exact');
+    expect(await openTo(opened, [plain, fromPlain])).toEqual([plain, fromPlain]);
+    expect(((await doctor()).details as { closed_logins: string[] }).closed_logins).toEqual([HIDER, READER].sort());
+    expect(await readMode(await connectAs(READER))).toBe('all');
   }, 120_000);
 });

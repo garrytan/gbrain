@@ -5,8 +5,12 @@
 # aggregate succeeded. scripts/ci-reuse.ts reads the artifact on a push to master;
 # `gstack-pregate clear --run` reads it as run evidence for the remote gate.
 # Input (environment): ARTIFACT_DIR, RUN_ID, RUN_ATTEMPT, WORKFLOW, EVENT, and
-# optionally MANIFEST, the run's ci-manifest.json (scripts/ci-manifest.ts).
+# optionally MANIFEST, the run's ci-manifest.json (scripts/ci-manifest.ts), and
+# RUNNER_OS, which GitHub Actions sets on every runner.
 # Output: $ARTIFACT_DIR/tree.json and step-summary lines.
+# `os` is the runner's OS (Linux, macOS or Windows) when RUNNER_OS is set.
+# gstack refuses a run under a .gstack/pregate.json run profile that sets `os`
+# unless tree.json records that OS (gstack docs/pregate.md#run-evidence).
 # `files` (every test file the run loaded, repo-relative, across lanes and
 # arms; a file whose tests all skipped counts, because the remote gate's
 # inventory lists the same env- and platform-gated files) and `tests` (its
@@ -45,8 +49,9 @@ else
   fi
 fi
 jq -n --arg tree "$tree" --arg sha "$sha" --arg workflow "$WORKFLOW" --arg event "$EVENT" \
-  --argjson run_id "$RUN_ID" --argjson run_attempt "$RUN_ATTEMPT" --slurpfile evidence "$evidence" \
-  '{tree: $tree, sha: $sha, workflow: $workflow, event: $event, run_id: $run_id, run_attempt: $run_attempt, profile: "full"} + $evidence[0]' \
+  --argjson run_id "$RUN_ID" --argjson run_attempt "$RUN_ATTEMPT" --slurpfile evidence "$evidence" --arg os "${RUNNER_OS:-}" \
+  '{tree: $tree, sha: $sha, workflow: $workflow, event: $event, run_id: $run_id, run_attempt: $run_attempt, profile: "full"}
+    + (if $os == "" then {} else {os: $os} end) + $evidence[0]' \
   > "$ARTIFACT_DIR/tree.json"
 rm -f "$evidence"
 jq -c 'del(.files)' "$ARTIFACT_DIR/tree.json"

@@ -7,12 +7,13 @@
  *   gbrain secrets key status [--json]                               which keys this host can read
  *   gbrain secrets key export [<key_id>] --out <file> --passphrase-stdin
  *   gbrain secrets key import <file> --passphrase-stdin
+ *   gbrain secrets backup [--restore <object>] [--json]             encrypted export to the configured storage backend
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { opError } from '../core/ops/contract.ts';
 import { readStdinBounded } from '../core/interaction.ts';
-import { exportKeyEscrow, importKeyEscrow, keyringStatus, type KeyEscrow } from '../core/secret-store/keyring.ts';
+import { exportKeyEscrow, importKeyEscrow, keyringStatus, markEscrowExported, type KeyEscrow } from '../core/secret-store/keyring.ts';
 import { countsByRule, keysInUse, listEntries, reveal } from '../core/secret-store/store.ts';
 import { applyRestore, previewRestore } from '../core/secret-store/restore.ts';
 
@@ -28,6 +29,8 @@ encrypted with a key kept on this machine (never in the database or a backup).
   key status [--json]                                 Keys this host can read, and keys entries need
   key export [<key_id>] --out <file> --passphrase-stdin   Passphrase-wrapped copy of a key, to keep elsewhere
   key import <file> --passphrase-stdin                Add an exported key to this host's keyring
+  backup [--json]                                     Upload an encrypted export to the configured storage backend
+  backup --restore <object> [--json]                  Add the entries of one backup that this brain lacks
 `;
 
 function flag(args: string[], name: string): string | undefined {
@@ -110,6 +113,7 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
       const id = more.find(a => !a.startsWith('--') && a !== out) ?? keyringStatus().current;
       if (!id) throw opError('secret_store_key_missing', 'This host has no secret store key yet, so there is nothing to export.', 'A key is made on the first redaction.');
       writeFileSync(out, JSON.stringify(exportKeyEscrow(id, await passphrase(more)), null, 2) + '\n', { mode: 0o600 });
+      markEscrowExported(id);
       print(json, { exported: id, file: out }, `Exported key ${id} to ${out}. Keep it, and its passphrase, somewhere other than this machine and the brain's backups.`);
       return;
     }
@@ -121,5 +125,24 @@ export async function runSecrets(engine: BrainEngine, args: string[]): Promise<v
       return;
     }
   }
-  throw opError('invalid_params', `Unknown gbrain secrets command: ${args.join(' ')}`, 'Use gbrain secrets list, gbrain secrets reveal ss_ID, gbrain secrets restore, or gbrain secrets key status|export|import.');
+  if (sub === 'backup') {
+    const { backupStore, configuredStorage, restoreBackup, SKIPPED_NO_PAGE_NEXT, SKIPPED_NO_PAGE_TEXT } = await import('../core/secret-store/backup.ts');
+    const configured = await configuredStorage();
+    if (!configured) {
+      print(json, { backend: null, carried_by: 'database_backup' }, 'No storage backend is configured, so nothing was uploaded: the brain\'s database backup carries the secret store.');
+      return;
+    }
+    const object = flag(rest, '--restore');
+    if (object) {
+      const out = await restoreBackup(engine, configured.storage, object);
+      print(json, out, [`Restored ${out.inserted} entr${out.inserted === 1 ? 'y' : 'ies'} (${out.occurrences} occurrence(s)) from ${out.object}; ${out.existing} already here and left as they are.`,
+        ...(out.skipped_no_page ? [`${out.skipped_no_page} ${SKIPPED_NO_PAGE_TEXT}. ${SKIPPED_NO_PAGE_NEXT}`] : []),
+        ...(out.unreadable.length ? [`Skipped ${out.unreadable.length} that do not authenticate under a key on this host: ${out.unreadable.join(', ')}`] : [])].join('\n'));
+      return;
+    }
+    const out = await backupStore(engine, configured.storage, configured.identity);
+    print(json, out, `Uploaded ${out.object}: ${out.entries} entr${out.entries === 1 ? 'y' : 'ies'}, ${out.occurrences} occurrence(s), sealed with key ${out.key_id}. It restores only where that key is.`);
+    return;
+  }
+  throw opError('invalid_params', `Unknown gbrain secrets command: ${args.join(' ')}`, 'Use gbrain secrets list, gbrain secrets reveal ss_ID, gbrain secrets restore, gbrain secrets key status|export|import, or gbrain secrets backup.');
 }

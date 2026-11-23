@@ -134,6 +134,11 @@ describe('full CI on pull requests', () => {
         tree: git('rev-parse', 'HEAD^{tree}').stdout.trim(), sha: git('rev-parse', 'HEAD').stdout.trim(),
         workflow: 'Test', event: 'workflow_dispatch', run_id: 42, run_attempt: 2, profile: 'full',
       });
+      // On a runner, tree.json records RUNNER_OS: a run profile with `os` refuses a run that records none.
+      const onRunner = bash(`bash ${join(root, 'scripts/ci-full-suite-tree.sh')}`,
+        { ARTIFACT_DIR: out, RUN_ID: '42', RUN_ATTEMPT: '2', WORKFLOW: 'Test', EVENT: 'workflow_dispatch', RUNNER_OS: 'Linux', GITHUB_STEP_SUMMARY: join(dir, 'summary.md') }, dir);
+      expect(onRunner.status, onRunner.stderr).toBe(0);
+      expect(JSON.parse(readFileSync(join(out, 'tree.json'), 'utf8')).os).toBe('Linux');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

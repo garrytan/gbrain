@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { hashToken } from '../src/core/utils.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { writeSurfaceChangeAudit } from '../src/core/surface-audit.ts';
 import {
@@ -280,7 +281,7 @@ beforeEach(async () => {
 describe('PGLite integration (pre-flight → tx → audit → exchange)', () => {
   test('end-to-end: row, ttl, surface via rescope, audit row, verify round-trip', async () => {
     const sql = sqlQueryForEngine(engine);
-    const columns = await preflightOauthClientColumns(sql);
+    const columns = await preflightOauthClientColumns(engine);
     expect(columns.has('token_ttl')).toBe(true);
     expect(columns.has('surface')).toBe(true);
     expect(columns.has('deleted_at')).toBe(true);
@@ -370,7 +371,7 @@ describe('PGLite integration (pre-flight → tx → audit → exchange)', () => 
     const provider = new GBrainOAuthProvider({ sql, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     await provider.exchangeClientCredentials(registered.clientId, oldSecret); // sanity: works pre-rotation
 
-    const newSecret = await rotateClientSecret(engine, registered.clientId, 'itest-rotate');
+    const newSecret = await rotateClientSecret(engine, registered.clientId, hashToken(oldSecret));
     expect(newSecret).toMatch(/^gbrain_cs_/);
     expect(newSecret).not.toBe(oldSecret);
 

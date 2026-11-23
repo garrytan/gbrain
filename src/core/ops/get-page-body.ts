@@ -33,7 +33,7 @@
  * 'full', anything else 'auto'.
  */
 import type { Page } from '../types.ts';
-import { ownerWidened, worldOnlyFacts } from '../search/private-visibility.ts';
+import { storedFactsShown, worldOnlyFacts } from '../search/private-visibility.ts';
 import { remoteReadStrips } from '../remote-body.ts';
 import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { readHolders } from './context.ts';
@@ -403,7 +403,7 @@ function inlineDocument(doc: PageDocument): WindowDocument {
 
 /** Who a segmented page's markdown view is paged for: the stored body for the local CLI and (GST-3058) the owner's own credential reading every holder, else the read projection. */
 function markdownAudienceFor(ctx: OperationContext): 'trusted' | 'remote' {
-  return ctx.remote === false || (ownerWidened() && readHolders(ctx) === undefined) ? 'trusted' : 'remote';
+  return ctx.remote === false || storedFactsShown(readHolders(ctx), true) ? 'trusted' : 'remote';
 }
 
 /** GST-3058: the room marker's check (keepRoomBody) for a whole body this caller reads: remoteReadStrips over each column, with the rows held from world-only readers. */

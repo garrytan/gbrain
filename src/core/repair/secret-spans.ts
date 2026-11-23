@@ -226,7 +226,7 @@ function valuesOf(planned: Planned): string[] {
 async function* once(text: string): AsyncIterable<Uint8Array> { if (text) yield Buffer.from(text, 'utf8'); }
 
 const receiptKey = (hash: string, pageId: number) => `${hash}:${pageId}`;
-const audit = createAuditWriter<{ ts: string } & Json>({ featureName: 'secret-spans', errorLabel: 'secret-spans-audit', errorTrailer: '; repair continues' });
+const audit = createAuditWriter<{ ts: string } & Json>({ featureName: 'secret-spans', errorLabel: 'secret-spans-audit', errorTrailer: '; repair continues', fileMode: 0o600 });
 
 /** Rewrites one page's changed fields in the caller's transaction; `unsealed`: a segmented body whose projection is built after commit. */
 async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed: boolean }> {
@@ -275,7 +275,7 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
   for (const [id, data] of rawData) await tx.executeRaw('UPDATE raw_data SET data=$2::text::jsonb WHERE id=$1', [id, JSON.stringify(data)]);
   if (!pageChanged) {
     // Rows alone changed: a new revision tells caches and projections the page's knowledge moved.
-    await tx.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=$1', [page.id]);
+    await tx.bumpPageKnowledgeRevision(page.id);
     if (page.body_storage === 'segmented') await sealSegmentedPage(tx, page.id);
   }
   // Rows holding a value are matched here, never in SQL, so no secret is ever sent as a statement parameter (which a
@@ -413,8 +413,7 @@ async function residualScan(engine: BrainEngine, sourceId: string, slug: string,
   return out;
 }
 
-const sourcesOf = (engine: BrainEngine, selection: Selection) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [selection.source_ids]);
+const sourcesOf = (engine: BrainEngine, selection: Selection) => engine.listSourceIncarnations(selection.source_ids);
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) =>
   previewHash({ kind: 'secret-spans-v1', brain_id: scope.brain_id, sources: await sourcesOf(engine, selection), selection,

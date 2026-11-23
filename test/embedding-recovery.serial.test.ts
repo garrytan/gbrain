@@ -1071,6 +1071,11 @@ for (const kind of backends) {
             if (!archived && sql.includes('format_type') && await target.getConfig('embedding_migration.state')) await archive();
             return target.executeRaw(sql, params);
           };
+          // The vector-column catalog reads (format_type) run through these typed engine members.
+          if ((key === 'readChunkVectorColumn' || key === 'readEmbeddingIdentity') && phase === 'before-ddl') return async (...args: unknown[]) => {
+            if (!archived && await target.getConfig('embedding_migration.state')) await archive();
+            return (target as any)[key](...args);
+          };
           if (key === 'transaction' && phase === 'before-companions') return async (fn: (tx: BrainEngine) => Promise<unknown>) => {
             let invalidation = false;
             const observe = (tx: BrainEngine): BrainEngine => new Proxy(tx, { get(inner, field) {

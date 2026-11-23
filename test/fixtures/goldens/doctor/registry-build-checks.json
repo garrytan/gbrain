@@ -295,6 +295,10 @@
       },
       {
         "category": "ops",
+        "name": "topology_recovery_stopped"
+      },
+      {
+        "category": "ops",
         "name": "persistence_compaction"
       },
       {
@@ -460,6 +464,10 @@
       {
         "category": "brain",
         "name": "access_labelled_only_members"
+      },
+      {
+        "category": "brain",
+        "name": "access_pages_read_by_nobody"
       },
       {
         "category": "brain",
@@ -1248,6 +1256,14 @@
       {
         "category": "brain",
         "name": "facts_undated_lines"
+      },
+      {
+        "category": "brain",
+        "name": "secret_store"
+      },
+      {
+        "category": "ops",
+        "name": "owner_identity"
       },
       {
         "category": "brain",

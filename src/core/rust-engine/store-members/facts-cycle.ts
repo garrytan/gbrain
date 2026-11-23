@@ -29,11 +29,20 @@ export const listFenceRowGroups: Member<'listFenceRowGroups'> = (brain) =>
 export const readFactSubject: Member<'readFactSubject'> = (brain, id) =>
   storeCall({ member: 'readFactSubject' }, () => brain.readFactSubject(id));
 
+/** `expired_at` comes back from PGLite as a `Date`. */
+export const readFactForForget: Member<'readFactForForget'> = async (brain, id) => {
+  const row: Record<string, unknown> | null = await storeCall({ member: 'readFactForForget' }, () => brain.readFactForForget(id));
+  return row === null ? null : withDates(row, ['expired_at']) as unknown as Awaited<ReturnType<BrainEngine['readFactForForget']>>;
+};
+
 /** `valid_from`, `valid_until` and `expired_at` come back from PGLite as `Date`s. */
 export const listFactsForPage: Member<'listFactsForPage'> = async (brain, sourceId, slug) => {
   const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listFactsForPage' }, () => brain.listFactsForPage({ sourceId, slug }));
   return rows.map((row) => withDates(row, ['valid_from', 'valid_until', 'expired_at'])) as unknown as Awaited<ReturnType<BrainEngine['listFactsForPage']>>;
 };
+
+export const readPageFileOrigin: Member<'readPageFileOrigin'> = (brain, sourceId, slug, opts) =>
+  storeCall({ member: 'readPageFileOrigin' }, () => brain.readPageFileOrigin({ sourceId, slug, includeDeleted: opts?.includeDeleted ?? false }));
 
 export const countLegacyFactsPending: Member<'countLegacyFactsPending'> = (brain, sourceId) =>
   storeCall({ member: 'countLegacyFactsPending' }, () => brain.countLegacyFactsPending(sourceId));
@@ -55,6 +64,12 @@ export const findBulkFactDays: Member<'findBulkFactDays'> = async (brain, source
 
 export const maxFenceRowNum: Member<'maxFenceRowNum'> = (brain, sourceId, slug) =>
   storeCall({ member: 'maxFenceRowNum' }, () => brain.maxFenceRowNum({ sourceId, slug }));
+
+export const readFenceRowOccupant: Member<'readFenceRowOccupant'> = async (brain, sourceId, slug, rowNum) => {
+  if (!Number.isSafeInteger(rowNum)) refuseMember('readFenceRowOccupant', 'a row number that is not an integer');
+  const id = await storeCall({ member: 'readFenceRowOccupant' }, () => brain.readFenceRowOccupant({ sourceId, slug, rowNum }));
+  return id == null ? null : Number(id);
+};
 
 export const listStoredFenceFactRows: Member<'listStoredFenceFactRows'> = (brain, sourceId, slug) =>
   storeCall({ member: 'listStoredFenceFactRows' }, () => brain.listStoredFenceFactRows({ sourceId, slug }));

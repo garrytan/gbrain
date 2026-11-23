@@ -1,7 +1,7 @@
 /**
  * Timeline reads by date: the Life Chronicle reads (BrainEngine getTimelineForDate, getSince, getOnThisDay,
  * getLastSeen), the event projection write (upsertEventProjection), the two page-write row members
- * (removeTimelineRows, updateTimelineDetails), and the timeline reads and delete of
+ * (removeTimelineRows, updateTimelineDetails, insertCanonicalTimelineRows), and the timeline reads and delete of
  * src/core/engine-sql/timeline-reads.ts (sampleEffectiveDates, sampleEffectiveDateSources, readMaxTimelineEntryId,
  * listStoredTimelineRowsOrdered, deleteTimelineRows, storedTimelineRowsByPageIds, countSegmentedTimelinePages,
  * countTimelineCommentMarkupRows, listTimelineOrphanPages). The chronicle reads take the page privacy policy of
@@ -15,7 +15,7 @@
  * unexported.
  */
 import { finalizeLastSeen } from '../../chronicle/last-seen.ts';
-import type { TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
+import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
 import type { ChronicleTimelineOpts, ChronicleTimelineRow, LastSeenResult, PageReadScope } from '../../types.ts';
 import type {
   EffectiveDateFallbackRow, EffectiveDateSampleCounts, OwnTimelineRow, PageTimelineRow, SegmentedTimelinePages, TimelineOrphanPage,
@@ -24,9 +24,10 @@ import type {
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
-// The chronicle reads never read these PageReadScope keys on PGLite either. `excludePrivate` is served: the store
-// applies the page policy to the depth page and the event page of each row.
-const UNREAD_SCOPE = ['requireSafeChunks', 'minTrust', 'suppressFlagged'] as const;
+// The chronicle reads never read these PageReadScope keys on PGLite either (a remote caller's readPolicyOpts sends
+// requireSafeChunks and takesHoldersAllowList). `excludePrivate` is served: the store applies the page policy to the
+// depth page and the event page of each row.
+const UNREAD_SCOPE = ['requireSafeChunks', 'minTrust', 'suppressFlagged', 'takesHoldersAllowList'] as const;
 // getTimelineForDate ignores `kind` and getSince ignores `week` on PGLite; the store ignores them the same way.
 const CHRONICLE = ['week', 'kind', 'limit', 'sourceId', 'sourceIds', 'excludePrivate'] as const;
 
@@ -71,6 +72,10 @@ export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowR
 
 export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
   await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
+};
+
+export const insertCanonicalTimelineRows: StoreMember<[pageId: number, rows: CanonicalTimelineRow[]], void> = async (brain, pageId, rows) => {
+  await storeCall({ member: 'insertCanonicalTimelineRows' }, () => brain.insertCanonicalTimelineRows(pageId, rows));
 };
 
 // ---------------------------------------------------------------------------------------------------------------------

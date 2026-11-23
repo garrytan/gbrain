@@ -198,6 +198,38 @@ describe('engine parity: cycle locks', () => {
     return result;
   });
 
+  parityTest('a page embedding lease is taken when free or expired, fenced by its token, and released with every expired one',
+    { methods: ['takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'readCycleLocks', 'acquireCycleLock'] }, async (engine) => {
+      const take = (id: string, pid: number, token: string, ttlMinutes = 2) =>
+        engine.takePageEmbeddingLease(id, { holderPid: pid, holderHost: `host-${pid}`, acquisitionToken: token, ttlMinutes });
+      const free = await take('embed-page:1', 101, TOKEN_A);
+      const held = await take('embed-page:1', 102, TOKEN_B);
+      // ttlMinutes -1: expired the moment it is written, so the next take wins with no steal grace.
+      const expiredFirst = await take('embed-page:2', 201, TOKEN_A, -1);
+      const takenOver = await take('embed-page:2', 202, TOKEN_B);
+      const strangerRenew = await engine.renewPageEmbeddingLease('embed-page:1', { acquisitionToken: TOKEN_B, ttlMinutes: 2 });
+      const ownRenew = await engine.renewPageEmbeddingLease('embed-page:1', { acquisitionToken: TOKEN_A, ttlMinutes: 2 });
+      // The install renews inside its transaction.
+      const txRenew = await engine.transaction(tx => tx.renewPageEmbeddingLease('embed-page:2', { acquisitionToken: TOKEN_B, ttlMinutes: 2 }));
+      const missingRenew = await engine.renewPageEmbeddingLease('embed-page:9', { acquisitionToken: TOKEN_A, ttlMinutes: 2 });
+      // An expired page lease of a crashed holder, an unexpired one of a live holder and an expired cycle lock.
+      await take('embed-page:3', 301, TOKEN_C, -1);
+      await take('embed-page:4', 401, TOKEN_C);
+      await engine.acquireCycleLock('gbrain-fs:expired', lease(501, TOKEN_C, { ttlMinutes: -1 }));
+      const before = views(await engine.readCycleLocks({ by: 'all' }));
+      // A release with the wrong token leaves the holder's row; it still sweeps the expired page lease.
+      await engine.releasePageEmbeddingLease('embed-page:1', { acquisitionToken: TOKEN_C });
+      const afterStranger = idsOf(await engine.readCycleLocks({ by: 'all' }));
+      await engine.releasePageEmbeddingLease('embed-page:1', { acquisitionToken: TOKEN_A });
+      const after = views(await engine.readCycleLocks({ by: 'all' }));
+      expect({ free, held, expiredFirst, takenOver }).toEqual({ free: true, held: false, expiredFirst: true, takenOver: true });
+      expect({ strangerRenew, ownRenew, txRenew, missingRenew }).toEqual({ strangerRenew: false, ownRenew: true, txRenew: true, missingRenew: false });
+      expect(afterStranger).toEqual(['embed-page:1', 'embed-page:2', 'embed-page:4', 'gbrain-fs:expired']);
+      expect(after.map(r => r.id)).toEqual(['embed-page:2', 'embed-page:4', 'gbrain-fs:expired']);
+      expect(after[0]).toMatchObject({ holder_pid: 202, holder_host: 'host-202', acquisition_token: TOKEN_B, refreshed: true });
+      return { free, held, expiredFirst, takenOver, strangerRenew, ownRenew, txRenew, missingRenew, before, afterStranger, after };
+    });
+
   parityTest('listSourceLocalPaths returns every registered path and drops sources without one', { methods: ['listSourceLocalPaths'] }, async (engine, backend) => {
     await createSource(engine, backend, 'with-path-a', {}, '/srv/brain/a');
     await createSource(engine, backend, 'with-path-b', {}, '/srv/brain/b');

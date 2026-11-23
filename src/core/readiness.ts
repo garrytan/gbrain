@@ -38,6 +38,7 @@ import { detectCapabilities } from './capability.ts';
 import { embeddingProviderConfigured } from './brain-score-recommendations.ts';
 import { isEngineDegraded } from './degraded-marker.ts';
 import { heldLockFor, peekLock, type LockPeekResult } from './pglite-lock.ts';
+import { ownedRustBrain } from './rust-engine/owned-brains.ts';
 import { listRecipes, RECIPES } from './ai/recipes/index.ts';
 import type { Recipe } from './ai/types.ts';
 import { mergedProviderEnv } from './ai/provider-env.ts';
@@ -179,20 +180,24 @@ function keyInput(recipe: Recipe): ActionInput[] {
   }));
 }
 
-/** The datastore the enable command must target, resolved before any argv is built. */
-export function enableArgv(cfg: GBrainConfig, model: string, width: number): string[] {
+/**
+ * The enable command. `gbrain embeddings enable` opens the configured datastore itself (or the mounted brain named by
+ * `--brain`), so the argv names no path and is the same on every engine; `_cfg` stays for callers that pass it.
+ */
+export function enableArgv(_cfg: GBrainConfig, model: string, width: number): string[] {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') {
     return ['gbrain', 'embeddings', 'enable', '--brain', brainId, '--embedding-model', model, '--embedding-dimensions', String(width)];
   }
-  const base = ['gbrain', 'init', '--force', '--embedding-model', model, '--embedding-dimensions', String(width)];
-  if (cfg.engine === 'postgres') return base;
-  return [...base, '--path', cfg.database_path ?? gbrainPath('brain.pglite')];
+  // Every engine turns vectors on in place with the same command, so a fix copied between brains stays right.
+  // `init --force ... --path` would rewrite a Rust brain's config to an empty PGLite brain, so no engine prints it.
+  return ['gbrain', 'embeddings', 'enable', '--embedding-model', model, '--embedding-dimensions', String(width)];
 }
 
 function datastoreLabel(cfg: GBrainConfig): string {
   const brainId = brainIdInMemory();
   if (brainId !== 'host') return `mounted brain '${brainId}' (the embedding model is set host-wide, so the host brain uses it too)`;
+  if (cfg.engine === 'rust') return `the Rust brain at ${cfg.database_path}`;
   return cfg.engine === 'postgres' ? 'this Postgres brain' : `the PGLite brain at ${cfg.database_path ?? gbrainPath('brain.pglite')}`;
 }
 
@@ -371,15 +376,23 @@ function isServeProcess(): boolean {
   return parseGlobalFlags(process.argv.slice(2)).rest[0] === 'serve';
 }
 
+function serveSelf(acquiredAt: number | undefined): LockOwner | null {
+  if (!isServeProcess()) return null;
+  return { pid: process.pid, transport: process.argv.includes('--http') ? 'http' : 'stdio',
+    ...(acquiredAt ? { started_at: new Date(acquiredAt).toISOString() } : {}), is_self: true };
+}
+
 function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
-  if (cfg.engine !== 'pglite' || cfg.remote_mcp || cfg.database_url) return null;
+  if (cfg.remote_mcp || cfg.database_url) return null;
+  // A Rust brain: only this process's own serve is named (an in-process read; another owner's pid is never guessed).
+  if (cfg.engine === 'rust') {
+    const owned = ownedRustBrain(cfg.database_path);
+    return owned ? serveSelf(owned.acquiredAt) : null;
+  }
+  if (cfg.engine !== 'pglite') return null;
   const dataDir = cfg.database_path ?? gbrainPath('brain.pglite');
   const self = heldLockFor(dataDir);
-  if (self) {
-    if (!isServeProcess()) return null;
-    return { pid: process.pid, transport: process.argv.includes('--http') ? 'http' : 'stdio',
-      ...(self.acquiredAt ? { started_at: new Date(self.acquiredAt).toISOString() } : {}), is_self: true };
-  }
+  if (self) return serveSelf(self.acquiredAt);
   const peek = (peekOverride ?? peekLock)(dataDir);
   if (!peek.held || !peek.isServe || peek.pid === undefined) return null;
   return { pid: peek.pid, transport: peek.http ? 'http' : 'stdio',
@@ -603,10 +616,7 @@ async function bounded(probe: Prober, engine: BrainEngine): Promise<ReadinessEnt
 
 async function countWaitingJobs(engine: BrainEngine): Promise<number> {
   // PGLite facts-absorb jobs belong to the automatic facts drain (its own readiness entry), not a worker.
-  const [row] = await engine.executeRaw<{ n: number }>(engine.kind === 'pglite'
-    ? `SELECT count(*)::int AS n FROM minion_jobs WHERE status = 'waiting' AND name <> 'facts-absorb'`
-    : `SELECT count(*)::int AS n FROM minion_jobs WHERE status = 'waiting'`);
-  return Number(row?.n ?? 0);
+  return engine.countWaitingJobs(engine.kind === 'pglite');
 }
 
 const workerProbe: Prober = {
@@ -624,7 +634,7 @@ const workerProbe: Prober = {
       why: `${waiting} job(s) are waiting and no worker is running${pglite ? ' (PGLite has no background worker; jobs run with --follow or while a worker holds the brain)' : ''}.`,
       fix: pglite
         ? { argv: ['gbrain', 'jobs', 'work'], consent: [], actor: 'agent', requires_exclusive: true, why: 'Runs the waiting jobs in this process; stop it once the queue drains.', verify: VERIFY('queue_health') }
-        : { argv: ['gbrain', 'jobs', 'supervisor', 'start'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Starts the job supervisor, which keeps a worker running for this Postgres brain.', verify: VERIFY('queue_health') },
+        : { argv: ['gbrain', 'jobs', 'supervisor', 'start'], consent: [], actor: 'agent', requires_exclusive: false, why: `Starts the job supervisor, which keeps a worker running for this ${engine.kind === 'rust' ? 'brain' : 'Postgres brain'}.`, verify: VERIFY('queue_health') },
     };
   },
 };
@@ -683,8 +693,7 @@ const syncProbe: Prober = {
   capability: 'sync',
   async run(engine) {
     const base = { capability: 'sync' as const, tier: 'probed' as const, http_visible: false };
-    const rows = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM sources WHERE NOT archived AND local_path IS NOT NULL AND local_path <> ''`);
-    const n = Number(rows[0]?.n ?? 0);
+    const n = await engine.countRepoBoundSources();
     if (n === 0) return { ...base, state: 'not_applicable', reason: 'no_repo_sources', why: 'No source is bound to a local repository, so `gbrain sync` has nothing to pull; pages arrive through gbrain writes and imports.' };
     return { ...base, state: 'ok', reason: 'git_sources', why: `${n} source(s) are bound to local repositories that \`gbrain sync\` reads.` };
   },

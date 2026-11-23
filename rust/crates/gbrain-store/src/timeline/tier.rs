@@ -11,42 +11,11 @@
 //!
 //! Keys: none; the tier is part of the `E` record and omitted while it is `unknown` with no origin.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
-
 use super::TimelineRecord;
 use crate::error::Result;
-use crate::trust::{OriginStamp, StampRow, TrustTable, TrustTier, stamp as stamp_trust};
-use crate::write_trust::stamp_context;
-
-/// `trust_tier` (`None` is `unknown`, the column default) and `write_origin` (`None` is NULL).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub(crate) struct TimelineTrust {
-    pub trust_tier: Option<String>,
-    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
-    pub write_origin: Option<Value>,
-}
-
-impl TimelineTrust {
-    pub(crate) fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    /// The stored tier.
-    pub(crate) fn tier(&self) -> TrustTier {
-        TrustTier::stored(self.trust_tier.as_deref())
-    }
-
-    /// The two columns of a `TimelineEntry` row.
-    pub(crate) fn extend_json(&self, row: &mut Map<String, Value>) {
-        row.insert("trust_tier".into(), json!(self.tier().as_str()));
-        row.insert(
-            "write_origin".into(),
-            json!(self.write_origin.clone().map(crate::jsonb::order)),
-        );
-    }
-}
+pub(crate) use crate::trust::RowTrust as TimelineTrust;
+use crate::trust::TrustTable;
+use crate::trust::stamp_row;
 
 fn content_changed(old: &TimelineRecord, new: &TimelineRecord) -> bool {
     (&old.summary, &old.detail, &old.date) != (&new.summary, &new.detail, &new.date)
@@ -54,32 +23,13 @@ fn content_changed(old: &TimelineRecord, new: &TimelineRecord) -> bool {
 
 /// `new` with the tier and origin the trigger would store, under the open write's trust context.
 pub(crate) fn stamp(old: Option<&TimelineRecord>, new: &TimelineRecord) -> Result<TimelineRecord> {
-    let context = stamp_context::current()?;
-    let (row, stored_origin) = match old {
-        None => (
-            StampRow::Insert {
-                supplied: new.trust.tier(),
-            },
-            new.trust.write_origin.clone(),
-        ),
-        Some(old) => (
-            StampRow::Update {
-                old: old.trust.tier(),
-                new: old.trust.tier(),
-                content_changed: content_changed(old, new),
-                origin_set: false,
-            },
-            old.trust.write_origin.clone(),
-        ),
-    };
-    let stamped = stamp_trust(&context, TrustTable::TimelineEntries, row)?;
     let mut out = new.clone();
-    out.trust.trust_tier =
-        (stamped.tier != TrustTier::Unknown).then(|| stamped.tier.as_str().to_owned());
-    out.trust.write_origin = match stamped.origin {
-        OriginStamp::Keep => stored_origin,
-        OriginStamp::Set(origin) => origin,
-    };
+    out.trust = stamp_row(
+        TrustTable::TimelineEntries,
+        old.map(|o| &o.trust),
+        &new.trust,
+        old.is_some_and(|o| content_changed(o, new)),
+    )?;
     Ok(out)
 }
 
@@ -87,7 +37,9 @@ pub(crate) fn stamp(old: Option<&TimelineRecord>, new: &TimelineRecord) -> Resul
 mod tests {
     use super::*;
     use crate::timeline::TimelineReceipt;
-    use crate::trust::WriteTrust;
+    use crate::trust::{TrustTier, WriteTrust};
+    use crate::write_trust::stamp_context;
+    use serde_json::{Map, Value, json};
 
     fn stamped(
         writer: Option<TrustTier>,

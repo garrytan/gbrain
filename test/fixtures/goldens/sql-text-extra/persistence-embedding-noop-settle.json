@@ -1,0 +1,73 @@
+{
+  "golden": {
+    "lockNoopEmbeddingWindow": [
+      [
+        "SELECT COALESCE(max(id),0)::text AS newest FROM persistence_effects",
+        []
+      ],
+      [
+        "SELECT e.id::text AS id, (e.data->>'page_id')::int AS page_id\n      FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued' AND e.attempts=0 AND e.recovery IS NULL\n      ORDER BY e.id LIMIT $2 FOR UPDATE SKIP LOCKED",
+        [
+          "5",
+          50
+        ]
+      ]
+    ],
+    "probeNoopEmbeddingSettle": [
+      [
+        "SELECT 1 FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued'\n    AND e.attempts=0 AND e.recovery IS NULL ORDER BY e.id LIMIT 1",
+        [
+          "5"
+        ]
+      ]
+    ],
+    "readNoopEmbeddingCandidates": [
+      [
+        "SELECT e.id::text AS id, e.kind, e.source_id, e.source_incarnation, e.worktree_id\n      FROM persistence_effects e\n      JOIN pages p ON p.id=(e.data->>'page_id')::int AND p.source_id=e.source_id\n      WHERE e.id=ANY($1::text[]::bigint[]) AND p.id=ANY($2::int[]) AND e.next_attempt_at<=now()\n        AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'retry_slugs') AND NOT (e.data ? 'parked')\n        AND (e.worktree_id IS NULL OR (EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=e.worktree_id AND w.owner_host_id=$3::uuid)\n          AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=e.worktree_id\n        AND fence.state IN ('fenced','merged','recovery_required'))))\n        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)\n        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)\n        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror\n          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')\n        AND p.deleted_at IS NULL AND p.knowledge_revision=e.revision AND p.text_projection_revision=p.knowledge_revision\n        AND p.embedding_signature=$4\n        AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id=p.id AND NOT (cc.\"embedding\" IS NOT NULL\n          AND cc.embedded_at IS NOT NULL AND cc.embedded_text_hash IS NOT DISTINCT FROM md5(cc.chunk_text) AND cc.model IS NOT DISTINCT FROM $5))\n      ORDER BY e.id\n      FOR SHARE OF p",
+        [
+          [
+            "7",
+            "9"
+          ],
+          [
+            3,
+            4
+          ],
+          "f0000000-0000-4000-8000-0000000000e3",
+          "sig-1",
+          "model-a"
+        ]
+      ]
+    ],
+    "readNoopEmbeddingCandidates#null-model": [
+      [
+        "SELECT e.id::text AS id, e.kind, e.source_id, e.source_incarnation, e.worktree_id\n      FROM persistence_effects e\n      JOIN pages p ON p.id=(e.data->>'page_id')::int AND p.source_id=e.source_id\n      WHERE e.id=ANY($1::text[]::bigint[]) AND p.id=ANY($2::int[]) AND e.next_attempt_at<=now()\n        AND NOT (e.data ? 'targets') AND NOT (e.data ? 'source_scan') AND NOT (e.data ? 'retry_slugs') AND NOT (e.data ? 'parked')\n        AND (e.worktree_id IS NULL OR (EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=e.worktree_id AND w.owner_host_id=$3::uuid)\n          AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=e.worktree_id\n        AND fence.state IN ('fenced','merged','recovery_required'))))\n        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)\n        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)\n        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror\n          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')\n        AND p.deleted_at IS NULL AND p.knowledge_revision=e.revision AND p.text_projection_revision=p.knowledge_revision\n        AND p.embedding_signature=$4\n        AND NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id=p.id AND NOT (cc.\"embedding\" IS NOT NULL\n          AND cc.embedded_at IS NOT NULL AND cc.embedded_text_hash IS NOT DISTINCT FROM md5(cc.chunk_text) AND cc.model IS NOT DISTINCT FROM $5))\n      ORDER BY e.id\n      FOR SHARE OF p",
+        [
+          [
+            "7",
+            "9"
+          ],
+          [
+            3,
+            4
+          ],
+          "f0000000-0000-4000-8000-0000000000e3",
+          "sig-1",
+          null
+        ]
+      ]
+    ],
+    "settleNoopEmbeddingRows": [
+      [
+        "UPDATE persistence_effects SET state='committed', error_code=NULL, attempts=attempts+1,\n        data=data-'retry_slugs'-'target_failures'-'failing_target', execution_token=NULL, claim_expires_at=NULL, claim_owner=NULL, outcome='{}'::jsonb, updated_at=now()\n      WHERE id=ANY($1::text[]::bigint[]) AND state='queued' AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id, request_id",
+        [
+          [
+            "7",
+            "9"
+          ]
+        ]
+      ]
+    ]
+  },
+  "normalizer": "noop-settle-statements-v1"
+}

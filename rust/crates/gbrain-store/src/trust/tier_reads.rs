@@ -3,21 +3,26 @@
 //!
 //! - [`Store::list_core_page_rows`]: the live `always_load` pages core memory lists, with the trust
 //!   columns its delivery reads.
-//! - [`Store::list_trust_scan_rows`] / [`Store::count_unscanned_trust_rows`]: the page and fact
-//!   rows at a listed stored tier above a cursor.
+//! - [`Store::list_trust_scan_rows`] / [`Store::count_unscanned_trust_rows`]: the page, fact, take
+//!   and timeline entry rows at a listed stored tier above a cursor.
 //! - [`Store::list_version_trust_tiers`] / [`Store::list_version_reason_writers`]: the snapshot
 //!   tier of a version, and the type and tier of the write that replaced it.
+//! - [`Store::list_page_refs_by_ids`]: the source, slug and type of each listed page, for the
+//!   reads that quote a third-party page's rows.
 //!
-//! They read the tier and write origin fields of the page, fact and version records
-//! (`trust::stamp`); no read needs a key range of its own, so the family adds no key prefix.
+//! They read the tier and write origin fields of the page, fact, take, timeline entry and version records
+//! (`trust::stamp`, `trust::row_trust`); no read needs a key range of its own, so the family adds no
+//! key prefix.
 //!
 //! The TypeScript members (src/core/rust-engine/store-members/trust-tier-reads.ts) refuse what the
-//! store does not model: a caller page policy that is not the no-caller one, the takes and
-//! timeline tables, and a cursor, limit or id that is not an integer. The belief history reads are
+//! store does not model: a caller page policy that is not the no-caller one, and a cursor, limit or
+//! id that is not an integer. The belief history reads are
 //! not served; the valid-time reads live in `trust/valid_time.rs`.
 
 use super::{TrustPolicy, TrustTier, activation_suppressed, withdrawals};
 use crate::Store;
+use crate::cli_reads::doctor_facts_trust::timeline_entries;
+use crate::cli_reads::pg_text::jsonb_value;
 use crate::error::{Result, StoreError};
 use crate::facts::trust_reads::all_fact_rows;
 use crate::facts::{PrivacyPolicy, page_hidden};
@@ -25,7 +30,8 @@ use crate::keys;
 use crate::kv::scan_prefix;
 use crate::links::no_nul;
 use crate::page_body::segmented_reference;
-use crate::pages::{PageRecord, VersionRecord, all_pages, read_page_by_id};
+use crate::pages::{PageRecord, VersionRecord, all_pages, read_page, read_page_by_id};
+use crate::takes::all_takes;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,7 +68,7 @@ pub struct PageRef {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrustScanQuery {
-    /// `pages` or `facts`.
+    /// `pages`, `facts`, `takes` or `timeline_entries`.
     pub table: String,
     /// Rows with an id above this one.
     pub after_id: i64,
@@ -83,19 +89,37 @@ pub struct VersionIdsQuery {
     pub ids: Vec<i64>,
 }
 
-/// The scan's table: `pages` or `facts`.
+/// `listPageRefsByIds(ids)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageIdsQuery {
+    pub ids: Vec<i64>,
+}
+
+/// A page named by source and slug (`listPageTrustTiersByKey`, `lockLivePagesByKey`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PageKeyRef {
+    pub source_id: String,
+    pub slug: String,
+}
+
+/// The scan's table: `pages`, `facts`, `takes` or `timeline_entries`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScanTable {
     Pages,
     Facts,
+    Takes,
+    Timeline,
 }
 
 fn scan_table(op: &str, table: &str) -> Result<ScanTable> {
     match table {
         "pages" => Ok(ScanTable::Pages),
         "facts" => Ok(ScanTable::Facts),
+        "takes" => Ok(ScanTable::Takes),
+        "timeline_entries" => Ok(ScanTable::Timeline),
         other => Err(StoreError::invalid(format!(
-            "{op}: the store scans pages and facts, not \"{other}\""
+            "{op}: the store scans pages, facts, takes and timeline entries, not \"{other}\""
         ))),
     }
 }
@@ -132,7 +156,7 @@ fn listed_versions(read: &dyn crate::kv::KvRead, ids: &[i64]) -> Result<Vec<Vers
 }
 
 /// Every version record (`V page_id id` keys).
-fn all_versions(read: &dyn crate::kv::KvRead) -> Result<Vec<VersionRecord>> {
+pub(crate) fn all_versions(read: &dyn crate::kv::KvRead) -> Result<Vec<VersionRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
     scan_prefix(read, &[keys::VERSION], false, &mut |_, v| {
@@ -230,7 +254,7 @@ impl Store {
         Ok(out)
     }
 
-    /// `listTrustScanRows`: the live pages (or the facts) with an id above `afterId` whose stored
+    /// `listTrustScanRows`: the live pages (or the facts, takes or timeline entries) with an id above `afterId` whose stored
     /// tier is listed, by id, at most `limit`: the id, source, tier and write origin, then the
     /// table's content columns.
     pub fn list_trust_scan_rows(&self, q: &TrustScanQuery) -> Result<Vec<Value>> {
@@ -320,6 +344,53 @@ impl Store {
                     ));
                 }
             }
+            // A take or timeline row reads its source from its page (the SQL joins `pages`, with no
+            // deleted filter); a row whose page is gone has no join partner.
+            ScanTable::Takes => {
+                for take in all_takes(read)? {
+                    let tier = take.trust.tier();
+                    if !above(take.id) || !tiers.contains(tier.as_str()) {
+                        continue;
+                    }
+                    let Some(page) = read_page_by_id(read, take.page_id)? else {
+                        continue;
+                    };
+                    out.push((
+                        take.id,
+                        json!({
+                            "id": take.id,
+                            "source_id": page.source_id,
+                            "trust_tier": tier.as_str(),
+                            "write_origin": take.trust.write_origin.as_ref().map(jsonb_value),
+                            "claim": take.claim,
+                            "source": take.source,
+                        }),
+                    ));
+                }
+            }
+            ScanTable::Timeline => {
+                for entry in timeline_entries(read)? {
+                    let tier = entry.trust.tier();
+                    if !above(entry.id) || !tiers.contains(tier.as_str()) {
+                        continue;
+                    }
+                    let Some(page) = read_page_by_id(read, entry.page_id)? else {
+                        continue;
+                    };
+                    out.push((
+                        entry.id,
+                        json!({
+                            "id": entry.id,
+                            "source_id": page.source_id,
+                            "trust_tier": tier.as_str(),
+                            "write_origin": entry.trust.write_origin.as_ref().map(jsonb_value),
+                            "summary": entry.summary,
+                            "detail": entry.detail,
+                            "source": entry.source,
+                        }),
+                    ));
+                }
+            }
         }
         out.sort_by_key(|(id, _)| *id);
         Ok(out)
@@ -364,6 +435,64 @@ impl Store {
                 None => (page.page_type.clone(), page_tier(&page)),
             };
             out.push(json!({ "id": v.id, "type": kind, "tier": tier.as_str() }));
+        }
+        Ok(out)
+    }
+
+    /// `listPageRefsByIds`: the source, slug and stored type of each listed page record, deleted
+    /// or not, by id, once each. An id no page has (a purged page, a negative id) answers nothing.
+    pub fn list_page_refs_by_ids(&self, q: &PageIdsQuery) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = q
+            .ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            if let Some(page) = read_page_by_id(&*read, id)? {
+                out.push(json!({
+                    "id": page.id,
+                    "source_id": page.source_id,
+                    "slug": page.slug,
+                    "type": page.page_type,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `listPageTrustTiersByKey`: the id and stored trust tier of each named page, deleted or not,
+    /// in key order, a key named twice answering twice as the SQL join does (the join has no set
+    /// order). A key no page has answers nothing. Timeline projection stamps each row with its page's tier.
+    pub fn list_page_trust_tiers_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for PageKeyRef { source_id, slug } in refs {
+            if let Some(page) = read_page(&*read, source_id, slug)? {
+                out.push(json!({
+                    "id": page.id,
+                    "source_id": page.source_id,
+                    "slug": page.slug,
+                    "trust_tier": TrustTier::stored(page.trust_tier.as_deref()).as_str(),
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `lockLivePagesByKey`: the named pages that are live (not soft-deleted), in key order, a key
+    /// named twice answering twice as the SQL join does. The SQL engines hold each row `FOR SHARE` until the transaction ends; a
+    /// store transaction is serialized already, so no other write can delete one in between.
+    pub fn lock_live_pages_by_key(&self, refs: &[PageKeyRef]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for PageKeyRef { source_id, slug } in refs {
+            if let Some(page) = read_page(&*read, source_id, slug)?
+                && page.deleted_at_us.is_none()
+            {
+                out.push(json!({ "source_id": page.source_id, "slug": page.slug }));
+            }
         }
         Ok(out)
     }

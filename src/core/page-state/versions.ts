@@ -5,10 +5,11 @@ import { PAGE_INLINE_MAX_BYTES, isLargePageBytes } from '../page-size-policy.ts'
 import { LARGE_PAGE_VERSIONS_KEPT, readPageBodyPolicy } from '../page-body/limits.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { markPrunedHistory } from '../engine-sql/version-prune.ts';
 
 export { LARGE_PAGE_VERSIONS_KEPT };
-/** GST-2497: the most saved versions of a holding page one save removes, so a page with a long history drains over later saves. */
-export const HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE = 100;
+/** GST-2497: the holding-page prune is the typed member `pruneHoldingPageVersions` (engine-sql/version-prune.ts). */
+export { HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE } from '../engine-sql/version-prune.ts';
 
 /**
  * GBRA-217: what a sync import knows about the write a snapshot records: the reason Git gives for it
@@ -25,8 +26,7 @@ export interface VersionHistory { reason?: string | null; reasonSource?: { commi
  */
 async function stampableReason(tx: BrainEngine, sourceId: string, history: VersionHistory): Promise<string | null> {
   if (!history.reason || !history.reasonSource) return history.reason ?? null;
-  const purged = await tx.executeRaw('SELECT 1 FROM reason_purge_tombstones WHERE source_id = $1 AND commit_sha = $2 AND path = $3',
-    [sourceId, history.reasonSource.commit, history.reasonSource.path]);
+  const purged = await tx.readReasonPurgeTombstones(sourceId, { commit_sha: history.reasonSource.commit, path: history.reasonSource.path });
   return purged.length ? null : history.reason;
 }
 
@@ -112,31 +112,6 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
     RETURNING id`, [pageId, policy.versionsMaxPerPage, policy.versionsMaxPinnedBytes]);
   await markPrunedHistory(tx, pageId, deleted.map(row => Number((row as { id: number }).id)));
   return deleted.length;
-}
-
-/**
- * GST-2497: a save that adds a fact to a holding page keeps that page's newest LARGE_PAGE_VERSIONS_KEPT inline saved
- * versions, removing at most HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE older ones, and records the gap. It runs only from
- * the fence append, after its version is saved: writes that edit saved versions themselves (a held move, purge) never
- * prune, so the versions they count are the versions they edit. Segmented versions keep their own retention.
- */
-export async function pruneHoldingPageVersions(tx: BrainEngine, pageId: number): Promise<void> {
-  const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE id IN (SELECT id FROM (SELECT id FROM page_versions
-    WHERE page_id = $1 AND body_storage IS DISTINCT FROM 'segmented' ORDER BY id DESC OFFSET $2) excess ORDER BY id LIMIT $3) RETURNING id`,
-  [pageId, LARGE_PAGE_VERSIONS_KEPT, HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE]);
-  await markPrunedHistory(tx, pageId, pruned.map(row => Number(row.id)));
-}
-
-/**
- * GBRA-217: after a prune, the retained snapshot just before each pruned one has lost its successor (`successor_pruned`,
- * so a remote reader is never shown its reason: the successor's visibility can no longer be checked), and the page has
- * lost history (`version_history_gap_at`, read by valid-time answers).
- */
-async function markPrunedHistory(tx: BrainEngine, pageId: number, pruned: number[]): Promise<void> {
-  if (!pruned.length) return;
-  await tx.executeRaw(`UPDATE page_versions SET successor_pruned = true WHERE page_id = $1 AND id IN (
-      SELECT (SELECT max(k.id) FROM page_versions k WHERE k.page_id = $1 AND k.id < d.id) FROM unnest($2::int[]) AS d(id))`, [pageId, pruned]);
-  await tx.executeRaw('UPDATE pages SET version_history_gap_at = now() WHERE id = $1', [pageId]);
 }
 
 /**

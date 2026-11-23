@@ -283,6 +283,7 @@ export const STARTER_CALLABLE_PARAMS: Readonly<Record<string, Readonly<Record<st
   remember: {
     visibility: 'Already accepted per item in items, which starter lists; the segmented-entity refusal and the connection check pass it.',
     infer_entity: 'false only turns entity inference off; the segmented-entity refusal\'s retry names it.',
+    valid_from: 'Already accepted per item in items; it only dates the fact being written, to the same source under the same grant, and reads nothing.',
   },
   recall: {
     grep: 'A substring filter that only narrows the facts returned; gbrain\'s connection check passes it.',
@@ -316,6 +317,17 @@ export function paramCallable(op: OperationMeta, param: string, surface: McpSurf
   if (surface === 'full' || !(param in op.params)) return true;
   const listed = filterOpsForSurface([op], surface)[0];
   return !listed || param in listed.params || STARTER_CALLABLE_PARAMS[op.name]?.[param] !== undefined;
+}
+
+/** GST-3170: ops whose array parameter's items take the op's own parameter names (remember's items[]). */
+const ITEM_PARAMS: Readonly<Record<string, string>> = { remember: 'items' };
+
+/** GST-3170: the op's own parameter names an item of its ITEM_PARAMS array carries, each held to paramCallable as at the top. */
+export function itemParamKeys(op: OperationMeta, params: Record<string, unknown>): string[] {
+  const field = ITEM_PARAMS[op.name];
+  const items = field ? params[field] : undefined;
+  if (!Array.isArray(items)) return [];
+  return [...new Set(items.flatMap(item => item && typeof item === 'object' ? Object.keys(item) : []))].filter(key => key in op.params);
 }
 
 /** #9669: the highest value a narrower surface may pass for a reviewed hidden parameter that only lowers a default. */

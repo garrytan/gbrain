@@ -8,13 +8,17 @@
  *  - Contract: each member returns the same answer on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts): definition and reference rows, symbol
- *    types, doctor counts, code readiness, qualified names, withdrawal chunks,
+ *    types, doctor counts, code readiness, search's unsealed-page probe, qualified names, withdrawal chunks,
  *    the chunks two deletes leave, contextual-mode candidates and frozen hits.
  *  - Regression: an engine whose read drifts gives a different code-def or
  *    code-refs answer, doctor finding, readiness status, walk candidate,
  *    withdrawal target, kept chunk set, repair plan or delivered hit per backend.
  *  - Why existing coverage misses it: the caller tests run these reads on
  *    PGLite only and never compare arms.
+ *  - Owner-only sources: the last describe adds a source of kind imessage and one with owner_only set, then reads the
+ *    chunk pages and windows and the code reads under `excludePrivate` as a non-owner. Every page is hidden while one
+ *    exists (the closed form, no schema version in context); at schema 320 (the fn form) only the pages in those
+ *    sources and the concepts synthesized from them are (`ownerOnlyAllowedSql`, src/core/search/private-visibility.ts).
  *  - Seam: none. Typed methods only (no executeRaw). Page and chunk ids are
  *    serial and engine-dependent, so every case maps them back to slugs and
  *    chunk indexes. Fixtures have no ties where the SQL leaves the row order to
@@ -27,6 +31,9 @@ import { createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -206,6 +213,46 @@ describe('engine parity: chunk reads', () => {
       expect(result.current.other).toEqual({ any: true, symbol: false });
       expect(sealed).toEqual({ any: true, symbol: true });
       return { ...result, sealed };
+    },
+  );
+
+  parityTest(
+    'hasUnsealedPages finds a live page below the safe-chunk fence under the source, privacy, type and slug-prefix filters',
+    { methods: ['putPage', 'sealChunks', 'softDeletePage', 'hasUnsealedPages'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const note = (slug: string, frontmatter: Record<string, unknown> = {}): PageInput =>
+        ({ type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter });
+      // A brain whose every page is sealed has nothing below the fence.
+      await engine.putPage('notes/sealed', note('notes/sealed'));
+      await installChunks(engine, 'notes/sealed', [chunk(0, 'sealed body')]);
+      const sealedBrain = await engine.hasUnsealedPages({});
+      // other: one unsealed note under a hard-excluded prefix, one unsealed private note.
+      await engine.putPage('archive/old', note('archive/old'), { sourceId: 'other' });
+      await engine.putPage('notes/secret', note('notes/secret', { visibility: 'private' }), { sourceId: 'other' });
+      // default: an unsealed concept page, and an unsealed page that is deleted.
+      await engine.putPage('concepts/idea', { ...note('concepts/idea'), type: 'concept' });
+      await engine.putPage('notes/gone', note('notes/gone'));
+      await engine.softDeletePage('notes/gone');
+      const result = {
+        sealedBrain,
+        all: await engine.hasUnsealedPages({}),
+        def: await engine.hasUnsealedPages({ sourceId: 'default' }),
+        defNotes: await engine.hasUnsealedPages({ sourceId: 'default', types: ['note'] }),
+        defConcepts: await engine.hasUnsealedPages({ sourceId: 'default', types: ['concept'] }),
+        defNoTypes: await engine.hasUnsealedPages({ sourceId: 'default', types: [] }),
+        other: await engine.hasUnsealedPages({ sourceIds: ['other'] }),
+        otherPublic: await engine.hasUnsealedPages({ sourceIds: ['other'], excludePrivate: true }),
+        otherPublicKept: await engine.hasUnsealedPages({ sourceIds: ['other'], excludePrivate: true, excludeSlugPrefixes: ['archive/'] }),
+        otherKept: await engine.hasUnsealedPages({ sourceIds: ['other'], excludeSlugPrefixes: ['archive/'] }),
+        bothSources: await engine.hasUnsealedPages({ sourceIds: ['default', 'other'], types: ['note'], excludeSlugPrefixes: ['archive/', 'notes/'] }),
+        none: await engine.hasUnsealedPages({ sourceIds: [] }),
+      };
+      expect(result).toEqual({
+        sealedBrain: false, all: true, def: true, defNotes: false, defConcepts: true, defNoTypes: false,
+        other: true, otherPublic: true, otherPublicKept: false, otherKept: true, bothSources: false, none: false,
+      });
+      return result;
     },
   );
 
@@ -419,7 +466,7 @@ describe('engine parity: chunk reads', () => {
         });
       }
       const hits = pages.map(([slug], ord) => ({ source_id: 'default', slug, chunk_id: 0, ord }));
-      // A safe-chunk read refuses on Rust (no chunker-version fence), so the scope turns it off.
+      // The scope turns the chunker-version fence off, so the case reads privacy alone.
       const scope = { excludePrivate: true, requireSafeChunks: false, sourceId: 'default' };
       const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
         defs: sorted((await engine.findCodeDefinitions('run', scope)).map(r => r.slug)),
@@ -436,6 +483,185 @@ describe('engine parity: chunk reads', () => {
       expect(member.defs).toEqual(['src/open', 'src/readers', 'src/team']);
       expect(granted.frozen).toEqual(['src/open', 'src/private', 'src/readers']);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'code reads, code readiness and frozen hits under a safe-chunk scope serve only pages at or above the chunker-version fence',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'currentCodeChunksExist', 'resolveFrozenHits'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await sealedCode(engine, 'src/fenced', [sym(0, 'function run() { /* fenced */ }', 'run', 'function')]);
+      // Sealed and served, but stamped short of the safe fence: only a safe-chunk read drops them.
+      await sealedCode(engine, 'src/old', [sym(0, 'class Run { /* old */ }', 'run', 'class')]);
+      await engine.setChunkerVersion('src/old', 3);
+      await sealedCode(engine, 'src/old-other', [sym(0, 'function run() { /* old other */ }', 'run', 'function')], 'other');
+      await engine.setChunkerVersion('src/old-other', 3, { sourceId: 'other' });
+      const hits = [['default', 'src/fenced'], ['default', 'src/old'], ['other', 'src/old-other']]
+        .map(([source_id, slug], ord) => ({ source_id, slug, chunk_id: 0, ord }));
+      const read = async (scope: { requireSafeChunks?: boolean; excludePrivate?: boolean }) => ({
+        defs: (await engine.findCodeDefinitions('run', { ...scope, allSources: true })).map(r => `${r.source_id}:${r.slug}`),
+        types: await engine.listSymbolTypesForName('run', { ...scope, allSources: true }),
+        refs: (await engine.findCodeRefChunks('run', { ...scope, allSources: true })).map(r => `${r.source_id}:${r.slug}`),
+        otherReady: await engine.currentCodeChunksExist({ ...scope, sourceId: 'other' }, 'with_symbol'),
+        frozen: sorted((await engine.resolveFrozenHits(hits, scope)).map(r => `${r.source_id}:${r.slug}`)),
+      });
+      const out = {
+        fenced: await read({ requireSafeChunks: true }),
+        // An excludePrivate read asks for safe chunks unless it says otherwise.
+        privateImplied: await read({ excludePrivate: true }),
+        privateOff: await read({ excludePrivate: true, requireSafeChunks: false }),
+        open: await read({}),
+      };
+      expect(out.fenced).toEqual({ defs: ['default:src/fenced'], types: ['function'], refs: ['default:src/fenced'], otherReady: false, frozen: ['default:src/fenced'] });
+      expect(out.privateImplied).toEqual(out.fenced);
+      expect(out.open.frozen).toEqual(['default:src/fenced', 'default:src/old', 'other:src/old-other']);
+      expect(out.privateOff).toEqual(out.open);
+      return out;
+    },
+  );
+});
+
+/** The schema-320 form of the owner-only rule ('fn'): the read runs in an engine scope that records the latest schema version. */
+async function underFnForm<T>(engine: BrainEngine, read: () => Promise<T>): Promise<T> {
+  noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+  try {
+    return await withEngineScope(engine, read);
+  } finally {
+    noteSchemaVersion(engine, Number.NaN);
+  }
+}
+
+const READER = { identity: ['member:alice-example'], hidePrivate: true };
+
+/** Reads `run` with no caller record and as a reader caller. */
+async function asNoneAndReader<T>(run: () => Promise<T>) {
+  return { none: await run(), reader: await withCallerAccess(READER, run) };
+}
+
+describe('engine parity: owner-only sources on excludePrivate chunk and code reads', () => {
+  parityTest(
+    'getChunkPage and getChunkWindows under excludePrivate hide every page while a source is owner-only (closed form) and only owner-only pages and their concepts at schema 320 (fn form)',
+    { methods: ['putPage', 'addLink', 'sealChunks', 'getPage', 'getChunkPage', 'getChunkWindows'] },
+    async (engine, backend) => {
+      const refs: Array<[slug: string, sourceId: string]> = [];
+      const seed = async (slug: string, sourceId: string, extra: Partial<PageInput> = {}) => {
+        const opts = sourceId === 'default' ? undefined : { sourceId };
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `About ${slug}.`, timeline: '', ...extra }, opts);
+        await installChunks(engine, slug, [chunk(0, `About ${slug}.`)], opts);
+        refs.push([slug, sourceId]);
+      };
+      const concept: Partial<PageInput> = { type: 'concept', frontmatter: { visibility: 'world', synthesized_by: 'dream' } };
+      await seed('notes/open', 'default');
+      await seed('concepts/from-open', 'default', concept);
+      await engine.addLink('concepts/from-open', 'notes/open', '', 'synthesized_from', 'concept-provenance');
+
+      const read = () => asNoneAndReader(async () => {
+        const pages: string[] = [];
+        const ids = new Map<number, string>();
+        for (const [slug, sourceId] of refs) {
+          const page = await engine.getChunkPage(slug, { sourceId, fromIndex: 0, limit: 10, excludePrivate: true });
+          if (page.total_chunks > 0) pages.push(`${sourceId}:${slug}:${page.chunks.map((c) => c.chunk_text).join('|')}`);
+          ids.set((await engine.getPage(slug, { sourceId }))!.id, `${sourceId}:${slug}`);
+        }
+        const requests = [...ids.keys()].map((page_id) => ({ page_id, from_index: 0, to_index: 5, priority: 0 }));
+        const windows = (await engine.getChunkWindows(requests, {
+          chunkSources: ['compiled_truth'], maxRows: 100, sourceIds: ['default', 'chat', 'vault'], excludePrivate: true,
+        })).map((p) => ids.get(p.page_id)!);
+        return { pages: sorted(pages), windows: sorted(windows) };
+      });
+      const kept = {
+        pages: ['default:concepts/from-open:About concepts/from-open.', 'default:notes/open:About notes/open.'],
+        windows: ['default:concepts/from-open', 'default:notes/open'],
+      };
+
+      // Before an owner-only source exists the default pages read: the case is not vacuous.
+      const before = await read();
+      expect(before.none).toEqual(kept);
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await seed('notes/chat-note', 'chat');
+      await seed('notes/vault-note', 'vault');
+      await seed('concepts/from-chat', 'default', concept);
+      await engine.addLink('concepts/from-chat', 'notes/chat-note', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { toSourceId: 'chat' });
+
+      // Closed form: no schema version in context. A non-owner reads nothing while any source is owner-only.
+      const closed = await read();
+      expect(closed.none).toEqual({ pages: [], windows: [] });
+      expect(closed.reader).toEqual({ pages: [], windows: [] });
+
+      // Fn form (schema 320): only owner-only pages, and the concept synthesized from one, are hidden.
+      const fn = await underFnForm(engine, read);
+      expect(fn.none).toEqual(kept);
+      expect(fn.reader).toEqual(kept);
+      return { before, closed, fn };
+    },
+  );
+
+  parityTest(
+    'code reads, code chunk probes and frozen hits under excludePrivate hide every page while a source is owner-only (closed form) and only owner-only pages at schema 320 (fn form)',
+    { methods: ['putPage', 'sealChunks', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'codeChunksExist', 'resolveFrozenHits'] },
+    async (engine, backend) => {
+      const seedCode = (slug: string, sourceId: string) =>
+        sealedCode(engine, slug, [sym(0, `function run() { /* ${sourceId}:${slug} */ }`, 'run', 'function')], sourceId === 'default' ? undefined : sourceId);
+      await seedCode('src/open', 'default');
+
+      const hits = ['default', 'chat', 'vault'].map((source_id, ord) => ({ source_id, slug: 'src/open', chunk_id: 0, ord }));
+      const labels = (rows: Array<{ source_id?: string | null; slug: string }>) => sorted(rows.map((r) => `${r.source_id}:${r.slug}`));
+      // The scope turns the chunker-version fence off, so the case reads privacy alone.
+      const scope = { excludePrivate: true, requireSafeChunks: false };
+      const read = () => asNoneAndReader(async () => ({
+        defs: labels(await engine.findCodeDefinitions('run', scope)),
+        types: await engine.listSymbolTypesForName('run', scope),
+        refs: labels(await engine.findCodeRefChunks('run', scope)),
+        stored: await engine.codeChunksExist('default', { excludePrivate: true }),
+        frozen: labels(await engine.resolveFrozenHits(hits, scope)),
+      }));
+      const kept = { defs: ['default:src/open'], types: ['function'], refs: ['default:src/open'], stored: true, frozen: ['default:src/open'] };
+
+      const before = await read();
+      expect(before.none).toEqual(kept);
+
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await createSource(engine, backend, 'vault', { owner_only: true });
+      await seedCode('src/open', 'chat');
+      await seedCode('src/open', 'vault');
+
+      const closed = await read();
+      const hidden = { defs: [], types: [], refs: [], stored: false, frozen: [] };
+      expect(closed.none).toEqual(hidden);
+      expect(closed.reader).toEqual(hidden);
+
+      const fn = await underFnForm(engine, read);
+      expect(fn.none).toEqual(kept);
+      expect(fn.reader).toEqual(kept);
+      return { before, closed, fn };
+    },
+  );
+});
+
+describe('engine parity: the safe-chunk fence on getChunks', () => {
+  parityTest(
+    'getChunks with requireSafeChunks reads a page only when its chunker version meets the safe fence, as the import chunk reuse asks',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      // sealChunks stamps the current chunker version, so each page's version under test is stamped after the seal.
+      const versions: Array<[string, number]> = [['notes/fence-old', 3], ['notes/fence-safe', 4], ['notes/fence-high', 9], ['notes/fence-zero', 0]];
+      for (const [slug] of versions) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `${slug} first`), chunk(1, `${slug} second`)]);
+      }
+      for (const [slug, version] of versions) await engine.setChunkerVersion(slug, version, { sourceId: 'default' });
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        (await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, requireSafeChunks })).map(c => `${c.chunk_index}:${c.chunk_text}`);
+      const out: Record<string, unknown> = {};
+      for (const slug of ['notes/fence-old', 'notes/fence-safe', 'notes/fence-high', 'notes/fence-zero', 'notes/missing']) {
+        out[slug] = { safe: await read(slug, true), plain: await read(slug, false), unset: await read(slug) };
+      }
+      expect(out['notes/fence-old']).toEqual({ safe: [], plain: ['0:notes/fence-old first', '1:notes/fence-old second'], unset: ['0:notes/fence-old first', '1:notes/fence-old second'] });
+      expect((out['notes/fence-safe'] as { safe: string[] }).safe).toEqual(['0:notes/fence-safe first', '1:notes/fence-safe second']);
+      return out;
     },
   );
 });

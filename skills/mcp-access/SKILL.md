@@ -83,7 +83,8 @@ process, delete its lock, or start another server to obtain administration.
   and authorization codes and invalidates pending approvals; it retains the
   active client and secret, so machine credentials can obtain new tokens.
   Revocation disables access; deletion removes its registration while audit
-  history remains. Never substitute one for another silently.
+  history remains. Never substitute one for another silently. When a teammate
+  leaves, also preview `gbrain access member handover <member>` on the host.
 
 A failed transport after a mutation was sent can mean **unknown outcome**.
 Inspect the existing client before retrying. Recover a committed secret delivery

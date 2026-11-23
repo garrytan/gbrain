@@ -173,6 +173,38 @@ for (const kind of testBackends()) {
       expect((await call(100, 'full')).code).not.toBe(CODE);
     });
 
+    test('GST-3186: a starter client dates a remembered fact with valid_from, as items[].valid_from already could', async () => {
+      const stored = async (fact: string) => (await engine.executeRaw<{ valid_from: Date | string }>(
+        `SELECT valid_from FROM facts WHERE source_id = 'default' AND fact = $1`, [fact]))[0];
+      const single = await dispatchToolCall(engine, 'remember',
+        { fact: 'acme-example signed the lease', entity: 'acme-example', provenance: 'meeting notes', valid_from: '2025-03-01' }, stdio('starter'));
+      expect(envelope(single).code).not.toBe(CODE);
+      expect(single.isError).toBeFalsy();
+      const batch = await dispatchToolCall(engine, 'remember',
+        { items: [{ fact: 'acme-example opened an office', entity: 'acme-example', provenance: 'meeting notes', valid_from: '2025-03-01' }] }, stdio('starter'));
+      expect(batch.isError).toBeFalsy();
+      const [a, b] = [await stored('acme-example signed the lease'), await stored('acme-example opened an office')];
+      expect(new Date(a!.valid_from).toISOString()).toBe('2025-03-01T00:00:00.000Z');
+      expect(new Date(b!.valid_from).toISOString()).toBe(new Date(a!.valid_from).toISOString());
+      expect(filterOpsForSurface(operations.filter(op => op.name === 'remember'), 'starter')[0]!.params).not.toHaveProperty('valid_from');
+    });
+
+    test('GST-3170: a starter client cannot pass a typed-claim key its schema hides inside remember items either', async () => {
+      const hidden = Object.keys(operations.find(op => op.name === 'remember')!.params).filter(key => key.startsWith('claim_')
+        && !(key in filterOpsForSurface(operations.filter(op => op.name === 'remember'), 'starter')[0]!.params) && !(CALLABLE.remember?.[key]));
+      expect(hidden.length).toBeGreaterThan(0);
+      const fact = 'acme-example closed a round canaryitemclaim';
+      for (const key of hidden) {
+        const res = await dispatchToolCall(engine, 'remember',
+          { items: [{ fact, entity: 'acme-example', provenance: 'meeting notes', [key]: key === 'claim_value' ? 5 : 'fundraise' }] }, stdio('starter'));
+        expect({ key, code: envelope(res).code, text: all(res).includes(key) }).toEqual({ key, code: CODE, text: true });
+      }
+      expect((await engine.executeRaw('SELECT 1 FROM facts WHERE fact = $1', [fact])).length).toBe(0);
+      const full = await dispatchToolCall(engine, 'remember',
+        { items: [{ fact, entity: 'acme-example', provenance: 'meeting notes', claim_metric: 'fundraise', claim_value: 5 }] }, stdio('full'));
+      expect(full.isError).toBeFalsy();
+    });
+
     test('param_not_on_surface is one registered code, and a call to a hidden tool still gets unknown_tool', async () => {
       expect(CODE in CODES).toBe(true);
       expect(operations.some(op => op.name === 'get_versions') && !allowedOpNames(operations, 'starter').has('get_versions')).toBe(true);

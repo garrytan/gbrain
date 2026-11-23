@@ -77,6 +77,35 @@ fn a_run_is_written_once_and_the_trend_lists_runs_newest_first() {
 }
 
 #[test]
+fn the_last_prompt_version_is_the_newest_runs_and_none_before_any_run() {
+    let b = brain("contra-last-prompt");
+    assert_eq!(b.read_last_contradictions_prompt_version().unwrap(), None);
+    b.write_contradictions_run(&run("run-b", json!({"prompt_version": "v1"})))
+        .unwrap();
+    assert_eq!(
+        b.read_last_contradictions_prompt_version()
+            .unwrap()
+            .as_deref(),
+        Some("v1")
+    );
+    b.clock.advance(1_000);
+    b.write_contradictions_run(&run("run-a", json!({"prompt_version": "v2"})))
+        .unwrap();
+    b.clock.advance(1_000);
+    // A repeated run id writes nothing, so the newest run stays run-a.
+    assert!(
+        !b.write_contradictions_run(&run("run-b", json!({"prompt_version": "v3"})))
+            .unwrap()
+    );
+    assert_eq!(
+        b.read_last_contradictions_prompt_version()
+            .unwrap()
+            .as_deref(),
+        Some("v2")
+    );
+}
+
+#[test]
 fn real_columns_hold_an_f32_and_print_its_shortest_decimal() {
     let b = brain("contra-real");
     b.write_contradictions_run(&run(

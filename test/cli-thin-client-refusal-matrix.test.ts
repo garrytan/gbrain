@@ -111,8 +111,8 @@ describe('A16b thin-client refusal matrix', () => {
     routing = await run(ROUTING_ROWS);
   }, 300_000);
 
-  test('the matrix covers all 76 handleCliOnly cases', () => {
-    expect(CASES.length).toBe(76);
+  test('the matrix covers all 78 handleCliOnly cases', () => {
+    expect(CASES.length).toBe(78);
   });
 
   test('every handleCliOnly case, run bare on a thin client, matches the golden', () => {

@@ -5,7 +5,7 @@
 //! and findOrphanPages, and the search-reads link reads hasSupersedeEdges, supersedingPageSlugs
 //! and pagesLinkingTo. rewriteLinks needs no store call. The link reads of
 //! src/core/engine-sql/link-reads.ts: inboundLinkCoverage, listJunkEntityHubs, countEntityPages,
-//! entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks,
+//! entityGraphCoverage, entityFeatureCoverage, countDatedMeetingPages, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
 //! listLinkEndpointPages, listPagesTitledIn and wordLexemes, each with one JSON input.
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -226,6 +226,26 @@ impl Brain {
         })
     }
 
+    /// `entityFeatureCoverage(input)`: `{ sampleSize, matched }`.
+    #[napi]
+    pub fn entity_feature_coverage<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::FeatureCoverageInput =
+                arg(input, "entityFeatureCoverage input")?;
+            s.entity_feature_coverage(&input)
+        })
+    }
+
+    /// `countDatedMeetingPages()`: a count.
+    #[napi]
+    pub fn count_dated_meeting_pages<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_dated_meeting_pages())
+    }
+
     /// `countForeignEdges(input)`: a count.
     #[napi]
     pub fn count_foreign_edges<'env>(
@@ -268,6 +288,20 @@ impl Brain {
         })
     }
 
+    /// `readEntityInboundEdges(input)`: the entity card's inbound edge rows.
+    #[napi]
+    pub fn read_entity_inbound_edges<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::InboundCountInput =
+                arg(input, "readEntityInboundEdges input")?;
+            s.read_entity_inbound_edges(&input)
+        })
+    }
+
     /// `listLinkEndpointPages(input)`: the endpoint page rows.
     #[napi]
     pub fn list_link_endpoint_pages<'env>(
@@ -296,6 +330,34 @@ impl Brain {
         })
     }
 
+    /// `probePageTypes(input)`: `{ present, available }`.
+    #[napi]
+    pub fn probe_page_types<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::TypeProbeInput =
+                arg(input, "probePageTypes input")?;
+            s.probe_page_types(&input)
+        })
+    }
+
+    /// `readLongPageSizes(input)`: `[{ id, chars, bytes }]`.
+    #[napi]
+    pub fn read_long_page_sizes<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::link_queries::LongPageSizeInput =
+                arg(input, "readLongPageSizes input")?;
+            s.read_long_page_sizes(&input)
+        })
+    }
+
     /// `wordLexemes(words)`: `[{ w, lexemes }]`.
     #[napi]
     pub fn word_lexemes<'env>(
@@ -306,6 +368,33 @@ impl Brain {
         self.run(env, move |s| {
             let words: Vec<String> = arg(words, "wordLexemes words")?;
             s.word_lexemes(&words)
+        })
+    }
+
+    /// `readLinkContextMatches(asks)`: `[{ i, link_source, context, page_id }]`.
+    #[napi]
+    pub fn read_link_context_matches<'env>(
+        &self,
+        env: &'env Env,
+        asks: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let asks: Vec<gbrain_store::link_queries::LinkContextAsk> =
+                arg(asks, "readLinkContextMatches asks")?;
+            s.read_link_context_matches(&asks)
+        })
+    }
+
+    /// `readLinkContextOriginPages(ids)`: `[{ id, source_id, slug, compiled_truth, timeline }]`.
+    #[napi]
+    pub fn read_link_context_origin_pages<'env>(
+        &self,
+        env: &'env Env,
+        ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<u64> = arg(ids, "readLinkContextOriginPages ids")?;
+            s.read_link_context_origin_pages(&ids)
         })
     }
 }

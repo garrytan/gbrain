@@ -33,8 +33,7 @@ import { underGitCheckout } from '../../core/git-remote.ts';
 export async function plainDirectorySyncRoot(engine: BrainEngine, opts: SyncOpts, managed: boolean): Promise<string | null> {
   if (opts.githubItem || opts.srcSubpath) return null;
   const sourceId = opts.sourceId ?? 'default';
-  const [source] = await engine.executeRaw<{ local_path: string | null; last_commit: string | null; config: { kind?: unknown } | null }>(
-    'SELECT local_path,last_commit,config FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
+  const source = await engine.readPlainSyncSource(sourceId);
   const registered = source?.local_path;
   if (!registered || !isAbsolute(registered) || source.config?.kind != null) return null;
   let root: string;
@@ -76,7 +75,7 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   let result: Awaited<ReturnType<typeof runImport>>;
   try {
     result = await runImport(engine, [root, ...(opts.noEmbed || keyless ? ['--no-embed'] : [])],
-      { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, noticeRun: 'sync', ...(managed ? { heldPaths: { has: isReservedSkillBundlePath } } : {}) });
+      { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, noticeRun: 'sync', ...(managed ? { plainDirectorySync: true, heldPaths: { has: isReservedSkillBundlePath } } : {}) });
     if (opts.signal?.aborted) throw new ImportAbortError('interrupted', 1, result);
   } catch (error) {
     // #7819: a --timeout stop is a resumable partial, as in the full Git import (sync/full.ts).
@@ -90,7 +89,7 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   // A managed brain fences source checkpoints to coordinated writers; the classic import stamps last_sync_at itself.
   if (managed) {
     const attribution = await maintenanceAttribution(engine);
-    await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1', [sourceId]), attribution));
+    await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.markSourceSynced(sourceId), attribution));
   }
   return { ...empty, status: 'synced', added: result.imported, chunksCreated: result.chunksCreated, ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
     ...(result.privacy_label_notice ? { privacy_label_notice: result.privacy_label_notice } : {}) };

@@ -13,10 +13,13 @@ use crate::chunks::{
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{
     CONSTRAINT_VIOLATION, EMPTY_OVERWRITE, INVALID_ARGUMENT, INVALID_SLUG, ORIGIN_CLAIMED,
-    PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
+    PAGE_AMBIGUOUS, PAGE_NOT_FOUND, REVISION_CONFLICT, REVISION_REQUIRED, Result, StoreError,
 };
+use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::keyword::{TRGM_SIMILARITY_THRESHOLD, sql_ilike, trgm_similarity};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::sources::{DEFAULT_SOURCE, all_sources, require_source};
+use crate::write_receipt::{ActorColumns, RevisionReceipt, VersionReceipt};
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value, json};
@@ -159,6 +162,10 @@ pub(crate) struct PageRecord {
     pub source_kind: Option<String>,
     #[serde(default)]
     pub source_uri: Option<String>,
+    /// Why the page is database-only (`pages.database_only_reason`): `detached`, `origin_twin`, .. `None` is NULL,
+    /// and what a record written before the store kept the column reads as. Not part of `to_page`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_only_reason: Option<String>,
     #[serde(default)]
     pub ingested_via: Option<String>,
     #[serde(default)]
@@ -183,8 +190,21 @@ pub(crate) struct PageRecord {
     pub write_origin: Option<Value>,
     /// When the page last lost version history (`pages.version_history_gap_at`): a version prune
     /// (`version_prune`) or `createVersion` with `historyGap`. `None` is NULL. Not part of `to_page`.
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_history_gap_at_us: Option<i64>,
+    /// The actor that wrote the live revision (`pages.revision_*`). Absent in a record stored
+    /// before it, and omitted while every column is null. [`write_page`] stamps it.
+    #[serde(default, skip_serializing_if = "ActorColumns::is_empty")]
+    pub revision_receipt: RevisionReceipt,
+}
+
+/// The `database_only_reason` markers a `putPage` that names a file clears (PGLite `putPage`'s `CASE`).
+fn clears_database_only(reason: Option<&str>) -> bool {
+    matches!(
+        reason,
+        Some("detached" | "origin_twin" | "mirror_read_only")
+    )
 }
 
 fn opt_iso(us: Option<i64>) -> Value {
@@ -287,13 +307,39 @@ pub struct PutPageOptions {
     pub contextual_retrieval: Option<crate::aliases::ContextualRetrievalStamp>,
 }
 
-/// Which pages a read may see. Mirrors `GetPageOpts`: `source_ids` wins when it is not empty.
+/// Which pages a read may see. Mirrors `PageSnapshotOptions`: `source_ids` wins when it is not
+/// empty. `exclude_private` is the page policy of `excludePrivate` (`facts/privacy.rs`
+/// `page_hidden`); `read_page_snapshot` and `resolve_slugs` read it, and a hidden page reads as
+/// missing. The other four fields are read by `read_page_snapshot` only:
+/// - `resolve_alias`: a slug with no readable page follows the slug aliases of each source in
+///   scope to their canonical page; an exact page always outranks an alias.
+/// - `require_unambiguous`: more than one readable candidate (exact or alias) is
+///   `page_ambiguous`.
+/// - `require_live_source`: the page's source must exist and not be archived.
+/// - `preserve_exact_identity`: an alias of a source that has a page at the slug itself, in any
+///   deleted state, is not followed.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReadScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub include_deleted: bool,
+    pub exclude_private: Option<PrivacyPolicy>,
+    pub resolve_alias: bool,
+    pub require_unambiguous: bool,
+    pub require_live_source: bool,
+    pub preserve_exact_identity: bool,
+}
+
+/// Options of `getTags`: the scope, `liveOnly` (a soft-deleted page has no tags) and the page
+/// policy `excludePrivate` names (a page it hides has no tags), as `engine-sql/tags.ts` reads them.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TagsQuery {
+    pub source_id: Option<String>,
+    pub source_ids: Option<Vec<String>>,
+    pub live_only: bool,
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// Options of `addTag` and `addPageTagsById`: the page's source and who claims the tags.
@@ -350,6 +396,9 @@ pub struct PageFilters {
     pub source_id: Option<String>,
     #[serde(rename = "sourceIds")]
     pub source_ids: Option<Vec<String>>,
+    /// The page policy of `excludePrivate`: a hidden page is not listed (before the limit).
+    #[serde(rename = "excludePrivate")]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -360,6 +409,9 @@ pub struct VersionsOptions {
     pub limit: Option<usize>,
     /// `false` leaves `compiled_truth` and `timeline` out. Default true.
     pub include_body: Option<bool>,
+    /// `excludePrivate`: the caller's page policy. A live page it hides lists no snapshot, and a
+    /// snapshot it hides (`facts::caller_version_hidden`) is left out before `limit`.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// A page key given to `lock_page_keys`.
@@ -418,6 +470,11 @@ pub(crate) struct VersionRecord {
     /// reader is never shown this version's reason (`version_prune::mark_pruned_history`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub successor_pruned: bool,
+
+    /// Who wrote the snapshotted revision and who archived it (`page_versions.write_*`,
+    /// `archived_*`). Absent in a record stored before it. [`snapshot_in`] stamps it.
+    #[serde(default, skip_serializing_if = "VersionReceipt::is_empty")]
+    pub receipt: VersionReceipt,
 }
 
 impl VersionRecord {
@@ -428,6 +485,7 @@ impl VersionRecord {
         v["trust_tier"] =
             json!(crate::trust::TrustTier::stored(self.trust_tier.as_deref()).as_str());
         v["write_origin"] = json!(self.write_origin.clone().map(crate::jsonb::order));
+
         v["change_reason"] = json!(self.change_reason);
         v
     }
@@ -564,12 +622,28 @@ pub(crate) fn read_page_by_id(read: &dyn KvRead, id: u64) -> Result<Option<PageR
 
 /// Stores a page record and its id key, keeps its origin key (`o`) in step with it, and calls the
 /// page index hook (`page_index::reindex_page`) and the page projection hook
-/// (`page_projection::queue_page_projection`) with the record as stored before and after.
+/// (`page_projection::queue_page_projection`) with the record as stored before and after. It
+/// also sets the sticky member-access flag for a page with `readable_by` (`access_flag`).
 ///
 /// The record's `trust_tier` and `write_origin` are stamped first, as PGLite's
 /// `trust_tier_stamp` trigger stamps every row written to `pages` (see [`stamp_page_trust`]).
+/// Before that, a write that stores a content hash tombstoned in its source is refused with
+/// `purged_content`, as the `pages_refuse_purged` trigger refuses it
+/// (`facts::page_purges::refuse_purged_page`).
 pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, false, false)
+    write_page_as(tx, record, false, None)
+}
+
+/// [`write_page`] for a write that also sets the page's `trust_tier` and `write_origin` columns
+/// (`UPDATE pages SET trust_tier=…, write_origin=…`, the derived-tier lowering of
+/// `lowerTrustTier`): the stamp reads the set tier as the write's new tier and keeps the set
+/// origin, as PGLite's `trust_tier_stamp` trigger does for an UPDATE that names both columns.
+pub(crate) fn write_page_setting_trust(
+    tx: &mut dyn KvWrite,
+    record: &PageRecord,
+    set: Option<(crate::trust::TrustTier, Option<Value>)>,
+) -> Result<()> {
+    write_page_as(tx, record, false, set)
 }
 
 /// `write_page` for a statement that SETs `title` and `timeline` whatever their values: PGLite's search vector trigger
@@ -577,32 +651,42 @@ pub(crate) fn write_page(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()
 /// have grown since (a timeline entry added, an entry's cutoff passed, a lead published), so the check and the
 /// sealed search timeline's forgetting run every time.
 pub(crate) fn write_page_setting_vector(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, true, false)
-}
-
-/// `write_page` for a statement that SETs `trust_tier` and `write_origin` themselves
-/// (`UPDATE pages SET trust_tier=…, write_origin=…`): the stamp starts from the record's tier and
-/// origin instead of the stored ones, as PGLite's trigger sees that statement's NEW row.
-pub(crate) fn write_page_setting_trust(tx: &mut dyn KvWrite, record: &PageRecord) -> Result<()> {
-    write_page_as(tx, record, false, true)
+    write_page_as(tx, record, true, None)
 }
 
 fn write_page_as(
     tx: &mut dyn KvWrite,
     record: &PageRecord,
     sets_vector: bool,
-    sets_trust: bool,
+    set: Option<(crate::trust::TrustTier, Option<Value>)>,
 ) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
-    let stamped = stamp_page_trust(before.as_ref(), record, sets_trust)?;
-    let record = &stamped;
+    crate::facts::page_purges::refuse_purged_page(&*tx, before.as_ref(), record)?;
+    let mut stamped = stamp_page_trust(before.as_ref(), record, set)?;
+    // `gbrain_stamp_revision_attribution`: the actor of the write that set the live revision.
+    stamped.revision_receipt = crate::write_receipt::stamp_revision(
+        before
+            .as_ref()
+            .map(|b| (&b.revision_receipt, b.knowledge_revision.as_str())),
+        &record.revision_receipt,
+        &record.knowledge_revision,
+    )?;
+    store_page(tx, before.as_ref(), &stamped, sets_vector)
+}
+
+/// Stores a page record whose trust is already stamped: the rest of [`write_page`]. `sets_vector`
+/// says the write sets the title and timeline whatever their values.
+fn store_page(
+    tx: &mut dyn KvWrite,
+    before: Option<&PageRecord>,
+    record: &PageRecord,
+    sets_vector: bool,
+) -> Result<()> {
     // A write that sets the title or timeline fires PGLite's search vector trigger. It builds the vector before the
     // row is stored, and its error ("string is too long for tsvector") aborts the write. A write that does not set
     // them fires it only when they changed.
     if sets_vector
-        || before
-            .as_ref()
-            .is_none_or(|b| b.title != record.title || b.timeline != record.timeline)
+        || before.is_none_or(|b| b.title != record.title || b.timeline != record.timeline)
     {
         crate::keyword::check_page_vector(&*tx, record)?;
         if before.is_some() {
@@ -612,9 +696,43 @@ fn write_page_as(
     let key = page_key(&record.source_id, &record.slug);
     put_json(tx, &key, record)?;
     tx.put(&keys::page_id(record.id), &key)?;
-    index_origin(tx, before.as_ref(), Some(record))?;
-    crate::page_index::reindex_page(tx, before.as_ref(), Some(record))?;
-    crate::page_projection::queue_page_projection(tx, before.as_ref(), Some(record))
+    index_origin(tx, before, Some(record))?;
+    crate::page_index::reindex_page(tx, before, Some(record))?;
+    crate::access_flag::mark_restricted(tx, record)?;
+    crate::page_projection::queue_page_projection(tx, before, Some(record))
+}
+
+/// `restorePageTrust` (PGLite `UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE
+/// id=$1`): the page's tier and origin set back, through the same trust stamp the `trust_tier_stamp`
+/// trigger applies to that UPDATE. A raise is kept only under a promotion that covers it (the caller's
+/// `withTrustPromotion`); otherwise an undeclared writer is refused and a declared one keeps the
+/// stored tier. The origin is the one the statement sets. Nothing for an unknown page id.
+fn restore_page_trust_in(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    tier: crate::trust::TrustTier,
+    origin: Option<Value>,
+) -> Result<()> {
+    use crate::trust::{OriginStamp, StampRow, TrustTable, TrustTier, stamp};
+    let Some(before) = read_page_by_id(&*tx, id)? else {
+        return Ok(());
+    };
+    let context = crate::write_trust::stamp_context::current()?;
+    let row = StampRow::Update {
+        old: TrustTier::stored(before.trust_tier.as_deref()),
+        new: tier,
+        content_changed: false,
+        origin_set: true,
+    };
+    let stamped = stamp(&context, TrustTable::Pages, row)?;
+    let mut record = before.clone();
+    record.trust_tier =
+        (stamped.tier != TrustTier::Unknown).then(|| stamped.tier.as_str().to_owned());
+    record.write_origin = match stamped.origin {
+        OriginStamp::Keep => origin,
+        OriginStamp::Set(set) => set,
+    };
+    store_page(tx, Some(&before), &record, false)
 }
 
 /// `record` with the trust tier and origin PGLite's `trust_tier_stamp` trigger would store, under
@@ -625,19 +743,22 @@ fn write_page_as(
 /// page's tier or origin itself (PGLite's `putPage` and the other page writes leave both columns
 /// out of their `SET`), so the update starts from the stored tier and origin, whatever the record
 /// carries: a record built before an earlier write in the same transaction restamped the page
-/// cannot lower or replace them. The one exception is `sets_trust` ([`write_page_setting_trust`]):
-/// the update starts from the record's tier and origin, and the origin counts as set by the write.
-/// The content columns are `TrustTable::Pages.content_columns`, with the frontmatter compared
-/// without the trust-ephemeral keys.
+/// cannot lower or replace them. The content columns are `TrustTable::Pages.content_columns`, with
+/// the frontmatter compared without the trust-ephemeral keys.
+///
+/// `set` is the tier and origin an UPDATE names itself (`write_page_setting_trust`); on an insert
+/// it is ignored, because no store insert names them.
 fn stamp_page_trust(
     before: Option<&PageRecord>,
     record: &PageRecord,
-    sets_trust: bool,
+    set: Option<(crate::trust::TrustTier, Option<Value>)>,
 ) -> Result<PageRecord> {
     use crate::trust::{
         OriginStamp, StampRow, TrustTable, TrustTier, page_frontmatter_content, stamp,
     };
     let context = crate::write_trust::stamp_context::current()?;
+    // `gbrain_stamp_revision_attribution` casts the request on every row written to `pages`.
+    context.attribution.refuse_request_not_uuid()?;
     let tier_of = |page: &PageRecord| TrustTier::stored(page.trust_tier.as_deref());
     let (row, stored_origin) = match before {
         None => (
@@ -657,16 +778,26 @@ fn stamp_page_trust(
                 || old.deleted_at_us != record.deleted_at_us
                 || page_frontmatter_content(&old.frontmatter)
                     != page_frontmatter_content(&record.frontmatter);
-            let set = if sets_trust { record } else { old };
-            (
-                StampRow::Update {
-                    old: tier_of(old),
-                    new: tier_of(set),
-                    content_changed,
-                    origin_set: sets_trust,
-                },
-                set.write_origin.clone(),
-            )
+            match set {
+                None => (
+                    StampRow::Update {
+                        old: tier_of(old),
+                        new: tier_of(old),
+                        content_changed,
+                        origin_set: false,
+                    },
+                    old.write_origin.clone(),
+                ),
+                Some((tier, origin)) => (
+                    StampRow::Update {
+                        old: tier_of(old),
+                        new: tier,
+                        content_changed,
+                        origin_set: origin != old.write_origin,
+                    },
+                    origin,
+                ),
+            }
         }
     };
     let stamped = stamp(&context, TrustTable::Pages, row)?;
@@ -827,6 +958,95 @@ pub(crate) fn scope_sources(
             .then_with(|| a.cmp(b))
     });
     Ok(ids)
+}
+
+/// The sources a snapshot read tries, in PGLite's order: the first of `source_ids` (else
+/// `default`) first, then by id.
+fn snapshot_sources(read: &dyn KvRead, scope: &ReadScope) -> Result<Vec<String>> {
+    let mut ids = scope_sources(read, &scope.source_id, &scope.source_ids)?;
+    let first = scope
+        .source_ids
+        .as_ref()
+        .and_then(|ids| ids.first())
+        .map_or(DEFAULT_SOURCE, String::as_str)
+        .to_string();
+    ids.sort_by(|a, b| (*b == first).cmp(&(*a == first)).then_with(|| a.cmp(b)));
+    ids.dedup();
+    Ok(ids)
+}
+
+/// The page a snapshot read answers, in PGLite's `readPageSnapshot` order: the exact slug first,
+/// then (under `resolve_alias`) the canonical pages of the slug's aliases; within each, the
+/// first of `source_ids` (else `default`) first, then by source id. Under
+/// `require_unambiguous`, more than one candidate is `page_ambiguous`.
+fn snapshot_page(read: &dyn KvRead, slug: &str, scope: &ReadScope) -> Result<Option<PageRecord>> {
+    let sources = snapshot_sources(read, scope)?;
+    let mut candidates = Vec::new();
+    for id in &sources {
+        if let Some(page) = read_page(read, id, slug)?
+            && snapshot_visible(read, &page, scope)?
+        {
+            candidates.push(page);
+        }
+    }
+    let exact_found = !candidates.is_empty();
+    if scope.resolve_alias && (scope.require_unambiguous || !exact_found) {
+        for id in &sources {
+            if let Some(page) = alias_target(read, id, slug, scope)? {
+                candidates.push(page);
+            }
+        }
+    }
+    if scope.require_unambiguous && candidates.len() > 1 {
+        return Err(StoreError::new(
+            PAGE_AMBIGUOUS,
+            "Multiple readable pages match this identifier.",
+        ));
+    }
+    Ok(candidates.into_iter().next())
+}
+
+/// The readable page the alias `slug` of `source` names, as the alias branch of PGLite's
+/// snapshot statement joins it: the alias's source exists (and, unless `include_deleted`, is not
+/// archived), the canonical slug differs from `slug`, and under `preserve_exact_identity` the
+/// source has no page at `slug` in any deleted state.
+fn alias_target(
+    read: &dyn KvRead,
+    source: &str,
+    slug: &str,
+    scope: &ReadScope,
+) -> Result<Option<PageRecord>> {
+    let Some(alias) = crate::aliases::read_slug_alias(read, source, slug)? else {
+        return Ok(None);
+    };
+    if alias.canonical_slug == slug
+        || crate::sources::read_source(read, source)?
+            .is_none_or(|s| s.archived && !scope.include_deleted)
+        || (scope.preserve_exact_identity && read_page(read, source, slug)?.is_some())
+    {
+        return Ok(None);
+    }
+    match read_page(read, source, &alias.canonical_slug)? {
+        Some(page) if snapshot_visible(read, &page, scope)? => Ok(Some(page)),
+        _ => Ok(None),
+    }
+}
+
+/// Whether a snapshot read may answer `page`: live unless `include_deleted`, in a live source
+/// under `require_live_source`, and not hidden by the `exclude_private` page policy.
+fn snapshot_visible(read: &dyn KvRead, page: &PageRecord, scope: &ReadScope) -> Result<bool> {
+    if !scope.include_deleted && page.deleted_at_us.is_some() {
+        return Ok(false);
+    }
+    if scope.require_live_source
+        && crate::sources::read_source(read, &page.source_id)?.is_none_or(|s| s.archived)
+    {
+        return Ok(false);
+    }
+    match &scope.exclude_private {
+        Some(policy) => Ok(!page_hidden(read, page, policy)?),
+        None => Ok(true),
+    }
 }
 
 pub(crate) fn find_in_scope(
@@ -1069,6 +1289,7 @@ pub(crate) fn put_page_in(
             import_filename: input.import_filename.clone(),
             source_kind: input.source_kind.clone(),
             source_uri: input.source_uri.clone(),
+            database_only_reason: None,
             ingested_via: input.ingested_via.clone(),
             ingested_at_us: provenance.then_some(now),
             tags: Vec::new(),
@@ -1076,6 +1297,7 @@ pub(crate) fn put_page_in(
             trust_tier: None,
             write_origin: None,
             version_history_gap_at_us: None,
+            revision_receipt: RevisionReceipt::default(),
         },
         Some(old) => {
             let canonical_changed = old.page_type != input.page_type
@@ -1119,6 +1341,15 @@ pub(crate) fn put_page_in(
                 source_path: input.source_path.clone().or(old.source_path.clone()),
                 source_kind: input.source_kind.clone().or(old.source_kind.clone()),
                 source_uri: input.source_uri.clone().or(old.source_uri.clone()),
+                // PGLite's `putPage` drops the detached, origin twin and read-only mirror markers once the write
+                // names a file again.
+                database_only_reason: if input.source_path.is_some()
+                    && clears_database_only(old.database_only_reason.as_deref())
+                {
+                    None
+                } else {
+                    old.database_only_reason.clone()
+                },
                 ingested_via: input.ingested_via.clone().or(old.ingested_via.clone()),
                 ingested_at_us: if provenance {
                     Some(now)
@@ -1131,6 +1362,9 @@ pub(crate) fn put_page_in(
     };
     // PGLite's `trg_pages_search_vector` (BEFORE INSERT OR UPDATE OF title, timeline) rewrites the
     // page keyword vector on every `putPage`, also when the values are unchanged.
+    // `putPage` is `INSERT ... ON CONFLICT DO UPDATE`: the `BEFORE INSERT` purge trigger fires for the
+    // insert attempt, so a tombstoned hash is refused here even when the page already holds it.
+    crate::facts::page_purges::refuse_purged_page(&*tx, None, &record)?;
     write_page_setting_vector(tx, &record)?;
     if let Some(stamp) = &options.contextual_retrieval {
         crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;
@@ -1251,18 +1485,12 @@ fn cmp_updated(a: &PageRecord, b: &PageRecord) -> Ordering {
 
 impl Store {
     /// `readPageSnapshot(slug, opts)`: `{page, tags, revision, sourceIncarnation, withdrawals}`
-    /// or `None` when the page is not visible in the scope.
+    /// (with `globalPurges` and `globalPurgeRows` when the source has a `*` tombstone,
+    /// `page_withdrawals.rs`) or `None` when the page is not visible in the scope.
     pub fn read_page_snapshot(&self, slug: &str, scope: &ReadScope) -> Result<Option<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
-        let Some(page) = find_in_scope(
-            &*read,
-            &slug,
-            &scope.source_id,
-            &scope.source_ids,
-            scope.include_deleted,
-        )?
-        else {
+        let Some(page) = snapshot_page(&*read, &slug, scope)? else {
             return Ok(None);
         };
         let incarnation = crate::sources::read_source(&*read, &page.source_id)?
@@ -1270,13 +1498,21 @@ impl Store {
             .unwrap_or_default();
         let mut tags = page.tags.clone();
         tags.sort();
-        Ok(Some(json!({
+        let mut snapshot = json!({
             "page": page.to_page_with_columns(&*read)?,
             "tags": tags,
             "revision": page.knowledge_revision,
             "sourceIncarnation": incarnation,
-            "withdrawals": crate::trust::withdrawals::page_withdrawals(&*read, &page.source_id, &page.slug)?,
-        })))
+        });
+        if let Value::Object(fields) = &mut snapshot {
+            fields.extend(crate::page_withdrawals::snapshot_withdrawals(
+                &*read,
+                &page.source_id,
+                &page.slug,
+                scope.exclude_private.is_some(),
+            )?);
+        }
+        Ok(Some(snapshot))
     }
 
     /// `putPage(slug, page, opts)`: the stored `Page`.
@@ -1347,6 +1583,15 @@ impl Store {
                     }
             })
             .collect();
+        if let Some(policy) = &filters.exclude_private {
+            let mut kept = Vec::with_capacity(pages.len());
+            for page in pages {
+                if !page_hidden(&*read, &page, policy)? {
+                    kept.push(page);
+                }
+            }
+            pages = kept;
+        }
         match filters.sort.as_deref() {
             Some("updated_asc") => pages.sort_by(cmp_updated),
             Some("created_desc") => pages.sort_by(|a, b| {
@@ -1392,10 +1637,12 @@ impl Store {
         Ok(())
     }
 
-    /// `resolveSlugs(partial, opts)`, the exact half: the live slug equal to `partial`, as PGLite
-    /// answers first. When no live page has that slug PGLite goes on to a trigram match on titles
-    /// (and an `ILIKE` on slugs), which this store does not have, so the answer is the empty list
-    /// and means only "no exact match": the caller must not take it for "nothing resembles it".
+    /// `resolveSlugs(partial, opts)`: the live slug equal to `partial` when one exists, as PGLite
+    /// answers first. Otherwise the fuzzy half: up to five slugs of live pages whose title is
+    /// trigram-similar to `partial` (`title % partial`) or whose slug contains it
+    /// (`slug ILIKE '%partial%'`), best `similarity(title, partial)` first, then slug, then source
+    /// id, both in byte order (`COLLATE "C"`). Both halves keep to the source scope and hide what
+    /// `excludePrivate` hides. A slug held by pages of two sources is listed once per page.
     pub fn resolve_slugs(&self, partial: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let sources: Option<BTreeSet<String>> = match (&scope.source_ids, &scope.source_id) {
@@ -1403,12 +1650,39 @@ impl Store {
             (_, Some(id)) if !id.is_empty() => Some(BTreeSet::from([id.clone()])),
             _ => None,
         };
-        let exact = all_pages(&*read)?.into_iter().find(|p| {
-            p.deleted_at_us.is_none()
-                && p.slug == partial
-                && sources.as_ref().is_none_or(|s| s.contains(&p.source_id))
+        let pattern = format!("%{partial}%");
+        let mut fuzzy: Vec<(f32, String, String)> = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.deleted_at_us.is_some()
+                || sources
+                    .as_ref()
+                    .is_some_and(|s| !s.contains(&page.source_id))
+            {
+                continue;
+            }
+            let exact = page.slug == partial;
+            let sim = trgm_similarity(&page.title, partial);
+            // `title % partial` compares the f32 score, widened, with the f64 threshold.
+            let similar = f64::from(sim) >= TRGM_SIMILARITY_THRESHOLD;
+            if !(exact || similar || sql_ilike(&page.slug, &pattern)) {
+                continue;
+            }
+            if let Some(policy) = &scope.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            if exact {
+                return Ok(vec![page.slug]);
+            }
+            fuzzy.push((sim, page.slug, page.source_id));
+        }
+        fuzzy.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
         });
-        Ok(exact.map(|p| vec![p.slug]).unwrap_or_default())
+        Ok(fuzzy.into_iter().take(5).map(|(_, slug, _)| slug).collect())
     }
 
     /// `softDeletePage`: hides the page. `None` when no live page matches. With no `source_id` it
@@ -1475,7 +1749,7 @@ impl Store {
         })
     }
 
-    /// `getTags(slug, opts)`, sorted.
+    /// `getTags(slug, opts)`, sorted. A page the `exclude_private` page policy hides has no tags.
     pub fn get_tags(&self, slug: &str, scope: &ReadScope) -> Result<Vec<String>> {
         let read = self.read()?;
         let page = find_in_scope(
@@ -1485,7 +1759,35 @@ impl Store {
             &scope.source_ids,
             true,
         )?;
+        let page = match (page, &scope.exclude_private) {
+            (Some(page), Some(policy)) if page_hidden(&*read, &page, policy)? => None,
+            (page, _) => page,
+        };
         let mut tags = page.map(|p| p.tags).unwrap_or_default();
+        tags.sort();
+        Ok(tags)
+    }
+
+    /// `getTags(slug, { sourceId?, sourceIds?, liveOnly?, excludePrivate? })`, sorted: no tags for
+    /// a page `liveOnly` or the page policy drops.
+    pub fn get_tags_query(&self, slug: &str, query: &TagsQuery) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let page = find_in_scope(
+            &*read,
+            &slug.to_lowercase(),
+            &query.source_id,
+            &query.source_ids,
+            !query.live_only,
+        )?;
+        let Some(page) = page else {
+            return Ok(Vec::new());
+        };
+        if let Some(policy) = &query.exclude_private
+            && crate::facts::page_hidden(&*read, &page, policy)?
+        {
+            return Ok(Vec::new());
+        }
+        let mut tags = page.tags;
         tags.sort();
         Ok(tags)
     }
@@ -1595,10 +1897,9 @@ impl Store {
         })
     }
 
-    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page (NULL body)
-    /// is refused with `invalid_state` before anything is written: PGLite versions it as a reference
-    /// to its live body generation, which pins that generation's manifest rows against the segment
-    /// sweep, and this store keeps no such reference.
+    /// `createVersion(slug, {sourceId})`: snapshots the page as it is. A segmented page's snapshot
+    /// references its live body generation (`snapshot_in`), as PGLite's `insertSegmentedVersion`
+    /// does, which pins that generation's manifest rows against the segment sweep.
     pub fn create_version(&self, slug: &str, source_id: Option<&str>) -> Result<Value> {
         self.create_version_with(slug, source_id, None)
     }
@@ -1617,6 +1918,8 @@ impl Store {
                 source_id: source_id.map(str::to_owned),
                 reason: reason.map(str::to_owned),
                 history_gap: None,
+                reason_source: None,
+                preimage: None,
             },
         )
     }
@@ -1625,22 +1928,46 @@ impl Store {
     /// `historyGap` the page first records `version_history_gap_at`, as PGLite's
     /// `createPageVersion` does before it inserts.
     pub fn create_version_opts(&self, slug: &str, options: &CreateVersionOptions) -> Result<Value> {
-        let source_id = options.source_id.as_deref();
-        let reason = options.reason.as_deref();
-        if let Some(reason) = reason {
-            crate::links::no_nul("createVersion", &[("reason", reason)])?;
-        }
+        // Postgres refuses a NUL byte in text, so neither the tombstone read nor the insert takes one.
+        let from = options.reason_source.as_ref();
+        crate::links::no_nul(
+            "createVersion",
+            &[
+                ("reason", options.reason.as_deref().unwrap_or("")),
+                (
+                    "reasonSource.commit",
+                    from.map_or("", |f| f.commit.as_str()),
+                ),
+                ("reasonSource.path", from.map_or("", |f| f.path.as_str())),
+            ],
+        )?;
         self.write(|tx| {
-            let source = source_id.unwrap_or(DEFAULT_SOURCE);
+            let source = options.source_id.as_deref().unwrap_or(DEFAULT_SOURCE);
             let Some(page) = read_page(&*tx, source, &slug.to_lowercase())? else {
                 return Err(StoreError::new(
                     PAGE_NOT_FOUND,
                     format!("createVersion failed: page \"{slug}\" (source={source}) not found"),
                 ));
             };
+            // `stampableReason`: a non-empty reason whose (commit, path) a purge tombstoned is
+            // dropped. The tombstone is read in this write, so a purge commits wholly before or after.
+            let reason = match (options.reason.as_deref(), from) {
+                (Some(reason), Some(from)) if !reason.is_empty() => {
+                    (!crate::reason_tombstones::tombstoned(&*tx, source, &from.commit, &from.path)?)
+                        .then_some(reason)
+                }
+                (reason, _) => reason,
+            };
             if options.history_gap == Some(true) {
                 crate::version_prune::record_history_gap(tx, &*self.env, page.id)?;
             }
+            let page = match &options.preimage {
+                Some(preimage) => {
+                    let segmented = crate::page_body::segmented_reference(&*tx, page.id)?.is_some();
+                    preimage.applied(&page, segmented)
+                }
+                None => page,
+            };
             let mut row = snapshot_in(tx, &*self.env, &page)?;
             // A segmented prune can delete the snapshot it follows; a reason never brings it back.
             let key = keys::version(page.id, row.id);
@@ -1654,38 +1981,85 @@ impl Store {
         })
     }
 
-    /// `getVersions(slug, opts)`, newest first.
+    /// `getVersions(slug, opts)`, newest first; under `excludePrivate`, only the versions the page
+    /// and version policies keep, each with its reason only when its successor does not withhold it.
     pub fn get_versions(&self, slug: &str, options: &VersionsOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
         let slug = slug.to_lowercase();
         let include_body = options.include_body.unwrap_or(true);
-        let mut rows: Vec<VersionRecord> = Vec::new();
+        let mut rows: Vec<(VersionRecord, Option<String>)> = Vec::new();
         let sources = scope_sources(&*read, &options.source_id, &options.source_ids)?;
         for id in sources {
             if let Some(page) = read_page(&*read, &id, &slug)? {
+                let policy = options.exclude_private.as_ref();
+                if let Some(policy) = policy
+                    && page_hidden(&*read, &page, policy)?
+                {
+                    continue;
+                }
+                let mut versions: Vec<VersionRecord> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
                         if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
-                            rows.push(row);
+                            versions.push(row);
                         }
                         true
                     },
                 )?;
+                versions.sort_by_key(|v| v.id);
+                // A policy reader sees a version's reason only when its successor (the next
+                // version over every version of the page, never only the visible ones; the live
+                // page, which the page check above covers, for the newest) does not withhold it,
+                // and no prune deleted that successor (`replacedBecauseSql`).
+                let reasons: Vec<Option<String>> = versions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, row)| {
+                        let withheld = policy.is_some_and(|policy| {
+                            row.successor_pruned
+                                || versions.get(i + 1).is_some_and(|next| {
+                                    crate::facts::successor_withholds_reason(
+                                        &next.page_type,
+                                        &next.frontmatter,
+                                        policy,
+                                    )
+                                })
+                        });
+                        if withheld {
+                            None
+                        } else {
+                            row.change_reason.clone()
+                        }
+                    })
+                    .collect();
+                for (row, reason) in versions.into_iter().zip(reasons) {
+                    if !policy.is_some_and(|policy| {
+                        crate::facts::caller_version_hidden(
+                            &page,
+                            &row.page_type,
+                            &row.frontmatter,
+                            policy,
+                        )
+                    }) {
+                        rows.push((row, reason));
+                    }
+                }
             }
         }
-        rows.sort_by_key(|a| std::cmp::Reverse(a.id));
+        rows.sort_by_key(|(a, _)| std::cmp::Reverse(a.id));
         if let Some(limit) = options.limit {
             rows.truncate(limit);
         }
         Ok(rows
             .iter()
-            .map(|r| {
+            .map(|(r, reason)| {
                 let mut v = r.to_json(include_body);
-                // The trusted read's `replaced_because` is the stored reason (`replacedBecauseSql`).
-                v["replaced_because"] = json!(r.change_reason);
+                // `replacedBecauseSql`: the stored reason for a trusted read, the successor-checked
+                // one for a policy reader.
+                v["replaced_because"] = json!(reason);
                 v
             })
             .collect())
@@ -1699,6 +2073,33 @@ impl Store {
         };
         let read = self.read()?;
         Ok(versions_of(&*read, page_id)?.iter().map(|v| v.id).max())
+    }
+
+    /// `pruneHoldingPageVersions(pageId)`: the holding-page version cap the fence fact append
+    /// runs after its snapshot (`version_prune::prune_holding`); answers how many versions it
+    /// deleted, 0 for an unknown page.
+    pub fn prune_holding_page_versions(&self, page_id: i64) -> Result<u64> {
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(0);
+        };
+        self.write(|tx| crate::version_prune::prune_holding(tx, &*self.env, page_id))
+    }
+
+    /// `readLatestVersionIdAtTier(pageId, tier)`: the page's newest version whose snapshot tier is
+    /// `tier`, or none (`SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY
+    /// id DESC LIMIT 1`). A version keeps the page's tier as `trust::stamp` stored it, where no tier
+    /// is `unknown` as PGLite's column default reads; a NUL in the tier is refused as text refuses it.
+    pub fn read_latest_version_id_at_tier(&self, page_id: i64, tier: &str) -> Result<Option<u64>> {
+        crate::links::no_nul("readLatestVersionIdAtTier", &[("tier", tier)])?;
+        let Ok(page_id) = u64::try_from(page_id) else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        Ok(versions_of(&*read, page_id)?
+            .iter()
+            .filter(|v| crate::trust::TrustTier::stored(v.trust_tier.as_deref()).as_str() == tier)
+            .map(|v| v.id)
+            .max())
     }
 
     /// `stampVersionChangeReason({ pageId, afterVersionId, reason })`: sets the reason on every
@@ -1721,16 +2122,114 @@ impl Store {
             Ok(stamped)
         })
     }
+
+    /// `restorePageTrust({ pageId, trustTier, writeOrigin })`: a fence append sets its page's tier
+    /// and origin back after the page write (`src/core/trust/fence-append.ts` withPageTierKept).
+    /// `writeOrigin` is JSON text or null. A tier that is not a trust tier is refused.
+    pub fn restore_page_trust(&self, q: &PageTrustRestore) -> Result<()> {
+        const OP: &str = "restorePageTrust";
+        let Some(tier) = crate::trust::TrustTier::parse(&q.trust_tier) else {
+            return Err(StoreError::invalid(format!(
+                "{OP}: {:?} is not a trust tier",
+                q.trust_tier
+            )));
+        };
+        let origin = match q.write_origin.as_deref() {
+            None => None,
+            Some(text) => {
+                crate::links::no_nul(OP, &[("writeOrigin", text)])?;
+                Some(serde_json::from_str::<Value>(text).map_err(|e| {
+                    StoreError::invalid(format!("{OP}: writeOrigin is not JSON text: {e}"))
+                })?)
+            }
+        };
+        self.write(|tx| {
+            let Ok(id) = u64::try_from(q.page_id) else {
+                return Ok(());
+            };
+            restore_page_trust_in(tx, id, tier, origin.clone())
+        })
+    }
 }
 
-/// `createVersion`'s options: the page's source, the snapshot's change reason and the history gap.
+/// `restorePageTrust`'s argument: the page and the tier and origin (JSON text) to set back.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageTrustRestore {
+    pub page_id: i64,
+    pub trust_tier: String,
+    pub write_origin: Option<String>,
+}
+
+/// The (commit, path) a version's reason came from (`VersionHistory.reasonSource`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasonSource {
+    pub commit: String,
+    pub path: String,
+}
+
+/// `createVersion`'s options: the page's source, the snapshot's change reason, the (commit, path)
+/// that reason came from and the history gap.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateVersionOptions {
     pub source_id: Option<String>,
     pub reason: Option<String>,
+    /// Drop `reason` when a purge tombstoned this (commit, path) for the source (`stampableReason`).
+    pub reason_source: Option<ReasonSource>,
     /// Record that the page lost history (`version_history_gap_at`) before the snapshot.
     pub history_gap: Option<bool>,
+    /// The caller's own read of the page (`createPageVersion`'s `preimage`), versioned as read.
+    pub preimage: Option<VersionPreimage>,
+}
+
+/// The fields of a page read (`PageSnapshot`) that `createPageVersion` versions instead of the
+/// stored page: a fact purge reads the page, then versions it after its generation flip. A
+/// segmented page keeps the stored body reference (its live generation, bytes and hash), as
+/// `insertSegmentedVersion` reads them from the page row; an inline page takes the read body too.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct VersionPreimage {
+    pub revision: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub page_type: String,
+    #[serde(deserialize_with = "crate::jsonb::de_map")]
+    pub frontmatter: Map<String, Value>,
+    pub tags: Vec<String>,
+    pub compiled_truth: Option<String>,
+    pub timeline: Option<String>,
+    pub source_path: Option<String>,
+    pub deleted: bool,
+}
+
+impl VersionPreimage {
+    /// `page` as the preimage read it; the body columns only when the page is not segmented.
+    fn applied(&self, page: &PageRecord, segmented: bool) -> PageRecord {
+        let mut out = page.clone();
+        out.title = self.title.clone();
+        out.page_type = self.page_type.clone();
+        out.frontmatter = self.frontmatter.clone();
+        out.tags = self.tags.clone();
+        out.source_path = self.source_path.clone();
+        // The snapshot's writer is the stored revision's only when the read is that revision, as the
+        // attribution trigger copies `write_*` only then: a stale read keeps them NULL.
+        if self.revision != page.knowledge_revision {
+            out.revision_receipt = RevisionReceipt::default();
+        }
+        out.knowledge_revision = self.revision.clone();
+        out.deleted_at_us = match (self.deleted, page.deleted_at_us) {
+            (false, _) => None,
+            (true, Some(at)) => Some(at),
+            (true, None) => Some(0),
+        };
+        if !segmented {
+            out.compiled_truth = PageText(self.compiled_truth.clone());
+            out.timeline = PageText(self.timeline.clone());
+        }
+        out
+    }
 }
 
 /// `stampVersionChangeReason`'s argument.
@@ -1808,6 +2307,9 @@ pub(crate) fn snapshot_in(
     env: &dyn Env,
     page: &PageRecord,
 ) -> Result<VersionRecord> {
+    let context = crate::write_trust::stamp_context::current()?;
+    // `gbrain_stamp_version_attribution` casts the request on every row inserted into `page_versions`.
+    context.attribution.refuse_request_not_uuid()?;
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
     tags.sort();
@@ -1815,7 +2317,7 @@ pub(crate) fn snapshot_in(
     // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
     // caller supplies its own, so the backfill branch never applies.
     let (tier, write_origin) = crate::trust::snapshot_version(
-        &crate::write_trust::stamp_context::current()?,
+        &context,
         crate::trust::TrustTier::stored(page.trust_tier.as_deref()),
         page.write_origin.as_ref(),
         None,
@@ -1841,6 +2343,9 @@ pub(crate) fn snapshot_in(
         write_origin,
         change_reason: None,
         successor_pruned: false,
+
+        // `gbrain_stamp_version_attribution`: `page` is the snapshotted revision as stored.
+        receipt: VersionReceipt::stamp(&page.revision_receipt)?,
     };
     put_json(tx, &keys::version(page.id, id), &row)?;
     // PGLite's `createPageVersion` prunes the page's history after it inserts, in the same write.
@@ -1867,7 +2372,7 @@ pub(crate) fn snapshot_in(
 //   seal with the text writes the record again.
 // - A hard page delete removes it (`remove_page`).
 
-const SEARCH_TIMELINE: &str = "page_search_timeline";
+pub(crate) const SEARCH_TIMELINE: &str = "page_search_timeline";
 
 /// Characters of the sanitized timeline the page keyword vector reads (`PAGE_TIMELINE_FTS_MAX_CHARS`).
 pub(crate) const SEARCH_TIMELINE_MAX_CHARS: usize = 65_536;
@@ -1968,6 +2473,110 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn create_version_stamps_the_git_reason_and_marks_a_history_gap() {
+        let store = crate::test_support::store();
+        put(&store, "a");
+        let reason = |reason: Option<&str>, history_gap: bool| CreateVersionOptions {
+            source_id: None,
+            reason: reason.map(str::to_owned),
+            history_gap: Some(history_gap),
+            reason_source: None,
+            preimage: None,
+        };
+        let v1 = store
+            .create_version_opts("a", &reason(Some("Fix the typo"), false))
+            .unwrap();
+        assert_eq!(v1["change_reason"], "Fix the typo");
+        let gap = |store: &Store| {
+            read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "a")
+                .unwrap()
+                .unwrap()
+                .version_history_gap_at_us
+        };
+        assert_eq!(gap(&store), None);
+        let v2 = store.create_version_opts("a", &reason(None, true)).unwrap();
+        assert_eq!(v2["change_reason"], Value::Null);
+        assert!(gap(&store).is_some());
+        let listed: Vec<Value> = store
+            .get_versions("a", &VersionsOptions::default())
+            .unwrap()
+            .into_iter()
+            .map(|v| v["replaced_because"].clone())
+            .collect();
+        assert_eq!(listed, [Value::Null, json!("Fix the typo")]);
+    }
+
+    #[test]
+    fn a_remote_reader_gets_the_reason_only_when_the_successor_is_visible() {
+        let store = crate::test_support::store();
+        let body = |text: &str, private: bool| {
+            let mut input = PageInput {
+                page_type: "note".into(),
+                title: "Why".into(),
+                compiled_truth: text.into(),
+                ..PageInput::default()
+            };
+            if private {
+                input.frontmatter = json!({ "visibility": "private" }).as_object().cloned();
+            }
+            store
+                .put_page("why", &input, &PutPageOptions::default())
+                .unwrap();
+        };
+        let reason = |reason: &str| CreateVersionOptions {
+            source_id: None,
+            reason: Some(reason.to_owned()),
+            history_gap: None,
+            reason_source: None,
+            preimage: None,
+        };
+        body("v1", false);
+        store.create_version_opts("why", &reason("one")).unwrap();
+        body("v2", true);
+        store.create_version_opts("why", &reason("two")).unwrap();
+        body("v3", false);
+        store.create_version_opts("why", &reason("three")).unwrap();
+        let read = |remote: bool| -> Vec<(String, Value)> {
+            let options = VersionsOptions {
+                exclude_private: remote.then(|| crate::facts::PrivacyPolicy {
+                    entity_privacy: true,
+                    ..crate::facts::PrivacyPolicy::default()
+                }),
+                ..VersionsOptions::default()
+            };
+            store
+                .get_versions("why", &options)
+                .unwrap()
+                .into_iter()
+                .map(|v| {
+                    (
+                        v["compiled_truth"].as_str().unwrap().to_owned(),
+                        v["replaced_because"].clone(),
+                    )
+                })
+                .collect()
+        };
+        // A trusted read shows every stored reason.
+        assert_eq!(
+            read(false),
+            [
+                ("v3".to_owned(), json!("three")),
+                ("v2".to_owned(), json!("two")),
+                ("v1".to_owned(), json!("one"))
+            ]
+        );
+        // A remote read drops the private snapshot, and the snapshot before it loses its reason
+        // because its successor is the one that is hidden.
+        assert_eq!(
+            read(true),
+            [
+                ("v3".to_owned(), json!("three")),
+                ("v1".to_owned(), Value::Null)
+            ]
+        );
+    }
+
     /// Turns a stored page into a segmented shell the way PGLite's `createSegmentedPageShell` leaves it: NULL body
     /// columns and no content hash. The page_body family writes these; the test writes the record directly.
     fn make_shell(store: &Store, slug: &str) -> PageRecord {
@@ -1982,6 +2591,59 @@ mod tests {
                 Ok(page)
             })
             .unwrap()
+    }
+
+    /// The newest version stamped with the tier answers; another page's versions, another tier and a
+    /// page with no version answer none, and a version with no stored tier reads as `unknown`.
+    #[test]
+    fn read_latest_version_id_at_tier_answers_the_newest_version_stamped_with_the_tier() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/tiered");
+        let other = put(&store, "notes/other");
+        let version = |id: u64, page_id: u64, tier: Option<&str>| -> VersionRecord {
+            serde_json::from_value(json!({
+                "id": id, "page_id": page_id, "compiled_truth": "body", "timeline": "", "title": "T", "type": "note",
+                "tags": [], "frontmatter": {}, "source_path": null, "content_hash": "abc", "knowledge_revision": "r1",
+                "is_deleted": false, "snapshot_at_us": 3, "trust_tier": tier,
+            }))
+            .unwrap()
+        };
+        store
+            .write(|tx| {
+                for v in [
+                    version(1, page.id, Some("user_confirmed")),
+                    version(2, page.id, Some("agent_written")),
+                    version(3, page.id, Some("user_confirmed")),
+                    version(4, page.id, None),
+                    version(5, other.id, Some("user_confirmed")),
+                ] {
+                    put_json(tx, &keys::version(v.page_id, v.id), &v)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let at = |page_id: u64, tier: &str| {
+            store
+                .read_latest_version_id_at_tier(i64::try_from(page_id).unwrap(), tier)
+                .unwrap()
+        };
+        assert_eq!(at(page.id, "user_confirmed"), Some(3));
+        assert_eq!(at(page.id, "agent_written"), Some(2));
+        assert_eq!(at(page.id, "unknown"), Some(4));
+        assert_eq!(at(page.id, "tool_observed"), None);
+        assert_eq!(at(other.id, "agent_written"), None);
+        assert_eq!(at(page.id + other.id + 100, "user_confirmed"), None);
+        assert_eq!(
+            store
+                .read_latest_version_id_at_tier(-1, "user_confirmed")
+                .unwrap(),
+            None
+        );
+        assert!(
+            store
+                .read_latest_version_id_at_tier(1, "user\u{0}")
+                .is_err()
+        );
     }
 
     #[test]
@@ -2043,6 +2705,32 @@ mod tests {
             .unwrap()
         })
         .is_empty());
+    }
+
+    #[test]
+    fn update_slug_refuses_a_null_body_with_no_segmented_generation_and_moves_nothing() {
+        let store = crate::test_support::store();
+        put(&store, "big");
+        // A NULL body with no body state behind it: PGLite's CHECK makes this row impossible.
+        make_shell(&store, "big");
+        let err = store.update_slug("big", "big-2", None).unwrap_err();
+        assert_eq!(err.code, crate::error::INVALID_STATE);
+        assert_eq!(
+            err.message,
+            "updateSlug refuses page big (source=default): its body is NULL and no segmented body generation holds it"
+        );
+        let scope = ReadScope::default();
+        assert!(store.read_page_snapshot("big", &scope).unwrap().is_some());
+        assert!(store.read_page_snapshot("big-2", &scope).unwrap().is_none());
+        assert!(
+            store
+                .get_versions("big", &VersionsOptions::default())
+                .unwrap()
+                .is_empty()
+        );
+        // An inline page still renames.
+        put(&store, "small");
+        assert_eq!(store.update_slug("small", "small-2", None).unwrap(), 1);
     }
 
     #[test]

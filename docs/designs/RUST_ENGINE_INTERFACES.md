@@ -169,6 +169,12 @@ Reserved tags:
 | trust | `t` | `TRUST` | no (the trust family asks core when it needs the page-delete hook) |
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
+| entity_identities | `i` | `ENTITY_IDENTITY` | yes |
+| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
+| reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
+| session_state | `y` | `SESSION_STATE` | no |
+| access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -187,6 +193,7 @@ in its module header:
 | `0x08` | `TELEMETRY_RETRIEVAL_WEIGHT` | `retrieval_weights` |
 | `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
 | `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
+| `0x0B` | `TELEMETRY_CHAT_USAGE` | `chat_usage_log` |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
@@ -522,16 +529,46 @@ store keeps the same rule in `pages.rs`.
   `store-members/pages.ts` refuses `putPage` with a `source_path` for such a source.
 - **Advisory locks.** PGLite takes a lock per origin so that two writers serialize. The store has one writer at a
   time, so it needs none.
-- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal and the valid-time body
-  read are typed engine members (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`,
-  `sealImportedPage`, `readLivePageBody`; SQL in `engine-sql/write-guards.ts`). The store answers them in
+- **Write guards.** The origin check, the origin bind, the ingest stamp, the import seal, the valid-time body
+  read, the append path's tail-digest body read and the page write gate's stored tier read are typed engine members
+  (`readPageOrigin`, `listOriginClaims`, `bindPageOrigin`, `stampPageIngest`, `sealImportedPage`, `readLivePageBody`,
+  `readInlinePageRegions`, `readStoredPageTier`; SQL in `engine-sql/write-guards.ts`). The store answers them in
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
+- **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
+  pages it reads, the opening probe of its visibility check, and a stored writer's slug fence are typed engine members
+  (`readPageHiddenFromCaller`, `readCallerPageAccess`, `readWriteVisibilityProbe`, capability `pages`;
+  `readWriterSlugFence`, capability `persistence_journal`; SQL in
+  `engine-sql/page-visibility.ts`). The store answers the page reads in `page_visibility.rs` and the fence from
+  its local writer registration; an OAuth client's fence and an unrendered caller policy refuse. See
+  [`rust/docs/store/page-visibility.md`](../../rust/docs/store/page-visibility.md).
+- **Large-page guard.** A remote put_page's read of the stored body size of the page it replaces is a typed engine
+  member (`readStoredBodyBytes`, capability `pages`, SQL in `engine-sql/large-page.ts`). The store answers it in
+  `large_page.rs`: a segmented page's `body_bytes`, else the UTF-8 bytes of its body columns. See
+  [`rust/docs/store/large-page.md`](../../rust/docs/store/large-page.md).
+- **Member-access flag.** The store sets config `access.restrictions_present` to `'1'` when it writes a page whose
+  frontmatter has a top-level `readable_by` key, as the v282 trigger `pages_access_mark_restricted` does on PGLite and
+  Postgres (`access_flag.rs`). It sets it from the page write hook, from every store write handle on the put of such
+  a page record, and once at open from the page records already stored, as v282 does when it runs. The store keeps
+  no access members, so the `access_members` trigger has no store half. See
+  [`rust/docs/store/access-flag.md`](../../rust/docs/store/access-flag.md).
 - **Fence reads.** The fence projection's retire read and the fence guard's trust read are typed engine members
   (`listFenceRetireCandidates`, capability `facts`, SQL in `engine-sql/facts.ts`; `listFenceFactRows`, capability
-  `facts`, SQL in `engine-sql/trust-fence.ts`). The store answers them in `facts/fence.rs` in the default write
+  `facts`, SQL in `engine-sql/trust-fence.ts`), and the fact rows adapter's before-state read and restore (`readFactPreimages`,
+  `restoreFactPreimage`, capability `facts`, SQL in `engine-sql/facts.ts`; its consolidation reads `readGenerationRestored`
+  and `clearTieHeldGenerationRows` are capability `persistence_journal`, SQL in `engine-sql/derived-generations.ts`), the extracted facts adapter's own-row read and retire (`listFactIdsBySourcePrefix`, `expireFactRows`, capability `facts`,
+  SQL in `engine-sql/facts.ts`), the page generation adapters' page row read (`readGenerationPageRows`, capability
+  `persistence_journal`, SQL in `engine-sql/generation-page-rows.ts`, store in `generations/page_rows.rs`), the atoms adapter's input and legacy evidence reads (`readAtomOriginInput`,
+  `listProducerVersionRows`, `listAtomWriteReceipts`, capability `persistence_journal`, SQL in
+  `engine-sql/generation-atom-reads.ts`, store in `generations/atom_reads.rs`), and the take rows
+  adapter's before-state read (`readTakePreimages`, capability `takes`, SQL in `engine-sql/takes-reads.ts`, store in `takes/reads.rs`). The store answers them in `facts/fence.rs` in the default write
   context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
-  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
+  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md). The fence
+  guard's read of held timeline rows is the typed member `listHeldTimelineRows` (capability `timeline`, SQL in
+  `engine-sql/trust-fence.ts`), served from `timeline/held.rs`; see "Held timeline rows" in
+  [`rust/docs/store/timeline_queries.md`](../../rust/docs/store/timeline_queries.md). Its read of held takes is
+  `listHeldTakeRows` (capability `takes`, the same SQL text `heldRows` sent), served from `takes/held.rs`; see "Held
+  takes" in [`rust/docs/store/takes.md`](../../rust/docs/store/takes.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -750,12 +787,12 @@ example `families/timeline.rs` and `store-members/timeline.ts`) for the details.
 
 ### page_ops
 
-Batch page reads and writes the pages capability still refuses.
+Batch page reads and writes of the `pages` and `page_versions` capabilities (served; `pages` stays unreported while its other members refuse).
 
 - **Files:** `gbrain-store/src/page_ops.rs`, `gbrain-napi/src/families/page_ops.rs`, `store-members/page-ops.ts`.
 - **Tag:** `p` (`PAGE_OPS`). Cascade on page delete: no.
 - **Members (18), capability:** `pages` (17), `page_versions` (1).
-- **Store and binding:** `readPageSnapshotsBatch` (`read_page_snapshots_batch`), `findDuplicatePage` (`find_duplicate_page`), `findDuplicatePages` (`find_duplicate_pages`), `deletePages` (`delete_pages`), `resolveSlugsByPaths` (`resolve_slugs_by_paths`), `softDeletePages` (`soft_delete_pages`), `purgeDeletedPages` (`purge_deleted_pages`), `findPages` (`find_pages`), `countPagesBy` (`count_pages_by`), `getAllSlugs` (`get_all_slugs`), `listAllPageRefs` (`list_all_page_refs`), `listPrefixSampledPages` (`list_prefix_sampled_pages`), `listCorpusSample` (`list_corpus_sample`), `getContentFlagsByPageIds` (`get_content_flags_by_page_ids`), `getUnverifiedExtractionPageIds` (`get_unverified_extraction_page_ids`), `getPageTimestamps` (`get_page_timestamps`), `getEffectiveDates` (`get_effective_dates`), `revertToVersion` (`revert_to_version`).
+- **Store and binding:** `readPageSnapshotsBatch` (`read_page_snapshots_batch`), `findDuplicatePage` (`find_duplicate_page`), `findDuplicatePages` (`find_duplicate_pages`), `deletePages` (`delete_pages`), `resolveSlugsByPaths` (`resolve_slugs_by_paths`), `softDeletePages` (`soft_delete_pages`), `purgeDeletedPages` (`purge_deleted_pages`), `findPages` (`find_pages`), `countPagesBy` (`count_pages_by`), `getAllSlugs` (`get_all_slugs`), `listAllPageRefs` (`list_all_page_refs`), `listPrefixSampledPages` (`list_prefix_sampled_pages`), `listCorpusSample` (`list_corpus_sample`), `getContentFlagsByPageIds` (`get_content_flags_by_page_ids`), `getUnverifiedExtractionPageIds` (`get_unverified_extraction_page_ids`), `getPageTimestamps` (`get_page_timestamps`), `getEffectiveDates` (`get_effective_dates`), `readAdmittedPageRefs` (`read_admitted_page_refs`), `readPageSynopses` (`read_page_synopses`), `readSeedTitleSlugs` (`read_seed_title_slugs`), `readLiveSlugs` (`read_live_slugs`), `readLivePageTypes` (`read_live_page_types`), `readTrigramCandidates` (`read_trigram_candidates`), `readPrefixCandidates` (`read_prefix_candidates`), `readPrefixDirs` (`read_prefix_dirs`), `readPrefixTitleMatches` (`read_prefix_title_matches`), `readNamedEntitySlugs` (`read_named_entity_slugs`), `revertToVersion` (`revert_to_version`).
 - **Postgres tables:** `pages` (read and soft/hard delete through `pages.rs`), `page_versions` (revert).
 - **Keys:** No rows of its own are needed for parity. Use `p` only for an index the reads need (for example `p 0x01 <source> 0x00 <source_path> 0x00 <slug>` for `resolveSlugsByPaths`, `p 0x02 <source> 0x00 <content_hash> 0x00 <page id>` for duplicate lookup), kept in step by the core page index hook (`page_index::reindex_page`; the stub is in `page_ops.rs`). For `resolveSlugsByPaths`, the core `o` key already indexes live pages by `source_path` ("Page origin"); it holds no soft-deleted pages, so a read that needs them keeps scanning `all_pages` or adds its own `p` index.
 - **Depends on:** Core page helpers (`read_page`, `all_pages`, `remove_page`, `write_page`, `snapshot_in`). `deletePages` and `purgeDeletedPages` also remove the deleted slugs from eval candidates (`retrieved_slugs`): call the eval_capture family's `pub(crate) fn remove_retrieved_slugs`, so build eval_capture first. The other tables PGLite scrubs there (retrieval events, feedback, gazetteer entries) have no Rust records; the scrub is a no-op for them until a family stores them.
@@ -837,7 +874,7 @@ Segmented page bodies: segment texts, manifests, staging and derivations.
 - **Store and binding:** `allocateBodyOccurrenceIds` (`allocate_body_occurrence_ids`), `stageSegmentTexts` (`stage_segment_texts`), `readSegmentTexts` (`read_segment_texts`), `stageManifestRows` (`stage_manifest_rows`), `readManifest` (`read_manifest`), `stageSegmentChunks` (`stage_segment_chunks`), `createSegmentedPageShell` (`create_segmented_page_shell`), `flipBodyGeneration` (`flip_body_generation`), `sealSegmentedPage` (`read_segmented_seal_lead`, `seal_segmented_page`), `openBodyStaging` (`open_body_staging`), `setBodyStagingState` (`set_body_staging_state`), `sweepSegments` (`sweep_segments`), `readSegmentDerivations` (`read_segment_derivations`), `upsertSegmentDerivations` (`upsert_segment_derivations`), `retireSegmentDerivations` (`retire_segment_derivations`), `refreshPageBody` (`refresh_page_body`).
 - **Postgres tables:** `page_segment_texts`, `page_body_manifest`, `page_body_stagings`, `page_segment_derivations`, `page_derivation_spend`.
 - **Keys:** `b 0x01 <source> 0x00 <sha256>` segment text; `b 0x02 <page id> <occurrence id> <gen_from> <staging id>` manifest row (ids big-endian); `b 0x03 <staging id>` staging; `b 0x04 <page id> ...` derivations; `M next_body_occurrence_id` for occurrence ids. Page-keyed rows go in `remove_page_rows`; segment texts are kept until `sweepSegments`, as in PGLite.
-- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries vectors until the embeddings family lands. The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
+- **Depends on:** Core page helpers for `createSegmentedPageShell`, `flipBodyGeneration`, `sealSegmentedPage` and `refreshPageBody` (page record writes go through `write_page`; the seal records the sanitized lead with `record_search_timeline`). `stageSegmentChunks` writes chunk rows through the core segment chunk helpers (built; "Segment chunks"), and refuses any input that carries a vector (`engine_capability_missing`). The flip publishes the view generation (`publish_segment_chunks`) and retires chunks with the segment chunk deletes. The generation-1 parity case also needs the transactions family.
 - **Estimate:** about 7 to 8 days: texts and manifest 1 to 2, flip and staging 3, sweep 2, derivations 1.
 - **Notes:** Segment bodies are bytes; sha256 and bodies cross the binding as hex or `Buffer`. `flipBodyGeneration` and `sweepSegments` are each one store write.
 - **Segment storage probe:** `hasSegmentStorage` (capability `page_body`, in `write_guards.rs`) is true when any segment text (`b 0x01`) or body staging (`b 0x03`) exists. The journal reads it before it looks for segmented pages.
@@ -874,11 +911,81 @@ Facts and their supersession chains.
     conversation relink's page pick, reads the source's `F 0x01` rows and the tried memos.
   - The reads `remember` and `forget` make before admission are typed members (`engine-sql/memory-mutation-reads.ts`:
     `readSourceWriteRow`, `readSourceLocalPath`, `readFactEntitySlug`, `hasLiveFileBackedPage`, `factReadableUnder`,
-    and `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`).
+    `readRemoteForgetTier` for the remote forget guard in `trust/supersede-handlers.ts`, and `readForgetTarget` for the
+    fact a forget names in `persistence/forget-prepare.ts`, with `isFactEntityUnbacked`, `readLinkedFactCopies`,
+    `hasHiddenFactCopy` and `ownerReachesFact` for what its withdrawal reaches, and `readFactWithdrawalClaim` for the
+    claim `planFactWithdrawal` in `facts/withdrawal.ts` changes).
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
-    a member page or a private-facts grant widens, and a remote provenance floor that is not the no-caller one. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`.
-- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding refuses until vectors land; the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: fill in `facts::rename_slug_rows` ("Rename slug rows").
+    a member page or a private-facts grant widens, a remote provenance floor that is not the no-caller one, and
+    `ownerReachesFact` for an owner bound to a member. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
+    and `test/engine-parity/forget-reach-reads.test.ts`.
+  - The forget commit is typed too (`engine-sql/trust-withdrawals.ts`): `lockFactForWithdrawal`, `queueWithdrawalReview`,
+    `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions`, `readPageRevisions` and `appendFactForgetReason`, and
+    `readFactWithdrawnRow` and `readFactWithdrawnBacking` for the `fact_withdrawn` refusal of a remember. The store
+    serves them in `trust/withdrawal_commit.rs` (rust/docs/store/trust.md "The forget commit"). Pinned by
+    `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. `recordFactWithdrawal`
+    itself locks the claim with `readFactWithdrawalClaim` (`lock`) and queues its review with `applyDecideReviewQueue`,
+    so `lockFactForWithdrawal`, `queueWithdrawalReview`, `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions` and
+    `readPageRevisions` have no caller in `src/` yet. Still raw on Rust: the purge sweep's commit transaction and
+    post-commit work (`facts/purge.ts`) and the forget's post-commit chunk rebuild (`page-state/projections.ts`).
+    The write-request forget (lane 4) reaches these members and the typed `lockSourceRow`, `readFactWithdrawalClaim`,
+    `applyDecideReviewQueue` and `insertWithdrawalEffects` calls, so `recordFactWithdrawal` makes no raw statement but the
+    ledger and fence reads.
+  - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge.ts` from `purgeSubjectPageLive` to
+    `listNearestFactsForPurge`, and `engine-sql/facts-purge-plan.ts`, four members to `listPurgeProbeItems`). The store serves
+    them in `facts/purge_plan.rs`, `facts/purge_probe.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md);
+    it probes `links`, `timeline_entries`, `raw_data`, `wanted_links` and every other inventory table it keeps (bytea
+    `minion_attachments.content` included), answers 0 for the tables it keeps no rows of, and refuses only naming
+    `raw_data` rows. On Rust a purge plan and its dry run complete and equal PGLite. Pinned by
+    `test/engine-parity/purge-plan.test.ts`, `test/engine-parity/purge-dry-run.test.ts` and
+    `test/purge-plan-sql-pin.test.ts`.
+  - The reads withdrawal discovery makes (`discoverWithdrawalTargets`, `facts/withdrawal-discovery.ts`) are one typed
+    member, `readWithdrawalDiscovery(read)` (`engine-sql/withdrawal-discovery.ts`), tagged by `kind`: `claim_keys`,
+    `provenance_pages`, `claim_matches`, `inline_fence_pages`, `segment_fence_rows`, `split_fence_slots`,
+    `target_pages` and `sample_slugs`. PGLite and Postgres run the statement text the call site ran. The store serves
+    every kind from the `F 0x01` fact rows, the page records and the live segmented-body rows with facts slots
+    (`facts/withdrawal_discovery.rs`, no new key prefix; rust/docs/store/facts.md). The member refuses a cursor, limit
+    or id that is not a safe integer. Pinned by `test/engine-parity/withdrawal-discovery-reads.test.ts`.
+  - The page statements a fact withdrawal runs (`recordFactWithdrawal`, `facts/withdrawal.ts`) are two typed members
+    (capability `facts`, `engine-sql/withdrawal-pages.ts`): `listSegmentedPages(sourceId, slugs)` and
+    `invalidateWithdrawnPages(sourceId, slugs)`. PGLite and Postgres run the statement text the call site ran. The
+    store reads and rewrites page records (`facts/withdrawal_pages.rs`, no new key prefix; rust/docs/store/facts.md)
+    and clears the page's embedding signature. Pinned by `test/engine-parity/withdrawal-forget.test.ts`.
+  - The withdrawal check a prepared import runs on a malformed facts fence (`assertPreparedFactWithdrawals`,
+    `facts/withdrawal.ts`) is one typed member (capability `facts`, `engine-sql/withdrawal-fence.ts`):
+    `hasWithdrawnFenceClaim(sourceId, claims, subject)`. PGLite and Postgres run the statement text the call site
+    ran. The store reads the withdrawal ledger (`t 0x01`) and the purge ledger (`F 0x0F`) with both fingerprints
+    (`facts/withdrawal_fence.rs`, no new key prefix; rust/docs/store/facts.md). Pinned by
+    `test/engine-parity/withdrawal-fence.test.ts`.
+  - Four owner-facing facts trust reads (`engine-sql/facts-trust.ts`) are served by the Rust engine
+    (`store-members/facts-trust-owner.ts`, `facts/trust_owner.rs`, no new key prefix): `readFactForOwnerAction`,
+    `countDerivedFactTaint`, `listLexicalContestCandidates` and `listStandingPreferences`. They read the stamped trust
+    columns and the write-gate receipts. `matchSavedFacts` is served too (`facts/saved_match.rs`), for the `english`
+    FTS language and the `CORRECTION_CUE` cue only. Pinned by `test/engine-parity/facts-trust-owner.test.ts`.
+    `listExtractorFactsForClassification` (`store-members/facts-repair.ts`, `facts/extractor_classify.rs`) reads its
+    receipts from the write journal's committed requests. Pinned by `test/engine-parity/facts-repair.test.ts`.
+    The four repair previews that list facts (`gbrain repair consolidate-ties`, `facts-rehome`, `ontology-facts` and `duplicate-facts`)
+    read through `listClosedConsolidationTies`, `listPagelessEntityFacts`, `listOntologyFactCandidates` and `listDuplicateFactRows`
+    (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
+    `test/engine-parity/repair-facts-previews.test.ts`.
+    The previews of `fact-claim-dates` (`listFactsOnValidDay`), `url-clone-fences` (`readLivePageByPath`) and `purged-page-facts`
+    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. The applies of
+    `captured-facts`, `url-clone-fences` and `purged-page-facts` stop on a Rust brain by name (`engine_capability_missing`, raw_sql:
+    "repair captured-facts page write", "repair url-clone-fences page write", "repair purged-page-facts expire") before their first
+    write, until the page write door and the fact expiry move to typed members. Pinned by `test/engine-parity/repair-facts-previews-2.test.ts`.
+    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. `visibility` (except its `facts` class) and `open-facts` stop by name before any read (`engine_capability_missing`, raw_sql: "repair visibility privacy scan", "repair open-facts privacy scan"), as their reads build privacy predicates the store does not carry; the applies of `facts-home` and `visibility` stop at "repair facts-home page write" and "repair visibility page write". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
+  - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
+    (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
+    `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and
+    Postgres pinned by `test/fixtures/goldens/remote-reads/statements.json`). The store answers it in
+    `facts/held_cells.rs`. For a member caller the TypeScript member passes the caller's member page, principal and
+    page policy, and the store admits that page's private facts as `memberFactAdmitSql` does. For a caller with a
+    private-facts grant it passes the granted sources, and the store admits the rows `grantedPrivateFactSql` admits.
+    A page policy the store does not render refuses, and `heldFenceLines` then holds every fence line (fail closed). Before the member existed the
+    check ran through `executeRaw`, which the Rust engine refuses, so a Rust brain held every fence line. Parity:
+    `held-fence-cells.test.ts`.
+- **Depends on:** None for the core members. Three cases also read takes (`countUnconsolidatedFacts`, `getFactsHealth`, the `listFactsByEntity` consolidation filter) and one needs the transactions family (keyset across a shared timestamp inside `transaction`). `findCandidateDuplicates` with an embedding needs core vectors (built); the keyword arm uses the keyword family's ranker. Source delete is not served yet (see "Page delete cascade"). A page rename moves facts and withdrawals keyed by the old slug: `cascade::rename_slug_rows` calls `facts::rename_slug_rows` ("Rename slug rows").
 - **Estimate:** about 4 days.
 - **Notes:** `listFactsKeyset` cursors are microsecond ISO text; `grep` is ILIKE with wildcards treated literally. `migrateFactsToCanonical` rewrites `entity_slug`, `source_markdown_slug` and `row_num` only.
 - **Parity cases (22, in `facts.test.ts`, `sync-aliases.test.ts`):**
@@ -904,6 +1011,52 @@ Facts and their supersession chains.
   - `facts.test.ts`: findTrajectory returns the typed-claim history chronologically, world-only unless local
   - `facts.test.ts`: getFactsHealth partitions active/expired/consolidated and ranks top entities
   - `sync-aliases.test.ts`: migrateFactsToCanonical moves active phantom facts, leaves expired ones, and is idempotent
+
+#### Design note: the short member-access form (built)
+
+A remote read on a brain whose config `access.restrictions_present` was unset when the request began
+(`CallerAccess.restricted` false) renders the member-access part of every page and fact policy as the short form
+`p.page_readers IS NULL AND p.folder_rule_ids IS NULL` (plus the owner-only part, the same in both forms;
+`accessAllowedForAllSql` in `search/private-visibility.ts`). The store judges the short form itself: the TypeScript
+members render their comparison texts under the caller's own `restricted` value and send `open` for a short-form
+caller. They no longer map such a caller to the full form. This note records why that is safe.
+
+- **The premise.** The short form equals the full form only when no page names readers, no access member exists, and
+  no folder rule or pending folder prefix exists: Postgres sets the flag in the same transaction as the first of each
+  (triggers of v282 and v283), and the flag is sticky. Under the premise, `readersAllowedSql`, `folderRulesAllowedSql`
+  and `originAllowedSql` pass every page, so the short form skips them, the lineage read included.
+- **Derived `page_readers`.** No new store state. The column is `gbrain_access_readers(frontmatter)`, recomputed by a
+  trigger on every write of `frontmatter` or `page_readers`, so it is NULL exactly when the frontmatter has no
+  top-level `readable_by` key. The store already reads that as `names_readers` (`facts/privacy.rs`); an invalid value
+  derives `['!nobody']`, which is not NULL, so the page stays hidden in both.
+- **Derived `folder_rule_ids`.** The column is `gbrain_access_folder_rules(source_id, slug)` from the applied rulebook
+  (`access_rules`, `access_policy_state`), stamped at insert, rename and policy apply. The store keeps no access tables,
+  so the value is NULL on every Rust page by construction. A later rulebook family must stamp it on the same writes and
+  set the flag as v283 does, or the short form would show a folder-restricted page.
+- **Where the premise could fail on a Rust brain, and how the store closes it.** A page record with `readable_by`
+  that reached the store without setting the flag (a build before `access_flag.rs`, or a later write path that
+  skips `pages::write_page`) would leave the flag unset. The short form still hides that page (its `page_readers` is
+  not NULL), but it shows an atom, question, concept or event page derived from it, which the full form's origin
+  test hides. The store closes this in `access_flag.rs`: every store write handle (`Store::write`) sets the flag on
+  the put of a page record that names readers, whatever path made the put, and the first open of a brain with no
+  scan record reads every page record (soft-deleted ones too, as v282) and sets the flag if one names readers.
+  The scan runs once per brain, so a flag an operator unsets by hand stays unset, as on Postgres. When the scan
+  cannot write, the open goes on and that process reads the flag as `'1'` if a page names readers or the read
+  does not finish (`Store::flag_assumed`).
+- **The change.** `PrivacyPolicy` has `open: bool` (default false). When true, a page that names readers fails the
+  member-access part for every identity, as the short form's `page_readers IS NULL` does. The rest of the part
+  (the origin walk) is read only when the store's own flag is `'1'`: a caller whose flag read was stale gets the
+  full form's origin test, which fails closed. `storePrivacyPolicy` and `storePageTextPolicy` render their
+  no-caller comparison texts under the caller's own `restricted` value and send `open`. The store reads live page
+  state for each row, as the short form reads live columns, so a page that gains readers during the request is
+  still hidden.
+- **Parity.** `restriction-flag-reads.test.ts` and `unrestricted-caller-reads.test.ts` run both forms: an unflagged
+  brain serves the short form, a flagged brain still hides a page derived from a `readable_by` origin, and a
+  short-form caller with the member identity still does not see a `readable_by` page (the old mapping showed it).
+  Postgres cannot seed the failed-premise brain (its trigger sets the flag), so the open-time scan and the write
+  handle have store tests (`tests/access_flag.rs`, the unit tests in `access_flag.rs`).
+- **Gain.** Honest text equality (no mapped caller) and no origin reads on unflagged Rust brains. Store test:
+  `tests/page_visibility.rs` (`the_open_form_hides_every_page_that_names_readers_and_reads_the_store_flag_for_origins`).
 
 ### ontology
 
@@ -934,7 +1087,7 @@ Takes and synthesis evidence.
 - **Store and binding:** `addTakesBatch` (`add_takes_batch`), `listTakes` (`list_takes`), `searchTakes` (`search_takes`), `updateTake` (`update_take`), `supersedeTake` (`supersede_take`), `resolveTake` (`resolve_take`), `getScorecard` (`get_scorecard`), `getCalibrationCurve` (`get_calibration_curve`), `addSynthesisEvidence` (`add_synthesis_evidence`), `listActiveTakesForPages` (`list_active_takes_for_pages`), `matchTakeRows` (`match_take_rows`), `deleteTakeRows` (`delete_take_rows`).
 - **Postgres tables:** `takes` (unique `(page_id, row_num)`), `synthesis_evidence`, read of `take_grade_cache` for `ungradedFirst`.
 - **Keys:** `A 0x01 <take id>` row; `A 0x02 <page id> <row_num u32>` to the take id (unique); `A 0x03 <synthesis page id> <take page id> <row_num>` evidence; `A 0x04 <take page id> <row_num> <synthesis page id>` reverse evidence. `M next_take_id`. `remove_page_rows` deletes the page's takes and every evidence row that names it.
-- **Depends on:** Core page helpers for slug and visibility joins. Vector search over takes and take embeddings belong to core (vectors, embeddings); the `takes` capability is reported only after those land.
+- **Depends on:** Core page helpers for slug and visibility joins. Vector search over takes and take embeddings belong to core (vectors, embeddings; both built), so the `takes` capability is reported.
 - **Estimate:** about 4 days.
 - **Notes:** `weight` is REAL: clamp and round as `buildTakeRows` does, then store as `f32`. `since_date` is text compared after padding, not a date. `searchTakes` is a trigram `word_similarity` score: share the keyword family's trigram code once it exists, or build `pg_trgm` scoring in this family and let keyword call it.
 - **Parity cases (21, in `code-eval-salience.test.ts`, `facts.test.ts`, `links.test.ts`, `takes.test.ts`):**
@@ -1081,7 +1234,7 @@ Brain statistics, health and the ingest log.
 - **Store and binding:** `getStats` (`get_stats`), `getHealth` (`get_health`), `countOnboardSignal` (`count_onboard_signal`), `logIngest` (`log_ingest`), `getIngestLog` (`get_ingest_log`), `listEnrichCandidates` (`list_enrich_candidates`), `findAnomalies` (`find_anomalies`).
 - **Postgres tables:** Counts over every table; `ingest_log`.
 - **Keys:** `n <created_at us> <id>` ingest log row; `M next_ingest_log_id`.
-- **Depends on:** Reads every family. `getHealth` reads extraction stamps and embedding coverage, so finish it last; the embedding counts refuse until the embeddings family lands, unless the store has no chunks. `listEnrichCandidates` and `findAnomalies` read salience and timeline.
+- **Depends on:** Reads every family. `getHealth` reads extraction stamps and embedding coverage, so finish it last. The embedding counts read the stored vectors of the active column; a brain whose config names another column refuses (`rust/docs/store/stats.md`). `listEnrichCandidates` and `findAnomalies` read salience and timeline.
 - **Estimate:** about 2 to 3 days.
 - **Notes:** Health lists order with `COLLATE "C"` (byte order). `getStats` counts links only when both ends are in scope. `countOnboardSignal` is served because a production caller reaches it on a Rust brain: the MCP onboarding coach (`src/core/onboard/mcp-onboarding.ts:72`, started by `src/mcp/server.ts:551` and read by `src/mcp/dispatch.ts:1464`). It counts brain-wide, with no source scope.
 - **Parity cases (7, in `code-eval-salience.test.ts`, `config-ingest.test.ts`, `search-reads.test.ts`):**
@@ -1166,6 +1319,18 @@ rebuild counts and the retrieval coverage counts. Detail: `rust/docs/store/link_
   the refresh after a link write and the temporal and wanted steps of a derived-link publication run in one store
   transaction, as on PGLite and Postgres.
 
+### entity_identities
+
+Cross-source identity groups (migration v137): manual links, lookups, the canonical twin. Detail: `rust/docs/store/entity_identities.md`.
+
+- **Files:** `gbrain-store/src/entity_identities.rs`, `gbrain-napi/src/families/entity_identities.rs`, `store-members/entity-identities.ts`.
+- **Tag:** `i` (`ENTITY_IDENTITY`). Cascade on page delete: yes (`remove_page_rows` drops the page's membership and its group key).
+- **Keys:** `i 0x01 <page id BE8>` to the membership JSON; `i 0x02 <entity_id> 0x00 <page id BE8>` (empty, the group index).
+- **Members (5), capability:** `entity_identities` (5): `linkEntityIdentityRow`, `unlinkEntityIdentityRow`, `listEntityIdentityRows`, `readEntityIdentityIdsForPages`, `readCanonicalTwin`.
+- **Postgres tables:** `entity_identities`; SQL in `src/core/engine-sql/entity-identities.ts`.
+- **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
+- **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
+
 ### timeline_queries
 
 Timeline reads by date and event projections.
@@ -1204,7 +1369,7 @@ Keyword search members of the keyword_search capability (all served), and title 
 - **Members (6), capability:** `keyword_search` (6).
 - **Store and binding:** `searchKeyword` (`search_keyword`; the hybrid arm is in `keyword/arm.rs`), `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
-- **Keys:** None written yet; every member scans the live pages and rebuilds vectors from text (`rust/docs/store/keyword.md`, "Keys"). The family owns the `R` tag (`TRIGRAM`).
+- **Keys:** The keyword index of store format 4 under the `R` tag (`TRIGRAM`), one kind byte after the tag: `0x00` the index state, `0x01` chunk and `0x02` page lexeme postings, `0x03` title trigrams, `0x04` slug basenames, `0x05`/`0x06` forward records (`keys.rs`, `rust/docs/store/keyword.md`, "Keys"). Until the state is complete every member scans the live pages and rebuilds vectors from text.
 - **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are not used; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
 - **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
 - **Notes:** Every keyword case must match PGLite exactly, order and score within `1e-6`; `search.tsv` is empty.
@@ -1224,7 +1389,7 @@ Chunk reads of the chunks capability (served; the capability stays unreported wh
 - **Store and binding:** `getChunkPage` (`get_chunk_page`), `getChunkWindows` (`get_chunk_windows`), `countChunklessPagesWithContent` (`count_chunkless_pages_with_content`), `listChunklessPagesWithContent` (`list_chunkless_pages_with_content`).
 - **Postgres tables:** `content_chunks`, `pages`.
 - **Keys:** Reads core chunk rows (`K`) through `chunks.rs` helpers; `c` only if a read needs an index.
-- **Depends on:** Core chunk helpers. Two cases also read embeddings (core).
+- **Depends on:** Core chunk helpers. Two cases also read embeddings (core, built).
 - **Estimate:** about 1 to 2 days.
 - **Notes:** Chunkless pages exclude quarantined and `embed_skip` pages.
 - **Parity cases (6, in `chunks.test.ts`):**
@@ -1242,12 +1407,12 @@ Chunk vectors and vector search.
 - **Files:** `gbrain-store/src/vectors.rs`, `gbrain-napi/src/families/vectors.rs`, `store-members/vectors.ts`.
 - **Tag:** `X` (`VECTOR`). Cascade on page delete: yes.
 - **Members (2), capability:** `vector_search` (1), `takes` (1).
-- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`).
+- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`). `searchTakesVector` is built in the takes files: `gbrain-store/src/takes/vector_search.rs`, `gbrain-napi/src/families/takes.rs` and `store-members/takes.ts`.
 - **Postgres tables:** Chunk and take vectors (`embedding` columns), the vector index.
 - **Keys:** `X` (core sub-layout).
-- **Depends on:** The coming vector store work (HNSW or exact scan choice, design phase 2).
-- **Estimate:** core.
-- **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector.
+- **Depends on:** Nothing. The store serves both members with an exact scan over the stored vectors (`rust/docs/store/vectors.md`).
+- **Estimate:** built.
+- **Notes:** Cosine score is `1 - distance`, within `1e-6` of pgvector. A query value outside the float4 range refuses with `invalid_argument`. A safe reader (`requireSafeChunks` or `excludePrivate`) sees a page only when its `chunker_version` is 4 or more.
 - **Store field:** `Store` holds one `pub(crate) vectors: crate::vectors::VectorCache`, made with `Default` in
   `open_kv`, so a search passes `Some(&self.vectors)` to `load_index` and reuses the decoded vectors across reads.
   Core defines `VectorCache` as an empty struct at the end of `vectors.rs`. Git merges it into the family's file with
@@ -1270,9 +1435,9 @@ Embedding state of chunks and pages.
 - **Store and binding:** `getEmbeddingsByChunkIds` (`get_embeddings_by_chunk_ids`), `countStaleChunks` (`count_stale_chunks`), `sumStaleChunkChars` (`sum_stale_chunk_chars`), `setPageEmbeddingSignature` (`set_page_embedding_signature`), `invalidateStaleSignatureEmbeddings` (`invalidate_stale_signature_embeddings`), `invalidateContentDriftEmbeddings` (`invalidate_content_drift_embeddings`), `listStaleChunks` (`list_stale_chunks`), `readEmbeddingStateCounts` (`read_embedding_state_counts`), `listEmbeddingStateRows` (`list_embedding_state_rows`), `getChunksWithEmbeddings` (`get_chunks_with_embeddings`), `updateTakeEmbeddings` (`update_take_embeddings`), `getTakeEmbeddings` (`get_take_embeddings`), `countStaleTakes` (`count_stale_takes`), `listStaleTakes` (`list_stale_takes`).
 - **Postgres tables:** Embedding columns and state on `content_chunks`, `pages.embedding_signature`, take embeddings.
 - **Keys:** `B` (core sub-layout).
-- **Depends on:** vectors.
-- **Estimate:** core.
-- **Notes:** Reports the active embedding column the way the registry does.
+- **Depends on:** vectors (built).
+- **Estimate:** built (`rust/docs/store/embeddings.md`).
+- **Notes:** Reports the active embedding column the way the registry does. A brain whose config names a vector column other than `embedding`, and a chunk that carries an image vector, still refuse with `engine_capability_missing`.
 - **Parity cases (9, in `chunks.test.ts`, `search.test.ts`, `takes.test.ts`):**
   - `chunks.test.ts`: getChunks includeEmbedding returns stored vectors; getChunksWithEmbeddings reads the full rows
   - `chunks.test.ts`: countStaleChunks, sumStaleChunkChars and listStaleChunks agree on which chunks lack a vector
@@ -1339,7 +1504,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `h i x y z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry and `f` is the dream synthesis completion archive).
+until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1577,16 +1742,12 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     counts and inserts in one write, so no second admission can see the count before the insert. The cases in
     `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
     (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
-  - Delegated admission and retry: the refuse-before-write guard. `admitJob` with a delegated client's policy and
-    `retryJob` run the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`) that
-    serves the job reads, `countOpenJobsByOwner` and `readJobSourceState` from the store. When the policy has called
-    `lockOAuthClient`, the handle records it (`handle.locked()`), and the member refuses (`engine_capability_missing`)
-    before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
-    one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
-    `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
-    refuses too (a lock that locks nothing would hide a missing guarantee). No production caller reaches the engine
-    member on a Rust brain: its one caller, `lockDelegatedSubmission` (`src/core/minions/delegated-admission.ts:38`),
-    runs on the handle above, so the member stays refused.
+  - Delegated admission and retry: one engine transaction. `admitJob` with a delegated client's policy runs the lock,
+    a store probe (`capacityCheck: true`, which answers a coalesce or stops where the capacity check runs and writes
+    nothing), the policy's capacity check and the store admission in one `transaction`, and `retryJob` runs its job
+    read, policy and update in one. The store admits one write transaction at a time, so the policy's count and the
+    insert are one admission. `lockOAuthClient` resolves with nothing to do: inside a transaction the store's single
+    writer holds what the row lock holds.
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
@@ -1646,7 +1807,9 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
   `ENGINE_CAPABILITIES`) for the policy, tier, gate, withdrawal and review members, and the existing
   `belief_ledger` for the belief members, so the belief part can ship later without holding the rest.
 - **Store and binding:** the Rust method is the member name in snake_case.
-  - Policy and gate: `readTrustGeneration`, `readWriteGateReceipt`, `clearStalePageGateReceipts`,
+  - Policy and gate: `readTrustGeneration` (the other half of the hot-memory cache identity; the store keeps no
+    `trust_policy_state` and answers its commit sequence, which moves on every commit, a superset of the SQL
+    generation's trigger events, so a Rust cache rebuilds after any write), `readWriteGateReceipt`, `clearStalePageGateReceipts`,
     `listWriteGateHolds`, `listTrustAllowRules`, `insertTrustProposal`, `listTrustProposals`.
   - Page tiers: `readPageTrustRows` (one read for the four sites that read page tiers), `readTrustTierCounts`,
     `lowerPageTrustTiers`, `relowerClaimedRows`, `readTaintInputPages`, `findPageVersionByTier`, `listFlaggedPages`,
@@ -1654,7 +1817,10 @@ Trust tiers, the write gate, trust review, fact withdrawal and the belief ledger
     `guardFenceFactRows`.
   - Withdrawal: `insertFactWithdrawal`, `isFactWithdrawn` (one member for the current and v1 forms), `isFactPurged`,
     `planFactWithdrawal`, `listWithdrawals` (one filtered list for the discovery, dates and export readers),
-    `hasSourcePurges`.
+    `hasSourcePurges`, `readFactCacheWatermark` (the hot-memory cache watermark: the source's withdrawal count, the
+    newest withdrawal in UTC with microseconds, and the folder access digest, which the store reports as the digest of
+    two empty tables because it keeps no folder rules; the newest withdrawal is UTC ISO text, not `::text`, which
+    followed the session time zone; the text is a cache key only, so no answer changed).
   - Review: `insertWithdrawReviewItem`, `countPurgeReviewQueueRefs`.
   - Beliefs (`belief_ledger`): `readCoverageIntervals`, `listCoveredSources`, `readOpenLifetimes`,
     `mintBeliefLifetime`, `resolveBeliefLifetimes`, `readBeliefRedactions`, `readBeliefState`.
@@ -1766,7 +1932,12 @@ and write provenance on content rows, and the trust records.
     no floor), `findOrphanPages` and `listLinkSources`.
   - Ignored on purpose, as their SQL does: the raw-files, stats, ontology, timeline and chunk-page reads.
   - Built: `listSingleFactMetadata` (refused only under the remote floor) and `listUnpreviewedTrustFacts` read the
-    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` honours a read eligibility.
+    stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
+    (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
+    caller's eligibility) honour a read eligibility.
+  - Built: the trust scan's cursor, claimed-source check and id ceilings are typed members
+    (`engine-sql/trust-scan.ts`), served by `trust/scan_state.rs` and `persistence/trust_scan_cursor.rs`, so a scan on a
+    Rust brain stops and resumes as on PGLite.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
@@ -1777,8 +1948,14 @@ and write provenance on content rows, and the trust records.
     answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
     fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets no isolation level, because a
     store transaction holds the one writer from its start, and it enforces `READ ONLY` with Postgres's `25006` refusal. It refuses the takes and timeline
-    scan tables, and the belief history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
-    The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks.
+    scan tables; the belief history members read the store's belief ledger (`trust/belief_history.rs`).
+    The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks, and it serves the
+    fence fact append's holding-page prune (`pruneHoldingPageVersions`), its occupied-row read (`readFenceRowOccupant`)
+    and its page tier restore (`restorePageTrust`, through the same trust stamp as the PGLite `UPDATE`).
+    The fact purge's segmented writes are typed members the store serves (`engine-sql/segmented-purge-writes.ts`): the
+    flip's staging lock (`lockBodyStagingState`) and stale chunk delete (`deleteUnstagedSegmentChunks`), the delete of the
+    derivation rows a rewritten segment may hold (`deleteRewrittenSegmentDerivations`), the version read
+    (`listPurgeVersionBodies`, `purge_version_bodies.rs`), and `createVersion` with the purge's `preimage`.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
     refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
@@ -1881,10 +2058,10 @@ member lands. Within a group, build in the order shown.
 |---|---|---|---|---|
 | 1. Page reads and deletes | page_ops | yes | about 9 days | nothing to start; `deletePages` calls the eval_capture helper, which group 5 builds first (about half a day) |
 | 2. Page state | extraction, then aliases | yes | about 10 days | `updateSlug` uses the core rename helper (built) |
-| 3. Page bodies | page_body | yes | about 7 to 8 days | vector input to `stageSegmentChunks` refuses until embeddings; one case needs transactions |
+| 3. Page bodies | page_body | yes | about 7 to 8 days | `stageSegmentChunks` refuses a chunk that carries a vector; one case needs transactions |
 | 4. Memory records | dream, contradictions, facts, ontology, raw_files, stats | yes | about 9 days | three facts cases need takes (group 5); `getHealth` last |
-| 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core); code_edges uses the core chunk-delete hook (built) |
-| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings |
+| 5. Takes and salience | eval_capture (first), takes, salience, code_edges | yes | about 7 to 8 days | the `takes` capability needs vectors and embeddings (core, built); code_edges uses the core chunk-delete hook (built) |
+| 6. Graph and search reads | timeline_queries, chunk_queries, link_queries, keyword | yes | about 11 days | keyword writes the `ts_rank` compatibility ranker itself; two chunk cases need embeddings (core, built) |
 
 Groups 1 and 2 share the `pages` capability: `pages` is reported only when page_ops, extraction and aliases are all
 done. Groups 6 and 2 are the longest (about 11 and 10 days) and set the critical path. `sweepSegments` is served: it reads the version and journal
@@ -1910,8 +2087,8 @@ brain; then the first persistence slice (about 4 days, core) comes first.
 | Page projection hook (`page_projection::queue_page_projection`, called by `write_page` and `remove_page`) | built; the family fills in the body | persistence (`page_projection_jobs`) |
 | Tags `d`, `m`, `t` (`PERSISTENCE`, `JOBS`, `TRUST`) and the empty `persistence.rs`, `jobs.rs` and `trust.rs` | built | persistence, jobs, trust |
 | Timeline date index hook in `timeline.rs` | a family asking | timeline_queries |
-| vectors (`X`): chunk and take vectors, vector search | the coming vector store work | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
-| embeddings (`B`): stale counts, signatures, embedding state | vectors | stats `getHealth`, chunk_queries shared cases, takes capability |
+| vectors (`X`): chunk and take vectors, vector search | built (exact scan) | embeddings, takes capability, page_body chunk vectors, `findCandidateDuplicates` with an embedding |
+| embeddings (`B`): stale counts, signatures, embedding state | built | stats `getHealth`, chunk_queries shared cases, takes capability |
 | transactions (`w`): the BrainEngine `transaction` callback across napi and `lockPageKeys` | a store transaction that stays open across napi calls | the nine cases that open a transaction; link_temporal (one transaction for the link refresh and the derived-link steps) |
 | relations (`v`): the relation API in place of raw SQL | Track 2 of the design (D18) | not in the Dec 1 scope; `executeRaw` and the rest keep refusing |
 | Source-delete list (`cascade::remove_source_rows`) | built; nothing calls it yet | facts, aliases, code_edges, link_queries, raw_files, page_body, takes, extraction |

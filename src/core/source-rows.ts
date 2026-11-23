@@ -33,3 +33,15 @@ export async function sourceRecordsRawConfig(
   const rows = await engine.listSourceRecords();
   return opts.includeArchived === true ? rows : rows.filter(row => row.archived !== true);
 }
+
+/**
+ * `SELECT id, incarnation, local_path, config, archived FROM sources WHERE id = ANY($1) ORDER BY id COLLATE "C"` through the
+ * typed `readSourceState` member: one row per known id (archived ones included), in byte order of id.
+ */
+export async function readSourceStates(engine: Pick<BrainEngine, 'readSourceState'>, sourceIds: readonly string[]) {
+  const rows = await Promise.all([...new Set(sourceIds)].map(async id => {
+    const state = await engine.readSourceState(id);
+    return state ? { id, ...state } : null;
+  }));
+  return sortSourcesById(rows.filter((row): row is NonNullable<typeof row> => row !== null));
+}

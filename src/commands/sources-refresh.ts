@@ -60,6 +60,8 @@ function describe(result: WorktreeRefreshResult): string {
   if (result.incoming_files !== undefined) lines.push(`Incoming files: ${result.incoming_files}.`);
   for (const member of result.synced) lines.push(`  ${member.source_id}: sync ${member.status}, last_commit ${head(member.last_commit)}`);
   if (result.preserved_uncommitted.length) lines.push(`Preserved uncommitted paths (outside the incoming diff): ${result.preserved_uncommitted.slice(0, 20).join(', ')}${result.preserved_uncommitted.length > 20 ? ' ...' : ''}`);
+  for (const backlog of result.link_backlog ?? []) lines.push(backlog.outcome === 'drained' ? `  ${backlog.source_id}: derived links for ${backlog.pages} stale page(s) after the refresh` + (backlog.remaining ? `; ${backlog.remaining} remain` : '')
+    : backlog.outcome === 'skipped' ? `  ${backlog.source_id}: stale-link backlog skipped (another drain of this source is running)` : `  ${backlog.source_id}: stale-link backlog drain failed: ${backlog.message}`);
   for (const blocked of result.sync_blocked ?? []) lines.push(`  ${blocked.source_id} blocked (${blocked.code}): ${blocked.message} Resume: ${blocked.resume}`);
   if (result.next) lines.push(`Next: ${result.next}`);
   return lines.join('\n');
@@ -68,6 +70,8 @@ function describe(result: WorktreeRefreshResult): string {
 /** Print a refresh result, or a refusal with its filled fix; both go to stdout (one JSON object with --json). */
 export function printRefreshOutcome(outcome: { result: WorktreeRefreshResult } | { error: OperationError }, json: boolean): void {
   if ('result' in outcome) {
+    const { phase_ms, lock_held_ms } = outcome.result;
+    if (process.env.GBRAIN_DEBUG === '1' && phase_ms) process.stderr.write(`[gbrain] sources refresh phase_ms ${JSON.stringify(phase_ms)}${lock_held_ms !== undefined ? ` lock_held_ms ${lock_held_ms}` : ''}\n`);
     console.log(json ? JSON.stringify(outcome.result) : describe(outcome.result));
     if (['sync_blocked', 'sync_deferred', 'syncing'].includes(outcome.result.status)) setCliExitVerdict(1);
     return;
@@ -77,7 +81,7 @@ export function printRefreshOutcome(outcome: { result: WorktreeRefreshResult } |
   // #7685: a refusal that carries a structured fix (argv, actor, ask_user) emits it as the v1 `fix`; the prose stays in `suggestion`.
   const env = toAgentError(error, { transport: 'cli', command: 'sources refresh', render: cliRenderContext() });
   const refusal = { status: 'refused', code: error.code, cause: error.message, fix: error.fix && env.fix ? env.fix : error.suggestion ?? null, docs: error.docs ?? null,
-    ...(error.detail ? { detail: error.detail } : {}), ...(error.why ? { why: error.why } : {}),
+    ...(error.detail ? { detail: error.detail } : {}), ...(error.why ? { why: error.why } : {}), ...(error.reason ? { reason: error.reason } : {}),
     error: env.error, message: env.message, suggestion: env.suggestion, docs_cmd: env.docs_cmd, class: env.class, retryable: env.retryable,
     contract_version: env.contract_version };
   console.log(json ? JSON.stringify(refusal) : `Refresh refused (${error.code}): ${error.message}\nFix: ${error.suggestion ?? USAGE}${error.docs ? `\nDocs: ${error.docs}` : ''}${error.why ? `\nWhy: ${error.why}` : ''}`);

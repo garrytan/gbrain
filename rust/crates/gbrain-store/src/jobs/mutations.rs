@@ -52,8 +52,8 @@ fn held_by(token: &str) -> impl Fn(&JobRecord) -> bool + '_ {
     move |r| r.status == "active" && r.lock_token.as_deref() == Some(token)
 }
 
-fn add_token(what: &str, have: i32, delta: i64) -> Result<i32> {
-    i32::try_from(i64::from(have) + delta)
+pub(super) fn add_token(what: &str, have: i32, delta: impl Into<i64>) -> Result<i32> {
+    i32::try_from(i64::from(have) + delta.into())
         .map_err(|_| StoreError::invalid(format!("addJobTokens: {what} is out of integer range")))
 }
 

@@ -29,11 +29,10 @@ import type { SearchResult, PageType, RelationalFanoutRow, PageReadPolicy } from
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { listSources } from '../sources-ops.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { resolveEntitySlugWithSource, retiredPageSql } from '../entities/resolve.ts';
-import { buildVisibilityClause } from './sql-ranking.ts';
-import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
+import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { hasReadPolicy, readPolicyOf } from './read-policy-sql.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
-import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { overlaidBoundedRows } from '../page-window/bounded-lead.ts';
 import { parseRelationalQuery, type RelationalQuery, type RelationVocab } from './relational-intent.ts';
 import { edgeValidityEnabled, type EdgeTemporalOpts } from '../link-validity.ts';
 import { stampEvidence, type EvidenceOpts } from './evidence.ts';
@@ -150,10 +149,8 @@ async function resolveSeedScoped(
   for (const sid of sources) {
     let r = await resolveEntitySlugWithSource(engine, sid, phrase);
     if (r?.source === 'fallback_slugify' && titleTypes.length) {
-      const titled = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
-           AND lower(title) = lower($3) AND NOT ${retiredPageSql('pages')} LIMIT 2`, [sid, titleTypes, phrase.trim()]);
-      if (titled.length === 1) r = { slug: titled[0].slug, source: 'exact_page' };
+      const titled = await engine.readSeedTitleSlugs(sid, titleTypes, phrase.trim());
+      if (titled.length === 1) r = { slug: titled[0], source: 'exact_page' };
     }
     if (!r || r.source === 'fallback_slugify') continue;
     const key = `${sid}:${r.slug}`;
@@ -162,13 +159,9 @@ async function resolveSeedScoped(
     out.push({ source_id: sid, slug: r.slug });
   }
   if (!out.length || !hasReadPolicy(policy)) return out;
-  const params: unknown[] = [out.map(ref => ref.source_id), out.map(ref => ref.slug)];
-  const filter = pageReadFilter('p', policy, params, true);
-  const admitted = await engine.executeRaw<{ source_id: string; slug: string }>(
-    `SELECT p.source_id, p.slug FROM pages p
-     JOIN unnest($1::text[], $2::text[]) AS refs(source_id, slug)
-       ON p.source_id = refs.source_id AND p.slug = refs.slug WHERE ${filter}`, params,
-  );
+  // The policy admit: drop every seed the read policy hides before the walk (the fanout filters again, as defense
+  // in depth). The arm is handed the whole search options; the member reads the read policy alone.
+  const admitted = await engine.readAdmittedPageRefs(out, readPolicyOf(policy) ?? {});
   const allowed = new Set(admitted.map(ref => `${ref.source_id}:${ref.slug}`));
   return out.filter(ref => allowed.has(`${ref.source_id}:${ref.slug}`));
 }
@@ -185,20 +178,7 @@ async function hydrate(
   policy: PageReadPolicy,
 ): Promise<SearchResult[]> {
   if (rows.length === 0) return [];
-  const params: unknown[] = [rows.map(r => r.source_id), rows.map(r => r.slug)];
-  const filter = pageReadFilter('p', policy, params);
-  const pageRows = await engine.executeRaw<{
-    page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null;
-  }>(
-    `SELECT p.id AS page_id, p.slug, p.source_id, p.title, p.type,
-            ${boundedBodyPrefixSql('p')} AS synopsis
-     FROM pages p
-     JOIN sources s ON s.id = p.source_id
-     JOIN unnest($1::text[], $2::text[]) AS refs(source_id, slug)
-       ON p.source_id = refs.source_id AND p.slug = refs.slug
-     WHERE ${filter} ${buildVisibilityClause('p', 's', { excludePrivate: policy.excludePrivate, requireSafeChunks: false })}`,
-    params,
-  );
+  const pageRows = await engine.readPageSynopses(rows.map(r => ({ source_id: r.source_id, slug: r.slug })), readPolicyOf(policy));
   // Large pages: a bounded, withdrawal-overlaid prefix per row is sanitized, never the whole body.
   const leads = await overlaidBoundedRows(engine, pageRows.map(pr => ({ slug: pr.slug, source_id: pr.source_id, compiled_truth: pr.synopsis })));
   const byKey = new Map<string, typeof pageRows[number]>();

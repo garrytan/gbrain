@@ -58,7 +58,7 @@ export async function readPageSnapshotsBatch(
     WHERE w.batch_n = 1 OR w.batch_prior_bytes < $3
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
@@ -66,11 +66,11 @@ export async function readPageSnapshotsBatch(
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
-      ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
+      ORDER BY w.visibility COLLATE "C",w.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
         FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
         GROUP BY visibility,fact_hash) w), '[]'::jsonb)
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
-        ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
+        ORDER BY x.visibility COLLATE "C",x.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug
           GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals,
       (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g

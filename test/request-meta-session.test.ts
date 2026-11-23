@@ -50,6 +50,9 @@ describe('per-session hot-memory cache stays bounded under remote session ids', 
     __resetHotMemoryCacheForTests();
     const engine = {
       executeRaw: async () => [{ n: 0, at: null, generation: '0' }],
+      // The trust generation and the cache watermark are typed engine reads now; they answer what the raw row above did.
+      readTrustGeneration: async () => '0',
+      readFactCacheWatermark: async () => ({ withdrawals: 0, latest_withdrawn_at: null, access_rules: '' }),
       listFactsBySession: async () => [],
       listFactsSince: async () => [],
     };

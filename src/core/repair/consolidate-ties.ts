@@ -31,6 +31,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface ClosedTie {
   source_id: string;
@@ -44,17 +45,7 @@ export interface ClosedTie {
 
 /** Every fact the pre-#6023 writeback closed at its own instant, in (source, id) order. Read-only. */
 export async function findClosedTies(engine: BrainEngine, sourceIds: string[]): Promise<ClosedTie[]> {
-  const rows = await engine.executeRaw<{ source_id: string; id: number | string; entity_slug: string; take_id: number | string; valid_from: string;
-    partners: Array<number | string> | null }>(`
-    SELECT f.source_id, f.id, f.entity_slug, f.consolidated_into AS take_id, f.valid_from::text AS valid_from,
-           (SELECT array_agg(g.id ORDER BY g.id) FROM facts g
-             WHERE g.source_id = f.source_id AND g.id <> f.id AND g.consolidated_into = f.consolidated_into
-               AND g.claim_metric = f.claim_metric AND g.claim_unit IS NOT DISTINCT FROM f.claim_unit
-               AND g.claim_period IS NOT DISTINCT FROM f.claim_period AND g.valid_from = f.valid_from) AS partners
-      FROM facts f
-     WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.claim_metric IS NOT NULL
-       AND f.consolidated_into IS NOT NULL AND f.valid_until = f.valid_from AND f.entity_slug IS NOT NULL
-     ORDER BY f.source_id, f.id`, [sourceIds]);
+  const rows = await engine.listClosedConsolidationTies(sourceIds);
   return rows.filter(row => row.partners?.length).map(row => ({ source_id: row.source_id, id: Number(row.id), entity_slug: row.entity_slug,
     take_id: Number(row.take_id), valid_from: row.valid_from, partners: row.partners!.map(Number) }));
 }
@@ -66,8 +57,7 @@ function previewCommand(scope: RepairScope): string {
   return `gbrain repair consolidate-ties${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, sources: unknown, ties: ClosedTie[]) =>
   previewHash({ kind: 'consolidate-ties-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, ties });
@@ -104,6 +94,8 @@ export const consolidateTiesRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { tie, hash, last } = entry as RestoreItem;
+    // The restore rewrites the fact row through raw SQL, so a Rust brain stops here by name, before its first write.
+    requireRawSql(ctx.engine, 'repair consolidate-ties fact write');
     const restore = async (tx: BrainEngine): Promise<boolean> => (await tx.executeRaw<{ id: number }>(
       `UPDATE facts SET valid_until = NULL
         WHERE source_id = $1 AND id = $2 AND entity_slug = $3 AND consolidated_into = $4 AND expired_at IS NULL

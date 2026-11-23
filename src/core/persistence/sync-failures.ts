@@ -130,7 +130,7 @@ async function deleteFailure(engine: BrainEngine, key: string, failure: ManagedS
 async function sourceFailureRows(engine: BrainEngine, sourceId: string): Promise<Array<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>> {
   const rows = await engine.executeRaw<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>(`SELECT f.fingerprint AS key,f.completed_keys->0 AS failure,
       EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS unfinished
-    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint`, [sourceId]);
+    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint COLLATE "C"`, [sourceId]);
   return rows;
 }
 
@@ -168,24 +168,9 @@ export async function acknowledgeManagedSyncFailures(engine: BrainEngine, run: M
 }
 
 export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncFailure[]> {
-  const rows = await engine.executeRaw<{ cursor_key: string; value: { sourceId: string; incarnation: string; runId: string; index: number; target: string; pending?: { requestId: string };
-      syncOptions: SyncCursorOptions | null; processingOptions: Partial<SyncProcessingOptions> | null };
-    receipt: Pick<WriteRequest, 'state' | 'request_id' | 'error_code' | 'error_message' | 'error_detail'> | null; failure: ManagedSyncFailure | null; path: string | null; updated_at: string }>(`
-    SELECT c.fingerprint AS cursor_key,jsonb_build_object('sourceId',s.id,'incarnation',s.incarnation,'runId',c.completed_keys->0->>'runId',
-      'index',c.completed_keys->0->'index','target',c.completed_keys->0->>'target',
-      'syncOptions',c.completed_keys->0->'syncOptions','processingOptions',c.completed_keys->0->'processingOptions',
-      'pending',jsonb_build_object('requestId',c.completed_keys->0->'pending'->>'requestId')) AS value,
-      CASE WHEN r.id IS NULL THEN NULL ELSE jsonb_build_object('state',r.state,'request_id',r.request_id,'error_code',r.error_code,'error_message',r.error_message,'error_detail',r.error_detail) END AS receipt,
-      f.completed_keys->0 AS failure,m.completed_keys->((c.completed_keys->0->>'index')::int)->>'path' AS path,c.updated_at
-    FROM op_checkpoints c
-    JOIN sources s ON s.id=c.completed_keys->0->>'sourceId' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
-    LEFT JOIN persistence_requests r ON r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.request_id=(c.completed_keys->0->'pending'->>'requestId')::uuid
-      AND r.principal_id=c.completed_keys->0->'authority'->'writer'->'principal'->>'id'
-      AND r.principal_kind=c.completed_keys->0->'authority'->'writer'->'principal'->>'kind'
-    LEFT JOIN op_checkpoints f ON f.op='managed-sync-failure' AND f.fingerprint=c.fingerprint
-    LEFT JOIN op_checkpoints m ON m.op='managed-sync-manifest' AND m.fingerprint=c.completed_keys->0->>'runId'
-    WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))`, [sourceIds ?? null]);
+  const rows = await engine.readManagedSyncFailureRows<{ sourceId: string; incarnation: string; runId: string; index: number; target: string; pending?: { requestId: string };
+      syncOptions: SyncCursorOptions | null; processingOptions: Partial<SyncProcessingOptions> | null },
+    Pick<WriteRequest, 'state' | 'request_id' | 'error_code' | 'error_message' | 'error_detail'>, ManagedSyncFailure>(sourceIds ?? null);
   const failures: ManagedSyncFailure[] = rows.map(row => {
     const c = row.value, r = row.receipt;
     const options = { ...(c.syncOptions ? { syncOptions: c.syncOptions } : {}), ...(c.processingOptions ? { processingOptions: c.processingOptions } : {}) };
@@ -199,11 +184,7 @@ export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: s
       run_id: c.runId, target: c.target, cursor_key: row.cursor_key, phase: r ? 'receipt' : 'resume', state: r?.state ?? 'unfinished',
       observation_id: c.pending?.requestId ?? `${c.runId}:${c.index}`, first_seen: new Date(row.updated_at).toISOString(), attempts: 1 };
   });
-  const orphaned = await engine.executeRaw<{ failure: ManagedSyncFailure }>(`
-    SELECT f.completed_keys->0 AS failure FROM op_checkpoints f
-    JOIN sources s ON s.id=f.completed_keys->0->>'source_id' AND s.incarnation::text=f.completed_keys->0->>'source_incarnation'
-    WHERE f.op='managed-sync-failure' AND ($1::text[] IS NULL OR s.id=ANY($1::text[]))
-      AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint)`, [sourceIds ?? null]);
+  const orphaned = await engine.readOrphanedManagedSyncFailureRows<ManagedSyncFailure>(sourceIds ?? null);
   return [...failures, ...orphaned.map(row => row.failure)];
 }
 

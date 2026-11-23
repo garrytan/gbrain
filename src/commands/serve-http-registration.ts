@@ -14,7 +14,6 @@ import { GrantError } from '../core/grants/model.ts';
 import { parseAdminGrantRequest, previewNewAdminGrant, sendAdminMutationError, GRANT_TOKEN_IMPLICATIONS } from './serve-http-grants.ts';
 
 export function mountAdminRegistration(app: Express, requireAdmin: RequestHandler, engine: BrainEngine, mcpResourceUrl: URL, issuerUrl: URL): void {
-  const sql = sqlQueryForEngine(engine);
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     res.set('Cache-Control', 'no-store');
@@ -116,17 +115,12 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       // cathedral-6: a WELL-FORMED but nonexistent source used to surface as
       // a 500 (the source_id FK fires inside the INSERT). Check existence +
       // archived up front for a structured 400 — same contract as the
-      // malformed case, mirroring the CLI lane. ONE batched query on the
-      // engine lane (SqlQuery forbids arrays; engine is in scope).
+      // malformed case, mirroring the CLI lane. One typed engine read per id,
+      // so a store with no raw SQL (the Rust engine) checks the same way.
       {
         const idsToCheck = [...new Set([sourceId, ...(federatedReadIds ?? [])])];
-        const found = await engine.executeRaw<{ id: string; archived: boolean | null }>(
-          `SELECT id, archived FROM sources WHERE id = ANY($1::text[])`,
-          [idsToCheck],
-        );
-        const byId = new Map(found.map(r => [r.id, r]));
         for (const id of idsToCheck) {
-          const row = byId.get(id);
+          const row = await engine.readSourceAttestState(id);
           if (!row) {
             res.status(400).json({
               error: 'unknown_source',
@@ -165,8 +159,8 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       const grantRequest = parseAdminGrantRequest(req.body);
       const preview = await previewNewAdminGrant(engine, name, grantRequest.patch, { sourceId, federatedRead: federatedReadIds, scopes: scopeString });
       if (grantRequest.dryRun) {
-        const existing = await sql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`;
-        if (existing.length) { res.status(409).json({ error: 'duplicate_name', client_id: existing[0].client_id }); return; }
+        const existing = (await engine.readLiveOauthClients()).find(c => c.client_name === name);
+        if (existing) { res.status(409).json({ error: 'duplicate_name', client_id: existing.client_id }); return; }
         res.json({ before: null, after: preview, grant: preview, revision: 0, dryRun: true, dry_run: true,
           grantTypes: grants, redirectUris: uris, harness, tokenEndpointAuthMethod: validatedAuthMethod, tokenImplications: GRANT_TOKEN_IMPLICATIONS });
         return;
@@ -177,7 +171,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       // front with the CLI lane's brain_too_old contract. Passing {columns}
       // through also makes the ttl write SKIP (rather than throw) on brains
       // without token_ttl.
-      const columns = await preflightOauthClientColumns(sql);
+      const columns = await preflightOauthClientColumns(engine);
       if (!columns.has('source_id') || !columns.has('federated_read')) {
         res.status(400).json({
           error: 'brain_too_old',
@@ -196,13 +190,12 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
       let registered: RegisteredClient | undefined;
       mutationStarted = true;
       await engine.transaction(async (tx) => {
-        await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
+        await tx.lockOauthClientName(registerClientNameLockKey(name));
         const txSql = sqlQueryForEngine(tx);
-        const dupRows = columns.has('deleted_at')
-          ? await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`
-          : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
-        if (dupRows.length > 0) {
-          dupClientId = String(dupRows[0].client_id);
+        // An engine brain has run its migrations, so the live rows are the ones with no `deleted_at`.
+        const dup = (await tx.readLiveOauthClients()).find(c => c.client_name === name);
+        if (dup) {
+          dupClientId = String(dup.client_id);
           return;
         }
         // Compose the SAME core the CLI uses (registerScopedClient) instead of
@@ -222,7 +215,7 @@ export function mountAdminRegistration(app: Express, requireAdmin: RequestHandle
           boundMaxConcurrent: undefined,
           budgetUsdPerDay: undefined,
           tokenTtlSeconds: undefined,
-        }, { tokenTtlSeconds: preview.tokenTtlSeconds ?? ttlNum, columns, grant: grantRequest.patch });
+        }, { tokenTtlSeconds: preview.tokenTtlSeconds ?? ttlNum, columns, grant: grantRequest.patch, engine: tx });
         if (registered.clientSecret) {
           // Preserve delivery before COMMIT so a lost browser response is
           // recoverable without rotating or duplicating the registered client.

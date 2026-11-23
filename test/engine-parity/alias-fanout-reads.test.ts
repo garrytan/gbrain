@@ -1,7 +1,8 @@
 /**
  * BrainEngine parity: the alias fan-out reads of engine-sql/alias-fanout-reads.ts (findPagesByTitles,
  * resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows), which search's alias fan-out
- * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`.
+ * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`, and readEntityAliasRows, the entity
+ * card's alias read (verbs/entity-card.ts, entity-card-identity.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member returns the same rows in the same order on every engine arm (PGLite always; Postgres with
@@ -30,6 +31,9 @@ import { resolveQueryEntities } from '../../src/core/search/alias-fanout.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { createSource, parityArms } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -119,6 +123,31 @@ describe('engine parity: alias fan-out reads', () => {
   );
 
   parityTest(
+    'findPagesByTitles under excludePrivate hides an owner-only source\'s pages, and under the closed form every page while one exists',
+    { methods: ['putPage', 'addLink', 'findPagesByTitles'] },
+    async (engine, backend) => {
+      await engine.putPage('people/acme-open', page('person', 'Acme Example'));
+      await engine.putPage('concepts/acme-synthesis', page('concept', 'Acme Example'));
+      const read = async (excludePrivate: boolean) => (await engine.findPagesByTitles(['acme example'], ['default', 'chat'], ['person', 'concept'], { excludePrivate }))
+        .map((r) => `${r.source_id}:${r.slug}`);
+      const before = await read(true);
+      // An owner-only source: a page with the same title, and the lineage input of the default-source concept.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await engine.putPage('people/acme-chat', page('person', 'Acme Example'), { sourceId: 'chat' });
+      await engine.addLink('concepts/acme-synthesis', 'people/acme-chat', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      const unfiltered = await read(false);
+      const closed = await read(true);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => read(true));
+      expect(before).toEqual(['default:concepts/acme-synthesis', 'default:people/acme-open']);
+      expect(unfiltered).toEqual(['chat:people/acme-chat', 'default:concepts/acme-synthesis', 'default:people/acme-open']);
+      expect(closed).toEqual([]);
+      expect(fn).toEqual(['default:people/acme-open']);
+      return { before, unfiltered, closed, fn };
+    },
+  );
+
+  parityTest(
     'resolveCaseSensitiveAliases finds no row for frontmatter aliases, which are never case-sensitive',
     { methods: ['putPage', 'setPageAliases', 'resolveCaseSensitiveAliases'] },
     async (engine) => {
@@ -167,6 +196,44 @@ describe('engine parity: alias fan-out reads', () => {
         'companies/widget-co|wgco|subject|WGCO',
       ]);
       return { caseRows, aliasRows };
+    },
+  );
+
+  parityTest(
+    'readEntityAliasRows returns every alias row of the listed slugs in one source, by alias',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'readEntityAliasRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      // Written out of alias order, with a same-named page in `other` and an unlisted page in `default`.
+      await engine.putPage('people/alice-example', page('person', 'Alice Example'), { sourceId: 'other' });
+      await engine.setPageAliases('people/alice-example', 'other', ['foreign']);
+      await engine.putPage('people/alice-example', page('person', 'Alice Example'));
+      await engine.setPageAliases('people/alice-example', 'default', ['zed', 'alice']);
+      await engine.replaceDerivedAliases('people/alice-example', 'default', [
+        { alias_norm: 'mike', origin: 'declared', case_sensitive: false, alias_text: 'Mike' },
+      ]);
+      await engine.putPage('people/al-twin', page('person', 'Al Twin'));
+      await engine.setPageAliases('people/al-twin', 'default', ['bravo']);
+      await engine.putPage('people/unlisted', page('person', 'Unlisted'));
+      await engine.setPageAliases('people/unlisted', 'default', ['able']);
+      const both = await engine.readEntityAliasRows('default', ['people/alice-example', 'people/al-twin', 'people/missing']);
+      const one = await engine.readEntityAliasRows('default', ['people/alice-example']);
+      const other = await engine.readEntityAliasRows('other', ['people/alice-example']);
+      const none = await engine.readEntityAliasRows('default', []);
+      const row = (r: { slug: string; alias_norm: string; origin: string | null; alias_text: string | null }) => `${r.slug}|${r.alias_norm}|${r.origin}|${r.alias_text}`;
+      const result = { both: both.map(row), one: one.map(row), other: other.map(row), none: none.map(row) };
+      expect(result).toEqual({
+        both: [
+          'people/alice-example|alice|frontmatter|null',
+          'people/al-twin|bravo|frontmatter|null',
+          'people/alice-example|mike|declared|Mike',
+          'people/alice-example|zed|frontmatter|null',
+        ],
+        one: ['people/alice-example|alice|frontmatter|null', 'people/alice-example|mike|declared|Mike', 'people/alice-example|zed|frontmatter|null'],
+        other: ['people/alice-example|foreign|frontmatter|null'],
+        none: [],
+      });
+      return result;
     },
   );
 
@@ -317,7 +384,7 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], lineage: true, hidePrivate: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));

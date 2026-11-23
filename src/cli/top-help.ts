@@ -40,6 +40,7 @@ MEMORY (facts agents recall; MEMORY_VERBS v1)
                                      facts are pushed into new agent sessions (private: recall only)
   recall [<entity>] [--query <q>]    Find saved facts
   forget <fact-id>                   Withdraw a fact
+  identity [--member <id>] [--json]  Who gbrain takes the owner to be, and the signals behind it
 
 PAGES
   get <slug>                         Read a page
@@ -125,6 +126,7 @@ TOOLS
   compile-context --target <t>       Compile a deterministic, scanned, budgeted context
         [--budget N] [--check]       file (claude-code | codex | openclaw)
   decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
+  apple-contacts <write|status>      Change Apple Contacts through GBrain Helper; writes off by default
   memory-proposals list|show|approve|deny  QM's proposed timeline entries and links awaiting your decision
   facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)

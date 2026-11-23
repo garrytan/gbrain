@@ -4,28 +4,26 @@
 //!
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-export.md):
 //! - no statement timeout: `setLocalStatementTimeout` runs only in TypeScript and does nothing;
-//! - no `fact_purges` rows: the withdrawal list holds withdrawals only, each with `purged` false;
 //! - no folder rules: the list of sources with an access policy is empty.
 //!
-//! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
+//! Keys: none of its own. It reads the page, page-id, page-body, raw-data, withdrawal and fact
+//! purge records.
 
 use super::pg_text::{is_pg_space, jsonb_text, pg_lower, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::purge_ledger::source_purges;
 use crate::links::no_nul;
 use crate::page_body::{
-    ManifestRow, in_generation, manifest_rows, page_u64, read_body_state, segmented_body_states,
-    segmented_reference, tiling,
+    ManifestRow, in_generation, manifest_rows, page_u64, read_body_state, segmented_reference,
 };
 use crate::pages::read_page_by_id;
 use crate::raw_files::page_raw_rows;
-use crate::sources::read_source;
 use crate::trust::withdrawals::source_withdrawals;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 
 /// Rows per export batch (`LIMIT 256`).
 const EXPORT_BATCH: usize = 256;
@@ -107,35 +105,6 @@ pub struct SegmentedPageHead {
     pub body_flags: Option<Value>,
     pub segmenter_version: Option<i64>,
     pub revision: Option<String>,
-}
-
-/// `listUntiledSegmentedPages(q)`: the source and slug lists narrow the scan (absent: any), `limit`
-/// bounds the list (absent: 1,000).
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct UntiledPagesQuery {
-    #[serde(default)]
-    pub source_ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub slugs: Option<Vec<String>>,
-    #[serde(default)]
-    pub limit: Option<i64>,
-}
-
-/// One row of `listUntiledSegmentedPages`: a live segmented page whose live generation's rows do
-/// not tile its body. `covered_bytes` is null when the rows leave a gap; a NULL `body_bytes` reads 0.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct UntiledPage {
-    pub source_id: String,
-    pub slug: String,
-    pub page_id: i64,
-    pub revision: String,
-    pub body_generation: i64,
-    pub body_bytes: i64,
-    pub segment_count: Option<i64>,
-    pub source_path: Option<String>,
-    pub rows: i64,
-    pub covered_bytes: Option<i64>,
 }
 
 /// One row of `readBodyManifestRows`: a published manifest row and the generation it was read at.
@@ -321,22 +290,32 @@ impl Store {
             + 2)
     }
 
-    /// `listExportWithdrawals`: the source's withdrawals ordered by visibility, fact_hash and
-    /// subject (byte order), `withdrawn_at` as ISO text. The store keeps no purge tombstones, so
-    /// every row has `purged` false.
+    /// `listExportWithdrawals`: the source's withdrawals (`purged` false) and its fact purge
+    /// tombstones (`purged` true, `withdrawn_at` the purge time), ordered by visibility, fact_hash
+    /// and subject (byte order), the time as ISO text.
     pub fn list_export_withdrawals(&self, source_id: &str) -> Result<Vec<ExportWithdrawal>> {
         no_nul("listExportWithdrawals", &[("sourceId", source_id)])?;
         let read = self.read()?;
-        let mut rows: Vec<ExportWithdrawal> = source_withdrawals(&*read, source_id)?
+        let withdrawals =
+            source_withdrawals(&*read, source_id)?
+                .into_iter()
+                .map(|w| ExportWithdrawal {
+                    visibility: w.visibility,
+                    fact_hash: w.fact_hash,
+                    withdrawn_at: iso(w.withdrawn_at_us),
+                    subject: w.subject,
+                    purged: false,
+                });
+        let purges = source_purges(&*read, source_id)?
             .into_iter()
-            .map(|w| ExportWithdrawal {
-                visibility: w.visibility,
-                fact_hash: w.fact_hash,
-                withdrawn_at: iso(w.withdrawn_at_us),
-                subject: w.subject,
-                purged: false,
-            })
-            .collect();
+            .map(|p| ExportWithdrawal {
+                visibility: p.visibility,
+                fact_hash: p.fact_hash,
+                withdrawn_at: iso(p.purged_at_us),
+                subject: p.subject,
+                purged: true,
+            });
+        let mut rows: Vec<ExportWithdrawal> = withdrawals.chain(purges).collect();
         rows.sort_by(|a, b| {
             (
                 a.visibility.as_bytes(),
@@ -431,79 +410,6 @@ impl Store {
             segmenter_version: state.and_then(|s| s.segmenter_version),
             revision: Some(page.knowledge_revision.clone()),
         }))
-    }
-
-    /// `listUntiledSegmentedPages(q)`: the live (not deleted) segmented pages of unarchived sources
-    /// whose live generation's published rows do not cover `body_bytes` gapless from 0
-    /// (`liveTilingSql` + `untiledSql`; a NULL `body_bytes` counts only a gap), by source id then
-    /// slug in byte order, at most `limit`.
-    pub fn list_untiled_segmented_pages(&self, q: &UntiledPagesQuery) -> Result<Vec<UntiledPage>> {
-        let limit = match q.limit {
-            Some(n) if n < 0 => {
-                return Err(StoreError::invalid(
-                    "listUntiledSegmentedPages limit: LIMIT must not be negative",
-                ));
-            }
-            Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
-            None => 1000,
-        };
-        let read = self.read()?;
-        let mut archived: BTreeMap<String, bool> = BTreeMap::new();
-        let mut out = Vec::new();
-        for (id, state) in segmented_body_states(&*read)? {
-            let Some(page) = read_page_by_id(&*read, id)? else {
-                continue;
-            };
-            if page.deleted_at_us.is_some()
-                || q.source_ids
-                    .as_ref()
-                    .is_some_and(|ids| !ids.contains(&page.source_id))
-                || q.slugs
-                    .as_ref()
-                    .is_some_and(|slugs| !slugs.contains(&page.slug))
-            {
-                continue;
-            }
-            let gone = match archived.get(&page.source_id) {
-                Some(gone) => *gone,
-                None => {
-                    let gone = read_source(&*read, &page.source_id)?.is_none_or(|s| s.archived);
-                    archived.insert(page.source_id.clone(), gone);
-                    gone
-                }
-            };
-            if gone {
-                continue;
-            }
-            let live: Vec<ManifestRow> = manifest_rows(&*read, id)?
-                .into_iter()
-                .map(|(_, row)| row)
-                .filter(|row| in_generation(row, state.body_generation))
-                .collect();
-            let refs: Vec<&ManifestRow> = live.iter().collect();
-            let (n, covered, gapless) = tiling(&refs);
-            if gapless && state.body_bytes.is_none_or(|bytes| bytes == covered) {
-                continue;
-            }
-            out.push(UntiledPage {
-                source_id: page.source_id.clone(),
-                slug: page.slug.clone(),
-                page_id: i64::try_from(id).unwrap_or(i64::MAX),
-                revision: page.knowledge_revision.clone(),
-                body_generation: state.body_generation,
-                body_bytes: state.body_bytes.unwrap_or(0),
-                segment_count: state.segment_count,
-                source_path: page.source_path.clone(),
-                rows: n,
-                covered_bytes: gapless.then_some(covered),
-            });
-        }
-        out.sort_by(|a, b| {
-            (a.source_id.as_bytes(), a.slug.as_bytes())
-                .cmp(&(b.source_id.as_bytes(), b.slug.as_bytes()))
-        });
-        out.truncate(limit);
-        Ok(out)
     }
 
     /// `readBodyManifestRows(pageId, generation)`: the rows of generation
@@ -673,10 +579,18 @@ impl Store {
         crate::pages::segmented_version_body_bytes(&*read, page, generation)
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with an access policy. The store keeps no folder
-    /// rules, so there are none.
+    /// `listAccessPolicySourceIds()`: the sources, archived ones too, that hold access state
+    /// (`access_rules.rs`), by id in byte order (`ORDER BY source_id`).
     pub fn list_access_policy_source_ids(&self) -> Result<Vec<String>> {
-        Ok(Vec::new())
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for source in crate::sources::all_sources(&*read)? {
+            if crate::access_rules::has_state(&*read, &source.id)? {
+                out.push(source.id);
+            }
+        }
+        out.sort();
+        Ok(out)
     }
 }
 
@@ -737,6 +651,40 @@ mod tests {
             jsonb_timestamptz(1_795_000_000_000_000),
             "2026-11-18T11:06:40+00:00"
         );
+    }
+
+    #[test]
+    fn the_withdrawal_list_holds_purge_tombstones_too() {
+        let s = store();
+        assert!(
+            s.insert_fact_withdrawal("default", "world", "a claim", "*", None)
+                .unwrap()
+        );
+        let purge: crate::facts::purge_ledger::FactPurgeInsert = serde_json::from_value(json!({
+            "sourceId": "default", "visibility": "private", "subject": "people/a",
+            "factHash": "0abc", "requestId": null, "actor": null, "reason": null }))
+        .unwrap();
+        assert!(s.insert_fact_purge(&purge).unwrap());
+        let rows = s.list_export_withdrawals("default").unwrap();
+        // `ORDER BY visibility, fact_hash, subject`: the private tombstone first, then the world withdrawal.
+        let shape: Vec<(&str, &str, &str, bool)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.visibility.as_str(),
+                    r.fact_hash.as_str(),
+                    r.subject.as_str(),
+                    r.purged,
+                )
+            })
+            .collect();
+        assert_eq!(shape.len(), 2);
+        assert_eq!(shape[0], ("private", "0abc", "people/a", true));
+        assert_eq!((shape[1].0, shape[1].2, shape[1].3), ("world", "*", false));
+        assert!(rows[0].withdrawn_at.ends_with('Z'));
+        // The ledger size counts withdrawals only, as the SQL member's `fact_withdrawals` sum does.
+        let one = s.read_export_withdrawal_ledger_bytes("default").unwrap();
+        assert!(one > 2);
     }
 
     #[test]
@@ -845,6 +793,11 @@ mod tests {
         assert_eq!(s.read_segmented_version_body_bytes(id, 1).unwrap(), None);
         assert_eq!(s.read_segmented_version_body_bytes(-1, 1).unwrap(), None);
         assert!(s.list_access_policy_source_ids().unwrap().is_empty());
+        s.put_access_policy_state("default").unwrap();
+        assert_eq!(
+            s.list_access_policy_source_ids().unwrap(),
+            vec!["default".to_string()]
+        );
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);
     }

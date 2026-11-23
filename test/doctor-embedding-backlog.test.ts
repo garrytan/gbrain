@@ -20,7 +20,7 @@
  * or a model swap reads as a months-old backlog and asks for paid spend on a
  * brain draining normally), or goes back to "ok at >= 90% coverage whatever
  * the backlog" (forced probe: 136,314 chunks missing at 90% read ok on master).
- * The stub probes answer the age query through executeRaw; the PGLite probes
+ * The stub probes answer the age query through readEmbeddingBacklogAge; the PGLite probes
  * run the real write paths that set and clear the column.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -45,9 +45,7 @@ function ctxFor(coverage: number, missing: number, config: Record<string, string
     getHealth: async () => ({ embed_coverage: coverage, missing_embeddings: missing }),
     getConfig: async (key: string) => config[key] ?? null,
     ...(age ? {
-      executeRaw: async (sql: string) => sql.includes('embedding_pending_since')
-        ? [{ age_s: age.ageS, unaged: age.unaged ?? 0, backfilled: age.backfilled ?? false }]
-        : [],
+      readEmbeddingBacklogAge: async () => ({ age_s: age.ageS, unaged: age.unaged ?? 0, backfilled: age.backfilled ?? false }),
     } : {}),
   };
   return { engine, progress: { heartbeat() {} } } as unknown as DoctorContext;
@@ -155,17 +153,17 @@ describe('embeddings doctor check: backlog age', () => {
 
   test('a refused age read warns with the typed refusal, health unknown, and keeps the backlog and its fix', async () => {
     const ctx = ctxFor(0, 34);
-    (ctx.engine as unknown as { executeRaw: () => Promise<never> }).executeRaw = async () => { throw capabilityMissing('raw_sql', 'executeRaw'); };
+    (ctx.engine as unknown as { readEmbeddingBacklogAge: () => Promise<never> }).readEmbeddingBacklogAge = async () => { throw capabilityMissing('health', 'readEmbeddingBacklogAge'); };
     const [check] = await runCheck(ctx);
     expect(check.status).toBe('warn');
-    expect(check.message).toMatch(/^No embeddings yet\. Backlog: 34 chunk\(s\) without embeddings\. Backlog age unknown: This brain's engine does not support executeRaw yet \(it needs the raw_sql capability\)/);
+    expect(check.message).toMatch(/^No embeddings yet\. Backlog: 34 chunk\(s\) without embeddings\. Backlog age unknown: This brain's engine does not support readEmbeddingBacklogAge yet \(it needs the health capability\)/);
     expect(check.message).toContain('Fix: gbrain embed --stale --catch-up');
     expect(check.details).toMatchObject({ code: 'embedding_backlog', backlog: 34, oldest_pending_age_s: null,
-      health: 'unknown', reason: 'engine_capability_missing', capability: 'raw_sql' });
+      health: 'unknown', reason: 'engine_capability_missing', capability: 'health' });
     expect(check.fix?.consent).toEqual(['paid']);
     // Any other age-read failure still leaves the coverage rule to decide (a mostly embedded brain stays ok).
     const other = ctxFor(0.95, 50_000);
-    (other.engine as unknown as { executeRaw: () => Promise<never> }).executeRaw = async () => { throw new Error('disk full'); };
+    (other.engine as unknown as { readEmbeddingBacklogAge: () => Promise<never> }).readEmbeddingBacklogAge = async () => { throw new Error('disk full'); };
     expect((await runCheck(other))[0].status).toBe('ok');
   });
 

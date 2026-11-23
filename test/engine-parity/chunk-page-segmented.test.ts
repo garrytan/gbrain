@@ -168,6 +168,87 @@ describe('engine parity: chunk reads of a segmented page', () => {
     },
   );
 
+  // Review finding specialist-batched#3: includeUnsealed and the embedding maintenance reads use chunkGenerationFilter,
+  // which also needs a live manifest row. A flip that defers its retire (retireMaxRows) leaves the closed occurrence's
+  // chunk at an old generation; it is no longer part of the body, so these reads must not serve, count or embed it.
+  parityTest(
+    'a chunk whose occurrence a deferred retire closed stays out of includeUnsealed reads and embedding maintenance',
+    { methods: ['getChunks', 'getChunksWithEmbeddings', 'countStaleChunks', 'sumStaleChunkChars', 'listStaleChunks', 'readEmbeddingStateCounts', 'listEmbeddingStateRows', 'flipBodyGeneration'] },
+    async (engine) => {
+      const { pageId, occ } = await publish(engine);
+      const staging = await stageReplace(engine, pageId, occ);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, staging.id, [ONE, FOUR, TWO],
+        { closeOccurrences: [occ[1]!, occ[2]!], retireChunkOccurrences: [occ[2]!], retireMaxRows: 0 }));
+      await engine.setBodyStagingState(staging.id, 'committed');
+      const unsealed = words((await engine.getChunks('notes/big', { includeUnsealed: true })).map((c) => c.chunk_text));
+      const withVectors = words((await engine.getChunksWithEmbeddings('notes/big', { includeUnsealed: true })).map((c) => c.chunk_text));
+      const stale = words((await engine.listStaleChunks({ batchSize: 50 })).map((r) => r.chunk_text)).sort();
+      const counts = await engine.readEmbeddingStateCounts({ mode: 'full', purgeWindowHours: 24 });
+      const rows = (await engine.listEmbeddingStateRows({ states: ['pending'], limit: 10, purgeWindowHours: 24 }))
+        .map((r) => ({ slug: r.slug, state: r.state, chunks: r.chunks, bytes: r.bytes }));
+      return {
+        unsealed, withVectors, stale,
+        staleCount: await engine.countStaleChunks(),
+        staleChars: await engine.sumStaleChunkChars(),
+        counts: counts.counts,
+        rows,
+      };
+    },
+  );
+
+  // resolveFrozenHits joins chunks through chunkGenerationFilter too: a frozen hit on the chunk of an occurrence a
+  // deferred retire closed keeps its page row and reads no chunk, so evidence never quotes retired text.
+  parityTest(
+    'a frozen hit on a chunk whose occurrence a deferred retire closed reads no chunk text',
+    { methods: ['getChunks', 'flipBodyGeneration', 'sealSegmentedPage', 'resolveFrozenHits'] },
+    async (engine) => {
+      const { pageId, occ } = await publish(engine);
+      const before = await engine.getChunks('notes/big');
+      const idOf = (word: string) => Number(before.find((c) => words([c.chunk_text])[0] === word)!.id);
+      const staging = await stageReplace(engine, pageId, occ);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, staging.id, [ONE, FOUR, TWO],
+        { closeOccurrences: [occ[1]!, occ[2]!], retireChunkOccurrences: [occ[2]!], retireMaxRows: 0 }));
+      await engine.setBodyStagingState(staging.id, 'committed');
+      await engine.sealSegmentedPage(pageId);
+      const rows = await engine.resolveFrozenHits([
+        { source_id: 'default', slug: 'notes/big', chunk_id: idOf('ibex'), ord: 1 },
+        { source_id: 'default', slug: 'notes/big', chunk_id: idOf('quillwort'), ord: 2 },
+      ], {});
+      const out = rows.map((r) => ({ ord: r.ord, slug: r.slug, chunk: r.chunk_text === null ? null : words([r.chunk_text])[0] }))
+        .sort((a, b) => a.ord - b.ord);
+      expect(out).toEqual([{ ord: 1, slug: 'notes/big', chunk: null }, { ord: 2, slug: 'notes/big', chunk: 'quillwort' }]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'the canonical chunk a relational walk names for a segmented page is a chunk of its live body',
+    { methods: ['relationalFanout', 'getChunks', 'flipBodyGeneration', 'stageManifestRows', 'addLink'] },
+    async (engine) => {
+      const { pageId, occ } = await publish(engine);
+      // Generation 2 drops ONE, the occurrence whose chunk has the lowest chunk_index. Its chunk retire is deferred
+      // (retireMaxRows 0), so the chunk row stays while its manifest row is closed.
+      const staging = stagingInput({ slug: 'notes/big', pageId, mode: 'replace', baseGeneration: 1 });
+      await engine.openBodyStaging(staging);
+      await engine.stageManifestRows([
+        manifestRow({ pageId, occurrenceId: occ[1]!, genFrom: 2, seq: 0, text: TWO, byteStart: 0, stagingId: staging.id }),
+        manifestRow({ pageId, occurrenceId: occ[2]!, genFrom: 2, seq: 1, text: THREE, byteStart: TWO.body.byteLength, stagingId: staging.id }),
+      ]);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, staging.id, [TWO, THREE],
+        { closeOccurrences: [occ[0]!, occ[1]!, occ[2]!], retireChunkOccurrences: [occ[0]!], retireMaxRows: 0 }));
+      await engine.setBodyStagingState(staging.id, 'committed');
+      await engine.putPage('people/reader', { type: 'person', title: 'Reader', compiled_truth: 'reads the big page', timeline: '' });
+      await engine.addLink('people/reader', 'notes/big', 'reads it', 'cites', 'manual');
+      const live = await engine.getChunks('notes/big', { includeUnsealed: true });
+      const wordOf = new Map(live.map((c) => [c.id, words([c.chunk_text])[0]]));
+      const [hit] = (await engine.relationalFanout(['people/reader'], { direction: 'out' })).filter((r) => r.slug === 'notes/big');
+      const canonical = hit?.canonical_chunk_id == null ? null : (wordOf.get(hit.canonical_chunk_id) ?? 'not a live chunk');
+      expect(words(live.map((c) => c.chunk_text))).toEqual(['heron', 'ibex']);
+      expect(canonical).toBe('heron');
+      return { live: [...wordOf.values()], canonical };
+    },
+  );
+
   parityTest(
     'getChunkPage pages a segmented page by position in document order, not by insertion chunk_index',
     { methods: ['getChunkPage', 'stageSegmentChunks', 'flipBodyGeneration'] },

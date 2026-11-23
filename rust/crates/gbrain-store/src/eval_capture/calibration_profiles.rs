@@ -208,7 +208,13 @@ fn to_real(x: Option<f64>, column: &str) -> Result<Option<f32>> {
         None => Ok(None),
         Some(x) => {
             let r = x as f32;
-            if x.is_finite() && r.is_infinite() {
+            // A NaN or infinity (a native caller only) would be stored as null and no longer decode.
+            if !x.is_finite() {
+                return Err(StoreError::invalid(format!(
+                    "insertCalibrationProfile: {column} is not a finite number"
+                )));
+            }
+            if r.is_infinite() {
                 return Err(StoreError::invalid(format!(
                     "insertCalibrationProfile: {column} is out of range for type real"
                 )));
@@ -257,9 +263,8 @@ fn delete_record(tx: &mut dyn KvWrite, record: &ProfileRecord) -> Result<()> {
     tx.delete(&time_key(record.generated_at_us, record.id))
 }
 
-/// A source delete's cascade: removes every profile of `source_id` and its index entries.
-// Core's source delete is the first caller (cascade::remove_source_rows); until then tests call it.
-#[cfg_attr(not(test), allow(dead_code))]
+/// A source delete's cascade (`cascade::remove_source_rows`): removes every profile of `source_id`
+/// and its index entries.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for record in all_records(&*tx)? {
         if record.source_id == source_id {
@@ -506,11 +511,30 @@ impl Store {
     }
 }
 
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_records(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![
+                (
+                    "pattern_statements",
+                    ProbeCell::text_array(&r.pattern_statements),
+                ),
+                ("domain_scorecards", ProbeCell::jsonb(&r.domain_scorecards)),
+            ],
+            source_id: Some(r.source_id),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
-    //! `remove_source_rows` and the stored `domain_scorecards` are not reachable through a public
-    //! member (the Rust store serves no source delete, and no member returns the scorecards), so
-    //! their contract is tested here. The members are tested through the public API in
+    //! `remove_source_rows` is reached only through the whole source delete, and no member returns
+    //! the stored `domain_scorecards`, so their contract is tested here. The members are tested through the public API in
     //! `tests/calibration_profiles.rs`.
     use super::*;
     use crate::sources::SourceInput;

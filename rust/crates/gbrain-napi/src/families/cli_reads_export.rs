@@ -3,7 +3,7 @@
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 
-use gbrain_store::cli_reads::export::{ExportPageKeyQuery, UntiledPagesQuery};
+use gbrain_store::cli_reads::export::ExportPageKeyQuery;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -140,22 +140,6 @@ impl Brain {
         })
     }
 
-    /// `listUntiledSegmentedPages(q)`: the live segmented pages of unarchived sources whose live
-    /// rows do not tile the body, by source then slug in byte order, at most `q.limit` (1,000).
-    #[napi]
-    pub fn list_untiled_segmented_pages<'env>(
-        &self,
-        env: &'env Env,
-        q: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_untiled_segmented_pages(&required::<UntiledPagesQuery>(
-                q,
-                "listUntiledSegmentedPages q",
-            )?)
-        })
-    }
-
     /// `readSegmentedVersionBodyBytes(pageId, generation)`: the size the newest segmented version
     /// of the generation records, or null.
     #[napi]
@@ -185,8 +169,7 @@ impl Brain {
         })
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with an access policy; none, as the store keeps
-    /// no folder rules.
+    /// `listAccessPolicySourceIds()`: the sources, archived ones too, that hold access state, by id.
     #[napi]
     pub fn list_access_policy_source_ids<'env>(
         &self,

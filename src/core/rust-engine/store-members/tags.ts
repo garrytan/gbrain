@@ -1,5 +1,6 @@
 /** Tag members (BrainEngine addTag, removeTag, getTags, pruneFrontmatterTags, addPageTagsById). */
 import { namedSourceIds, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
 export const addTag: StoreMember<[slug: string, tag: string, opts?: { sourceId?: string; tagSource?: 'frontmatter' }], void> = async (brain, slug, tag, opts) => {
   const scope = takeOptions('addTag', opts, ['sourceId', 'tagSource']);
@@ -13,17 +14,19 @@ export const removeTag: StoreMember<[slug: string, tag: string, opts?: { sourceI
 
 type GetTagsOpts = { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; liveOnly?: boolean };
 
-/** Like PGLite: a federated grant reads the union of the sources' tags, an unscoped read reads `default`. */
+/**
+ * Like PGLite: a federated grant reads the union of the sources' tags, an unscoped read reads `default`; `liveOnly`
+ * and the page policy `excludePrivate` names leave a soft-deleted or hidden page with no tags.
+ */
 export const getTags: StoreMember<[slug: string, opts?: GetTagsOpts], string[]> = async (brain, slug, opts) => {
-  const scope = takeOptions('getTags', opts, ['sourceId', 'sourceIds', 'liveOnly']);
+  const scope = takeOptions('getTags', opts, ['sourceId', 'sourceIds', 'liveOnly', 'excludePrivate']);
   // An id that names no source (an empty string) matches nothing in PGLite; the store would read it as "no scope".
   const sourceIds = namedSourceIds((scope.sourceIds as unknown[] | undefined)?.length ? (scope.sourceIds as unknown[]) : [scope.sourceId ?? 'default']);
+  const excludePrivate = storePagePolicy('getTags', scope.excludePrivate, { callerReaders: true }) ?? null;
   const tags = new Set<string>();
   for (const sourceId of sourceIds) {
     const found: string[] = await storeCall({ member: 'getTags', slug }, () =>
-      scope.liveOnly === true
-        ? brain.readPageSnapshot(slug, { sourceId }).then((snapshot: { tags: string[] } | null) => snapshot?.tags ?? [])
-        : brain.getTags(slug, { sourceId }));
+      brain.getTags(slug, { sourceId, liveOnly: scope.liveOnly === true, excludePrivate }));
     for (const tag of found) tags.add(tag);
   }
   return [...tags].sort();

@@ -23,7 +23,7 @@
  * cap, so a cycle terminates.
  *
  * Count once (duplicate people PR 2): a page that gbrain dedupe confirm linked into an identity group
- * (entity_identities.established_by 'dedupe:confirm') hands its edges, after the retirement fold, to its group's
+ * (entity_identities.established_by 'dedupe:confirm', or 'dedupe:auto' for companies the sync linked) hands its edges, after the retirement fold, to its group's
  * canonical page when both are readable, so a person kept as one page per source ranks once. Hand-made groups
  * (entity_identity_link) do not fold. A caller who cannot read the canonical page sees the member unfolded.
  *
@@ -103,7 +103,10 @@ function readablePageSql(opts: Pick<RankEntitiesStatementOpts, 'sourceIds' | 're
  * link extraction, and (with mentionTypes) a mention pass? Pages the caller
  * cannot read never move the state.
  */
-export function rankCoverageStatement(opts: { sourceId: string; excludePrivate: boolean; versionTs: string; mentionTypes?: string[] }): { text: string; params: unknown[] } {
+/** `rankCoverageStatement` options: one source, the caller's privacy, the link-extractor watermark and, when mentions count, the alias-derived page types. */
+export interface RankCoverageStatementOpts { sourceId: string; excludePrivate: boolean; versionTs: string; mentionTypes?: string[] }
+
+export function rankCoverageStatement(opts: RankCoverageStatementOpts): { text: string; params: unknown[] } {
   const readable = readablePageSql({ sourceIds: [opts.sourceId], remote: { excludePrivate: opts.excludePrivate } });
   const mentionDue = opts.mentionTypes
     ? sqlFragment`EXISTS (SELECT 1 FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
@@ -157,7 +160,7 @@ export function rankEntitiesStatement(opts: RankEntitiesStatementOpts): { text: 
         JOIN entity_identities c ON c.entity_id = ei.entity_id AND c.canonical
         JOIN readable mv ON mv.id = ei.page_id
         JOIN readable cv ON cv.id = c.page_id
-       WHERE ei.established_by = 'dedupe:confirm' AND ei.page_id <> c.page_id
+       WHERE ei.established_by IN ('dedupe:confirm', 'dedupe:auto') AND ei.page_id <> c.page_id
     ),
     folded AS (
       SELECT COALESCE(ff.target_id, l.from_page_id) AS src, COALESCE(ft.target_id, l.to_page_id) AS dst, l.link_type

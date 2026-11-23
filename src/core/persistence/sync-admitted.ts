@@ -26,7 +26,7 @@ export function localResumeRequired(sourceId: string): OperationError {
 /** The principal that admitted (or will admit) a frozen member: the authority frozen in its own intent. */
 export const admittedBy = (member: AdmittedMember, cursor: AdmittingCursor): Principal => member.intent.syncAuthority?.writer.principal ?? cursor.authority.writer.principal;
 /** The rows of admitted members, each read under its own admitting principal (one read per principal, normally one). */
-export async function readAdmitted(engine: Pick<BrainEngine, 'executeRaw'>, cursor: AdmittingCursor, members: AdmittedMember[], committedOnly = false): Promise<WriteRequest[]> {
+export async function readAdmitted(engine: Pick<BrainEngine, 'readAdmittedWriteRequests'>, cursor: AdmittingCursor, members: AdmittedMember[], committedOnly = false): Promise<WriteRequest[]> {
   const byPrincipal = new Map<string, { principal: Principal; ids: string[] }>();
   for (const member of members) {
     const principal = admittedBy(member, cursor), slot = principalKey(principal);
@@ -35,8 +35,7 @@ export async function readAdmitted(engine: Pick<BrainEngine, 'executeRaw'>, curs
   }
   const rows: WriteRequest[] = [];
   for (const { principal, ids } of byPrincipal.values()) {
-    rows.push(...await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])${committedOnly ? " AND state='committed'" : ''}`,
-      [principal.kind, principal.id, ids]));
+    rows.push(...await engine.readAdmittedWriteRequests(principal.kind, principal.id, ids, committedOnly));
   }
   return rows;
 }

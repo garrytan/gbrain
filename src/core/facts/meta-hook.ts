@@ -48,6 +48,7 @@ import { eligibilityCacheField, readTrustGeneration } from '../eligibility/gener
 import { callerRelaxesPrivacy, privateFactSources, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { isConfigTruthy } from '../config.ts';
 import { callerIdentityKey } from '../access/member-facts.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
@@ -95,16 +96,12 @@ export function invalidateHotMemoryForEngine(engine: object): void {
 
 /**
  * Changes whenever a withdrawal is recorded for the source or (GBRA-218) a folder rulebook is installed, by any process.
- * Read-only embedder engines without raw SQL fall back to the TTL alone.
+ * Read-only embedder engines without the typed watermark read fall back to the TTL alone.
  */
 async function withdrawalWatermark(engine: OperationContext['engine'], sourceId: string): Promise<string> {
-  if (typeof engine.executeRaw !== 'function') return '';
-  const [row] = await engine.executeRaw<{ n: number; at: string | null; rules: string | null }>(
-    `SELECT count(*)::int AS n, max(withdrawn_at)::text AS at,
-       (SELECT md5(coalesce(string_agg(source_id || '/' || rule_id || '/' || prefix || '/' || array_to_string(readable_by, ',') || '/' || revision::text, '|' ORDER BY source_id, rule_id), '')) FROM access_rules)
-         || ':' || (SELECT md5(coalesce(string_agg(source_id || '/' || prefix || '/' || reason || '/' || coalesce(revision::text, ''), '|' ORDER BY source_id, prefix, reason), '')) FROM access_pending_coverage) AS rules
-     FROM fact_withdrawals WHERE source_id = $1`, [sourceId]);
-  return `${row?.n ?? 0}:${row?.at ?? ''}:${row?.rules ?? ''}`;
+  if (typeof engine.readFactCacheWatermark !== 'function') return '';
+  const row = await engine.readFactCacheWatermark(sourceId);
+  return `${row.withdrawals}:${row.latest_withdrawn_at ?? ''}:${row.access_rules}`;
 }
 
 /** Bounded set: evict the oldest-expiry entry when inserting at capacity. */
@@ -242,6 +239,8 @@ export async function getBrainHotMemoryMeta(
       activeOnly: true, limit: topK * 3, visibility, excludePrivate, fingerprint: true, eligibility,
     });
   }
+  // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+  fetched = await applySlotEnds(ctx.engine, { sourceId, worldOnly, excludePrivate, minTrust: policy.floor, suppressFlagged: policy.suppressFlagged }, fetched, { activeOnly: true });
   if (fetched.length === 0) {
     store({ expiresAt: Date.now() + ttl, payload: undefined });
     return undefined;

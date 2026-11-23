@@ -20,6 +20,9 @@
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, pick, sorted } from './harness.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
+import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -274,6 +277,74 @@ describe('engine parity: sync + aliases', () => {
       const backlinks = (await engine.getBacklinks('companies/acme-renamed')).map((l) => l.from_slug);
       const unknown = await engine.rewriteLinks('notes/never-existed', 'notes/whatever');
       return { out: out ?? null, links, backlinks, unknown: unknown ?? null };
+    },
+  );
+
+  parityTest(
+    'resolveAliases and aliasCanonicalRefs under excludePrivate hide an owner-only source\'s pages, and under the closed form every page while one exists',
+    { methods: ['putPage', 'setPageAliases', 'updateSlug', 'addLink', 'resolveAliases', 'aliasCanonicalRefs'] },
+    async (engine, backend) => {
+      const put = (slug: string, type: 'person' | 'concept', sourceId?: string) =>
+        engine.putPage(slug, { type, title: slug, compiled_truth: `${slug} body.`, timeline: '' }, sourceId ? { sourceId } : undefined);
+      await put('people/al-open', 'person');
+      await put('concepts/synthesis', 'concept');
+      await put('concepts/old-open', 'concept');
+      await put('concepts/old-synth', 'concept');
+      await engine.setPageAliases('people/al-open', 'default', ['ally']);
+      await engine.setPageAliases('concepts/synthesis', 'default', ['synth']);
+      await engine.updateSlug('concepts/old-open', 'concepts/new-open');
+      await engine.updateSlug('concepts/old-synth', 'concepts/new-synth');
+      // An owner-only source: a page with an alias, a renamed concept, and the lineage input of two default-source concepts.
+      await createSource(engine, backend, 'chat', { kind: 'imessage' });
+      await put('people/chat-pal', 'person', 'chat');
+      await put('concepts/chat-old', 'concept', 'chat');
+      await put('concepts/chat-input', 'concept', 'chat');
+      await engine.setPageAliases('people/chat-pal', 'chat', ['ally']);
+      await engine.updateSlug('concepts/chat-old', 'concepts/chat-new', { sourceId: 'chat' });
+      for (const from of ['concepts/synthesis', 'concepts/new-synth']) {
+        await engine.addLink(from, 'concepts/chat-input', '', 'synthesized_from', 'concept-provenance', undefined, undefined, { fromSourceId: 'default', toSourceId: 'chat' });
+      }
+      const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) =>
+        Object.fromEntries([...m.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => [k, sorted(v.map((r) => `${r.source_id}:${r.slug}`))]));
+      const refs = [['default', 'concepts/new-open'], ['default', 'concepts/new-synth'], ['chat', 'concepts/chat-new'], ['default', 'concepts/synthesis']]
+        .map(([source_id, slug]) => ({ source_id, slug }));
+      const key = (rows: Array<{ source_id: string; canonical_slug: string }>) => sorted(rows.map((r) => `${r.source_id}::${r.canonical_slug}`));
+      const read = async (excludePrivate: boolean) => ({
+        aliases: flat(await engine.resolveAliases(['ally', 'synth', 'nobody'], { sourceIds: ['default', 'chat'], excludePrivate })),
+        canonical: key(await engine.aliasCanonicalRefs(refs, { sourceIds: ['default', 'chat'], excludePrivate })),
+      });
+      const unfiltered = await read(false);
+      const closed = await read(true);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const fn = await withEngineScope(engine, () => read(true));
+      expect(unfiltered.aliases).toEqual({ ally: ['chat:people/chat-pal', 'default:people/al-open'], synth: ['default:concepts/synthesis'] });
+      expect(unfiltered.canonical).toEqual(['chat::concepts/chat-new', 'default::concepts/new-open', 'default::concepts/new-synth']);
+      expect(closed).toEqual({ aliases: {}, canonical: [] });
+      expect(fn).toEqual({ aliases: { ally: ['default:people/al-open'] }, canonical: ['default::concepts/new-open'] });
+      return { unfiltered, closed, fn };
+    },
+  );
+
+  parityTest(
+    'listSlugAliases lists every old slug of a renamed page in one source, repointed through a chain of renames',
+    { methods: ['putPage', 'updateSlug', 'listSlugAliases'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'lsa-other');
+      const body = { type: 'note' as const, title: 'T', compiled_truth: 'B.', timeline: '' };
+      await engine.putPage('notes/lsa-a', body);
+      await engine.putPage('notes/lsa-x', body);
+      await engine.putPage('notes/lsa-a', body, { sourceId: 'lsa-other' });
+      await engine.updateSlug('notes/lsa-a', 'notes/lsa-b');
+      await engine.updateSlug('notes/lsa-b', 'notes/lsa-c');
+      await engine.updateSlug('notes/lsa-a', 'notes/lsa-z', { sourceId: 'lsa-other' });
+      const key = (rows: Array<{ alias_slug: string; canonical_slug: string }>) => sorted(rows.map((r) => `${r.alias_slug}->${r.canonical_slug}`));
+      const inDefault = key(await engine.listSlugAliases('default'));
+      const inOther = key(await engine.listSlugAliases('lsa-other'));
+      const none = await engine.listSlugAliases('lsa-missing');
+      expect(inDefault).toEqual(['notes/lsa-a->notes/lsa-c', 'notes/lsa-b->notes/lsa-c']);
+      expect(inOther).toEqual(['notes/lsa-a->notes/lsa-z']);
+      expect(none).toEqual([]);
+      return { inDefault, inOther, none };
     },
   );
 });

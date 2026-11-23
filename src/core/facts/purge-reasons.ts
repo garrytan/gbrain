@@ -31,9 +31,9 @@ const scanFailed = (sourceId: string, rawId: string, detail: string) => opError(
  */
 export async function scanPurgeTrailers(engine: BrainEngine, input: { sourceId: string; claim: string; rawId: string; limit?: number }): Promise<PurgeTrailerPlan> {
   const none: PurgeTrailerPlan = { sourceRoot: null, head: null, hits: [], commits: 0, limited: false };
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [input.sourceId]);
+  const localPath = await engine.readPurgeSourceLocalPath(input.sourceId);
   // The default source's repository may be the legacy sync.repo_path (local_path NULL); a relative path names no repository.
-  const root = source?.local_path || (input.sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
+  const root = localPath || (input.sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   if (!root || !isAbsolute(root)) return none;
   const scan = await scanTrailersCarrying(root, [input.claim], input.limit === undefined ? {} : { limit: input.limit });
   if (scan.status === 'no_repository') return none;
@@ -60,9 +60,7 @@ export async function recordReasonTombstones(tx: BrainEngine, input: { sourceId:
   if (recheck.status === 'no_repository') throw scanFailed(input.sourceId, input.rawId, 'the Git checkout scanned before the purge is gone');
   const hits = [...plan.hits, ...(recheck.status === 'complete' ? recheck.hits : [])];
   if (!hits.length) return 0;
-  return (await tx.executeRaw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
-    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
-  [input.sourceId, hits.map(hit => hit.commit), hits.map(hit => hit.path)])).length;
+  return tx.writeReasonPurgeTombstones(input.sourceId, hits.map(hit => ({ commit_sha: hit.commit, path: hit.path })));
 }
 
 /** A Git effect a worker is running may have its commit message in flight: the purge waits for it. */
@@ -79,10 +77,7 @@ const gitCommitRunning = (requestId: string) => opError('purge_blocked_pending_r
 export async function redactGitEffectReasons(tx: BrainEngine, sourceId: string, claim: string): Promise<number> {
   const [needle, escaped] = claimNeedles(claim);
   const folded = reasonNeedle(claim);
-  const rows = await tx.executeRaw<{ id: string; state: string; request_id: string; data: Record<string, unknown> }>(`SELECT e.id::text AS id, e.state, r.request_id::text AS request_id, e.data
-    FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
-    WHERE e.source_id = $1 AND e.kind = 'git' AND (strpos(lower(e.data::text), $2) > 0 OR strpos(lower(e.data::text), $3) > 0 OR strpos(lower(e.data::text), $4) > 0)
-    ORDER BY e.id FOR UPDATE OF e`, [sourceId, needle, escaped, JSON.stringify(folded).slice(1, -1)]);
+  const rows = await tx.listGitEffectsCarryingReason(sourceId, needle, escaped, JSON.stringify(folded).slice(1, -1));
   const carries = (value: unknown) => typeof value === 'string' && (value.toLowerCase().includes(needle) || value.toLowerCase().includes(folded));
   let redacted = 0;
   for (const row of rows) {
@@ -96,7 +91,7 @@ export async function redactGitEffectReasons(tx: BrainEngine, sourceId: string, 
       const kept = listed.filter(trailer => !carries(trailer));
       if (kept.length) data.commit_trailers = kept; else delete data.commit_trailers;
     }
-    await tx.executeRaw('UPDATE persistence_effects SET data = $2::text::jsonb WHERE id = $1::bigint', [row.id, JSON.stringify(data)]);
+    await tx.setPurgeEffectData(row.id, data);
     redacted++;
   }
   return redacted;
@@ -107,16 +102,13 @@ export async function redactGitEffectReasons(tx: BrainEngine, sourceId: string, 
  * those its requests recorded (a creation's reason is on no snapshot). They join the claim needles for the slug's receipts.
  */
 export async function pageChangeReasons(tx: BrainEngine, sourceId: string, slug: string, pageId: number): Promise<string[]> {
-  const rows = await tx.executeRaw<{ reason: string | null }>(`SELECT change_reason AS reason FROM page_versions WHERE page_id = $1
-    UNION SELECT intent->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3
-    UNION SELECT outcome->'reason_recorded'->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3`, [pageId, sourceId, slug]);
+  const rows = await tx.listPageChangeReasons(sourceId, slug, pageId);
   return [...new Set(rows.map(row => row.reason).filter((reason): reason is string => !!reason && reason !== '[purged]'))];
 }
 
 /** The slug's requests whose intent or outcome records a reason, compacted ones included (compaction keeps the outcome). */
 export async function requestsRecordingReasons(tx: BrainEngine, sourceId: string, slug: string): Promise<IntentRedactionTarget[]> {
-  return tx.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id, principal_kind, principal_id FROM persistence_requests
-    WHERE source_id = $1 AND slug = $2 AND ((intent->>'reason') IS NOT NULL OR (outcome->'reason_recorded') IS NOT NULL) ORDER BY sequence LIMIT 10000`, [sourceId, slug]);
+  return tx.listRequestsRecordingReasons(sourceId, slug);
 }
 
 /**
@@ -124,10 +116,7 @@ export async function requestsRecordingReasons(tx: BrainEngine, sourceId: string
  * a running one whose trailers carry a reason refuses `purge_blocked_pending_recovery`. Returns the effects stripped.
  */
 export async function stripPageGitNotes(tx: BrainEngine, sourceId: string, slug: string): Promise<number> {
-  const rows = await tx.executeRaw<{ id: string; state: string; request_id: string; data: Record<string, unknown> }>(`SELECT e.id::text AS id, e.state, r.request_id::text AS request_id, e.data
-    FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
-    WHERE e.source_id = $1 AND e.kind = 'git' AND e.data->>'slug' = $2
-      AND ((e.data->'commit_line') IS NOT NULL OR (e.data->'commit_trailers') IS NOT NULL OR (e.data->'commit_trailer') IS NOT NULL) ORDER BY e.id FOR UPDATE OF e`, [sourceId, slug]);
+  const rows = await tx.listPageGitEffectsForStrip(sourceId, slug);
   const reasonTrailer = (value: unknown) => typeof value === 'string' && value.startsWith(`${REASON_TRAILER_KEY}:`);
   let stripped = 0;
   for (const row of rows) {
@@ -136,7 +125,7 @@ export async function stripPageGitNotes(tx: BrainEngine, sourceId: string, slug:
       if (reasonTrailer(legacy) || (Array.isArray(listed) && listed.some(reasonTrailer))) throw gitCommitRunning(row.request_id);
       continue;
     }
-    await tx.executeRaw('UPDATE persistence_effects SET data = $2::text::jsonb WHERE id = $1::bigint', [row.id, JSON.stringify(data)]);
+    await tx.setPurgeEffectData(row.id, data);
     stripped++;
   }
   return stripped;

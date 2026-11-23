@@ -13,14 +13,16 @@ import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor, QueryOpts } from './executor.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { JOURNAL_LIMITS_SQL } from '../persistence/limits.ts';
+import { MANAGED_SYNC_PASS_OP } from '../persistence/sync-pass-row.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/receipt-bytes.ts';
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
+import { GIT_HOLD_SUMMARY_OP } from './sync-hold-op.ts';
 
 /** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
 export const GIT_HOLD_OP = 'sync-hold';
 /** The op of a source's held-file summary row (sync-holds.ts re-exports it). */
-export const GIT_HOLD_SUMMARY_OP = 'sync-hold-summary';
+export { GIT_HOLD_SUMMARY_OP };
 
 /** Creates missing counter rows; takes no lock on existing ones. Keys sorted. */
 export const ENSURE_COUNTERS_SQL = 'INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING';
@@ -101,12 +103,35 @@ export interface WriteRequestInsert {
   deferredRefreshId: string | null;
 }
 
+/** One page of a grouped admission (`insertWriteRequestGroup`). */
+export interface WriteRequestGroupItem {
+  requestId: string; pageId: number | null; slug: string | null; digest: string; intent: unknown; intentBytes: number;
+  terminalReservation: number; clientRequestId: string | null;
+}
+/** A grouped admission's shared columns and its pages in manifest order; every row is a queued page write, protocol 1. */
+export interface WriteRequestGroupInsert {
+  principalKind: string; principalId: string; operation: string; sourceId: string; sourceIncarnation: string; worktreeId: string | null;
+  topologyGeneration: number | string | null; authority: unknown; admitterVersion: string; admitterHostId: string | null; counterKeys: string[];
+  items: WriteRequestGroupItem[];
+}
+
 /** The terminal state of one request and the numbers its completion statement needs. */
 export interface WriteCompletion {
   id: string; state: 'committed' | 'conflict' | 'failed' | 'cancelled'; outcome: unknown; errorCode: string | null; errorMessage: string | null;
   consumerVersion: string; consumerHostId: string | null; errorDetail: unknown; resultBytes: number; counterKeys: string[]; intentBytes: number;
   retainedBytes: number; terminalReservation: number; probePurges: boolean;
 }
+
+/**
+ * A cancellation: the completion of a request that is still in `expectState` under `expectExecutionToken`, not
+ * terminal, not publishing and not in recovery. The engine checks that and completes the row in one step.
+ */
+export interface WriteCancellation extends Omit<WriteCompletion, 'state'> { state: 'cancelled'; expectState: string; expectExecutionToken: string | null }
+/**
+ * `cancelled`: the completed row. `kept`: the row was terminal, publishing, in recovery, or no longer the row the
+ * caller read, and nothing changed. `too_large`: the result exceeds the reservation, and nothing changed.
+ */
+export type WriteCancelResult = { status: 'cancelled'; row: CompletedWriteRow } | { status: 'kept' | 'too_large'; row: WriteRequest };
 
 /** The claimed row: the request as stamped, whether it passed a queued sync row, and the newest sequence for a sync row. */
 export type ClaimedWriteRow = WriteRequest & { passed_sync: boolean; seen_sequence: string | null };
@@ -124,7 +149,7 @@ export const HELD_PAGES_SQL = `SELECT h.completed_keys->0 AS record, p.knowledge
       JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
       LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
       WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
-      ORDER BY h.fingerprint`;
+      ORDER BY h.fingerprint COLLATE "C"`;
 
 /** The current-incarnation hold rows naming these page ids, each with its page's revision, in fingerprint order. */
 export function readHeldPageRows<R>(exec: LegacyUnscopedRead, pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>> {
@@ -144,7 +169,7 @@ export function readHeldCoverageRows(exec: LegacyUnscopedRead, sourceIds: string
       FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
       WHERE h.op=$1 AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))
         AND COALESCE((h.completed_keys->0->>'count')::int,0)>0
-      ORDER BY s.id`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
+      ORDER BY s.id COLLATE "C"`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
 }
 
 /** The request a principal admitted under `requestId`, or null. */
@@ -154,10 +179,70 @@ export async function readWriteRequest(exec: LegacyUnscopedRead, principalKind: 
   return row ?? null;
 }
 
+/** The requests a principal admitted under any of `requestIds` (uuids), in no order. */
+export function readWriteRequestsByRequestIds(exec: LegacyUnscopedRead, principalKind: string, principalId: string, requestIds: readonly string[]): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=ANY($3::uuid[])',
+    [principalKind, principalId, requestIds]);
+}
+
+/** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null when it has no owner or no binding. */
+export async function readOwnerHostBinding(exec: LegacyUnscopedRead, worktreeId: string): Promise<string | null> {
+  const [binding] = await exec.executeRaw<{ local_path: string | null }>(`SELECT h.local_path FROM persistence_host_bindings h
+      JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [worktreeId]);
+  return binding?.local_path ?? null;
+}
+
+/**
+ * At most two request rows with this request_id, whoever submitted them (ops/persistence.ts hostOperatorReceipt): the
+ * trusted local CLI reads a receipt by request_id alone only when exactly one row has it.
+ */
+export async function readWriteRequestsByRequestId(exec: LegacyUnscopedRead, requestId: string): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+}
+
+/**
+ * `listWriteRequestRows` filters. `before` is a sequence as decimal text; a null list skips its fence and an empty
+ * list matches nothing. `slugPrefixes` are lower-case (one ending in `/` matches under it, any other matches the slug
+ * or under it); `operations` match `authority.attestedOp`, else `operation`; `slugAllowList` holds exact slugs or
+ * `<prefix>/*`.
+ */
+export interface WriteRequestListFilter {
+  before: string | null; limit: number; slugPrefixes: string[] | null; operations: string[] | null; slugAllowList: string[] | null;
+}
+
+/**
+ * One candidate page of `list_write_requests` (persistence/control.ts): a principal's requests in one live source
+ * (the source has the request's incarnation and is not archived), newest sequence first, through the filter. The
+ * caller authorizes each row and pages.
+ */
+export function listWriteRequestRows(exec: LegacyUnscopedRead, principalKind: string, principalId: string, sourceId: string,
+  filter: WriteRequestListFilter): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
+      JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation AND NOT s.archived
+      WHERE r.principal_kind=$1 AND r.principal_id=$2 AND r.source_id=$3
+      AND ($4::bigint IS NULL OR r.sequence<$4::bigint)
+      AND ($6::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($6::text[]) AS p(prefix)
+        WHERE length(p.prefix)>0 AND (CASE WHEN right(p.prefix,1)='/'
+          THEN left(lower(r.slug),length(p.prefix))=p.prefix
+          ELSE lower(r.slug)=p.prefix OR left(lower(r.slug),length(p.prefix)+1)=p.prefix||'/' END)))
+      AND ($7::text[] IS NULL OR COALESCE(r.authority->>'attestedOp', r.operation)=ANY($7::text[]))
+      AND ($8::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($8::text[]) AS a(pattern)
+        WHERE CASE WHEN right(a.pattern,2)='/*' THEN left(r.slug,length(a.pattern)-1)=left(a.pattern,length(a.pattern)-1)
+          ELSE r.slug=a.pattern END))
+      ORDER BY r.sequence DESC LIMIT $5`,
+  [principalKind, principalId, sourceId, filter.before, filter.limit, filter.slugPrefixes, filter.operations, filter.slugAllowList]);
+}
+
 /** The request with journal id `id`, or null. */
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);
   return row ?? null;
+}
+
+/** The requests admitted under any of the client request ids `requestIds`, any principal, by sequence. */
+export async function listWriteRequestsByRequestIds(exec: LegacyUnscopedRead, requestIds: readonly string[]): Promise<WriteRequest[]> {
+  if (!requestIds.length) return [];
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=ANY($1::uuid[]) ORDER BY sequence', [[...requestIds]]);
 }
 
 /** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
@@ -298,6 +383,32 @@ export async function insertWriteRequest(exec: SqlExecutor, row: WriteRequestIns
   return inserted!;
 }
 
+/**
+ * The grouped admission's rows and their counter reservation in one statement; the counters are already locked. The
+ * rows are inserted in item order, so their sequences keep the manifest order.
+ */
+export const ADMIT_WRITE_GROUP_SQL = `WITH reserved AS (UPDATE persistence_counters SET outstanding_count=outstanding_count+$14,
+      intent_bytes=intent_bytes+$12,lifetime_ids=lifetime_ids+$14,terminal_bytes=terminal_bytes+$13 WHERE key=ANY($15::text[]))
+      INSERT INTO persistence_requests
+      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
+       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
+       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader)
+      SELECT $1,$2,(e->>'request_id')::uuid,$3,$4,$5::uuid,(e->>'page_id')::integer,e->>'slug',$6::uuid,$7,e->>'digest',e->'intent',$8::text::jsonb,
+        (e->>'intent_bytes')::bigint,(e->>'terminal_reservation')::bigint,'page',1,$9,$10::uuid,e->>'client_request_id',true
+      FROM jsonb_array_elements($11::text::jsonb) WITH ORDINALITY AS t(e,n) ORDER BY n
+      RETURNING *`;
+
+/** Inserts a grouped admission's rows in item order and charges their counters (already locked); returns the stored rows. */
+export async function insertWriteRequestGroup(exec: SqlExecutor, group: WriteRequestGroupInsert): Promise<WriteRequest[]> {
+  if (!group.items.length) return [];
+  const bytes = group.items.reduce((sum, item) => sum + item.intentBytes, 0), terminalBytes = group.items.reduce((sum, item) => sum + item.terminalReservation, 0);
+  return exec.executeRaw<WriteRequest>(ADMIT_WRITE_GROUP_SQL, [group.principalKind, group.principalId, group.operation, group.sourceId, group.sourceIncarnation,
+    group.worktreeId, group.topologyGeneration, JSON.stringify(group.authority), group.admitterVersion, group.admitterHostId,
+    JSON.stringify(group.items.map(item => ({ request_id: item.requestId, page_id: item.pageId, slug: item.slug, digest: item.digest, intent: item.intent,
+      intent_bytes: item.intentBytes, terminal_reservation: item.terminalReservation, client_request_id: item.clientRequestId }))),
+    bytes, terminalBytes, group.items.length, group.counterKeys]);
+}
+
 /** Stamps the claim on request `id` (running, its token, its lease and its first phase); null when the refresh barrier refused it. */
 export async function stampWriteClaim(exec: SqlExecutor, id: string, token: string, leaseMs: number, phaseJson: string): Promise<ClaimedWriteRow | null> {
   const [claimed] = await exec.executeRaw<ClaimedWriteRow>(CLAIM_STAMP_SQL, [id, token, leaseMs, phaseJson]);
@@ -310,12 +421,61 @@ export async function lockWriteRequest(exec: SqlExecutor, id: string): Promise<W
   return row ?? null;
 }
 
+/** The requests with these ids, locked FOR UPDATE until the transaction ends, in id order (an unknown id reads nothing). */
+export async function lockWriteRequestsById(exec: SqlExecutor, ids: readonly string[]): Promise<WriteRequest[]> {
+  return exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+}
+
+/**
+ * A terminal request's compaction once its stored intent carried purged content (journal.ts finishTerminal). `left` is
+ * what the receipt keeps without its intent, `reservation` the terminal reservation the completion left, `counterKeys`
+ * the counters it charged.
+ */
+export interface TerminalIntentCompaction { id: string; left: number; reservation: number; counterKeys: readonly string[] }
+
+/** journal.ts finishTerminal's compaction at b220b0df91, with EFFECT_BYTES_SQL written out (see the module header). */
+export const COMPACT_TERMINAL_INTENT_SQL = `WITH effects AS (SELECT COALESCE(SUM(octet_length(data::text)+octet_length(kind)+1024),0) AS bytes,
+        COALESCE(bool_or(state<>'committed'),false) AS unfinished FROM persistence_effects WHERE request_id=$1::uuid),
+      r AS (UPDATE persistence_requests SET intent=NULL,compacted=true,terminal_reservation=CASE WHEN (SELECT unfinished FROM effects) THEN terminal_reservation
+        ELSE LEAST(terminal_reservation,$2::bigint+(SELECT bytes FROM effects)) END WHERE id=$1::uuid RETURNING *),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST($3::bigint-r.terminal_reservation,c.terminal_bytes)
+        FROM r WHERE c.key=ANY($4::text[]))
+      SELECT * FROM r`;
+
+/**
+ * Drops the request's intent and marks it compacted. Its terminal reservation shrinks to `left` plus its effect bytes
+ * once no effect is unfinished, and the counters release what it gave up. The compacted row, or null for an unknown id.
+ */
+export async function compactTerminalIntent(exec: SqlExecutor, c: TerminalIntentCompaction): Promise<WriteRequest | null> {
+  const [redacted] = await exec.executeRaw<WriteRequest>(COMPACT_TERMINAL_INTENT_SQL, [c.id, c.left, c.reservation, c.counterKeys]);
+  return redacted ?? null;
+}
+
 /** Records a request's terminal state and releases its counters; null when the result exceeds the reservation (nothing changed). */
 export async function completeWriteRow(exec: SqlExecutor, c: WriteCompletion): Promise<CompletedWriteRow | null> {
   const [done] = await exec.executeRaw<CompletedWriteRow>(c.probePurges ? COMPLETE_WRITE_PURGE_PROBE_SQL : COMPLETE_WRITE_SQL, [c.id, c.state,
     JSON.stringify(c.outcome), c.errorCode, c.errorMessage, c.consumerVersion, c.consumerHostId,
     c.errorDetail ? JSON.stringify(c.errorDetail) : null, c.resultBytes, c.counterKeys, c.intentBytes, c.retainedBytes, c.terminalReservation]);
   return done ?? null;
+}
+
+/** Whether a locked request may still be cancelled under the caller's expectation (the same test the Rust store runs). */
+function cancellable(row: WriteRequest, c: WriteCancellation): boolean {
+  return !['committed', 'conflict', 'failed', 'cancelled'].includes(row.state) && row.state === c.expectState
+    && (row.execution_token ?? null) === c.expectExecutionToken && !row.publication_started && row.recovery == null;
+}
+
+/**
+ * Cancels request `c.id`: durable commit on, the row locked FOR UPDATE, the check, then the completion statement.
+ * Null when the row does not exist.
+ */
+export async function cancelWriteRow(exec: SqlExecutor, c: WriteCancellation): Promise<WriteCancelResult | null> {
+  const current = await lockWriteRequest(exec, c.id);
+  if (!current) return null;
+  if (!cancellable(current, c)) return { status: 'kept', row: current };
+  await exec.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+  const done = await completeWriteRow(exec, c);
+  return done ? { status: 'cancelled', row: done } : { status: 'too_large', row: current };
 }
 
 /** The config key that turns a remote write's mention links off (effect-model.ts `REMOTE_AUTO_LINKS_KEY`; the statement test pins the two). */
@@ -356,4 +516,56 @@ export function publicationEffectsParams(spec: PublicationEffectsSpec): unknown[
 export async function insertPublicationEffects(exec: SqlExecutor, spec: PublicationEffectsSpec): Promise<string[]> {
   const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
   return rows.map(row => row.kind);
+}
+
+/**
+ * The effects a managed-request withdrawal queues (facts/withdrawal.ts `recordFactWithdrawal`): the text it sent
+ * through `executeRaw`, byte for byte. One row per kind, stamped with the source's incarnation and its bound worktree;
+ * an unknown source inserts nothing and a kind already queued for the request is kept.
+ */
+export const WITHDRAWAL_EFFECTS_SQL = `INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
+          SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
+          FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
+          CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
+          WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`;
+
+/** One page a withdrawal changed, as its effects name it. */
+export interface WithdrawalEffectTarget { slug: string; page_id: number; revision: string }
+
+/** What `insertWithdrawalEffects` inserts for a withdrawal under write request `requestId`. */
+export interface WithdrawalEffectsSpec { requestId: string; sourceId: string; targets: readonly WithdrawalEffectTarget[] }
+
+/** The data every effect of a withdrawal carries: version 2, its targets in slug order. */
+export function withdrawalEffectsData(spec: WithdrawalEffectsSpec): { version: 2; targets: WithdrawalEffectTarget[] } {
+  return { version: 2, targets: [...spec.targets].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) };
+}
+
+/** The withdrawal effects insert's parameters; the data binds as one text parameter, so postgres.js does not double-encode it. */
+export function withdrawalEffectsParams(spec: WithdrawalEffectsSpec): unknown[] {
+  return [spec.requestId, spec.sourceId, JSON.stringify(withdrawalEffectsData(spec))];
+}
+
+/** Queues a withdrawal's `withdrawal-mirror`, `git` and `embedding` effects (see `WITHDRAWAL_EFFECTS_SQL`). */
+export async function insertWithdrawalEffects(exec: SqlExecutor, spec: WithdrawalEffectsSpec): Promise<void> {
+  await exec.executeRaw(WITHDRAWAL_EFFECTS_SQL, withdrawalEffectsParams(spec));
+}
+
+/** The raw progress row of a drain lease's holder (`readDrainHolderProgress`). */
+export interface DrainHolderProgressRow { committed: number | string; last_committed_at: Date | string | null; last_saved_at: Date | string | null }
+
+/**
+ * The source's managed-sync commits since `since` (ISO), its last managed-sync commit, and its last cursor save, pass
+ * row write or hold summary write, through the source's writer binding; null when no binding exists.
+ */
+export async function readDrainHolderProgress(exec: LegacyUnscopedRead, sourceId: string, since: string): Promise<DrainHolderProgressRow | null> {
+  const [row] = await exec.executeRaw<DrainHolderProgressRow>(`
+    SELECT (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.state='committed'
+        AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' AND r.completed_at >= $2::timestamptz) AS committed,
+      (SELECT max(r.completed_at) FROM persistence_requests r WHERE r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
+        AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS last_committed_at,
+      GREATEST((SELECT max(c.updated_at) FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'sourceId'=$1),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op=$3 AND c.fingerprint=b.source_id||':'||b.source_incarnation::text),
+        (SELECT c.updated_at FROM op_checkpoints c WHERE c.op='sync-hold-summary' AND c.fingerprint=b.source_id||':'||b.source_incarnation::text)) AS last_saved_at
+    FROM persistence_source_bindings b WHERE b.source_id=$1`, [sourceId, since, MANAGED_SYNC_PASS_OP]);
+  return row ?? null;
 }

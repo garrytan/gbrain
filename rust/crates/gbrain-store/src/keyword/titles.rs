@@ -50,11 +50,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::filters::{KeywordOptions, PageFilter, row_count, source_factor};
+use super::index::{Postings, serves};
 use super::rank::ts_rank_cd;
 use super::stem::pg_lower;
 use super::tsearch::{
     TsQuery, TsVector, Weight, check_query_items, concat, fts_input, is_vector_overflow, setweight,
-    to_tsvector, ts_filter, ts_matches, tsquery_or_all, websearch_to_tsquery,
+    to_tsvector, ts_filter, ts_matches, tsquery_or_all, websearch_to_tsquery, with_query_stack,
 };
 use super::vector_cache::{VectorKind, cached};
 use crate::Store;
@@ -63,7 +64,9 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::{PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, search_timeline};
+use crate::pages::{
+    PageRecord, SEARCH_TIMELINE_MAX_CHARS, all_pages, read_page_by_id, search_timeline,
+};
 use crate::timeline::{TimelineRecord, latest_entry_micros};
 
 /// `PAGE_TIMELINE_FTS_MAX_CHARS` (fts-language.ts): the timeline characters a page vector reads.
@@ -189,7 +192,10 @@ fn page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Arc<TsVector>> {
 /// cap). SQL never stores such a page (its trigger raises in the write, and [`check_page_vector`] raises the same here),
 /// but a store written before that check may hold one. It matches nothing; it must not fail the searches that pass over
 /// it. Any other failure is still an error.
-fn readable_page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<Option<Arc<TsVector>>> {
+pub(super) fn readable_page_vector(
+    read: &dyn KvRead,
+    page: &PageRecord,
+) -> Result<Option<Arc<TsVector>>> {
     match page_vector(read, page) {
         Ok(vector) => Ok(Some(vector)),
         Err(e) if is_vector_overflow(&e) => Ok(None),
@@ -207,6 +213,23 @@ pub(crate) fn check_page_vector(read: &dyn KvRead, page: &PageRecord) -> Result<
 /// The write-time half of `pageSearchVectorSql`: the vector a seal that sends `timeline` stores for a page titled `title`.
 pub(crate) fn check_sealed_page_vector(title: &str, timeline: &str) -> Result<()> {
     sealed_vector(title, timeline).map(|_| ())
+}
+
+/// The page postings of every attempt's lexemes and the pages any attempt can match, ascending;
+/// `None` when the index does not serve the read or an attempt has no candidate bound (the scan).
+/// `Title` matches the weight-A lexemes of the same pages, so it has the same candidates.
+fn indexed_pages(read: &dyn KvRead, queries: &[&TsQuery]) -> Result<Option<(Postings, Vec<u64>)>> {
+    if !serves(read)? {
+        return Ok(None);
+    }
+    let postings = Postings::read(read, keys::KW_PAGE_POSTING, queries)?;
+    let Some(docs) = postings.candidates_of(queries) else {
+        return Ok(None);
+    };
+    let ids = docs.into_iter().map(|(id, _)| id).collect();
+    #[cfg(test)]
+    super::index::tests::served_by_index();
+    Ok(Some((postings, ids)))
 }
 
 /// `$tsq`: each text's `websearch_to_tsquery(gbrain_fts_input(t))`, ORed from the left.
@@ -256,18 +279,20 @@ struct Ranked {
     score: f64,
 }
 
-/// The representative chunk: visible, text, compiled truth first (only compiled truth for
-/// `detail` low), then the lowest chunk index.
+/// The representative chunk: in the page's live body (`chunkGenerationFilter`, as `title-statement.ts` reads it, so a
+/// chunk a deferred retire left is never shown), text, compiled truth first (only compiled truth for `detail` low),
+/// then the lowest chunk index.
 fn representative(
     read: &dyn KvRead,
     page: &PageRecord,
     detail_low: bool,
 ) -> Result<Option<ChunkRecord>> {
-    let generation = read_segment_view(read, page.id)?.generation;
+    let view = read_segment_view(read, page.id)?;
+    let segmented_page = crate::chunks::segmented(page);
     Ok(read_chunks(read, page.id)?
         .into_iter()
         .filter(|c| {
-            c.visible_at(generation)
+            crate::chunks::in_live_body(c, segmented_page, &view)
                 && c.modality == "text"
                 && (!detail_low || c.chunk_source == "compiled_truth")
         })
@@ -316,51 +341,75 @@ impl Store {
             .collect::<Result<Vec<_>>>()?;
         let read = self.read()?;
         let mut filter = PageFilter::new(options)?;
-        let mut pages = all_pages(&*read)?;
-        pages.sort_by_key(|p| p.id);
+        let queries: Vec<&TsQuery> = windows.iter().map(|(_, _, q)| q).collect();
         let mut candidates: Vec<Candidate> = Vec::new();
-        for page in pages {
-            if filter.keeps(&*read, &page)? {
-                let Some(whole) = readable_page_vector(&*read, &page)? else {
-                    continue;
-                };
-                candidates.push(Candidate {
-                    page,
-                    whole,
-                    title: None,
-                });
+        match indexed_pages(&*read, &queries)? {
+            // The pages any attempt can match, ascending by id, each with its sparse vector.
+            Some((postings, ids)) => {
+                for id in ids {
+                    let Some(page) = read_page_by_id(&*read, id)? else {
+                        continue;
+                    };
+                    if filter.keeps(&*read, &page)? {
+                        candidates.push(Candidate {
+                            page,
+                            whole: postings.sparse((id, 0)),
+                            title: None,
+                        });
+                    }
+                }
+            }
+            None => {
+                let mut pages = all_pages(&*read)?;
+                pages.sort_by_key(|p| p.id);
+                for page in pages {
+                    if filter.keeps(&*read, &page)? {
+                        let Some(whole) = readable_page_vector(&*read, &page)? else {
+                            continue;
+                        };
+                        candidates.push(Candidate {
+                            page,
+                            whole,
+                            title: None,
+                        });
+                    }
+                }
             }
         }
         let mut factors: HashMap<usize, f64> = HashMap::new();
         let mut out = Vec::with_capacity(attempts.len());
         for (attempt, (limit, offset, query)) in attempts.iter().zip(windows) {
             let kind = attempt.kind;
-            let matched: Vec<usize> = (0..candidates.len())
-                .filter(|&i| ts_matches(candidates[i].vector(kind), &query))
-                .collect();
-            let cut = kind != TitleAttemptKind::Title && matched.len() > cap;
-            let ranked_pages: &[usize] = match kind {
-                TitleAttemptKind::Title => &matched,
-                TitleAttemptKind::Whole => &matched[..matched.len().min(cap)],
-                TitleAttemptKind::Complete if cut => &[],
-                TitleAttemptKind::Complete => &matched,
-            };
-            let mut ranked: Vec<Ranked> = ranked_pages
-                .iter()
-                .map(|&index| {
-                    let factor = *factors
-                        .entry(index)
-                        .or_insert_with(|| source_factor(&candidates[index].page, &options.boosts));
-                    let c = &mut candidates[index];
-                    let exact = exact_title_key(&c.page.title) == exact_key;
-                    let score = f64::from(ts_rank_cd(c.vector(kind), &query)) * factor;
-                    Ranked {
-                        index,
-                        exact,
-                        score,
-                    }
-                })
-                .collect();
+            // One deep-stack thread per attempt when the query is deep, not one per candidate.
+            let (cut, mut ranked) = with_query_stack(query.items.len(), || {
+                let matched: Vec<usize> = (0..candidates.len())
+                    .filter(|&i| ts_matches(candidates[i].vector(kind), &query))
+                    .collect();
+                let cut = kind != TitleAttemptKind::Title && matched.len() > cap;
+                let ranked_pages: &[usize] = match kind {
+                    TitleAttemptKind::Title => &matched,
+                    TitleAttemptKind::Whole => &matched[..matched.len().min(cap)],
+                    TitleAttemptKind::Complete if cut => &[],
+                    TitleAttemptKind::Complete => &matched,
+                };
+                let ranked: Vec<Ranked> = ranked_pages
+                    .iter()
+                    .map(|&index| {
+                        let factor = *factors.entry(index).or_insert_with(|| {
+                            source_factor(&candidates[index].page, &options.boosts)
+                        });
+                        let c = &mut candidates[index];
+                        let exact = exact_title_key(&c.page.title) == exact_key;
+                        let score = f64::from(ts_rank_cd(c.vector(kind), &query)) * factor;
+                        Ranked {
+                            index,
+                            exact,
+                            score,
+                        }
+                    })
+                    .collect();
+                (cut, ranked)
+            });
             ranked.sort_by(|a, b| {
                 b.exact
                     .cmp(&a.exact)
@@ -387,7 +436,7 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     fn put(store: &Store, slug: &str, title: &str, timeline: &str) {
@@ -459,6 +508,33 @@ mod tests {
     }
 
     #[test]
+    fn a_deep_title_query_matches_every_candidate_on_one_deep_thread() {
+        // Minder row 3: one deep-query thread per attempt, not one per candidate page.
+        let store = crate::test_support::store();
+        for i in 0..12 {
+            put(&store, &format!("notes/deep-{i}"), "Red Apple", "");
+        }
+        let text = "red apple ".repeat(400);
+        let all: KeywordOptions = serde_json::from_value(json!({})).unwrap();
+        super::super::tsearch::reset_deep_spawns();
+        let out = store
+            .search_titles_attempts(
+                &[attempt(&[text.as_str()], TitleAttemptKind::Whole, 100.0)],
+                "red apple",
+                100.0,
+                &all,
+            )
+            .unwrap();
+        assert_eq!(slugs(&out[0]).len(), 12);
+        let spawned = super::super::tsearch::deep_spawns();
+        // One for parsing the text and one for the attempt's walk.
+        assert!(
+            spawned <= 2,
+            "the title search started {spawned} deep-query threads"
+        );
+    }
+
+    #[test]
     fn the_trigger_form_reads_the_timeline_and_older_entries_at_weight_c() {
         let store = crate::test_support::store();
         put(&store, "notes/a", "Alpha Nebula", "gamma linex");
@@ -517,7 +593,7 @@ mod tests {
     }
 
     /// A segmented page published from one segment with `lead` as its timeline lead.
-    fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
+    pub(crate) fn segmented(store: &Store, slug: &str, title: &str, lead: &str) {
         use sha2::{Digest, Sha256};
         let staging = "66666666-6666-4666-8666-666666666666";
         let body = "one\n";

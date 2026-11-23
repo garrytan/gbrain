@@ -139,7 +139,13 @@ export async function drainSpool(engine: BrainEngine): Promise<{ moved: number; 
     const sourceId = entry.source_id ?? await sourceForPath(engine, entry.root, entry.occurrences.find(o => o.line !== null)?.path ?? null);
     if (!sourceId) continue;
     const outcome = await sealWithId(engine, { id: entry.id, sourceId, rule: entry.rule, value: opened.value });
-    if (outcome.kind === 'duplicate') { writeEntry({ ...entry, duplicate_of: outcome.existing }); continue; }
+    if (outcome.kind === 'duplicate') {
+      for (const o of entry.occurrences) {
+        await recordOccurrence(engine, { entryId: outcome.existing, sourceId, field: o.field, origin: 'publish_rebuild', commit: o.commit, path: o.path, line: o.line, createdBy: 'publish redact (spooled)' });
+      }
+      writeEntry({ ...entry, duplicate_of: outcome.existing });
+      continue;
+    }
     if (outcome.kind === 'inserted') {
       for (const o of entry.occurrences) {
         await recordOccurrence(engine, { entryId: entry.id, sourceId, field: o.field, origin: 'publish_rebuild', commit: o.commit, path: o.path, line: o.line, createdBy: 'publish redact (spooled)' });

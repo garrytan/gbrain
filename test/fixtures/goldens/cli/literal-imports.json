@@ -13,6 +13,9 @@
       "anomalies": [
         "./commands/anomalies.ts"
       ],
+      "apple-contacts": [
+        "./commands/apple-contacts.ts"
+      ],
       "autopilot": [
         "./commands/autopilot.ts"
       ],
@@ -105,6 +108,9 @@
       ],
       "guests": [
         "./commands/guests.ts"
+      ],
+      "identity": [
+        "./commands/identity.ts"
       ],
       "import": [
         "./commands/import.ts",

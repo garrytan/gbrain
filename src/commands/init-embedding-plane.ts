@@ -21,8 +21,7 @@ export async function keptEmbeddingIdentity(engine: BrainEngine, aiOpts: Resolve
   if (await engine.getConfig('embedding_disabled').catch(() => null) === 'true') return null;
   let embedded = false;
   for (const table of await readPrimaryEmbeddingStores(engine)) {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`);
-    if (row?.present) { embedded = true; break; }
+    if (await engine.hasStoredVectors(table)) { embedded = true; break; }
   }
   if (!embedded) return null;
   const stored = await readStoredEmbeddingIdentity(engine).catch(() => null);

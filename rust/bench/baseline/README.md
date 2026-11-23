@@ -34,8 +34,12 @@ single-client metric, default 120; the actual `n` is in the result); `--limit-pa
 
 A default run needs an empty store. `--fresh` deletes only a store this runner created: a PGLite directory with a
 `<dir>.bakeoff-marker` file, or a Postgres database whose comment is `gbrain-bakeoff-baseline`. It refuses anything else.
-The corpus directory is read only, except that the exact ground truth is written once to `<corpus>/truth_top10.json`
-(the format the Rust harness also reads and writes: per query, the 10 nearest chunk row numbers).
+The corpus directory is read only, except that the exact ground truth is cached in `<corpus>/truth_top10.json`
+(the format the Rust harness also reads and writes: per query, the 10 nearest chunk row numbers, plus a
+fingerprint: the byte size and sha256 of `vectors.f32` and `queries.f32`, the dims and k). A cached file is reused
+only when the fingerprint of the current corpus files matches; a different corpus in the same directory, or a file
+with no fingerprint, makes the runner recompute the truth and rewrite the file. Rebuilding a corpus with
+`rust/scripts/export-corpus.ts --overwrite` or `rust/bench/corpus/dbpedia.py` deletes the old file.
 
 Type check: `cd <repo> && node_modules/.bin/tsc --noEmit -p rust/bench/baseline/tsconfig.json`. The root tsconfig does
 not include `rust/`, and this project config pulls in `src/` files that need ambient declarations the root build

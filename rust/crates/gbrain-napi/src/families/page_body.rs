@@ -71,6 +71,19 @@ impl Brain {
         })
     }
 
+    /// `readSegmentedEmbedPage({ id } | { sourceId, slug })`: the sealed live segmented page's embed
+    /// fields, or `null`.
+    #[napi]
+    pub fn read_segmented_embed_page<'env>(
+        &self,
+        env: &'env Env,
+        reference: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_segmented_embed_page(&required(reference, "readSegmentedEmbedPage ref")?)
+        })
+    }
+
     /// `readManifest(pageId, { generation?, stagingId?, region?, lastN? }?)`: rows by seq.
     #[napi]
     pub fn read_manifest<'env>(
@@ -137,8 +150,9 @@ impl Brain {
         })
     }
 
-    /// Not a member: `{ lead, revision }` of page `pageId` for `sealSegmentedPage` (the stored
-    /// timeline lead, `""` when none, and the page's knowledge revision), or `null` for a missing page.
+    /// Not a member: `{ lead, revision, slug, sourceId }` of page `pageId` for `sealSegmentedPage`
+    /// (the stored timeline lead, `""` when none, the page's knowledge revision and its identity),
+    /// or `null` for a missing page.
     #[napi]
     pub fn read_segmented_seal_lead<'env>(
         &self,
@@ -146,10 +160,7 @@ impl Brain {
         page_id: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let lead =
-                s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)?;
-            Ok(lead
-                .map(|(lead, revision)| serde_json::json!({ "lead": lead, "revision": revision })))
+            s.read_segmented_seal_lead(required(page_id, "readSegmentedSealLead pageId")?)
         })
     }
 
@@ -279,7 +290,8 @@ impl Brain {
             s.refresh_page_body(&slug, &source_id, &compiled_truth, &timeline, &content_hash)
         })
     }
-    /// `lockBodyStagingState(stagingId)`: the staging's state, null when there is none.
+
+    /// `lockBodyStagingState(stagingId)`: the staging's state, or `null`.
     #[napi]
     pub fn lock_body_staging_state<'env>(
         &self,
@@ -289,21 +301,42 @@ impl Brain {
         self.run(env, move |s| s.lock_body_staging_state(&staging_id))
     }
 
-    /// `deleteUnstagedSegmentChunks(pageId, generation, keepIndexes)`: the number of rows deleted.
+    /// `deleteUnstagedSegmentChunks(pageId, generation, keepChunkIndexes)`: resolves `null`.
     #[napi]
     pub fn delete_unstaged_segment_chunks<'env>(
         &self,
         env: &'env Env,
-        page_id: i64,
-        generation: i64,
-        keep_indexes: Value,
+        page_id: Value,
+        generation: Value,
+        keep_chunk_indexes: Value,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let keep: Vec<i64> = required(keep_indexes, "deleteUnstagedSegmentChunks keepIndexes")?;
-            s.delete_unstaged_segment_chunks(page_id, generation, &keep)
+            let keep: Vec<i64> = required(
+                keep_chunk_indexes,
+                "deleteUnstagedSegmentChunks keepChunkIndexes",
+            )?;
+            s.delete_unstaged_segment_chunks(
+                required(page_id, "deleteUnstagedSegmentChunks pageId")?,
+                required(generation, "deleteUnstagedSegmentChunks generation")?,
+                &keep,
+            )
         })
     }
 
+    /// `deleteRewrittenSegmentDerivations({ pageId, touchedOccurrenceIds, linkReachOccurrenceIds,
+    /// pipelines, liveOccurrenceIds })`: rows deleted.
+    #[napi]
+    pub fn delete_rewritten_segment_derivations<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: gbrain_store::page_body::RewrittenDerivationsDelete =
+                required(spec, "deleteRewrittenSegmentDerivations spec")?;
+            s.delete_rewritten_segment_derivations(&spec)
+        })
+    }
     /// `readSegmentedLivePage(pageId)`: `{ id, body_generation, body_storage, title, type,
     /// body_flags }` or null.
     #[napi]
@@ -313,17 +346,6 @@ impl Brain {
         page_id: i64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_segmented_live_page(page_id))
-    }
-
-    /// `readSegmentedSealed(sourceId, slug)`: whether the live page is sealed at its revision.
-    #[napi]
-    pub fn read_segmented_sealed<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slug: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_segmented_sealed(&source_id, &slug))
     }
 
     /// `listChunkedOccurrences(pageId, occurrences, generation)`: the occurrences with a chunk row
@@ -440,52 +462,6 @@ impl Brain {
         })
     }
 
-    /// `readPageTrustStamp({ sourceId, slug } | { id })`: `{ id, trust_tier, write_origin }` or null.
-    #[napi]
-    pub fn read_page_trust_stamp<'env>(
-        &self,
-        env: &'env Env,
-        page: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let page: gbrain_store::page_body::PageTrustRef =
-                required(page, "readPageTrustStamp page")?;
-            s.read_page_trust_stamp(&page)
-        })
-    }
-
-    /// `restorePageTrustStamp(pageId, trustTier, writeOrigin)`: puts a fence append's prior tier
-    /// and origin back under the trust stamp rules.
-    #[napi]
-    pub fn restore_page_trust_stamp<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        trust_tier: String,
-        write_origin: Option<Value>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.restore_page_trust_stamp(page_id, &trust_tier, write_origin)
-        })
-    }
-
-    /// `storeSegmentDerivationRuns(pageId, generation, rows)`: true when the page is segmented at
-    /// `generation` and the rows were stored.
-    #[napi]
-    pub fn store_segment_derivation_runs<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        generation: i64,
-        rows: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let rows: Vec<gbrain_store::page_body::SegmentDerivationInput> =
-                required(rows, "storeSegmentDerivationRuns rows")?;
-            s.store_segment_derivation_runs(page_id, generation, &rows)
-        })
-    }
-
     /// `readSegmentedRewritePage(pageId)`: the page a live fence rewrite reads, or null.
     #[napi]
     pub fn read_segmented_rewrite_page<'env>(
@@ -559,36 +535,6 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.set_segmented_version_hash(page_id, generation, &content_hash, body_bytes)
-        })
-    }
-
-    /// `deleteRewrittenDerivationRows(pageId, { touched, reach, unpaidKinds, live })`: rows deleted.
-    #[napi]
-    pub fn delete_rewritten_derivation_rows<'env>(
-        &self,
-        env: &'env Env,
-        page_id: i64,
-        scope: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let scope: gbrain_store::page_body::RewrittenDerivationScope =
-                required(scope, "deleteRewrittenDerivationRows scope")?;
-            s.delete_rewritten_derivation_rows(page_id, &scope)
-        })
-    }
-
-    /// `readSegmentedEmbedPage({ id } | { sourceId, slug })`: the sealed segmented page an embed
-    /// reads, or null.
-    #[napi]
-    pub fn read_segmented_embed_page<'env>(
-        &self,
-        env: &'env Env,
-        page: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let page: gbrain_store::page_body::SegmentedEmbedRef =
-                required(page, "readSegmentedEmbedPage page")?;
-            s.read_segmented_embed_page(&page)
         })
     }
 

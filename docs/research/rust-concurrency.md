@@ -42,7 +42,7 @@ see "fjall bake-off" below): at 64 disjoint writers the store does 1629 ops/s ag
 (2.2x). It loses at one client (0.6x of redb), and it ties redb on one hot page. 837 of 839 store
 tests pass on it; the 2 that fail open the redb file by name. We learned that fjall is the base
 store to move to. You should do that after the Dec 1 parity work, behind the same flag and not as
-the default, once crash simulation also runs on fjall.
+the default. A process-kill check now passes on fjall; a power-loss check still does not exist.
 
 ## What gbrain relies on from Postgres, and the embedded answer
 
@@ -248,8 +248,8 @@ Tests: the full `gbrain-store` suite on fjall (`GBRAIN_RUST_BAKEOFF_STORE=fjall 
 gbrain-store --features fjall`) passes 837 of 839, with the flag off and with it on. The 2 that
 fail are redb harness tests: `an_unknown_format_is_refused_before_the_records_are_touched` reads
 `records.redb` by name, and `a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts` builds its
-format-1 brain with `RedbKv`. The crash and fsync simulation in `tests/occ_history.rs` runs only on
-redb.
+format-1 brain with `RedbKv`. The simulated-disk crash and fsync runs in `tests/occ_history.rs`
+run only on redb; the process-kill runs below are the fjall counterpart.
 
 Store tier (5 s per point, three runs, 0 errors in every run; p50 and p99 are the mean of the
 three runs; "serial" is one writer at a time, "OCC" is the flag on):
@@ -317,9 +317,84 @@ What the bake-off says:
    faster at one writer too (119 against 64 ops/s), so the loss is the per-commit sync, not the
    data path. `PersistMode::SyncData` would likely close it; it changes the durability call, so
    it needs the crash simulation on fjall first. Not tried.
-4. **The today column moved.** This branch's "today" is 883 / 612 / 500 / 409 ops/s; the first
-   write-up measured 910 / 762 / 602 / 520 on `e58b0795e8`. The base is different (this branch
-   carries the cli-members merges and format 2), and I did not profile the difference.
+4. **The today column moved, and the cause is the page projection queue.** This branch's
+   "today" is 883 / 612 / 500 / 409 ops/s; the first write-up measured 910 / 762 / 602 / 520 on
+   `e58b0795e8`. See "Why the today column moved" below.
+
+### Why the today column moved
+
+The drift is a feature cost, not machine drift and not the concurrency work.
+
+- **Not the machine.** `e58b0795e8`, rebuilt and run again in the same window as this branch,
+  gave 945 / 730 / 593 / 510 ops/s (flag off, three runs), the same as the first write-up.
+- **Not the TypeScript.** `e58b0795e8`'s TypeScript with this branch's Rust addon is as slow as
+  this branch (934 / 608 / 497 / 418 ops/s), so the cause is in `rust/crates`.
+- **The commit.** Each Rust addon along this branch's history, benched with `e58b0795e8`'s
+  TypeScript (two runs at 4 and 64 clients, means in ops/s):
+
+  | Rust at | 4 clients | 64 clients |
+  |---|---|---|
+  | `099e189c29` | 746 | 515 |
+  | `ca41d30f0f` | 747 | 510 |
+  | `2ffbc3adf4` | 741 | 522 |
+  | `41a5cec528` | 614 | 410 |
+  | `1321bcb1f2` | 611 | 402 |
+  | `7470c703ed` (before any concurrency commit) | 613 | 414 |
+
+  The step is `41a5cec528`, the merge of `rust-engine/projection-queue`. Its one Rust change,
+  `041f67abe0` ("Rust brains keep the page projection queue"), turns `queue_page_projection`
+  from a stub into real work on every page write: it reads the source record, then writes (or
+  deletes) one `page_projection_jobs` row with its job record in the same commit. That is the
+  embedded form of the Postgres `gbrain_queue_page_projection` trigger. The bench never drains the
+  queue, so the rows grow, and on redb each commit also copies the B-tree pages of a second key
+  range.
+- **The ablation.** This branch's head with `queue_page_projection` returning at once (a local
+  edit, never committed), against the same build with the queue on, two runs each:
+
+  | Clients | Queue on ops/s | Queue off ops/s |
+  |---|---|---|
+  | 1 | 881 / 840 | 948 / 936 |
+  | 4 | 614 / 613 | 766 / 733 |
+  | 16 | 496 / 497 | 577 / 615 |
+  | 64 | 420 / 385 | 509 / 513 |
+
+  With the queue off the numbers return to the first write-up's. The queue is required for
+  Postgres parity, so the cost belongs to the `rust-engine/projection-queue` lane: batching or
+  coalescing the queue row (for example, skipping the write when the job row already holds the
+  same reason) might win much of it back; I did not try it. The concurrency comparisons above all use the same
+  base on both sides, so their ratios stand.
+
+### Crash research on fjall
+
+fjall does its own file I/O, so the simulated disk (`SimDisk` with a `FaultPlan`) cannot stand
+under it: torn writes, dropped caches and failed fsyncs cannot be injected. In their place,
+`tests/occ_history.rs` has a `fjall_research` module (built only with the `fjall` feature):
+
+- **History check.** The same writers and checker as the redb run, on fjall: 4, 16 and 64
+  writers, three seeds each, then a clean close and reopen. Every acknowledged history replays as
+  one serial order, and the state survives the reopen. Pass.
+- **Process kill.** A child process runs 4, 16 or 64 writers on a fjall store without end. Each
+  writer prints its attempt before a commit and the commit sequence after it. The parent sends
+  `SIGKILL` after 0.3-1 s, reopens the store and checks: every acknowledged commit is present;
+  every transaction in the store was attempted; each transaction is whole (both of its registers,
+  or its row); the counter equals the number of transactions; the row values are 0, 1, 2, ...
+  with no gap; the register orders have no cycle; the commit sequence is not behind an
+  acknowledged one; and the first id handed out after the reopen is above every recovered one.
+  20 runs per writer count, all pass:
+
+  | Writers | Acknowledged before the kill | Found after reopen | Committed, not yet acknowledged |
+  |---|---|---|---|
+  | 4 | 4912 | 4945 | 33 |
+  | 16 | 6633 | 6669 | 36 |
+  | 64 | 7258 | 7304 | 46 |
+
+  A third test feeds the checker a torn transaction and a lost commit, and it refuses both.
+
+What this does not show: `SIGKILL` leaves the operating system's page cache in place, so this is
+a process crash, not a power loss or a failed fsync. A power-loss check on fjall needs a VM or a
+block device that drops unsynced writes (for example `dm-log-writes` or a `dm-flakey` device),
+which I did not set up. Run the kill test longer with `GBRAIN_FJALL_KILL_RUNS=<n> cargo test -p
+gbrain-store --features fjall --test occ_history fjall_research`.
 
 ## Caveats and losses
 

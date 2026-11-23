@@ -22,8 +22,7 @@ export async function embeddingPlaneDisagreementCheck(engine: BrainEngine, file:
     if (await engine.getConfig('embedding_disabled') === 'true') return { name: 'embedding_plane_disagreement', status: 'ok', message: 'The config file and the database both disable embeddings (keyless by choice).', details: { file_disabled: true, database_disabled: true, docs: DOCS } };
     const stores: string[] = [];
     for (const table of await readPrimaryEmbeddingStores(engine)) {
-      const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM ${table} WHERE embedding IS NOT NULL) AS present`);
-      if (row?.present) stores.push(table);
+      if (await engine.hasStoredVectors(table)) stores.push(table);
     }
     if (!stores.length) return { name: 'embedding_plane_disagreement', status: 'ok', message: 'The config file disables embeddings and the database holds no vectors.', details: { file_disabled: true, database_disabled: false, vector_tables: [], docs: DOCS } };
     const stored = await readStoredEmbeddingIdentity(engine);

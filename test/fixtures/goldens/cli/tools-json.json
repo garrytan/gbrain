@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301442,
-    "stdoutSha256": "75d5b3e9ae6e8072f3c5bec08c12f68958e19f3663c1049f59e2569431e07e49",
+    "stdoutBytes": 301654,
+    "stdoutSha256": "4e11c04295c4342ee025b97b9f4a90c8292ffc931ab024a3b4a88e71c74fd0c9",
     "toolNames": [
       "remember",
       "entity",
@@ -1923,7 +1923,7 @@
               "type": "boolean"
             },
             "autocut": {
-              "description": "Default on (never empty); false: full top-K for breadth.",
+              "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
               "type": "boolean"
             },
             "cross_modal": {
@@ -4283,7 +4283,7 @@
         "scope": "read"
       },
       {
-        "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+        "description": "Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). Never fuzzy: empty matches means no exact match; ambiguous means several.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -4297,7 +4297,7 @@
         "schema": {
           "properties": {
             "query": {
-              "description": "Email address or name, e.g. 'alice@acme-example.com'.",
+              "description": "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'.",
               "type": "string"
             },
             "source_id": {

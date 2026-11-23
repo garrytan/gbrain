@@ -526,6 +526,16 @@
       "stdout": []
     },
     {
+      "argv": "identity",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain identity` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain identity",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
       "argv": "brainstorm",
       "exitCode": 1,
       "stderr": [
@@ -774,6 +784,16 @@
         "Error [requires_local_engine]: `gbrain connectors` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
         "Fix: gbrain connectors",
         "Why: connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "apple-contacts",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain apple-contacts` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain apple-contacts",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []

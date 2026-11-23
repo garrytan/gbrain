@@ -11,86 +11,12 @@
 //!
 //! The actor comes from the open write's context (`write_trust::stamp_context`, its
 //! [`WriteAttribution`]), the time from `env::transaction_clock`: one time per transaction, as
-//! `now()` is. Keys: none; the receipt is part of the `E` record.
-
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+//! `now()` is. Keys: none; the receipt is part of the `E` record. The stamp itself is
+//! [`WriteReceipt::stamp`], which facts and takes share.
 
 use super::TimelineRecord;
-use crate::env::{iso, transaction_clock};
-use crate::error::{Result, StoreError};
-use crate::write_trust::{WRITE_REQUEST, WriteAttribution, stamp_context};
-
-/// The seven receipt columns. A record stored before the receipt reads every one as null.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub(crate) struct TimelineReceipt {
-    pub write_request_id: Option<String>,
-    pub write_principal_kind: Option<String>,
-    pub write_principal_id: Option<String>,
-    pub last_write_request_id: Option<String>,
-    pub last_write_principal_kind: Option<String>,
-    pub last_write_principal_id: Option<String>,
-    pub last_written_at_us: Option<i64>,
-}
-
-impl TimelineReceipt {
-    pub(crate) fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    fn written_by(&self) -> bool {
-        self.write_request_id.is_some()
-            || self.write_principal_kind.is_some()
-            || self.write_principal_id.is_some()
-    }
-
-    fn last_written(&self) -> bool {
-        self.last_write_request_id.is_some()
-            || self.last_write_principal_kind.is_some()
-            || self.last_write_principal_id.is_some()
-            || self.last_written_at_us.is_some()
-    }
-
-    fn set_last(&mut self, actor: &WriteAttribution, at: i64) {
-        self.last_write_request_id = actor.request_id.clone();
-        self.last_write_principal_kind = actor.principal_kind.clone();
-        self.last_write_principal_id = actor.principal_id.clone();
-        self.last_written_at_us = Some(at);
-    }
-
-    fn take_last(&mut self, old: &Self) {
-        self.last_write_request_id = old.last_write_request_id.clone();
-        self.last_write_principal_kind = old.last_write_principal_kind.clone();
-        self.last_write_principal_id = old.last_write_principal_id.clone();
-        self.last_written_at_us = old.last_written_at_us;
-    }
-
-    /// The seven columns of a `TimelineEntry` row; `last_written_at` is an ISO string.
-    pub(crate) fn extend_json(&self, row: &mut Map<String, Value>) {
-        let cols = [
-            ("write_request_id", &self.write_request_id),
-            ("write_principal_kind", &self.write_principal_kind),
-            ("write_principal_id", &self.write_principal_id),
-            ("last_write_request_id", &self.last_write_request_id),
-            ("last_write_principal_kind", &self.last_write_principal_kind),
-            ("last_write_principal_id", &self.last_write_principal_id),
-        ];
-        for (name, value) in cols {
-            row.insert(name.into(), json!(value));
-        }
-        row.insert(
-            "last_written_at".into(),
-            json!(self.last_written_at_us.map(iso)),
-        );
-    }
-}
-
-fn now() -> Result<i64> {
-    transaction_clock::transaction_now().ok_or_else(|| {
-        StoreError::invalid("a timeline write ran outside a store write transaction")
-    })
-}
+use crate::error::Result;
+use crate::write_receipt::WriteReceipt;
 
 /// The content tuple the trigger compares (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.timeline_entries`).
 fn content_changed(old: &TimelineRecord, new: &TimelineRecord) -> bool {
@@ -119,35 +45,9 @@ fn content_changed(old: &TimelineRecord, new: &TimelineRecord) -> bool {
 /// `old` (the module rules). A `gbrain.write_request` that is not a UUID is `invalid_argument`
 /// for every write, as the trigger casts it with `::uuid` before it reads anything else.
 pub(crate) fn stamp(old: Option<&TimelineRecord>, new: &TimelineRecord) -> Result<TimelineRecord> {
-    let actor = stamp_context::current()?.attribution;
-    if let Some(request) = actor.request_id.as_deref()
-        && !crate::env::is_uuid(request)
-    {
-        return Err(StoreError::invalid(format!(
-            "{WRITE_REQUEST} is not a UUID: {request}"
-        )));
-    }
+    let changed = old.is_some_and(|old| content_changed(old, new));
     let mut out = new.clone();
-    let receipt = &mut out.receipt;
-    let Some(old) = old else {
-        if actor.principal_kind.is_some() {
-            receipt.write_request_id = actor.request_id.clone();
-            receipt.write_principal_kind = actor.principal_kind.clone();
-            receipt.write_principal_id = actor.principal_id.clone();
-            receipt.set_last(&actor, now()?);
-        }
-        return Ok(out);
-    };
-    if old.receipt.written_by() {
-        receipt.write_request_id = old.receipt.write_request_id.clone();
-        receipt.write_principal_kind = old.receipt.write_principal_kind.clone();
-        receipt.write_principal_id = old.receipt.write_principal_id.clone();
-    }
-    if content_changed(old, new) {
-        receipt.set_last(&actor, now()?);
-    } else if old.receipt.last_written() {
-        receipt.take_last(&old.receipt);
-    }
+    out.receipt = WriteReceipt::stamp(old.map(|o| &o.receipt), &new.receipt, changed)?;
     Ok(out)
 }
 
@@ -155,11 +55,15 @@ pub(crate) fn stamp(old: Option<&TimelineRecord>, new: &TimelineRecord) -> Resul
 mod tests {
     use super::*;
     use crate::env::Env;
+    use crate::env::transaction_clock;
     use crate::error::INVALID_ARGUMENT;
+    use crate::timeline::TimelineReceipt;
     use crate::timeline::{AddTimelineOptions, TimelineInput, TimelineOptions};
     use crate::timeline_queries::TimelineDetailRefresh;
     use crate::trust::WriteTrust;
     use crate::write_trust::{WRITE_PRINCIPAL_ID, WRITE_PRINCIPAL_KIND, WRITE_REQUEST};
+    use crate::write_trust::{WriteAttribution, stamp_context};
+    use serde_json::{Value, json};
     use std::sync::Arc;
 
     struct At(i64);

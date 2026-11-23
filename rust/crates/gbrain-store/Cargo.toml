@@ -21,3 +21,8 @@ fjall = ["dep:fjall"]
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }
+
+# The bench tool's unit tests (the query generator) run with `cargo test`.
+[[example]]
+name = "keyword_scale"
+test = true

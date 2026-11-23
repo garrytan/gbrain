@@ -8,7 +8,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import type { ManifestRow } from './types.ts';
-import type { UntiledPage } from '../engine-sql/export-reads.ts';
+import type { UntiledPage, UntiledPageQuery } from '../engine-sql/repair-plan-scans.ts';
 
 export interface RowSpan { byteStart: number; byteLen: number }
 
@@ -78,14 +78,13 @@ export async function assertGenerationTiles(engine: Pick<BrainEngine, 'readSegme
   assertRowsTile(rows, { slug: page.slug, sourceId: page.source_id, total: bodyBytes ?? await generationBodyBytes(engine, { ...page, id: pageId }, at) });
 }
 
-export type { UntiledPage } from '../engine-sql/export-reads.ts';
+export type { UntiledPage } from '../engine-sql/repair-plan-scans.ts';
 
 /**
  * GST-1209: the live (not deleted) pages of unarchived sources stored in segments whose live generation's rows do not cover body_bytes gapless
- * from 0, so every read of them refuses page_body_rows_unreadable (`listUntiledSegmentedPages`, engine-sql/export-reads.ts on the SQL
- * engines, the store on Rust). `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).
+ * from 0, so every read of them refuses page_body_rows_unreadable (BrainEngine listUntiledSegmentedPages, engine-sql/repair-plan-scans.ts).
+ * `sourceIds` and `slugs` narrow the scan, `limit` bounds the list (ordered by source and slug).
  */
-export async function untiledSegmentedPages(engine: Pick<BrainEngine, 'listUntiledSegmentedPages'>, opts: { sourceIds?: readonly string[]; slugs?: readonly string[]; limit?: number } = {}):
-  Promise<UntiledPage[]> {
+export function untiledSegmentedPages(engine: Pick<BrainEngine, 'listUntiledSegmentedPages'>, opts: UntiledPageQuery = {}): Promise<UntiledPage[]> {
   return engine.listUntiledSegmentedPages(opts);
 }

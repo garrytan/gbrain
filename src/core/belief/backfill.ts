@@ -59,7 +59,7 @@ export async function bodySubjects(engine: BrainEngine, sourceId: string, lifeti
   const active = facts.facts.filter(f => f.active);
   const fps = active.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
     [active.map(f => f.claim)]) : [];
-  // A claim recorded under its pre-v330 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
+  // A claim recorded under its pre-v336 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
   const legacy = await legacyClaimFingerprints(engine, sourceId, [...active.map(f => f.claim), ...takes.takes.map(t => t.claim)]);
   const subject = lifetimeRef(lifetime);
   const groups = new Map<string, { raw: Parameters<typeof factValue>[0]; count: number }>();
@@ -203,7 +203,7 @@ export async function backfillBeliefHistory(engine: BrainEngine, sourceId: strin
       `Ask the user, then run gbrain beliefs enable --source ${sourceId} first.`);
   }
   const since = first.started_at;
-  const slugs = opts.slugs ?? (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug', [sourceId])).map(r => r.slug);
+  const slugs = opts.slugs ?? (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug COLLATE "C"', [sourceId])).map(r => r.slug);
   const report: BackfillReport = { source_id: sourceId, since, pages: [], events: 0, retried: 0 };
   const hiddenKeys = async () => new Set((await engine.executeRaw<{ subject_key: string }>(`SELECT DISTINCT subject_key FROM belief_events
     WHERE source_id = $1 AND event_type = 'derived.hidden'`, [sourceId])).map(r => r.subject_key));

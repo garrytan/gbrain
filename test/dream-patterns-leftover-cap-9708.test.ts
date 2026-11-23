@@ -16,6 +16,8 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { runPhasePatterns } from '../src/core/cycle/patterns.ts';
 import * as journal from '../src/core/persistence/journal.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { outstandingAdmissionWindow } from '../src/core/persistence/limits.ts';
+import { repairAdmissionWindow } from '../src/core/repair/settle.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
@@ -128,6 +130,14 @@ for (const backend of testBackends()) {
       expect(await verified(engine)).toEqual(LEFTOVER);
       expect(watch.admitted().sort()).toEqual(LEFTOVER.filter(slug => !afterFirst.includes(slug)));
       expect(Math.max(...watch.sizes())).toBeLessThanOrEqual(CAP);
+    }, { databaseUrl, setup }), 180_000);
+
+    test('repairs and maintenance batches share one window: half the cap, at least 1 and at most 64', () => managedBrain(async ({ engine }) => {
+      for (const [cap, window] of [[8, 4], [1, 1], [200, 64]]) {
+        await engine.setConfig('persistence.limits.principal_outstanding', String(cap));
+        expect(await outstandingAdmissionWindow(engine)).toBe(window);
+        expect(await repairAdmissionWindow(engine)).toBe(window);
+      }
     }, { databaseUrl, setup }), 180_000);
   });
 }

@@ -65,6 +65,93 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
   return row?.present === true;
 }
 
+/**
+ * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
+ * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
+ * value is skipped, so the child rows still load, and reported as `corruptParent`.
+ */
+export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }> {
+  // UNION ALL, not UNION: the Set below dedupes, so no server-side sort runs over a large checkpoint. The legacy arm is
+  // gated on jsonb_typeof = 'array' because jsonb_array_elements_text throws on a scalar and would kill the whole union.
+  const rows = await exec.executeRaw<{ ckey: unknown; corrupt: number }>(
+    `SELECT path AS ckey, 0 AS corrupt FROM op_checkpoint_paths
+       WHERE op = $1 AND fingerprint = $2
+     UNION ALL
+     SELECT jsonb_array_elements_text(completed_keys) AS ckey, 0 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) = 'array'
+     UNION ALL
+     SELECT NULL AS ckey, 1 AS corrupt FROM op_checkpoints
+       WHERE op = $1 AND fingerprint = $2 AND jsonb_typeof(completed_keys) <> 'array'`,
+    [op, fingerprint],
+  );
+  const keys = new Set<string>();
+  let corruptParent = false;
+  for (const r of rows) {
+    if (Number(r.corrupt) === 1) corruptParent = true;
+    else if (typeof r.ckey === 'string') keys.add(r.ckey);
+  }
+  return { keys: [...keys], corruptParent };
+}
+
+/** One checkpoint parent as `readOpCheckpointRecord` returns it. */
+export interface OpCheckpointRecord {
+  /** The stored JSON, as written (a JSON array on every write path). */
+  completed_keys: unknown;
+  /** The stamp on the database clock, ISO 8601 with milliseconds, UTC. */
+  updated_at: string;
+  /** Whether the stamp is within `freshWithinDays` of the database clock; null when the caller did not ask. */
+  fresh: boolean | null;
+}
+
+/**
+ * The parent row of one checkpoint whose keys are JSON records rather than text keys: the repair runner's cursor
+ * (repair/core.ts, op `repair`) and the preview-approval sets (persistence/preview-approval.ts, op
+ * `repair-approval`). Freshness is measured on the database clock, the clock the checkpoint purge uses.
+ */
+export async function readOpCheckpointRecord(exec: LegacyUnscopedRead, op: string, fingerprint: string,
+  opts: { freshWithinDays?: number } = {}): Promise<OpCheckpointRecord | null> {
+  const days = opts.freshWithinDays === undefined ? null : String(opts.freshWithinDays);
+  const [row] = await exec.executeRaw<{ completed_keys: unknown; updated_at: string; fresh: boolean | null }>(
+    `SELECT completed_keys,
+            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
+            updated_at >= now() - ($3::text || ' days')::interval AS fresh
+       FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
+    [op, fingerprint, days]);
+  return row ? { completed_keys: row.completed_keys, updated_at: row.updated_at, fresh: row.fresh ?? null } : null;
+}
+
+/**
+ * The page clock of the get_health memo (health-memo.ts): the brain id and `page_generation_clock_seq`, which every
+ * page insert, update or delete advances, as `<brain id>:<clock>`.
+ */
+export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ brain: string | null; clock: string | null }>(
+    `SELECT (SELECT brain_id::text FROM persistence_brain WHERE singleton = 1) AS brain,
+            COALESCE((SELECT last_value FROM page_generation_clock_seq), 0)::text AS clock`);
+  return `${row?.brain ?? ''}:${row?.clock ?? ''}`;
+}
+
+/** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
+export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE "C"`);
+  return rows.map(r => r.id);
+}
+
+/**
+ * Whether a live markdown page names the synopsis tier in its frontmatter where the frontmatter is trusted: a page of
+ * `default`, or of a source that trusts its pages' overrides, that is not archived (synopsis-sweep.ts, #9683: the probe
+ * the sweep's single statement used to carry as a NULL row).
+ */
+export async function hasSynopsisFrontmatterOverride(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
+       WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
+         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
+         AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false))) AS present`);
+  return row?.present === true;
+}
+
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
 export function listSharedSkillPackRoots(exec: LegacyUnscopedRead, hostId: string): Promise<SharedSkillPackRoot[]> {
   return exec.executeRaw<SharedSkillPackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,
@@ -125,8 +212,17 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 
 /** The ids of the access members that are neither disabled nor tombstoned, by id. */
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
-  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(row => row.id);
+}
+
+/**
+ * Whether any access member carries the labelled-only grant, disabled and removed members included (the one cheap test
+ * a write runs before resolving its writer, access/labelled-only.ts anyLabelledOnlyMember). A failed read is thrown;
+ * the caller counts it as yes.
+ */
+export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
+  return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */
@@ -161,6 +257,40 @@ export async function expireMemoryProposals(exec: SqlExecutor, reason: string): 
 export function listAwaitingMemoryProposals(exec: LegacyUnscopedRead, limit: number): Promise<Array<Record<string, unknown>>> {
   return exec.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE state='awaiting_owner'
     ORDER BY created_at LIMIT $1`, [limit]);
+}
+
+/** The memory proposal a principal holds under `requestId` (a uuid), as its stored row, or null. */
+export async function readMemoryProposal(exec: LegacyUnscopedRead, principalKind: string, principalId: string, requestId: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    'SELECT * FROM memory_proposals WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid', [principalKind, principalId, requestId]);
+  return row ?? null;
+}
+
+/** The pending-proposal count and the oldest pending proposal's age in hours (null with none), as Postgres returns them. */
+export interface PendingProposalRow { n: number | string; oldest: number | string | null }
+
+/** How many memory proposals still await their owner unexpired, and how old the oldest is (status and doctor). */
+export async function readPendingProposalSummary(exec: LegacyUnscopedRead): Promise<PendingProposalRow | null> {
+  const [row] = await exec.executeRaw<PendingProposalRow>(`SELECT count(*) AS n,
+      EXTRACT(EPOCH FROM now() - min(created_at)) / 3600 AS oldest FROM memory_proposals WHERE state='awaiting_owner' AND expires_at>now()`);
+  return row ?? null;
+}
+
+/** One page of the owner's proposal list: `afterAt`/`afterId` are the previous page's last creation time and request id. */
+export interface ProposalListQuery { sourceId: string | null; all: boolean; limit: number; afterAt: string | null; afterId: string | null }
+
+/** The owner's proposal list, oldest first (creation time to the millisecond, then request id), as stored rows. */
+export function listMemoryProposalRows(exec: LegacyUnscopedRead, q: ProposalListQuery): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
+    AND ($2::boolean OR state='awaiting_owner')
+    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
+    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
+    [q.sourceId, q.all, q.limit, q.afterAt, q.afterId]);
+}
+
+/** The proposals of any credential that carry this request id (at most two, so a uuidv5 collision is seen, never guessed). */
+export function listOwnerProposalRows(exec: LegacyUnscopedRead, requestId: string): Promise<Array<Record<string, unknown>>> {
+  return exec.executeRaw<Record<string, unknown>>('SELECT * FROM memory_proposals WHERE request_id=$1::uuid LIMIT 2', [requestId]);
 }
 
 /** Deletes every closed memory proposal decided (or last updated) at least `retentionDays` days ago; returns how many. */

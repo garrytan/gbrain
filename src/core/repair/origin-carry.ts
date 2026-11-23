@@ -16,6 +16,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { assertPurgeAge } from '../engine-errors.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -194,6 +195,7 @@ async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Pro
  * applies: the caller clears those after its purge, so an origin parked when the purge was previewed stays this run.
  */
 export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<{ parks: DerivedOriginPark[]; unparked: Origin[] }> {
+  assertPurgeAge(olderThanHours);
   await pruneDerivedOriginParks(engine);
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;
@@ -219,6 +221,7 @@ export interface CarryForecast { release: Origin[]; hold: Origin[] }
  * origin not parked but blocked is held. A failed read holds every origin, as a failed carry parks every origin.
  */
 export async function forecastCarry(engine: BrainEngine, olderThanHours: number): Promise<CarryForecast> {
+  assertPurgeAge(olderThanHours);
   const parks = new Set((await readDerivedOriginParks(engine)).map(park => park.page_id));
   return withoutCallerAccess(async () => {
     let origins: Origin[] = [];

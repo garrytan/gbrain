@@ -5,7 +5,8 @@
  */
 import type { Chunk, ChunkInput } from '../../types.ts';
 import { prepareChunks, textColumnModel } from '../chunk-input.ts';
-import { toChunk } from '../store-codec.ts';
+import { toChunk, toGetPage } from '../store-codec.ts';
+import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -53,28 +54,32 @@ export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts
 export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; expectedRevision?: string }], void> =
   async (brain, slug, chunks, opts) => {
     const sourceId = opts?.sourceId ?? 'default';
-    const current: { page: { deleted_at: unknown; timeline: string | null }; revision: string } | null = await storeCall({ member: 'sealChunks', slug }, () => brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }));
+    // PGLite seals the overlaid timeline (its readPageSnapshot strikes withdrawn fence rows), so the store's is overlaid here.
+    const stored: StoreSnapshot | null = await storeCall({ member: 'sealChunks', slug }, () => brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }));
+    // A segmented page has no whole body to overlay (toGetPage refuses it); the store refuses its seal as PGLite does.
+    const segmented = (stored?.page as { body_storage?: string } | undefined)?.body_storage === 'segmented';
+    const current = stored === null ? null : segmented ? stored : overlayStoreSnapshot({ ...stored, page: toGetPage(stored.page) });
     if (!current || current.page.deleted_at) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const timeline = current.page.timeline;
     const searchTimeline = typeof timeline === 'string' ? sanitizeRemoteBody(timeline) : undefined;
     await writeChunks(brain, slug, chunks, { sourceId, expectedRevision: opts?.expectedRevision ?? current.revision, seal: true, searchTimeline }, 'sealChunks');
   };
 
-export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean }], Chunk[]> =
+export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean }], Chunk[]> =
   async (brain, slug, opts) => {
-    const { sourceIds, sourceId, includeEmbedding, includeUnsealed } =
-      takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed']) as
-        { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean };
+    const { sourceIds, sourceId, includeEmbedding, includeUnsealed, requireSafeChunks } =
+      takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed', 'requireSafeChunks']) as
+        { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean };
     // PGLite reads `sourceIds` when it is not empty and otherwise the one `sourceId` (default `default`). An id that
     // names no source (an empty string) matches nothing there, and the store would read it as "no scope" and answer
     // for every source, so a scope that names no source is answered here with no chunks and never forwarded.
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return [];
-    // Chunks of one slug from several sources come back in an order PGLite leaves to the database (the sort key ties
-    // across sources), so a read over more than one source is refused, not guessed.
-    if (named.length > 1) refuseMember('getChunks', 'a read over several sources');
-    const scope = { sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true };
+    // Chunks of one slug from several sources merge in document order, the source id (byte order) breaking a tie.
+    // `requireSafeChunks` (safeChunksFilter): a page chunked before the fence chunker version has no chunks to read.
+    const scope = { ...(named.length > 1 ? { sourceIds: named } : { sourceId: named[0]! }), includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
+      requireSafeChunks: requireSafeChunks === true };
     const rows: Chunk[] = await storeCall({ member: 'getChunks', slug }, () => brain.getChunks(slug, scope));
     return rows.map((row) => toChunk(row));
   };

@@ -47,19 +47,12 @@ async function sends(run: (tx: never) => Promise<unknown>, rows?: Record<string,
 }
 
 describe('engine-sql/segmented-writes sends each caller its old statement', () => {
-  test('segmented-apply.ts: the staging lock, the unstaged-chunk delete and the live page read', async () => {
-    expect(await sends(tx => sw.lockBodyStagingState(tx, 'u-1'))).toEqual([
-      { sql: 'SELECT state FROM page_body_stagings WHERE id=$1::uuid FOR UPDATE', params: ['u-1'] }]);
-    expect(await sends(tx => sw.deleteUnstagedSegmentChunks(tx, 7, 3, [0, 2]))).toEqual([
-      { sql: 'DELETE FROM content_chunks WHERE page_id=$1 AND body_generation=$2 AND NOT (chunk_index = ANY($3::int[]))', params: [7, 3, [0, 2]] }]);
+  test('segmented-apply.ts: the live page read', async () => {
     expect(await sends(tx => sw.readSegmentedLivePage(tx, 7))).toEqual([
       { sql: 'SELECT id, body_generation, body_storage, title, type, body_flags FROM pages WHERE id=$1', params: [7] }]);
   });
 
-  test('searchable.ts and ingest.ts: the seal probe and the chunked-occurrence probe', async () => {
-    expect(await sends(tx => sw.readSegmentedSealed(tx, 'default', 'a'))).toEqual([
-      { sql: `SELECT text_projection_revision=knowledge_revision AS sealed FROM pages
-    WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, params: ['default', 'a'] }]);
+  test('ingest.ts: the chunked-occurrence probe', async () => {
     expect(await sends(tx => sw.listChunkedOccurrences(tx, 7, [4, 5], 3))).toEqual([
       { sql: `SELECT o AS occurrence_id FROM unnest($2::bigint[]) AS o
     WHERE EXISTS (SELECT 1 FROM content_chunks c
@@ -110,33 +103,6 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
       { sql: `UPDATE pages SET updated_at = 'epoch'::timestamptz + $2::bigint * interval '1 microsecond' WHERE id=$1`, params: [7, '1700000000000000'] }]);
   });
 
-  test('fence-append.ts: the trust stamp by source and slug, and by id, and its restore', async () => {
-    expect(await sends(tx => sw.readPageTrustStamp(tx, { sourceId: 'default', slug: 'a' }))).toEqual([
-      { sql: 'SELECT id, trust_tier, write_origin FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', params: ['default', 'a'] }]);
-    expect(await sends(tx => sw.readPageTrustStamp(tx, { id: 7 }))).toEqual([
-      { sql: 'SELECT id, trust_tier, write_origin FROM pages WHERE id=$1', params: [7] }]);
-    const restore = 'UPDATE pages SET trust_tier=$2, write_origin=$3::text::jsonb WHERE id=$1';
-    expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'operator_curated', { channel: 'owner' }))).toEqual([
-      { sql: restore, params: [7, 'operator_curated', '{"channel":"owner"}'] }]);
-    expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'agent_written', '{"channel":"agent"}'))).toEqual([
-      { sql: restore, params: [7, 'agent_written', '{"channel":"agent"}'] }]);
-    expect(await sends(tx => sw.restorePageTrustStamp(tx, 7, 'unknown', null))).toEqual([{ sql: restore, params: [7, 'unknown', null] }]);
-  });
-
-  test('segment-derive.ts: a derivation run is stored only while the page is segmented at its generation', async () => {
-    const row = { pageId: 99, kind: 'links' as const, occurrenceId: 3, version: 2, segmentSha256: new Uint8Array([0xab, 0x01]),
-      contextHash: new Uint8Array([0xcd]), state: 'done' as const, output: { a: 1 }, receipt: null };
-    const [sent] = await sends(tx => sw.storeSegmentDerivationRuns(tx, 7, 4, [row]));
-    expect(sent!.sql).toStartWith(`WITH live AS (SELECT id FROM pages WHERE id=$1 AND body_storage='segmented' AND body_generation=$2 FOR SHARE)`);
-    expect(sent!.sql).toContain('SELECT live.id, d.pipeline, d.occurrence_id');
-    expect(sent!.sql).toContain('FROM live, jsonb_to_recordset($3::text::jsonb)');
-    expect(sent!.sql).toEndWith('RETURNING 1');
-    expect(sent!.params).toEqual([7, 4, JSON.stringify([{ pipeline: 'links', occurrence_id: 3, pipeline_version: 2, segment_sha256: 'ab01',
-      context_hash: 'cd', state: 'done', output: { a: 1 }, receipt: null }])]);
-    expect(await sw.storeSegmentDerivationRuns(recorder().tx as never, 7, 4, [row])).toBe(false);
-    expect(await sw.storeSegmentDerivationRuns(recorder([{ '?column?': 1 }]).tx as never, 7, 4, [row])).toBe(true);
-  });
-
   test('segment-rewrite.ts and segment-derive.ts: the fence rewrite statements', async () => {
     const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,
   protected_regions,facts_slots,static_proj_bytes,static_proj_lines,outline,date_min,date_max,hash_state`;
@@ -157,10 +123,6 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
     WHERE page_id=$1 AND staging_id=$4::uuid`, params: [7, 3, next, staging] }]);
     expect(await sends(tx => sw.setSegmentedVersionHash(tx, 7, 3, 'h', 12))).toEqual([
       { sql: `UPDATE page_versions SET content_hash=$3,body_bytes=$4 WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented'`, params: [7, 3, 'h', 12] }]);
-    expect(await sends(tx => sw.deleteRewrittenDerivationRows(tx, 7, { touched: [4], reach: [5], unpaidKinds: ['links', 'mentions'], live: [4, 5, 6] }))).toEqual([
-      { sql: `DELETE FROM page_segment_derivations WHERE page_id=$1
-    AND (occurrence_id = ANY($2::bigint[]) OR (pipeline = 'links' AND occurrence_id = ANY($3::bigint[]))
-      OR (pipeline = ANY($4::text[]) AND NOT (occurrence_id = ANY($5::bigint[])))) RETURNING 1`, params: [7, [4], [5], ['links', 'mentions'], [4, 5, 6]] }]);
   });
 
   test('segmented-embedding.ts: the embed reads and the vector install', async () => {
@@ -169,9 +131,6 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
        FROM pages p JOIN sources s ON s.id = p.source_id
       WHERE `;
     const pageTail = ` AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived AND ${sealed}`;
-    expect(await sends(tx => sw.readSegmentedEmbedPage(tx, { id: 7 }))).toEqual([{ sql: `${page}p.id = $1${pageTail}`, params: [7] }]);
-    expect(await sends(tx => sw.readSegmentedEmbedPage(tx, { sourceId: 'default', slug: 'a' }))).toEqual([
-      { sql: `${page}p.source_id = $1 AND p.slug = $2${pageTail}`, params: ['default', 'a'] }]);
     expect(await sends(tx => sw.hasLiveSegmentedPage(tx, 'default', 'a'))).toEqual([{ sql: `SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
     WHERE p.source_id = $1 AND p.slug = $2 AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived`, params: ['default', 'a'] }]);
     expect(await sends(tx => sw.countSegmentedEmbedRows(tx, 7, 'embedding'))).toEqual([{ sql: `SELECT count(*)::int AS total, count(*) FILTER (WHERE cc.${quoteIdentifier('embedding')} IS NULL)::int AS stale
@@ -208,21 +167,15 @@ describe('engine-sql/segmented-writes sends each caller its old statement', () =
 
   test('results keep the callers\' shapes', async () => {
     const { tx } = recorder([]);
-    expect(await sw.lockBodyStagingState(tx, 'u-1')).toBeNull();
-    expect(await sw.readSegmentedSealed(tx, 'default', 'a')).toBe(false);
     expect(await sw.readMaterializingRevision(tx)).toBeNull();
-    expect(await sw.readPageTrustStamp(tx, { id: 7 })).toBeNull();
     expect(await sw.listChunkedOccurrences(recorder([{ occurrence_id: '4' }]).tx, 7, [4, 5], 3)).toEqual([4]);
     expect(await sw.retireStaleSegmentChunks(recorder([{ id: 1 }, { id: 2 }]).tx, 7, 3, [], 500)).toBe(2);
     expect(await sw.listSegmentedRechunkCandidates(recorder([{ id: '12' }]).tx, 2)).toEqual([12]);
-    expect(await sw.readSegmentedSealed(recorder([{ sealed: true }]).tx, 'default', 'a')).toBe(true);
     expect(await sw.readSegmentedRewritePage(tx, 7)).toBeNull();
     expect(await sw.lockSegmentedGenerationPage(tx, 7)).toBeNull();
-    expect(await sw.readSegmentedEmbedPage(tx, { id: 7 })).toBeNull();
     expect(await sw.hasLiveSegmentedPage(tx, 'default', 'a')).toBe(false);
     expect(await sw.countSegmentedEmbedRows(recorder([{ total: '3', stale: '1' }]).tx, 7, 'embedding')).toEqual({ total: 3, stale: 1 });
     expect(await sw.installSegmentedVectors(recorder([{ id: 1 }]).tx, 7, { name: 'embedding', type: 'vector', dimensions: 1 } as never, null,
       [{ chunk_index: 1, chunk_text: 't', vector: new Float32Array([1]), hash: 'h', expected: null }])).toBe(1);
-    expect(await sw.deleteRewrittenDerivationRows(recorder([{ '?column?': 1 }, { '?column?': 1 }]).tx, 7, { touched: [4], reach: [], unpaidKinds: [], live: [4] })).toBe(2);
   });
 });

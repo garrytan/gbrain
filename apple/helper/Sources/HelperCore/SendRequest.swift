@@ -69,8 +69,8 @@ public enum Recipient {
         return "+" + digits
     }
 
-    public static func hash(_ recipient: String) -> String {
-        String(SHA256.hash(data: Data(recipient.utf8)).map { String(format: "%02x", $0) }.joined().prefix(12))
+    public static func hash(_ recipient: String, key: [UInt8]) -> String {
+        String(HMAC<SHA256>.authenticationCode(for: Data(recipient.utf8), using: SymmetricKey(data: key)).map { String(format: "%02x", $0) }.joined().prefix(12))
     }
 }
 

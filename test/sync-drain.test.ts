@@ -160,7 +160,9 @@ describe('estimates and outcomes', () => {
 });
 
 describe('managed sync backlog', () => {
-  const engineWith = (headers: unknown[]) => ({ executeRaw: async () => headers.map(header => ({ header })) }) as never;
+  // The pass rows come from readLiveSyncPassRows, the member persistence/sync-pass-row.ts readLivePassRows calls (the
+  // doctor's listLiveManagedSyncPassRows is not on this path; faking it left readLivePassRows on the raw fallback).
+  const engineWith = (headers: unknown[]) => ({ listManagedSyncBacklogHeaders: async () => headers, readLiveSyncPassRows: async () => [] }) as never;
 
   test('estimates from the latest drain window and builds the resume command from stored options', async () => {
     const { readManagedSyncBacklog, formatManagedSyncBacklog } = await import('../src/core/persistence/sync-drain.ts');

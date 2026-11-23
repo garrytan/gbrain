@@ -4,12 +4,14 @@ import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { readJobPrincipal as readJobPrincipalOver } from '../engine-sql/access-control.ts';
 import type { AuthInfo, OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { STOP_PRODUCERS, legacyRecoveryHint, selectCommand } from './legacy-selection.ts';
 import { normalizeSlugPrefix } from '../ops/context.ts';
 import { hasScope } from '../scope.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 import { authSourcesFromGrant, grantFromTokenRow } from '../grants/model.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
@@ -114,8 +116,7 @@ export function assertSameAuthority(actual: unknown, expected: SubmissionAuthori
 }
 
 async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: RemoteJobName) {
-  const [source] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT id, local_path, config, archived, created_at FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.readJobSourceState(sourceId);
   if (!source || source.archived !== false || typeof source.local_path !== 'string' || !source.local_path) {
     deny('an active source with a registered filesystem root is required',
       `Source ${sourceId} must be active and registered with a directory on the brain host. The brain host operator checks it with gbrain sources list --json.`);
@@ -137,16 +138,23 @@ async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: Re
   try { worktreeRoot = realpathSync(discoverGitRoot(canonicalRoot)); }
   catch { if (jobName === 'sync') deny('remote sync requires an existing Git working tree; initialize or restore it locally',
     `Source ${sourceId}'s root is not inside a Git working tree, so sync has nothing to diff. Submit import for it instead, or have the brain host operator restore the checkout.`); }
-  return { canonicalRoot, worktreeRoot, sourceCreatedAt: new Date(source.created_at as string).toISOString() };
+  return { canonicalRoot, worktreeRoot, sourceCreatedAt: source.created_at.toISOString() };
 }
 
-export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, authority: RemoteJobAuthority): Promise<void> {
+/**
+ * An engine the principal check reads through: an OAuth client through readOauthClient, a legacy token through its
+ * typed readJobPrincipal, or (a test double) only executeRaw.
+ */
+export type JobPrincipalEngine = Pick<BrainEngine, 'readOauthClient'> & (Pick<BrainEngine, 'readJobPrincipal'> | Pick<BrainEngine, 'executeRaw'>);
+
+export async function assertCurrentRemoteJobPrincipal(engine: JobPrincipalEngine, authority: RemoteJobAuthority): Promise<void> {
   const { principal, grant } = authority;
+  const read = (p: RemoteJobAuthority['principal']) => 'readJobPrincipal' in engine ? engine.readJobPrincipal(p) : readJobPrincipalOver(engine, p);
   let scopes: string[], sourceId: string | undefined;
   if (principal.kind === 'oauth_client') {
     // No fallback projections: an incomplete auth schema cannot authorize background work.
-    const [row] = await engine.executeRaw<Record<string, unknown>>(
-      'SELECT client_id, deleted_at, scope, source_id, bound_slug_prefixes, surface, allowed_operations FROM oauth_clients WHERE client_id = $1', [principal.id]);
+    const found = await engine.readOauthClient(principal.id);
+    const row = found && requireOauthClientColumns(found as unknown as Record<string, unknown>, ['client_id', 'deleted_at', 'scope', 'source_id', 'bound_slug_prefixes', 'surface', 'allowed_operations']);
     if (!row || row.deleted_at != null) deny('OAuth client is missing or revoked', `OAuth client ${principal.id} was deleted or revoked, so this job does not run. Reconnect with a current client and submit a new job.`);
     scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/).filter(Boolean) : [];
     sourceId = typeof row.source_id === 'string' ? row.source_id : undefined;
@@ -161,8 +169,7 @@ export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, autho
       }
     }
   } else {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(
-      'SELECT * FROM access_tokens WHERE id = $1', [principal.id]);
+    const row = await read(principal);
     if (!row || row.revoked_at != null) deny('legacy token is missing or revoked', `Legacy token ${principal.id} was revoked, so this job does not run. Reconnect with a current credential and submit a new job.`);
     const tokenGrant = grantFromTokenRow(row);
     if (tokenGrant.permissionsMalformed) deny('malformed token permissions', `Legacy token ${principal.id}'s stored permissions cannot be read. Ask the brain host operator to reissue the credential, then submit a new job.`);
@@ -235,8 +242,8 @@ async function assertCurrentAgent(engine: BrainEngine, a: RemoteAgentAuthority, 
     return;
   }
   // Preserve the older explicit authority shape for already accepted jobs.
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT deleted_at, scope, source_id, bound_tools, bound_source_id, bound_slug_prefixes FROM oauth_clients WHERE client_id = $1', [a.principal.id]);
+  const found = await engine.readOauthClient(a.principal.id);
+  const row = found && requireOauthClientColumns(found as unknown as Record<string, unknown>, ['deleted_at', 'scope', 'source_id', 'bound_tools', 'bound_source_id', 'bound_slug_prefixes']);
   if (!row || row.deleted_at != null) deny('agent owner is missing or revoked', `OAuth client ${a.principal.id}, which owns this agent job, was deleted or revoked. Reconnect with a current client and submit a new job.`);
   const scopes = typeof row.scope === 'string' ? row.scope.split(/\s+/) : [];
   if (!hasScope(a.grant.scopes, 'agent') || !hasScope(scopes, 'agent')) deny('original and current grants must include agent scope',

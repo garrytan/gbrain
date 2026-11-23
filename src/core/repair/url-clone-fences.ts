@@ -52,6 +52,8 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { resolveSlugForPath } from '../sync.ts';
 import { isOwnedClone, trackedChanges, urlCloneReadOnly, urlCloneRepairPreviewArgv } from '../url-clone.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
+import { readSourceStates } from '../source-rows.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#url-clone-fences';
 /** preview-approval's command union predates this kind; the store keys on the string alone. */
@@ -94,8 +96,7 @@ export function proveFenceRowsOnly(head: string | null, work: string | null): Pr
 }
 
 async function pageOf(engine: BrainEngine, sourceId: string, path: string): Promise<{ slug: string; page_id: number | null }> {
-  const [row] = await engine.executeRaw<{ id: number; slug: string }>(
-    'SELECT id, slug FROM pages WHERE source_id = $1 AND source_path = $2 AND deleted_at IS NULL ORDER BY id LIMIT 1', [sourceId, path]);
+  const row = await engine.readLivePageByPath(sourceId, path);
   return row ? { slug: row.slug, page_id: Number(row.id) } : { slug: resolveSlugForPath(path), page_id: null };
 }
 
@@ -103,8 +104,7 @@ const canonicalRoot = (path: string | null): string | null => path && existsSync
 
 /** Why the source or page of a previewed file is no longer the one its preview read, or null when it still is. */
 async function identityChange(engine: BrainEngine, file: ClonedFile): Promise<string | null> {
-  const [source] = await engine.executeRaw<{ incarnation: string; local_path: string | null }>(
-    'SELECT incarnation::text AS incarnation, local_path FROM sources WHERE id = $1', [file.source_id]);
+  const source = await engine.readSourceState(file.source_id);
   if (!source || source.incarnation !== file.incarnation) return `source ${file.source_id} was removed or replaced since the preview`;
   if (canonicalRoot(source.local_path) !== file.root) return `source ${file.source_id} now points at ${source.local_path ?? 'no checkout'}, not the clone the preview read (${file.root})`;
   const page = await pageOf(engine, file.source_id, file.path);
@@ -122,8 +122,7 @@ const headHold = (head: string, slug: string): ContentRefusal | null => {
 async function survey(engine: BrainEngine, sourceIds: string[]): Promise<{ files: ClonedFile[]; listing: RepairListing[] }> {
   const files: ClonedFile[] = [];
   const listing: RepairListing[] = [];
-  const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: unknown }>(
-    'SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [sourceIds]);
+  const sources = await readSourceStates(engine, sourceIds);
   for (const source of sources) {
     const root = canonicalRoot(source.local_path);
     if (!root || !isOwnedClone(source)) continue;
@@ -236,6 +235,9 @@ export const urlCloneFencesRepair: RepairHandler = {
     return { items: files.map((file, index) => toItem(file, index)), residuals, listing, ...(files.length ? { preview_hash: hash } : {}), details: { listing } };
   },
   async apply(ctx, entry, opts) {
+    // The page import publishes through the page write door and the clone checks read sources through raw SQL, so a Rust brain
+    // stops here by name, before the filesystem lock, the backup or the first write.
+    requireRawSql(ctx.engine, 'repair url-clone-fences page write');
     const item = entry as FileItem;
     const { file } = item;
     const outcome = await withSourceFilesystemLock(ctx.engine, file.root,

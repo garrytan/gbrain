@@ -10,13 +10,16 @@
  * Postgres too when DATABASE_URL is set (test/postgres-unit-arms.txt).
  */
 import { afterAll, describe, expect, spyOn, test } from 'bun:test';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { commitAndPush } from '../src/core/git/commit-push.ts';
 import { redactUnpushed, spoolSealer, type RedactOutcome, type RedactPreview } from '../src/core/git/redact-unpushed.ts';
-import { allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, spoolValue, undrainedCount } from '../src/core/secret-store/spool.ts';
+import * as redactModule from '../src/core/git/redact-unpushed.ts';
+import * as spawnModule from '../src/core/spawn.ts';
+const realRedact = redactModule.redactUnpushed;
+import { addSpoolOccurrences, allowedLocally, drainSpool, openSpooled, readSpool, refreshAllowedCache, spoolValue, undrainedCount } from '../src/core/secret-store/spool.ts';
 import { currentKey, macKeyOf } from '../src/core/secret-store/keyring.ts';
 import { backgroundPublish } from '../src/core/git/background-publish.ts';
 import { runSecrets } from '../src/commands/secrets.ts';
@@ -33,7 +36,8 @@ import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/owner
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { finishRedactions, secretPublishMaintenance, settlePublishRedactions } from '../src/core/git/redact-finish.ts';
-import { reveal, seal } from '../src/core/secret-store/store.ts';
+import { purgeSecretsForSlugs, recordOccurrence, reveal, seal } from '../src/core/secret-store/store.ts';
+import { computeIsoWeekFilename } from '../src/core/audit/audit-writer.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -87,6 +91,11 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expect(result.outcome).toBe('pushed');
     expect(result.redaction).toMatchObject({ values: 1, rebuilt: 2, old_head: old, held: [], spooled: 1 });
     expect(result.notices?.map(n => n.code)).toEqual(['publish_secret_redacted', 'secret_store_spooled']);
+    const spooledNotice = result.notices!.find(n => n.code === 'secret_store_spooled')!;
+    expect(spooledNotice.kind).toBe('info');
+    expect(spooledNotice.why).toStartWith('1 original(s) were sealed in this machine\'s encrypted spool');
+    expect(spooledNotice.why).toContain('gbrain git commit-push does not move them itself');
+    expect(spooledNotice.why).not.toContain('could not be written');
     expect(remoteTip(r)).toBe(git(r.root, 'rev-parse', 'HEAD'));
     expectRemoteClean(r);
     const file = readFileSync(join(r.root, 'notes.md'), 'utf8');
@@ -247,6 +256,62 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     expectRemoteClean(r);
   }, 60_000);
 
+  test('a publish whose redaction waits on a busy commit lock stops at its overall budget, not at the lock wait', async () => {
+    const r = repo();
+    const head = commit(r.root, 'notes.md', `token ${token}\n`);
+    const lockPath = resolve(r.root, git(r.root, 'rev-parse', '--git-path', 'brain-commit.lock'));
+    const holder = spawn(process.execPath, ['-e', `const { acquireNativeLockSync } = await import(${JSON.stringify(resolve('src/core/persistence/native-lock.ts'))}); const held = acquireNativeLockSync(${JSON.stringify(lockPath)}, { timeoutMs: 0 }); if (!held) process.exit(3); console.log('held'); await new Promise(r => setTimeout(r, 60_000)); held.release();`], { stdio: ['ignore', 'pipe', 'inherit'] });
+    try {
+      await new Promise<void>(held => holder.stdout!.on('data', d => { if (String(d).includes('held')) held(); }));
+      const started = Date.now();
+      const error = await inHome(r, () => failure(() => commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true, scanTimeoutMs: 3_000, lockWaitMs: 20_000 })));
+      expect(error.code).toBe('publish_secret_rebuild_unbounded');
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(git(r.root, 'rev-parse', 'HEAD')).toBe(head);
+      expect(remoteTip(r)).toBe(r.base);
+    } finally { holder.kill(); }
+  }, 60_000);
+
+  test('planning a range with a thousand distinct values in one file stays linear: the preview finishes in seconds, every value once', async () => {
+    const r = repo();
+    const rows = Array.from({ length: 1000 }, (_, i) => `row ${i} token ghp_${createHash('sha256').update(String(i)).digest('hex').slice(0, 36)} ${'lorem ipsum '.repeat(160)}`);
+    commit(r.root, 'export.md', rows.join('\n') + '\n');
+    const started = Date.now();
+    const preview = await inHome(r, () => redactUnpushed(r.root, { base: r.base })) as RedactPreview;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(preview.rules.github_token).toMatchObject({ values: 1000, hits: 1000 });
+  }, 120_000);
+
+  test('the first scan and the redaction share one deadline: the redaction gets what is left of the publish budget, not a fresh one', async () => {
+    const r = repo();
+    commit(r.root, 'notes.md', `token ${token}\n`);
+    const deadlines: Array<number | undefined> = [], calledAt: number[] = [];
+    const spy = spyOn(redactModule, 'redactUnpushed').mockImplementation((root, opts) => { deadlines.push(opts.deadline); calledAt.push(Date.now()); return realRedact(root, opts); });
+    try {
+      const started = Date.now();
+      expect((await inHome(r, () => commitAndPush({ repo: r.root, cwd: r.root, paths: [], pushOnly: true, scanTimeoutMs: 60_000 }))).outcome).toBe('pushed');
+      expect(deadlines).toHaveLength(1);
+      expect(deadlines[0]).toBeGreaterThan(started);
+      expect(deadlines[0]).toBeLessThan(calledAt[0]! + 60_000);
+    } finally { spy.mockRestore(); }
+    expectRemoteClean(r);
+  }, 60_000);
+
+  test('planning about 48,000 hits of a few repeated credentials across three 20 MB files, plus rare ones, finishes in seconds', async () => {
+    const r = repo();
+    const at = '@', creds = Array.from({ length: 6 }, (_, i) => `https://svc${i}:Zt4qXk9mPw${i}Lr7Qa${at}db${i}.example.invalid/q`);
+    for (let f = 0; f < 3; f++) {
+      const lines = Array.from({ length: 400_000 }, (_, i) => i % 25 === 0 ? `sync ${i} via ${creds[(i / 25 + f) % 6]} ok` : `line ${i} of the export with ordinary text here`);
+      if (f === 0) for (let k = 0; k < 17; k++) lines[k * 7 + 3] = `rare https://ops${k}:Qm${k}Vt8Wn3Rp${at}vault${k}.example.invalid/k`;
+      writeFileSync(join(r.root, `export-${f}.md`), lines.join('\n') + '\n');
+    }
+    git(r.root, 'add', '.'); git(r.root, 'commit', '-qm', 'exports');
+    const started = Date.now();
+    const preview = await inHome(r, () => redactUnpushed(r.root, { base: r.base, budgetMs: 600_000 })) as RedactPreview;
+    expect(Date.now() - started).toBeLessThan(45_000);
+    expect(preview.rules.url_credentials).toMatchObject({ values: 23, hits: 48_017 });
+  }, 180_000);
+
   test('secrets.on_push refuse keeps the refusal and writes nothing', async () => {
     const r = repo();
     const head = commit(r.root, 'notes.md', `token ${token}\n`);
@@ -291,6 +356,27 @@ describe('GST-2988 a publish redacts unpushed secrets', () => {
     const journal = readFileSync(join(r.root, '.git', 'gbrain', 'redactions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     expect(journal).toEqual([expect.objectContaining({ old_head: outcome.old_head, new_head: outcome.new_head })]);
   }, 120_000);
+
+  test('a budget that runs out just after the branch moves still journals the move and reports the redaction', async () => {
+    const r = repo();
+    commit(r.root, 'notes.md', `token ${token}\n`);
+    const realNow = Date.now.bind(Date), realSpawn = spawnModule.spawnSync;
+    let shift = 0;
+    const clock = spyOn(Date, 'now').mockImplementation(() => realNow() + shift);
+    const spawnSpy = spyOn(spawnModule, 'spawnSync').mockImplementation(((command: string, ...rest: unknown[]) => {
+      const out = (realSpawn as (...a: unknown[]) => unknown)(command, ...rest);
+      if (Array.isArray(rest[0]) && (rest[0] as string[]).includes('update-ref') && (rest[0] as string[]).some(a => a.includes('secrets replaced by store markers'))) shift = 3_600_000;
+      return out;
+    }) as typeof spawnModule.spawnSync);
+    let outcome: RedactOutcome;
+    try {
+      outcome = await inHome(r, () => redactUnpushed(r.root, { base: r.base, sealer: spoolSealer(r.root, null), budgetMs: 60_000 })) as RedactOutcome;
+    } finally { spawnSpy.mockRestore(); clock.mockRestore(); }
+    expect(outcome).toMatchObject({ redacted: true });
+    expect(git(r.root, 'rev-parse', 'HEAD')).toBe(outcome.new_head);
+    const journal = readFileSync(join(r.root, '.git', 'gbrain', 'redactions.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(journal).toEqual([expect.objectContaining({ old_head: outcome.old_head, new_head: outcome.new_head })]);
+  }, 60_000);
 
   test('gbrain git redact-unpushed: the CLI previews as JSON and applies with --expect', () => {
     const r = repo();
@@ -405,14 +491,14 @@ const managedRemoteClean = (c: Managed) => {
 };
 /**
  * The child CLI answers a foreground keep-checkout publish as one past its budget (publish_secret_rebuild_unbounded)
- * and logs its arguments; a publish given the background budget (--scan-timeout 1200) runs for real unless always is set.
+ * and logs its arguments; a publish given the background budget (--scan-timeout 600) runs for real unless always is set.
  */
 function overBudgetChild(c: Managed, always: boolean): string {
   const log = join(c.home, 'child-args.log');
   const real = `exec '${process.execPath}' '${resolve(import.meta.dir, '../src/cli.ts')}' "$@"`;
   const fake = `printf '%s\\n' '{"code":"publish_secret_rebuild_unbounded","message":"Redacting the unpushed commits ran past its budget."}'; exit 1`;
   writeFileSync(c.cli, ['#!/bin/sh', `echo "$*" >> '${log}'`, 'case " $* " in',
-    `  *" commit-push "*"--scan-timeout 1200 "*) ${always ? fake : real} ;;`, `  *" commit-push "*) ${fake} ;;`, 'esac', real, ''].join('\n'));
+    `  *" commit-push "*"--scan-timeout 600 "*) ${always ? fake : real} ;;`, `  *" commit-push "*) ${fake} ;;`, 'esac', real, ''].join('\n'));
   chmodSync(c.cli, 0o700);
   return log;
 }
@@ -431,10 +517,17 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
   test("a page write's Git effect publishes redacted: the store holds the original, the database page holds the same marker", async () => {
     const c = managedCheckout();
     await managedWrite(c, databaseUrl, async w => {
+      const auditFile = join(c.home, 'audit', computeIsoWeekFilename('secret-spans'));
+      mkdirSync(join(c.home, 'audit'), { recursive: true });
+      writeFileSync(auditFile, '', { mode: 0o644 });
+      chmodSync(auditFile, 0o644);
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
       expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(git(c.root, 'rev-parse', 'HEAD'));
       managedRemoteClean(c);
+      expect(readFileSync(auditFile, 'utf8')).toContain('"kind":"publish-redact"');
+      expect(readFileSync(auditFile, 'utf8')).not.toContain(token);
+      expect(statSync(auditFile).mode & 0o777).toBe(0o600);
       const marker = MARKER.exec(readFileSync(join(c.root, 'notes/beta-example.md'), 'utf8'))!;
       const page = (await w.engine.getPage('notes/beta-example', { sourceId: w.sourceId }))!;
       expect(page.compiled_truth).not.toContain(token);
@@ -519,7 +612,7 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
     });
   }, 120_000);
 
-  test('a publish past its budget retries once in the background with 4x the budget; the root waits as a dependency, then settles the redaction', async () => {
+  test('a publish past its budget retries once in the background with 2x the budget; the root waits as a dependency, then settles the redaction', async () => {
     const c = managedCheckout();
     const log = overBudgetChild(c, false);
     await managedWrite(c, databaseUrl, async w => {
@@ -527,7 +620,7 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_secret_rebuild_unbounded' });
       expect(backgroundPublish(c.root).state).not.toBe('none');
       await backgroundDone(c.root);
-      expect(readFileSync(log, 'utf8')).toContain(`git commit-push --push-only --keep-checkout --scan-secrets --scan-timeout 1200 --path ${c.root} --json`);
+      expect(readFileSync(log, 'utf8')).toContain(`git commit-push --push-only --keep-checkout --scan-secrets --scan-timeout 600 --path ${c.root} --json`);
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
       expect(backgroundPublish(c.root).state).toBe('none');
@@ -540,7 +633,7 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
     });
   }, 300_000);
 
-  test('a background publish past its 4x budget again holds the pushes as publish_scan_unreadable, new commits or not, until the remote branch moves', async () => {
+  test('a background publish past its 2x budget again holds the pushes as publish_scan_unreadable, new commits or not, until the remote branch moves', async () => {
     const c = managedCheckout();
     const before = git(c.remote, 'rev-parse', 'refs/heads/main');
     const log = overBudgetChild(c, true);
@@ -553,13 +646,13 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'queued', error_code: 'publish_scan_unreadable' });
       await w.runEffects();
-      expect(readFileSync(log, 'utf8').split('\n').filter(line => line.includes('--scan-timeout 1200'))).toHaveLength(1);
+      expect(readFileSync(log, 'utf8').split('\n').filter(line => line.includes('--scan-timeout 600'))).toHaveLength(1);
       expect(git(c.remote, 'rev-parse', 'refs/heads/main')).toBe(before);
       managedRemoteClean(c);
 
       // The fix the hold names: a publish by hand with a longer budget moves the remote branch, and the backups go on.
       const manual = spawnSync(process.execPath, [resolve(import.meta.dir, '../src/cli.ts'), 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets',
-        '--scan-timeout', '1200', '--path', c.root, '--json'], { encoding: 'utf8', env: process.env, timeout: 120_000 });
+        '--scan-timeout', '600', '--path', c.root, '--json'], { encoding: 'utf8', env: process.env, timeout: 120_000 });
       expect(JSON.parse(manual.stdout.trim().split('\n').pop()!)).toMatchObject({ outcome: 'pushed' });
       await w.runEffects();
       expect(await w.effect()).toMatchObject({ state: 'committed', error_code: null });
@@ -605,7 +698,11 @@ for (const [arm, databaseUrl] of [['pglite', undefined], ...(PG_URL ? [['postgre
       const sealed = await seal(engine, { sourceId: 'source-a', rule: 'github_token', value: token });
       const id = spoolValue({ root: r.root, sourceId: 'source-a', rule: 'github_token', value: token });
       expect(id).not.toBe(sealed.id);
+      addSpoolOccurrences(id, [{ commit: 'c'.repeat(40), path: 'notes.md', line: 1, field: 'file' }]);
       expect(await drainSpool(engine)).toMatchObject({ moved: 0, remaining: 0 });
+      expect(await engine.executeRaw('SELECT commit_sha FROM secret_store_occurrence WHERE entry_id = $1', [sealed.id])).toEqual([{ commit_sha: 'c'.repeat(40) }]);
+      await recordOccurrence(engine, { entryId: sealed.id, sourceId: 'source-a', slug: 'notes/held', field: 'compiled_truth', origin: 'repair' });
+      expect(await purgeSecretsForSlugs(engine, 'source-a', ['notes/held'])).toEqual({ occurrences: 1, entries: 0 });
       expect(readSpool().find(entry => entry.id === id)?.duplicate_of).toBe(sealed.id);
       expect(undrainedCount()).toBe(0);
       expect((await reveal(engine, id, 'test')).value).toBe(token);

@@ -154,15 +154,11 @@ for (const backendName of testBackends()) {
       expect(await carries(c, marker)).toBe(true);
 
       const mutable = engine as unknown as Record<string, unknown>;
-      const realRaw = engine.executeRaw.bind(engine);
-      mutable.executeRaw = async (sql: string, params?: unknown[]) => {
-        if (sql.includes('trust_policy_state')) throw new Error('generation read failed');
-        return realRaw(sql, params);
-      };
+      mutable.readTrustGeneration = async () => { throw new Error('generation read failed'); };
       try {
         expect(await getBrainHotMemoryMeta('get_stats', c)).toBeUndefined();
       } finally {
-        delete mutable.executeRaw;
+        delete mutable.readTrustGeneration;
       }
       expect(await carries(c, marker)).toBe(true);
 

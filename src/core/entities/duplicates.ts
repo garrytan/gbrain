@@ -7,8 +7,8 @@
  * that are not archived, read through BrainEngine.listEntityKeyRows. Keys: email, phone, X handle, LinkedIn,
  * GitHub, a company's domain, and every frontmatter field the pack declares in a page type's `identity_keys`.
  * A placeholder (empty, zero, a placeholder word, too long) is never a key, and a value more than CROWDED_LIMIT
- * pages carry is only counted. Names fold with nameWords (strict: every word kept) and, for "likely" and
- * conflicts, with leading titles and company suffixes dropped (variant).
+ * pages carry is only counted. Names fold with nameWords, a run of single letters in a company name read as one word
+ * (strict: every word kept) and, for "likely" and conflicts, with leading titles and company suffixes dropped (variant).
  *
  * Matchers propose member sets; the finder merges proposals with the same kind and members, adds the key
  * evidence (every shared key type, with how many other pages carry a shared contact or handle value, and every
@@ -18,7 +18,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
-import type { EntityKeyRow } from '../engine-sql/entity-keys.ts';
+import type { EntityKeyRow, EntityKeyRowsOpts } from '../engine-sql/entity-keys.ts';
 import { NAME_TITLE_TOKENS, nameWords } from './name-variants.ts';
 import { CORPORATE_SUFFIXES } from './near-name.ts';
 import { GITHUB_RESERVED_NAMES } from './github-reserved.ts';
@@ -72,6 +72,15 @@ export interface EntityPage extends DuplicateMember {
   /** Usable key values by `<key>:<field>`; placeholders and crowded values are already gone. */
   keys: Map<string, PageKey>;
   distinctFrom: Set<string>;
+  page_id: number;
+  generation: number;
+  created_at: string;
+  identity: { entity_id: string; established_by: string } | null;
+  /** Domains from a site value with no URL path: the company's own site, not a page it has on someone else's. */
+  ownDomains: Set<string>;
+  countries: Set<string>;
+  /** pageFingerprint: its variant name and strong keys, read before crowded values are dropped. */
+  fingerprint: string | null;
 }
 export interface KeyValueCarriers { key: KeyType; field: string; value: string; pages: EntityPage[] }
 export interface DuplicateScan {
@@ -97,7 +106,15 @@ export interface FindDuplicatesOptions {
    * The owner's recorded decisions (gbrain dedupe confirm and reject): every pair inside an `apart` set is kept out of every
    * group, like `distinct_from`; a group whose members all sit in one `confirmed` set is decided and left out.
    */
-  decided?: { apart: DuplicateMember[][]; confirmed: DuplicateMember[][] };
+  decided?: { apart: DuplicateMember[][]; confirmed: DuplicateMember[][]; apartEvidence?: string[][] };
+  /**
+   * Read only these pages and every page that shares an exclusive key value (LinkedIn, GitHub, a declared id) with them,
+   * two hops out: every group a `clean` class can come from (the company sweep after a sync). Other groups of these pages
+   * may be missing pages, so only their clean groups are complete.
+   */
+  near?: DuplicateMember[];
+  /** How many hops out `near` reads; 2 unless set. */
+  nearHops?: number;
 }
 
 const PLACEHOLDER_WORDS = new Set(['unknown', 'none', 'null', 'n/a', 'na', 'tbd', 'todo', '-', '?']);
@@ -143,17 +160,55 @@ function rawValues(value: unknown): string[] {
   return list.filter(v => typeof v === 'string' || typeof v === 'number').map(v => String(v).trim()).filter(v => !isPlaceholder(v));
 }
 
-export function strictNameFold(text: string): string {
-  return nameWords(text).join(' ');
+/**
+ * nameWords; for a company, a run of single letters reads as one word, so "L.L.C.", "L L C" and "LLC" fold alike. A
+ * person's initials stay apart, so "D. R. Example" never folds into the title "Dr".
+ */
+function foldWords(text: string, kind: EntityKind): string[] {
+  if (kind !== 'company') return nameWords(text);
+  const out: string[] = [];
+  let run = '';
+  for (const w of [...nameWords(text), '']) {
+    if (w.length === 1 && /\p{L}/u.test(w)) { run += w; continue; }
+    if (run) out.push(run);
+    run = '';
+    if (w) out.push(w);
+  }
+  return out;
+}
+
+export function strictNameFold(text: string, kind: EntityKind = 'person'): string {
+  return foldWords(text, kind).join(' ');
 }
 
 export function variantNameFold(text: string, kind: EntityKind = 'person'): string {
-  const words = nameWords(text);
+  const words = foldWords(text, kind);
   let start = 0;
   while (start < words.length - 1 && NAME_TITLE_TOKENS.has(words[start]!)) start++;
   let end = words.length;
   if (kind === 'company') while (end - 1 > start && CORPORATE_SUFFIXES.has(words[end - 1]!)) end--;
   return words.slice(start, end).join(' ');
+}
+
+const STRONG_KEYS: ReadonlySet<KeyType> = new Set(['linkedin', 'github', 'domain', 'declared_id']);
+
+/**
+ * A page's fingerprint: 32 hex of sha256 over its kind, its variant name (leading titles and company suffixes dropped,
+ * so "Acme" and "Acme Ltd" agree) and its strong key values (LinkedIn, GitHub, domain, declared ids), never the values
+ * themselves. A "different" decision keeps its members' fingerprints, so the pair stays apart after a new slug, a move
+ * to another source or a suffix added to the name; a page edited to new keys or another name is new evidence. A page
+ * with no strong key has none, since its name alone would keep every namesake apart; its pair stays apart by slug.
+ */
+export function pageFingerprint(type: EntityKind, name: string, keys: ReadonlyMap<string, PageKey>): string | null {
+  const values = [...keys].filter(([, k]) => STRONG_KEYS.has(k.key)).flatMap(([id, k]) => [...k.values].map(v => `${id}=${v}`)).sort();
+  if (!values.length) return null;
+  return createHash('sha256').update([type, name, ...values].join('\n')).digest('hex').slice(0, 32);
+}
+
+/** The forms listEntityKeyRows's token read matches a stored value against, for one normalized key value. */
+function keyTokens(k: PageKey): string[] {
+  if (k.key === 'linkedin') return [...k.values].map(v => v.split('/')[1]!).filter(Boolean);
+  return [...k.values];
 }
 
 const pageKey = (m: DuplicateMember) => `${m.source_id}\t${m.slug}`;
@@ -184,21 +239,45 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
   for (const s of sources) typesBySource.set(s.id, await sourceTypes(engine, s.id, opts.identityKeys));
   const types = [...new Set([...typesBySource.values()].flatMap(t => [...t.person, ...t.company]))].sort();
   const declaredFields = [...new Set([...typesBySource.values()].flatMap(t => [...t.declared.person, ...t.declared.company]))];
-  const keyFields = [...new Set([...KEY_SPECS.flatMap(s => s.fields), ...declaredFields, 'distinct_from'])].sort();
+  const keyFields = [...new Set([...KEY_SPECS.flatMap(s => s.fields), ...declaredFields, 'distinct_from', 'country'])].sort();
+  const tokenFields = [...new Set([...KEY_SPECS.filter(s => s.key_class === 'exclusive').flatMap(s => s.fields), ...declaredFields])].sort();
 
-  const rows: EntityKeyRow[] = [];
-  for (let after: { source_id: string; slug: string } | undefined; ;) {
-    const page = await engine.listEntityKeyRows({ types, keys: keyFields, after, limit: PAGE_SIZE });
-    rows.push(...page);
-    if (page.length < PAGE_SIZE) break;
-    after = { source_id: page[page.length - 1]!.source_id, slug: page[page.length - 1]!.slug };
+  const read = async (filter: Pick<EntityKeyRowsOpts, 'members' | 'tokens'>) => {
+    const out: EntityKeyRow[] = [];
+    for (let after: { source_id: string; slug: string } | undefined; ;) {
+      const page = await engine.listEntityKeyRows({ types, keys: keyFields, after, limit: PAGE_SIZE, ...filter });
+      out.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      after = { source_id: page[page.length - 1]!.source_id, slug: page[page.length - 1]!.slug };
+    }
+    return out;
+  };
+  let rows: EntityKeyRow[];
+  if (!opts.near) rows = await read({});
+  else {
+    const byRow = new Map<string, EntityKeyRow>();
+    let frontier = opts.near.length ? await read({ members: opts.near }) : [];
+    for (const r of frontier) byRow.set(pageKey(r), r);
+    const searched = new Set<string>();
+    for (let hop = 0; hop < (opts.nearHops ?? 2) && frontier.length; hop++) {
+      const values = [...new Set(frontier.flatMap(r => [...toPage(r)?.keys.values() ?? []].filter(k => k.key_class === 'exclusive').flatMap(keyTokens)))].filter(v => !searched.has(v));
+      for (const v of values) searched.add(v);
+      frontier = values.length ? (await read({ tokens: { values, fields: tokenFields } })).filter(r => !byRow.has(pageKey(r))) : [];
+      for (const r of frontier) byRow.set(pageKey(r), r);
+    }
+    rows = [...byRow.values()].sort((a, b) => cmp(a.source_id, b.source_id) || cmp(a.slug, b.slug));
   }
 
   const pages: EntityPage[] = [];
   for (const row of rows) {
+    const p = toPage(row);
+    if (p) pages.push(p);
+  }
+
+  function toPage(row: EntityKeyRow): EntityPage | null {
     const st = typesBySource.get(row.source_id);
     const type: EntityKind | null = st?.person.has(row.type) ? 'person' : st?.company.has(row.type) ? 'company' : null;
-    if (!st || !type) continue;
+    if (!st || !type) return null;
     const title = row.title ?? '';
     const keys = new Map<string, PageKey>();
     const add = (key: KeyType, field: string, key_class: KeyClass, value: string | null) => {
@@ -214,8 +293,15 @@ async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promi
     }
     for (const f of st.declared[type]) for (const raw of rawValues(row.keys[f])) add('declared_id', f, 'exclusive', raw.toLowerCase());
     const distinct = row.keys.distinct_from;
-    pages.push({ source_id: row.source_id, slug: row.slug, title, type, strict: strictNameFold(title), variant: variantNameFold(title, type), keys,
-      distinctFrom: new Set((Array.isArray(distinct) ? distinct : [distinct]).filter((d): d is string => typeof d === 'string').map(d => d.trim())) });
+    const domainSpec = KEY_SPECS.find(s => s.key === 'domain')!;
+    const ownDomains = new Set(type !== 'company' ? [] : domainSpec.fields.flatMap(f => rawValues(row.keys[f]))
+      .filter(raw => /^[^/?#]*\/?(?:[?#].*)?$/.test(raw.toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '')))
+      .map(raw => domainSpec.norm(raw, type)).filter((d): d is string => !!d));
+    const strict = strictNameFold(title, type);
+    return { source_id: row.source_id, slug: row.slug, title, type, strict, variant: variantNameFold(title, type), keys,
+      distinctFrom: new Set((Array.isArray(distinct) ? distinct : [distinct]).filter((d): d is string => typeof d === 'string').map(d => d.trim())),
+      page_id: row.page_id, generation: row.generation, created_at: row.created_at, identity: row.identity, ownDomains,
+      countries: new Set(rawValues(row.keys.country).map(c => c.toLowerCase())), fingerprint: pageFingerprint(type, variantNameFold(title, type), keys) };
   }
 
   const carriers = new Map<string, EntityPage[]>();
@@ -355,15 +441,16 @@ export interface CleanRuleInput {
 
 /**
  * The rule for `clean`, rule A as the owner chose it on the bench numbers (plan Decision F, narrowed): one type,
- * one strict name, one member per source, no vetoing key, and a shared **exclusive** key (LinkedIn, GitHub, a
- * declared id) whose value no page outside the group carries, or, for a union, clean parts. Contact and handle
- * keys (email, phone, X handle, domain) never make a group clean on their own.
+ * one strict name, one member per source, no vetoing key, no two different domains, and a shared **exclusive** key
+ * (LinkedIn, GitHub, a declared id) whose value no page outside the group carries, or, for a union, clean parts.
+ * Contact and handle keys (email, phone, X handle, domain) never make a group clean on their own. Two companies with
+ * one name on a group's shared LinkedIn page (a US firm and its UK namesake) differ by domain, so they stay likely.
  */
 export function isCleanGroup(input: CleanRuleInput): boolean {
   const { members } = input;
   if (new Set(members.map(m => m.type)).size !== 1 || new Set(members.map(m => m.strict)).size !== 1 || !members[0]?.strict) return false;
   if (new Set(members.map(m => m.source_id)).size !== members.length) return false;
-  if (input.differing_keys.some(k => k.veto)) return false;
+  if (input.differing_keys.some(k => k.veto || k.key === 'domain')) return false;
   if (input.union) return true;
   return input.shared_keys.some(k => k.key_class === 'exclusive' && k.values_only_in_group > 0);
 }
@@ -439,12 +526,20 @@ function decidedChecks(decided: FindDuplicatesOptions['decided']) {
     for (const b of set) if (pageKey(b) !== pageKey(a)) others.add(pageKey(b));
     apartOf.set(pageKey(a), others);
   }
+  const prints = (decided?.apartEvidence ?? []).filter(e => e.length > 1);
+  const matched = (evidence: string[], members: EntityPage[]) => {
+    const left = [...evidence];
+    let n = 0;
+    for (const m of members) { const at = m.fingerprint ? left.indexOf(m.fingerprint) : -1; if (at >= 0) { left.splice(at, 1); n++; } }
+    return n;
+  };
   const confirmedSets = (decided?.confirmed ?? []).map(set => new Set(set.map(pageKey)));
   const confirmedIn = new Map<string, number[]>();
   confirmedSets.forEach((set, i) => { for (const k of set) confirmedIn.set(k, [...(confirmedIn.get(k) ?? []), i]); });
   return {
     keptApart: (members: EntityPage[]) => {
       if (hasDistinctPair(members)) return true;
+      if (prints.some(evidence => matched(evidence, members) > 1)) return true;
       if (!apartOf.size) return false;
       const inGroup = new Set(members.map(pageKey));
       return members.some(a => [...(apartOf.get(pageKey(a)) ?? [])].some(b => inGroup.has(b)));
@@ -460,8 +555,19 @@ function groupId(kind: DuplicateKind, members: DuplicateMember[]): string {
   return `dedupe/${createHash('sha256').update(`${kind}\n${lines}`).digest('hex').slice(0, 16)}`;
 }
 
+/** The finder's view of these pages (missing ones are left out), for the fingerprints a "different" decision keeps. */
+export async function entityPagesOf(engine: BrainEngine, members: DuplicateMember[]): Promise<Map<string, EntityPage>> {
+  return members.length ? (await loadScan(engine, { near: members, nearHops: 0 })).byKey : new Map();
+}
+
 export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<DuplicateResult> {
+  return (await findTypedDuplicateGroups(engine, opts)).result;
+}
+
+/** findDuplicateGroups plus each group's entity kind (person or company), which the finder's JSON contract leaves out. */
+export async function findTypedDuplicateGroups(engine: BrainEngine, opts: FindDuplicatesOptions = {}): Promise<{ result: DuplicateResult; kindOf: Map<string, EntityKind>; pages: Map<string, EntityPage> }> {
   const { scan, byKey, crowded, carriers } = await loadScan(engine, opts);
+  const kindOf = new Map<string, EntityKind>();
   const matchers = opts.matchers ?? DEFAULT_MATCHERS;
   const { keptApart, confirmed } = decidedChecks(opts.decided);
   const drafts = new Map<string, Draft>();
@@ -522,7 +628,9 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
       .sort((a, b) => cmp(a.source_id, b.source_id) || cmp(a.slug, b.slug));
     const sorted = [...new Map(evidence.map(e => [evidenceKey(e), e])).values()]
       .sort((a, b) => cmp(a.matcher, b.matcher) || cmp(a.rule, b.rule) || cmp(a.key ?? '', b.key ?? '') || cmp(a.field ?? '', b.field ?? ''));
-    groups.push({ id: groupId(d.kind, members), kind: d.kind, class: cls, members, evidence: sorted });
+    const id = groupId(d.kind, members);
+    kindOf.set(id, d.members[0]!.type);
+    groups.push({ id, kind: d.kind, class: cls, members, evidence: sorted });
   }
   groups.sort((a, b) => DUPLICATE_KINDS.indexOf(a.kind) - DUPLICATE_KINDS.indexOf(b.kind) || cmp(a.id, b.id));
 
@@ -532,5 +640,5 @@ export async function findDuplicateGroups(engine: BrainEngine, opts: FindDuplica
     crowded_key_values: crowded,
   };
   for (const g of groups) { counts.by_kind[g.kind]++; counts.by_class[g.class]++; }
-  return { schema_version: DEDUPE_PREVIEW_SCHEMA_VERSION, groups, counts };
+  return { result: { schema_version: DEDUPE_PREVIEW_SCHEMA_VERSION, groups, counts }, kindOf, pages: byKey };
 }

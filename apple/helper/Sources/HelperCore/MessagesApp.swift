@@ -19,6 +19,7 @@ public enum DispatchResult: Equatable {
 public protocol MessagesPort {
     func prepare(askPermission: Bool) -> PrepareResult
     func send(text: String, to recipient: String) -> DispatchResult
+    func handOver<T>(_ body: () -> T) -> T
 }
 
 public final class MessagesApp: MessagesPort {
@@ -87,6 +88,10 @@ public final class MessagesApp: MessagesPort {
         case .success(let reply): return reply.booleanValue ? .ready : .signedOut
         case .failure(let failure): return failure.number == Int(errAEEventNotPermitted) ? .automationDenied : .failed(failure.number)
         }
+    }
+
+    public func handOver<T>(_ body: () -> T) -> T {
+        onMain(body)
     }
 
     public func send(text: String, to recipient: String) -> DispatchResult {

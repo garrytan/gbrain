@@ -247,8 +247,8 @@ const scenarios: Scenario[] = [
 
   // 7. federated chunk reads
   {
-    name: 'getChunks over two sources',
-    expect: 'refused',
+    name: 'getChunks over two sources returns the chunks of both, in PGLite\'s order',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('fed/a', NOTE);
       await engine.putPage('fed/a', { ...NOTE, compiled_truth: 'work text' }, { sourceId: 'work' });
@@ -325,10 +325,10 @@ const scenarios: Scenario[] = [
     },
   },
 
-  // 10. listColumnsOnly
+  // 10. listColumnsOnly: the list projection, with content_hash and emotional_weight present and undefined as on PGLite.
   {
-    name: 'listPages with listColumnsOnly',
-    expect: 'refused',
+    name: 'listPages with listColumnsOnly returns the list columns with a blank body, timeline and frontmatter',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('cols/page', NOTE);
       return engine.listPages({ slugPrefix: 'cols/', listColumnsOnly: true } as never);
@@ -357,8 +357,8 @@ const scenarios: Scenario[] = [
     },
   },
   {
-    name: 'resolveSlugs on a partial name (trigram matching is a later step)',
-    expect: 'refused',
+    name: 'resolveSlugs on a partial name: a title typo found by pg_trgm similarity',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('resolve/zulu-note', { ...NOTE, title: 'Alpha Zulu' });
       return engine.resolveSlugs('Zula');

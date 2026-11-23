@@ -5,9 +5,9 @@
  * there as a client instead of failing with `store_locked`.
  *
  * Election retries for a bounded time: an owner that holds the lock but has not bound its socket yet, or one that just
- * exited, is waited for; once the lock is free this process takes it. When an owner goes away, the calls it had not
- * answered end with `owner_unavailable` (`outcome_unknown`) and are never sent again; the client's next call runs this
- * election again (rust-engine.ts), so one of the remaining processes becomes the owner.
+ * exited, is waited for; once the lock is free this process takes it. A client whose owner exits runs the election
+ * again on its next call (client.ts `rejoin`, RustEngine `_takeOver`); its calls in flight end `owner_unavailable`
+ * (routes.ts `ownerGone`, `outcome_unknown`) and are never sent again, since the owner may have started them.
  */
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -16,6 +16,7 @@ import { opError } from '../../ops/contract.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../persistence/native-lock.ts';
 import { parseGlobalFlags } from '../../cli-options.ts';
 import { connectOwner, type OwnerConnection } from './client.ts';
+import { recordOwnedRustBrain } from '../owned-brains.ts';
 import { ownerLockPath, ownerSocketPath } from './protocol.ts';
 import { serveOwnerEngine, type OwnerEngineServer, type OwnerServerOptions } from './server.ts';
 
@@ -66,7 +67,7 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
       try {
         const { waitMs: _waitMs, onLock: _onLock, ...serverOpts } = opts;
         const server = await serveOwnerEngine(engine, socketPath, { ...serverOpts, serve: opts.serve ?? processIsServe() });
-        if (server) return { role: 'owner', lock, server };
+        if (server) { recordOwnedRustBrain(databasePath, lock); return { role: 'owner', lock, server }; }
         lastError = new Error('The owner socket is claimed by another process.');
       } catch (error) {
         lastError = error;

@@ -48,14 +48,12 @@ let redactionFault: PurgeRedactionFault | null = null;
 export function __setPurgeRedactionFaultForTests(fault: PurgeRedactionFault | null): void { redactionFault = fault; }
 
 /** The source's purge counter, incremented in the purge transaction; payloads prepared under an older epoch are refused. */
-export async function bumpPurgeEpoch(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<number> {
-  const [row] = await tx.executeRaw<{ purge_epoch: string | number }>('UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch', [sourceId]);
-  return Number(row?.purge_epoch ?? 0);
+export async function bumpPurgeEpoch(tx: Pick<BrainEngine, 'bumpSourcePurgeEpoch'>, sourceId: string): Promise<number> {
+  return Number((await tx.bumpSourcePurgeEpoch(sourceId)) ?? 0);
 }
 
-export async function sourceHasBeliefEvents(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
-  const [row] = await tx.executeRaw<{ present: boolean }>('SELECT EXISTS (SELECT 1 FROM belief_events WHERE source_id = $1) AS present', [sourceId]);
-  return row?.present === true;
+export async function sourceHasBeliefEvents(tx: Pick<BrainEngine, 'hasBeliefEvents'>, sourceId: string): Promise<boolean> {
+  return tx.hasBeliefEvents(sourceId);
 }
 
 /**
@@ -92,15 +90,13 @@ export const quotes = (text: string, forms: readonly string[]) => {
   });
 };
 
-async function registerRedaction(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, key: string, field: string, request: string, hash: string): Promise<void> {
-  await tx.executeRaw(`INSERT INTO belief_redactions (source_id, subject_key, field, purge_request, field_hash)
-    SELECT $1, $2, $3, $4::uuid, $5 WHERE NOT EXISTS (SELECT 1 FROM belief_redactions WHERE source_id = $1 AND subject_key = $2 AND field = $3
-      AND purge_request = $4::uuid AND field_hash = $5)`, [sourceId, key, field, request, hash]);
+async function registerRedaction(tx: Pick<BrainEngine, 'registerPurgeRedaction'>, sourceId: string, key: string, field: string, request: string, hash: string): Promise<void> {
+  await tx.registerPurgeRedaction({ sourceId, subjectKey: key, field, purgeRequest: request, fieldHash: hash });
 }
 
 /** Pass 1: purged keys lose their values. Returns the events marked. */
 export async function redactPurgedKeys(tx: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[];
-  /** The purged claim texts: their history recorded under a pre-v330 fingerprint (legacy-fingerprint.ts) is redacted too. */
+  /** The purged claim texts: their history recorded under a pre-v336 fingerprint (legacy-fingerprint.ts) is redacted too. */
   claims?: readonly string[] }): Promise<number> {
   if ((!input.claimFps.length && !input.lifetimes.length) || redactionFault === 'skip_purged_keys') return 0;
   const legacy = (input.claims ?? []).filter(mayHaveLegacyFingerprint);
@@ -120,7 +116,7 @@ export interface RedactedField { subject_key: string; field: string; event_id: n
  * Keyset batches read only the carrying fields of the source's events (no substring scan in SQL, so the cost is
  * one pass over the events whatever the number of claims, #6); the claims are matched in JS.
  */
-export async function redactCarryingFields(tx: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; request: string; claims: readonly string[] }): Promise<RedactedField[]> {
+export async function redactCarryingFields(tx: Pick<BrainEngine, 'executeRaw' | 'registerPurgeRedaction'>, input: { sourceId: string; request: string; claims: readonly string[] }): Promise<RedactedField[]> {
   const forms = claimForms(input.claims);
   if (!forms.length || redactionFault === 'skip_carrying_fields') return [];
   const out: RedactedField[] = [];
@@ -367,8 +363,7 @@ async function rowSubject(engine: BrainEngine, table: 'facts' | 'takes', id: num
 export async function suppressedFields(engine: BrainEngine, table: 'facts' | 'takes', id: number): Promise<string[]> {
   const subject = await rowSubject(engine, table, id);
   if (!subject) return [];
-  const rows = await engine.executeRaw<{ field: string; field_hash: string; released_hash: string | null }>(`SELECT field, field_hash, released_hash FROM belief_redactions
-    WHERE source_id = $1 AND subject_key = $2`, [subject.sourceId, subject.key]);
+  const rows = await engine.readBeliefRedactions(subject.sourceId, [subject.key], []);
   return [...new Set(rows.filter(r => typeof subject.value[r.field] === 'string' && r.released_hash !== fieldHash(subject.value[r.field] as string)
     && r.field_hash !== fieldHash(subject.value[r.field] as string)).map(r => r.field))];
 }
@@ -387,10 +382,9 @@ export async function releaseSuppressedFields(engine: BrainEngine, table: 'facts
     const text = subject.value[field];
     if (typeof text !== 'string') continue;
     const hash = fieldHash(text);
-    const rows = await engine.executeRaw<{ purge_request: string }>(`UPDATE belief_redactions SET released_by = $4::uuid, released_hash = $5 WHERE source_id = $1 AND subject_key = $2
-      AND field = $3 AND released_hash IS DISTINCT FROM $5 AND field_hash <> $5 RETURNING purge_request::text AS purge_request`, [subject.sourceId, subject.key, field, releasedBy, hash]);
-    if (rows.length) released.push(field);
-    releases.push(...rows.map(r => ({ field, purge_request: r.purge_request, released_hash: hash })));
+    const requests = await engine.releasePurgeRedactionsForField({ sourceId: subject.sourceId, subjectKey: subject.key, field, releasedBy, releasedHash: hash });
+    if (requests.length) released.push(field);
+    releases.push(...requests.map(purge_request => ({ field, purge_request, released_hash: hash })));
   }
   if (releases.length) noteBelief({ kind: 'released', table, rowId: id, releases });
   return released;

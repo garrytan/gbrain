@@ -1,7 +1,8 @@
 /**
- * The commands that can turn a brain shared (gbrain access member add and member enable, gbrain access owner set,
- * gbrain config set brain.audience) keep conversation archive pages written while the brain was personal to the owner
- * before they return. member add and member enable do it before the member is added or enabled
+ * The commands that can turn a brain shared (gbrain access member add and member enable, gbrain access serves several,
+ * the admin API's member add and enable, gbrain access owner set, gbrain config set brain.audience) keep conversation
+ * archive pages written while the brain was personal to the owner before they return. Member add and enable, on every
+ * path, do it before the member is added or enabled
  * (rescopeArchiveBefore), so the member's credentials never read those pages; every command then records it
  * (rescopeArchiveAfter, rescopeArchiveOnShared).
  */

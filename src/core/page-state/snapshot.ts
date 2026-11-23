@@ -29,7 +29,7 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
   const rows = await query<{ w: PageWithdrawal }>(`SELECT jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,
       'withdrawn_at',min(purged_at),'purged',true) AS w
     FROM fact_purges WHERE source_id=$1 AND subject='*' AND fact_hash=ANY($2::text[]) ${marker.world_only ? "AND visibility='world'" : ''}
-    GROUP BY visibility,fact_hash ORDER BY visibility,fact_hash`, [sourceId, hashes]);
+    GROUP BY visibility,fact_hash ORDER BY visibility COLLATE "C",fact_hash COLLATE "C"`, [sourceId, hashes]);
   return rows.map(r => typeof r.w === 'string' ? JSON.parse(r.w) as PageWithdrawal : r.w);
 }
 
@@ -39,7 +39,7 @@ export type OverlayEngine = Pick<BrainEngine, 'normalizeFenceLines' | 'executeRa
 /**
  * A typed store's snapshots with their inline fence rows overlaid, as readSnapshotStatement overlays them: each inline
  * page whose snapshot lists withdrawals, normalized in one call. The Rust store keeps no fact purge ledger and never held
- * a pre-v330 fingerprint, so the snapshot's own withdrawals are the whole ledger (export-snapshot.ts does the same).
+ * a pre-v336 fingerprint, so the snapshot's own withdrawals are the whole ledger (export-snapshot.ts does the same).
  */
 export async function overlayInlineSnapshots(normalize: OverlayEngine['normalizeFenceLines'], snapshots: readonly PageSnapshot[]): Promise<void> {
   const fenced = snapshots.filter(({ page, withdrawals }) => withdrawals.length > 0 && !isSegmentedPage(page)
@@ -64,7 +64,7 @@ export async function overlayCanonicalBodies(source: ReadQuery | OverlayEngine, 
   if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
   if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
   if (typeof source !== 'function') {
-    // The typed form: the normalization through the engine; the purge marker and the pre-v330 fingerprint aliases are
+    // The typed form: the normalization through the engine; the purge marker and the pre-v336 fingerprint aliases are
     // ledger rows only a SQL engine holds (the Rust store keeps no fact purge ledger and never held a v2 fingerprint).
     const query: ReadQuery | undefined = hasCapability(source, 'raw_sql') ? (sql, params) => source.executeRaw(sql, params) : undefined;
     if (pending && !query) throw new Error(`overlayCanonicalBodies: source ${pending.sourceId} has a purge marker, which only a SQL engine records.`);
@@ -135,10 +135,10 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     : `pages p WHERE p.slug=$1${and}`;
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
     SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${candidates}
-    ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
+    ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id COLLATE "C" ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
@@ -146,11 +146,11 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
-      ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
+      ORDER BY w.visibility COLLATE "C",w.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
         FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
         ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb)
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
-        ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
+        ORDER BY x.visibility COLLATE "C",x.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug
           ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals,
       (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*'

@@ -9,17 +9,46 @@ let boxPublic = Base64URL.encode(Array(boxKey.publicKey.rawRepresentation))
 let sendPeer = IPv4.parse("100.102.0.7")!
 
 final class MemoryStore: SendStateStore {
+    let lock = NSLock()
     var state: SendState?
     var saves = 0
     var failure: Problem?
+    var saveFailure: Problem?
+    var saving: DispatchSemaphore?
+    var saveGate: DispatchSemaphore?
     init(_ state: SendState?) { self.state = state }
     func load() throws -> SendState? {
+        lock.lock()
+        defer { lock.unlock() }
         if let failure { throw failure }
         return state
     }
     func save(_ state: SendState) throws {
+        saving?.signal()
+        lock.lock()
+        let gate = saveGate
+        lock.unlock()
+        gate?.wait()
+        lock.lock()
+        defer { lock.unlock() }
+        if let saveFailure { throw saveFailure }
         self.state = state
         saves += 1
+    }
+    func release() {
+        lock.lock()
+        let gate = saveGate
+        saveGate = nil
+        lock.unlock()
+        gate?.signal()
+    }
+}
+
+final class WatchedLock: NSRecursiveLock, @unchecked Sendable {
+    var waiting: DispatchSemaphore?
+    override func lock() {
+        waiting?.signal()
+        super.lock()
     }
 }
 
@@ -31,9 +60,24 @@ final class FakeMessages: MessagesPort {
     var askedPermission = false
     var gate: DispatchSemaphore?
     var onSend: ((String, String) -> Void)?
+    var preparing: DispatchSemaphore?
+    var prepareGate: DispatchSemaphore?
+    var handingOver: DispatchSemaphore?
+    var handOverGate: DispatchSemaphore?
+
+    func handOver<T>(_ body: () -> T) -> T {
+        handingOver?.signal()
+        handOverGate?.wait()
+        return body()
+    }
 
     func prepare(askPermission: Bool) -> PrepareResult {
-        if askPermission { askedPermission = true }
+        if askPermission {
+            askedPermission = true
+        } else {
+            preparing?.signal()
+            prepareGate?.wait()
+        }
         return prepareResult
     }
 
@@ -88,8 +132,10 @@ final class FakePresence: OwnerPresence {
     var answer = Presence.confirmed
     var reasons: [String] = []
     var gate: DispatchSemaphore?
+    var entered: DispatchSemaphore?
     func confirm(reason: String) -> Presence {
         reasons.append(reason)
+        entered?.signal()
         gate?.wait()
         return answer
     }
@@ -110,8 +156,9 @@ final class Harness {
     let clock = Clock()
     var switchedOn = true
     lazy var audit = SendAudit(directory: directory)
+    let lock = WatchedLock()
     lazy var service = SendService(store: store, switchedOn: { self.switchedOn }, audit: audit, messages: messages, ledger: ledger, banner: banner,
-                                   presence: presence, clock: clock.clock, confirmWindow: 30, pollInterval: 0.5)
+                                   presence: presence, clock: clock.clock, confirmWindow: 30, pollInterval: 0.5, stateLock: lock)
 
     init(limits: SendLimits = SendLimits(), enabled: Bool = true) {
         store = MemoryStore(SendState(enabled: enabled, keys: [SendKey(name: "box", publicKey: boxPublic)], limits: limits))
@@ -548,7 +595,34 @@ final class Harness {
         #expect(lines.count == 2)
         #expect(lines.allSatisfy { $0.text == nil && $0.to == nil && $0.ownerInstruction == nil })
         #expect(lines[1].outcome == "sent")
-        #expect(lines[0].toHash == Recipient.hash("+15550100"))
+        let key = try #require(h.store.state?.recipientKey)
+        #expect(lines[0].toHash == Recipient.hash("+15550100", key: key))
+    }
+
+    @Test func recipientHashIsKeyedPerInstall() throws {
+        let plain = String(SHA256.hash(data: Data("+15550100".utf8)).map { String(format: "%02x", $0) }.joined().prefix(12))
+        let first = Harness()
+        #expect(first.store.state?.recipientHashKey == nil)
+        #expect(first.send(first.request(first.body())).status == 200)
+        let key = try #require(first.store.state?.recipientKey)
+        #expect(first.send(first.request(first.body(text: "Second"), key: "owner-msg-0002")).status == 200)
+        #expect(first.store.state?.recipientKey == key)
+        let hashes = first.auditLines().compactMap(\.toHash)
+        #expect(hashes.count == 4)
+        #expect(Set(hashes) == [Recipient.hash("+15550100", key: key)])
+        #expect(!hashes.contains(plain))
+        let second = Harness()
+        #expect(second.send(second.request(second.body())).status == 200)
+        let other = try #require(second.auditLines().first?.toHash)
+        #expect(other != hashes[0] && other != plain)
+    }
+
+    @Test func malformedRecipientHashKeyRefuses() {
+        let h = Harness()
+        h.store.state?.recipientHashKey = "short"
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_keys_tampered")
+        #expect(h.messages.sent.isEmpty)
+        #expect(h.store.state?.recipientHashKey == "short")
     }
 }
 
@@ -584,29 +658,281 @@ final class Harness {
         #expect(admin(h, ["action": "add_key", "name": "bad", "public_key": "abc"]).1["code"] as? String == "bad_param")
     }
 
-    @Test func aSendSeeingTheSwitchOffKeepsAKeyAddedMeanwhile() {
+    @Test func removingAKeyThatIsNotThereLeavesNoStopBehind() {
+        let h = Harness()
+        #expect(admin(h, ["action": "remove_key", "name": "no-key-has-this-name"]).1["code"] as? String == "not_found")
+        #expect(h.service.currentStops().keys.isEmpty)
+        #expect(admin(h, ["action": "remove_key", "name": "box"]).0 == 200)
+        #expect(h.service.currentStops().keys == ["box": 1])
+    }
+
+    @Test func aSendSeeingTheSwitchOffDuringTouchIDRefusesTheChange() {
         let h = Harness()
         h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
         group.enter()
-        DispatchQueue.global().async {
-            _ = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic])
             group.leave()
-        }
-        let deadline = Date().addingTimeInterval(10)
-        while h.presence.reasons.isEmpty && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
         h.switchedOn = false
-        group.enter()
-        DispatchQueue.global().async {
-            _ = h.send(h.request(h.body()))
-            group.leave()
-        }
-        Thread.sleep(forTimeInterval: 0.3)
+        #expect(h.send(h.request(h.body())).json["code"] as? String == "send_disabled")
         h.presence.gate?.signal()
-        group.wait()
-        #expect(h.store.state?.keys.map(\.name).sorted() == ["box", "second"])
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "send_disabled")
+        #expect(h.store.state?.keys.map(\.name) == ["box"])
         #expect(h.store.state?.enabled == false)
         #expect(h.messages.count == 0)
+    }
+
+    @Test func aSendWaitingOnAKeyReplacementChecksTheNewKey() {
+        let h = Harness()
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.store.saving = DispatchSemaphore(value: 0)
+        h.store.saveGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        Thread {
+            _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.store.saving?.wait(timeout: .now() + 10) == .success)
+        h.lock.waiting = DispatchSemaphore(value: 0)
+        var code: String?
+        group.enter()
+        Thread {
+            code = h.send(h.request(h.body())).json["code"] as? String
+            group.leave()
+        }.start()
+        #expect(h.lock.waiting?.wait(timeout: .now() + 10) == .success)
+        h.store.release()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+        #expect(code == "unknown_send_key")
+        #expect(h.messages.count == 0)
+    }
+
+    @Test func aSendDuringAPendingTouchIDDoesNotWaitForIt() {
+        let h = Harness()
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0000")).status == 200)
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        group.enter()
+        Thread {
+            _ = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.send(h.request(h.body())).status == 200)
+        #expect(h.messages.count == 2)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+    }
+
+    @Test func aSendDuringAKeyReplacementDialogGoesOutUnderTheCurrentKeyOnly() {
+        let h = Harness()
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0000")).status == 200)
+        let replacement = Curve25519.Signing.PrivateKey()
+        let other = Base64URL.encode(Array(replacement.publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "box", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0002", signer: replacement)).status != 200)
+        #expect(h.messages.count == 1)
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0001")).status == 200)
+        #expect(h.messages.count == 2)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.0 == 200)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: other)])
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0003")).status != 200)
+        #expect(h.messages.count == 2)
+    }
+
+    @Test func anAdminChangeLandingDuringTouchIDIsRefused() {
+        let h = Harness()
+        let other = Base64URL.encode(Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation))
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "add_key", "name": "second", "public_key": other])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "remove_key", "name": "box"]).0 == 200)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.presence.reasons.count == 1)
+        #expect(h.store.state?.keys.isEmpty == true)
+    }
+
+    @Test func anOffDuringAPendingSetupIsNotUndoneByTheSetup() {
+        let h = Harness()
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "setup"])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "overloaded")
+        #expect(h.store.state?.enabled == false)
+    }
+
+    @Test(arguments: [["action": "off"], ["action": "remove_key", "name": "box"]])
+    func aSendHeldBeforeMessagesIsStoppedByAChangeThatAlreadyReturned(fields: [String: String]) {
+        let h = Harness()
+        h.messages.preparing = DispatchSemaphore(value: 0)
+        h.messages.prepareGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.preparing?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, fields).0 == 200)
+        h.messages.prepareGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.json["code"] as? String == (fields["action"] == "off" ? "send_disabled" : "unknown_send_key"))
+        #expect(h.messages.count == 0)
+    }
+
+    @Test(arguments: [[["action": "off"], ["action": "setup"]],
+                      [["action": "remove_key", "name": "box"], ["action": "add_key", "name": "box", "public_key": boxPublic]]])
+    func aStopCancelsASendHeldBeforeMessagesEvenWhenItIsUndoneAtOnce(changes: [[String: String]]) {
+        let h = Harness()
+        h.messages.preparing = DispatchSemaphore(value: 0)
+        h.messages.prepareGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.preparing?.wait(timeout: .now() + 10) == .success)
+        for change in changes { #expect(admin(h, change).0 == 200) }
+        #expect(h.store.state?.enabled == true)
+        #expect(h.store.state?.keys == [SendKey(name: "box", publicKey: boxPublic)])
+        h.messages.prepareGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.json["code"] as? String == (changes[0]["action"] == "off" ? "send_disabled" : "unknown_send_key"))
+        #expect(h.messages.count == 0)
+        h.messages.preparing = nil
+        h.messages.prepareGate = nil
+        #expect(h.send(h.request(h.body(), key: "owner-msg-0002")).status == 200)
+        #expect(h.messages.count == 1)
+    }
+
+    @Test func removingAnotherKeyLeavesAHeldSendAlone() {
+        let h = Harness()
+        #expect(admin(h, ["action": "add_key", "name": "second", "public_key": boxPublic]).0 == 200)
+        h.messages.preparing = DispatchSemaphore(value: 0)
+        h.messages.prepareGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.preparing?.wait(timeout: .now() + 10) == .success)
+        #expect(admin(h, ["action": "remove_key", "name": "second"]).0 == 200)
+        h.messages.prepareGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.status == 200)
+        #expect(h.messages.count == 1)
+    }
+
+    @Test func offDoesNotWaitWhileASendWaitsForItsTurnWithMessages() {
+        let h = Harness()
+        h.messages.handingOver = DispatchSemaphore(value: 0)
+        h.messages.handOverGate = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (status: Int, json: [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = h.send(h.request(h.body()))
+            group.leave()
+        }.start()
+        #expect(h.messages.handingOver?.wait(timeout: .now() + 10) == .success)
+        let off = DispatchGroup()
+        var offStatus = 0
+        off.enter()
+        Thread {
+            offStatus = self.admin(h, ["action": "off"]).0
+            off.leave()
+        }.start()
+        #expect(off.wait(timeout: .now() + 10) == .success)
+        #expect(offStatus == 200)
+        h.messages.handOverGate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.json["code"] as? String == "send_disabled")
+        #expect(h.messages.count == 0)
+    }
+
+    @Test(arguments: [true, false])
+    func aSetupApprovedAfterTheConfigSwitchWentOffIsRefused(helperHeardOff: Bool) {
+        let h = Harness()
+        #expect(admin(h, ["action": "off"]).0 == 200)
+        h.presence.gate = DispatchSemaphore(value: 0)
+        h.presence.entered = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var reply: (Int, [String: Any]) = (0, [:])
+        group.enter()
+        Thread {
+            reply = self.admin(h, ["action": "setup"])
+            group.leave()
+        }.start()
+        #expect(h.presence.entered?.wait(timeout: .now() + 10) == .success)
+        h.switchedOn = false
+        if helperHeardOff { #expect(admin(h, ["action": "off"]).0 == 200) }
+        h.presence.gate?.signal()
+        #expect(group.wait(timeout: .now() + 10) == .success)
+        #expect(reply.1["code"] as? String == "send_disabled")
+        #expect(h.store.state?.enabled == false)
+    }
+
+    @Test(arguments: [["action": "off"], ["action": "remove_key", "name": "box"], ["action": "set_limits", "max_per_day": "50"]])
+    func aChangeThatCannotBeSavedIsReported(fields: [String: String]) {
+        let h = Harness()
+        h.store.saveFailure = .sendKeysUnreadable
+        #expect(admin(h, fields).1["code"] as? String == "send_keys_unreadable")
+        #expect(h.presence.reasons.isEmpty)
+    }
+
+    @Test func offIsSavedEvenWhenTheSwitchAlreadyLooksOff() {
+        let h = Harness()
+        h.switchedOn = false
+        h.store.saveFailure = .sendKeysUnreadable
+        #expect(admin(h, ["action": "off"]).1["code"] as? String == "send_keys_unreadable")
+        #expect(h.store.state?.enabled == true)
     }
 
     @Test func turningSendingBackOnAfterTheConfigSwitchNeedsTheOwner() {
@@ -646,6 +972,25 @@ final class Harness {
                                                     "ACLAuthorizationMAC", "ACLAuthorizationSign"], applications: [helper]),
                           ACLEntry(authorizations: ["ACLAuthorizationChangeACL"], applications: [])]
         #expect(SendKeychainPolicy.trusted(macDefault, helperPath: helper))
+    }
+
+    @Test func trustsTheAppBundleMacOSRecordsForTheHelper() {
+        let decrypt: Set<String> = ["ACLAuthorizationDecrypt", "ACLAuthorizationDerive", "ACLAuthorizationExportClear", "ACLAuthorizationExportWrapped",
+                                    "ACLAuthorizationMAC", "ACLAuthorizationSign"]
+        func item(_ app: String) -> [ACLEntry] {
+            [ACLEntry(authorizations: ["ACLAuthorizationEncrypt"], applications: nil),
+             ACLEntry(authorizations: decrypt, applications: [app]),
+             ACLEntry(authorizations: ["ACLAuthorizationChangeACL"], applications: [])]
+        }
+        #expect(SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/Other.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app/Contents"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app.evil.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper .app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/tmp/Applications/GBrain Helper.app"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper"), helperPath: helper))
+        #expect(!SendKeychainPolicy.trusted(item("/Applications/GBrain Helper.app"), helperPath: "/usr/local/bin/gbrain-apple-helper"))
     }
 }
 
@@ -699,10 +1044,10 @@ final class Harness {
 
 @Suite struct SendFixTextTests {
     @Test func everyFixNamesACommandThatExists() {
-        let commands = ["send-setup", "send-key", "send-limits", "send-audit", "init", "token", "validate-config", "check", "serve"]
+        let commands = ["send-setup", "contacts-setup", "send-key", "send-limits", "send-audit", "init", "token", "validate-config", "check", "serve"]
         let problems: [Problem] = [.automationDenied, .messagesSignedOut, .messagesUnavailable, .sendDisabled, .signatureInvalid, .timestampSkew(serverTime: 0),
                                    .unknownSendKey, .sendKeysUnreadable, .sendKeysTampered, .ownerPresenceUnavailable, .auditUnavailable,
-                                   .sourceDisabled("imessage"), .noAccess, .unauthorized, .forbiddenHost]
+                                   .sourceDisabled("imessage"), .noAccess, .unauthorized, .forbiddenHost, .contactsNotAllowed, .cursorExpired]
         for problem in problems {
             let fix = problem.fix ?? ""
             #expect(!fix.contains("gbrain apple "), "\(problem.code) names a gbrain command that doesn't exist")

@@ -362,6 +362,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // handler dispatch.
   // selfHelp: whoknows honours --help first (runWhoknows HELP block, whoknows.ts).
   { name: 'whoknows', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/whoknows.ts') },
+  // selfHelp: GST-3216 identity prints its own HELP (commands/identity.ts); refuse on a thin client, whose identifiers live on the brain host.
+  { name: 'identity', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/identity.ts') },
   { name: 'brainstorm', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/brainstorm.ts') },
   { name: 'lsd', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/lsd.ts') },
   // selfHelp: v0.41.20.0 skillopt's detailed HELP constant lives in src/core/skillopt/help.ts;
@@ -411,6 +413,9 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   // selfHelp: connectors ships its own printHelp (commands/connectors/index.ts) with the
   // per-subcommand usage; keep the generic short-circuit from hiding it.
   { name: 'connectors', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/connectors.ts') },
+  // selfHelp: Apple Contacts writes through GBrain Helper (commands/apple-contacts.ts HELP), docs/guides/apple-contacts.md. Thin client:
+  // refused, because the owner signing key and the helper route live on the brain host, never behind a remote brain.
+  { name: 'apple-contacts', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, load: () => import('./commands/apple-contacts.ts') },
   // selfHelp: Wakeshift report-back switch (commands/wakeshift.ts HELP), docs/guides/wakeshift.md. Thin client: only
   // `watch` routes (watch_job / watch_write_request / watch_cron over MCP); the rest writes the host file plane and key.
   { name: 'wakeshift', phase: 'post-connect', thinClient: 'route-then-refuse', selfHelp: true, load: () => import('./commands/wakeshift.ts') },

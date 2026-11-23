@@ -1,12 +1,12 @@
 /**
- * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
+ * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, searchTakesVector, updateTake, supersedeTake, resolveTake,
  * getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, matchTakeRows, deleteTakeRows).
  * The store keeps the `takes` and `synthesis_evidence` rows (rust/docs/store/takes.md). This shell does what the shared SQL module does before its
  * statement runs (weight normalization, defaults, limit clamps, the GBrainErrors), so both engines say the same thing.
  *
- * A read-eligibility policy is honoured without `floor` and `suppressFlagged`: the store hides the takes of
- * soft-deleted and quarantined pages, as `projectionEligibleSql` always does. A trust floor or flag suppression
- * refuses (the store keeps no trust tiers or write-gate receipts for takes).
+ * A read-eligibility policy is honoured whole: the store hides the takes of soft-deleted and quarantined pages, as
+ * `projectionEligibleSql` always does, and applies the trust floor and flag suppression over the tier each take write
+ * stamped (rust/crates/gbrain-store/src/takes/trust.rs) and the take's write-gate receipts.
  */
 import { clampSearchLimit } from '../../engine.ts';
 import type {
@@ -21,11 +21,18 @@ import type { TakeFenceRow } from '../../engine-sql/takes.ts';
 import type { SearchOpts } from '../../types.ts';
 import { GBrainError } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
-/** Page-read options these members accept and that change nothing here (no trust tiers or chunk safety on takes). */
+/** Page-read options these members accept and that change nothing here, as the takes SQL never reads them (trust applies through `eligibility`). */
 const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'] as const;
 
-/** `SearchOpts` keys that do not change which takes `searchTakes` returns (its SQL never reads them). */
+/**
+ * The aggregate reads also ignore the options copy of the holder allow-list (`readPolicyOpts` adds it): their SQL
+ * filters holders by the `allowList` argument, which the ops pass the same list.
+ */
+const IGNORED_AGGREGATE_OPTIONS = [...IGNORED_READ_OPTIONS, 'takesHoldersAllowList'] as const;
+
+/** `SearchOpts` keys that do not change which takes `searchTakes` and `searchTakesVector` return (their SQL never reads them). */
 const SEARCH_IGNORED = [
   ...IGNORED_READ_OPTIONS,
   'offset', 'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete',
@@ -45,12 +52,9 @@ function sourceScope(opts: { sourceId?: unknown; sourceIds?: unknown }): unknown
   return null;
 }
 
-/** Whether a read applies the eligibility base clauses; a floor or flag suppression refuses. */
-function eligibleOnly(member: string, policy: ReadEligibility | undefined): boolean {
-  if (!policy) return false;
-  if (policy.floor) refuseMember(member, 'option eligibility.floor');
-  if (policy.suppressFlagged) refuseMember(member, 'option eligibility.suppressFlagged');
-  return true;
+/** The store's eligibility fields: the base clauses whenever a policy is given, plus its floor and flag suppression. */
+function eligibilityScope(policy: ReadEligibility | undefined) {
+  return { eligible_only: Boolean(policy), min_trust: policy?.floor ?? null, suppress_flagged: policy?.suppressFlagged === true };
 }
 
 /** An allow-list as the SQL reads it: undefined and null filter nothing. */
@@ -85,7 +89,7 @@ export const addTakesBatch: StoreMember<[rows: TakeBatchInput[], opts?: BatchOpt
 export const listTakes: StoreMember<[opts?: TakesListOpts], Take[]> = async (brain, opts = {}) => {
   const o = takeOptions('listTakes', opts, [
     'page_id', 'page_slug', 'holder', 'kind', 'active', 'resolved', 'takesHoldersAllowList', 'sortBy', 'oldestFirst',
-    'sinceOnOrBefore', 'limit', 'offset', 'sourceId', 'sourceIds', 'eligibility',
+    'sinceOnOrBefore', 'limit', 'offset', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate',
   ], IGNORED_READ_OPTIONS) as TakesListOpts;
   const offset = Math.max(0, Math.floor(o.offset ?? 0));
   const filter = {
@@ -103,7 +107,8 @@ export const listTakes: StoreMember<[opts?: TakesListOpts], Take[]> = async (bra
     // Postgres refuses a non-finite OFFSET; the store refuses anything but a number.
     offset: Number.isFinite(offset) ? offset : String(offset),
     source_ids: sourceScope(o),
-    eligible_only: eligibleOnly('listTakes', o.eligibility),
+    ...eligibilityScope(o.eligibility),
+    exclude_private: storePagePolicy('listTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   const rows: Take[] = await storeCall({ member: 'listTakes' }, () => brain.listTakes(filter));
   return rows.map(toTake);
@@ -113,14 +118,15 @@ export const searchTakes: StoreMember<
   [query: string, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility }],
   TakeHit[]
 > = async (brain, query, opts = {}) => {
-  const o = takeOptions('searchTakes', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility'], SEARCH_IGNORED) as
-    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility };
+  const o = takeOptions('searchTakes', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate'], SEARCH_IGNORED) as
+    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility; excludePrivate?: boolean };
   const options = {
     query,
     limit: clampSearchLimit(o.limit, 30, 100),
     allow_list: allowList(o.takesHoldersAllowList),
     source_ids: sourceScope(o),
-    eligible_only: eligibleOnly('searchTakes', o.eligibility),
+    ...eligibilityScope(o.eligibility),
+    exclude_private: storePagePolicy('searchTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   return storeCall({ member: 'searchTakes' }, () => brain.searchTakes(options));
 };
@@ -208,7 +214,7 @@ export const resolveTake: StoreMember<[pageId: number, rowNum: number, resolutio
 
 export const getScorecard: StoreMember<[opts: TakesScorecardOpts, allowList: string[] | undefined], TakesScorecard> =
   async (brain, opts, list) => {
-    const o = takeOptions('getScorecard', opts, ['holder', 'domainPrefix', 'since', 'until', 'sourceId', 'sourceIds'], IGNORED_READ_OPTIONS) as TakesScorecardOpts;
+    const o = takeOptions('getScorecard', opts, ['holder', 'domainPrefix', 'since', 'until', 'sourceId', 'sourceIds', 'excludePrivate'], IGNORED_AGGREGATE_OPTIONS) as TakesScorecardOpts;
     const options = {
       holder: o.holder || null,
       domain_prefix: o.domainPrefix || null,
@@ -216,6 +222,7 @@ export const getScorecard: StoreMember<[opts: TakesScorecardOpts, allowList: str
       until: o.until || null,
       allow_list: list ? list : null,
       source_ids: sourceScope(o),
+      exclude_private: storePagePolicy('getScorecard', o.excludePrivate, { callerReaders: true }) ?? null,
     };
     const raw: Parameters<typeof finalizeScorecard>[0] = await storeCall({ member: 'getScorecard' }, () => brain.getScorecard(options));
     return finalizeScorecard(raw);
@@ -223,13 +230,14 @@ export const getScorecard: StoreMember<[opts: TakesScorecardOpts, allowList: str
 
 export const getCalibrationCurve: StoreMember<[opts: CalibrationCurveOpts, allowList: string[] | undefined], CalibrationBucket[]> =
   async (brain, opts, list) => {
-    const o = takeOptions('getCalibrationCurve', opts, ['holder', 'bucketSize', 'sourceId', 'sourceIds'], IGNORED_READ_OPTIONS) as CalibrationCurveOpts;
+    const o = takeOptions('getCalibrationCurve', opts, ['holder', 'bucketSize', 'sourceId', 'sourceIds', 'excludePrivate'], IGNORED_AGGREGATE_OPTIONS) as CalibrationCurveOpts;
     const bucketSize = o.bucketSize && o.bucketSize > 0 && o.bucketSize <= 1 ? o.bucketSize : 0.1;
     const options = {
       holder: o.holder || null,
       bucket_size: bucketSize,
       allow_list: list ? list : null,
       source_ids: sourceScope(o),
+      exclude_private: storePagePolicy('getCalibrationCurve', o.excludePrivate, { callerReaders: true }) ?? null,
     };
     return storeCall({ member: 'getCalibrationCurve' }, () => brain.getCalibrationCurve(options));
   };

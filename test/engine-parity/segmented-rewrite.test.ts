@@ -95,7 +95,7 @@ describe('engine parity: segmented fence rewrites', () => {
   parityTest('a live fence rewrite flips a new generation that keeps the unchanged segments and leaves a soft-deleted page deleted',
     { methods: ['setConfig', 'getPage', 'getChunks', 'transaction', 'readSegmentedPageHead', 'readManifest', 'readSegmentTexts',
       'upsertSegmentDerivations', 'readSegmentDerivations', 'softDeletePage', 'readSegmentedRewritePage', 'restorePageDeletedAt',
-      'deleteRewrittenDerivationRows'], timeout: 600_000 },
+      'deleteRewrittenSegmentDerivations'], timeout: 600_000 },
     async (engine) => {
       await engine.setConfig('pages.segmented_storage', 'on');
       await fencedPage(engine, 'notes/fenced', fencedBody(11));
@@ -155,7 +155,7 @@ describe('engine parity: segmented fence rewrites', () => {
     });
 
   parityTest('a fence append keeps the page tier and origin through a lowering and a raising write',
-    { methods: ['transaction', 'putPage', 'readPageTrustStamp', 'restorePageTrustStamp'] },
+    { methods: ['transaction', 'putPage', 'readPageTrustRows', 'restorePageTrust'] },
     async (engine) => {
       const write = (slug: string, tier: TrustTier, channel: string, truth: string, keep: boolean) => engine.transaction(tx =>
         withWriteTrust(tx, { tier, origin: { channel } }, async () => {
@@ -163,7 +163,7 @@ describe('engine parity: segmented fence rewrites', () => {
           await (keep ? withPageTierKept(tx, { sourceId: 'default', slug }, put) : put());
         }));
       const stamp = async (slug: string) => {
-        const row = await engine.readPageTrustStamp({ sourceId: 'default', slug });
+        const [row] = await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug }] });
         return row && { trust_tier: row.trust_tier, write_origin: row.write_origin };
       };
       // An owner page appended to by an agent: the agent write lowers it, the restore raises it back.
