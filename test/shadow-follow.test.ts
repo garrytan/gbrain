@@ -68,6 +68,8 @@ describe('a seed written before shadow follow existed', () => {
       expect(follower.state).toBe('needs_reseed');
       expect(follower.action).toContain(STOP_COMMAND);
       expect(follower.action).toContain('gbrain engine shadow seed');
+      expect(follower.action).toContain('gbrain engine shadow start --plan');
+      expect(follower.action).toContain('gbrain engine shadow start --yes --expect <plan_hash>');
       const md = capture();
       expect(await runEngineShadow(['status'], { ...deps, ...md.deps })).toBe(0);
       const text = md.out.join('\n');

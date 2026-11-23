@@ -41,7 +41,8 @@ After the copy, in the same snapshot, it counts the unseeded gap rows (`countSee
 `not_copied` table, the unfinished `minion_jobs` (status other than `completed`, `failed`, `dead`, `cancelled`) and
 the segmented pages, and writes `<shadow dir>/seed.json` (0600): `seed_id`, `started_at`, `finished_at`,
 `primary_engine`, per relation `{ rows_read, imported, skipped, dropped, unmapped_columns }`, `losses { values,
-not_copied, gaps }`, `unseeded_gap_rows` and its total, `non_terminal_jobs` and `segmented_pages`. `status --json`
+not_copied, gaps }`, `unseeded_gap_rows` and its total, `non_terminal_jobs`, `segmented_pages` and `digests: true` (the store holds a digest entry for every row it copied; a
+`seed.json` without it was written before follow existed, is not followed and makes `reconcile` refuse it). `status --json`
 shows `seed { seed_id, finished_at, unseeded_gap_rows_total }` (nulls before a seed), and the provisional report names
 the seed, its age, the segmented pages and each gap that holds rows. `seedSwapCheck` refuses a swap with no seed
 (`not_seeded`) or while any gap holds a row (`unseeded_gaps`).

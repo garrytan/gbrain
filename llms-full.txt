@@ -6104,7 +6104,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   overwriting what the pass verified; every full pass therefore rewrites rows that were already correct.
   **A seed written before follow existed has no digest entries**, so nothing is followed and `reconcile` refuses it:
   `status` says the brain needs a reseed (`follower.state` is `needs_reseed`, with the steps in `follower.action`).
-  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
+  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start --plan`,
+  then `gbrain engine shadow start --yes --expect <plan_hash>` (a bare `start` only prints the plan).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
