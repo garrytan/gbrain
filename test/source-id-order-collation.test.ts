@@ -28,7 +28,7 @@ const EXEMPT: Record<string, string> = {
     'sorts the union output column id, which the first branch already selects as `id COLLATE "C"`.',
   'src/core/engine-sql/sources.ts|ORDER BY id LIMIT 2':
     'readSoleSourceId only checks that exactly one row exists; the order picks nothing (ruling C keeps its SQL).',
-  'src/commands/sources-git-gap.ts|ORDER BY 1':
+  'src/core/engine-sql/git-gap-census.ts|ORDER BY 1':
     'column 1 is a hold code, not a source id.',
   'src/core/sync-attempt.ts|ORDER BY created_at DESC, id DESC LIMIT':
     'sorts minion_jobs ids; sources is only a subquery.',

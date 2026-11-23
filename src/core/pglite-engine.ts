@@ -242,6 +242,8 @@ import * as volunteerEventsImpl from './engine-sql/volunteer-events.ts';
 import * as chronicleLedgerImpl from './engine-sql/chronicle-ledger.ts';
 import * as retrievalFeedbackImpl from './engine-sql/retrieval-feedback.ts';
 import * as pageAccessRowsImpl from './engine-sql/page-access-rows.ts';
+import * as gitGapCensusImpl from './engine-sql/git-gap-census.ts';
+import type { GitGapBatch } from './engine-sql/git-gap-census.ts';
 import type { OwnerOnlyForm } from './access/owner-only.ts';
 import type { RetrievalEventInsert, RetrievalRatingBatch } from './engine-sql/retrieval-feedback.ts';
 import type { ChronicleJudgeKey, ChronicleRowUpsert } from './engine-sql/chronicle-ledger.ts';
@@ -2516,6 +2518,15 @@ export class PGLiteEngine implements BrainEngine {
   insertRetrievalEvents(events: RetrievalEventInsert[]) { return retrievalFeedbackImpl.insertRetrievalEvents(this, events); }
   readRetrievalEvent(id: string) { return retrievalFeedbackImpl.readRetrievalEvent(this, id); }
   applyRetrievalRatings(args: RetrievalRatingBatch) { return retrievalFeedbackImpl.applyRetrievalRatings(this, args); }
+  readGitGapSourceRow(sourceId: string) { return gitGapCensusImpl.readGitGapSourceRow(this, sourceId); }
+  countGitGapLivePages(sourceId: string) { return gitGapCensusImpl.countGitGapLivePages(this, sourceId); }
+  markTransactionReadOnly() { return gitGapCensusImpl.markTransactionReadOnly(this); }
+  listGitGapNewestPages(sourceId: string, limit: number) { return gitGapCensusImpl.listGitGapNewestPages(this, sourceId, limit); }
+  countGitGapUnreadFacts(sourceId: string, pageIds: readonly string[]) { return gitGapCensusImpl.countGitGapUnreadFacts(this, sourceId, pageIds); }
+  readGitGapPageBatch(sourceId: string, batch: GitGapBatch) { return gitGapCensusImpl.readGitGapPageBatch(this, sourceId, batch); }
+  countGitGapFactsOnPages(sourceId: string, slugs: readonly string[]) { return gitGapCensusImpl.countGitGapFactsOnPages(this, sourceId, slugs); }
+  countGitGapTimelineOnPages(pageIds: readonly number[]) { return gitGapCensusImpl.countGitGapTimelineOnPages(this, pageIds); }
+  readGitGapSourceRows(sourceId: string, derivedLinkSources: readonly string[], holdOp: string) { return gitGapCensusImpl.readGitGapSourceRows(this, sourceId, derivedLinkSources, holdOp); }
   revokeAccessTokensNamed(name: string) { return accessCredentials.revokeAccessTokensNamed(this, name); }
   revokeAccessToken(id: string) { return accessCredentials.revokeAccessToken(this, id); }
   deleteOAuthClient(clientId: string) { return accessCredentials.deleteOAuthClient(this, clientId); }

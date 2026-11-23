@@ -17,7 +17,7 @@
  *    Postgres to see it fail.
  *  - Seam: source and member rows come from the createSource fixture and insertAccessMember; pages with their
  *    frontmatter from putPage, OAuth clients (with a stamped created_at) from insertOauthClient and file rows from
- *    upsertCliFileRow; link, hold and effect rows from harness-only SQL. `files verify` runs with an empty GBRAIN_HOME
+ *    upsertCliFileRow; link rows from addLink and hold rows from writeGitHoldRow; effect rows from harness-only SQL. `files verify` runs with an empty GBRAIN_HOME
  *    and stubbed process.exit and console.error. The admin clients list is read over HTTP from an express app on an
  *    ephemeral port. A command that still reads raw SQL stops on the Rust arm's raw_sql refusal.
  */
@@ -131,17 +131,34 @@ describe('command listings sort text keys by byte', () => {
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 
-  parityTest('the git-gap census counts links, holds and parked effects in byte key order', { methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('the git-gap census counts links and holds in byte key order', {
+    methods: ['putPage', 'readSourceState', 'addLink', 'writeGitHoldRow', 'transaction'],
+  }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await page(engine, 'work', 'notes/a');
     await page(engine, 'work', 'notes/b');
-    const [a, b] = (await engine.executeRaw<{ id: string }>("SELECT id::text FROM pages WHERE source_id = 'work' ORDER BY slug")).map(r => r.id);
-    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id = 'work'");
+    const { incarnation } = (await engine.readSourceState('work'))!;
     for (const key of MIXED_SOURCES) {
-      await engine.executeRaw('INSERT INTO links (from_page_id, to_page_id, link_type, link_source) VALUES ($1, $2, $3, $4)', [a, b, `t-${key}`, key]);
-      await engine.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES ('sync-hold',$1,$2::text::jsonb)",
-        [`work:${incarnation}:notes/${key}.md`, JSON.stringify([{ source_id: 'work', incarnation, path: `notes/${key}.md`, code: key, page_id: null, meta: {} }])]);
+      await engine.addLink('notes/a', 'notes/b', '', `t-${key}`, key, undefined, undefined, { fromSourceId: 'work', toSourceId: 'work' });
+      await engine.writeGitHoldRow('work', incarnation, `notes/${key}.md`, { source_id: 'work', incarnation, path: `notes/${key}.md`, code: key, page_id: null, meta: {} });
     }
+    const census = await censusGitGap(engine, 'work', { sample: 0 });
+    expect({
+      links: Object.keys(census.rows_without_git_home.links.by_link_source),
+      holds: Object.keys(census.holds),
+    }).toEqual({
+      links: BYTE_SOURCES,
+      holds: BYTE_SOURCES,
+    });
+    // The counts themselves are compared across engines.
+    return { links: census.rows_without_git_home.links, holds: census.holds };
+  });
+
+  // The parked-effect seed has no typed writer, so this half seeds by SQL and stops on the Rust arm.
+  parityTest('the git-gap census counts parked effects in byte key order', { methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql' }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await page(engine, 'work', 'notes/a');
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id = 'work'");
     await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
       const [request] = await tx.executeRaw<{ id: string }>(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,
@@ -153,12 +170,8 @@ describe('command listings sort text keys by byte', () => {
     });
     const census = await censusGitGap(engine, 'work', { sample: 0 });
     expect({
-      links: Object.keys(census.rows_without_git_home.links.by_link_source),
-      holds: Object.keys(census.holds),
       parked: census.parked_effects.map(p => [p.kind, p.code]),
     }).toEqual({
-      links: BYTE_SOURCES,
-      holds: BYTE_SOURCES,
       parked: BYTE_SOURCES.flatMap(kind => BYTE_SOURCES.map(code => [kind, code])),
     });
   });

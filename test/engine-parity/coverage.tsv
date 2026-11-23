@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2022/2039
+# covered: 2022/2048
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -74,7 +74,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 108/112
+# write_misc: 108/121
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -120,7 +120,7 @@ disconnect	lifecycle	yes	2	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	3	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	304	no	yes	yes	serves
+transaction	lifecycle	yes	305	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -128,7 +128,7 @@ getPage	pages	yes	205	yes	yes	yes	serves
 readPageSnapshot	pages	yes	60	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1096	yes	yes	yes	serves
+putPage	pages	yes	1097	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -327,7 +327,7 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	145	yes	yes	yes	serves
+addLink	links	yes	146	yes	yes	yes	serves
 addLinksBatch	links	yes	38	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -675,7 +675,7 @@ readSourcePurgeEpoch	persistence_journal	yes	4	no	yes	yes	serves
 lockGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 adjustGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
-writeGitHoldRow	persistence_journal	yes	4	no	yes	yes	serves
+writeGitHoldRow	persistence_journal	yes	5	no	yes	yes	serves
 replaceGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
 deleteGitHoldRow	persistence_journal	yes	1	no	yes	yes	serves
 countGitHolds	persistence_journal	yes	2	no	yes	yes	serves
@@ -1619,7 +1619,7 @@ replaceWantedLinkRows	wanted_links	yes	9	no	yes	yes	serves
 listMarkdownPageSlugs	write_misc	yes	1	no	yes	yes	serves
 readPageAccessRows	write_misc	yes	2	no	yes	yes	serves
 isSourceClaimed	write_misc	yes	5	no	yes	yes	serves
-readSourceState	write_misc	yes	11	no	yes	yes	serves
+readSourceState	write_misc	yes	12	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
@@ -1720,6 +1720,15 @@ reserveChronicleJudgeSlot	write_misc	yes	2	no	yes	yes	serves
 insertRetrievalEvents	write_misc	yes	5	no	yes	yes	serves
 readRetrievalEvent	write_misc	yes	3	no	yes	yes	serves
 applyRetrievalRatings	write_misc	yes	4	no	yes	yes	serves
+readGitGapSourceRow	write_misc	no	0	no	-	-	-
+countGitGapLivePages	write_misc	no	0	no	-	-	-
+markTransactionReadOnly	write_misc	no	0	no	-	-	-
+listGitGapNewestPages	write_misc	no	0	no	-	-	-
+countGitGapUnreadFacts	write_misc	no	0	no	-	-	-
+readGitGapPageBatch	write_misc	no	0	no	-	-	-
+countGitGapFactsOnPages	write_misc	no	0	no	-	-	-
+countGitGapTimelineOnPages	write_misc	no	0	no	-	-	-
+readGitGapSourceRows	write_misc	no	0	no	-	-	-
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
 revokeAccessToken	write_misc	yes	12	no	yes	yes	serves
 deleteOAuthClient	write_misc	yes	9	no	yes	yes	serves

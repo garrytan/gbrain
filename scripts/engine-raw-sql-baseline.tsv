@@ -126,7 +126,6 @@ src/commands/serve-http-webhooks.ts	execute_raw	3
 src/commands/serve-http.ts	sql_template	1
 src/commands/sources-add-next.ts	execute_raw	2
 src/commands/sources-canonical.ts	execute_raw	1
-src/commands/sources-git-gap.ts	execute_raw	15
 src/commands/sources-git-reconcile.ts	execute_raw	1
 src/commands/sources-harden.ts	execute_raw	5
 src/commands/sources-lifecycle.ts	execute_raw	1

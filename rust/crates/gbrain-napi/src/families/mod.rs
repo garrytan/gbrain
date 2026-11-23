@@ -49,6 +49,7 @@ mod op_checkpoint;
 mod page_purges;
 
 mod chronicle_ledger;
+mod git_gap_census;
 mod page_visibility;
 mod pages;
 mod publication_journal;

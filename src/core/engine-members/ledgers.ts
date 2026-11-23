@@ -21,6 +21,7 @@ import type * as PinnedQuestionsSql from '../engine-sql/pinned-questions.ts';
 import type * as VolunteerEventsSql from '../engine-sql/volunteer-events.ts';
 import type * as ChronicleLedgerSql from '../engine-sql/chronicle-ledger.ts';
 import type * as RetrievalFeedbackSql from '../engine-sql/retrieval-feedback.ts';
+import type * as GitGapCensusSql from '../engine-sql/git-gap-census.ts';
 
 export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
@@ -210,6 +211,24 @@ export interface LedgerMembers {
   readRetrievalEvent(id: string): Promise<RetrievalFeedbackSql.RetrievalEventRead | null>;
   /** Applies one batch of ratings (targets already distinct): each newly stored rating moves its element's weight. */
   applyRetrievalRatings(args: RetrievalFeedbackSql.RetrievalRatingBatch): Promise<RetrievalFeedbackSql.AppliedRatingRow[]>;
+  /** The Git-gap census reads (commands/sources-git-gap.ts; engine-sql/git-gap-census.ts). The source's checkout root and incarnation. */
+  readGitGapSourceRow(sourceId: string): Promise<GitGapCensusSql.GitGapSourceRow | null>;
+  /** The source's live pages. */
+  countGitGapLivePages(sourceId: string): Promise<number>;
+  /** Makes the open transaction read-only (`SET TRANSACTION READ ONLY`); the census reads run in one. */
+  markTransactionReadOnly(): Promise<void>;
+  /** The `limit` most recently updated live pages of the source, newest first. */
+  listGitGapNewestPages(sourceId: string, limit: number): Promise<Array<{ id: string; updated_at: string }>>;
+  /** The source's fenced facts on a live page that is not one of `pageIds`. */
+  countGitGapUnreadFacts(sourceId: string, pageIds: readonly string[]): Promise<number>;
+  /** One batch of the source's live pages by id, with the census key fields and the privacy part's verdict. */
+  readGitGapPageBatch(sourceId: string, batch: GitGapCensusSql.GitGapBatch): Promise<GitGapCensusSql.GitGapPageRow[]>;
+  /** The source's fenced facts on the pages at `slugs`. */
+  countGitGapFactsOnPages(sourceId: string, slugs: readonly string[]): Promise<number>;
+  /** The timeline rows of the pages `pageIds`. */
+  countGitGapTimelineOnPages(pageIds: readonly number[]): Promise<number>;
+  /** The census's source-wide rows with no Git home, hold codes and parked effect targets, each list by byte order. */
+  readGitGapSourceRows(sourceId: string, derivedLinkSources: readonly string[], holdOp: string): Promise<GitGapCensusSql.GitGapSourceRows>;
 
   /** Revoke every active access token with this exact name; the revoked ids (none on a store that keeps no credentials). */
   revokeAccessTokensNamed(name: string): Promise<string[]>;

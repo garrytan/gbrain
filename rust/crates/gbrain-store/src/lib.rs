@@ -24,6 +24,7 @@ pub mod error;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
 pub mod format;
+pub mod git_gap_census;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
