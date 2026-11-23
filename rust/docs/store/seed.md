@@ -351,7 +351,7 @@ of a take and the referrers of a fact; they keep their entries.
 
 The relations whose rows are looked up this way, with the column sets that are unique, are the `unique` lists of each
 relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chunks` (page, index), `links` (from, to,
-type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `takes`
+type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `timeline_entries` (page, date, summary, source), `takes`
 (page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
 `code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
 found through the digest entries' identity columns, scanning the relation's entries once per call that has a row to

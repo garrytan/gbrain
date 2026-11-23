@@ -18,7 +18,7 @@ import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
 import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
 import { readManagedStorage, storageLine, storageReport, type StorageReport } from '../shadow/managed-gate.ts';
-import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
+import { readSeedRecord, RESEED_STEPS, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
   brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
@@ -279,8 +279,7 @@ export function seedStatus(record: SeedRecord | null): {
   };
 }
 
-const RESEED_STEP = 'A Rust store is seeded once. To seed again, start from a new shadow directory: '
-  + 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed.';
+const RESEED_STEP = `A Rust store is seeded once. To seed again, start from a new shadow directory: ${RESEED_STEPS}.`;
 
 async function seed(
   brain: { key: string; dir: string; engine: string }, f: Set<string>, deps: EngineShadowDeps,
@@ -369,7 +368,8 @@ async function seedFrom(
 async function reconcileCommand(
   brain: { key: string; dir: string }, json: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void,
 ): Promise<number> {
-  if (!readSeedRecord(brain.dir)) { err('engine shadow: reconcile needs a seeded store. Run gbrain engine shadow seed first.'); return 1; }
+  const seeded = readSeedRecord(brain.dir);
+  if (seeded?.digests !== true) { err(seeded ? `engine shadow: this seed was written before follow existed, so reconcile cannot guard its rows. Reseed: ${RESEED_STEPS}.` : 'engine shadow: reconcile needs a seeded store. Run gbrain engine shadow seed first.'); return 1; }
   const [{ Reconciler }, { ShadowSupervisor }, { shadowChildArgv }, { openReadSource }] = await Promise.all([
     import('../shadow/reconcile.ts'), import('../shadow/supervisor.ts'), import('../shadow/attach.ts'), import('../shadow/read-pool.ts'),
   ]);

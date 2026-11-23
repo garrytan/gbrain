@@ -69,7 +69,11 @@ export interface SeedRecord {
   non_terminal_jobs: number;
   /** Pages whose body is stored in segments: the seeded store reads them as shells, without their text. */
   segmented_pages: number;
+  /** The store holds a digest entry for every row it copied: the follower and reconcile need them. Absent in a seed written before follow. */
+  digests?: true;
 }
+
+export const RESEED_STEPS = 'gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start to turn shadow mode on again';
 
 export interface SeedOptions {
   primaryEngine: string;
@@ -208,6 +212,7 @@ export async function runSeed(primary: BrainEngine, target: SeedTarget, opts: Se
       unseeded_gap_rows_total: Object.values(gaps).reduce((a, b) => a + b, 0),
       non_terminal_jobs: nonTerminalJobs,
       segmented_pages: segmentedPages,
+      digests: true,
     };
   }, { readOnly: true });
 }

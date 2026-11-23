@@ -55,7 +55,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     offer: (capture: Parameters<MirrorQueue['offer']>[0]) => queue.offer(capture),
     active: () => supervisor.active(),
   };
-  const seeded = deps.follow === undefined && readSeedRecord(dir) !== null;
+  const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
   const reads = seeded ? openReadSource(engine) : undefined;
   const follower = reads ? new ShadowFollower({

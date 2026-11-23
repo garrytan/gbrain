@@ -10,6 +10,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { buildFollowStatus, readPasses } from '../../src/shadow/follow-status.ts';
 import { rowDigest, sortKey } from '../../src/shadow/follow-digest.ts';
+import { nextGeneration } from '../../src/shadow/follower.ts';
 import type { ShadowState } from '../../src/shadow/state.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
@@ -31,10 +32,10 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 5)); // a pass r
 const status = (rig: FollowRig) => { rig.child.tick(); return buildFollowStatus(rig.dir, STATE); };
 
 export function defineFollowScenarios(ctx: FollowScenarioContext): void {
-  async function rig(): Promise<FollowRig> {
+  async function rig(opts: { dirty?: (relation: string) => void } = {}): Promise<FollowRig> {
     const primary = ctx.primary();
     await fillSeedFixture(primary);
-    const r = await openFollowRig(primary, ctx.addon(), ctx.tempDir(), ctx.kind);
+    const r = await openFollowRig(primary, ctx.addon(), ctx.tempDir(), ctx.kind, opts);
     // A fresh epoch starts invalid ("not_reconciled"); the first full pass proves the seed and restores coverage.
     const first = await r.reconciler.run('full');
     expect(first.error).toBeUndefined();
@@ -236,6 +237,49 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(pass.repaired_by_relation.pages).toBe(2);
         expect(await r.rust.getTags('people/alice-example')).toEqual([]);
         expect((await r.rust.getPage('people/carol-example'))?.title).toBe('Carol Example');
+      } finally { await r.close(); }
+    }, 90_000);
+
+    test('a clean interval still raises the fence: an older apply that arrives after the pass changes nothing', async () => {
+      const r = await rig();
+      try {
+        const key = [{ name: 'key', type: 'text', collatable: true, category: 'S', generated: false }];
+        const sort = sortKey(key, ['gen_probe']).toString('hex');
+        const apply = (generation: number, value: string) => r.store.replaceRelationRows(
+          r.seedId, 'config', generation, [{ sort, key: { key: 'gen_probe' } }], [{ key: 'gen_probe', value }],
+          [{ sort, digest: rowDigest({ key: 'gen_probe', value }).toString('hex') }]);
+        await ctx.primary().executeRaw(`INSERT INTO config (key, value) VALUES ('gen_probe', 'current') ON CONFLICT (key) DO UPDATE SET value = 'current'`);
+        expect((await r.reconciler.run('full')).repaired_rows).toBeGreaterThanOrEqual(1);
+        // A follower read taken now carries this generation; its apply is still on the way when the next pass verifies the store.
+        const early = nextGeneration();
+        await tick();
+        const clean = await r.reconciler.run('full');
+        expect(clean.repaired_rows).toBe(0);
+        const late = await apply(early, 'intermediate');
+        expect(late.skipped_older).toBe(1);
+        expect(await r.rust.getConfig('gen_probe')).toBe('current');
+      } finally { await r.close(); }
+    }, 90_000);
+
+    test('displacing a page also marks its tags dirty, and a pass over what was reported leaves the store equal', async () => {
+      const dirtied: string[] = [];
+      const r = await rig({ dirty: (relation) => dirtied.push(relation) });
+      try {
+        const primary = ctx.primary();
+        const tagsOf = async (slug: string) => (await primary.getTags(slug)).sort();
+        expect(await tagsOf('people/alice-example')).not.toEqual([]);
+        // Acme takes alice's slug and alice is renamed, but only acme's change reaches the follower: alice, still unrenamed in the store, is displaced.
+        await primary.executeRaw(`UPDATE pages SET slug = 'people/alice-renamed' WHERE slug = 'people/alice-example'`);
+        await primary.executeRaw(`UPDATE pages SET slug = 'people/alice-example' WHERE slug = 'companies/acme-example'`);
+        r.follower.publish({ seq: 3_000_000, committed_at: Date.now(), items: [{ kind: 'rows', relation: 'pages', selector: { slug: 'people/alice-example' }, before_keys: null }] });
+        await r.settle();
+        expect(dirtied).toContain('pages');
+        expect(dirtied).toContain('tags');
+        await tick();
+        expect((await r.reconciler.run('dirty', [...new Set(dirtied)])).error).toBeUndefined();
+        expect(await r.rust.getTags('people/alice-renamed')).toEqual(await tagsOf('people/alice-renamed'));
+        const pass = await r.reconciler.run('full');
+        expect(pass.repaired_rows).toBe(0);
       } finally { await r.close(); }
     }, 90_000);
   });

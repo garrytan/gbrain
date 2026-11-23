@@ -6074,9 +6074,14 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   pass also runs on its own a minute after a serving process starts if the watermark is still invalid, every 24 hours
   while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
   displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
-  next full pass.
-- **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
-  `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
+  next full pass. A displaced page also marks `tags` dirty, because its tags go with it. An interval that already
+  matches is still rewritten, so its generation fence stops a follower read that began before the pass from
+  overwriting what the pass verified; every full pass therefore rewrites rows that were already correct.
+  **A seed written before follow existed has no digest entries**, so nothing is followed and `reconcile` refuses it:
+  `status` says the brain needs a reseed (`follower.state` is `needs_reseed`, with the steps in `follower.action`).
+  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
+- **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
+  `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
   `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
   watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
