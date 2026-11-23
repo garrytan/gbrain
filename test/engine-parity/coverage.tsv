@@ -120,7 +120,7 @@ disconnect	lifecycle	yes	2	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	3	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	299	no	yes	yes	serves
+transaction	lifecycle	yes	298	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -128,13 +128,13 @@ getPage	pages	yes	204	yes	yes	yes	serves
 readPageSnapshot	pages	yes	63	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1087	yes	yes	yes	serves
+putPage	pages	yes	1088	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	289	yes	yes	yes	serves
+softDeletePage	pages	yes	290	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	6	no	yes	yes	serves
@@ -761,12 +761,12 @@ shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	12	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	73	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	91	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	92	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	33	no	yes	yes	serves
 lockWriteRequest	persistence_journal	yes	6	no	yes	yes	serves
-completeWriteRow	persistence_journal	yes	40	no	yes	yes	serves
+completeWriteRow	persistence_journal	yes	41	no	yes	yes	serves
 lockWriteRequestsById	persistence_journal	no	0	no	-	-	-
 compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 cancelWriteRow	persistence_journal	yes	3	no	yes	yes	serves
@@ -1522,7 +1522,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	159	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	157	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
@@ -1638,7 +1638,7 @@ appendOpCheckpointPaths	write_misc	yes	5	no	yes	yes	serves
 deleteOpCheckpoint	write_misc	yes	3	no	yes	yes	serves
 deleteOpCheckpointPaths	write_misc	yes	2	no	yes	yes	serves
 readOpCheckpointRecords	write_misc	yes	6	no	yes	yes	serves
-writeOpCheckpointRecords	write_misc	yes	8	no	yes	yes	serves
+writeOpCheckpointRecords	write_misc	yes	9	no	yes	yes	serves
 readSyncImportPageRows	write_misc	yes	4	no	yes	yes	serves
 declareSyncImportPageCursor	write_misc	yes	1	no	yes	yes	refuses:raw_sql
 fetchSyncImportPageCursor	write_misc	yes	1	no	yes	yes	refuses:raw_sql
@@ -1648,7 +1648,7 @@ readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
 readOpCheckpointRecord	write_misc	yes	15	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	34	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	35	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -2070,7 +2070,7 @@ readChronicleDuplicateEvents	doctor_reads_acc	yes	1	no	yes	yes	serves
 readFeedbackStatus	doctor_reads_acc	yes	1	no	yes	yes	serves
 listVolunteerChannels	doctor_reads_acc	yes	1	no	yes	yes	serves
 listFenceCandidateRecords	doctor_checkpoints	yes	3	no	yes	yes	serves
-listDerivedOriginParks	doctor_checkpoints	yes	1	no	yes	yes	serves
+listDerivedOriginParks	doctor_checkpoints	yes	2	no	yes	yes	serves
 listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves
 readSoakCounterRows	doctor_checkpoints	yes	1	no	yes	yes	serves
 listUnfinishedManagedSyncCursors	doctor_checkpoints	yes	1	no	yes	yes	serves
@@ -2094,7 +2094,7 @@ listInterimStoredObjectCounts	doctor_brain	yes	1	no	yes	yes	serves
 readOldestSourceCreatedAt	doctor_brain	yes	1	no	yes	yes	serves
 listVisibilityCandidatePages	doctor_brain	yes	1	no	yes	yes	serves
 countVisibilityNoncanonicalHolds	doctor_brain	yes	1	no	yes	yes	serves
-listContentBlockedReceipts	doctor_brain	yes	1	no	yes	yes	serves
+listContentBlockedReceipts	doctor_brain	yes	2	no	yes	yes	serves
 listPassAdmittedReceipts	doctor_brain	yes	1	no	yes	yes	serves
 readTerminalFailureGroups	doctor_terminal	yes	2	no	yes	yes	serves
 listTerminalFailureBatch	doctor_terminal	yes	2	no	yes	yes	serves

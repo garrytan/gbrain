@@ -17,10 +17,11 @@ The backup-coverage maturity read (`readBrainMaturity`) is the stats family's me
 | `brain.listInterimStoredObjectCounts({type, shelfSourceId, prefix, adoptedTag})` | live pages of `type` outside the shelf source, whose slug starts with `prefix` and is not `prefix + 'index'`, with no `adoptedTag` tag, counted per source | rows ordered by source id bytewise |
 | `brain.readOldestSourceCreatedAt()` | the earliest source `created_at`, or null with no source | ISO text |
 | `brain.listVisibilityCandidatePages(sourceIds \| null)` | live pages of live sources whose frontmatter is an object with a `visibility` key in any letter case and a `visibility` value that is not the text `private` (a missing or non-text value counts as not private) | ordered by source id then slug, bytewise |
+| `brain.listContentBlockedReceipts()` | for each `managed-sync` checkpoint whose first record is not `done: true`, the failed, conflicted or cancelled request of the record's `sourceId` whose request id is the record's `pending.requestId`: `{ source_id, error_code, error_message, error_detail }` | rows ordered by the cursor's source id bytewise; rows of one source keep their scan order |
 
 ## Members with no writer on a Rust brain (answer empty)
 
-The git-hold, managed-sync receipt and connector checkpoint rows live in `op_checkpoints` and `persistence_requests`, which only
+The git-hold and pass receipt rows these read live in `op_checkpoints` and `persistence_requests`, which only
 `executeRaw` writes, and a Rust brain refuses `executeRaw`; no row of them exists there. These members answer the empty value
 with no store call, which is what the same read finds on a PGLite brain nothing has written to. They are listed here so a later
 writer knows which reads it must feed:
@@ -28,7 +29,6 @@ writer knows which reads it must feed:
 | JS | Resolves | Reads |
 | --- | --- | --- |
 | `brain.countVisibilityNoncanonicalHolds(holdOp, sourceIds)` | `0` | the `visibility_noncanonical` hold rows of live sources |
-| `brain.listContentBlockedReceipts()` | `[]` | the failed receipts that block a managed-sync cursor |
 | `brain.listPassAdmittedReceipts(sourceId, passId)` | `[]` | the failed receipts of one admitted pass |
 | `brain.listOrphanConnectorCheckpoints(query)` | `[]` | the checkpoint and retry rows no source can load (also the list the repair preview prints) |
 

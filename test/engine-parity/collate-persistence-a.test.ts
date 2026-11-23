@@ -188,15 +188,17 @@ describe('connector, derived-origin and atom-retirement readers sort by byte', (
   });
 
   parityTest('readDerivedOriginParks lists parks oldest first, ties by fingerprint', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage', 'writeOpCheckpointRecords', 'listDerivedOriginParks'],
   }, async (engine) => {
     const ids: number[] = [];
     for (const slug of ['collate/one', 'collate/two', 'collate/three']) {
-      const [page] = await engine.executeRaw<{ id: number }>(`INSERT INTO pages(slug,type,title,compiled_truth,deleted_at) VALUES($1,'note',$1,'x',now()) RETURNING id`, [slug]);
-      ids.push(Number(page!.id));
+      const page = await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '' });
+      await engine.softDeletePage(slug);
+      ids.push(Number(page.id));
     }
-    // Every park shares one timestamp, so the fingerprint breaks the tie. Page ids are decimal text, which orders the same by byte or locale.
-    for (const id of ids) await checkpoint(engine, DERIVED_ORIGIN_PARK_OP, String(id), [{ page_id: id }], '2021-01-01T00:00:00Z');
+    // Every park is written by one statement, so all share one timestamp and the fingerprint breaks the tie. Page ids
+    // are decimal text, which orders the same by byte or locale.
+    await engine.writeOpCheckpointRecords(DERIVED_ORIGIN_PARK_OP, ids.map(id => ({ fingerprint: String(id), record: { page_id: id } })));
     const parks = (await readDerivedOriginParks(engine)).map(park => park.page_id);
     expect(parks).toEqual(byteOrder(ids.map(String)).map(Number));
     return parks.length;

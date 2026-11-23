@@ -45,4 +45,13 @@ impl Brain {
             s.list_visibility_candidate_pages(source_ids.as_deref())
         })
     }
+
+    /// `listContentBlockedReceipts()`: the failed request each unfinished managed-sync cursor waits on.
+    #[napi]
+    pub fn list_content_blocked_receipts<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_content_blocked_receipts())
+    }
 }

@@ -16,6 +16,7 @@ predicate are pinned by `test/doctor-checkpoints-sql.test.ts`). The TypeScript s
 | `brain.readLatestConnectorReceipt()` | the summary of the newest `source_type = 'connector'` row, or null | `readLatestConnectorReceipt` |
 | `brain.listFactsAbsorbFailureGroups()` | the last 24 hours of `facts:absorb` failures grouped by source and reason | `listFactsAbsorbFailureGroups` |
 | `brain.readSyncAdmissionSettingRow(key, op, fp)` | the config value, with no dating row | `readSyncAdmissionSettingRow` |
+| `brain.listDerivedOriginParks(op)` | `[{park}]`: the first record of each `op` parent whose fingerprint is the decimal id of a soft-deleted page, oldest parent first, ties by fingerprint bytewise | `listDerivedOriginParks` |
 
 Last-known rows live in the housekeeping key space (`d 0x02 <op> 0x00 <fingerprint>`, a `HousekeepingRow`). The fingerprint is the
 entry name and `completed_keys` is `[value]` as a jsonb value (keys ordered by length, then bytes), so a read returns what
@@ -33,12 +34,12 @@ pass row's `set_at`; the store keeps no dating row for a config key, so `row_val
 ## Members with no writer on a Rust brain (answer empty)
 
 These read `op_checkpoints` rows that only the managed-sync (git) pass writes: per-source cursors, pass rows, stops, backlog headers,
-derived-origin and purge parks, soak counters, identity downgrades and held atoms; and the credential re-chunk holds,
+purge parks, soak counters, identity downgrades and held atoms; and the credential re-chunk holds,
 which only the credential re-seal migration writes through `executeRaw`. A Rust brain has no such writer and no
 managed-sync writer (`persistence_journal` family in `members.ts`), so the true answer is none: a list member returns `[]`, a single-row
 member returns null. They are listed here so a later writer knows which reads it must feed:
 
-`readOpCheckpointKeys`, `listDerivedOriginParks`, `listPurgeParks`, `readSoakCounterRows`,
+`readOpCheckpointKeys`, `listPurgeParks`, `readSoakCounterRows`,
 `listUnfinishedManagedSyncCursors`, `listManagedSyncPassStops`, `listManagedSyncBacklogHeaders`, `readManagedSyncPassRow`,
 `listLiveManagedSyncPassRows`, `listCheckpointBlockedSources`, `listOpenIdentityDowngrades`, `listHeldManagedAtomRows`, `listCredentialResealHoldRows`.
 

@@ -49,4 +49,14 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_facts_absorb_failure_groups())
     }
+
+    /// `listDerivedOriginParks(op)`: `{ park }` for each park whose page is a tombstone, oldest first.
+    #[napi]
+    pub fn list_derived_origin_parks<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_derived_origin_parks(&op))
+    }
 }

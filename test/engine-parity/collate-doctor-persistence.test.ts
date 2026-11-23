@@ -237,15 +237,14 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('contentBlockedSources lists the sources a failed content refusal stops by byte id', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+    methods: ['insertWriteRequest', 'completeWriteRow', 'writeOpCheckpointRecord', 'listContentBlockedReceipts'],
   }, async (engine, backend) => {
     const { contentBlockedSources } = await import('../../src/commands/doctor/checks/git-holds.ts');
     for (const id of SRC) {
       await createSource(engine, backend, id);
       const requestId = randomUUID();
-      await request(engine, { source: id, state: 'failed', requestId, errorCode: 'invalid_frontmatter' });
-      await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
-        [id, JSON.stringify([{ sourceId: id, pending: { requestId }, done: false }])]);
+      await seedTypedRequest(engine, { source: id, principalId: 'doctor', digest: randomUUID(), state: 'failed', requestId, errorCode: 'invalid_frontmatter' });
+      await engine.writeOpCheckpointRecord('managed-sync', id, [{ sourceId: id, pending: { requestId }, done: false }]);
     }
     const blocked = await contentBlockedSources(engine);
     const out = blocked.map(b => b.source_id);
