@@ -8,6 +8,7 @@
  * onto the build already installed (doctor's `runtime_build_skew` fix);
  * `--dry-run` prints the plan and changes nothing.
  */
+import { isEngineCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
@@ -499,8 +500,9 @@ export async function restartServeAfterSelfUpgrade(isIdle: () => Promise<boolean
     if (!('detail' in result)) return;
     logSelfUpgrade({ channel: 'autopilot', action: 'restart_serve', current: VERSION, outcome: result.outcome === 'restarted' ? 'applied' : 'skipped', reason: result.outcome });
     console.log(`[autopilot] serve ${result.outcome === 'restarted' ? `restarted onto v${VERSION}` : `still on another build (${result.outcome})`}: ${result.detail}`);
-  } catch {
-    /* the serve restart must never break the autopilot tick */
+  } catch (e) {
+    // Never breaks the tick, but a brain whose engine cannot say whether it is idle is not "nothing to restart".
+    if (isEngineCapabilityRefusal(e)) console.error(`[autopilot] serve restart skipped this tick: ${(e as Error).message}`);
   }
 }
 

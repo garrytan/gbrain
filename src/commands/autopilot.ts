@@ -56,7 +56,7 @@ import { readHostBun } from '../core/bun-floor.ts';
 import { detectInstallMethod, readInstallTargetFloor } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
-import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { installRepoFallback } from './autopilot/install-repo.ts';
 // Path helpers live in a LEAF core module so other commands (gbrain migrate)
@@ -545,8 +545,9 @@ export async function attemptAutopilotSelfUpgrade(
       /* already gone */
     }
     process.exit(0);
-  } catch {
-    /* the self-upgrade channel must never break the tick */
+  } catch (e) {
+    // The channel must never break the tick, but a brain whose engine cannot say whether it is idle is not "nothing to upgrade".
+    if (isEngineCapabilityRefusal(e)) console.error(`[autopilot] self-upgrade skipped this tick: ${(e as Error).message}`);
   }
 }
 
