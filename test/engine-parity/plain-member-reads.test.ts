@@ -75,9 +75,10 @@ describe('engine parity: a plain member reads what it may', () => {
       await seed(arm.engine, arm.backend);
       await arm.engine.setConfig('mcp.stdio_member', 'alice-example');
       const access = await remoteCallerAccess(arm.engine, undefined, [], 'stdio');
-      const outcome = await withCallerAccess(access, () => arm.engine.listFactsSince(SRC, new Date(0), { entity: 'people/a-example', excludePrivate: true } as never))
-        .then(() => 'answers', (e: { code?: string }) => String(e.code));
-      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing' : 'answers' });
+      const outcome = await withCallerAccess(access, () => arm.engine.listFactsSince(SRC, new Date(0), { entitySlug: 'people/a-example', excludePrivate: true }))
+        .then(() => 'answers', (e: { code?: string; message?: string }) => `${e.code}: ${/excludePrivate for a caller/.test(String(e.message)) ? 'caller policy' : e.message}`);
+      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing: caller policy' : 'answers' });
     }
+    expect(arms().length).toBeGreaterThan(0);
   }, 120_000);
 });
