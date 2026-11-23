@@ -10,18 +10,19 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
 import { policyHash, READINESS_POLICY } from '../src/core/engine-swap/policy.ts';
-import { capabilitySetHash, currentBuild, ensureEpoch, readEpoch, type EpochBuild, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
+import { capabilitySetHash, currentBuild, ensureEpoch, readEpoch, SHADOW_ADAPTER_VERSION, type EpochBuild, type EpochInputs } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, DEFAULT_READINESS_DAYS, MIN_SUCCESSFUL_PER_OP, renderEvidenceStatus } from '../src/shadow/evidence.ts';
 import { exactnessArm, isCollationOrder, qualifyMismatch } from '../src/shadow/exactness.ts';
 import { appendFault, appendLedgerRows, ledgerDir, type ShadowFault, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
+import { appendPass, buildFollowStatus, NOT_RUN_PROBE } from '../src/shadow/follow-status.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState } from '../src/shadow/state.ts';
@@ -523,5 +524,166 @@ describe('through the status command, the report and the readiness evaluator', (
       used(dir, epoch, { getBacklinks: { offered: 4, sampled_out: 4 } });
       expect((await evaluate(dir)).row(2).detail).toContain('getBacklinks 0/100');
     });
+  });
+});
+
+describe('opening an epoch from several processes', () => {
+  const script = (): string => {
+    const path = join(tmp(), 'open-epoch.ts');
+    writeFileSync(path, `import { existsSync } from 'node:fs';
+import { ensureEpoch } from ${JSON.stringify(join(import.meta.dir, '..', 'src', 'shadow', 'evidence-epoch.ts'))};
+const [dir, go] = process.argv.slice(2);
+const deadline = Date.now() + 20000;
+while (go && !existsSync(go) && Date.now() < deadline) { /* wait for the start signal */ }
+const m = ensureEpoch(dir!, ${JSON.stringify(INPUTS)}, Date.now());
+console.log(JSON.stringify({ epoch_id: m.epoch_id, started_at: m.started_at }));
+`);
+    return path;
+  };
+  const run = (file: string, ...args: string[]) => {
+    const child = spawn(process.execPath, ['run', file, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)));
+    return { child, exited, out: () => out };
+  };
+
+  test('a child waits while another process holds the epoch lock, then opens the epoch', async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'evidence'));
+    writeFileSync(join(dir, 'evidence', 'epoch.lock'), String(process.pid)); // held by a live process: this one
+    const p = run(script(), dir);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(p.child.exitCode).toBeNull();
+    expect(existsSync(join(dir, 'evidence', 'epoch.json'))).toBe(false);
+    rmSync(join(dir, 'evidence', 'epoch.lock'));
+    expect(await p.exited).toBe(0);
+    expect(JSON.parse(p.out()).epoch_id).toBe(readEpoch(dir)!.epoch_id);
+    expect(existsSync(join(dir, 'evidence', 'epoch.lock'))).toBe(false); // released
+  }, 30_000);
+
+  test('processes that start together agree on one epoch, opened once', async () => {
+    const file = script();
+    for (let round = 0; round < 4; round++) {
+      const dir = tmp();
+      const go = join(tmp(), 'go');
+      const procs = [run(file, dir, go), run(file, dir, go), run(file, dir, go)];
+      await new Promise((resolve) => setTimeout(resolve, 400)); // all three are spinning on the start signal
+      writeFileSync(go, '');
+      expect(await Promise.all(procs.map((p) => p.exited))).toEqual([0, 0, 0]);
+      const seen = procs.map((p) => JSON.parse(p.out()));
+      expect(new Set(seen.map((m) => m.epoch_id)).size).toBe(1);
+      expect(new Set(seen.map((m) => m.started_at)).size).toBe(1); // one process created it; the others found it
+      expect(readEpoch(dir)).toMatchObject(seen[0]);
+    }
+  }, 60_000);
+
+  test('a lock left by a process that is gone is taken over', () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'evidence'));
+    const gone = spawnSync(process.execPath, ['-e', '0']);
+    writeFileSync(join(dir, 'evidence', 'epoch.lock'), String(gone.pid));
+    expect(ensureEpoch(dir, INPUTS, STARTED).epoch_id).toBe(readEpoch(dir)!.epoch_id);
+    expect(existsSync(join(dir, 'evidence', 'epoch.lock'))).toBe(false);
+  });
+});
+
+describe('adapter identity', () => {
+  test('the TS adapter version is pinned to a digest of the adapter source: a change to it must bump the version', () => {
+    const root = join(import.meta.dir, '..', 'src', 'core', 'rust-engine');
+    const files = [...readdirSync(join(root, 'store-members')).filter((n) => n.endsWith('.ts')).map((n) => `store-members/${n}`), 'store-codec.ts', 'members.ts'].sort();
+    const digest = createHash('sha256');
+    for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
+    // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([1, '2da36b0aec9fd66f7873674ff553852d076d3038eb0807174ac1864efc92fafd']);
+  });
+});
+
+describe('unreadable fault history', () => {
+  const faultsFile = (dir: string): string => join(dir, 'faults.jsonl');
+  const good = (epoch: string): string => JSON.stringify({ ts: new Date(NOW.getTime() - DAY).toISOString(), kind: 'child_exit', detail: 'code=1 signal=none', epoch_id: epoch }) + '\n';
+
+  test('only an unfinished final line is tolerated; any malformed complete line or record makes child health absent', () => {
+    const { dir, epoch } = epochDir();
+    writeFileSync(faultsFile(dir), good(epoch) + good(epoch));
+    expect(status(dir).child).toEqual({ panics: 0, faults: 2 });
+    appendFileSync(faultsFile(dir), '{"ts":"2026-11-29T00:00:00.000Z","ki'); // a writer died mid-line
+    expect(status(dir).child).toEqual({ panics: 0, faults: 2 });
+    for (const bad of ['not json\n', '{}\n', '[]\n', 'null\n', '{"ts":"x","kind":5}\n', JSON.stringify({ ts: 'x', kind: 'child_exit', epoch_id: 7 }) + '\n']) {
+      writeFileSync(faultsFile(dir), good(epoch) + bad + good(epoch));
+      expect([bad, status(dir).child]).toEqual([bad, undefined]);
+      writeFileSync(faultsFile(dir), good(epoch) + bad); // a malformed COMPLETE final line is not an unfinished one
+      expect([bad, status(dir).child]).toEqual([bad, undefined]);
+    }
+    expect(status(dir).reads).toBeUndefined(); // no ledger rows were written here, and the child field alone is what went missing
+    const doc = { epoch_id: epoch, epoch_started_at: STARTED_ISO, ...status(dir) };
+    const verdict = evaluateReadiness(doc, NOW).criteria.find((c) => c.n === 9)!;
+    expect(verdict.state).toBe('missing');
+  });
+});
+
+const STARTED_ISO = new Date(STARTED).toISOString();
+
+describe('follower readiness inputs are reported only for the current epoch', () => {
+  const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
+  const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
+  const AT = new Date(NOW.getTime());
+  function follower(dir: string, tag: string | null | undefined): void {
+    writeSeedRecord(dir, SEED);
+    const lag: number[] = []; lag[3] = 100;
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify({
+      version: 1, epoch_id: 'seed-1', seed_id: 'seed-1', ...(tag === undefined ? {} : { evidence_epoch: tag }), epoch_started_at: 't', updated_at: AT.toISOString(), applied_rows: 12, queue_depth: 0, lag_ms: 0, last_seq: 1,
+      watermark: { valid: true, through: AT.toISOString(), invalidated_reason: null }, lag: { epoch: lag, hours: { [String(Math.floor(AT.getTime() / 3_600_000))]: lag } },
+      fingerprints: { checked_rows: 50, mismatches: 1 }, probe: { state: 'pass', checked_at: 't', server_version: '16', collation: 'C', mismatches: 0 }, allocators: { verified: true, checked_at: 't' },
+    }));
+  }
+  const pass = (dir: string, over: Record<string, unknown> = {}) => appendPass(dir, {
+    id: 'p', kind: 'full', started_at: new Date(NOW.getTime() - 3_600_000).toISOString(), finished_at: new Date(NOW.getTime() - 3_000_000).toISOString(), repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0, ...over,
+  } as never);
+
+  test('probe, fingerprints, allocators and lag count when tagged with the manifest epoch, and not otherwise', () => {
+    const { dir, epoch } = epochDir();
+    follower(dir, epoch);
+    const ok = buildFollowStatus(dir, STATE as never, AT);
+    expect(ok.fingerprints).toMatchObject({ checked_rows: 50, mismatches: 1, probe: { state: 'pass' } });
+    expect(ok.allocators.verified).toBe(true);
+    expect(ok.follower.lag_ms_p99_epoch).toBe(8);
+    expect(ok.follower.lag_ms_p99_24h).toBe(8);
+    for (const tag of ['an-older-epoch', null, undefined]) {
+      follower(dir, tag);
+      const other = buildFollowStatus(dir, STATE as never, AT);
+      expect([tag, other.fingerprints, other.allocators, other.follower.lag_ms_p99_epoch, other.follower.lag_ms_p99_24h]).toEqual([
+        tag, { checked_rows: 0, mismatches: 0, probe: NOT_RUN_PROBE }, { verified: false, checked_at: null }, null, null,
+      ]);
+      expect(other.follower).toMatchObject({ applied_rows: 12, state: 'following' }); // the Rust store's state is the seed's, not the epoch's
+    }
+    // After a rotation the manifest names a new epoch: the same file no longer counts.
+    follower(dir, epoch);
+    ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'f'.repeat(64) }, STARTED + DAY);
+    expect(buildFollowStatus(dir, STATE as never, AT).fingerprints.probe.state).toBe('not_run');
+  });
+
+  test('a reconcile pass counts only if it started and finished under the current epoch', () => {
+    const { dir, epoch } = epochDir();
+    follower(dir, epoch);
+    pass(dir, { id: 'older', epoch_id: 'an-older-epoch' });
+    pass(dir, { id: 'legacy' }); // appendPass tags it with the current epoch...
+    const legacy = readFileSync(join(dir, 'reconcile', 'passes.jsonl'), 'utf8');
+    expect(JSON.parse(legacy.trim().split('\n')[1]!).epoch_id).toBe(epoch); // ...so this one does count
+    pass(dir, { id: 'before-epoch', started_at: new Date(STARTED - 1_000).toISOString() });
+    appendFileSync(join(dir, 'reconcile', 'passes.jsonl'), JSON.stringify({ id: 'untagged', kind: 'full', started_at: new Date(NOW.getTime() - 1_000).toISOString(), finished_at: NOW.toISOString(), repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 }) + '\n');
+    const s = buildFollowStatus(dir, STATE as never, AT).reconcile;
+    expect(s.consecutive_clean_full_passes).toBe(1); // only 'legacy' (now tagged) qualifies
+    expect(s.last_pass).toMatchObject({ id: 'legacy' });
+    ensureEpoch(dir, { ...INPUTS, comparator_version: 9 }, STARTED + DAY);
+    expect(buildFollowStatus(dir, STATE as never, AT).reconcile).toMatchObject({ state: 'never_run', consecutive_clean_full_passes: 0, last_pass: null, next_full_pass_due: null });
+  });
+
+  test('with no epoch yet nothing is filtered and the status carries no epoch', () => {
+    const dir = tmp();
+    follower(dir, undefined);
+    const s = buildFollowStatus(dir, STATE as never, AT);
+    expect(s.epoch_id).toBeNull();
+    expect(s.fingerprints.probe.state).toBe('pass');
   });
 });

@@ -51,6 +51,11 @@ export interface FollowChildOptions {
   now?: () => number;
   /** Called with the boundary (`apply`, `fingerprint`, `reconcile`) and the error whenever a Rust call in the follower throws. */
   onRustError?: (boundary: string, error: unknown) => void;
+  /**
+   * The evidence epoch the readiness inputs below are counted under (evidence-epoch.ts), or null when this child has none.
+   * Left out, nothing is tagged (the follower knows no epochs). The store calls keep using the seed id.
+   */
+  epochId?: () => string | null;
 }
 
 const errorCode = (error: unknown): string => (error as { code?: string })?.code ?? (error instanceof Error ? error.name : 'rpc_failed');
@@ -84,9 +89,27 @@ export class FollowChild {
       allocators: { verified: false, checked_at: null },
     };
     if (!o.owner()) return;
+    this.syncEpoch();
     // A new owner session proves nothing about the writes before it: only a full pass that starts after this settles it.
     this.invalidate(keep ? 'follower_session_start' : 'not_reconciled');
     try { writeFileSync(join(o.dir, FOREIGN_FILE), ''); } catch { /* no lines to miss yet */ }
+  }
+
+  /**
+   * The probe, fingerprint totals, allocator verification and lag histograms are readiness evidence of ONE evidence epoch.
+   * They are tagged with it (`evidence_epoch`); when the epoch is not the one they were counted under (a rotation, or a
+   * file from before the tag) they start over, so the status never reports another build's evidence as this one's.
+   */
+  private syncEpoch(): void {
+    const file = this.file;
+    if (!file || !this.o.epochId || !this.o.owner()) return;
+    const id = this.o.epochId();
+    if ((file.evidence_epoch ?? null) === id && file.evidence_epoch !== undefined) return;
+    file.evidence_epoch = id;
+    file.lag = { epoch: [], hours: {} };
+    file.fingerprints = { checked_rows: 0, mismatches: 0 };
+    file.probe = NOT_RUN_PROBE;
+    file.allocators = { verified: false, checked_at: null };
   }
 
   /** Queues one event; ordering is the order of calls. */
@@ -128,7 +151,7 @@ export class FollowChild {
   }
 
   /** Flushes follower.json (called on the heartbeat). */
-  tick(): void { this.readForeign(); this.write(true); }
+  tick(): void { this.readForeign(); this.syncEpoch(); this.write(true); }
 
   async close(): Promise<void> {
     await this.chain;
@@ -137,6 +160,7 @@ export class FollowChild {
   }
 
   private async run(event: FollowEvent): Promise<void> {
+    this.syncEpoch();
     if (event.t === 'apply') await this.apply(event);
     else if (event.t === 'watermark') this.invalidate(event.reason, event.relation);
     else if (event.t === 'rpc') await this.rpc(event);

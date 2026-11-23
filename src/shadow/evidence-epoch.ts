@@ -11,7 +11,7 @@
  * concurrently agree on it, and a return to earlier inputs is still a new epoch (it must not revive old rows).
  */
 import { createHash } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { detectAddonTarget } from '../core/rust-engine/addon-target.ts';
 import { VERSION } from '../version.ts';
@@ -77,25 +77,94 @@ export function readEpoch(dir: string): EpochManifest | null {
   } catch { return null; } // silent-read-ok: no readable manifest is no epoch; the status leaves every count absent
 }
 
+const lockPath = (dir: string): string => join(dir, 'evidence', 'epoch.lock');
+const LOCK_STALE_MS = 30_000;
+const LOCK_WAIT_MS = 10_000;
+
+const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+/** A lock is stale when its holder process is gone, or (holder unknown) when it is older than LOCK_STALE_MS. */
+function staleLock(path: string): boolean {
+  try {
+    const pid = Number.parseInt(readFileSync(path, 'utf8'), 10);
+    if (Number.isInteger(pid) && pid > 0) {
+      try { process.kill(pid, 0); } catch (e) { return (e as NodeJS.ErrnoException).code !== 'EPERM'; }
+      return false;
+    }
+    return Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS;
+  } catch { return false; } // silent-read-ok: a lock that cannot be read is treated as held; the wait then times out and the caller records no epoch
+}
+
+/** Creates the lock file exclusively (O_EXCL): true when this process now holds it, false when another does. */
+function tryCreateLock(path: string): boolean {
+  try { const fd = openSync(path, 'wx', 0o600); writeSync(fd, String(process.pid)); closeSync(fd); return true; } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw e;
+  }
+}
+
+/** Runs `fn` while holding `<dir>/evidence/epoch.lock` (created O_EXCL), so children in other processes take turns. */
+function withEpochLock<T>(dir: string, fn: () => T): T {
+  mkdirSync(join(dir, 'evidence'), { recursive: true, mode: 0o700 });
+  const path = lockPath(dir);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    if (tryCreateLock(path)) break;
+    if (staleLock(path)) { try { unlinkSync(path); } catch { /* another process took it first */ } continue; }
+    if (Date.now() > deadline) throw Object.assign(new Error('the evidence epoch lock is held'), { code: 'epoch_lock_timeout' });
+    sleepSync(20);
+  }
+  try { return fn(); } finally { try { unlinkSync(path); } catch { /* already gone */ } }
+}
+
 /**
  * Returns the current epoch for `inputs`, opening a new one (and keeping the old manifest) when any input changed.
- * `build` is written only when a new epoch opens; an unchanged epoch keeps the build it started with.
+ * `build` is written only when a new epoch opens; an unchanged epoch keeps the build it started with. Opening is
+ * serialized across processes by a lock file and re-reads the manifest under it, so children that start together
+ * agree on one epoch. Throws (`epoch_lock_timeout`) when the lock stays held: the caller then has no epoch.
  */
 export function ensureEpoch(dir: string, inputs: EpochInputs, now: number = Date.now(), build?: EpochBuild): EpochManifest {
-  const current = readEpoch(dir);
-  if (current && canonical(current.inputs) === canonical(inputs)) return current;
-  const next: EpochManifest = {
-    version: 1, started_at: new Date(now).toISOString(), inputs, ...(build ? { build } : {}),
-    epoch_id: sha(`${canonical(inputs)}\0${current?.epoch_id ?? new Date(now).toISOString()}`).slice(0, 16),
+  const quick = readEpoch(dir);
+  if (quick && canonical(quick.inputs) === canonical(inputs)) return quick;
+  return withEpochLock(dir, () => {
+    const current = readEpoch(dir);
+    if (current && canonical(current.inputs) === canonical(inputs)) return current;
+    const next: EpochManifest = {
+      version: 1, started_at: new Date(now).toISOString(), inputs, ...(build ? { build } : {}),
+      epoch_id: sha(`${canonical(inputs)}\0${current?.epoch_id ?? new Date(now).toISOString()}`).slice(0, 16),
+    };
+    if (current) appendFileSync(historyPath(dir), JSON.stringify(current) + '\n', { mode: 0o600 });
+    const tmp = `${epochPath(dir)}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
+    renameSync(tmp, epochPath(dir));
+    return next;
+  });
+}
+
+/**
+ * The epoch id a long-lived process sees: the manifest's, re-read at most every `ttlMs`. A serving process notes each
+ * call under the epoch current at that moment, so a rotation is seen within `ttlMs`.
+ */
+export function epochWatch(dir: string, now: () => number = Date.now, ttlMs = 1_000): () => string | null {
+  let checked = -Infinity;
+  let id: string | null = null;
+  return () => {
+    const t = now();
+    if (t - checked >= ttlMs) { checked = t; id = readEpoch(dir)?.epoch_id ?? null; }
+    return id;
   };
-  mkdirSync(join(dir, 'evidence'), { recursive: true, mode: 0o700 });
-  if (current) appendFileSync(historyPath(dir), JSON.stringify(current) + '\n', { mode: 0o600 });
-  const tmp = `${epochPath(dir)}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
-  renameSync(tmp, epochPath(dir));
-  // Two children racing to open the same new epoch: both use the one that is on disk.
-  const won = readEpoch(dir);
-  return won && canonical(won.inputs) === canonical(inputs) ? won : next;
+}
+
+/**
+ * The version of the TS adapter that turns the Rust store's answers into engine results (src/core/rust-engine/
+ * store-members/**, store-codec.ts, members.ts). It is an epoch input: bump it with any change to that mapping.
+ * test/shadow-evidence.test.ts pins it to a digest of those files, so a change that forgets to bump it fails CI.
+ */
+export const SHADOW_ADAPTER_VERSION = 1;
+
+/** The adapter identity an epoch records: the adapter version, the engine ABI and the addon's catalog version. */
+export function adapterIdentity(abi: number, catalog: string, adapterVersion: number = SHADOW_ADAPTER_VERSION): string {
+  return `adapter${adapterVersion}.abi${abi}.catalog${catalog}`;
 }
 
 /** Same failure, same boundary, at most one fault line this often: a broken engine must not fill the disk. */
@@ -108,7 +177,7 @@ export const INTERNAL_ERROR_SPACING_MS = 1_000;
  * still counts. One thrown error seen on two paths counts once (it is remembered by identity), and the same boundary
  * is recorded at most once per `INTERNAL_ERROR_SPACING_MS`. Never throws.
  */
-export function internalErrorRecorder(dir: string, epochId: string | null, now: () => number = Date.now): (boundary: string, error: unknown) => void {
+export function internalErrorRecorder(dir: string, epochId: string | null | (() => string | null), now: () => number = Date.now): (boundary: string, error: unknown) => void {
   const seen = new WeakSet<object>();
   const last = new Map<string, number>();
   return (boundary, error) => {
@@ -119,7 +188,8 @@ export function internalErrorRecorder(dir: string, epochId: string | null, now: 
       const at = now();
       if (at - (last.get(boundary) ?? -Infinity) < INTERNAL_ERROR_SPACING_MS) return;
       last.set(boundary, at);
-      const fault: ShadowFault = { ts: new Date(at).toISOString(), kind: 'rust_internal_error', detail: `boundary=${boundary} code=${code}`, ...(epochId ? { epoch_id: epochId } : {}) };
+      const epoch = typeof epochId === 'function' ? epochId() : epochId;
+      const fault: ShadowFault = { ts: new Date(at).toISOString(), kind: 'rust_internal_error', detail: `boundary=${boundary} code=${code}`, ...(epoch ? { epoch_id: epoch } : {}) };
       appendFault(dir, fault);
     } catch { /* a full disk loses the line, never the child */ }
   };

@@ -9,7 +9,7 @@
  * Reads the files raw so it does not depend on the aggregator (test/shadow-evidence.test.ts covers that).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -18,7 +18,11 @@ import { attachShadowParts } from '../src/shadow/attach.ts';
 import { encodeValue } from '../src/shadow/codec.ts';
 import { runShadowChild, type ShadowChildDeps } from '../src/shadow/child.ts';
 import { SHADOW_COMPARATOR_VERSION } from '../src/shadow/exactness.ts';
-import { MirrorQueue, newMirrorCounters } from '../src/shadow/mirror.ts';
+import { epochWatch } from '../src/shadow/evidence-epoch.ts';
+import { buildEvidenceStatus } from '../src/shadow/evidence.ts';
+import { MirrorQueue, newMirrorCounters, UsageMeter, zeroUsage } from '../src/shadow/mirror.ts';
+import { appendUsage } from '../src/shadow/usage.ts';
+import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 
@@ -46,13 +50,20 @@ async function runChild(dir: string, lines: string[], deps: Partial<ShadowChildD
 
 const ledgerRows = (dir: string): Array<Record<string, unknown>> => {
   try {
-    return readdirSync(join(dir, 'ledger')).flatMap((n) => readFileSync(join(dir, 'ledger', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+    return readdirSync(join(dir, 'ledger')).sort().flatMap((n) => readFileSync(join(dir, 'ledger', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
   } catch { return []; }
 };
 const faults = (dir: string): Array<Record<string, unknown>> => {
   try { return readFileSync(join(dir, 'faults.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
 };
 const manifest = (dir: string): { epoch_id: string; started_at: string; inputs: Record<string, unknown>; build?: unknown } => JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8'));
+const SAMPLE_NONE = { version: 1, enabled: true, started_at: 'x', sample_rate: 0, queue_bound: 4, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
+const writeManifest = (dir: string, id: string): void => {
+  mkdirSync(join(dir, 'evidence'), { recursive: true });
+  writeFileSync(join(dir, 'evidence', 'epoch.json'), JSON.stringify({ version: 1, epoch_id: id, started_at: '2026-11-23T00:00:00.000Z', inputs: { seed_id: 's' } }));
+};
+const usageLines = (dir: string): Array<{ epoch_id: string | null; ops: Record<string, Record<string, number>> }> =>
+  readdirSync(join(dir, 'usage')).sort().flatMap((n) => readFileSync(join(dir, 'usage', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
 const seeded = (): string => { const d = tmp(); writeSeedRecord(d, SEED); return d; };
 
 function fakePrimary(): BrainEngine {
@@ -78,10 +89,10 @@ describe('per-operation usage', () => {
     await full.getPage('a'); // accepted
     await full.getPage('b'); // queue full: shed
     await (full as unknown as { getPage(...a: unknown[]): Promise<unknown> }).getPage('c', { cb: () => 1 }); // a callback cannot cross the pipe
-    expect(q.meter.take()).toEqual({
+    expect(q.meter.take()).toEqual([{ epoch_id: null, ops: {
       getPage: { offered: 5, sampled_out: 2, shed: 1, skipped_in_transaction: 0, unmirrorable: 1 },
       listPages: { offered: 1, sampled_out: 0, shed: 0, skipped_in_transaction: 1, unmirrorable: 0 },
-    });
+    } }]);
     expect(q.meter.take()).toBeNull();
   });
 
@@ -94,25 +105,59 @@ describe('per-operation usage', () => {
     expect(await wrapShadowEngine(fakePrimary(), bare, { sampleRate: 0 }).getPage('a')).toEqual({ slug: 'a' } as never);
   });
 
-  test('a process whose calls were all sampled out appends its counts, tagged with the current epoch, when its engine disconnects', async () => {
+  test('a process whose calls were all sampled out appends its counts, under the epoch current when they were noted, when its engine disconnects', async () => {
     const dir = tmp(); // unseeded, so attach builds no follower; the epoch manifest is written by hand
-    mkdirSync(join(dir, 'evidence'));
-    writeFileSync(join(dir, 'evidence', 'epoch.json'), JSON.stringify({ version: 1, epoch_id: 'e1', started_at: '2026-11-23T00:00:00.000Z', inputs: { seed_id: 's' } }));
+    writeManifest(dir, 'e1');
     const engine = fakePrimary();
-    const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 0, queue_bound: 4, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
-    const attached = attachShadowParts(engine, dir, state as never, { gbrainArgv: ['never-spawned'] });
+    const attached = attachShadowParts(engine, dir, SAMPLE_NONE as never, { gbrainArgv: ['never-spawned'] });
     await attached.engine.getPage('a');
     await attached.engine.listPages();
     for (const hook of (engine as unknown as { hooks: Array<() => Promise<void>> }).hooks) await hook();
-    const files = readdirSync(join(dir, 'usage'));
-    expect(files).toHaveLength(1);
-    const line = JSON.parse(readFileSync(join(dir, 'usage', files[0]!), 'utf8').trim());
-    expect(line.epoch_id).toBe('e1');
-    expect(line.ops).toEqual({
-      getPage: { offered: 1, sampled_out: 1, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 },
-      listPages: { offered: 1, sampled_out: 1, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 },
-    });
+    const lines = usageLines(dir);
+    expect(lines.every((l) => l.epoch_id === 'e1')).toBe(true);
+    const total = (op: string) => lines.reduce((n, l) => n + (l.ops[op]?.sampled_out ?? 0), 0);
+    expect([total('getPage'), total('listPages')]).toEqual([1, 1]);
     expect(attached.supervisor.childPid).toBeNull(); // nothing was sent, so no child was spawned for the counts
+  });
+
+  test('the first call of a class is on disk before any flush: a used, sampled-out class reaches readiness after an abrupt exit', async () => {
+    const dir = tmp();
+    writeManifest(dir, 'e1');
+    const attached = attachShadowParts(fakePrimary(), dir, SAMPLE_NONE as never, { gbrainArgv: ['never-spawned'] });
+    await attached.engine.getPage('a'); // no flush, no disconnect: the process "dies" here
+    await attached.engine.getPage('b');
+    expect(usageLines(dir).map((l) => Object.keys(l.ops))).toEqual([['getPage']]); // one small append, not one per call
+    const evidence = buildEvidenceStatus({ dir });
+    expect(evidence.reads!.ops).toEqual([{ op: 'getPage', successful: 0, minimum: 100 }]);
+    const verdict = evaluateReadiness({ epoch_id: 'e1', epoch_started_at: '2026-11-23T00:00:00.000Z', ...evidence }, new Date('2026-12-30T00:00:00Z'));
+    expect(verdict.criteria.find((c) => c.n === 2)).toMatchObject({ state: 'fail' });
+    expect(verdict.criteria.find((c) => c.n === 2)!.detail).toContain('getPage 0/100');
+  });
+
+  test('an epoch rotation is seen: the next first call of a class registers under the new epoch and counts stay with the epoch they were noted in', () => {
+    const dir = tmp();
+    let at = 0;
+    writeManifest(dir, 'e1');
+    const meter = new UsageMeter();
+    meter.bind({ epoch: epochWatch(dir, () => at, 1_000), register: (epoch_id, op) => appendUsage(dir, { ts: '2026-11-23T00:00:00.000Z', epoch_id, ops: { [op]: zeroUsage() } }) });
+    meter.note('getPage', 'offered');
+    meter.note('getPage', 'offered'); // the same class again: not registered twice
+    writeManifest(dir, 'e2');
+    at = 500;
+    meter.note('getPage', 'offered'); // inside the 1 s window the process still sees e1
+    at = 1_500;
+    meter.note('getPage', 'offered'); // now e2: a new first use
+    expect(usageLines(dir).map((l) => l.epoch_id)).toEqual(['e1', 'e2']);
+    expect(meter.take()).toEqual([
+      { epoch_id: 'e1', ops: { getPage: { ...zeroUsage(), offered: 3 } } }, { epoch_id: 'e2', ops: { getPage: { ...zeroUsage(), offered: 1 } } },
+    ]);
+  });
+
+  test('a failed first-use append loses nothing: the counts stay for the next flush', () => {
+    const meter = new UsageMeter();
+    meter.bind({ epoch: () => 'e1', register: () => { throw new Error('disk full'); } });
+    meter.note('getPage', 'offered');
+    expect(meter.take()).toEqual([{ epoch_id: 'e1', ops: { getPage: { ...zeroUsage(), offered: 1 } } }]);
   });
 });
 
@@ -146,12 +191,14 @@ describe('stale and inconclusive mismatches', () => {
         findByTitleFuzzy: answer(['b', 'a']), searchKeyword: answer(['b', 'a']), searchTitles: answer(['a']), getPage: answer([]),
       }) as never,
     });
-    const committedAt = Date.parse('2026-11-22T23:59:00Z');
+    // One UTC day: rows go to one file per day, and the order of files in a directory listing is not a contract.
+    const committedAt = Date.parse('2026-11-23T00:00:10Z');
     input.write(JSON.stringify({ t: 'apply', seq: 1, committed_at: committedAt, relation: 'pages', generation: 1, keys: [], rows: [], digests: [] }) + '\n');
-    input.write(read('findByTitleFuzzy', ['t'], rows(['a', 'b'])));
-    input.write(read('searchKeyword', ['q'], rows(['a', 'b'])));
-    input.write(read('searchTitles', ['q'], rows(['a', 'b']))); // a different row set
-    input.write(read('getPage', ['x'], { slug: 'x' }, Date.parse('2026-11-22T23:00:00Z'))); // captured BEFORE the pending write was committed
+    const later = Date.parse('2026-11-23T00:00:20Z');
+    input.write(read('findByTitleFuzzy', ['t'], rows(['a', 'b']), later));
+    input.write(read('searchKeyword', ['q'], rows(['a', 'b']), later));
+    input.write(read('searchTitles', ['q'], rows(['a', 'b']), later)); // a different row set
+    input.write(read('getPage', ['x'], { slug: 'x' }, Date.parse('2026-11-23T00:00:05Z'))); // captured BEFORE the pending write was committed
     await reached;
     for (let i = 0; i < 5; i++) await tick();
     release();
@@ -160,6 +207,19 @@ describe('stale and inconclusive mismatches', () => {
     expect(ledgerRows(dir).map((r) => [r.op, r.outcome, r.mismatch])).toEqual([
       ['findByTitleFuzzy', 'stale', 'order_diff'], ['searchKeyword', 'stale', 'order_diff'], ['searchTitles', 'stale', 'diff'], ['getPage', 'inconclusive', 'diff'],
     ]);
+  });
+
+  test('rows of different UTC days go to separate day files, each in arrival order: a listing of the directory orders nothing', async () => {
+    const dir = seeded();
+    const day = (iso: string) => Date.parse(iso);
+    await runChild(dir, [read('getPage', ['a'], { slug: 'x' }, day('2026-11-23T00:00:30Z')), read('getTags', ['a'], ['x'], day('2026-11-22T23:59:30Z')), read('getPage', ['b'], { slug: 'x' }, day('2026-11-23T00:00:40Z'))], {
+      openEngine: () => engineOf({ getPage: async () => ({ slug: 'a' }), getTags: async () => ['x'] }) as never,
+    });
+    const files = readdirSync(join(dir, 'ledger')).sort();
+    expect(files).toEqual(['2026-11-22.jsonl', '2026-11-23.jsonl']);
+    const ops = (f: string) => readFileSync(join(dir, 'ledger', f), 'utf8').trim().split('\n').map((l) => `${JSON.parse(l).op}:${JSON.parse(l).ts.slice(11, 19)}`);
+    expect(ops(files[0]!)).toEqual(['getTags:23:59:30']);
+    expect(ops(files[1]!)).toEqual(['getPage:00:00:30', 'getPage:00:00:40']); // arrival order within a day
   });
 
   test('the same order-only trigram difference with no lag is inconclusive, never a match', async () => {
@@ -317,5 +377,76 @@ describe('evidence epoch in the child', () => {
     expect(manifest(dir).inputs).toMatchObject({ rust_addon_sha256: null, capability_set_hash: null });
     expect(ledgerRows(dir).map((r) => [r.outcome, r.epoch_id])).toEqual([['addon_unavailable', manifest(dir).epoch_id]]);
     writeFileSync(join(dir, 'unused'), '');
+  });
+});
+
+describe('owner identity, timeouts, adapter and follower evidence', () => {
+  const engineOf = (over: Record<string, unknown>) => ({ async connect() {}, async disconnect() {}, ...over });
+
+  test('a client of another process\'s owner cannot name an epoch: its rows carry none, and a takeover opens the epoch for its own addon', async () => {
+    const dir = seeded();
+    const eng = { ownerRole: 'client', async connect() {}, async disconnect() {}, getPage: async () => ({ slug: 'a' }) };
+    const input = new PassThrough();
+    const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, openEngine: () => eng as never });
+    input.write(read('getPage', ['a'], { slug: 'a' }));
+    for (let i = 0; i < 6; i++) await tick();
+    expect(existsSync(join(dir, 'evidence', 'epoch.json'))).toBe(false); // the owner's addon is unknown: no epoch is opened for this child's
+    eng.ownerRole = 'owner'; // the owner went away and this child took over the store
+    input.write(read('getPage', ['b'], { slug: 'b' }));
+    input.end();
+    await done;
+    const rows = ledgerRows(dir);
+    expect(rows.map((r) => r.epoch_id)).toEqual([undefined, manifest(dir).epoch_id]);
+    expect(manifest(dir).inputs.rust_addon_sha256).toBe('a'.repeat(64));
+  });
+
+  test('an internal_error that rejects after the read timeout is recorded once, under the epoch', async () => {
+    const dir = seeded();
+    const input = new PassThrough();
+    const done = runShadowChild(dir, {
+      input, writeControl: () => {}, ...BASE, timeoutMs: 20,
+      openEngine: () => engineOf({ getPage: () => new Promise((_, reject) => setTimeout(() => reject(internal()), 80)) }) as never,
+    });
+    input.write(read('getPage', ['a'], { slug: 'a' }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    input.end();
+    await done;
+    expect(ledgerRows(dir).map((r) => r.outcome)).toEqual(['timeout']);
+    const found = faults(dir).filter((f) => f.kind === 'rust_internal_error');
+    expect(found.map((f) => [f.detail, f.epoch_id])).toEqual([['boundary=read code=internal_error', manifest(dir).epoch_id]]);
+  });
+
+  test('a change of the TS adapter version, everything else equal, opens a new epoch', async () => {
+    const dir = seeded();
+    const open = { openEngine: () => engineOf({}) as never };
+    await runChild(dir, [], { ...open, adapterVersion: 1 });
+    const first = manifest(dir);
+    expect(first.inputs.adapter_version).toBe('adapter1.abi1.catalog3');
+    await runChild(dir, [], { ...open, adapterVersion: 1 });
+    expect(manifest(dir).epoch_id).toBe(first.epoch_id);
+    await runChild(dir, [], { ...open, adapterVersion: 2 });
+    expect(manifest(dir).epoch_id).not.toBe(first.epoch_id);
+    expect(manifest(dir).inputs).toMatchObject({ ...first.inputs, adapter_version: 'adapter2.abi1.catalog3' });
+  });
+
+  test('the follower\'s probe, fingerprint totals, allocators and lag start over under a new epoch and survive a restart in the same one', async () => {
+    const dir = seeded();
+    const stale = {
+      version: 1, epoch_id: 'seed-1', seed_id: 'seed-1', evidence_epoch: 'an-older-epoch', epoch_started_at: 't', updated_at: new Date().toISOString(), applied_rows: 9, queue_depth: 0, lag_ms: 0, last_seq: 1,
+      watermark: { valid: true, through: null, invalidated_reason: null }, lag: { epoch: [3], hours: { '1': [3] } }, fingerprints: { checked_rows: 50, mismatches: 0 },
+      probe: { state: 'pass', checked_at: 't', server_version: '16', collation: 'C', mismatches: 0 }, allocators: { verified: true, checked_at: 't' },
+    };
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify(stale));
+    const follower = () => JSON.parse(readFileSync(join(dir, 'follower.json'), 'utf8'));
+    await runChild(dir, [], { openEngine: () => engineOf({}) as never });
+    expect(follower()).toMatchObject({
+      evidence_epoch: manifest(dir).epoch_id, applied_rows: 9, lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 },
+      probe: { state: 'not_run' }, allocators: { verified: false },
+    });
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify({ ...follower(), probe: { ...stale.probe }, fingerprints: { checked_rows: 7, mismatches: 0 } }));
+    await runChild(dir, [], { openEngine: () => engineOf({}) as never }); // the same epoch
+    expect(follower()).toMatchObject({ probe: { state: 'pass' }, fingerprints: { checked_rows: 7 } });
+    await runChild(dir, [], { openEngine: () => engineOf({}) as never, addonSha256: () => 'c'.repeat(64) }); // a new epoch
+    expect(follower()).toMatchObject({ probe: { state: 'not_run' }, fingerprints: { checked_rows: 0 } });
   });
 });

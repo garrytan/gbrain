@@ -132,13 +132,18 @@ export function readJsonlStrict<T>(path: string): T[] | null {
   return out;
 }
 
-/** The whole fault history (a torn line is skipped); null when the file exists and cannot be read. */
+/**
+ * The whole fault history. Null (unreadable evidence) when the file cannot be read, a complete line is not JSON, or a
+ * record is not a fault (no string `kind` and `ts`, or a non-string `epoch_id`); only an unfinished final line is
+ * tolerated. A missing file is an empty history.
+ */
 export function readAllFaults(shadowDir: string): ShadowFault[] | null {
   const path = faultsPath(shadowDir);
   if (!existsSync(path)) return [];
-  let text: string;
-  try { text = readFileSync(path, 'utf8'); } catch { return null; } // silent-read-ok: null is the unreadable marker; child health stays absent, never zero
-  return text.split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as ShadowFault] : []; } catch { return []; } });
+  const faults = readJsonlStrict<ShadowFault>(path);
+  const ok = (f: unknown): boolean => !!f && typeof f === 'object' && typeof (f as ShadowFault).kind === 'string' && typeof (f as ShadowFault).ts === 'string'
+    && ((f as ShadowFault).epoch_id === undefined || typeof (f as ShadowFault).epoch_id === 'string');
+  return faults !== null && faults.every(ok) ? faults : null;
 }
 
 export function readFaults(shadowDir: string, limit = 20): ShadowFault[] {

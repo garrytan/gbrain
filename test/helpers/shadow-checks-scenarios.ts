@@ -11,7 +11,8 @@ import { buildVectorSearchStatement } from '../../src/core/search/vector-stateme
 import { makeAskHandler } from '../../src/shadow/checks.ts';
 import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { encodeValue } from '../../src/shadow/codec.ts';
-import { readEpoch } from '../../src/shadow/evidence-epoch.ts';
+import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
+import { appendLedgerRows } from '../../src/shadow/ledger.ts';
 import { readEpochRecall, RECALL_REFERENCE_LIMIT, type RankedKey } from '../../src/shadow/recall.ts';
 import { evaluateReadiness } from '../../src/core/engine-swap/readiness.ts';
 import { buildEvidenceStatus } from '../../src/shadow/evidence.ts';
@@ -277,6 +278,41 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         expect(r.evidence.ranking_differences).toEqual({});
         expect(r.row3).toMatchObject({ state: 'fail' });
       }
+    });
+  });
+
+  describe('a child that is an IPC client of another owner counts nothing', () => {
+    const client = async (o: Partial<RigOptions> = {}): Promise<Rig> => { const rig = await start(o); (rig.rust as Record<string, unknown>).ownerRole = 'client'; return rig; };
+
+    test('its rows carry no epoch, no rerun or recall runs, and the status has no evidence from it', async () => {
+      const primary = ctx.primary();
+      await privacyFixture(primary);
+      await vectorFixture(primary);
+      const rig = await client();
+      rig.rust.listPages = async () => [];
+      rig.rust.searchVector = async () => [];
+      await sample(rig);
+      await rig.engine.searchVector(vec(3), { limit: 10 });
+      const rows = await rig.finish(2);
+      expect(rows.map((r) => r.epoch_id)).toEqual([undefined, undefined]); // a client names no epoch
+      expect(rows.find((r) => r.op === 'listPages')).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:no_epoch' });
+      expect(readEpoch(rig.dir)).toBeNull(); // and opens none
+      expect(buildEvidenceStatus({ dir: rig.dir })).toEqual({});
+      expect(readEpochRecall(rig.dir, 'any')).toEqual([]); // no reference run was asked for
+    });
+
+    test('a privacy pause from it still stops mirroring but is not counted in any epoch', async () => {
+      const ids = await privacyFixture(ctx.primary());
+      const rig = await client();
+      const epoch = ensureEpoch(rig.dir, { seed_id: 'seed-1', rust_addon_sha256: 'a', comparator_version: 2, adapter_version: 'x', capability_set_hash: 'c', readiness_policy_hash: 'p' }).epoch_id;
+      appendLedgerRows(rig.dir, [{ ts: new Date().toISOString(), op: 'getPage', outcome: 'match', epoch_id: epoch, primary_ms: 1, rust_ms: 1, primary_rows: 1, rust_rows: 1 }]);
+      rig.rust.listPages = async () => [{ id: ids['priv/a'], slug: 'priv/a', source_id: 'default', title: 'x', type: 'note' }];
+      await withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
+      const rows = await rig.finish();
+      expect(rows[0]).toMatchObject({ outcome: 'privacy_diverged' });
+      expect(rows[0]!.epoch_id).toBeUndefined();
+      expect(rig.stoppedBy).toBe('privacy_diverged'); // safety is not an evidence count
+      expect(buildEvidenceStatus({ dir: rig.dir }).privacy_diverged).toBe(0);
     });
   });
 

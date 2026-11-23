@@ -47,26 +47,48 @@ export type UsageField = keyof OpUsage;
 
 export const zeroUsage = (): OpUsage => ({ offered: 0, sampled_out: 0, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 });
 
+/** Counts noted under one evidence epoch (null: no epoch was current). */
+export interface UsageBucket { epoch_id: string | null; ops: Record<string, OpUsage> }
+
+/**
+ * Per-operation call counts, bucketed by the evidence epoch current when each call was noted. The first call of a class
+ * under an epoch is also handed to `register` at once (before sampling decides anything), so the class is on disk even
+ * if the process dies before its next flush.
+ */
 export class UsageMeter {
-  private ops: Record<string, OpUsage> = {};
+  private buckets = new Map<string | null, Record<string, OpUsage>>();
+  private readonly registered = new Set<string>();
+  private hooks: { epoch?: () => string | null; register?: (epoch: string | null, op: string) => void } = {};
+
+  /** Sets where the current epoch comes from and where a first use is written. */
+  bind(hooks: { epoch?: () => string | null; register?: (epoch: string | null, op: string) => void }): void { this.hooks = hooks; }
 
   note(op: string, field: UsageField): void {
-    (this.ops[op] ??= zeroUsage())[field]++;
+    const epoch = this.hooks.epoch?.() ?? null;
+    const ops = this.buckets.get(epoch) ?? this.buckets.set(epoch, {}).get(epoch)!;
+    (ops[op] ??= zeroUsage())[field]++;
+    const key = `${epoch}\0${op}`;
+    if (this.registered.has(key)) return;
+    this.registered.add(key);
+    try { this.hooks.register?.(epoch, op); } catch { /* the counts stay in memory for the next flush */ }
   }
 
-  /** The counts since the last take, or null when there are none. */
-  take(): Record<string, OpUsage> | null {
-    if (Object.keys(this.ops).length === 0) return null;
-    const out = this.ops;
-    this.ops = {};
+  /** The counts since the last take, one bucket per epoch, or null when there are none. */
+  take(): UsageBucket[] | null {
+    if (this.buckets.size === 0) return null;
+    const out = [...this.buckets].map(([epoch_id, ops]) => ({ epoch_id, ops }));
+    this.buckets = new Map();
     return out;
   }
 
   /** Puts counts back after a take whose write failed, so a full disk delays them and never drops a class. */
-  restore(taken: Record<string, OpUsage>): void {
-    for (const [op, u] of Object.entries(taken)) {
-      const into = (this.ops[op] ??= zeroUsage());
-      for (const key of Object.keys(u) as UsageField[]) into[key] += u[key];
+  restore(taken: UsageBucket[]): void {
+    for (const { epoch_id, ops: back } of taken) {
+      const ops = this.buckets.get(epoch_id) ?? this.buckets.set(epoch_id, {}).get(epoch_id)!;
+      for (const [op, u] of Object.entries(back)) {
+        const into = (ops[op] ??= zeroUsage());
+        for (const key of Object.keys(u) as UsageField[]) into[key] += u[key];
+      }
     }
   }
 }

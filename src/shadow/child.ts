@@ -28,7 +28,7 @@ import { RERUN_DEADLINE_MS } from './checks.ts';
 import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
+import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
@@ -63,6 +63,8 @@ export interface ShadowChildDeps {
   addonSha256?: (addon: RustAddon) => string | null;
   /** The build recorded when a new epoch opens (not an epoch input); default `currentBuild()`. */
   build?: () => EpochBuild;
+  /** The TS adapter version, an epoch input; default `SHADOW_ADAPTER_VERSION`. */
+  adapterVersion?: number;
   /** The capability names the Rust engine reports; default `servedCapabilities()`. */
   capabilities?: () => Iterable<string>;
   /** Seam for tests: called with each ledger row as it is recorded, before it is flushed. */
@@ -124,24 +126,36 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // `stop --delete` can land while the addon loads: opening the store now would recreate the directory it removed.
   const hadState = existsSync(shadowStatePath(shadowDir));
   const deleted = (): boolean => !existsSync(shadowDir) || (hadState && !existsSync(shadowStatePath(shadowDir)));
-  // The evidence epoch this child session belongs to. Without a seed or a writable manifest there is no epoch: its rows
-  // carry none and count for nothing.
+  // The evidence epoch this child session belongs to. It names the addon THIS child loaded, so it is only valid while this
+  // child is the owner of the Rust store: a client of another process's owner reads answers from an addon whose digest
+  // the owner handshake does not carry, so it cannot name an epoch and its rows and counts carry none (fail closed).
+  // Without a seed or a writable manifest there is no epoch either. The role is checked on every use, so a client that
+  // takes over opens (or joins) the epoch for its own addon from then on.
   let epoch: EpochManifest | null = null;
+  let epochTried = false;
   const seed = readSeedRecord(shadowDir);
-  if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
-    try {
-      epoch = ensureEpoch(shadowDir, {
-        seed_id: seed.seed_id,
-        rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
-        comparator_version: SHADOW_COMPARATOR_VERSION,
-        adapter_version: `abi${RUST_ENGINE_ABI}.catalog${load.ok ? String(load.addon.catalogVersion) : 'none'}`,
-        capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
-        readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
-      }, now(), (deps.build ?? currentBuild)());
-    } catch { epoch = null; }
-  }
-  const epochId = epoch?.epoch_id ?? null;
-  const recordRustError = internalErrorRecorder(shadowDir, epochId, now);
+  const isClient = (): boolean => (engine as { ownerRole?: string | null } | null)?.ownerRole === 'client';
+  const epochNow = (): EpochManifest | null => {
+    if (isClient()) return null;
+    if (!epochTried) {
+      epochTried = true;
+      if (seed && !deleted()) { // a deleted shadow directory must not be recreated by the manifest
+        try {
+          epoch = ensureEpoch(shadowDir, {
+            seed_id: seed.seed_id,
+            rust_addon_sha256: load.ok ? ((deps.addonSha256 ?? addonFileSha256)(load.addon) ?? 'unreadable') : null,
+            comparator_version: SHADOW_COMPARATOR_VERSION,
+            adapter_version: adapterIdentity(RUST_ENGINE_ABI, load.ok ? String(load.addon.catalogVersion) : 'none', deps.adapterVersion),
+            capability_set_hash: load.ok ? capabilitySetHash((deps.capabilities ?? servedCapabilities)()) : null,
+            readiness_policy_hash: (deps.readinessPolicyHash ?? (() => policyHash(READINESS_POLICY)))(),
+          }, now(), (deps.build ?? currentBuild)());
+        } catch { epoch = null; }
+      }
+    }
+    return epoch;
+  };
+  const curEpoch = (): string | null => epochNow()?.epoch_id ?? null;
+  const recordRustError = internalErrorRecorder(shadowDir, () => epochNow()?.epoch_id ?? null, now);
   if (!load.ok) {
     unavailable = { outcome: 'addon_unavailable', reason: `${load.code}:${load.reason}` };
   } else if (deleted()) {
@@ -164,6 +178,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     }
   }
 
+  epochNow(); // the role is known now: an owner (or a child with no engine) opens its epoch before the first row
+
   // The follower (apply lines and reconcile calls) works on the same Rust store; it exists once the engine is open.
   const rustEngine = engine as unknown as { storeFor?: (member: string) => Promise<FollowStore>; ownerRole?: string | null } | null;
   const follow = new FollowChild({
@@ -171,6 +187,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     store: async () => { try { return (await rustEngine?.storeFor?.('follow')) ?? null; } catch (error) { recordRustError('open', error); return null; } },
     owner: () => rustEngine?.ownerRole !== 'client',
     onRustError: recordRustError,
+    epochId: () => epochNow()?.epoch_id ?? null,
   });
   const stalled = new Set<Promise<unknown>>();
   const heartbeat = setInterval(() => {
@@ -204,7 +221,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     counts[c.outcome] = (counts[c.outcome] ?? 0) + 1;
     const row: ShadowLedgerRow = {
       ts, op: event.op, outcome: c.outcome, ...(c.reason ? { reason: c.reason } : {}), ...(c.mismatch ? { mismatch: c.mismatch } : {}),
-      ...(epochId ? { epoch_id: epochId } : {}), ...(rerun ? { rerun } : {}), ...(policyApplies(event.args as unknown[]) ? { private_read: true } : {}),
+      ...(epochNow() ? { epoch_id: epochNow()!.epoch_id } : {}), ...(rerun ? { rerun } : {}), ...(policyApplies(event.args as unknown[]) ? { private_read: true } : {}),
       primary_ms: Math.round(event.primary_ms * 1000) / 1000,
       rust_ms: rustMs === null ? null : Math.round(rustMs * 1000) / 1000,
       primary_rows: rowCount(event.result), rust_rows: rustRows,
@@ -214,7 +231,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     handled++;
     if (c.outcome === 'privacy_diverged' && !paused) {
       paused = true;
-      try { appendFault(shadowDir, { ts, kind: 'privacy_pause', detail: `op=${event.op} reason=${c.reason ?? 'unknown'}`, ...(epochId ? { epoch_id: epochId } : {}) }); } catch { /* disk */ }
+      try { appendFault(shadowDir, { ts, kind: 'privacy_pause', detail: `op=${event.op} reason=${c.reason ?? 'unknown'}`, ...(curEpoch() ? { epoch_id: curEpoch()! } : {}) }); } catch { /* disk */ }
       try { deps.writeControl('{"t":"pause","reason":"privacy_diverged"}\n'); } catch { /* parent gone */ }
     }
     flush(false);
@@ -229,6 +246,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const callRust = (op: string, args: unknown[], access: CallerAccess | undefined, ms: number, onCall?: (call: Promise<unknown>) => void) => {
     const run = (): unknown => (engine![op] as (...a: unknown[]) => unknown).apply(engine, args);
     const call = Promise.resolve(access ? withCallerAccess(access, run) : run());
+    call.catch((error) => recordRustError('read', error)); // seen even when it rejects after the timeout; one failure is recorded once
     onCall?.(call);
     return withTimeout(call, ms);
   };
@@ -257,8 +275,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`);
     const deadline = now() + RERUN_DEADLINE_MS;
     try {
-      const answer = await ask({ kind: 'rerun', op: event.op, args: event.args, access: event.access, epoch_id: epochId }, RERUN_DEADLINE_MS) as { result: unknown; stamp: number; epoch_id: string };
-      if (answer.epoch_id !== epochId) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
+      const answer = await ask({ kind: 'rerun', op: event.op, args: event.args, access: event.access, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as { result: unknown; stamp: number; epoch_id: string };
+      if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
       let call!: Promise<unknown>;
       const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
       if (out?.timedOut) trackStall(call);
@@ -280,12 +298,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const recallGate = new IntervalGate(RECALL_INTERVAL_MS, now);
   let recalling: Promise<void> | null = null;
   const scoreRecallLater = (event: ReadEvent, args: unknown[], rust: unknown): void => {
-    if (event.op !== 'searchVector' || !epochId || recalling || !recallEligible(args) || !recallGate.take()) return;
+    if (event.op !== 'searchVector' || !curEpoch() || recalling || !recallEligible(args) || !recallGate.take()) return;
     recalling = (async () => {
       try {
         const reference = await ask({ kind: 'vector', args: event.args, access: event.access }, RERUN_DEADLINE_MS) as RankedKey[];
         const score = scoreRecall(reference, event.result, rust);
-        if (score) appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epochId, ...score });
+        const epoch = curEpoch(); // a child that is no longer an owner names no epoch: the sample is dropped
+        if (score && epoch) appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score });
       } catch { /* an unscored sample is skipped, never counted */ }
       recalling = null;
     })();
@@ -319,7 +338,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       scoreRecallLater(event, args, encoded);
       const task: RerunTask = { event, args, c, rustMs, rows: rowCount(encoded) };
       if (c.outcome !== 'inconclusive') record(event, c, rustMs, task.rows);
-      else if (!epochId) record(event, c, rustMs, task.rows, 'skipped:no_epoch');
+      else if (!curEpoch()) record(event, c, rustMs, task.rows, 'skipped:no_epoch');
       else if (!reruns.add(task)) record(event, c, rustMs, task.rows, 'skipped:queue_full');
     } catch (error) {
       recordRustError('read', error);

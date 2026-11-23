@@ -14,9 +14,9 @@ import { ShadowFollower } from './follower.ts';
 import { openReadSource, type ReadSource } from './read-pool.ts';
 import { Reconciler } from './reconcile.ts';
 import { makeAskHandler } from './checks.ts';
-import { readEpoch } from './evidence-epoch.ts';
+import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
-import { MirrorQueue } from './mirror.ts';
+import { MirrorQueue, zeroUsage } from './mirror.ts';
 import type { ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
@@ -65,10 +65,18 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
     active: () => supervisor.active(),
   };
+  // Each call is noted under the epoch current when it happens, and the first call of a class is appended at once.
+  queue.meter.bind({
+    epoch: epochWatch(dir),
+    register: (epoch_id, op) => appendUsage(dir, { ts: new Date().toISOString(), epoch_id, ops: { [op]: zeroUsage() } }),
+  });
   const flushUsage = (): void => {
-    const ops = queue.meter.take();
-    if (!ops) return;
-    try { appendUsage(dir, { ts: new Date().toISOString(), epoch_id: readEpoch(dir)?.epoch_id ?? null, ops }); } catch { queue.meter.restore(ops); }
+    const taken = queue.meter.take();
+    if (!taken) return;
+    const ts = new Date().toISOString();
+    for (const [i, bucket] of taken.entries()) {
+      try { appendUsage(dir, { ts, epoch_id: bucket.epoch_id, ops: bucket.ops }); } catch { queue.meter.restore(taken.slice(i)); return; }
+    }
   };
   const usageTimer = setInterval(flushUsage, USAGE_FLUSH_MS);
   usageTimer.unref();

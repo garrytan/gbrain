@@ -176,8 +176,9 @@ describe('unexplained and privacy fields', () => {
     expect(status(dir).privacy_diverged).toBe(0);
     appendLedgerRows(dir, [row(epoch, 'listPages', 'privacy_diverged')]);
     expect(status(dir).privacy_diverged).toBe(1);
-    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'x', epoch_id: epoch });
-    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'y', epoch_id: epoch });
+    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'op=listPages reason=row_not_readable_by_caller', epoch_id: epoch });
+    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'privacy_diverged: the serving process line for the same pause', epoch_id: epoch }); // not a second pause
+    appendFault(dir, { ts, kind: 'privacy_pause', detail: 'op=getPage reason=x', epoch_id: epoch });
     expect(status(dir).privacy_diverged).toBe(2); // a pause whose row was lost still counts
     expect(evaluateReadiness({ privacy_diverged: 2 }, NOW).criteria.find((c) => c.n === 6)).toMatchObject({ state: 'fail' });
     const open = epochDir();

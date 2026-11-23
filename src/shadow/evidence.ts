@@ -167,7 +167,9 @@ function foldChild(dir: string, epoch: EpochManifest): { panics: number; faults:
     if (f.kind === 'rust_internal_error') panics++;
     else if (f.kind === 'child_exit') { count++; if (/signal=SIGABRT|code=134\b/.test(f.detail ?? '')) panics++; }
     else if (f.kind === 'spawn_failed') count++;
-    else if (f.kind === 'privacy_pause') pauses++;
+    // The child's own pause record (`op=...`, tagged with its epoch: one per child session). The serving process writes a second line for the
+    // same pause, tagged by the manifest and not by the child, so it cannot tell a client of another owner (which counts nothing).
+    else if (f.kind === 'privacy_pause' && f.epoch_id === epoch.epoch_id && /^op=/.test(f.detail ?? '')) pauses++;
   }
   return { panics, faults: count, privacy_pauses: pauses };
 }
