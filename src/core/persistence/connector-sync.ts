@@ -94,10 +94,15 @@ function callReads(engine: BrainEngine): BrainEngine {
   return registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = sql.replace(/\s+/g, ' ').trim();
-      if (!CALL_STABLE_READS.has(text) || opts?.signal) return target.executeRaw(sql, params, opts);
+      const stable = CALL_STABLE_READS.has(text) && !opts?.signal;
       const id = JSON.stringify([text, params ?? null]);
-      let rows = reads.get(id);
-      if (!rows) { rows = target.executeRaw<Record<string, unknown>>(sql, params, opts); reads.set(id, rows); rows.catch(() => reads.delete(id)); }
+      let rows = stable ? reads.get(id) : undefined;
+      if (!rows) {
+        rows = target.executeRaw<Record<string, unknown>>(sql, params, opts);
+        if (!stable) return rows;
+        reads.set(id, rows);
+        rows.catch(() => reads.delete(id));
+      }
       return rows.then(found => structuredClone(found));
     };
     const value = Reflect.get(target, key, target);
