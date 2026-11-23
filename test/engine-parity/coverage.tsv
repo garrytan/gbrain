@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 1966/1982
+# covered: 2006/2022
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -33,6 +33,7 @@
 # config: 7/7
 # import_guards: 13/13
 # persistence_journal: 211/215
+# mention_pass: 40/40
 # entity_reads: 28/28
 # cycle_locks: 10/10
 # minion_jobs: 10/10
@@ -836,6 +837,46 @@ listWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	1	no	yes	yes	serves
 readSegmentedGateEvidence	persistence_journal	yes	2	no	yes	yes	serves
 readLiveJobIds	persistence_journal	yes	1	no	yes	yes	serves
+readSegmentedPageSealed	mention_pass	yes	1	no	yes	yes	serves
+storeSegmentDerivationsIfLive	mention_pass	yes	1	no	yes	yes	serves
+listMentionSourceIds	mention_pass	yes	1	no	yes	yes	serves
+writeMentionIndexStatus	mention_pass	yes	1	no	yes	yes	serves
+lockMentionSources	mention_pass	yes	1	no	yes	yes	serves
+listMentionLinkOrigins	mention_pass	yes	1	no	yes	yes	serves
+deleteSourceMentionLinks	mention_pass	yes	1	no	yes	yes	serves
+clearMentionSourceIndex	mention_pass	yes	1	no	yes	yes	serves
+listStaleDerivedAliasSlugs	mention_pass	yes	1	no	yes	yes	serves
+deleteDerivedAliasesForSlugs	mention_pass	yes	1	no	yes	yes	serves
+listAliasDuePages	mention_pass	yes	1	no	yes	yes	serves
+listDerivedAliasRows	mention_pass	yes	1	no	yes	yes	serves
+readMentionPageRevisions	mention_pass	yes	1	no	yes	yes	serves
+insertDerivedAliasRows	mention_pass	yes	1	no	yes	yes	serves
+upsertPageAliasState	mention_pass	yes	1	no	yes	yes	serves
+listMentionCandidatePages	mention_pass	yes	1	no	yes	yes	serves
+listGazetteerEntryKeys	mention_pass	yes	1	no	yes	yes	serves
+listMentionLinkersOfTargets	mention_pass	yes	1	no	yes	yes	serves
+lockMentionEntries	mention_pass	yes	1	no	yes	yes	serves
+applyGazetteerEntryChanges	mention_pass	yes	1	no	yes	yes	serves
+resetMentionRevisions	mention_pass	yes	1	no	yes	yes	serves
+readMentionGenerations	mention_pass	yes	1	no	yes	yes	serves
+listMentionDuePages	mention_pass	yes	2	no	yes	yes	serves
+listPageOutLinks	mention_pass	yes	1	no	yes	yes	serves
+deleteLinksById	mention_pass	yes	1	no	yes	yes	serves
+upsertPageMentionState	mention_pass	yes	1	no	yes	yes	serves
+readMentionStatusStates	mention_pass	yes	1	no	yes	yes	serves
+readMentionPolicyFingerprints	mention_pass	yes	1	no	yes	yes	serves
+resetSourceMentionIndexRevisions	mention_pass	yes	1	no	yes	yes	serves
+listLivePageSourceIds	mention_pass	yes	2	no	yes	yes	serves
+listGazetteerPages	mention_pass	yes	2	no	yes	yes	serves
+listGazetteerAliases	mention_pass	yes	2	no	yes	yes	serves
+readPageStampTimes	mention_pass	yes	1	no	yes	yes	serves
+readPageRevisionForShare	mention_pass	yes	1	no	yes	yes	serves
+readExplainPage	mention_pass	yes	1	no	yes	yes	serves
+readExplainScanPage	mention_pass	yes	1	no	yes	yes	serves
+countMentionLinksTo	mention_pass	yes	1	no	yes	yes	serves
+readPageNameText	mention_pass	yes	1	no	yes	yes	serves
+listFrontmatterAliasNorms	mention_pass	yes	1	no	yes	yes	serves
+listRejectedDeclarationPages	mention_pass	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
 readMentionIndexStatus	entity_reads	yes	2	no	yes	yes	serves
 countLivePagesInSource	entity_reads	yes	1	no	yes	yes	serves

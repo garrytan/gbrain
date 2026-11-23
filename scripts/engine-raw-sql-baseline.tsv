@@ -203,7 +203,7 @@ src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/budget/daily-ledger.ts	execute_raw	5
-src/core/by-mention.ts	execute_raw	5
+src/core/by-mention.ts	execute_raw	2
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	7
@@ -355,7 +355,6 @@ src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	2
 src/core/maintenance/run.ts	execute_raw	1
 src/core/meetings/meetings-source.ts	execute_raw	2
-src/core/mentions/pass.ts	execute_raw	32
 src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12

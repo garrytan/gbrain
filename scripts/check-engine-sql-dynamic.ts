@@ -194,6 +194,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   chunkDocumentOrder: 'src/core/search/safe-chunks.ts: constant ORDER BY column list over caller chunk/manifest aliases (Wave B)',
   syncImportPagesSql: 'src/core/persistence/sync-pass-pages-sql.ts: the constant sync pass I⋈P statement (module constants MARKDOWN_CHUNKER_VERSION and syncDeleteOrigin(\'p\') only), its placeholders $1..$5 bound by the caller; the keyset LIMIT is a Number.isSafeInteger-checked integer',
   syncAdmissionEffectsSql: 'src/core/persistence/sync-admission-sql.ts: the constant sync.admission effective-probe statement (effectProbes over literal $1..$7 placeholders only), every value bound by the caller',
+  embeddingCandidateWhere: 'src/core/engine-sql/persistence-effect-scans.ts: the constant stale-embedding-effect predicate; its error codes pass assertCandidateCodes (each code must match /^[a-z0-9_]+$/) before they are spliced into the text[] literal; no caller values',
   quoteIdentifier: 'src/core/search/embedding-column.ts: double-quoted identifier (embedded quotes doubled); callers pass registry-resolved or COLUMN_NAME_REGEX-checked embedding column names',
   vectorCastSuffix: 'src/core/search/embedding-column.ts: constant ::vector / ::halfvec cast suffix from the resolved column type',
   safeChunksFilter: 'src/core/search/safe-chunks.ts: constant safe-chunk predicate over a caller alias',

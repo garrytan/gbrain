@@ -16,6 +16,7 @@
  *   follow-ups").
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { embeddingCandidateWhere } from './persistence-effect-scans.ts';
 import type { ParkedTarget } from '../persistence/effect-model.ts';
 import type { WriteRequest } from '../persistence/model.ts';
@@ -253,29 +254,33 @@ export async function listParkedGroupRows(raw: EngineRawRead, sourceIds: string[
 }
 
 /** The shared embedding candidate predicate (persistence/embedding-settlement.ts EMBEDDING_CANDIDATE_WHERE): the failed effects a retry does not help are parked targets and a zero-norm refusal. */
-const EMBEDDING_CANDIDATE = embeddingCandidateWhere(['targets_parked', 'embedding_zero_norm']);
+/** The codes a failed embedding effect never retries on (the stale-embedding doctor reads). */
+const EMBEDDING_NEVER_RETRIED = ['targets_parked', 'embedding_zero_norm'] as const;
+const EMBEDDING_CANDIDATE = embeddingCandidateWhere(EMBEDDING_NEVER_RETRIED);
 
 export interface StaleEmbeddingCounts { count: number; failed: number; requeued: number }
 const STALE_EMBEDDING_COUNTS_SQL = `SELECT COUNT(*)::int AS count,
       COUNT(*) FILTER (WHERE e.state='failed')::int AS failed, COUNT(*) FILTER (WHERE e.state='queued' AND e.data ? 'repair_requeued_at')::int AS requeued
       FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE ${EMBEDDING_CANDIDATE} `;
-const STALE_EMBEDDING_COUNTS_SCOPED_SQL = `SELECT COUNT(*)::int AS count,
+const staleEmbeddingCountsScoped = (sourceIds: string[]) => renderFragment(sqlFragment`SELECT COUNT(*)::int AS count,
       COUNT(*) FILTER (WHERE e.state='failed')::int AS failed, COUNT(*) FILTER (WHERE e.state='queued' AND e.data ? 'repair_requeued_at')::int AS requeued
-      FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE ${EMBEDDING_CANDIDATE} AND r.source_id=ANY($1::text[])`;
+      FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE ${trustedSql(embeddingCandidateWhere(EMBEDDING_NEVER_RETRIED))} AND r.source_id=ANY(${sourceIds}::text[])`);
 /** Committed writes' stale queued or failed embedding effects: all, the failed, and the retry-queued. */
 export async function readStaleEmbeddingCounts(raw: EngineRawRead, sourceIds: string[] | null): Promise<StaleEmbeddingCounts> {
-  const [row] = await raw<StaleEmbeddingCounts>(sourceIds ? STALE_EMBEDDING_COUNTS_SCOPED_SQL : STALE_EMBEDDING_COUNTS_SQL, sourceIds ? [sourceIds] : []);
+  const scoped = sourceIds ? staleEmbeddingCountsScoped(sourceIds) : null;
+  const [row] = await raw<StaleEmbeddingCounts>(scoped ? scoped.text : STALE_EMBEDDING_COUNTS_SQL, scoped ? scoped.params : []);
   return row ?? { count: 0, failed: 0, requeued: 0 };
 }
 
 export interface StaleEmbeddingEffectRow { effect_id: string; source_id: string; slug: string | null; request_id: string; state: string; updated_at: string }
 const STALE_EMBEDDING_ROWS_SQL = `SELECT e.id::text AS effect_id,r.source_id,r.slug,r.request_id::text AS request_id,e.state,e.updated_at::text AS updated_at FROM persistence_effects e
        JOIN persistence_requests r ON r.id=e.request_id WHERE ${EMBEDDING_CANDIDATE}  ORDER BY e.id LIMIT 10`;
-const STALE_EMBEDDING_ROWS_SCOPED_SQL = `SELECT e.id::text AS effect_id,r.source_id,r.slug,r.request_id::text AS request_id,e.state,e.updated_at::text AS updated_at FROM persistence_effects e
-       JOIN persistence_requests r ON r.id=e.request_id WHERE ${EMBEDDING_CANDIDATE} AND r.source_id=ANY($1::text[]) ORDER BY e.id LIMIT 10`;
+const staleEmbeddingRowsScoped = (sourceIds: string[]) => renderFragment(sqlFragment`SELECT e.id::text AS effect_id,r.source_id,r.slug,r.request_id::text AS request_id,e.state,e.updated_at::text AS updated_at FROM persistence_effects e
+       JOIN persistence_requests r ON r.id=e.request_id WHERE ${trustedSql(embeddingCandidateWhere(EMBEDDING_NEVER_RETRIED))} AND r.source_id=ANY(${sourceIds}::text[]) ORDER BY e.id LIMIT 10`);
 /** The first 10 stale embedding effects. */
 export async function listStaleEmbeddingEffects(raw: EngineRawRead, sourceIds: string[] | null): Promise<StaleEmbeddingEffectRow[]> {
-  return raw<StaleEmbeddingEffectRow>(sourceIds ? STALE_EMBEDDING_ROWS_SCOPED_SQL : STALE_EMBEDDING_ROWS_SQL, sourceIds ? [sourceIds] : []);
+  const scoped = sourceIds ? staleEmbeddingRowsScoped(sourceIds) : null;
+  return raw<StaleEmbeddingEffectRow>(scoped ? scoped.text : STALE_EMBEDDING_ROWS_SQL, scoped ? scoped.params : []);
 }
 
 // ---- orphan-bindings.ts (doctor and persistence) / unbound-source.ts ------------------------------------------------------------
