@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runTakes } from '../src/commands/takes.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -96,6 +97,24 @@ describe('takes list by a stored spelling', () => {
     const json = JSON.parse(await capture(() => runTakes(engine, ['list', 'Companies/Dup-Example', '--json'])));
     expect(json.map((t: { claim: string }) => t.claim).sort()).toEqual(['Default dup claim', 'Other dup claim']);
   });
+
+  test('two stored spellings of one name, neither typed, are refused and named', async () => {
+    await storeWithTake('Companies/Amb-Example', 'First ambiguous claim');
+    await storeWithTake('COMPANIES/amb-example', 'Second ambiguous claim');
+    const exit = process.exit;
+    const errors: string[] = [];
+    const error = console.error;
+    let exitCode: number | undefined;
+    (process as { exit: unknown }).exit = (code?: number) => { exitCode = code ?? 0; throw new Error(`exit ${code}`); };
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    try {
+      await runTakes(engine, ['list', 'companies/Amb-example', '--json']).catch(() => {});
+    } finally {
+      (process as { exit: unknown }).exit = exit;
+      console.error = error;
+    }
+    expect({ exitCode, names: errors.join('\n').includes('Companies/Amb-Example') && errors.join('\n').includes('COMPANIES/amb-example') }).toEqual({ exitCode: 1, names: true });
+  });
 });
 
 /** A temp home with a brain repo configured as `sync.repo_path`. */
@@ -118,8 +137,6 @@ const marked = (file: string): boolean => readFileSync(file, 'utf8').includes('<
 
 /** Runs `takes revisit <typed>` against the brain in `home` with `EDITOR=true`; returns the exit code and what it wrote to stderr. */
 async function revisit(typed: string, home: string): Promise<{ exitCode: number; stderr: string }> {
-  const env = { GBRAIN_HOME: process.env.GBRAIN_HOME, EDITOR: process.env.EDITOR, VISUAL: process.env.VISUAL };
-  process.env.GBRAIN_HOME = home; process.env.EDITOR = 'true'; delete process.env.VISUAL;
   const exit = process.exit;
   let exitCode = 0;
   const stderr: string[] = [];
@@ -127,11 +144,10 @@ async function revisit(typed: string, home: string): Promise<{ exitCode: number;
   (process as { exit: unknown }).exit = (code?: number) => { exitCode = code ?? 0; throw new Error(`exit ${code}`); };
   (process.stderr as { write: unknown }).write = (s: string) => { stderr.push(String(s)); return true; };
   try {
-    await runTakes(engine, ['revisit', typed]).catch(() => {});
+    await withEnv({ GBRAIN_HOME: home, EDITOR: 'true', VISUAL: undefined }, () => runTakes(engine, ['revisit', typed]).catch(() => {}));
   } finally {
     (process as { exit: unknown }).exit = exit;
     (process.stderr as { write: unknown }).write = write;
-    for (const [k, v] of Object.entries(env)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
   return { exitCode, stderr: stderr.join('') };
 }
@@ -173,7 +189,8 @@ describe('takes revisit by a stored spelling', () => {
     mkdirSync(join(repo, '.git'), { recursive: true });
     const file = writeMarkdown(join(repo, 'public', 'Companies', 'Git-Example.md'));
     await storeWithTake('Companies/Git-Example', 'Git claim', { sourceId: 'git-src', sourcePath: 'public/Companies/Git-Example.md' });
-    await engine.executeRaw('UPDATE sources SET local_path = $1 WHERE id = $2', [join(repo, 'public'), 'git-src']);
+    // A git-synced source records paths from the git root and pins that mode.
+    await engine.executeRaw(`UPDATE sources SET local_path = $1, config = jsonb_build_object('slug_root_mode', 'git-root') WHERE id = $2`, [join(repo, 'public'), 'git-src']);
     const result = await revisit('Companies/Git-Example', home);
     const opened = { exitCode: result.exitCode, notFound: result.stderr.includes('Page not found'), marked: marked(file) };
     rmSync(home, { recursive: true, force: true });
