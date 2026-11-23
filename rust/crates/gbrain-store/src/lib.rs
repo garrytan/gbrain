@@ -67,6 +67,7 @@ pub mod page_ops;
 pub mod persistence;
 pub mod raw_files;
 pub mod relations;
+pub mod restore;
 pub mod salience;
 pub mod stats;
 pub mod takes;

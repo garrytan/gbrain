@@ -181,6 +181,7 @@ Errors from the addon are real `Error` objects with a `code`:
 | `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
 | `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
 | `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
+| `restore_refused` | `restoreQuarantine` changed nothing: the store holds unfinished write work, a recovery record, a missing purge or a record of a kind this build has not classified. The message is `<reason>: <count>` (`pending_requests`, `recovery_required`, `purge_replay`, `unclassified_state`). `gbrain backup restore` maps it to `restore_step_unsupported`. |
 | `invalid_argument` | A malformed argument. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |

@@ -55,6 +55,10 @@ pub const INVALID_STATE: &str = "invalid_state";
 /// it committed. `Store::write` runs the transaction again; callers do not see this code unless
 /// a write keeps losing until its retry budget is spent.
 pub const WRITE_CONFLICT: &str = "write_conflict";
+/// A restore changed nothing because the store holds work or state it cannot make safe: the message
+/// names the first blocker (`pending_requests`, `recovery_required`, `purge_replay` or
+/// `unclassified_state`) and its count.
+pub const RESTORE_REFUSED: &str = "restore_refused";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 

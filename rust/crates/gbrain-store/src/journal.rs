@@ -807,6 +807,41 @@ struct WriterRecord {
     revoked_at_us: Option<i64>,
 }
 
+/// The ids of the local writers that are not revoked.
+pub(crate) fn active_writer_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    scan_prefix(read, &[keys::WRITER], false, &mut |_, v| {
+        if let Ok(w) = serde_json::from_slice::<WriterRecord>(v)
+            && w.revoked_at_us.is_none()
+        {
+            ids.push(w.id);
+        }
+        true
+    })?;
+    Ok(ids)
+}
+
+/// `restore_quarantine`: revokes every local writer at `now` (a revoked one keeps its first
+/// time); returns the ids that were active.
+pub(crate) fn revoke_all_writers(tx: &mut dyn KvWrite, now: i64) -> Result<Vec<String>> {
+    let mut active = Vec::new();
+    scan_prefix(&*tx, &[keys::WRITER], false, &mut |_, v| {
+        if let Ok(w) = serde_json::from_slice::<WriterRecord>(v)
+            && w.revoked_at_us.is_none()
+        {
+            active.push(w);
+        }
+        true
+    })?;
+    let mut ids = Vec::new();
+    for mut w in active {
+        w.revoked_at_us = Some(now);
+        put_json(tx, &keys::writer(&w.id), &w)?;
+        ids.push(w.id);
+    }
+    Ok(ids)
+}
+
 /// The stored id and lane of the local writer `id` (case-folded key), revoked or not.
 pub(crate) fn read_writer_record(read: &dyn KvRead, id: &str) -> Result<Option<(String, String)>> {
     Ok(get_json::<WriterRecord>(read, &keys::writer(&id.to_lowercase()))?.map(|w| (w.id, w.lane)))

@@ -12,6 +12,7 @@ mod graph;
 mod journal;
 mod links;
 mod pages;
+mod restore;
 mod search;
 mod seed;
 mod sources;
