@@ -28,6 +28,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createSource, parityArms } from './harness.ts';
+import { seedTypedRequest } from '../helpers/persistence-typed-seed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { byteOrder, MIXED_IDS } from '../helpers/byte-order.ts';
@@ -82,6 +83,12 @@ async function counter(engine: BrainEngine, key: string, cols: { outstanding?: n
   [key, cols.outstanding ?? 0, cols.lifetime ?? 0, cols.terminal ?? 0]);
 }
 
+/** The same counter row as `counter`, through the typed counter members: create it, then add each column. */
+async function typedCounter(engine: BrainEngine, key: string, cols: { outstanding?: number; lifetime?: number; terminal?: number } = {}): Promise<void> {
+  await engine.lockPersistenceCounters([key]);
+  await engine.addPersistenceCounters(key, { outstanding_count: cols.outstanding ?? 0, lifetime_ids: cols.lifetime ?? 0, terminal_bytes: cols.terminal ?? 0 });
+}
+
 interface Req { principal?: string; source: string; slug?: string; state?: string; ageSql?: string; outcome?: unknown; worktree?: string; requestId?: string; errorCode?: string }
 /** One request row under the protocol the table's guard asks for. */
 async function request(engine: BrainEngine, r: Req): Promise<void> {
@@ -96,14 +103,14 @@ async function request(engine: BrainEngine, r: Req): Promise<void> {
 
 describe('doctor persistence reads sort text keys by byte', () => {
   parityTest('persistence_capacity, persistence_counter_drift and persistence_request_growth list counters by byte key', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['setConfig', 'lockPersistenceCounters', 'addPersistenceCounters', 'listCapacityCounters', 'readCounterDrift', 'listLifetimeCounters'],
   }, async engine => {
     const { checkPersistenceCapacity } = await import('../../src/commands/doctor/checks/persistence-capacity.ts');
     const { checkPersistenceCounterDrift } = await import('../../src/commands/doctor/checks/persistence-compaction.ts');
     const { requestGrowthCheck } = await import('../../src/commands/doctor/checks/persistence-requests.ts');
-    await setLimit(engine, 'persistence.limits.principal_lifetime_ids', 10);
+    await engine.setConfig('persistence.limits.principal_lifetime_ids', '10');
     const keys = MIXED_IDS.map(id => `principal:local_cli:${id}`);
-    for (const key of keys) await counter(engine, key, { lifetime: 9, terminal: 100 });
+    for (const key of keys) await typedCounter(engine, key, { lifetime: 9, terminal: 100 });
     const principals = (rows: { scope: string }[]) => rows.map(r => r.scope).filter(s => s.startsWith('principal:'));
     const capacity = await checkPersistenceCapacity(engine);
     const drift = await checkPersistenceCounterDrift(engine);
@@ -157,12 +164,12 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('local_edit_adoptions lists sources, and each source\'s paths, by byte', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+    methods: ['insertWriteRequest', 'completeWriteRow', 'listLocalEditAdoptions'],
   }, async (engine, backend) => {
     const { localEditAdoptionsEntry } = await import('../../src/commands/doctor/checks/local-edit-adoptions.ts');
     for (const id of SRC) await createSource(engine, backend, id);
     for (const id of SRC) {
-      for (const path of MIXED_IDS) await request(engine, { source: id, state: 'committed', outcome: { adopted_local_edit: { path: `${path}.md` } } });
+      for (const path of MIXED_IDS) await seedTypedRequest(engine, { source: id, principalId: 'doctor', slug: 'notes/x', digest: randomUUID(), state: 'committed', outcome: { adopted_local_edit: { path: `${path}.md` } } });
     }
     const [check] = await runEntry(localEditAdoptionsEntry, engine);
     const sources = detailsOf(check).sources as { source_id: string; paths: string[] }[];
@@ -247,12 +254,12 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('content_hash_duplicates names a duplicate group\'s slugs by byte', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'listContentHashDuplicates'],
   }, async engine => {
     const { checkContentHashDuplicates } = await import('../../src/commands/doctor/checks/extraction-sync.ts');
     const slugs = ['ab11', 'a-z1', 'aa-1'];
-    for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
-    await engine.executeRaw("UPDATE pages SET content_hash='same-content-hash' WHERE slug = ANY($1::text[])", [slugs]);
+    // putPage stores the content hash it is given, so three pages share one hash as an import of identical files leaves them.
+    for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '', content_hash: 'same-content-hash' });
     const check = await checkContentHashDuplicates(engine);
     const group = byteOrder(slugs).join(' == ');
     const out = { status: check.status, groups: detailsOf(check).sample_distinct_slug_groups, message: check.message.includes(`Sample: ${group}.`) };
