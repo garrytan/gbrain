@@ -33,6 +33,7 @@ pub mod pages;
 pub mod redb_kv;
 pub mod search;
 pub mod seed;
+pub mod snapshot;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -76,6 +77,7 @@ pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
 pub mod vectors;
+pub mod verify;
 mod version_prune;
 pub mod wanted_links;
 pub mod write_attribution;
@@ -173,7 +175,8 @@ pub struct Store {
     /// True when the open-time scan could not store the member-access flag and this process reads
     /// it as `'1'` (`access_flag::scan_at_open`).
     pub(crate) flag_assumed: bool,
-    /// The brain directory this store was opened on (`None` over a bare `Kv`): where `FORMAT` lives.
+    /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`): where
+    /// `FORMAT` lives (the snapshot copies it, `snapshot.rs`; a restore rewrites it). `None` over `open_kv`.
     pub(crate) dir: Option<PathBuf>,
 }
 
@@ -280,7 +283,8 @@ impl Store {
             keyword_index_builder: false,
             ..OpenOptions::default()
         };
-        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        store.dir = Some(dir.to_path_buf());
         if let Some(on_disk) = existing
             && on_disk.brain_id != store.info.brain_id
             && !store.rotated_from(&on_disk.brain_id)?

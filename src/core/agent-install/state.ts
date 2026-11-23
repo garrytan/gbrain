@@ -143,7 +143,8 @@ export function checkedManagedPaths(root: string | null, input: unknown): string
   return paths;
 }
 
-export function readInstallReceipt(root: string): AgentInstallReceipt | null {
+/** `databaseName` is the data directory under `.gbrain` the receipt must name: `brain.pglite` unless a Rust backup reads it. */
+export function readInstallReceipt(root: string, databaseName = 'brain.pglite'): AgentInstallReceipt | null {
   const path = installReceiptPath(root);
   assertNoSymlinks(path);
   if (!existsSync(path)) return null;
@@ -154,7 +155,7 @@ export function readInstallReceipt(root: string): AgentInstallReceipt | null {
     throw new AgentInstallError('invalid_receipt', `Unsupported or invalid install receipt: ${path}`);
   }
   if (value.skills_policy !== undefined && !['follow', 'memory-only'].includes(value.skills_policy)) throw new AgentInstallError('invalid_receipt', 'Invalid recorded shared-skills choice; preserve the receipt before recovery.');
-  if (value.root !== root || value.database_path !== join(root, '.gbrain', 'brain.pglite')) {
+  if (value.root !== root || value.database_path !== join(root, '.gbrain', databaseName)) {
     throw new AgentInstallError('receipt_mismatch', 'Install receipt belongs to a different root/database; use backup restore to relocate it.');
   }
   checkedManagedPaths(root, value.managed_paths);

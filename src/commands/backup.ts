@@ -38,6 +38,8 @@ import {
 const BACKUP_USAGE: Record<string, { usage: string; example: string }> = {
   create: { usage: 'gbrain backup create --output /absolute/private/path/archive.gbrain-backup [--json]',
     example: 'gbrain backup create --output /srv/private/brain-2026-10-03.gbrain-backup' },
+  'verify-store': { usage: 'gbrain backup verify-store /absolute/copied/brain.rust [--json]',
+    example: 'gbrain backup verify-store /srv/restore-home/.gbrain/brain.rust --json' },
   restore: { usage: 'gbrain backup restore ARCHIVE --into /absolute/new-root [--mode new-brain|recovery] [--purge-mirror /absolute/purge-events.jsonl] [--confirm-quiesced] [--confirm-backup-compatible] [--confirm-authority-reviewed] [--json]',
     example: 'gbrain backup restore /srv/private/brain-2026-10-03.gbrain-backup --into /srv/gbrain-restored' },
 };
@@ -47,6 +49,9 @@ function backupUsageError(sub: string, message: string): OperationError {
   const u = BACKUP_USAGE[sub] ?? BACKUP_USAGE.create!;
   return opError('invalid_params', message, `Usage: ${u.usage}. Example: ${u.example}`);
 }
+
+/** Codes a backup command reports as they are (each carries its own fix), instead of the generic storage failure. */
+const PASS_THROUGH_CODES: ReadonlySet<string> = new Set(['backup_too_large', 'unmanaged_database_path', 'restore_step_unsupported', 'rust_snapshot_stopped', 'rust_store_unreadable', 'rust_store_locked']);
 
 const SAFE_ERROR_FIELD = /^[A-Za-z0-9_.:-]{1,64}$/;
 
@@ -80,8 +85,12 @@ const HELP =
   '           cached verdict, including warnings, while remote evidence is fresh.\n' +
   '  check    Force a bounded remote-ref sweep, prioritizing pending/older refs.\n' +
   '           Remote evidence expires after one hour; offline is not verified.\n' +
-  '  create --output ABS   Snapshot local PGLite and installer-managed files.\n' +
+  '  create --output ABS   Snapshot a local PGLite or Rust brain and installer-managed files.\n' +
   '                        Pause file writers. Archive contains sensitive full DB state.\n' +
+  '                        A Rust brain over the 8 GiB archive cap, and a Postgres brain\n' +
+  '                        (pg_dump), are backed up as the docs describe.\n' +
+  '  verify-store DIR      Read-only check of a copied Rust brain directory (the physical-copy\n' +
+  '                        runbook): identity, format, generation, digests, index state.\n' +
   '  restore ARCHIVE --into ABS\n' +
   '                        Restore into a NEW absent root; preserve the old brain.\n' +
   '                        Default --mode new-brain resets shared identity and authority.\n' +
@@ -153,6 +162,39 @@ function isLockError(err: unknown): boolean {
   return err instanceof Error && err.message.includes('Could not acquire PGLite lock');
 }
 
+/** `gbrain backup verify-store DIR`: the mandatory step of the Rust physical-copy runbook. Reads the copy; changes nothing. */
+async function runVerifyStore(args: string[]): Promise<BackupCliResult> {
+  const json = args.includes('--json');
+  const positional = args.slice(1).filter(a => a !== '--json');
+  try {
+    if (positional.length !== 1 || positional[0].startsWith('-')) throw backupUsageError('verify-store', 'gbrain backup verify-store takes exactly one absolute directory.');
+    const { verifyRustStoreDir } = await import('../core/backup/rust-snapshot.ts');
+    const report = await verifyRustStoreDir(positional[0]);
+    const ok = report.verdict === 'ok';
+    if (json) console.log(JSON.stringify({ ok, dir: positional[0], ...report }));
+    else {
+      const tags = Object.entries(report.tags);
+      console.log([`verify-store ${positional[0]}: ${report.verdict.toUpperCase()}`,
+        `  brain id ${report.brain_id ?? 'unknown'}, record format ${report.engine_format_version ?? 'unknown'} (FORMAT file ${report.format_file_version ?? 'missing'}), schema ${report.schema_version ?? 'unknown'}, generation ${report.generation ?? 'unknown'}`,
+        `  ${report.keys} keys, ${report.bytes} bytes, ${tags.length} tags${report.relations ? `, ${Object.keys(report.relations).length} seeded relations` : ''}`,
+        `  keyword index: ${report.keyword_index ? `${report.keyword_index.state}${report.keyword_index.ok ? '' : ' (NOT ok)'}` : 'not checked'}`,
+        ...(report.integrity ? [`  integrity: ${report.integrity}`] : []), ...(report.mismatches.length ? [`  mismatches: ${report.mismatches.join(', ')}`] : []),
+        ok ? 'The copy was read, not opened: no file in it changed. Point a new GBRAIN_HOME at it to use it.' : 'Do not rely on this copy; copy the stopped brain again.'].join('\n'));
+    }
+    return { exitCode: ok ? 0 : 1 };
+  } catch (error) {
+    const { writeCliError } = await import('../cli/cli-error.ts');
+    if (error instanceof OperationError && error.code === 'invalid_params') { writeCliError(error, 'backup', { json, legacy: { ok: false, reason: 'invalid_params', message: error.message } }); return { exitCode: 2 }; }
+    const detail = (typeof error === 'object' && error !== null ? error : {}) as { code?: unknown };
+    const reason = typeof detail.code === 'string' && SAFE_ERROR_FIELD.test(detail.code) ? detail.code : 'verify_failed';
+    const message = backupFailureMessage(error);
+    if (error instanceof OperationError && PASS_THROUGH_CODES.has(error.code)) writeCliError(error, 'backup', { json, legacy: { ok: false, reason, message } });
+    else writeCliError(opError('storage_error', message, 'Tell the user the copy could not be read: it is missing, was not closed cleanly (copy only a stopped brain), or is not a Rust brain directory.', {
+      why: 'verify-store reads the copy without opening it, so it refuses what it cannot read safely.' }), 'backup', { json, legacy: { ok: false, reason, message } });
+    return { exitCode: 1 };
+  }
+}
+
 export async function runBackupCli(
   args: string[],
   connect: () => Promise<BrainEngine>,
@@ -162,6 +204,7 @@ export async function runBackupCli(
     return { exitCode: 0 };
   }
   const sub = args[0];
+  if (sub === 'verify-store') return runVerifyStore(args);
   if (sub === 'create' || sub === 'restore') {
     const json = args.includes('--json');
     try {
@@ -180,17 +223,18 @@ export async function runBackupCli(
         else if (arg.startsWith('-')) throw backupUsageError(sub, `Unknown backup option: ${arg}.`);
         else positional.push(arg);
       }
-      const { createPgliteBackup, restorePgliteBackup } = await import('../core/backup/snapshot.ts');
+      const { createBackup, restoreBackup } = await import('../core/backup/rust-snapshot.ts');
       if (sub === 'create') {
         if (!values['--output'] || values['--into'] || values['--mode'] || values['--purge-mirror'] || confirmations.size || positional.length) throw backupUsageError(sub, 'gbrain backup create takes exactly --output <absolute archive path>.');
-        const result = await createPgliteBackup({ output: values['--output'] });
+        const result = await createBackup({ output: values['--output'] });
+        const restoreBlockers = 'restore_blockers' in result ? result.restore_blockers : [];
         if (json) console.log(JSON.stringify({ ok: true, ...result }));
-        else console.log(`Backup created: ${result.archive}\nSensitive full database state; protect any off-VM copy.\nExcluded assets: ${(result.manifest.omitted as string[]).join('; ')}`);
+        else console.log(`Backup created: ${result.archive}\nSensitive full database state; protect any off-VM copy.\nExcluded assets: ${(result.manifest.omitted as string[]).join('; ')}${restoreBlockers.length ? `\n${restoreBlockers.join('\n')}` : ''}`);
       } else {
         if (!values['--into'] || values['--output'] || positional.length !== 1) throw backupUsageError(sub, 'gbrain backup restore takes one ARCHIVE and --into <absolute new root>.');
         if (values['--mode'] !== undefined && !['new-brain', 'recovery'].includes(values['--mode'])) throw new Error('Restore --mode must be new-brain or recovery.');
         if (values['--purge-mirror'] !== undefined && !isAbsolute(values['--purge-mirror'])) throw backupUsageError(sub, '--purge-mirror takes an absolute path to a copy of the original brain\'s .gbrain/purge-events.jsonl.');
-        const result = await restorePgliteBackup({ archive: positional[0], into: values['--into'], mode: values['--mode'] === 'recovery' ? 'recovery' : 'new_brain',
+        const result = await restoreBackup({ archive: positional[0], into: values['--into'], mode: values['--mode'] === 'recovery' ? 'recovery' : 'new_brain',
           confirmQuiesced: confirmations.has('--confirm-quiesced'), confirmBackupCompatible: confirmations.has('--confirm-backup-compatible'),
           confirmAuthorityReviewed: confirmations.has('--confirm-authority-reviewed'), ...(values['--purge-mirror'] ? { purgeMirror: values['--purge-mirror'] } : {}) });
         if (json) console.log(JSON.stringify({ ok: true, ...result }));
@@ -203,9 +247,9 @@ export async function runBackupCli(
         writeCliError(error, 'backup', { json, legacy: { ok: false, reason: 'invalid_params', message: error.message } });
         return { exitCode: 2 };
       }
-      if (error instanceof OperationError && (error.code === 'backup_too_large' || error.code === 'unmanaged_database_path')) {
+      if (error instanceof OperationError && PASS_THROUGH_CODES.has(error.code)) {
         const { writeCliError } = await import('../cli/cli-error.ts');
-        writeCliError(error, 'backup', { json, legacy: { ok: false, reason: error.code, message: error.message } });
+        writeCliError(error, 'backup', { json, legacy: { ok: false, reason: error.code, ...(error.code === 'restore_step_unsupported' && error.reason ? { refusal_reason: error.reason } : {}), message: error.message } });
         return { exitCode: 1 };
       }
       if (error instanceof OperationError && error.reason === 'pglite_required') {

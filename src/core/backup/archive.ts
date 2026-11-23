@@ -126,6 +126,22 @@ function checkEntryPath(paths: Map<string, { path: string; directory: boolean }>
   }
 }
 
+/** The validated manifest of an archive, without extracting anything: what `gbrain backup restore` dispatches on. */
+export function readBackupManifest(archive: string): ArchiveManifest {
+  assertNoSymlinks(archive);
+  const fd = openSync(archive, 'r');
+  try {
+    if (!readExactly(fd, MAGIC.length, 0).equals(MAGIC)) fail('Not a GBrain backup archive.');
+    const length = readExactly(fd, 4, MAGIC.length).readUInt32BE();
+    if (length > MAX_MANIFEST) fail('Backup manifest exceeds its size limit.');
+    let value: unknown;
+    try { value = JSON.parse(readExactly(fd, length, MAGIC.length + 4).toString('utf8')); }
+    catch { fail('Unreadable backup manifest.'); }
+    validateManifest(value);
+    return value;
+  } finally { closeSync(fd); }
+}
+
 /** Extract ONLY into a caller-created private, empty staging directory. */
 export function readBackupArchive(archive: string, destination: string): ArchiveManifest {
   assertNoSymlinks(archive);

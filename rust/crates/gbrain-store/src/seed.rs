@@ -31,7 +31,7 @@ mod wake;
 pub use decode::SeedRow;
 pub use follow::{
     AllocatorCheck, DigestInput, EntryInfo, FactFingerprints, FollowResult, IntervalDigest,
-    KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints,
+    KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints, relation_digest_stream,
 };
 pub use not_copied::{GapRows, LossKind, NOT_COPIED, NotCopied};
 

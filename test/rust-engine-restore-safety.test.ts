@@ -232,8 +232,9 @@ describe('refusals', () => {
       const error = restoreRefusal(reason, 3, { store: census().store }).toJSON() as Record<string, unknown>;
       expect(error.error).toBe('restore_step_unsupported');
       expect(error.reason).toBe(reason);
-      expect(String(error.message)).toContain('Nothing was published');
-      expect(String(error.message)).toContain('restore_target_exists');
+      const early = reason === 'recovery_mode' || reason === 'restore_addon_too_old';
+      expect(String(error.message)).toContain(early ? 'Nothing was reserved or published' : 'Nothing was published');
+      expect(String(error.message)).toContain(early ? 'the same --into can be used again' : 'restore_target_exists');
       expect(String(error.suggestion)).toContain('new absent --into');
       expect(error.docs).toBe(RESTORE_REFUSAL_DOCS);
       expect(JSON.stringify(error)).not.toMatch(/--(skip|no)-/i);

@@ -263,8 +263,45 @@ The restore drill in `test/backup-preflight-6649.serial.test.ts` runs these step
 `.gbrain` alias to another directory: it copies the stopped brain, opens the
 copy in its own home with the data intact, archives the copy and restores that
 archive into a third root. Archives over 8 GiB are not supported yet; this
-runbook is the recovery route until a streaming format ships
+runbook (and the Rust one below) is the recovery route until a streaming format ships
 ([#6649](https://github.com/garrytan/gbrain/issues/6649)).
+
+### Large brains on the Rust engine
+
+A Rust brain is a directory, `<root>/.gbrain/brain.rust`, that holds two files you copy, `FORMAT` and `records.redb`. Beside
+them a running brain keeps `.gbrain-owner.sock` (and a `.gbrain-owner.lock` next to the directory): the process that owns
+the brain. Never copy those.
+
+`gbrain backup create` works on a Rust brain whose archive fits the same 8 GiB cap. It asks the process that owns the brain
+for one copy at one committed generation (writers keep going), checks the copy against its own digests, and retakes it up to
+three times over a minute while the copy holds unfinished write requests; if they never finish it stops with
+`writers_active` and writes nothing. Above the cap, or in a flat or symlinked layout, it refuses with `backup_too_large` or
+`unmanaged_database_path` and names this runbook. Ask the user before step 1: it stops their memory service.
+
+1. **Stop every writer.** Stop `gbrain serve`, autopilot and jobs workers, and any agent session using this brain. The
+   brain is stopped when `.gbrain-owner.sock` is gone from the directory.
+2. **Copy.** Copy `FORMAT` and `records.redb` and nothing else from `<root>/.gbrain/brain.rust` into
+   `<new-home>/.gbrain/brain.rust`, and `config.json` to `<new-home>/.gbrain/config.json`. Do not start writers again
+   until the copy finishes.
+3. **Point the copy at itself.** Set `database_path` in the copied `config.json` to `<new-home>/.gbrain/brain.rust`.
+4. **Verify the copy (mandatory).** Run `gbrain backup verify-store <new-home>/.gbrain/brain.rust --json`. It reads the copy
+   without opening it the normal way, so nothing in it changes: no format upgrade, no repair, no index build. It reports the
+   brain id, record format, generation, key count and digests per record kind, and the keyword index state (a healthy
+   incomplete index is reported as incomplete, not as damage). A copy that was not closed cleanly, has an unknown format, or
+   has a damaged record file is refused or reported as `mismatch` or `integrity`. It cannot see a changed value inside an
+   intact file, so also compare `sha256sum` of the two `records.redb` files.
+5. **Open it in isolation.** Run `GBRAIN_HOME=<new-home> gbrain doctor --json` and an entity recall against the copy.
+
+Restoring an archive of a Rust brain (`gbrain backup restore ARCHIVE --into <new absent root>`) checks the restored bytes
+against the snapshot before it changes anything, then detaches external sources, rebases managed ones, switches
+automation off, cancels unfinished jobs and revokes archived local writers and OAuth clients, and prints exactly which. It
+refuses, by name and publishing nothing, an archive that holds unfinished write requests, a purge that was committed after
+the snapshot, or a record kind this build cannot make safe (access tokens among them); see
+[`restore_step_unsupported`](troubleshooting.md#restore-step-unsupported). The default `new-brain` mode is the only one. The restored brain gets a
+fresh brain id, and the restore output names the old and the new one.
+
+Postgres brains are unchanged: they keep `pg_dump` and `pg_restore` (`gbrain backup create` on one refuses with
+`pglite_required` and names them), and the PGLite path above is as it was.
 
 ## 7. Restore into a new root
 

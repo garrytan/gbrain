@@ -21,7 +21,10 @@ export type RestoreRefusalReason = (typeof RESTORE_REFUSAL_REASONS)[number];
 
 export const RESTORE_REFUSAL_DOCS = 'docs/guides/troubleshooting.md#restore-step-unsupported';
 
-const NOT_PUBLISHED = 'Nothing was published: the archive and the original brain are untouched, and the private failed receipt and staging folder stay under the restore target. Running the same command again fails with restore_target_exists.';
+const NOT_PUBLISHED = 'Nothing was published: the archive and the original brain are untouched, and the private failed receipt and staging folder stay under the restore target. Running the same command again fails with restore_target_exists; give --into a new, absent folder.';
+/** These two refusals come before a folder is reserved, so the same --into is still free. */
+const NOT_RESERVED = 'Nothing was reserved or published: the archive and the original brain are untouched, and the same --into can be used again once this is fixed.';
+const BEFORE_RESERVING: readonly RestoreRefusalReason[] = ['recovery_mode', 'restore_addon_too_old'];
 const NEW_BACKUP = ['gbrain', 'backup', 'create', '--output', '<NEW_ARCHIVE>'];
 const NEW_RESTORE = ['gbrain', 'backup', 'restore', '<ARCHIVE>', '--into', '<NEW_ABSENT_ROOT>'];
 const RESTORE_WITH_MIRROR = [...NEW_RESTORE, '--purge-mirror', '<MIRROR_COPY>'];
@@ -82,7 +85,7 @@ function action(reason: RestoreRefusalReason): Action {
 export function restoreRefusal(reason: RestoreRefusalReason, count = 1, context: { store?: RestoreStoreIdentity; mode?: string; detail?: string } = {}): OperationError {
   const text = TEXT[reason];
   const store = context.store ? ` store_format=${context.store.engine_format_version} generation=${context.store.generation}` : '';
-  return opError('restore_step_unsupported', `${text.what(count, context.detail)} ${NOT_PUBLISHED}`, text.remedy,
+  return opError('restore_step_unsupported', `${text.what(count, context.detail)} ${BEFORE_RESERVING.includes(reason) ? NOT_RESERVED : NOT_PUBLISHED}`, text.remedy,
     { reason, why: text.why, fix: action(reason), docs: RESTORE_REFUSAL_DOCS, detail: `reason=${reason} count=${count}${context.detail ? ` kinds=${context.detail}` : ''}${store}` });
 }
 
