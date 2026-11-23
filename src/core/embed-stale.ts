@@ -36,6 +36,7 @@ import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStat
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -360,6 +361,8 @@ export async function embedStalePages(
         result.aborted = true;
         return result;
       }
+      // A page that fails is skipped; an engine that cannot embed it refuses the whole call instead of reporting 0.
+      rethrowCapabilityMissing(e);
       process.stderr.write(`\n  [embed-stale] error on ${sourceId}/${slug}: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }

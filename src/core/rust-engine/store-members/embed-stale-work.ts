@@ -64,3 +64,8 @@ export const listUnembeddedChunkIndexes: Member<'listUnembeddedChunkIndexes'> = 
   storeColumn('listUnembeddedChunkIndexes', column);
   return ((await storeCall({ member: 'listUnembeddedChunkIndexes', slug }, () => brain.listUnembeddedChunkIndexes(slug, sourceId))) as Array<number | string>).map(Number);
 };
+
+export const sumEmbedBackfillChars: Member<'sumEmbedBackfillChars'> = async (brain, sourceId, all) => {
+  const row = await storeCall({ member: 'sumEmbedBackfillChars' }, () => brain.sumEmbedBackfillChars(sourceId ?? undefined, all)) as { chunk_chars: number | string; chunkless_chars: number | string };
+  return { chunk_chars: Number(row.chunk_chars), chunkless_chars: Number(row.chunkless_chars) };
+};

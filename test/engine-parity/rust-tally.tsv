@@ -213,6 +213,7 @@ test/engine-parity/reads-privacy.test.ts	51	1
 test/engine-parity/reason-tombstones.test.ts	3	0
 test/engine-parity/recall-members.test.ts	4	0
 test/engine-parity/referrer-reads.test.ts	5	0
+test/engine-parity/refusal-swallow-sites.test.ts	5	1	migrate embeddings refuses every mode by design on Rust (the store fixes its vector width; RUST_ENGINE.md loss row 45)
 test/engine-parity/relational-reads.test.ts	4	0
 test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0

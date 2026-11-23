@@ -158,6 +158,7 @@ const OOS = {
   repairHistoryKinds: 'out-of-scope:repair-history-kinds (the batch 6a history repair reads and writes, born in engine-sql/version-reasons.ts, overwrite-reads.ts, takes-reads.ts, fact-text-repair.ts, atom-restore-reads.ts and moved-page-reads.ts; pinned by test/engine-parity/repair-history-kinds.test.ts)',
   repairGenerationKinds: 'out-of-scope:repair-generation-kinds (the batch 7 generation repair reads, born in engine-sql/lost-fence-reads.ts and stale-atom-reads.ts; pinned by test/engine-parity/repair-generation-kinds.test.ts)',
   embedStaleWork: 'out-of-scope:embed-stale-work (born in engine-sql/embed-stale-work.ts and engine-sql/embedding-provenance.ts; pinned by test/engine-parity/embed-stale-work.test.ts)',
+  doctorTallies: 'out-of-scope:doctor-tallies (counts doctor checks ran through executeRaw inside a catch that hid a Rust refusal, born in engine-sql/doctor-tallies.ts; pinned by test/engine-parity/refusal-swallow-sites.test.ts)',
   engineMigration: 'out-of-scope:engine-migration (the reads gbrain migrate --engine copies a brain with, born in engine-sql/engine-migration.ts; pinned by test/engine-parity/migrate-engine-source.test.ts)',
   factsConversation: 'out-of-scope:facts-conversation (born in engine-sql/facts-conversation.ts; pinned by test/engine-parity/facts-conversation-sites.test.ts and test/facts-conversation-sites-sql-pin.test.ts)',
   memoryMutationReads: 'out-of-scope:memory-mutation-reads (born in engine-sql/memory-mutation-reads.ts; pinned by test/engine-parity/memory-mutation-reads.test.ts and test/memory-mutation-reads-sql-pin.test.ts)',
@@ -1715,6 +1716,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'lockContentDriftState': OOS.embedStaleWork,
   'invalidateContentDriftChunks': OOS.embedStaleWork,
   'listUnembeddedChunkIndexes': OOS.embedStaleWork,
+  'sumEmbedBackfillChars': OOS.embedStaleWork,
+  'countLiveSegmentedPages': OOS.doctorTallies,
+  'countValidityLapsedFacts': OOS.doctorTallies,
+  'countOrphanEventProjections': OOS.doctorTallies,
   'listReadablePageSlugs': OOS.factsQuotedReads,
 };
 

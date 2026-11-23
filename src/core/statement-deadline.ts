@@ -35,6 +35,7 @@ import { DOCTOR_READ_MEMBERS } from './engine-sql/doctor-reads.ts';
 import { DOCTOR_DERIVED_MEMBERS } from './engine-sql/doctor-derived.ts';
 import { DOCTOR_PERSISTENCE_MEMBERS } from './engine-sql/doctor-persistence.ts';
 import { DOCTOR_PAGES_MEMBERS } from './engine-sql/doctor-pages.ts';
+import { DOCTOR_TALLY_MEMBERS } from './engine-sql/doctor-tallies.ts';
 import { DOCTOR_SEARCH_MEMBERS } from './engine-sql/doctor-search.ts';
 import { DOCTOR_ACC_MEMBERS } from './engine-sql/doctor-acc-members.ts';
 import { DOCTOR_JOIN_MEMBERS } from './engine-sql/doctor-join.ts';
@@ -121,7 +122,7 @@ const DOCTOR_PATH_TYPED_READS: readonly string[] = [
 export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);
 /** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
-  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS, ...DOCTOR_JOIN_MEMBERS,
+  ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_TALLY_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS, ...DOCTOR_JOIN_MEMBERS,
   ...DOCTOR_CHECKPOINT_MEMBERS, ...DOCTOR_TERMINAL_MEMBERS, ...DOCTOR_BRAIN_MEMBERS, ...DOCTOR_SYNC_MEMBERS, ...DOCTOR_SRC_MEMBERS, ...DOCTOR_FACTS_TRUST_MEMBERS, ...FENCE_CENSUS_MEMBERS,
   ...DOCTOR_PATH_TYPED_READS,
 ]);

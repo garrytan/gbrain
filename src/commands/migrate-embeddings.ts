@@ -43,6 +43,7 @@ import { countStaleFactEmbeddings } from '../core/facts/embedding-identity.ts';
 import { authorizeMigrationBudget, assertMigrationLeases, ceilCents, MigrationBudgetRefusal, withMigrationLeaseTransaction, type MigrationBudgetRefusalDetails, type MigrationLeaseAssert, type MigrationWorstCase } from '../core/embedding-migration-budget.ts';
 import { planMigrationWorstCase, MIGRATION_PROBE_TEXT, RERANKER_PROBE } from '../core/embedding-migration-worst-case.ts';
 import { withAIInvocationGuard } from '../core/ai/invocation-guard.ts';
+import { requireRawSql } from '../core/rust-engine/errors.ts';
 
 /**
  * Brain-wide migration lock (round-2 #4): serializes whole migrations so two
@@ -947,6 +948,14 @@ async function migrateConsent(engine: BrainEngine, args: string[], flags: Return
   return auth !== null;
 }
 
+/**
+ * The status census, the plan and the apply read and rewrite vector columns with raw SQL. The Rust store fixes its
+ * vector width when the brain is created (docs/designs/RUST_ENGINE.md loss row 45), so every mode refuses there before
+ * it reads anything (after the flag checks, which touch no engine) instead of reporting a census with fields quietly
+ * missing.
+ */
+const RUST_MIGRATION_STOP = 'migrate embeddings (the Rust store fixes its vector width at creation; status, plan and apply read vector columns with raw SQL)';
+
 export async function runMigrateEmbeddings(
   engine: BrainEngine,
   args: string[],
@@ -963,7 +972,7 @@ export async function runMigrateEmbeddings(
     exit(0);
   }
   const flags = parseMigrateEmbeddingsFlags(args);
-
+  requireRawSql(engine, RUST_MIGRATION_STOP);
   // ── Read-only status surface (D6). No env refusal (it REPORTS env), no
   // mutation, no spend — the mid-incident "where am I?" command.
   if (args.includes('--status')) {

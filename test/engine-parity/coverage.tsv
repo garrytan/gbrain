@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2016/2032
+# covered: 2020/2036
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -94,7 +94,8 @@
 # decide_proposals: 16/16
 # decide_store: 19/19
 # owner_only: 1/1
-# embed_stale_work: 9/9
+# embed_stale_work: 10/10
+# doctor_tallies: 3/3
 # engine_migration: 5/5
 # access_grants: 7/7
 # access_members: 18/18
@@ -135,7 +136,7 @@ findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	289	yes	yes	yes	serves
+softDeletePage	pages	yes	290	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	6	no	yes	yes	serves
@@ -381,7 +382,7 @@ getTimelineForDate	timeline	yes	8	no	yes	yes	serves
 getSince	timeline	yes	11	no	yes	yes	serves
 getOnThisDay	timeline	yes	7	no	yes	yes	serves
 getLastSeen	timeline	yes	6	no	yes	yes	serves
-upsertEventProjection	timeline	yes	22	no	yes	yes	serves
+upsertEventProjection	timeline	yes	23	no	yes	yes	serves
 removeTimelineRows	timeline	yes	3	no	yes	yes	serves
 updateTimelineDetails	timeline	yes	2	no	yes	yes	serves
 insertCanonicalTimelineRows	timeline	yes	1	no	yes	yes	serves
@@ -528,10 +529,10 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	160	yes	yes	yes	serves
+insertFact	facts	yes	161	yes	yes	yes	serves
 insertFacts	facts	yes	220	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	84	no	yes	yes	serves
+expireFact	facts	yes	85	no	yes	yes	serves
 listFactsByEntity	facts	yes	52	yes	yes	yes	serves
 listFactsSince	facts	yes	34	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
@@ -604,7 +605,7 @@ replaceDerivedAliases	sync_aliases	yes	16	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	49	no	yes	yes	serves
+getConfig	config	yes	50	no	yes	yes	serves
 setConfig	config	yes	73	no	yes	yes	serves
 unsetConfig	config	yes	3	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -1910,8 +1911,12 @@ listEmbedProjectionRepairPages	embed_stale_work	yes	1	no	yes	yes	serves
 readPageIsSegmented	embed_stale_work	yes	1	no	yes	yes	serves
 hasEmbeddingSignatureDrift	embed_stale_work	yes	2	no	yes	yes	serves
 listUnembeddedChunkIndexes	embed_stale_work	yes	1	no	yes	yes	serves
+sumEmbedBackfillChars	embed_stale_work	yes	1	no	yes	yes	serves
 lockContentDriftState	embed_stale_work	yes	2	no	yes	yes	serves
 invalidateContentDriftChunks	embed_stale_work	yes	2	no	yes	yes	serves
+countLiveSegmentedPages	doctor_tallies	yes	2	no	yes	yes	serves
+countValidityLapsedFacts	doctor_tallies	yes	1	no	yes	yes	serves
+countOrphanEventProjections	doctor_tallies	yes	1	no	yes	yes	serves
 readEngineMigrationHistory	engine_migration	yes	2	no	yes	yes	serves
 readMigrationRows	engine_migration	yes	5	no	yes	yes	serves
 readMigrationPageColumns	engine_migration	yes	2	no	yes	yes	serves
@@ -2028,7 +2033,7 @@ countCompactedCallerRefusals	doctor_persistence	yes	2	no	yes	yes	serves
 listLocalEditAdoptions	doctor_persistence	yes	2	no	yes	yes	serves
 listDerivationPurgeSweeps	doctor_persistence	yes	1	no	yes	yes	serves
 listOversizedPages	doctor_pages	yes	1	no	yes	yes	serves
-listScraperJunkCandidates	doctor_pages	yes	1	no	yes	yes	serves
+listScraperJunkCandidates	doctor_pages	yes	2	no	yes	yes	serves
 countMarkedPages	doctor_pages	yes	1	no	yes	yes	serves
 countOversizedCorePages	doctor_pages	yes	1	no	yes	yes	serves
 readRawProvenanceGaps	doctor_pages	yes	1	no	yes	yes	serves

@@ -86,6 +86,19 @@ impl Brain {
         })
     }
 
+    /// `sumEmbedBackfillChars(sourceId, all)`: resolves `{ chunk_chars, chunkless_chars }`.
+    #[napi]
+    pub fn sum_embed_backfill_chars<'env>(
+        &self,
+        env: &'env Env,
+        source_id: Option<String>,
+        all: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.sum_embed_backfill_chars(source_id.as_deref(), all)
+        })
+    }
+
     /// `readPageIsSegmented(pageId)`: resolves a boolean.
     #[napi]
     pub fn read_page_is_segmented<'env>(

@@ -4,6 +4,7 @@ import { resolveActiveEmbeddingColumnFromEngine } from './search/embedding-colum
 import { isMultimodalEnabled } from './sync.ts';
 import { buildSegmentedProjection } from './page-body/projection.ts';
 import type { PendingProjectionScope } from './engine-sql/embed-stale-work.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 // Every read here is a typed engine member (SQL in engine-sql/embed-stale-work.ts), so every engine answers it.
 
@@ -109,8 +110,10 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
           if (Date.now() >= (opts.deadline ?? Infinity)) throw new Error('Projection recovery deadline exceeded.');
         });
         rebuilt++;
-      } catch {
+      } catch (e) {
         if (opts.signal?.aborted) break;
+        // A page that fails stays counted as blocked; an engine that cannot rebuild it refuses instead.
+        rethrowCapabilityMissing(e);
         await opts.assertOwned?.();
       }
     }

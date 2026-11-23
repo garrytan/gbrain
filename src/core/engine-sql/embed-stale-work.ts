@@ -202,3 +202,26 @@ export async function invalidateContentDriftChunks(raw: EngineRawRead, window: C
   return row ?? { last_id: null, checked: 0, drifted: 0 };
 }
 
+
+/** What a backfill would embed, in characters (embed-consent.ts estimateEmbedBackfillUsd). */
+export interface EmbedBackfillChars { chunk_chars: number; chunkless_chars: number }
+
+/**
+ * embed-consent.ts estimateEmbedBackfillUsd: the characters of live pages' chunks (only chunks with no `embedding`
+ * vector unless `all`) and, unless `all`, of live chunkless pages' inline bodies; `sourceId` narrows both to one source.
+ * With `all` the chunkless sum is not read and answers 0.
+ */
+export async function sumEmbedBackfillChars(raw: EngineRawRead, sourceId: string | null, all: boolean): Promise<EmbedBackfillChars> {
+  const bySource = sourceId === null ? trustedSql('') : sqlFragment` AND p.source_id = ${sourceId}`;
+  const unembedded = trustedSql(all ? '' : ' AND c.embedding IS NULL');
+  const chunks = renderFragment(sqlFragment`-- chunk-visibility-ok: a cost estimate moved from embed-consent.ts; it sums every chunk row of a live page, as before.
+     SELECT COALESCE(SUM(length(c.chunk_text)), 0)::bigint AS chars FROM content_chunks c JOIN pages p ON p.id = c.page_id
+        WHERE p.deleted_at IS NULL${unembedded}${bySource}`);
+  const [chunkRow] = await raw<{ chars: number | string }>(chunks.text, chunks.params);
+  if (all) return { chunk_chars: Number(chunkRow?.chars ?? 0), chunkless_chars: 0 };
+  const chunkless = renderFragment(sqlFragment`-- chunk-visibility-ok: moved from embed-consent.ts; a page with any chunk row is not chunkless, as before.
+     SELECT COALESCE(SUM(length(p.compiled_truth) + length(p.timeline)), 0)::bigint AS chars FROM pages p
+        WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id)${bySource}`);
+  const [chunklessRow] = await raw<{ chars: number | string }>(chunkless.text, chunkless.params);
+  return { chunk_chars: Number(chunkRow?.chars ?? 0), chunkless_chars: Number(chunklessRow?.chars ?? 0) };
+}

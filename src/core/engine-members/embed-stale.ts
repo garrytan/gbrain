@@ -22,6 +22,8 @@ export interface EmbedStaleMembers {
   readPageProvenanceComplete(slug: string, sourceId: string, model: string, dims: number | null, column: string): Promise<boolean>;
   /** The chunk indexes of the page's live body with no vector in `column`, ascending (embed-stale.ts embedStaleForSource). */
   listUnembeddedChunkIndexes(slug: string, sourceId: string, column: string): Promise<number[]>;
+  /** The characters a backfill would embed: live pages' chunks without a vector (every chunk with `all`) and, unless `all`, live chunkless pages' bodies (embed-consent.ts). */
+  sumEmbedBackfillChars(sourceId: string | null, all: boolean): Promise<EmbedStaleWork.EmbedBackfillChars>;
   /** The content-drift sweep's cursor row, created with `initial` when absent and locked for the transaction; run it on the transaction handle. */
   lockContentDriftState(key: string, initial: string): Promise<string | null>;
   /** One content-drift batch: drop the vectors of the next chunk rows whose text changed since they were embedded; run it on the transaction handle. */

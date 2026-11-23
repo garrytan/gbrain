@@ -106,6 +106,11 @@ export const CONTENT_MEMBERS = {
   lockContentDriftState: 'config',
   listUnembeddedChunkIndexes: 'embeddings',
   invalidateContentDriftChunks: 'embeddings',
+  sumEmbedBackfillChars: 'embeddings',
+  // Doctor tallies a catch hid a refusal of (engine-sql/doctor-tallies.ts; rust/docs/store/cli-reads-doctor-tallies.md).
+  countLiveSegmentedPages: 'health',
+  countValidityLapsedFacts: 'health',
+  countOrphanEventProjections: 'health',
   readPageEmbeddingBudget: 'embeddings',
   recordPageEmbeddingHold: 'embeddings',
   openPageEmbeddingHold: 'embeddings',

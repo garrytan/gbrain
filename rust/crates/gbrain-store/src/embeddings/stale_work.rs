@@ -331,6 +331,38 @@ impl Store {
         Ok(out)
     }
 
+    /// `sumEmbedBackfillChars(sourceId, all)`: the characters (`length`) of live pages' chunks, only those with no
+    /// vector unless `all`, and, unless `all`, of live pages with no chunk record at all: `length(compiled_truth) +
+    /// length(timeline)`, which is NULL (not summed) when either column is NULL. `source_id` narrows both to one source.
+    /// With `all` the chunkless sum is not read and answers 0.
+    pub fn sum_embed_backfill_chars(&self, source_id: Option<&str>, all: bool) -> Result<Value> {
+        let read = self.read()?;
+        let (mut chunk_chars, mut chunkless_chars) = (0u64, 0u64);
+        for ctx in page_contexts(&*read)? {
+            if ctx.page.deleted_at_us.is_some()
+                || source_id.is_some_and(|id| id != ctx.page.source_id)
+            {
+                continue;
+            }
+            chunk_chars += ctx
+                .chunks
+                .iter()
+                .filter(|c| all || !c.embed.has_vector())
+                .map(|c| c.chunk_text.chars().count() as u64)
+                .sum::<u64>();
+            if !all
+                && ctx.chunks.is_empty()
+                && let (Some(truth), Some(timeline)) = (
+                    ctx.page.compiled_truth.as_deref(),
+                    ctx.page.timeline.as_deref(),
+                )
+            {
+                chunkless_chars += (truth.chars().count() + timeline.chars().count()) as u64;
+            }
+        }
+        Ok(json!({ "chunk_chars": chunk_chars, "chunkless_chars": chunkless_chars }))
+    }
+
     /// `readPageIsSegmented(pageId)`: whether the page (live or soft-deleted) keeps its body in segments.
     pub fn read_page_is_segmented(&self, page_id: u64) -> Result<bool> {
         let read = self.read()?;

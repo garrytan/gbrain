@@ -24,6 +24,7 @@ mod cli_reads_doctor_pages;
 mod cli_reads_doctor_persistence;
 mod cli_reads_doctor_search;
 mod cli_reads_doctor_src;
+mod cli_reads_doctor_tallies;
 mod cli_reads_doctor_terminal;
 mod cli_reads_export;
 mod cli_reads_import;
