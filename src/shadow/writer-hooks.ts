@@ -44,6 +44,7 @@ export function writerHooksManifestPath(dir: string): string { return join(dir, 
 export interface WriterHooksManifest { version: 1; state: 'installing' | 'installed' | 'removing'; at: string; tables: string[] }
 
 export function readWriterHooksManifest(dir: string): WriterHooksManifest | null {
+  // silent-read-ok: a missing or torn manifest only means no install was recorded; removal reads the catalog itself.
   try { const m = JSON.parse(readFileSync(writerHooksManifestPath(dir), 'utf8')) as WriterHooksManifest; return m?.version === 1 ? m : null; } catch { return null; }
 }
 

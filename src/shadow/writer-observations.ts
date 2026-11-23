@@ -134,6 +134,7 @@ export class WriterObserver {
   private async write(): Promise<void> {
     if (!this.firstDone && this.o.beforeFirstNote) {
       this.firstDone = true;
+      // silent-read-ok: not silent; a failed rehook becomes a writer_observation_failed fault that eligibility counts as unknown
       try { await this.o.beforeFirstNote(); } catch (error) { this.fail(`hooks_${errorCode(error)}`); }
     }
     try {
@@ -141,7 +142,8 @@ export class WriterObserver {
       await this.o.primary.transaction(async (tx) => {
         await tx.executeRaw(NOTE_SQL, [id.hostId, id.applicationName, id.processKind, id.gbrainVersion]);
       });
-    } catch (error) {
+    // capability-refusal-ok: a background note on the primary (PGLite or Postgres) must never throw into the caller; any refusal becomes a fault that eligibility counts as unknown
+    } catch (error) { // silent-read-ok: not silent; the failure becomes a writer_observation_failed fault that eligibility counts as unknown
       this.lastWritten = Number.NEGATIVE_INFINITY;
       this.fail(errorCode(error));
     }
