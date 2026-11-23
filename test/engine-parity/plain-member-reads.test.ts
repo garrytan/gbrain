@@ -7,7 +7,6 @@
  *    rule's pages, and none of another member's; labelledOnlyFor is true only for a member with the grant, never the owner.
  *  - Regression: labelledOnlyFor read access_members with raw SQL and counted the refusal as labelled-only, so on a Rust
  *    brain every plain member's read was refused.
- *  - Why existing coverage misses it: the labelled-only cases bind a member that has the grant.
  *  - Seam: none. addMember, proposeRevision, putPage, the real caller record. A refusal is returned as a value, since
  *    the harness counts a thrown typed refusal as a pass and refusing a plain member is the bug.
  */
@@ -59,8 +58,7 @@ describe('engine parity: a plain member reads what it may', () => {
   }, async (engine, backend) => {
     await seed(engine, backend);
     const out: Record<string, unknown> = { alice: await readAs(engine, 'alice-example'), bob: await readAs(engine, 'bob-example') };
-    const alice = ['notes/alice-labelled', 'notes/open', 'private/alice/diary'];
-    expect(out.alice).toEqual({ core: alice, pages: ['notes/open', 'notes/alice-labelled', 'private/alice/diary'] });
+    expect(out.alice).toEqual({ core: ['notes/alice-labelled', 'notes/open', 'private/alice/diary'], pages: ['notes/open', 'notes/alice-labelled', 'private/alice/diary'] });
     await setMemberLabelledOnly(engine, 'carol-example', true, { remote: false });
     await setOwner(engine, 'owner-example');
     await engine.setAccessMemberLabelledOnly('owner-example', true); // setMemberLabelledOnly refuses the owner

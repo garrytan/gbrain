@@ -20,3 +20,11 @@ test('labelledOnlyFor counts a refused or failed read as labelled-only and reads
   expect(await labelledOnlyFor(engine({ getConfig: refused }), [['member:alice-example']])).toBe(true);
   expect(await labelledOnlyFor(engine({ readAccessMembers: refused, getConfig: refused }), [['group:team-a']])).toBe(false);
 });
+
+test('labelledOnlyFor reads removed members, exempts a padded owner, and fails closed when the owner changes mid-read', async () => {
+  const carol = async (by: unknown) => [{ id: 'carol-example', labelled_only: (by as { includeRemoved?: boolean }).includeRemoved === true }] as never;
+  expect(await labelledOnlyFor(engine({ readAccessMembers: carol }), [['member:carol-example']])).toBe(true);
+  expect(await labelledOnlyFor(engine({ readAccessMembers: carol, getConfig: async () => '  carol-example  ' }), [['member:carol-example']])).toBe(false);
+  let n = 0; // the owner changes from bob to alice between the two owner reads
+  expect(await labelledOnlyFor(engine({ readAccessMembers: rows, getConfig: async () => (n++ ? 'alice-example' : 'bob-example') }), [['member:alice-example']])).toBe(true);
+});

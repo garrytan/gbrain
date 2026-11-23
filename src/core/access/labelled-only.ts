@@ -72,8 +72,12 @@ export async function labelledOnlyFor(engine: Pick<BrainEngine, 'readAccessMembe
   const members = new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)));
   if (!members.size) return false;
   try {
-    // Typed reads every engine serves (the Rust store included): every member row, removed ones too, and the owner.
-    const [rows, owner] = await Promise.all([engine.readAccessMembers({ includeRemoved: true }), engine.getConfig(OWNER_MEMBER_KEY)]);
+    // Typed reads every engine serves (the Rust store included): every member row in one read, removed ones too, and
+    // the owner read before and after it. An owner that changed between the two reads may pair old flags with a new
+    // owner, so it counts as labelled-only (fail closed), as the single SQL statement's one snapshot never could.
+    const owner = await engine.getConfig(OWNER_MEMBER_KEY);
+    const rows = await engine.readAccessMembers({ includeRemoved: true });
+    if ((await engine.getConfig(OWNER_MEMBER_KEY)) !== owner) return true;
     return rows.some(r => r.labelled_only === true && members.has(r.id) && r.id !== owner?.trim());
   } catch {
     return true;
