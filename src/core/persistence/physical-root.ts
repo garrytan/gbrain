@@ -12,6 +12,16 @@ import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalR
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
+/**
+ * The database facts a root claim checks: the brain id, a worktree's owner and state, and its host binding. The
+ * default reads them with SQL on `tx`; the unmanaged claim passes its claim store (engine-sql/worktree-claim.ts), so a
+ * Rust brain answers them from its binding records.
+ */
+export interface PhysicalRootFacts {
+  brainId(): Promise<string | null>;
+  worktree(id: string): Promise<{ owner_host_id: string | null; state: string } | null>;
+  hostBinding(worktreeId: string, hostId: string): Promise<{ local_path: string; coordination_path: string } | null>;
+}
 async function brainIdentity(tx: SqlEngine): Promise<string> {
   const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
   if (!brain) throw physicalRootError();

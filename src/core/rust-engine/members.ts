@@ -390,6 +390,9 @@ export const RUST_ENGINE_MEMBERS = {
   listDueDecideSweepDeferred: 'eval_capture',
   listMemoryProposalRows: 'raw_sql',
   listOpenLoops: 'facts',
+  countOpenLoopsByCounterpartyEmail: 'pages', // held: the store has no per-email open-loop count yet; the open-loop family serves it later as 'facts'
+  listPendingCoreEditNotices: 'pages',
+  purgeStaleAppliedCaptures: 'ingest_log',
   listOwnerProposalRows: 'raw_sql',
   listSharedSkillPackRoots: 'raw_sql',
   listStoredTimelineRowsOrdered: 'raw_sql',
