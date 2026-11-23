@@ -8,6 +8,7 @@
  * so every engine lists ties the same way.
  */
 import type { BrainEngine } from '../engine.ts';
+import { renderFragment, sqlFragment } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -126,9 +127,8 @@ export interface SourceCycleFailureRow { source_id: string; fail_count: number; 
  * with no source id do not count. `sourceId` narrows to one source. Rows by source id, bytewise (the statement has no order).
  */
 export async function listRecentSourceCycleFailures(tx: Raw, spec: { cutoff: string; sourceId?: string | null }): Promise<SourceCycleFailureRow[]> {
-  const params: unknown[] = [spec.cutoff];
-  let sql =
-    `SELECT data->>'source_id' AS source_id,
+  const only = spec.sourceId ? sqlFragment` AND data->>'source_id' = ${spec.sourceId}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT data->>'source_id' AS source_id,
             count(*)::int AS fail_count,
             max(finished_at) AS last_failed_at
        FROM minion_jobs
@@ -137,10 +137,9 @@ export async function listRecentSourceCycleFailures(tx: Raw, spec: { cutoff: str
         AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
         AND data->>'source_id' IS NOT NULL
         AND finished_at IS NOT NULL
-        AND finished_at > $1`;
-  if (spec.sourceId) { params.push(spec.sourceId); sql += ` AND data->>'source_id' = $${params.length}`; }
-  sql += ` GROUP BY data->>'source_id'`;
-  const rows = await tx.executeRaw<{ source_id: string; fail_count: number | string; last_failed_at: Timestamp }>(sql, params);
+        AND finished_at > ${spec.cutoff}${only}
+      GROUP BY data->>'source_id'`);
+  const rows = await tx.executeRaw<{ source_id: string; fail_count: number | string; last_failed_at: Timestamp }>(text, params);
   return rows
     .map(r => ({ source_id: r.source_id, fail_count: Number(r.fail_count), last_failed_at: date(r.last_failed_at) }))
     .sort((a, b) => (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
