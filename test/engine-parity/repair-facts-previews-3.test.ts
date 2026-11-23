@@ -142,6 +142,41 @@ async function strictBrain<T>(engine: BrainEngine, body: (root: string) => Promi
 }
 
 describe('engine parity: repair kind previews of batch 4.3a', () => {
+  parityTest('the visibility, open-facts, open-twins and label-write members answer the same rows on every arm', {
+    methods: ['putPage', 'insertFacts', 'insertSource', 'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages',
+      'listOpenTwinRows', 'listCheckoutFilePages', 'listPageAccessKeys', 'tightenDatabaseFactVisibility', 'listTypePageBodies', 'listOpenFactsWindow',
+      'countOpenFactReasons', 'listContextualRetrievalModes', 'listUnembeddedChunkPages'], timeout: 60_000,
+  }, async (engine) => {
+    const origin = await engine.putPage('notes/origin', note('Origin', { visibility: 'private' }), { sourceId: 'default' });
+    await engine.putPage('notes/aliased', note('Aliased', { access: 'private' }), { sourceId: 'default' });
+    const atom = await engine.putPage('atoms/one', note('Atom', { source_slug: 'notes/origin' }, 'atom'), { sourceId: 'default' });
+    await engine.putPage('events/one', note('Event', { captured_via: 'life-chronicle:example', event: { depth: 'notes/origin' } }, 'event'), { sourceId: 'default' });
+    await engine.insertSource({ id: 'other-example', name: 'other-example', local_path: null, config: {} });
+    await engine.putPage('notes/origin', note('Twin', { visibility: 'world' }), { sourceId: 'other-example' });
+    const ids = await insert(engine, [
+      { fact: 'A world fact on the private origin', visibility: 'world', row_num: null, source_markdown_slug: 'notes/origin' },
+      { fact: 'A private fact on an open page', visibility: 'private', row_num: null, source_markdown_slug: 'notes/aliased' },
+    ]);
+    const drop = (rows: object[]) => rows.map(r => { const { id, origin_id, ...rest } = r as Record<string, unknown>; void id; return { ...rest, origin: origin_id === null ? null : typeof origin_id }; });
+    const scans = {
+      atoms: drop(await engine.listAtomLineageRows(['default'], null, 60_000)),
+      oneAtom: drop(await engine.listAtomLineageRows(['default'], [atom.id], 60_000)),
+      events: drop(await engine.listChronicleEventVisibilityRows(['default'], null, 60_000)),
+      aliases: drop(await engine.listAliasOnlyPrivatePages(['default'], null, 60_000)),
+      twins: await engine.listOpenTwinRows([{ source_id: 'default', slug: 'notes/origin' }], [{ identity: [], satisfied: [] }]),
+      checkout: await engine.listCheckoutFilePages([origin.id, atom.id], 60_000),
+      access: (await engine.listPageAccessKeys([origin.id, atom.id])).map(r => ({ ...r, id: r.id === origin.id ? 'origin' : 'atom' })),
+      typePages: (await engine.listTypePageBodies({ type: 'atom', limit: 10 })).map(r => r.slug),
+      modes: await engine.listContextualRetrievalModes([origin.id, atom.id], 60_000),
+      unembedded: (await engine.listUnembeddedChunkPages([origin.id, atom.id], 60_000)).map(id => (id === origin.id ? 'origin' : 'atom')),
+    };
+    const sel = { sourceId: 'default', createdBefore: '2999-01-01T00:00:00Z', ids: null };
+    const window = (await engine.listOpenFactsWindow(sel, 0, null, ['fenced', 'unfenced'], 10, 60_000)).map(r => ({ ...r, id: ids.indexOf(Number(r.id)) }));
+    const reasons = await engine.countOpenFactReasons(sel, 60_000);
+    const tightened = (await engine.tightenDatabaseFactVisibility('default', ids)).map(id => ids.indexOf(id));
+    return { scans, window, reasons, tightened };
+  });
+
   /** The facts of a strict source that need no access read: an ontology observation, an entity with a page, with a deleted page, and no entity. */
   async function seedHome(engine: BrainEngine) {
     await engine.putPage('people/alive-example', note('Alive'), { sourceId: 'default' });

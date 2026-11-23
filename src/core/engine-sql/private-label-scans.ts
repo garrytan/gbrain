@@ -54,6 +54,7 @@ export async function listContextualRetrievalModes(raw: EngineRawRead, ids: numb
 
 /** The named pages with a chunk of their live body that has no vector yet (the re-embedding preview). */
 export async function listUnembeddedChunkPages(raw: EngineRawRead, ids: number[], timeoutMs: number): Promise<number[]> {
+  // chunk-visibility-ok: the statement keeps only live-body chunks through chunkGenerationFilter, spliced on its next line.
   const { text, params } = renderFragment(sqlFragment`${trustedSql(`SELECT DISTINCT cc.page_id AS id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
     WHERE cc.page_id = ANY($1::integer[]) AND cc.embedding IS NULL AND `)}${trustedSql(chunkGenerationFilter('p', 'cc'))}`);
   if (params.length !== 0) throw new Error('listUnembeddedChunkPages: a fragment bound a value ahead of the hand-numbered parameters');
