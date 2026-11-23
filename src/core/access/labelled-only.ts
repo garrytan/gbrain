@@ -19,6 +19,7 @@ import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
 import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import { withLiveConfigRead } from '../config-snapshot.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -73,11 +74,11 @@ export async function labelledOnlyFor(engine: Pick<BrainEngine, 'readAccessMembe
   if (!members.size) return false;
   try {
     // Typed reads every engine serves (the Rust store included): every member row in one read, removed ones too, and
-    // the owner read before and after it. An owner that changed between the two reads may pair old flags with a new
-    // owner, so it counts as labelled-only (fail closed), as the single SQL statement's one snapshot never could.
-    const owner = await engine.getConfig(OWNER_MEMBER_KEY);
+    // the owner read live (never the request's config snapshot) before and after it. An owner that changed between
+    // the two reads may pair old flags with a new owner, so it counts as labelled-only (fail closed).
+    const owner = await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY));
     const rows = await engine.readAccessMembers({ includeRemoved: true });
-    if ((await engine.getConfig(OWNER_MEMBER_KEY)) !== owner) return true;
+    if ((await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY))) !== owner) return true;
     return rows.some(r => r.labelled_only === true && members.has(r.id) && r.id !== owner?.trim());
   } catch {
     return true;
