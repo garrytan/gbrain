@@ -19,6 +19,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performSync } from '../../src/commands/sync.ts';
+import { syncIdentityDecisions } from '../../src/core/entities/identity-decisions.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFindPattern, type FindPagesQuery } from '../../src/core/page-find.ts';
 import { QUARANTINE_KEY } from '../../src/core/quarantine.ts';
@@ -966,6 +967,34 @@ describe('engine parity: pages', () => {
       const removed = await engine.applyIdentityDecisions({ remove: ['0000000000000001'] });
       expect(removed).toEqual({ upserted: 0, removed: 1, linked: 0, unlinked: 2 });
       return { applied, decisions: read.decisions.map(d => ({ ...d, decided_at: d.decided_at.slice(0, 10) })), pending: read.pending, removed };
+    },
+  );
+
+  parityTest(
+    'the sync hook links a pending member once its page exists and fills the fingerprints of a bare different decision',
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listEntityKeyRows', 'listEntityIdentityRows'] },
+    async (engine) => {
+      // A LinkedIn profile is a strong key, so each page has a fingerprint (duplicates.ts pageFingerprint).
+      const person = (title: string, handle: string): PageInput => ({ type: 'person', title, compiled_truth: `${title}.`, frontmatter: { linkedin: `linkedin.com/in/${handle}` } });
+      await seed(engine, [['people/alice-example', person('Alice Example', 'alice-example')], ['people/bob-example', person('Bob Example', 'bob-example')]]);
+      const ref = (slug: string) => ({ source_id: 'default', slug });
+      const base = { decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const, home_source_id: null, git_blob: null };
+      await engine.applyIdentityDecisions({ upsert: [
+        { ...base, decision_id: '0000000000000011', verdict: 'same', members: [ref('people/alice-example'), ref('people/carol-example')],
+          group_id: 'dedupe/0000000000000011', entity_id: 'dedupe/0000000000000011', canonical: ref('people/alice-example') },
+        { ...base, decision_id: '0000000000000012', verdict: 'different', members: [ref('people/alice-example'), ref('people/bob-example')],
+          group_id: 'dedupe/0000000000000012', entity_id: null, canonical: null },
+      ] });
+      const before = (await engine.listIdentityDecisions()).pending.map(p => p.slug);
+      await engine.putPage('people/carol-example', person('Carol Example', 'carol-example'));
+      // A brain with no decision home: the hook applies the pending members and fills the bare decision's fingerprints.
+      await syncIdentityDecisions(engine, 'default');
+      const read = await engine.listIdentityDecisions();
+      const members = (await engine.listEntityIdentityRows({ entityId: 'dedupe/0000000000000011' })).map(r => r.slug).sort();
+      const result = { before, pending: read.pending.map(p => p.slug), members,
+        evidence: read.decisions.find(d => d.decision_id === '0000000000000012')?.evidence?.length ?? 0 };
+      expect(result).toEqual({ before: ['people/carol-example'], pending: [], members: ['people/alice-example', 'people/carol-example'], evidence: 2 });
+      return result;
     },
   );
 
