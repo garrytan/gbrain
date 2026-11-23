@@ -450,6 +450,21 @@ mod tests {
                 })
                 .is_err()
         );
+
+        // Inside a transaction the lock reads the transaction's own writes.
+        let tx = store.begin_transaction(false).unwrap();
+        assert!(locked(&tx, "default", "notes/live", Some(rev)));
+        let edited = put(&tx, "notes/live", "y");
+        assert_ne!(edited.knowledge_revision, page.knowledge_revision);
+        assert!(!locked(&tx, "default", "notes/live", Some(rev)));
+        assert!(locked(
+            &tx,
+            "default",
+            "notes/live",
+            Some(edited.knowledge_revision.as_str())
+        ));
+        tx.rollback_transaction().unwrap();
+        assert!(locked(&store, "default", "notes/live", Some(rev)));
     }
 
     #[test]
