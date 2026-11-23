@@ -554,7 +554,7 @@ expireFenceFacts	facts	yes	2	no	yes	yes	serves
 refreshFenceFactFields	facts	yes	2	no	yes	yes	serves
 clearChangedTakeResolutions	facts	yes	2	no	yes	yes	serves
 writeFenceTakeResolutions	facts	yes	2	no	yes	yes	serves
-listLiveSlugAliases	facts	yes	1	no	yes	yes	serves
+readLiveSlugAliases	facts	yes	1	no	yes	yes	serves
 detachFenceFactRows	facts	yes	1	no	yes	yes	serves
 listOccupiedFenceRowNums	facts	yes	2	no	yes	yes	serves
 moveGuardedFenceRows	facts	yes	1	no	yes	yes	serves

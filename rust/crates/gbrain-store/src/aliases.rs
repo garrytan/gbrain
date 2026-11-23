@@ -1074,11 +1074,11 @@ impl Store {
             }))
     }
 
-    /// `listLiveSlugAliases(sourceId, slugs)` (`engine-sql/fence-projection.ts`, the link
+    /// `readLiveSlugAliases(sourceId, slugs)` (`engine-sql/fence-projection.ts`, the link
     /// preparation): `{ alias_slug, canonical_slug }` of each of `slugs` that is an alias in
     /// `source_id` whose own page is not live and whose canonical page is, in alias byte order (the
     /// SQL sets no order; its caller builds a map).
-    pub fn list_live_slug_aliases(&self, source_id: &str, slugs: &[String]) -> Result<Vec<Value>> {
+    pub fn read_live_slug_aliases(&self, source_id: &str, slugs: &[String]) -> Result<Vec<Value>> {
         let read = self.read()?;
         let live = |slug: &str| -> Result<bool> {
             Ok(crate::pages::read_page(&*read, source_id, slug)?

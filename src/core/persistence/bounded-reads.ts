@@ -107,7 +107,7 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
   'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots',
-  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'listLiveSlugAliases', 'readPageInlineBody']);
+  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readLiveSlugAliases', 'readPageInlineBody']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

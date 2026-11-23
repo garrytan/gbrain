@@ -4747,7 +4747,7 @@ export class PostgresEngine implements BrainEngine {
   refreshFenceFactFields(sourceId: string, slug: string, fieldRows: string) { return fenceProjectionImpl.refreshFenceFactFields(this, sourceId, slug, fieldRows); }
   clearChangedTakeResolutions(pageId: number, claims: string) { return fenceProjectionImpl.clearChangedTakeResolutions(this, pageId, claims); }
   writeFenceTakeResolutions(pageId: number, resolutions: string) { return fenceProjectionImpl.writeFenceTakeResolutions(this, pageId, resolutions); }
-  listLiveSlugAliases(sourceId: string, slugs: readonly string[]) { return fenceProjectionImpl.listLiveSlugAliases(this, sourceId, slugs); }
+  readLiveSlugAliases(sourceId: string, slugs: readonly string[]) { return fenceProjectionImpl.readLiveSlugAliases(this, sourceId, slugs); }
   detachFenceFactRows(ids: readonly number[]) { return trustFenceImpl.detachFenceFactRows(this, ids); }
   listOccupiedFenceRowNums(sourceId: string, slug: string) { return trustFenceImpl.listOccupiedFenceRowNums(this, sourceId, slug); }
   moveGuardedFenceRows(moves: readonly trustFenceImpl.FenceRowMove[]) { return trustFenceImpl.moveGuardedFenceRows(this, moves); }

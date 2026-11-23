@@ -1,5 +1,4 @@
 import type { BrainEngine } from '../engine.ts';
-import { isMissingSchemaObject } from '../utils.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeResolver, type ExtractPageLinksOptions,
   type PageLinksResult } from '../link-extraction.ts';
@@ -25,13 +24,8 @@ const raced = (error: unknown): null => {
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
-  try {
-    const rows = await engine.listLiveSlugAliases(sourceId, [...new Set(targets)]);
-    return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
-  } catch (error) {
-    if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return new Map();
-    throw error;
-  }
+  const rows = await engine.readLiveSlugAliases(sourceId, [...new Set(targets)]);
+  return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
 }
 
 interface SourceSlugIndex { count: number; hash: bigint; maxId: number; index: Map<string, string[]> }

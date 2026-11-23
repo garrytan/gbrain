@@ -14,6 +14,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -122,7 +123,17 @@ export async function writeFenceTakeResolutions(raw: Raw, pageId: number, resolu
   await raw.executeRaw(WRITE_RESOLUTIONS_SQL, [pageId, resolutions]);
 }
 
-/** The aliases of `slugs` in the source whose own page is gone and whose canonical page is live. */
-export async function listLiveSlugAliases(raw: Raw, sourceId: string, slugs: readonly string[]): Promise<Array<{ alias_slug: string; canonical_slug: string }>> {
-  return raw.executeRaw<{ alias_slug: string; canonical_slug: string }>(LIVE_SLUG_ALIASES_SQL, [sourceId, [...slugs]]);
+/**
+ * Of `targets`, the alias slugs of the source that hold no live page while their canonical page is live. A brain
+ * without the `slug_aliases` table has none. (The same member as rust-engine/wikilink-put-rust's
+ * engine-sql/links-preparation.ts readLiveSlugAliases: same name, signature and statement.)
+ */
+export async function readLiveSlugAliases(raw: Raw, sourceId: string, targets: readonly string[]): Promise<Array<{ alias_slug: string; canonical_slug: string }>> {
+  if (!targets.length) return [];
+  try {
+    return await raw.executeRaw<{ alias_slug: string; canonical_slug: string }>(LIVE_SLUG_ALIASES_SQL, [sourceId, [...new Set(targets)]]);
+  } catch (error) {
+    if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return [];
+    throw error;
+  }
 }

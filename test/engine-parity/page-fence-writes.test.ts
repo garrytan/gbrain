@@ -116,7 +116,7 @@ describe('engine parity: put_page with a facts and a takes fence', () => {
 
   parityTest('the fence projection take, hold and alias members answer and write the same rows on every arm', {
     methods: ['addTakesBatch', 'listQuotedTakeRows', 'listPageTakeRowNums', 'writeFenceTakeResolutions', 'clearChangedTakeResolutions', 'hasFenceAbsentHold',
-      'listLiveSlugAliases', 'updateSlug'],
+      'readLiveSlugAliases', 'updateSlug'],
   }, async (engine) => {
     const created = await engine.putPage(SLUG, { type: 'person', title: 'Alice Example', compiled_truth: 'A synthetic person.', timeline: '' }, { sourceId: 'default' });
     const pageId = Number(created.id);
@@ -140,7 +140,7 @@ describe('engine parity: put_page with a facts and a takes fence', () => {
     const hold = [await engine.hasFenceAbsentHold('default', TAKE_FENCE_KIND, fenceOwnerKey(SLUG)), await engine.hasFenceAbsentHold('default', TAKE_FENCE_KIND, fenceOwnerKey('people/nobody'))];
     await engine.putPage('notes/old-name', { type: 'note', title: 'Old', compiled_truth: 'Renamed note.', timeline: '' }, { sourceId: 'default' });
     await engine.updateSlug('notes/old-name', 'notes/new-name', { sourceId: 'default' });
-    const aliases = await engine.listLiveSlugAliases('default', ['notes/old-name', 'notes/new-name', 'notes/none']);
+    const aliases = await engine.readLiveSlugAliases('default', ['notes/old-name', 'notes/new-name', 'notes/none']);
     return { quoted, rowNums, resolved, refused, cleared, hold, aliases };
   });
 

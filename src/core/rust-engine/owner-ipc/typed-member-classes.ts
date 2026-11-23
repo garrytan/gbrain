@@ -363,7 +363,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // A page publication's fence projection and fence guard reads, the tier-only change's reads and the unwithdrawn-facts
   // page body read (engine-sql/fence-projection.ts, trust-fence.ts, row-tier.ts, unwithdrawn-restore.ts).
   'listQuotedTakeRows', 'listPageFenceFactCells', 'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums',
-  'listLiveSlugAliases', 'listOccupiedFenceRowNums', 'listTrustedPrivateCopies', 'readLiveFenceFactAt', 'listFactsAboveWriter',
+  'readLiveSlugAliases', 'listOccupiedFenceRowNums', 'listTrustedPrivateCopies', 'readLiveFenceFactAt', 'listFactsAboveWriter',
   'readRowTrustTier', 'readTierProjectionPage', 'readPageInlineBody',
 ];
 

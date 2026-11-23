@@ -813,7 +813,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'refreshFenceFactFields': OOS.pageFenceWrites,
   'clearChangedTakeResolutions': OOS.pageFenceWrites,
   'writeFenceTakeResolutions': OOS.pageFenceWrites,
-  'listLiveSlugAliases': OOS.pageFenceWrites,
+  'readLiveSlugAliases': OOS.pageFenceWrites,
   'detachFenceFactRows': OOS.pageFenceWrites,
   'listOccupiedFenceRowNums': OOS.pageFenceWrites,
   'moveGuardedFenceRows': OOS.pageFenceWrites,

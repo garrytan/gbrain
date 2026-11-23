@@ -19,7 +19,7 @@ export interface FenceProjectionMembers {
   clearChangedTakeResolutions(pageId: number, claims: string): Promise<void>;
   writeFenceTakeResolutions(pageId: number, resolutions: string): Promise<void>;
   /** The link preparation's live aliases of `slugs` (persistence/links-preparation.ts, engine-sql/fence-projection.ts). */
-  listLiveSlugAliases(sourceId: string, slugs: readonly string[]): Promise<Array<{ alias_slug: string; canonical_slug: string }>>;
+  readLiveSlugAliases(sourceId: string, slugs: readonly string[]): Promise<Array<{ alias_slug: string; canonical_slug: string }>>;
   /** The fence guard's statements around its decisions (trust/fence-guard.ts, engine-sql/trust-fence.ts). */
   detachFenceFactRows(ids: readonly number[]): Promise<void>;
   listOccupiedFenceRowNums(sourceId: string, slug: string): Promise<number[]>;
