@@ -41,8 +41,8 @@ test/engine-parity/collate-engine-sql.test.ts	28	7
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	5	1
 test/engine-parity/collate-outputs.test.ts	2	5
-test/engine-parity/collate-persistence-a.test.ts	0	20
-test/engine-parity/collate-persistence-b.test.ts	0	21
+test/engine-parity/collate-persistence-a.test.ts	1	19
+test/engine-parity/collate-persistence-b.test.ts	2	20
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
