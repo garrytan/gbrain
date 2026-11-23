@@ -2,7 +2,7 @@
  * `gbrain engine shadow seed` refuses a brain that uses managed storage (src/shadow/managed-gate.ts).
  *
  * Protects: the Rust engine never holds managed storage, so seeding a store from such a brain copies data nothing
- * can use. `seed` and `seed --json` exit 3 with `engine_shadow_refused (managed_storage)` before the shadow directory
+ * can use. `seed` and `seed --json` exit 3 with `engine_swap_refused (managed_storage)` before the shadow directory
  * is created, before the Rust store opens and before the seed's snapshot transaction starts, so a refused seed
  * leaves no directory, no store and no seed.json. A brain whose mode cannot be read or opened refuses the same way
  * (never a pass), and an unmanaged brain still seeds. Real PGLite primary.
@@ -68,7 +68,7 @@ describe('engine shadow seed on a managed-storage brain', () => {
     for (const args of [['seed'], ['seed', '--json']]) {
       const r = await seedCommand(args, primary);
       expect(r.code, args.join(' ')).toBe(3);
-      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
+      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
       expect(r.err.join('\n')).toContain('The Rust engine never holds managed storage, so this brain can never swap to Rust');
       expect(r.err.join('\n')).toContain('Brains made by a default `gbrain init` use managed storage and cannot be shadowed or swapped yet.');
       expect(r.err.join('\n')).toContain('`gbrain init --db-only`');
@@ -82,7 +82,7 @@ describe('engine shadow seed on a managed-storage brain', () => {
       expect(r.disconnects).toBe(1);
       if (args.includes('--json')) {
         const body = JSON.parse(r.out.join('\n'));
-        expect(body).toMatchObject({ error: 'engine_shadow_refused', code: 'engine_shadow_refused', reason: 'managed_storage', class: 'consent' });
+        expect(body).toMatchObject({ error: 'engine_swap_refused', code: 'engine_swap_refused', reason: 'managed_storage', class: 'consent' });
         expect(body.fix.next).toBe('ask_user');
       } else {
         expect(r.out).toEqual([]);
@@ -99,11 +99,29 @@ describe('engine shadow seed on a managed-storage brain', () => {
     expect(existsSync(read.dir)).toBe(false);
     const opened = await seedCommand(['seed'], async () => { throw new Error('could not connect, said the test'); });
     expect(opened.code).toBe(3);
-    expect(opened.err[0]).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
+    expect(opened.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
     expect(opened.err.join('\n')).toContain('could not connect, said the test');
     expect(opened.err.join('\n')).not.toMatch(/refused: this brain uses managed storage|This brain uses managed storage/);
     expect(existsSync(opened.dir)).toBe(false);
     expect(opened.storeOpens).toBe(0);
+  });
+
+  // Value: protects=the refusal never prints a database address or password a failed open or mode read carried; fails_when=the error text reaches either stream unredacted;
+  // why_new=the refusal tests only check that the error text is named; seam=none; no_claim=redaction of text the database error never carried.
+  test('a failed open or mode read is named without its connection address or password, in text and --json', async () => {
+    const leaky = (what: string) => `${what}: connection to server at "db.example.internal" (10.1.2.3), port 5432 failed: postgresql://db.example.internal:5432/brain?password=CANARYVALUE`;
+    const broken = { executeRaw: async () => { throw new Error(leaky('read')); }, disconnect: async () => undefined } as unknown as BrainEngine;
+    for (const args of [['seed'], ['seed', '--json']]) {
+      for (const engine of [async () => broken, async () => { throw new Error(leaky('open')); }]) {
+        const r = await seedCommand(args, engine);
+        expect(r.code, args.join(' ')).toBe(3);
+        const text = [...r.err, ...r.out].join('\n');
+        expect(text).toContain('connection to server at');
+        expect(text).not.toContain('CANARYVALUE');
+        expect(text).not.toContain('10.1.2.3');
+        expect(existsSync(r.dir)).toBe(false);
+      }
+    }
   });
 
   test('a busy PGLite brain (another gbrain holds it) is refused honestly, with the stop-serve next step', async () => {
@@ -111,7 +129,7 @@ describe('engine shadow seed on a managed-storage brain', () => {
     for (const args of [['seed'], ['seed', '--json']]) {
       const r = await seedCommand(args, async () => { throw busy; });
       expect(r.code, args.join(' ')).toBe(3);
-      expect(r.err[0]).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
+      expect(r.err[0]).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: gbrain could not confirm that this brain does not use managed storage.');
       const text = r.err.join('\n');
       expect(text).toContain('pglite_busy');
       expect(text).toContain('stop `gbrain serve`');
@@ -128,7 +146,7 @@ describe('engine shadow seed on a managed-storage brain', () => {
     const r = await seedCommand(['seed'], primary);
     expect(r.storeOpens).toBe(1);
     expect(r.code).toBe(1);
-    expect(r.err.join('\n')).not.toContain('engine_shadow_refused');
+    expect(r.err.join('\n')).not.toContain('engine_swap_refused');
     expect(r.disconnects).toBe(1);
   });
 });

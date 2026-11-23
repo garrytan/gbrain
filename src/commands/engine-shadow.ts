@@ -302,6 +302,13 @@ function renderManagedRefusal(e: OperationError, err: (l: string) => void): numb
 }
 
 async function refuseManaged(e: OperationError, json: boolean, out: (l: string) => void, err: (l: string) => void): Promise<number> {
+  // The refusal can carry a database error's own text (a DSN, a host, a user name): scrub it before either stream shows it.
+  const { redactConnectionInfo } = await import('../core/audit/redact-connection-info.ts');
+  const { redactUrlsInText } = await import('../core/url-redact.ts');
+  const clean = (text: string): string => redactUrlsInText(redactConnectionInfo(text));
+  if (e.why) e.why = clean(e.why);
+  if (e.detail) e.detail = clean(e.detail);
+  if (e.fix?.why) e.fix.why = clean(e.fix.why);
   if (json) {
     const { renderCliError } = await import('../core/agent-output.ts');
     out(renderCliError(e, { json: true, command: 'engine shadow seed', tty: false }).stdout!.trimEnd());

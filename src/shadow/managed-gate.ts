@@ -9,9 +9,9 @@ import type { SqlEngine } from '../core/persistence/model.ts';
 import { readManagedMode } from '../core/persistence/managed-mode.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 
-// After the master merge: if core's engine_swap_refused `managed_storage` row is on master, switch to it and delete the
-// engine_shadow_refused registry row; one row only. This constant is the only place in src that names the code besides its registry row.
-const SHADOW_REFUSAL_CODE = 'engine_shadow_refused';
+// One registry row for this refusal: the swap's `engine_swap_refused` / `managed_storage` (consent, exit 3), the same
+// reason `gbrain engine swap` uses. The shadow text below is its own; the code and reason are shared.
+const SHADOW_REFUSAL_CODE = 'engine_swap_refused';
 const VERIFY = { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] };
 const MANAGED_WHY = 'This brain uses managed storage. The Rust engine never holds managed storage, so this brain can never swap to Rust and a shadow on it measures nothing it could use. '
   + 'Brains made by a default `gbrain init` use managed storage and cannot be shadowed or swapped yet.';
@@ -20,7 +20,7 @@ const NEXT = 'Ask the user how they want to proceed; nothing was written.';
 const MANAGED_NEXT = `Ask the user. ${WAYS_OUT} Nothing was written.`;
 const BUSY_NEXT = 'Ask the user to stop `gbrain serve` and any other process holding this brain, run the same command again, then restart serve (shadow mode attaches only to processes that open the brain after start); nothing was written.';
 
-/** The brain's mode was read as managed (a literal `true`): the only case that says "this brain uses managed storage". Inlined: core will export a `managed_storage` builder from src/core/engine-swap/refusals.ts; it is not on master yet. */
+/** The brain's mode was read as managed (a literal `true`): the only case that says "this brain uses managed storage". The swap's own builder (managedStorageError in src/core/engine-swap/refusals.ts) speaks of the swap, so shadow keeps its own text under the same code and reason. */
 function managedStorageRefused(): OperationError {
   return build('Shadow mode is refused: this brain uses managed storage.', MANAGED_NEXT, MANAGED_WHY,
     `This brain uses managed storage, and the Rust engine never holds it, so a shadow on it would measure nothing it could use. Brains made by a default \`gbrain init\` use managed storage and cannot be shadowed or swapped yet. ${WAYS_OUT} Nothing was written.`);

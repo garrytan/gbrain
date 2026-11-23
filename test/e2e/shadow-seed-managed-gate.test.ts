@@ -1,7 +1,7 @@
 /**
  * Postgres twin of test/shadow-seed-managed-gate.test.ts: `gbrain engine shadow seed` on a managed-storage Postgres brain.
  *
- * Protects: a Postgres brain with persistence_brain.enabled = true is refused (exit 3, engine_shadow_refused /
+ * Protects: a Postgres brain with persistence_brain.enabled = true is refused (exit 3, engine_swap_refused /
  * managed_storage) by `seed` and `seed --json` before the shadow directory exists, before the Rust store opens and
  * before the REPEATABLE READ snapshot transaction starts; the same brain with enabled = false goes on to open the store.
  * Regression it catches: a seed that opens a store or starts its snapshot on a managed Postgres brain.
@@ -59,10 +59,10 @@ d('engine shadow seed on a Postgres brain', () => {
     for (const args of [['seed'], ['seed', '--json']]) {
       const r = await seedCommand(args);
       expect(r.code, args.join(' ')).toBe(3);
-      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_shadow_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
+      expect(r.err[0], args.join(' ')).toBe('engine shadow: engine_swap_refused (managed_storage): Shadow mode is refused: this brain uses managed storage.');
       expect(existsSync(r.dir), args.join(' ')).toBe(false);
       expect([r.storeOpens, r.addonLoads, r.transactions]).toEqual([0, 0, 0]);
-      if (args.includes('--json')) expect(JSON.parse(r.out.join('\n'))).toMatchObject({ error: 'engine_shadow_refused', reason: 'managed_storage', class: 'consent' });
+      if (args.includes('--json')) expect(JSON.parse(r.out.join('\n'))).toMatchObject({ error: 'engine_swap_refused', reason: 'managed_storage', class: 'consent' });
     }
   }, 60_000);
 
@@ -70,6 +70,6 @@ d('engine shadow seed on a Postgres brain', () => {
     const r = await seedCommand(['seed']);
     expect(r.storeOpens).toBe(1);
     expect(r.code).toBe(1);
-    expect(r.err.join('\n')).not.toContain('engine_shadow_refused');
+    expect(r.err.join('\n')).not.toContain('engine_swap_refused');
   }, 60_000);
 });

@@ -286,6 +286,30 @@ fn pages_keep_ids_times_revisions_and_family_columns() {
 }
 
 #[test]
+fn an_imported_page_signature_decides_which_embedded_chunks_are_stale() {
+    // Value: protects=the page's embedding signature survives the import; fails_when=the signature is dropped or changed (every embedded chunk
+    // would then read stale or fresh by the wrong rule); why_new=the signature check in pages_keep_ids_times_revisions_and_family_columns runs on a
+    // page with no chunk, so it passes without the signature; seam=none; no_claim=embedding provider compatibility.
+    let s = seeded_pages();
+    let text = "Alice builds widgets at acme.";
+    let mut embedded = chunk_row("41", "0", text);
+    embedded.insert("embedding".into(), Some("[0.5,-0.25,1]".into()));
+    embedded.insert("embedded_at".into(), Some("2026-01-03 00:00:00+00".into()));
+    embedded.insert("embedded_text_hash".into(), Some(md5_hex(text)));
+    assert_eq!(import(&s, "content_chunks", vec![embedded]).imported, 1);
+    let stale = |signature: &str| {
+        s.count_stale_chunks(&StaleChunkOptions {
+            signature: Some(signature.into()),
+            include_null_signature: true,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert_eq!(stale("openai:text-embedding-3-large:1536"), 0);
+    assert_eq!(stale("another:model:1"), 1);
+}
+
+#[test]
 fn pages_retry_skips_and_a_slug_held_by_another_id_is_refused() {
     let s = seeded_pages();
     let r = import(&s, "pages", vec![page_row("7", "people/alice-example")]);
