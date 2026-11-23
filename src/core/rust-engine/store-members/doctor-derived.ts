@@ -66,8 +66,11 @@ export const listBudgetLimitedRows: Member<'listBudgetLimitedRows'> = async () =
 export const readBudgetHoldAge: Member<'readBudgetHoldAge'> = async () => ({ stale: 0, oldest: null });
 /** Derived generations and their ledger: the store keeps none, so no retirement is ledger-covered. */
 export const countLedgerCoveredAtomRetirements: Member<'countLedgerCoveredAtomRetirements'> = async () => 0;
-export const listLiveGenerationRetirements: Member<'listLiveGenerationRetirements'> = async () => [];
-export const listHeldGenerations: Member<'listHeldGenerations'> = async () => [];
+/** The live generations that retired items inside the restore window, and the held generations: served from the ledger (generations/doctor_reads.rs). */
+export const listLiveGenerationRetirements: Member<'listLiveGenerationRetirements'> = async (brain, sourceIds, restoreDays) =>
+  storeCall({ member: 'listLiveGenerationRetirements' }, () => brain.listLiveGenerationRetirements([...sourceIds], restoreDays));
+export const listHeldGenerations: Member<'listHeldGenerations'> = async (brain, sourceIds) =>
+  storeCall({ member: 'listHeldGenerations' }, () => brain.listHeldGenerations([...sourceIds]));
 export const listOrphanGenerationCandidates: Member<'listOrphanGenerationCandidates'> = async () => [];
 /** The 7-day extract rollup: the store keeps no `extract_rollup_7d`, so no kind has a rollup row or a recorded halt reason. */
 export const readExtractRollup7d: Member<'readExtractRollup7d'> = async () => [];

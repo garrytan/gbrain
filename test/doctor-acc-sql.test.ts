@@ -135,3 +135,28 @@ describe('doctor reads, second set: seeded PGLite', () => {
     expect(await listPrivilegedDcrClients(raw, 'admin')).toBeNull();
   });
 });
+
+describe('doctor reads, second set: pages that name readers and the chat census', () => {
+  const page = (frontmatter: Record<string, unknown>, type = 'note', title = 'page') => ({ type: type as 'note', title, compiled_truth: 'body', frontmatter });
+
+  test('malformed and unknown readers are listed by page, each with its total and first page', async () => {
+    await engine.putPage('readers/bad', page({ readable_by: ['!! not valid !!'] }));
+    await engine.putPage('readers/ghost-a', page({ readable_by: ['member:ghost'] }));
+    await engine.putPage('readers/ghost-b', page({ readable_by: ['member:ghost', 'group:crew'] }));
+    expect(await engine.listMalformedReaderPages(20)).toEqual([{ source_id: 'default', slug: 'readers/bad', total: 1 }]);
+    expect(await engine.listUnknownReaders(20)).toEqual([
+      { reader: 'group:crew', kind: 'unknown', pages: 1, sample: { source_id: 'default', slug: 'readers/ghost-b' } },
+      { reader: 'member:ghost', kind: 'unknown', pages: 2, sample: { source_id: 'default', slug: 'readers/ghost-a' } },
+    ]);
+    expect(await engine.listUnknownReaders(1)).toHaveLength(1);
+  });
+
+  test('a page that gained readers since its newest earlier version is a recent narrowing', async () => {
+    await engine.putPage('readers/narrowed', page({}));
+    await engine.createVersion('readers/narrowed');
+    await engine.putPage('readers/narrowed', page({ readable_by: ['member:ghost'] }));
+    const rows = await engine.listRecentReaderNarrowings(7, 20);
+    expect(rows.map(r => ({ slug: r.slug, readers: r.readers, total: r.total }))).toEqual([{ slug: 'readers/narrowed', readers: ['member:ghost'], total: 1 }]);
+    expect(await engine.listRecentReaderNarrowings(0, 20)).toEqual([]);
+  });
+});

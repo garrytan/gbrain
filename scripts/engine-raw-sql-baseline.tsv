@@ -38,7 +38,6 @@ src/commands/doctor/checks/default-source-path.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
 src/commands/doctor/checks/embedding-health.ts	execute_raw	2
 src/commands/doctor/checks/extraction-sync.ts	execute_raw	4
-src/commands/doctor/checks/folder-access.ts	execute_raw	1
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
 src/commands/doctor/checks/git-convergence.ts	execute_raw	2
@@ -50,7 +49,6 @@ src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
 src/commands/doctor/checks/managed-guard.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
-src/commands/doctor/checks/member-access.ts	execute_raw	3
 src/commands/doctor/checks/memory-writeback.ts	execute_raw	1
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
 src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
@@ -64,12 +62,10 @@ src/commands/doctor/checks/routing-federation.ts	execute_raw	1
 src/commands/doctor/checks/schema-function-bodies.ts	execute_raw	1
 src/commands/doctor/checks/schema-health.ts	sql_template	3
 src/commands/doctor/checks/search-eval.ts	execute_raw	2
-src/commands/doctor/checks/shared-agent-access.ts	execute_raw	2
 src/commands/doctor/checks/slug-collisions.ts	execute_raw	1
 src/commands/doctor/checks/slug-path-mismatch.ts	execute_raw	1
 src/commands/doctor/checks/supervisor-health.ts	execute_raw	1
 src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
-src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/report-remote.ts	execute_raw	2
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2

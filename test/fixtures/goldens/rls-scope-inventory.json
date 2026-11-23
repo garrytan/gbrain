@@ -463,6 +463,17 @@
         ],
         "flagOnScopes": []
       },
+      "countAccessFolderDrift#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countChunklessPagesWithContent#default": {
         "flagOffLanes": [
           "pool"
@@ -8822,6 +8833,7 @@
         "consolidateFact": "none",
         "convertLegacyAccessTokenGrant": "none",
         "cosinesByChunkIds": "none",
+        "countAccessFolderDrift": "none",
         "countAccessReaderDrift": "none",
         "countActiveConversationFacts": "none",
         "countAtomExtractionBacklog": "none",
@@ -9568,6 +9580,7 @@
         "listLocalEditAdoptions": "none",
         "listLocalPathSources": "none",
         "listLoopSuppressions": "none",
+        "listMalformedReaderPages": "none",
         "listManagedRootBindings": "none",
         "listManagedRoots": "none",
         "listManagedSyncBacklogHeaders": "none",
@@ -9696,6 +9709,7 @@
         "listRecentLeasePressure": "none",
         "listRecentPageBodies": "none",
         "listRecentPurgeRequests": "none",
+        "listRecentReaderNarrowings": "none",
         "listRecentSynthesisCompletions": "none",
         "listRecentWriterVersions": "none",
         "listRecordMetadataRows": "none",
@@ -9831,6 +9845,7 @@
         "listUnexpiredFactIds": "none",
         "listUnfencedFactRows": "none",
         "listUnfinishedManagedSyncCursors": "none",
+        "listUnknownReaders": "none",
         "listUnlinkedConversationRows": "none",
         "listUnlinkedConversationSlugs": "none",
         "listUnmatchedGenerationRows": "none",

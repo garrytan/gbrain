@@ -34,7 +34,7 @@ test/engine-parity/collate-aggregated-lists.test.ts	3	3
 test/engine-parity/collate-belief-cycle-walks.test.ts	2	4
 test/engine-parity/collate-command-listings.test.ts	0	8
 test/engine-parity/collate-core-page-lists.test.ts	4	12
-test/engine-parity/collate-doctor-access.test.ts	0	11
+test/engine-parity/collate-doctor-access.test.ts	10	1
 test/engine-parity/collate-doctor-persistence.test.ts	0	13
 test/engine-parity/collate-doctor.test.ts	9	1
 test/engine-parity/collate-engine-sql.test.ts	28	7

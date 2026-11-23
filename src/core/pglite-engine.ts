@@ -1766,6 +1766,9 @@ export class PGLiteEngine implements BrainEngine {
   listDanglingFederatedReads() { return doctorAccImpl.listDanglingFederatedReads(this.rawRead); }
   listOrphanWorkspaceSources(suffix: string) { return doctorAccImpl.listOrphanWorkspaceSources(this.rawRead, suffix); }
   listPrivilegedDcrClients(scopeRegex: string) { return doctorAccImpl.listPrivilegedDcrClients(this.rawRead, scopeRegex); }
+  listMalformedReaderPages(limit: number) { return doctorAccImpl.listMalformedReaderPages(this.rawRead, limit); }
+  listUnknownReaders(limit: number) { return doctorAccImpl.listUnknownReaders(this.rawRead, limit); }
+  listRecentReaderNarrowings(days: number, limit: number) { return doctorAccImpl.listRecentReaderNarrowings(this.rawRead, days, limit); }
   readMcpRequestLogBytes() { return doctorAccImpl.readMcpRequestLogBytes(this.rawRead); }
   countMcpRequestLogRows(limit: number) { return doctorAccImpl.countMcpRequestLogRows(this.rawRead, 'pglite', limit); }
   hasMcpLogRowsPastWindow(days: number, keepOperations: readonly string[]) { return doctorAccImpl.hasMcpLogRowsPastWindow(this.rawRead, days, keepOperations); }
@@ -2471,6 +2474,7 @@ export class PGLiteEngine implements BrainEngine {
   applyAccessRuleChanges(sourceId: string, changes: accessPolicyImpl.AccessRuleChanges) { return accessPolicyImpl.applyAccessRuleChanges(this, sourceId, changes); }
   restampAccessWindow(sourceId: string, after: number, batch: number) { return accessPolicyImpl.restampAccessWindow(this, sourceId, after, batch); }
   finishAccessRestamp(sourceId: string) { return accessPolicyImpl.finishAccessRestamp(this, sourceId); }
+  countAccessFolderDrift(sourceId: string) { return accessPolicyImpl.countAccessFolderDrift(this, sourceId); }
   insertAccessPolicyRevision(row: accessPolicyImpl.AccessRevisionInsert) { return accessPolicyImpl.insertAccessPolicyRevision(this, row); }
   markAccessRevisionsApplied(sourceId: string, upTo?: number) { return accessPolicyImpl.markAccessRevisionsApplied(this, sourceId, upTo); }
   approveAccessPolicyRevision(sourceId: string, revision: number, actor: string) { return accessPolicyImpl.approveAccessPolicyRevision(this, sourceId, revision, actor); }

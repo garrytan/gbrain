@@ -142,6 +142,8 @@ export interface LedgerMembers {
   applyAccessRuleChanges(sourceId: string, changes: AccessRuleChanges): Promise<void>;
   restampAccessWindow(sourceId: string, after: number, batch: number): Promise<AccessRestampWindow>;
   finishAccessRestamp(sourceId: string): Promise<number>;
+  /** The pages of the source whose kept folder rule ids differ from the rules that cover them now (what a restamp would change). */
+  countAccessFolderDrift(sourceId: string): Promise<number>;
   insertAccessPolicyRevision(row: AccessRevisionInsert): Promise<void>;
   markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
   approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
