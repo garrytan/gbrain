@@ -439,7 +439,7 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
     const candidates = `SELECT x.id, ${src} AS source_id, ${table === 'pages' ? 'x.slug' : 'NULL::text'} AS slug, x.trust_tier AS from_tier,
         ${trustTierFromRankSql(rule)} AS to_tier
       FROM ${from}
-     WHERE x.write_origin->>'channel' = 'trust_claim' AND ${src} = ANY($1::text[])
+     WHERE x.write_origin->>'channel' = 'trust_claim' AND x.write_origin->'owner_decision' IS NULL AND ${src} = ANY($1::text[])
        AND (${rule}) IS NOT NULL AND (${rule}) < ${trustRankSql('x.trust_tier')}`;
     const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string | null; from_tier: string; to_tier: string }>(
       `${candidates} ORDER BY x.id`, [claimed]);
