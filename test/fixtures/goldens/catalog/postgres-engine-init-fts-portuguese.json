@@ -120,6 +120,7 @@
       "drift_decisions.drift_decisions_pkey": "p PRIMARY KEY (id)",
       "drift_decisions.drift_decisions_recommended_weight_check": "c CHECK (((recommended_weight >= (0)::double precision) AND (recommended_weight <= (1)::double precision)))",
       "drift_decisions.drift_decisions_take_id_fkey": "f FOREIGN KEY (take_id) REFERENCES takes(id) ON DELETE CASCADE",
+      "engine_writer_observations.engine_writer_observations_pkey": "p PRIMARY KEY (host_id, application_name)",
       "entity_identities.entity_identities_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "entity_identities.entity_identities_page_uniq": "u UNIQUE (source_id, page_id)",
       "entity_identities.entity_identities_pkey": "p PRIMARY KEY (id)",
@@ -859,6 +860,9 @@
       "drift_decisions": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "engine_writer_observations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "entity_identities": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1396,6 +1400,7 @@
       "dream_verdicts_expires_idx": "CREATE INDEX dream_verdicts_expires_idx ON public.dream_verdicts USING btree (expires_at)",
       "dream_verdicts_pkey": "CREATE UNIQUE INDEX dream_verdicts_pkey ON public.dream_verdicts USING btree (file_path, content_hash)",
       "drift_decisions_pkey": "CREATE UNIQUE INDEX drift_decisions_pkey ON public.drift_decisions USING btree (id)",
+      "engine_writer_observations_pkey": "CREATE UNIQUE INDEX engine_writer_observations_pkey ON public.engine_writer_observations USING btree (host_id, application_name)",
       "entity_identities_canonical_uniq": "CREATE UNIQUE INDEX entity_identities_canonical_uniq ON public.entity_identities USING btree (entity_id) WHERE canonical",
       "entity_identities_entity_idx": "CREATE INDEX entity_identities_entity_idx ON public.entity_identities USING btree (entity_id)",
       "entity_identities_page_uniq": "CREATE UNIQUE INDEX entity_identities_page_uniq ON public.entity_identities USING btree (source_id, page_id)",
@@ -1466,6 +1471,7 @@
       "idx_derivation_inputs_input": "CREATE INDEX idx_derivation_inputs_input ON public.derivation_inputs USING btree (input_table, input_id)",
       "idx_drift_decisions_decided_at": "CREATE INDEX idx_drift_decisions_decided_at ON public.drift_decisions USING btree (decided_at DESC)",
       "idx_drift_decisions_take": "CREATE INDEX idx_drift_decisions_take ON public.drift_decisions USING btree (take_id)",
+      "idx_engine_writer_observations_last_seen": "CREATE INDEX idx_engine_writer_observations_last_seen ON public.engine_writer_observations USING btree (last_seen)",
       "idx_eval_candidates_created_at": "CREATE INDEX idx_eval_candidates_created_at ON public.eval_candidates USING btree (created_at DESC)",
       "idx_eval_capture_failures_ts": "CREATE INDEX idx_eval_capture_failures_ts ON public.eval_capture_failures USING btree (ts DESC)",
       "idx_extract_rollup_7d_day": "CREATE INDEX idx_extract_rollup_7d_day ON public.extract_rollup_7d USING btree (day)",
@@ -2683,6 +2689,17 @@
           "7 decided_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "8 applied_at timestamp with time zone/timestamptz NULL",
           "9 applied_by text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "engine_writer_observations": {
+        "columns": [
+          "1 host_id text/text NOT NULL",
+          "2 application_name text/text NOT NULL",
+          "3 process_kind text/text NOT NULL",
+          "4 gbrain_version text/text NOT NULL",
+          "5 first_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "6 last_seen timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
