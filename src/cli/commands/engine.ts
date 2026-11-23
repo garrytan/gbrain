@@ -18,10 +18,19 @@ export async function run(args: string[]): Promise<void> {
     // The read-only swap plan opens the brain itself (no migration) and writes nothing (S5a).
     // The swap reads the same status document `gbrain engine shadow status --json` prints (one builder).
     const { runEngineSwap } = await import('../../commands/engine-swap.ts');
+    const { openConfiguredPrimary } = await import('../../commands/engine-shadow.ts');
+    const { probeConfiguredFreshness } = await import('../../shadow/freshness-role.ts');
+    const { brainIdentity } = await import('../../shadow/state.ts');
+    const { capabilitiesForEngineKind } = await import('../../core/engine-capabilities.ts');
     const { readConfiguredShadowStatus } = await import('../../shadow/status-document.ts');
     const { loadConfig } = await import('../../core/config.ts');
     setCliExitVerdict(await runEngineSwap(args.slice(1), {
-      readShadowStatus: async () => (await readConfiguredShadowStatus(() => loadConfig())) as ShadowStatus | null,
+      // A Postgres brain's shadow is also asked why its freshness token is blind (a role without pg_read_all_stats).
+      readShadowStatus: async () => (await readConfiguredShadowStatus(() => loadConfig(), new Date(), () => {
+        const config = loadConfig();
+        const kind = config && brainIdentity(config)?.engine;
+        return kind && capabilitiesForEngineKind(kind).has('postgres_admin') ? probeConfiguredFreshness(openConfiguredPrimary) : Promise.resolve(null);
+      })) as ShadowStatus | null,
     }));
     return;
   }

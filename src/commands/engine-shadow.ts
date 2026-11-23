@@ -17,6 +17,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { OperationError } from '../core/ops/contract.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { shadowStatusDocument } from '../shadow/status-document.ts';
+import { capabilitiesForEngineKind } from '../core/engine-capabilities.ts';
+import { probeConfiguredFreshness, renderFreshnessBlind, type FreshnessBlind } from '../shadow/freshness-role.ts';
 import { renderEvidenceStatus } from '../shadow/evidence.ts';
 import { renderFollowStatus } from '../shadow/follow-status.ts';
 import { readSeedRecord, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
@@ -141,7 +143,7 @@ async function defaultBrainId(): Promise<() => string> {
   return () => brainRoutingArgs()[1] ?? 'unresolved';
 }
 
-async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir: string; engine: string }> {
+async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir: string; engine: NonNullable<EngineConfig['engine']> }> {
   // Shadow state is keyed by the host brain's config. A selected mounted brain would silently read, start or delete the host's.
   // Loaded here, not at the top, so the command's flag table does not grow by everything the resolver imports.
   const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
@@ -178,9 +180,9 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     }
     const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
-    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
+    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now, await freshnessOf(brain, deps));
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
-    if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
+    if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now, await freshnessOf(brain, deps));
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
     if (sub === 'reconcile') return await reconcileCommand(brain, flags(rest, ['--json', '--full'], 'reconcile').has('--json'), deps, out, err);
     throw new UsageError(`Unknown engine shadow subcommand: ${sub}`);
@@ -234,8 +236,14 @@ async function start(
   return 0;
 }
 
-function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
-  const doc = shadowStatusDocument(brain, now());
+/** Why the freshness token is blind for this brain's role, or null: asked only of a Postgres brain whose shadow is on (freshness-role.ts). */
+async function freshnessOf(brain: { dir: string; engine: NonNullable<EngineConfig['engine']> }, deps: EngineShadowDeps): Promise<FreshnessBlind | null> {
+  if (!capabilitiesForEngineKind(brain.engine).has('postgres_admin') || readShadowState(brain.dir)?.enabled !== true) return null;
+  return probeConfiguredFreshness(deps.openPrimary ?? openConfiguredPrimary);
+}
+
+function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date, freshness: FreshnessBlind | null): number {
+  const doc = shadowStatusDocument(brain, now(), freshness);
   if (json) {
     out(JSON.stringify(doc, null, 2));
     return 0;
@@ -252,6 +260,7 @@ function status(brain: { key: string; dir: string }, json: boolean, out: (l: str
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
   if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
+  if (freshness) for (const line of renderFreshnessBlind(freshness)) out(line);
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
@@ -387,7 +396,7 @@ async function reconcileCommand(
   }
 }
 
-async function openConfiguredPrimary(): Promise<BrainEngine> {
+export async function openConfiguredPrimary(): Promise<BrainEngine> {
   const { toEngineConfig } = await import('../core/config.ts');
   const { constructEngine } = await import('../core/engine-construct.ts');
   const cfg = loadConfig();
@@ -426,8 +435,8 @@ function stop(brain: { key: string; dir: string }, del: boolean, out: (l: string
   return 0;
 }
 
-function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
-  const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now());
+function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date, freshness: FreshnessBlind | null): number {
+  const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now(), freshness);
   if (existsSync(brain.dir)) {
     const paths = writeProvisionalReport(brain.dir, r);
     if (!json) out(`Wrote ${paths.markdown} and ${paths.json}.\n`);

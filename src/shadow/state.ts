@@ -46,7 +46,7 @@ export interface ShadowState {
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
-export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'>): { engine: string; identity: string } | null {
+export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'>): { engine: NonNullable<EngineConfig['engine']>; identity: string } | null {
   const engine: NonNullable<EngineConfig['engine']> = config.engine ?? (config.database_url ? 'postgres' : 'pglite');
   switch (engine) {
     case 'postgres': {

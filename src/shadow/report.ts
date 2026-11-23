@@ -8,6 +8,7 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
 import { buildEvidenceStatus, renderEvidenceStatus, type EvidenceStatus } from './evidence.ts';
+import type { FreshnessBlind } from './freshness-role.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
 import type { ShadowState } from './state.ts';
 import { readSeedRecord, type SeedRecord } from './seed.ts';
@@ -34,6 +35,8 @@ export interface ProvisionalReport {
   seed: ReportSeed | null;
   /** The swap-readiness evidence of the current epoch: reads, search arms, child health and the rules behind them (evidence.ts). */
   evidence: EvidenceStatus;
+  /** Present while the freshness token is blind: the reason, why it matters and the fix (freshness-role.ts). */
+  freshness_token?: FreshnessBlind;
 }
 
 export interface ReportSeed {
@@ -61,8 +64,9 @@ function reportSeed(record: SeedRecord | null, now: Date): ReportSeed | null {
   };
 }
 
-function whyNotReady(seed: ReportSeed | null): string[] {
+function whyNotReady(seed: ReportSeed | null, freshness: FreshnessBlind | null): string[] {
   const why = ['Provisional report: shadow mode compares reads only (plan S1 and the read half of S2).'];
+  if (freshness) why.push(`${freshness.message} (${freshness.code}): ${freshness.why} Fix: ${freshness.fix.command ?? ''}`);
   if (!seed) {
     why.push('The Rust store is not seeded: run gbrain engine shadow seed. Until then most Rust reads differ or miss; a diff here is expected.');
   } else {
@@ -79,7 +83,7 @@ function zeroOutcomes(): Record<ShadowOutcome, number> {
   return Object.fromEntries(SHADOW_OUTCOMES.map((o) => [o, 0])) as Record<ShadowOutcome, number>;
 }
 
-export function buildProvisionalReport(dir: string, brain: string, state: ShadowState | null, now = new Date()): ProvisionalReport {
+export function buildProvisionalReport(dir: string, brain: string, state: ShadowState | null, now = new Date(), freshness: FreshnessBlind | null = null): ProvisionalReport {
   const summary = readShadowSummary(dir);
   const totals = { ...zeroOutcomes(), compared: 0 };
   const byOp = Object.keys(summary.by_op).sort().map((op) => {
@@ -98,7 +102,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     schema_version: 1,
     kind: 'provisional',
     verdict: PROVISIONAL_VERDICT,
-    why_not_ready: whyNotReady(seed),
+    why_not_ready: whyNotReady(seed, freshness),
     generated_at: now.toISOString(),
     brain,
     enabled: state?.enabled === true,
@@ -112,6 +116,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     recent_faults: readFaults(dir, 10),
     seed,
     evidence: buildEvidenceStatus({ dir, now }),
+    ...(freshness ? { freshness_token: freshness } : {}),
   };
 }
 
