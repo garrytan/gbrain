@@ -214,6 +214,8 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     seen.push({ path, auth: req.headers.get('authorization'), body: await req.json() });
     if (path.startsWith('/denied/') || path.startsWith('/gdeny/')) return new Response('{"error": "forbidden"}', { status: 403 });
     if (path.startsWith('/hop/')) return new Response(null, { status: 307, headers: { location: '/v1/chat/completions' } });
+    if (path.startsWith('/a/')) return Response.json({ content: [{ type: 'text', text: '{"needed": true, "skills": ["gbrain:people"]}' }], stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 10 } });
+    if (path.startsWith('/o/')) return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text: '{"needed": true, "skills": ["gbrain:people"]}' }] }], usage: { input_tokens: 1000, output_tokens: 10 } });
     if (path.startsWith('/g/')) return Response.json({ candidates: [{ content: { parts: [{ text: '{"needed": true, "skills": ["gbrain:people"]}' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 10, thoughtsTokenCount: 150 } });
     const answer = '"choices": [{"message": {"content": "{\\"needed\\": true, \\"skills\\": [\\"gbrain:people\\"]}"}, "finish_reason": "stop"}]';
     if (path.startsWith('/huge/')) return new Response('{' + answer + ', "usage": {"prompt_tokens": 1e400, "completion_tokens": 10}}', { headers: { 'content-type': 'application/json' } });
@@ -296,6 +298,44 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
     expect(r.output.router?.est_usd).toBe(0.00102);
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
+  });
+
+  test('router_usd_per_mtok takes two or three prices, never four', async () => {
+    expect(routerSettings({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [1, 2, 0.1, 3] }).invalid).toStartWith('skills.resolver.router_usd_per_mtok must be');
+    expect(routerSettings({ router: true, router_model: 'compat:acme/picker-1', router_usd_per_mtok: [1, 2, 0.1] }).usdPerMtok).toEqual([1, 2, 0.1]);
+  });
+
+  test('a third router_usd_per_mtok value prices cached input', async () => {
+    const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/cached/v1`, router_usd_per_mtok: [1, 2, 0.1] }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.est_usd).toBe(0.00021);
+    expect((await readRouterSpend(h)).charged_usd).toBe(0.00021);
+  });
+
+  test('Opus and Fable 5.x think at low effort with room to answer; Sonnet 5.5 and Haiku keep thinking off', async () => {
+    const aenv = { ...process.env, ANTHROPIC_BASE_URL: `http://127.0.0.1:${server.port}/a`, ANTHROPIC_API_KEY: 'k-test' };
+    for (const [model, want, effort, maxTokens] of [['claude-opus-5-5', 'adaptive', 'low', 1024], ['claude-fable-5-1', 'adaptive', 'low', 1024], ['claude-fable-5-2', 'adaptive', 'low', 1024], ['claude-sonnet-5-5', 'between_tools', 'low', 200], ['claude-sonnet-5', 'disabled', undefined, 200], ['claude-haiku-5-5', 'disabled', undefined, 200]] as const) {
+      seen.length = 0;
+      const h = await home({ router: true, router_model: `anthropic:${model}` });
+      const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: aenv });
+      expect([model, r.output.router?.answered_by]).toEqual([model, 'picker']);
+      const body = seen.find(s => s.path === '/a/v1/messages')!.body;
+      expect([model, body.thinking]).toEqual([model, { type: want }]);
+      expect([model, body.output_config]).toEqual([model, effort ? { effort } : undefined]);
+      expect([model, body.max_tokens]).toEqual([model, maxTokens]);
+    }
+  });
+
+  test('GPT-6.x Sol and Astra are priced and reason at low effort with room to answer; models that accept none keep it', async () => {
+    const oenv = { ...process.env, OPENAI_BASE_URL: `http://127.0.0.1:${server.port}/o`, OPENAI_API_KEY: 'k-test' };
+    for (const [model, effort, maxTokens] of [['gpt-6.2-sol', 'low', 1024], ['gpt-6.1-sol', 'low', 1024], ['gpt-6.2-astra', 'low', 1024], ['gpt-6-astra', 'low', 1024], ['gpt-6-luna', 'none', 200]] as const) {
+      seen.length = 0;
+      const h = await home({ router: true, router_model: `openai:${model}` });
+      const r = await resolveSkills({ message: 'who is alice', harness: 'codex' }, { home: h, catalogs: ['c'], router: true, env: oenv });
+      expect([model, r.output.router?.answered_by]).toEqual([model, 'picker']);
+      const body = seen.find(s => s.path === '/o/v1/responses')!.body;
+      expect([model, body.reasoning, body.max_output_tokens]).toEqual([model, { effort }, maxTokens]);
+    }
   });
 
   test('Gemini thinking tokens are charged as output', async () => {

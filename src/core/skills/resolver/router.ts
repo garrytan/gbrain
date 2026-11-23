@@ -24,7 +24,7 @@ import { ROUTER_TIMEOUT_MS_CLAUDE_CODE_MAX, type RouterSettings } from './config
 import { writeFileAtomic } from './fsutil.ts';
 import { releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
 import { skillIndexRoot } from './paths.ts';
-import { firstParty, PickerHttpError, pickerChat, pickerKey, providerOf, type PickerReply } from './router-http.ts';
+import { firstParty, PickerHttpError, pickerChat, pickerKey, pickerReasons, providerOf, type PickerReply } from './router-http.ts';
 
 export const ROUTER_FALLBACK_CODES = ['timeout', 'provider_error', 'missing_key', 'daily_cap', 'parse_failed', 'no_known_ids', 'config_invalid', 'no_pricing', 'ledger_unavailable'] as const;
 export type RouterFallbackCode = (typeof ROUTER_FALLBACK_CODES)[number];
@@ -34,6 +34,8 @@ export const PICKER_SHORTLIST = 40;
 export const PICKER_PICKS = 3;
 export const PICKER_DESCRIPTION_CHARS = 400;
 export const PICKER_MAX_OUTPUT_TOKENS = 200;
+/** The output cap for a model that reasons before it answers: its reasoning counts against the cap, so 200 could leave no room for the reply. */
+export const PICKER_REASONING_OUTPUT_TOKENS = 1024;
 /** Tried in this order when router_model is unset; the first whose provider has a key answers (anthropic, openai and google are the providers the picker can call). */
 export const ROUTER_DEFAULT_MODELS = ['anthropic:claude-haiku-5-5', 'openai:gpt-6-luna', 'google:gemini-3.5-flash-lite'] as const;
 const LEDGER_FILE = 'router-spend.json';
@@ -147,13 +149,14 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   const { model, key } = routerModel(s, home, env);
   if (!model || key === null) return { ok: false, code: 'missing_key', model, usd: 0 };
   const compat = model.startsWith('compat:');
-  const price: { input: number; output: number; cache_read?: number; cache_write?: number } | null | undefined = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1] } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
+  const price: { input: number; output: number; cache_read?: number; cache_write?: number } | null | undefined = compat ? (s.usdPerMtok ? { input: s.usdPerMtok[0], output: s.usdPerMtok[1], ...(s.usdPerMtok[2] !== undefined ? { cache_read: s.usdPerMtok[2] } : {}) } : null) : (await import('../../model-pricing.ts')).canonicalLookup(model);
   if (!price) return { ok: false, code: 'no_pricing', model, usd: 0 };
   const readRate = price.cache_read ?? price.input;
   const writeRate = price.cache_write ?? price.input;
   if (s.maxUsdPerDay <= 0) return { ok: false, code: 'daily_cap', model, usd: 0, detail: 'router_max_usd_per_day is 0' };
   const system = pickerPrompt(skills);
-  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + PICKER_OVERHEAD_TOKENS) * Math.max(price.input, readRate, writeRate) + PICKER_MAX_OUTPUT_TOKENS * price.output) / 1e6);
+  const maxTokens = pickerReasons(model) ? PICKER_REASONING_OUTPUT_TOKENS : PICKER_MAX_OUTPUT_TOKENS;
+  const estimate = round6(((Buffer.byteLength(system) + Buffer.byteLength(message) + PICKER_OVERHEAD_TOKENS) * Math.max(price.input, readRate, writeRate) + maxTokens * price.output) / 1e6);
   if (signal.aborted) return { ok: false, code: 'timeout', model, usd: 0 };
   const reserved = await withLedger<{ ok: boolean; spent: number; day: string }>(home, stored => {
     const day = ledgerDay(stored.day, now());
@@ -172,7 +175,7 @@ async function callPicker(home: string, message: string, skills: readonly Picker
   let res: PickerReply;
   sent.usd = estimate;
   try {
-    res = await pickerChat({ model, system, message, maxTokens: PICKER_MAX_OUTPUT_TOKENS, signal, ...(compat && s.baseUrl ? { baseUrl: s.baseUrl } : {}) }, key, env);
+    res = await pickerChat({ model, system, message, maxTokens, signal, ...(compat && s.baseUrl ? { baseUrl: s.baseUrl } : {}) }, key, env);
   } catch (e) {
     if (firstParty(providerOf(model), env) && e instanceof PickerHttpError && e.status >= 400 && e.status < 500) {
       const refunded = await settle(0);
