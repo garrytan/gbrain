@@ -50,6 +50,14 @@ export interface ShadowState {
   writer_evidence_since?: string;
   /** The seed id the epoch belongs to (null: no seed yet at that start). */
   writer_evidence_seed?: string | null;
+  /**
+   * Set by `start` when it continues an existing epoch (an enabled restart, a start after stop, or an older state file). Hooks
+   * were replaced or were off at some point, and no record proves otherwise, so eligibility counts it as an unknown writer path
+   * while it is inside the window (a file, no database needed).
+   */
+  writer_coverage_restarted_at?: string;
+  /** Set by `stop` before it removes the hooks. Counted like the restart time, and the state itself counts while shadow mode is off. */
+  writer_coverage_stopped_at?: string;
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */

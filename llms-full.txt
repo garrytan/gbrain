@@ -6047,7 +6047,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   failure instead of holding one of the brain's connections.
   A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
-  NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. A write that only takes a lock,
+  NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
+  being off, a `stop`, and a `start` that continues an existing epoch each count as one unknown writer path (recorded in
+  `state.json` as `writer_coverage_stopped_at` and `writer_coverage_restarted_at`, so a failed gap insert cannot hide
+  them) while they are inside the 7-day window, and for as long as shadow mode stays off; the swap is refused with
+  `writer_coverage_unknown` until the window has passed. A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
   counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
   machine, and the database hooks replace it. Any

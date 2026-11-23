@@ -230,6 +230,8 @@ async function start(
   const evidenceSince = sameEpoch ? prior!.writer_evidence_since! : legacySame ? prior!.started_at : now().toISOString();
   // A stop that ran with this code recorded its own gap in the removal transaction; a legacy stop did not.
   const hooksWereOff = legacySame && prior!.enabled === false;
+  // Continuing an epoch is a coverage break criterion 11 cannot see inside (hooks were replaced or off), so it fails closed for the window.
+  const continuing = sameEpoch || legacySame;
   if (primaryTakesWriterHooks(brain.engine)) {
     let primary: BrainEngine | null = null;
     try {
@@ -249,6 +251,8 @@ async function start(
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine,
     writer_evidence_since: evidenceSince, writer_evidence_seed: seedId,
+    ...(continuing ? { writer_coverage_restarted_at: now().toISOString() } : {}),
+    ...(continuing && prior?.writer_coverage_stopped_at ? { writer_coverage_stopped_at: prior.writer_coverage_stopped_at } : {}),
   };
   writeShadowState(brain.dir, state);
   out(`Shadow mode is on for brain ${brain.key}. Processes that open this brain from now on mirror reads.`);
@@ -403,7 +407,9 @@ function renderSeed(r: SeedRecord, path: string, out: (l: string) => void): void
 
 async function stop(brain: { key: string; dir: string; engine: string }, del: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
   const state = readShadowState(brain.dir);
-  if (state?.enabled) writeShadowState(brain.dir, { ...state, enabled: false, stopped_at: now().toISOString() });
+  // The stop time is written before the hooks go: from here on nothing is proven to record writers (a file, so it cannot fail like a gap insert).
+  if (state?.enabled) writeShadowState(brain.dir, { ...state, enabled: false, stopped_at: now().toISOString(), writer_coverage_stopped_at: now().toISOString() });
+  else if (state && state.writer_coverage_stopped_at === undefined) writeShadowState(brain.dir, { ...state, writer_coverage_stopped_at: now().toISOString() });
   let hooksLeft = false;
   if (primaryTakesWriterHooks(brain.engine)) {
     let primary: BrainEngine | null = null;

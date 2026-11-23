@@ -62,6 +62,23 @@ export function eligibilityWindowStart(state: ShadowState | null, now: Date): Da
   return new Date(base - OBSERVATION_REFRESH_MS);
 }
 
+/**
+ * Criterion 11 fails closed on what it cannot prove: shadow mode being off, a `stop`, or a `start` that continued an existing
+ * epoch each leave a stretch where hooks may not have recorded a writer, and a gap row alone cannot prove otherwise (it can ride
+ * out of the window, or fail to insert under a lock). So each counts as one unknown writer path while it is inside the window,
+ * and a stopped state counts for as long as it is stopped. A time that cannot be read counts. A file-based rule: no database.
+ */
+export function coverageBreaks(state: ShadowState | null, since: Date): number {
+  if (!state) return 0;
+  let n = state.enabled === false ? 1 : 0;
+  for (const t of [state.writer_coverage_restarted_at, state.writer_coverage_stopped_at]) {
+    if (t === undefined) continue;
+    const ms = Date.parse(t);
+    if (!Number.isFinite(ms) || ms >= since.getTime()) { n++; break; }
+  }
+  return n;
+}
+
 export function isPreviewTarget(target: string | null): boolean {
   return target !== null && RELEASE_ADDON_TARGETS.includes(target);
 }
@@ -90,6 +107,6 @@ export async function buildEligibilityStatus(input: EligibilityInput): Promise<E
     return { eligibility: fields, eligibility_evidence: { state: 'read_failed', code: errorCode(error) } };
   }
   const source = input.source ?? planAsWrittenSource(input.dir);
-  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since);
+  const unknown = ev.unresolved + ev.gaps + ev.unhooked + ev.uncovered_roles + source.unknownPaths(since) + coverageBreaks(input.state, since);
   return { eligibility: { writer_hosts_7d: ev.hosts, unknown_writer_paths: unknown, ...fields } };
 }

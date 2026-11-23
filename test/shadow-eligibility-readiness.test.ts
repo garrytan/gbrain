@@ -19,6 +19,7 @@ import { WriterObserver } from '../src/shadow/writer-observations.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { readConfiguredShadowStatus } from '../src/shadow/status-document.ts';
 import { shadowBrainKey, shadowDirFor, writeShadowState, SHADOW_STATE_VERSION } from '../src/shadow/state.ts';
+import type { ShadowState } from '../src/shadow/state.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { mkdirSync } from 'node:fs';
 
@@ -105,6 +106,57 @@ describe('criterion 11 from the eligibility producer', () => {
     await observe('11111111-1111-4111-8111-111111111111', 'gbrain cli:1:aaaaaaaa');
     expect((await criterion11({ engine: primary, brain: 'team-a' })).verdict.reason).toBe('team_brain');
     expect((await criterion11({ engine: primary, target: 'linux-x64-musl' })).row.state).toBe('fail');
+  });
+});
+
+describe('criterion 11 fails closed on a stop or a restart it cannot see inside', () => {
+  const DAY = 86_400_000;
+  const HOST = '11111111-1111-4111-8111-111111111111';
+  const iso = (ago: number): string => new Date(Date.now() - ago).toISOString();
+  const state = (extra: Partial<ShadowState> = {}): ShadowState => ({
+    version: SHADOW_STATE_VERSION, enabled: true, started_at: iso(2 * DAY), sample_rate: 1, queue_bound: 8, plan_hash: 'h', brain: 'b', primary_engine: 'pglite',
+    writer_evidence_since: iso(30 * DAY), writer_evidence_seed: 'seed-1', ...extra,
+  });
+
+  async function criterion11(input: { engine: BrainEngine; state: ShadowState }) {
+    const out = await buildEligibilityStatus({
+      dir, state: input.state, engine: input.engine, source: { name: 'test', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => 'linux-x64-glibc',
+    });
+    const verdict = evaluateReadiness({ eligibility: out.eligibility } as ShadowStatus);
+    return { out, verdict, row: verdict.criteria.find(c => c.n === 11)! };
+  }
+
+  test('a clean epoch with one observed host passes (the control)', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    expect((await criterion11({ engine: primary, state: state() })).row.state).toBe('pass');
+  });
+
+  test('an enabled restart that continued the epoch refuses writer_coverage_unknown, whatever the evidence tables say', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    const { row, verdict, out } = await criterion11({ engine: primary, state: state({ writer_coverage_restarted_at: iso(60 * 60_000) }) });
+    expect(out.eligibility.unknown_writer_paths).toBe(1);
+    expect(row.state).toBe('fail');
+    expect(verdict.reason).toBe('writer_coverage_unknown');
+  });
+
+  test('a long stop and a restart: the stop time is older than the window, the restart is not, and the restart still refuses', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    const { row, verdict } = await criterion11({ engine: primary, state: state({ writer_coverage_stopped_at: iso(9 * DAY), writer_coverage_restarted_at: iso(60_000) }) });
+    expect(row.state).toBe('fail');
+    expect(verdict.reason).toBe('writer_coverage_unknown');
+  });
+
+  test('a stopped shadow refuses for as long as it is stopped, even with no gap row anywhere (a failed stop-gap insert cannot read as clean)', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    const { row, verdict } = await criterion11({ engine: primary, state: state({ enabled: false, stopped_at: iso(10 * DAY), writer_coverage_stopped_at: iso(10 * DAY) }) });
+    expect(row.state).toBe('fail');
+    expect(verdict.reason).toBe('writer_coverage_unknown');
+  });
+
+  test('the blanket lasts one window: a restart older than the window no longer counts, and an unreadable time always does', async () => {
+    await observe(HOST, 'gbrain cli:1:aaaaaaaa');
+    expect((await criterion11({ engine: primary, state: state({ writer_coverage_restarted_at: iso(9 * DAY) }) })).row.state).toBe('pass');
+    expect((await criterion11({ engine: primary, state: state({ writer_coverage_restarted_at: 'yesterday' }) })).row.state).toBe('fail');
   });
 });
 

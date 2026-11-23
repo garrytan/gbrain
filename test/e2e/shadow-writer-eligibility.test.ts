@@ -6,6 +6,10 @@
  * observation row; the eligibility SELECT runs on the pool the caller holds and a dropped database leaves the writer
  * fields out with the error code only. Regression it catches: Postgres-only behavior PGLite hides (pool concurrency,
  * real connection errors, timestamptz parameter binding).
+ * Stop and restart fail closed: `stop` writes writer_coverage_stopped_at and a continued `start` writer_coverage_restarted_at
+ * to state.json, and the eligibility read counts them as an unknown writer path while inside the window and while shadow mode
+ * is off, even when the stop's gap row could not be inserted (the gap table was locked). Regression it catches: a stop or
+ * restart that reads as clean because its only record was a table row that failed to land or aged out.
  * Needs DATABASE_URL; skips without it.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -20,6 +24,11 @@ import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { WriterObserver } from '../../src/shadow/writer-observations.ts';
 import { buildEligibilityStatus } from '../../src/shadow/eligibility.ts';
+import postgres from '#postgres';
+import { listHookedTables } from '../../src/shadow/writer-hooks.ts';
+import { runEngineShadow } from '../../src/commands/engine-shadow.ts';
+import { readShadowState, shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
@@ -90,4 +99,68 @@ d('writer observations on Postgres', () => {
     expect(Object.keys(out.eligibility_evidence ?? {}).sort()).toEqual(['code', 'state']);
     expect(out.eligibility_evidence!.code).toMatch(/^[A-Za-z0-9_.:-]{1,64}$/);
   }, 60_000);
+
+  /** A shadow brain on the clone under a temporary GBRAIN_HOME, with the commands wired to the shared engine. */
+  function coverageHarness() {
+    const home = tempDir();
+    const url = (engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+    const config = { engine: 'postgres' as const, database_url: url };
+    const out: string[] = [];
+    const view = new Proxy(engine, { get: (t, p) => (p === 'disconnect' ? async () => undefined : Reflect.get(t, p, t)) });
+    const make = () => ({ config: () => config, out: (l: string) => out.push(l), err: (l: string) => out.push(l), openPrimary: async () => view as never, loadAddon: async () => ({ ok: true }) as never, now: () => new Date() });
+    const dirOf = () => shadowDirFor(shadowBrainKey(config)!); // after GBRAIN_HOME is set: the directory follows it
+    const unknown = async () => {
+      const dir = dirOf();
+      const doc = await buildEligibilityStatus({ dir, state: readShadowState(dir), engine, source: { name: 'none', unknownPaths: () => 0 }, brainId: () => 'host', addonTarget: () => null });
+      return doc.eligibility.unknown_writer_paths!;
+    };
+    return { home, out, make, dirOf, unknown };
+  }
+
+  test('the state file records the stop and the restart, and each makes the eligibility read count an unknown path', async () => {
+    const { home, out, make, dirOf, unknown } = coverageHarness();
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      expect(await runEngineShadow(['start', '--plan'], make())).toBe(0);
+      const planHash = out.find(l => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+      expect(readShadowState(dirOf())?.writer_coverage_restarted_at).toBeUndefined();
+      expect(await unknown()).toBe(0);
+      // An enabled restart continues the epoch.
+      expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+      expect(readShadowState(dirOf())?.writer_coverage_restarted_at).toBeDefined();
+      expect(await unknown()).toBeGreaterThanOrEqual(1);
+      // A stop records its time, and a stopped shadow counts for as long as it is stopped.
+      expect(await runEngineShadow(['stop'], make())).toBe(0);
+      const stopped = readShadowState(dirOf())!;
+      expect([stopped.enabled, typeof stopped.writer_coverage_stopped_at]).toEqual([false, 'string']);
+      expect(await unknown()).toBeGreaterThanOrEqual(1);
+    });
+  }, 90_000);
+
+  test('a stop whose gap insert cannot land still refuses after the restart: the stop time is in the state file, not only in a table', async () => {
+    const { home, out, make, unknown } = coverageHarness();
+    const locker = postgres((engine as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl, { max: 1, onnotice: () => undefined, prepare: false });
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        expect(await runEngineShadow(['start', '--plan'], make())).toBe(0);
+        const planHash = out.find(l => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
+        expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+        let release!: () => void;
+        const held = new Promise<void>((r) => { release = r; });
+        let granted!: () => void;
+        const ready = new Promise<void>((r) => { granted = r; });
+        const locked = locker.begin(async (t) => { await t`LOCK TABLE engine_writer_coverage_gaps IN ACCESS EXCLUSIVE MODE`; granted(); await held; });
+        await ready;
+        // The removal's gap insert times out under the lock and is swallowed: the hooks come off with no gap row.
+        expect(await runEngineShadow(['stop'], make())).toBe(0);
+        release();
+        await locked.catch(() => undefined);
+        expect((await listHookedTables(engine)).length).toBe(0);
+        expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM engine_writer_coverage_gaps`))[0]!.n).toBe(0);
+        expect(await runEngineShadow(['start', '--yes', '--expect', planHash], make())).toBe(0);
+        expect(await unknown()).toBeGreaterThanOrEqual(1);
+        await runEngineShadow(['stop'], make());
+      });
+    } finally { await locker.end({ timeout: 5 }).catch(() => undefined); }
+  }, 90_000);
 });
