@@ -444,10 +444,12 @@ describe('storage', () => {
     await withShadow(async (c) => {
       await importOk(c, receipt());
       const bench = join(c.dir, 'evidence', 'bench');
+      const before = readFileSync(benchSummaryPath(c.dir), 'utf8');
       chmodSync(bench, 0o500);
       const x = await c.json(['bench', '--import', c.file(receipt()), '--json']);
       expect(x.out.code).toBe('storage_error');
       expect(x.err).toContain('EACCES');
+      expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
       chmodSync(bench, 0o700);
     });
   });
@@ -532,6 +534,61 @@ console.log(JSON.stringify(r.ok ? { ok: true } : { ok: false, code: r.error.code
 
 describe('the stored summary read', () => {
   test('absent reads absent', () => { expect(readBenchSummary(tmp())).toEqual({ state: 'absent' }); });
+});
+
+describe('round 1 review fixes: attribution, stored size, zero samples, and not measured is not slower', () => {
+  test('a metric attributed to another engine than its pair is refused and the earlier evidence stays byte for byte', async () => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt());
+      const before = readFileSync(benchSummaryPath(c.dir), 'utf8');
+      const x = await c.json(['bench', '--import', c.file(receipt((r) => met(r, 'pglite', 'read throughput at 1 client', { against: 'postgres' }))), '--json']);
+      expect(x.code).toBe(2);
+      expect(x.out.code).toBe('invalid_params');
+      expect(x.out.message).toContain('against');
+      expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
+    });
+  });
+
+  test('a summary over the stored-size cap is refused before anything is replaced: no temp file, the earlier evidence is still read', async () => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt());
+      const before = readFileSync(benchSummaryPath(c.dir), 'utf8');
+      const big = receipt((r) => { for (let i = 0; i < 45000; i++) pair(r, 'pglite').missing[`extra_op_${i}`] = 'x'.repeat(190); });
+      const x = await c.json(['bench', '--import', c.file(big), '--json']);
+      expect(x.code).toBe(2);
+      expect(x.out.code).toBe('invalid_params');
+      expect(x.out.message).toContain('larger than');
+      expect(x.err).toContain('previous bench evidence unchanged');
+      expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
+      expect(readdirSync(join(c.dir, 'evidence', 'bench')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+      expect(c.status().bench.sources.bench_corpus.state).toBe('measured');
+    });
+  });
+
+  test('zero recorded samples are not measured, are named in the losses, and never read as no worse', async () => {
+    await withShadow(async (c) => {
+      const reps = await importOk(c, receipt((r) => { pair(r, 'pglite').throughput[0].reps = 0; }));
+      expect(reps.rust_no_worse).toBe(false);
+      expect(reps.losses).toEqual([`${LOSS}read throughput at 1 client vs PGLite not measured (the receipt records zero samples)`]);
+      const cold = await importOk(c, receipt((r) => { r.arms.rust.cold_start.reps = []; }));
+      expect(cold.rust_no_worse).toBe(false);
+      expect(cold.losses).toEqual([`${LOSS}cold start vs PGLite not measured (the receipt records zero samples)`, `${LOSS}cold start vs Postgres not measured (the receipt records zero samples)`]);
+    });
+  });
+
+  test('readiness says not measured, not slower, when the only open rows are unmeasured; a measured loss still says slower (status to plan path)', async () => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt((r) => { nPairs(r, 'pglite', 'get_page', 50); }));
+      const row8 = (): { detail: string; gating: boolean } => evaluateReadiness({ ...readyDoc(), bench: readiness(c.status().bench) }, new Date('2026-12-01T00:00:00Z')).criteria.find((x) => x.n === 8)! as never;
+      const unmeasured = row8();
+      expect(unmeasured.detail).toContain('Rust not shown to be no worse (rows not measured)');
+      expect(unmeasured.detail).not.toContain('Rust slower');
+      expect(unmeasured.detail).toContain(`${LOSS}get_page p50 vs PGLite not measured: 50 pairs (needs 100)`);
+      expect(unmeasured.gating).toBe(false);
+      await importOk(c, receipt((r) => { nPairs(r, 'pglite', 'get_page', 50); lat(r, 'postgres', 'get_timeline', 'p99', { ratio: 1.3, ci95: [1.2, 1.4] }); }));
+      expect(row8().detail).toContain('Rust slower on at least one class');
+    });
+  });
 });
 
 function readyDoc(): ShadowStatus {

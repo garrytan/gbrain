@@ -81,6 +81,8 @@ function metricRow(pair: BenchPair | undefined, against: TsEngine, name: string,
   const m = pair.metrics.find((x) => x.metric === name);
   if (!m) return gone('absent from the receipt');
   if (m.status === 'missing') return { ...gone('the receipt marks it missing: Rust did not produce it'), direction: m.direction, sample: m.sample };
+  const sm = m.sample;
+  if (sm && ((sm.kind === 'throughput_reps' && sm.reps === 0) || (sm.kind === 'cold_starts' && (sm.rust === 0 || sm.reference === 0)))) return { ...gone('the receipt records zero samples'), direction: m.direction, sample: sm };
   return { ...base, direction: m.direction, ratio: m.ratio, ci95: m.ci95, sample: m.sample, status: direct(m.direction, m.ratio as number, m.ci95), reason: m.ci95 ? null : 'point estimate no interval' };
 }
 

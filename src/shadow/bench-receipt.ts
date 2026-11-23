@@ -237,6 +237,8 @@ export function summarizeReceipt(json: unknown, source: { file: string; sha256: 
     }
     const missing: Record<string, string> = {};
     for (const [op, why] of Object.entries(isObj(p.missing) ? p.missing : {})) missing[op] = typeof why === 'string' ? sanitizeText(why) : (why as string);
+    const stray = (Array.isArray(p.metrics) ? p.metrics : []).find((x: Raw) => isObj(x) && x.against !== ref);
+    if (stray) return no(`the metric ${sanitizeText(stray.metric, 64)} in the pair against ${ref} says it is against ${show(stray.against)} (a metric must name its own pair's engine)`);
     const metrics: MetricEntry[] = (Array.isArray(p.metrics) ? p.metrics : []).map((x: Raw) => ({
       metric: x?.metric, direction: x?.direction, ratio: x?.ratio ?? null, ci95: x?.ci95 ?? null, status: x?.status, core: x?.core,
       sample: typeof x?.metric === 'string' ? sampleFor(x.metric, p, arms, ref) : null,
@@ -289,9 +291,11 @@ export function importBenchReceipt(dir: string, path: string, opts: { maxBytes?:
   if (!result.ok) return result;
   const final = benchSummaryPath(dir);
   const tmp = `${final}.${process.pid}.tmp`;
+  const text = JSON.stringify(result.summary, null, 2) + '\n';
+  if (Buffer.byteLength(text) > MAX_SUMMARY_BYTES) return { ok: false, error: refuse(`the reduced bench summary would be larger than ${MAX_SUMMARY_BYTES} bytes, the most a status read accepts`, 'Pass the receipt perf.ts wrote: a receipt with this many extra operation entries is not an engine-bench receipt. Do not edit it.') };
   try {
     mkdirSync(join(dir, 'evidence', 'bench'), { recursive: true, mode: 0o700 });
-    writeFileSync(tmp, JSON.stringify(result.summary, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+    writeFileSync(tmp, text, { mode: 0o600, flag: 'wx' });
     renameSync(tmp, final);
   } catch (e) {
     try { rmSync(tmp, { force: true }); } catch { /* the temp file is never read as evidence either way */ }
