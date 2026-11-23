@@ -384,6 +384,55 @@ fn interval_digest(entries: &[(Vec<u8>, Entry)]) -> IntervalDigest {
     }
 }
 
+/// [`Store::relation_digest`] over one read, in the same bytes ([`interval_digest`]), without
+/// keeping the entries: each is hashed as the scan reaches it, so the memory is one entry however
+/// large the relation. A digest entry is checked for its 32-byte digest and generation, not for
+/// its identity JSON, which the digest does not use. `lo` and `hi` are raw sort-key bounds
+/// (`None`: unbounded), as `relation_digest` takes them after hex parsing. The store snapshot
+/// (`snapshot.rs`) calls it for every relation of the seed.
+pub fn relation_digest_stream(
+    read: &dyn KvRead,
+    relation: &str,
+    lo: Option<&[u8]>,
+    hi: Option<&[u8]>,
+) -> Result<IntervalDigest> {
+    let prefix = digest_prefix(relation);
+    let start = digest_key(relation, lo.unwrap_or_default());
+    let end = match hi {
+        Some(hi) => digest_key(relation, hi),
+        None => prefix_end(&prefix).unwrap_or_else(|| vec![0xFF; 64]),
+    };
+    let mut hasher = Sha256::new();
+    let mut rows = 0u64;
+    let mut failure = None;
+    if start < end {
+        read.scan(&start, &end, false, &mut |k, v| {
+            if v.len() < 40 {
+                failure = Some(StoreError::new(
+                    crate::error::STORE_CORRUPT,
+                    "bad shadow digest entry",
+                ));
+                return false;
+            }
+            let sort = &k[prefix.len()..];
+            hasher.update((sort.len() as u32).to_be_bytes());
+            hasher.update(sort);
+            hasher.update(&v[..32]);
+            rows += 1;
+            true
+        })?;
+    }
+    failure.map_or_else(
+        || {
+            Ok(IntervalDigest {
+                rows,
+                digest: to_hex(&hasher.finalize()),
+            })
+        },
+        Err,
+    )
+}
+
 // ---- the calls -----------------------------------------------------------------------------
 
 /// One call's state.

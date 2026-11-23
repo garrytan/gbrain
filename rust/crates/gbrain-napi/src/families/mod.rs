@@ -14,6 +14,7 @@ mod links;
 mod pages;
 mod search;
 mod seed;
+mod snapshot;
 mod sources;
 mod tags;
 mod timeline;
