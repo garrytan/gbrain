@@ -237,9 +237,9 @@ test('a listed rebuild that another worker completed does not replace its projec
     let current: Awaited<ReturnType<BrainEngine['getChunks']>> = [];
     const raced = new Proxy(engine, {
       get(target, key) {
-        if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-          const result = await target.executeRaw(sql, params);
-          if (!intervened && sql.startsWith('SELECT s.id AS source_id,j.source_incarnation')) {
+        if (key === 'listQueuedPageProjections') return async (...args: Parameters<BrainEngine['listQueuedPageProjections']>) => {
+          const result = await target.listQueuedPageProjections(...args);
+          if (!intervened) {
             intervened = true;
             expect((await rebuildPendingPageProjections(engine, 100)).rebuilt).toBeGreaterThan(0);
             current = await embedCurrent(engine, slug);

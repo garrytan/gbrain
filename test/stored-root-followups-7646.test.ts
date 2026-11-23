@@ -30,6 +30,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readDoctorSources } from '../src/core/engine-sql/doctor-sources.ts';
 
 const SYNC = { noPull: true, noEmbed: true, noExtract: true, full: true };
 const WINDOWS_PATH = 'C:\\brain-example';
@@ -169,11 +170,13 @@ for (const backend of testBackends()) {
     test('doctor default_source_local_path survives a failed sibling scan and says it was not checked', async () => {
       await engine.executeRaw("UPDATE sources SET local_path='.' WHERE id='default'");
       const original = engine.executeRaw.bind(engine);
+      const failingRaw = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("id <> 'default' AND local_path IS NOT NULL")) throw new Error('scan failed in test');
+        return original(sql, params);
+      };
       const failing = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-          if (sql.includes("id <> 'default' AND local_path IS NOT NULL")) throw new Error('scan failed in test');
-          return original(sql, params);
-        };
+        if (key === 'executeRaw') return failingRaw;
+        if (key === 'readDoctorSources') return (variant: never, scope: never) => readDoctorSources(failingRaw as never, variant, scope);
         return Reflect.get(target, key);
       } }) as BrainEngine;
       const check = await defaultSourceLocalPathCheck(failing);

@@ -2,11 +2,11 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-Four tables the decide loop keeps: `decide_proposals` (supersede proposals the conflict sweep leaves for the owner), `decide_review_proposals` (the review lane's proposals), `decide_review_queue` (the review lane's work queue) and `decide_sweep_deferred` (the conflict sweep's retry table). Store: `gbrain-store/src/eval_capture/decide_proposals.rs`. Binding: `gbrain-napi/src/families/decide_proposals.rs`. This landing carries the native store and binding with cargo tests; the SQL twin (`engine-sql/decide-proposals.ts`), the TypeScript member and the parity test arrive in a later landing, and nothing in TypeScript calls these members yet.
+Four tables the decide loop keeps: `decide_proposals` (supersede proposals the conflict sweep leaves for the owner), `decide_review_proposals` (the review lane's proposals), `decide_review_queue` (the review lane's work queue) and `decide_sweep_deferred` (the conflict sweep's retry table). Store: `gbrain-store/src/eval_capture/decide_proposals.rs`. Binding: `gbrain-napi/src/families/decide_proposals.rs`. TypeScript members: `src/core/rust-engine/store-members/decide-proposals.ts`. The shared SQL module for PGLite and Postgres is `engine-sql/decide-proposals.ts`; `src/core/ai/decide/proposals-store.ts` and `review-lane.ts` call these engine members. Parity test: `test/engine-parity/decide-proposals.test.ts`.
 
 ## Capability
 
-All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served; in this landing only the five eval-capture members are registered, so these 16 join them when their TypeScript members land.
+All 16 members belong to the `eval_capture` capability, the one the five eval-capture members use. The tables share that family's key tag (`Z`) and no other capability describes them; a new capability name would need a new row in the engine capability list for no gain. `servedCapabilities()` reports `eval_capture` only when every one of its members is served. All of them are registered: these 16, the 20 decide-store members (`decide-store.md`) and the five eval-capture members, so the capability is reported.
 
 ## Members
 
@@ -59,7 +59,7 @@ Proposals are owner-reviewed rows, a few hundred at most, so lists scan a table 
 ## Differences from PGLite and Postgres
 
 - Ids are taken before the unique keys are checked, as a BIGSERIAL does: a conflicting insert returns `null` and the id is gone. In Postgres a `NOT NULL` failure also takes an id; the store validates before it allocates, so a refused insert there takes none.
-- The review queue's due order is `a_ref COLLATE "C", b_ref COLLATE "C"`. This is a deliberate pin: it makes Postgres order by bytes, as the store does, so the two do not depend on the database's locale.
+- The review queue's due order ends in `a_ref, b_ref` (after `next_attempt_at, created_at`). Rust orders those refs by bytes; the SQL engines use the database's collation, so rows whose refs compare differently by bytes and by locale can come out in a different order.
 - The supersede rows' `created_at` and `decided_at` are ISO strings with milliseconds on PGLite and Postgres. The store keeps microseconds; `store-members/decide-proposals.ts` cuts them to milliseconds (`new Date(s).toISOString()`). Review rows pass through as Postgres prints them (`created_at::text`).
 - `REAL` columns (`p_supersede` and the like) are stored as `f32` and read back as the shortest decimal that names that `f32`, as Postgres prints a `real`. A value outside the `real` range is refused.
 - `claim_conflicts:%` is a SQL `LIKE`, so `_` matches any one character: `claimXconflicts:a` counts as a claim sweep, `claims_conflicts:a` does not. The store uses the same matcher as the facts family.

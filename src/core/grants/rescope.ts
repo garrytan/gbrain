@@ -1,8 +1,8 @@
-import type { SqlQuery } from '../sql-query.ts';
+import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
 import { assertValidSourceId } from '../source-id.ts';
 import { isUndefinedColumnError } from '../utils.ts';
 import { assertValidSlugPrefixes, pgArray } from './encoding.ts';
-import { rescopeClientGrantInTransaction } from './service.ts';
+import { rescopeClientGrantInTransaction, type GrantDatabase } from './service.ts';
 import type { GrantPatch, GrantProfileId } from './model.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../../mcp/surface.ts';
 
@@ -37,7 +37,12 @@ export interface RescopeClientOptions {
 }
 export type RescopeClientResult = { clientId: string; clientName: string; sourceId: string; federatedRead: string[]; boundSlugPrefixes?: string[] | null; surface?: string | null; surfaceOld?: string | null };
 
-export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
+/**
+ * An engine (or an engine transaction) probes the schema and the source through typed members, so a store with no raw
+ * SQL (the Rust engine) can rescope; a bare SqlQuery keeps the statements it always ran. The pre-migration fallback
+ * below runs only on SQL engines.
+ */
+export async function rescopeOAuthClient(db: GrantDatabase, clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
     const { sourceId, federatedRead, boundSlugPrefixes, surface } = opts;
     if (sourceId === undefined && federatedRead === undefined && boundSlugPrefixes === undefined && surface === undefined && !Object.entries(opts).some(([key, value]) => !['actor', 'expectedRevision', 'dryRun', 'repair', 'surfaceSetBy'].includes(key) && value !== undefined)) {
       throw new Error('rescope-client requires --source, --federated-read, --bound-slug-prefixes, and/or --surface');
@@ -69,17 +74,19 @@ export async function rescopeOAuthClient(sql: SqlQuery, clientId: string, opts: 
       }
       assertValidSlugPrefixes(boundSlugPrefixes);
     }
-    const schema = await sql`SELECT column_name FROM information_schema.columns
+    const schemaColumns = typeof db === 'function' ? (await db`SELECT column_name FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
-        AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`;
-    if (schema.length === 17) {
+        AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`).length
+      : (await db.readOauthClientColumns('grant')).length;
+    const sql = typeof db === 'function' ? db : sqlQueryForEngine(db);
+    if (schemaColumns === 17) {
       const { expectedRevision, actor, repair, dryRun, surfaceSetBy, ...patch } = opts;
       if (surface !== undefined) (patch as GrantPatch).surfaceSetBy = surface === null ? null : surfaceSetBy ?? 'operator';
       if (sourceId !== undefined) {
-        const found = await sql`SELECT id FROM sources WHERE id = ${sourceId}`;
-        if (!found.length) throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
+        const found = typeof db === 'function' ? (await db`SELECT id FROM sources WHERE id = ${sourceId}`).length > 0 : (await db.getSource(sourceId)) !== null;
+        if (!found) throw new Error(`Source "${sourceId}" does not exist. Create it first: gbrain sources add ${sourceId} ...`);
       }
-      const result = await rescopeClientGrantInTransaction(sql, clientId, patch, { expectedRevision, actor: actor ?? 'operator', repair, dryRun });
+      const result = await rescopeClientGrantInTransaction(db, clientId, patch, { expectedRevision, actor: actor ?? 'operator', repair, dryRun });
       return { clientId, clientName: result.after.clientName, sourceId: result.after.sourceId ?? '',
         federatedRead: result.after.federatedRead,
         ...(boundSlugPrefixes !== undefined ? { boundSlugPrefixes: result.after.boundSlugPrefixes } : {}),

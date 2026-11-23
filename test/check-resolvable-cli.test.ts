@@ -9,6 +9,7 @@ import {
   DEFERRED,
 } from '../src/commands/check-resolvable.ts';
 import { checkResolvable } from '../src/core/check-resolvable.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 // Path to the CLI entry point. Runs through bun directly so tests don't
 // require a pre-built binary. Always invoked from the repo root so bun can
@@ -447,7 +448,7 @@ describe('gbrain check-resolvable CLI — integration', () => {
       // Pass --fix; expect refusal exit + clear error message.
       const r = spawnSync('bun', ['run', CLI, 'check-resolvable', '--fix'], {
         cwd: empty,
-        env: { ...process.env, OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
+        env: { ...envWithoutDatabaseUrl(), OPENCLAW_WORKSPACE: '', GBRAIN_SKILLS_DIR: '' },
         encoding: 'utf-8',
       });
       expect(r.status).toBe(1);

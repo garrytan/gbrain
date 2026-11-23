@@ -29,7 +29,7 @@ async function sharedAgentVerdict(ctx: DoctorContext): Promise<Check> {
          SELECT 'token' AS kind, id::text AS id, name FROM access_tokens WHERE revoked_at IS NULL AND '*' = ANY(may_act_for)
          UNION ALL
          SELECT 'client' AS kind, client_id AS id, COALESCE(client_name, client_id) AS name FROM oauth_clients WHERE deleted_at IS NULL AND '*' = ANY(may_act_for)
-       ) w ORDER BY kind, name LIMIT ${SAMPLE}`);
+       ) w ORDER BY kind COLLATE "C", name COLLATE "C", id COLLATE "C" LIMIT ${SAMPLE}`);
     const [stdio] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key = $1', [STDIO_MAY_ACT_FOR_KEY]);
     const stdioWild = (stdio?.value ?? '').split(',').map(s => s.trim()).includes('*');
     const named = [...rows.map(r => `${r.kind} ${r.name}`), ...(stdioWild ? [`config ${STDIO_MAY_ACT_FOR_KEY}`] : [])];

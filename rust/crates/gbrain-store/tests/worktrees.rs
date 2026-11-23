@@ -425,7 +425,9 @@ fn a_transfer_prepare_drains_the_worktree_and_a_cancel_reactivates_it() {
     assert_eq!(store.prepared_transfer_worktree().unwrap(), None);
     assert_eq!(
         store.read_worktree_owner(OTHER_WORKTREE).unwrap(),
-        Some(json!({ "owner_host_id": HOST_B, "owner_epoch": "1", "state": "active" }))
+        Some(
+            json!({ "owner_host_id": HOST_B, "owner_epoch": "1", "state": "active", "manifest": null })
+        )
     );
     assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
     assert!(!store.worktree_publication_pending(OTHER_WORKTREE).unwrap());
@@ -487,4 +489,105 @@ fn a_source_delete_removes_the_binding_of_its_incarnation_and_keeps_the_worktree
     seed(&store, "work", STALE);
     assert!(store.delete_source_record("work", false).unwrap());
     assert!(store.get_worktree_binding("work", None).unwrap().is_some());
+}
+
+#[test]
+fn a_transfer_accept_moves_the_owner_binding_and_content_receipt_to_the_successor() {
+    let dir = TempDir::new("worktrees-accept");
+    let store = open(&dir);
+    let incarnation = source(&store, "work", json!({}));
+    let other = source(&store, "other", json!({}));
+    seed(&store, "work", &incarnation);
+    store
+        .insert_source_binding(&binding("other", &other, OTHER_WORKTREE))
+        .expect_err("an unknown worktree is refused");
+    let key = format!("shared_skills.content.v1.work.{incarnation}");
+    store.set_config(&key, "{\"root\":\"/old\"}").unwrap();
+
+    assert_eq!(
+        store.read_worktree_manifest(WORKTREE).unwrap(),
+        Some(json!({ "prepared_at": "2026-01-02T03:04:05Z" }))
+    );
+    assert_eq!(store.read_worktree_manifest(STALE).unwrap(), None);
+    assert_eq!(
+        store.read_worktree_owner(WORKTREE).unwrap().unwrap()["manifest"],
+        json!({ "prepared_at": "2026-01-02T03:04:05Z" })
+    );
+
+    // The successor host has no binding yet: no receipt row for it.
+    let ids = vec![WORKTREE.to_string()];
+    assert!(
+        store
+            .content_receipt_rows(&ids, HOST_B, None)
+            .unwrap()
+            .is_empty()
+    );
+    store
+        .upsert_host_binding(&host(WORKTREE, HOST_B, "/var/tmp/successor"))
+        .unwrap();
+    let rows = store.content_receipt_rows(&ids, HOST_B, None).unwrap();
+    assert_eq!(
+        rows,
+        vec![json!({
+            "source_id": "work",
+            "incarnation": incarnation,
+            "relative_path": "notes",
+            "local_path": "/var/tmp/successor",
+            "brain_id": store.brain_id(),
+            "key": key,
+            "value": "{\"root\":\"/old\"}",
+        })]
+    );
+    assert!(
+        store
+            .content_receipt_rows(&ids, HOST_B, Some(&["other".to_string()]))
+            .unwrap()
+            .is_empty(),
+        "the source filter applies"
+    );
+
+    // A rebind of an existing binding keeps its Git durability.
+    store
+        .upsert_host_binding(&host(WORKTREE, HOST_A, "/var/tmp/moved"))
+        .unwrap();
+    let state: Value = serde_json::from_str(&store.writer_admin_state_text().unwrap()).unwrap();
+    assert_eq!(
+        state["hosts"][0],
+        json!([
+            WORKTREE,
+            HOST_A,
+            "/var/tmp/moved",
+            "/var/tmp/moved-coord",
+            "enabled"
+        ])
+    );
+    assert_eq!(state["hosts"][1][4], Value::Null);
+    assert!(
+        store
+            .upsert_host_binding(&host(STALE, HOST_B, "/var/tmp/x"))
+            .is_err(),
+        "an unknown worktree is refused"
+    );
+
+    assert!(!store.swap_config_value(&key, "{}", "stale").unwrap());
+    assert!(
+        store
+            .swap_config_value(&key, "{}", "{\"root\":\"/old\"}")
+            .unwrap()
+    );
+    assert_eq!(store.get_config(&key).unwrap().as_deref(), Some("{}"));
+
+    store.accept_worktree_owner(WORKTREE, HOST_B).unwrap();
+    let owner = store.read_worktree_owner(WORKTREE).unwrap().unwrap();
+    assert_eq!(owner["owner_host_id"], json!(HOST_B));
+    assert_eq!(owner["owner_epoch"], json!("8"));
+    assert_eq!(owner["state"], json!("active"));
+    assert_eq!(
+        owner["manifest"],
+        json!({ "prepared_at": "2026-01-02T03:04:05Z" }),
+        "the manifest is kept"
+    );
+    assert!(store.read_worktree_heartbeat(WORKTREE).unwrap().is_some());
+    store.accept_worktree_owner(STALE, HOST_B).unwrap();
+    assert_eq!(store.read_worktree_owner(STALE).unwrap(), None);
 }

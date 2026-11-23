@@ -25,10 +25,17 @@ import type {
 import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { pagePolicyFlags, storePagePolicy } from './private-provenance.ts';
 
+/**
+ * `confidence` is DOUBLE PRECISION on the SQL engines, which keep NaN and ±Infinity and read them back as numbers.
+ * JSON has no number for those three, so they cross the store boundary as the text Postgres prints for them.
+ */
+const toStoreFloat = (value: number): number | string => Number.isFinite(value) ? value : String(value);
+const fromStoreFloat = (value: number | string): number => typeof value === 'string' ? Number(value) : value;
+
 /** Links the live page into the group; the identity page-not-found error with no live page. */
 export const linkEntityIdentityRow: StoreMember<[input: EntityIdentityLinkInput], void> = async (brain, input) => {
   const linked = await storeCall({ member: 'linkEntityIdentityRow', slug: input.slug, sourceId: input.sourceId }, () => brain.linkEntityIdentity({
-    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: input.confidence,
+    entity_id: input.entityId, slug: input.slug, source_id: input.sourceId, confidence: toStoreFloat(input.confidence),
     established_by: input.establishedBy, canonical: input.canonical,
   }));
   if (linked !== true) throw identityPageNotFound(input.slug, input.sourceId);
@@ -53,8 +60,8 @@ export const listEntityIdentityRows: StoreMember<[filter: EntityIdentityFilter],
     slug_source_id: (filter.slug && filter.slugSourceId) || null,
     allowed_sources: filter.allowedSources?.length ? [...filter.allowedSources] : null,
     exclude_private: policy ?? null,
-  }))) as Array<Omit<EntityIdentityRow, 'established_at'> & { established_at: string }>;
-  return found.map((r) => ({ ...r, established_at: new Date(r.established_at) }));
+  }))) as Array<Omit<EntityIdentityRow, 'established_at' | 'confidence'> & { established_at: string; confidence: number | string }>;
+  return found.map((r) => ({ ...r, confidence: fromStoreFloat(r.confidence), established_at: new Date(r.established_at) }));
 };
 
 /** The group of each live member of the cross product of the pages' sources and slugs, by source then slug. */
@@ -71,11 +78,17 @@ export const readCanonicalTwin: StoreMember<[sourceId: string, slug: string], Ca
   storeCall({ member: 'readCanonicalTwin', slug, sourceId }, () => brain.readCanonicalTwin(sourceId, slug)) as Promise<CanonicalTwinRow[]>;
 
 /**
- * Duplicate finder read. Refused: the store's key rows carry no page id, generation, creation time or identity group,
- * and it applies no `members` or `tokens` narrowing, all of which the finder and the company sweep read.
+ * Duplicate finder read: live, unretired pages of the types in unarchived sources, the named keys only, keyset-paged,
+ * narrowed to `members` and to pages with a `tokens` value. A row's `generation` is an equality token the store derives
+ * from the page's knowledge revision (rust/docs/store/entity_identities.md): it changes when the page does, but does not grow.
  */
-export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = async () =>
-  refuseMember('listEntityKeyRows', 'the page id, generation, creation time and identity group of each row, and the members and tokens filters');
+export const listEntityKeyRows: StoreMember<[opts: EntityKeyRowsOpts], EntityKeyRow[]> = (brain, opts) =>
+  storeCall({ member: 'listEntityKeyRows' }, () => brain.listEntityKeyRows({
+    types: [...opts.types], keys: [...opts.keys], after: opts.after ? { source_id: opts.after.source_id, slug: opts.after.slug } : null,
+    limit: opts.limit,
+    members: opts.members ? opts.members.map(m => ({ source_id: m.source_id, slug: m.slug })) : null,
+    tokens: opts.tokens ? { values: [...opts.tokens.values], fields: [...opts.tokens.fields] } : null,
+  }));
 
 /** The owner's identity decisions by id, the members still pending, and the revision an apply can pin. No evidence is kept. */
 export const listIdentityDecisions: StoreMember<[], IdentityDecisionsRead> = async (brain) => {
@@ -90,20 +103,22 @@ export const listRestrictedIdentityMembers: StoreMember<[members: ReadonlyArray<
     members.map(m => ({ source_id: m.source_id, slug: m.slug })), pagePolicyFlags(privatePagesFilterFragment('p'))));
 };
 
-/** Writes and removes decisions and reconciles the 'dedupe:confirm' identity rows in one store write. */
-export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = async (brain, input) => {
-  if ((input.upsert ?? []).some(d => d.evidence?.length)) refuseMember('applyIdentityDecisions', 'a decision that carries member fingerprints (evidence)');
-  if (input.auto && (input.auto.link.length || input.auto.unlink.length)) refuseMember('applyIdentityDecisions', "the company sweep's automatic groups");
-  // An empty sweep plan writes nothing, and the store holds no automatic group to remove.
-  const auto = input.auto ? { auto: { linked: 0, unlinked: 0, skipped: 0 } } : {};
-  const result: ApplyIdentityDecisionsResult = await storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
+/** Writes and removes decisions and reconciles the 'dedupe:auto' and 'dedupe:confirm' identity rows in one store write. */
+export const applyIdentityDecisions: StoreMember<[input: ApplyIdentityDecisionsInput], ApplyIdentityDecisionsResult> = (brain, input) =>
+  storeCall({ member: 'applyIdentityDecisions' }, () => brain.applyIdentityDecisions({
     upsert: (input.upsert ?? []).map(d => ({
       decision_id: d.decision_id, verdict: d.verdict, members: d.members, group_id: d.group_id ?? null, entity_id: d.entity_id ?? null,
       canonical: d.canonical ? { source_id: d.canonical.source_id, slug: d.canonical.slug } : null, decided_by: d.decided_by,
       decided_at: d.decided_at ?? null, origin: d.origin, home_source_id: d.home_source_id ?? null, git_blob: d.git_blob ?? null,
+      evidence: d.evidence?.length ? [...d.evidence] : null,
     })),
     remove: [...(input.remove ?? [])],
     expect_revision: input.expectRevision ?? null,
+    auto: input.auto ? {
+      link: input.auto.link.map(g => ({
+        entity_id: g.entity_id, canonical_page_id: g.canonical_page_id,
+        members: g.members.map(m => ({ source_id: m.source_id, page_id: m.page_id, generation: m.generation })),
+      })),
+      unlink: [...input.auto.unlink],
+    } : null,
   }));
-  return result.stale ? result : { ...result, ...auto };
-};

@@ -192,26 +192,13 @@ Promise<{ lost: { source_id: string; operation: string; reason: 'source_changed'
   not_replayable: { unpinned_target: number; revision_superseded: number } }> {
   type Lost = { id: string; request_id: string; source_id: string; slug: string; operation: string; digest: string; sequence: string; reason: 'source_changed' | 'writer_guard';
     unpinned: boolean; stale_revision: boolean };
-  const caller = `r.operation = ANY($2::text[]) AND NOT (r.operation='put_page' AND r.intent ? 'kind')`;
-  const refused = `(${GUARD_REFUSAL} OR ${DRIFT_REFUSAL})`;
-  const [rows, [compacted]] = await Promise.all([
-    engine.executeRaw<Lost>(
-      `SELECT r.id::text, r.request_id::text, r.source_id, r.slug, r.operation, r.digest, r.sequence::text,
-        CASE WHEN r.state='conflict' THEN 'source_changed' ELSE 'writer_guard' END AS reason,
-        (r.operation='remember' AND jsonb_typeof(r.intent->'entity_slug') IS DISTINCT FROM 'string') AS unpinned,
-        (r.operation='put_page' AND jsonb_typeof(r.intent->'expected_revision')='string' AND r.intent->>'expected_revision' IS DISTINCT FROM
-          (SELECT p.knowledge_revision::text FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL)) AS stale_revision
-      FROM persistence_requests r
-      WHERE r.source_id = ANY($1::text[]) AND NOT r.compacted AND r.intent IS NOT NULL AND ${refused} AND ${caller}
-      ORDER BY r.sequence`, [sourceIds, REPLAYABLE]),
+  const [rows, compacted] = await Promise.all([
+    engine.listCallerRefusalRows(sourceIds, [...REPLAYABLE]) as Promise<Lost[]>,
     // A compacted receipt keeps no intent, so an owner-produced put_page cannot be told from a caller's; remember and
     // add_timeline_entry are always caller writes.
-    engine.executeRaw<{ count: number }>(
-      `SELECT count(*)::int AS count FROM persistence_requests r
-      WHERE r.source_id = ANY($1::text[]) AND r.compacted AND (${GUARD_REFUSAL} OR ${DRIFT_REFUSAL}) AND r.operation = ANY($2::text[])`,
-      [sourceIds, REPLAYABLE.filter(operation => operation !== 'put_page')]),
+    engine.countCompactedCallerRefusals(sourceIds, REPLAYABLE.filter(operation => operation !== 'put_page')),
   ]);
-  if (!rows.length) return { lost: [], compacted: Number(compacted?.count ?? 0), not_replayable: { unpinned_target: 0, revision_superseded: 0 } };
+  if (!rows.length) return { lost: [], compacted, not_replayable: { unpinned_target: 0, revision_superseded: 0 } };
   // Attempt rows this command submitted belong to their original (walked below), not to the listing.
   const requestIds = new Set(rows.map(row => row.request_id));
   const replays = new Set<string>();
@@ -268,7 +255,7 @@ Promise<{ lost: { source_id: string; operation: string; reason: 'source_changed'
     groups.set(key, group);
   }
   const sorted = [...groups.values()].sort((a, b) => a.source_id.localeCompare(b.source_id) || a.operation.localeCompare(b.operation) || a.reason.localeCompare(b.reason));
-  return { lost: sorted.map(group => ({ source_id: group.source_id, operation: group.operation, reason: group.reason, count: group.digests.size })), compacted: Number(compacted?.count ?? 0),
+  return { lost: sorted.map(group => ({ source_id: group.source_id, operation: group.operation, reason: group.reason, count: group.digests.size })), compacted,
     not_replayable: { unpinned_target: unpinned.size, revision_superseded: stale.size } };
 }
 

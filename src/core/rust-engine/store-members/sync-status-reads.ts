@@ -25,7 +25,7 @@ import type {
 } from '../../engine-sql/sync-status-reads.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
-import { SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
+import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
 import type { StoreBrain } from '../store.ts';
@@ -95,8 +95,8 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
   const locks: CycleLockRow[] = await storeCall({ member }, () => brain.readCycleLocks({ by: 'id', lockId: syncLockId(sourceId) }));
   const pass = await readRow(brain, member, MANAGED_SYNC_PASS_OP, key);
   const withheld = await readRow(brain, member, SYNC_DELETES_WITHHELD_OP, key);
-  const [configKey, setOp, setFingerprint] = SYNC_ADMISSION_SETTING_PARAMS;
-  const stored: string | null = await storeCall({ member }, () => brain.getConfig(configKey));
+  const [, setOp, setFingerprint] = SYNC_ADMISSION_SETTING_PARAMS;
+  const stored: string | null = await storeCall({ member }, () => brain.getConfig(SYNC_ADMISSION_KEY));
   const dating = first(await readRow(brain, member, setOp, setFingerprint));
   const rowValue = text(dating?.value);
   let pinned: boolean | null = null;
@@ -110,13 +110,14 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
       && (setAt === null || millis(text(telemetry?.started_at)) < millis(setAt));
     destructive = false;
   }
+  const reviews = await readRow(brain, member, APPLE_CONTACTS_REVIEW_OP, sourceId);
+  const heldDeletes = await readRow(brain, member, APPLE_CONTACTS_PENDING_DELETES_OP, sourceId);
   return {
     incarnation, last_commit: detail.last_commit, last_sync_at: detail.last_sync_at, drain_lock: locks.length > 0,
     pass_value: first(pass) as never, pass_updated_at: pass?.updated_at ?? null, pass_read_at: new Date().toISOString(), withheld: first(withheld) as never,
     admission_stored: stored, admission_row_value: rowValue, admission_set_at: text(dating?.set_at), admission_pinned: pinned, admission_destructive: destructive,
-    writeback_failed: null, refresh: null,
-    identity_reviews: (await readRow(brain, member, APPLE_CONTACTS_REVIEW_OP, sourceId))?.completed_keys ?? null,
-    held_deletes: (await readRow(brain, member, APPLE_CONTACTS_PENDING_DELETES_OP, sourceId))?.completed_keys ?? null,
+    writeback_failed: null, refresh: null, identity_reviews: reviews?.completed_keys ?? null, held_deletes: heldDeletes?.completed_keys ?? null,
+    config: detail.config,
   };
 };
 

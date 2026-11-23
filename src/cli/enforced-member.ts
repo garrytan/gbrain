@@ -175,11 +175,11 @@ export async function enforcedAccess(engine: BrainEngine, command: string): Prom
       const { member: id } = await memberIdentity(engine, member);
       if (id === member && await ownerMemberId(engine) !== member) {
         const base = await remoteCallerAccess(engine, undefined, [], 'stdio', null, member);
-        const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources');
+        const sources = await engine.listSourceIds();
         resolved = {
           member,
           access: { ...base, identity: [...base.identity ?? []], satisfiedRuleIds: [...base.satisfiedRuleIds ?? []], hidePrivate: true, owner: false, privateReadableSources: [], applyRemoteReadPolicy: false },
-          hiddenSources: await hiddenPersonalSources(engine, sources.map(s => s.id), member, false),
+          hiddenSources: await hiddenPersonalSources(engine, sources, member, false),
         };
       }
     }

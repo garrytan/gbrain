@@ -1045,7 +1045,7 @@ export async function listEmbeddingStateRows(exec: ScopedRead, column: string,
          WHERE p.deleted_at IS NULL AND ${NO_CHUNK_ROWS}${scope}
       ) r
      WHERE r.state = ANY(${[...opts.states]}::text[])
-     ORDER BY r.state, r.source_id, r.slug
+     ORDER BY r.state COLLATE "C", r.source_id COLLATE "C", r.slug COLLATE "C"
      LIMIT ${opts.limit}`);
   return rows.map(row => normalizeStateRow(row));
 }

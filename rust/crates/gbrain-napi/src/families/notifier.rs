@@ -284,4 +284,28 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_source_wanted_markers(&source_id))
     }
+
+    /// `readSourceSyncShape(sourceId)`: `{ local_path, root, bound }` for a live source, or null when it is missing
+    /// or archived.
+    #[napi]
+    pub fn read_source_sync_shape<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_sync_shape(&source_id))
+    }
+
+    /// `readNotifierFirstDue(sourceIds)`: `{ source_id, observed_head, first_due_at }` per existing source.
+    #[napi]
+    pub fn read_notifier_first_due<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<String> = required(source_ids, "readNotifierFirstDue sourceIds")?;
+            s.read_notifier_first_due(&ids)
+        })
+    }
 }

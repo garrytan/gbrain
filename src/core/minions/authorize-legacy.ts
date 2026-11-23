@@ -64,7 +64,7 @@ async function snapshot(engine: BrainEngine, ids: number[], lock: boolean, previ
   const dependencies = graph.filter(job => !ids.includes(Number(job.id)));
   // Include source registration state in CAS without assuming old payload source
   // fields prove authority. The operator is approving the actual historical work.
-  const sources = await engine.executeRaw<Record<string, unknown>>('SELECT id, local_path, config, archived, created_at FROM sources ORDER BY id');
+  const sources = await engine.executeRaw<Record<string, unknown>>('SELECT id, local_path, config, archived, created_at FROM sources ORDER BY id COLLATE "C"');
   const version = await engine.getConfig('version');
   const digest = previewHash({ preview_version: 1, authority_version: 1, version, jobs, dependencies, sources });
   return {

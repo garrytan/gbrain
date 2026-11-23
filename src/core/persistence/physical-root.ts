@@ -3,6 +3,7 @@ import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
+import type { WriterAdminStore } from '../engine-sql/writer-admin.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import type { OperationError } from '../ops/contract.ts';
@@ -39,7 +40,7 @@ function sqlPhysicalRootFacts(tx: SqlEngine): PhysicalRootFacts {
     },
   };
 }
-async function brainIdentity(facts: PhysicalRootFacts): Promise<string> {
+async function brainIdentity(facts: Pick<PhysicalRootFacts, 'brainId'>): Promise<string> {
   const brainId = await facts.brainId();
   if (!brainId) throw physicalRootError();
   return brainId;
@@ -52,7 +53,7 @@ async function brainIdentity(facts: PhysicalRootFacts): Promise<string> {
 export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim,
   facts: PhysicalRootFacts = sqlPhysicalRootFacts(tx)): Promise<PhysicalRootReservation> {
   const root = canonicalFilesystemPath(path), brainId = await brainIdentity(facts);
-  await repairWedgedReservation(tx, root, opts.hostId);
+  await repairWedgedReservation(facts, root, opts.hostId);
   const previous = readPhysicalRootReservation(root);
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? resolveCoordinationLock(root, worktreeId, { reservation: previous?.coordinationPath }, opts.hostId).path;
@@ -79,7 +80,7 @@ export async function movedPhysicalRoot(tx: SqlEngine, path: string, hostId: str
     FROM persistence_brain WHERE singleton=1`, [moved.worktreeId, hostId]);
   if (row?.brain_id !== moved.brainId || row.owner_host_id !== hostId || row.local_path !== moved.recorded) return null;
   const members = await tx.executeRaw<{ source_id: string; relative_path: string }>(
-    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id', [moved.worktreeId]);
+    'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"', [moved.worktreeId]);
   return { ...moved, members: members.map(member => ({ sourceId: member.source_id, relativePath: member.relative_path })) };
 }
 /** #8625: the full moved-checkout refusal for a trusted local caller (paths, worktree, exit); null when `root` is no moved checkout of this host, or not of `recorded`. */
@@ -122,11 +123,12 @@ export async function preparePhysicalRootReplacement(tx: SqlEngine, stage: strin
   assertPhysicalRootStamp(stage, reservation);
 }
 /** Called only after the draining epoch and complete successor manifest were verified under SQL/native guards. */
-export async function preparePhysicalRootTransfer(tx: SqlEngine, path: string,
+/** A transfer accept's root claim, through the accept's writer-admin store (engine-sql/writer-admin.ts). */
+export async function preparePhysicalRootTransfer(store: Pick<WriterAdminStore, 'brainId' | 'lockWorktree'>, path: string,
   opts: Required<PhysicalRootClaim> & { expectedEpoch: string }): Promise<void> {
-  const [owner] = await tx.executeRaw<{ owner_epoch: string; state: string }>('SELECT owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid', [opts.worktreeId]);
+  const owner = await store.lockWorktree(opts.worktreeId);
   if (owner?.state !== 'draining' || String(owner.owner_epoch) !== opts.expectedEpoch) throw physicalRootError();
-  const root = canonicalFilesystemPath(path), brainId = await brainIdentity(sqlPhysicalRootFacts(tx));
+  const root = canonicalFilesystemPath(path), brainId = await brainIdentity(store);
   const reservation = readPhysicalRootReservation(root) ?? reservePhysicalRootRecord(root,
     { brainId, worktreeId: opts.worktreeId, hostId: opts.hostId, coordinationPath: opts.coordinationPath });
   if (reservation.brainId !== brainId || reservation.worktreeId !== opts.worktreeId || reservation.coordinationPath !== opts.coordinationPath) throw physicalRootError();

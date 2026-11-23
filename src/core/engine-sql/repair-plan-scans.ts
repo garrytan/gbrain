@@ -301,13 +301,13 @@ export async function listDriftConflictGroups(exec: LegacyUnscopedRead, sourceId
   const filtered = joinFragments(where, ' AND ');
   const totalsRead = renderFragment(sqlFragment`SELECT count(DISTINCT r.slug)::int AS slugs, count(*)::int AS receipts FROM persistence_requests r WHERE ${filtered}`);
   const [totals] = await exec.executeRaw<{ slugs: number; receipts: number }>(totalsRead.text, totalsRead.params);
-  const { text, params } = renderFragment(sqlFragment`SELECT r.slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=${query.driftMessage})::int AS drift_receipts,
+  const { text, params } = renderFragment(sqlFragment`SELECT r.slug COLLATE "C" AS slug, count(*)::int AS receipts, count(*) FILTER (WHERE r.error_message=${query.driftMessage})::int AS drift_receipts,
         to_char(min(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS first_seen,
         to_char(max(r.created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_seen,
-        array_agg(DISTINCT r.operation || COALESCE(':' || (r.intent->>'kind'), '') ORDER BY r.operation || COALESCE(':' || (r.intent->>'kind'), '')) AS producers,
+        array_agg(DISTINCT (r.operation || COALESCE(':' || (r.intent->>'kind'), '')) COLLATE "C" ORDER BY (r.operation || COALESCE(':' || (r.intent->>'kind'), '')) COLLATE "C") AS producers,
         (array_agg(r.request_id::text ORDER BY r.sequence DESC))[1] AS last_request_id
-      FROM persistence_requests r WHERE ${filtered} AND r.slug > ${query.after}
-      GROUP BY r.slug ORDER BY r.slug LIMIT ${query.limit}`);
+      FROM persistence_requests r WHERE ${filtered} AND r.slug COLLATE "C" > ${query.after}
+      GROUP BY r.slug COLLATE "C" ORDER BY r.slug COLLATE "C" LIMIT ${query.limit}`);
   const rows = await exec.executeRaw<DriftConflictGroupRow>(text, params);
   return { slugs: Number(totals?.slugs ?? 0), receipts: Number(totals?.receipts ?? 0), rows };
 }

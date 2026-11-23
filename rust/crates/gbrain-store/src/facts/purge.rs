@@ -58,7 +58,7 @@ pub(crate) fn unbacked(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
 }
 
 /// `ownedMemorySubjectSql`: the subject names a member page or the scope page.
-fn owned_memory_subject(subject: &str) -> bool {
+pub(crate) fn owned_memory_subject(subject: &str) -> bool {
     subject.starts_with(MEMBER_PAGE_PREFIX) || subject == SCOPE_PAGE_SLUG
 }
 

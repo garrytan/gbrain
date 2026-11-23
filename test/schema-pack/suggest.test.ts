@@ -16,8 +16,8 @@
  * The heuristic tests intentionally pass NO suggestFn: every branch of the
  * gateway probe (no provider / provider-but-deferred / import failure) routes
  * to heuristicSuggestions today, so the path is deterministic without env
- * setup. Engine access is stubbed at the executeRaw seam runDetect uses
- * (totals / prefix-distribution / type-distribution, routed on SQL text).
+ * setup. Engine access is stubbed at the three page-shape members runDetect
+ * reads (pageTypeTotals / pagePrefixSamples / countPagesByTypeForSource).
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -35,22 +35,13 @@ interface DetectRows {
   types?: Array<{ type: string; cnt: string }>;
 }
 
-/** Stub the three executeRaw calls runDetect issues, routed on SQL text. */
+/** Stub the three page-shape members runDetect reads (engine-sql/schema-detect.ts). */
 function detectEngine(rows: DetectRows = {}): BrainEngine {
   return {
-    executeRaw: async (sql: string) => {
-      if (sql.includes('FILTER (WHERE type IS NULL')) {
-        return [
-          {
-            total: String(rows.total ?? 0),
-            untyped: String(rows.untyped ?? 0),
-            typed: String(rows.typed ?? 0),
-          },
-        ];
-      }
-      if (sql.includes('substring(slug from')) return rows.prefixes ?? [];
-      return rows.types ?? [];
-    },
+    pageTypeTotals: async () => ({ total: rows.total ?? 0, untyped: rows.untyped ?? 0, typed: rows.typed ?? 0 }),
+    pagePrefixSamples: async () =>
+      (rows.prefixes ?? []).map(p => ({ prefix: p.prefix, cnt: Number(p.cnt), sample_types: p.sample_types ?? [] })),
+    countPagesByTypeForSource: async () => (rows.types ?? []).map(t => ({ type: t.type, cnt: Number(t.cnt) })),
   } as unknown as BrainEngine;
 }
 

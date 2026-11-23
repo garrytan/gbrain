@@ -62,15 +62,14 @@ export async function observeUpstream(root: string, syncedCommit: string | null)
 }
 
 /** Best-effort: never fails a sync. Compares the upstream with the source's synced commit as stored after the run. */
-export async function recordUpstreamObservation(engine: BrainEngine, sourceId: string, repoPath?: string): Promise<void> {
+export async function recordUpstreamObservation(engine: Pick<BrainEngine, 'getSource' | 'writeSourceUpstreamObservation'>, sourceId: string, repoPath?: string): Promise<void> {
   try {
     const source = await engine.getSource(sourceId);
     const root = repoPath ?? source?.local_path;
     if (!source || !root) return;
     const observed = await observeUpstream(root, source.last_commit);
     if (!observed) return;
-    await engine.executeRaw('UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1',
-      [sourceId, observed.checkedAt.toISOString(), observed.commit, observed.behind]);
+    await engine.writeSourceUpstreamObservation(sourceId, { checkedAt: observed.checkedAt.toISOString(), commit: observed.commit, behind: observed.behind });
   } catch {
     // Pre-migration brain or unreadable checkout: freshness stays "upstream unknown".
   }

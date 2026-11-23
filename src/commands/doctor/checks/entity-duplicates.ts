@@ -15,15 +15,15 @@
  * false) is settled and not listed.
  *
  * Bounded: titled candidates come from exact slug-prefix reads
- * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count.
+ * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count,
+ * all through typed engine members, so every engine answers them.
  *
  * entity_duplicates (plan autoplan-20261117192252, PR 1): the duplicate finder's groups (core/entities/duplicates.ts)
  * counted by kind and class, the first few listed by slug; never a key value, never a write.
  */
 import type { Check } from '../../doctor.ts';
 import { NAME_TITLE_TOKENS, hasLeadingTitle, stripLeadingTitles } from '../../../core/entities/name-variants.ts';
-import { resolveNameVariant } from '../../../core/verbs/entity-variants.ts';
-import { retiredPageSql } from '../../../core/entities/resolve.ts';
+import { resolveNameVariant, VARIANT_ROW_COLUMNS } from '../../../core/verbs/entity-variants.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups } from '../../../core/entities/duplicates.ts';
 import { decidedSets, identityDrift, type IdentityDrift } from '../../../core/entities/identity-decisions.ts';
@@ -54,10 +54,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
     let capped = false;
     for (const sourceId of sources) {
       if (scanned >= PAIR_SCAN_CAP) { capped = true; break; }
-      const stubs = await engine.executeRaw<{ slug: string; title: string | null }>(
-        `SELECT slug, title FROM pages
-          WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE ANY($2::text[]) AND NOT ${retiredPageSql('pages')}
-          ORDER BY slug LIMIT ${PAIR_SCAN_CAP - scanned + 1}`, [sourceId, PREFIXES]);
+      const stubs = await engine.listUnretiredPagesBySlugPattern(sourceId, PREFIXES, PAIR_SCAN_CAP - scanned + 1);
       if (stubs.length > PAIR_SCAN_CAP - scanned) capped = true;
       for (const stub of stubs.slice(0, PAIR_SCAN_CAP - scanned)) {
         scanned++;
@@ -65,19 +62,14 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
         const remainder = named ? stripLeadingTitles(named) : '';
         if (!remainder) continue;
         const res = await resolveNameVariant(engine, sourceId, remainder, {
-          selectColumns: 'slug, title, type, frontmatter', privatePredicate: '', retirementPrivacy: 'none', entityTypes: new Set(['person']), exclude: [stub.slug],
+          selectColumns: VARIANT_ROW_COLUMNS, privatePredicate: '', retirementPrivacy: 'none', entityTypes: new Set(['person']), exclude: [stub.slug],
         });
         if (res.hit && res.hit.row.slug.startsWith('people/')) pairs.push({ source_id: sourceId, stub: stub.slug, canonical: res.hit.row.slug, stub_links: 0, canonical_links: 0 });
       }
     }
     if (pairs.length) {
-      const counts = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(
-        `SELECT p.source_id, p.slug, count(DISTINCT l.from_page_id)::int AS n
-           FROM pages p JOIN links l ON l.to_page_id = p.id
-          WHERE (p.source_id, p.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))
-          GROUP BY p.source_id, p.slug`,
-        [pairs.flatMap(p => [p.source_id, p.source_id]), pairs.flatMap(p => [p.stub, p.canonical])]);
-      const n = new Map(counts.map(c => [`${c.source_id}:${c.slug}`, Number(c.n)]));
+      const counts = await engine.countDistinctInboundLinkers(pairs.flatMap(p => [p.source_id, p.source_id]), pairs.flatMap(p => [p.stub, p.canonical]));
+      const n = new Map(counts.map(c => [`${c.source_id}:${c.slug}`, c.n]));
       for (const p of pairs) {
         p.stub_links = n.get(`${p.source_id}:${p.stub}`) ?? 0;
         p.canonical_links = n.get(`${p.source_id}:${p.canonical}`) ?? 0;

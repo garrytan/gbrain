@@ -1540,7 +1540,9 @@ describe('#3583 review: a throwing bookmark advance can no longer lose a sentine
 
     const origAdvance = engine.advanceSourceCommit;
     (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit =
-      (async () => { throw new Error('injected advance outage'); }) as typeof engine.advanceSourceCommit;
+      (async () => {
+        throw new Error('injected advance outage');
+      }) as typeof engine.advanceSourceCommit;
     let threw = false;
     try {
       await performSync(engine, { repoPath: repo, ...SYNC_OPTS });

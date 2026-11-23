@@ -1851,6 +1851,14 @@ runs on PGLite alone without the flag.
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.
 
+### Topology recovery on the Rust engine
+
+A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change need
+raw SQL, which the Rust engine never serves. It refuses them by name (`member=managed_source_clone` or
+`member=source_topology_recovery`, `written=nothing`) before any lock, row or directory is touched. Doctor warns
+`topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. Finish the change from a
+pglite or postgres engine.
+
 ## Adding a new engine
 
 1. Create `src/core/<name>-engine.ts` implementing `BrainEngine`

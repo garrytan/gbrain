@@ -24,14 +24,14 @@ export async function listLivePagesBySourcePaths(raw: Raw, sourceId: string, exc
 /** At most five live pages of the source (but `excludeId`) whose recorded path is `name` or ends in `/name`, by slug. */
 export async function listLivePagesByFileName(raw: Raw, sourceId: string, excludeId: number, name: string): Promise<Array<{ slug: string; source_path: string }>> {
   return raw.executeRaw<{ slug: string; source_path: string }>(`SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2
-      AND source_path IS NOT NULL AND (source_path=$3 OR right(source_path, length($3) + 1)='/' || $3) ORDER BY slug LIMIT 5`, [sourceId, excludeId, name]);
+      AND source_path IS NOT NULL AND (source_path=$3 OR right(source_path, length($3) + 1)='/' || $3) ORDER BY slug COLLATE "C" LIMIT 5`, [sourceId, excludeId, name]);
 }
 
 /** At most five other live pages of the source whose frontmatter `id` is page `pageId`'s, by slug; none when it has none. */
 export async function listLivePagesSharingFrontmatterId(raw: Raw, sourceId: string, pageId: number): Promise<string[]> {
   const [own] = await raw.executeRaw<{ id: string | null }>('SELECT frontmatter->>\'id\' AS id FROM pages WHERE id=$1', [pageId]);
   if (!own?.id) return [];
-  const rows = await raw.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND frontmatter->>'id'=$3 ORDER BY slug LIMIT 5`,
+  const rows = await raw.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND frontmatter->>'id'=$3 ORDER BY slug COLLATE "C" LIMIT 5`,
     [sourceId, pageId, own.id]);
   return rows.map(r => r.slug);
 }

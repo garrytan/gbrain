@@ -35,10 +35,11 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     crate::embeddings::remove_page_rows(tx, page)?;
     crate::wanted_links::remove_page_rows(tx, page)?;
     crate::link_queries::link_temporal::remove_page_rows(tx, page)?;
+    crate::edge_proposals::remove_page_rows(tx, page)?;
     crate::facts::reconcile::remove_page_rows(tx, page)?;
     crate::page_ops::remove_page_rows(tx, page)?;
     crate::entity_identities::remove_page_rows(tx, page)?;
-    crate::embedding_holds::remove_page_rows(tx, page)?;
+    crate::mention_state::remove_page_rows(tx, page)?;
     Ok(())
 }
 
@@ -69,8 +70,9 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::facts::loops::remove_source_rows(tx, source_id)?;
     crate::persistence::remove_notifier_source_rows(tx, source_id)?;
     crate::reason_tombstones::remove_source_rows(tx, source_id)?;
-    crate::eval_capture::calibration_profiles::remove_source_rows(tx, source_id)?;
     crate::generations::remove_source_rows(tx, source_id)?;
+    crate::eval_capture::calibration_profiles::remove_source_rows(tx, source_id)?;
+    crate::mention_state::remove_source_rows(tx, source_id)?;
     Ok(())
 }
 

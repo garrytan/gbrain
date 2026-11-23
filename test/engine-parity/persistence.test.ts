@@ -20,6 +20,7 @@
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { fenceHoldEntries, fenceReadOf } from '../../src/core/generations/fence.ts';
 import { projectFactFenceGeneration } from '../../src/core/generations/adapters/fact-rows.ts';
@@ -245,6 +246,44 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('readSourcePurgeEpoch reads a fresh source as 0 and an unknown source as null; readReasonPurgeTombstones finds none', {
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+  }, async (engine) => {
+    const seen = {
+      epoch: String(await engine.readSourcePurgeEpoch('default')),
+      absent: await engine.readSourcePurgeEpoch('no-such-source'),
+      tombstones: await engine.readReasonPurgeTombstones('default'),
+      absentTombstones: await engine.readReasonPurgeTombstones('no-such-source'),
+    };
+    expect(seen).toEqual({ epoch: '0', absent: null, tombstones: [], absentTombstones: [] });
+    return seen;
+  });
+
+  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
+  // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
+  parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'purged');
+    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
+      throw write;
+    }
+    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
+      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
+    const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
+    const seen = {
+      epoch: String(await engine.readSourcePurgeEpoch('purged')),
+      defaultEpoch: String(await engine.readSourcePurgeEpoch('default')),
+      purged: order(await engine.readReasonPurgeTombstones('purged')),
+      other: order(await engine.readReasonPurgeTombstones('default')),
+    };
+    expect(seen).toEqual({ epoch: '3', defaultEpoch: '0', purged: [{ commit_sha: 'c1', path: 'notes/a.md' }, { commit_sha: 'c2', path: 'notes/b.md' }], other: [{ commit_sha: 'c3', path: 'notes/c.md' }] });
+    return seen;
+  });
+
   parityTest('a fence publish reads its page and the held list reads its pages\' files', {
     methods: ['putPage', 'softDeletePage', 'readFenceOriginGone', 'readFenceHoldFiles'],
   }, async (engine) => {
@@ -425,7 +464,7 @@ describe('engine parity: write journal', () => {
 
   parityTest('the repair generations reads select by run, time, key and id, and read the held proposal', {
     methods: ['transaction', 'activateGenerationRows', 'recordHeldGenerationRow', 'readGenerationItemsByIds', 'listUnmatchedGenerationRows',
-      'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal', 'listSourceIncarnations'],
+      'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal', 'listGenerationSourceIncarnations'],
   }, async (engine) => {
     const key = (ownerKey: string) => ({ sourceId: 'default', kind: 'repair_parity', ownerKey });
     const row = (generation: number, runId: string, completeness: string) => ({ generation, runId, operationId: `repair-parity-${runId}-${generation}`, inputPin: 'p',
@@ -451,7 +490,7 @@ describe('engine parity: write journal', () => {
       held: held.map(r => ({ id: name(r.id), owner_key: r.owner_key, held_reason: r.held_reason, items: Number(r.items) })),
       proposal: await engine.readHeldGenerationProposal(heldId),
       proposalOfLive: await engine.readHeldGenerationProposal(ids.live),
-      sources: (await engine.listSourceIncarnations(['default', 'elsewhere'])).map(r => r.id),
+      sources: (await engine.listGenerationSourceIncarnations(['default', 'elsewhere'])).map(r => r.id),
     };
     expect(answers).toEqual({
       items: [{ generation_id: 'live', item_key: 'notes/x', identity_hash: 'id-x', action: 'kept', preimage: { x: 1 } },
@@ -929,6 +968,23 @@ describe('engine parity: write journal', () => {
       head: { kind: 'withdrawal-mirror', data: { version: 2, targets: [{ slug: 'people/a', page_id: 1, revision: r1 }, { slug: 'people/b', page_id: 2, revision: r2 }] },
         revision: null, source_id: 'default', incarnation: true, worktree_id: null },
       refusals: { missing: 'violates foreign key constraint "persistence_effects_request_id_fkey"', notUuid: 'invalid input syntax for type uuid' } });
+    return answers;
+  });
+
+  parityTest('a withdrawal queued under an uppercase request id is stored and found by the mirror gate as Postgres reads a uuid', {
+    methods: ['insertWithdrawalEffects', 'transaction', 'readRequestEffects', 'readMirrorGateRows', 'readSourceMembership', 'lockPersistenceCounters',
+      'insertWriteRequest'],
+  }, async (engine) => {
+    const id = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000b6');
+    const upper = id.toUpperCase();
+    const targets = [{ slug: 'people/a', page_id: 1, revision: 'e0000000-0000-4000-8000-0000000000e1' }];
+    await engine.transaction(tx => tx.insertWithdrawalEffects({ requestId: upper, sourceId: 'default', targets }));
+    await engine.transaction(tx => tx.insertWithdrawalEffects({ requestId: id, sourceId: 'default', targets }));
+    // The id itself differs per arm, so each row says whether it carries the stored lowercase id.
+    const gate = async (requestId: string) => (await engine.readMirrorGateRows([requestId])).map(row => ({ lowercase_id: row.request_id === id, state: row.state }));
+    const answers = { lowercase: id === id.toLowerCase(), effects: (await engine.readRequestEffects(id)).map(e => e.kind), lower: await gate(id), upper: await gate(upper) };
+    expect(answers).toEqual({ lowercase: true, effects: ['embedding', 'git', 'withdrawal-mirror'], lower: [{ lowercase_id: true, state: 'queued' }],
+      upper: [{ lowercase_id: true, state: 'queued' }] });
     return answers;
   });
 

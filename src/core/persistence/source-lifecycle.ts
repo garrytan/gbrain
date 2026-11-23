@@ -30,7 +30,9 @@ import { sourceCheckoutMissingRefusal } from './verb-errors.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { rebindContentReceipts } from '../shared-skills/receipt-root.ts';
+import { sqlContentReceiptStore } from '../engine-sql/writer-admin.ts';
 import { assertLinkedWorktreeIntact } from './worktree-link.ts';
+import { requireTopologyRawSql } from './topology-stop.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -149,6 +151,8 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       {fix:ownerStatusFix(input.sourceId)});
   if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw opError('invalid_params','The default source cannot be removed or archived.',
     `The default source holds the brain's primary pages and always stays registered. ${input.operation} a named source instead; the command in fix lists them.`,{fix:sourcesListFix()});
+  // The named Rust stop (topology-stop.ts): a managed clone or reclone refuses before its principal, replay or path checks run.
+  if(input.operation==='reclone'||input.operation==='add'&&input.remoteUrl) requireTopologyRawSql(engine,'managed_source_clone');
   const principal=await topologyPrincipal(engine);
   const intent=topologyIntent(input);
   const prior=await priorTopologyChange(engine,principal,requestId,intent);
@@ -372,7 +376,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1",[input.sourceId]);
       }
       if(source&&!['remove','purge'].includes(input.operation)) await supersedeTopologyRetires(tx,input.sourceId,source.incarnation,principal,requestId);
-      const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
+      const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(sqlContentReceiptStore(tx),worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
       await advanceTopology(tx,worktrees);
       for(const id of worktrees){
         const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[id,hostIdFor(tx)]);

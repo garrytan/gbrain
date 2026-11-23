@@ -1,14 +1,12 @@
 {
   "golden": {
-    "count": 326,
+    "count": 329,
     "gaps": [
       17,
       18,
       19,
       100,
-      331,
-      332,
-      333
+      332
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -38,9 +36,11 @@
       "PAGES_FOLDER_RULE_IDS_INDEX": "f0929fed2e69d1045a1e3a6e8b4267e4323d658c6305e5ae1f568fc71195f684",
       "PAGES_NAME_LOOKUP_INDEXES": "6095ac01105dc3f441ba85d6a3f8fd4fdf5b224b963e38fb1de9bfd98edb2866",
       "PAGES_PAGE_READERS_INDEX": "01a92fc19f866e0791bde647e7220a4666561b94888dccaa1643276c384ba057",
+      "PAGES_PROJECTION_WAITING_WORDS_INDEX": "ed8676df69c7e974495cd01ca3fce7bc2665aa187b54b7f38a422a29307987ad",
       "PAGES_RECONCILE_NAME_INDEXES": "8805e35341b22324b932b1cc05030cc8f2bfc95532bf810ec35330783f29c59a",
       "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
       "PAGES_SOURCE_CREATED_INDEX": "33411b4d6fc2287ee8fa37b1ebf2cc36a076101dbd3f3f6ac492aed06288513a",
+      "PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX": "ebd5d8a2fa256c980f5342bc93ab7370eaeac958acaa945d62aea79aff6c2b00",
       "PAGES_TITLE_SEARCH_INDEX": "27e8e1a6c9a2069ee6c6af6fa99b9a7e9e9c118c7a933ffa80ba1864bf68baa3",
       "PAGE_PROJECTION_JOBS_BYTE_ORDER_INDEX": "92ba3b31896201b4f1cd61fafe7035d84020efb904d14b95531528e212325d22",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
@@ -52,6 +52,7 @@
       "PERSISTENCE_OPEN_INDEX": "7760f2e16960b587e041b19e2eb0b2688831f4a7ca509968a1acc0ca710fcc9c",
       "PERSISTENCE_REQUEST_ID_INDEX": "2c5325e86cf395f617d93a39a45593931639cd8b14fd513b6d9e7d125f16c78f",
       "PERSISTENCE_REQUEST_REPLAY_ID_INDEX": "b9ee7e914c0a8370a9aee053c68d78cdd83a20ffe30c5513d81acf04a3a91761",
+      "PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX": "bd7a4bb42d8782306bc1152b52cefafbfea5b871421345c824d6164ec5853104",
       "PERSISTENCE_REQUEST_SLUG_INTENT_INDEX": "5f2e4a3dde452e610fe7eaae949642c00d7c61a363b1cd344d7f0917db233aa5",
       "PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX": "4759eaf319a6ad8d99aae7648acb6556745ed7cba051175273e2f46927c77d52",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
@@ -87,7 +88,7 @@
       "measuredRoundTripMs": "8a51ca0f3fe1b930929b64efe81541160bfc3fedc24f90c2af35dfd74ab1687d",
       "migrateAutoThinkToPins": "34267fe3b1cc4ab2850ddcf9ba18ce73d959678233a53de238c85231e6b71470",
       "migrateConnectorCheckpoints": "5c13e69a334bfc5275c7d555c4e7b28e034569f086dd4bd70b4b78fa4770dc7a",
-      "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
+      "migrateLegacyTokens": "129b22ce1f5b0f88add515d698fd401b082da67ec0e08b18d4ee96e3b7bfc8f2",
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
       "migrationStatementTimeoutMs": "2883be5073d2cd96cc17136e2f7d3223c6bdafebe3ef3c7a6836be320867251d",
       "originTwinsRepairCommand": "fb3c721e48d9f2a98845ef91231836d4a37eb5929e9a9b62f8dfab5ce395c462",
@@ -112,7 +113,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 334,
+    "latest": 335,
     "records": [
       {
         "handler": {
@@ -2306,8 +2307,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 15752,
-          "sha256": "314bf96b5ab6f3311a1350a2f15fc47990cfeb60d4b8c4d7115c61c7715ceedb"
+          "length": 15869,
+          "sha256": "d0b1075dace5e6e8f3b487591986a2b201ae243ab763c3b5996f1c7dbf7d691d"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5401,6 +5402,49 @@
         "version": 330
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_read_log",
+        "sql": {
+          "length": 796,
+          "sha256": "f6f4eedb7a8b84ae342f434d490c4481f3b99ca67eff4d2e9e91ca56276030fc"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 331
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX",
+            "PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "03c272d8b214211016fdbae00ed1deb83b7f90507b4f0b7f7c61262e86be1dc2"
+        },
+        "idempotent": true,
+        "name": "byte_order_slug_indexes",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 333
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5428,6 +5472,36 @@
         "transaction": false,
         "verify": "absent",
         "version": 334
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "ACTIVATION_SERVED_REVISION",
+            "PAGES_PROJECTION_WAITING_WORDS_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "b264cb1d0f8eda37d0d5ec977e737722a6ce6c1689dfad788d3226dfda243cfc"
+        },
+        "idempotent": true,
+        "name": "pages_projection_waiting_haystack_trgm",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 335
       }
     ],
     "versions": [
@@ -5756,7 +5830,10 @@
       328,
       329,
       330,
-      334
+      331,
+      333,
+      334,
+      335
     ]
   },
   "normalizer": "migrations-record-v1"

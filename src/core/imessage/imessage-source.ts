@@ -393,7 +393,7 @@ async function runIMessageSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     await save(true);
     await holds.complete();
     if (!managed) {
-      await engine.executeRaw('UPDATE sources SET last_sync_at=now(), newest_content_at=COALESCE($1::timestamptz, newest_content_at) WHERE id=$2', [newest(), sourceId]).catch(() => undefined);
+      await engine.markSourceSynced(sourceId, { newestContentAt: newest() }).catch(() => undefined);
     }
   } catch (error) {
     if (stopsRun(error) && !(error as { name?: string }).name?.startsWith('Lock')) {

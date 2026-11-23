@@ -43,7 +43,8 @@ export async function readWriterVersionCutoff(exec: LegacyUnscopedRead): Promise
 }
 
 /** `listWriterVersions`: the text persistence/writer-versions.ts `listWriterVersions` always sent. */
-export const LIST_WRITER_VERSIONS_SQL = `SELECT * FROM (
+// DISTINCT ON keeps the newest row per group by created_at or publication time; the final sort, over both arms, is last_seen, then the group keys by byte, so rows with one last_seen keep one order (the Rust store's newest_first).
+export const LIST_WRITER_VERSIONS_SQL = `SELECT * FROM (SELECT * FROM (
       SELECT DISTINCT ON (admitter_host_id,principal_kind,principal_id) 'admitter' AS role,admitter_host_id::text AS host_id,
         principal_kind||':'||principal_id AS principal,admitter_version AS version,created_at AS last_seen
       FROM persistence_requests ORDER BY admitter_host_id,principal_kind,principal_id,created_at DESC) a
@@ -51,8 +52,8 @@ export const LIST_WRITER_VERSIONS_SQL = `SELECT * FROM (
       SELECT DISTINCT ON (consumer_host_id,principal_kind,principal_id) 'consumer' AS role,consumer_host_id::text AS host_id,
         principal_kind||':'||principal_id AS principal,consumer_version AS version,COALESCE(published_at,completed_at) AS last_seen
       FROM persistence_requests WHERE state='committed'
-      ORDER BY consumer_host_id,principal_kind,principal_id,COALESCE(published_at,completed_at) DESC) c
-    ORDER BY last_seen DESC LIMIT $1`;
+      ORDER BY consumer_host_id,principal_kind,principal_id,COALESCE(published_at,completed_at) DESC) c) v
+    ORDER BY last_seen DESC, role COLLATE "C", host_id COLLATE "C", principal COLLATE "C" LIMIT $1`;
 
 /** The latest admitter and consumer version per host and principal across all retained requests, newest first. */
 export async function listWriterVersions(exec: LegacyUnscopedRead, limit: number): Promise<WriterVersionRow[]> {

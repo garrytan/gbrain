@@ -514,7 +514,7 @@ export async function buildGazetteer(
   const policy = opts.policy ?? await readMentionPolicy(engine);
   const dropped = opts.dropped;
   const drop = (d: DroppedName) => { dropped?.push(d); };
-  const sources = await engine.executeRaw<{ id: string }>('SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL', []);
+  const sources = await engine.listLivePageSourceIds();
   const typesBySource = new Map<string, Set<string>>();
   const packBySource = new Map<string, PackTypes | null>();
   for (const { id } of sources) {
@@ -524,15 +524,7 @@ export async function buildGazetteer(
   }
   const allTypes = [...new Set([...typesBySource.values()].flatMap(set => [...set]))];
   const linkable = (sourceId: string | null, type: string | null) => !!type && (typesBySource.get(sourceId ?? 'default')?.has(type) ?? false);
-  const rows = (await engine.executeRaw<{ slug: string; source_id: string | null; title: string | null; type: string | null; connector_stub: boolean;
-    h1: string | null; h2: string | null; h3: string | null; h4: string | null }>(
-    `SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
-            frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
-     FROM pages
-     WHERE type = ANY($1::text[])
-       AND deleted_at IS NULL`,
-    [allTypes, ...HANDLE_FRONTMATTER_KEYS],
-  )).filter(r => linkable(r.source_id, r.type));
+  const rows = (await engine.listGazetteerPages(allTypes, HANDLE_FRONTMATTER_KEYS)).filter(r => linkable(r.source_id, r.type));
   const stubPages = new Set(rows.filter(r => r.connector_stub).map(r => `${r.source_id ?? 'default'}\0${r.slug}`));
   const stubFlag = (src: string, slug: string) => stubPages.has(`${src}\0${slug}`) ? { connector_stub: true as const } : {};
   const kindOf = new Map(rows.map(r => [`${r.source_id ?? 'default'}\0${r.slug}`, canonicalTypeOf(r.type, packBySource.get(r.source_id ?? 'default') ?? null)]));
@@ -547,14 +539,7 @@ export async function buildGazetteer(
   let aliasRows: Array<{ alias_norm: string; slug: string; source_id: string | null; title: string | null; type: string | null;
     origin: string | null; case_sensitive: boolean | null; alias_text: string | null; identity: unknown }> = [];
   try {
-    aliasRows = (await engine.executeRaw<typeof aliasRows[number]>(
-      `SELECT pa.alias_norm, pa.slug, pa.source_id, p.title, p.type, pa.origin, pa.case_sensitive, pa.alias_text, p.frontmatter->>'identity' AS identity
-       FROM page_aliases pa
-       JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
-       WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL`,
-      [allTypes],
-    )).filter(r => linkable(r.source_id, r.type));
+    aliasRows = (await engine.listGazetteerAliases(allTypes)).filter(r => linkable(r.source_id, r.type));
   } catch (err) {
     // pre-v110 brains: no page_aliases table — titles-only gazetteer.
     // Any OTHER failure (connection blip, permission) warns once per process
@@ -1098,15 +1083,7 @@ export async function scanStaleMentions(
 ): Promise<StaleMentionsScan> {
   const limit = opts.limit ?? STALE_MENTIONS_DEFAULT_LIMIT;
 
-  const totalRow = await engine.executeRaw<{ count: number }>(
-    `SELECT COUNT(DISTINCT l.from_page_id)::int AS count
-       FROM links l
-       JOIN pages p ON p.id = l.from_page_id
-      WHERE l.link_source = 'mentions'
-        AND p.deleted_at IS NULL`,
-    [],
-  );
-  const totalPagesWithMentions = totalRow[0]?.count ?? 0;
+  const totalPagesWithMentions = await engine.countPagesWithMentionLinks();
 
   const empty: StaleMentionsScan = {
     totalPagesWithMentions,
@@ -1133,7 +1110,7 @@ export async function scanStaleMentions(
             SELECT 1 FROM links l
              WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
           )
-        ORDER BY p.slug
+        ORDER BY p.slug COLLATE "C", p.id
         LIMIT $1
      )`;
 
@@ -1145,7 +1122,7 @@ export async function scanStaleMentions(
             COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
        FROM pages p
        JOIN scanned s ON s.id = p.id
-      ORDER BY p.slug`,
+      ORDER BY p.slug COLLATE "C", p.id`,
     [limit],
   );
 
@@ -1161,7 +1138,7 @@ export async function scanStaleMentions(
        JOIN pages f ON f.id = l.from_page_id
        JOIN pages t ON t.id = l.to_page_id
       WHERE l.link_source = 'mentions'
-      ORDER BY f.slug, t.slug`,
+      ORDER BY f.slug COLLATE "C", t.slug COLLATE "C"`,
     [limit],
   );
 

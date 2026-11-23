@@ -134,8 +134,22 @@ export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<str
 /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
 export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE "C"`);
   return rows.map(r => r.id);
+}
+
+/**
+ * Whether a live markdown page names the synopsis tier in its frontmatter where the frontmatter is trusted: a page of
+ * `default`, or of a source that trusts its pages' overrides, that is not archived (synopsis-sweep.ts, #9683: the probe
+ * the sweep's single statement used to carry as a NULL row).
+ */
+export async function hasSynopsisFrontmatterOverride(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
+       WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
+         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
+         AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false))) AS present`);
+  return row?.present === true;
 }
 
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
@@ -198,7 +212,7 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 
 /** The ids of the access members that are neither disabled nor tombstoned, by id. */
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
-  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(row => row.id);
 }
 
@@ -209,22 +223,6 @@ export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise
  */
 export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
   return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
-}
-
-/**
- * One `access_tokens` row as `gbrain auth list` reads it. The statement is `SELECT *` so every schema generation reads
- * (`private_pages`, `private_facts` and `member_id` arrive with their migrations; absent reads as none), so further
- * columns may be present.
- */
-export interface AccessTokenRow {
-  id: string; name: string; scopes: string[] | null; created_at: Date | string | null; last_used_at: Date | string | null;
-  revoked_at: Date | string | null; private_pages?: unknown; private_facts?: unknown; member_id?: string | null;
-  [column: string]: unknown;
-}
-
-/** Every legacy access token, revoked ones too, newest first. */
-export async function listAccessTokens(exec: LegacyUnscopedRead): Promise<AccessTokenRow[]> {
-  return exec.executeRaw<AccessTokenRow>('SELECT * FROM access_tokens ORDER BY created_at DESC');
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */

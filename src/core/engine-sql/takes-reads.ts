@@ -10,6 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import { ownerOnlyTakeAllowedSql, privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { QUARANTINE_KEY } from '../quarantine.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -341,4 +342,88 @@ export async function readTakePreimages(tx: Raw, read: TakePreimageRead): Promis
   }
   return tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(
     TAKE_PREIMAGES_SQL.rowNum, [read.pageId, [...read.gone], incoming]);
+}
+
+/** A resolved take of a holder as the calibration pattern drill-down shows it (`id` is the bigint id as text). */
+export interface HolderResolvedTakeRow {
+  id: string;
+  page_slug: string;
+  row_num: number;
+  claim: string;
+  weight: number;
+  resolved_quality: string | null;
+  since_date: string | null;
+}
+
+/** The drill-down read of `/admin/api/calibration/pattern/:id`, byte for byte as serve-http-admin-api.ts sent it at 0b8fde313c (a tie ends at the lowest take id). */
+export const TOP_RESOLVED_TAKES_SQL = `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
+           FROM takes t JOIN pages p ON p.id = t.page_id
+           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
+           ORDER BY t.weight DESC, t.since_date DESC, t.id
+           LIMIT 25`;
+
+/** The holder's 25 heaviest active resolved takes, newest `since_date` first within a weight, then the lowest id, on any page. */
+export async function listTopResolvedTakesForHolder(tx: Raw, holder: string): Promise<HolderResolvedTakeRow[]> {
+  const rows = await tx.executeRaw<HolderResolvedTakeRow>(TOP_RESOLVED_TAKES_SQL, [holder]);
+  return rows.map(r => ({ id: String(r.id), page_slug: r.page_slug, row_num: Number(r.row_num), claim: r.claim, weight: Number(r.weight),
+    resolved_quality: r.resolved_quality ?? null, since_date: r.since_date ?? null }));
+}
+
+/** An abandoned high-conviction take as the calibration abandoned-threads card shows it. */
+export interface AbandonedTakeRow {
+  id: number;
+  page_slug: string;
+  claim: string;
+  weight: number;
+  since_date: string;
+}
+
+/** The abandoned-threads read of `/admin/api/calibration/charts/abandoned-threads`, byte for byte as serve-http-admin-api.ts sent it at 0b8fde313c (a tie ends at the lowest take id). */
+export const ABANDONED_TAKES_SQL = `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
+             FROM takes t JOIN pages p ON p.id = t.page_id
+             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
+               AND t.weight >= 0.7
+               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
+                   < (now() - INTERVAL '12 months')
+             ORDER BY t.since_date ASC, t.id
+             LIMIT 5`;
+
+/**
+ * The five oldest active, unresolved, unsuperseded takes of weight 0.7 or more whose `since_date` (a `YYYY-MM` date
+ * read as the 1st) is more than 12 months ago, oldest first and then the lowest id, on any page. A `since_date` that is not a date fails the read.
+ */
+export async function listAbandonedTakes(tx: Raw): Promise<AbandonedTakeRow[]> {
+  const rows = await tx.executeRaw<Omit<AbandonedTakeRow, 'id'> & { id: number | string }>(ABANDONED_TAKES_SQL);
+  return rows.map(r => ({ id: Number(r.id), page_slug: r.page_slug, claim: r.claim, weight: Number(r.weight), since_date: r.since_date }));
+}
+
+/** The take at a page's row number: its id, claim and stored trust tier (the trust reads of the take write gate). */
+export async function readTakeRowTrust(tx: Raw, pageId: number, rowNum: number): Promise<{ id: number; claim: string; trust_tier: string } | null> {
+  const [row] = await tx.executeRaw<{ id: number | string; claim: string; trust_tier: string }>(
+    'SELECT id, claim, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2', [pageId, rowNum]);
+  return row ? { id: Number(row.id), claim: row.claim, trust_tier: row.trust_tier } : null;
+}
+
+export interface TakeTrustRef {
+  id: number;
+  /** The source of the take's page. */
+  source_id: string;
+  claim: string;
+  trust_tier: string;
+  write_origin: Record<string, unknown> | null;
+  active: boolean;
+  /** The take's page carries the quarantine frontmatter key. */
+  quarantined: boolean;
+}
+
+/** A take by id with its page's source and quarantine key, as `gbrain trust explain` reads it. */
+export async function readTakeTrustRef(tx: Raw, id: number): Promise<TakeTrustRef | null> {
+  const [row] = await tx.executeRaw<Omit<TakeTrustRef, 'id' | 'write_origin'> & { id: number | string; write_origin: unknown }>(
+    `SELECT t.id, p.source_id, t.claim, t.trust_tier, t.write_origin, t.active,
+            (COALESCE(p.frontmatter, '{}'::jsonb) ? $2::text) AS quarantined
+       FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1`, [id, QUARANTINE_KEY]);
+  if (!row) return null;
+  const origin = typeof row.write_origin === 'string' ? JSON.parse(row.write_origin) as Record<string, unknown> : (row.write_origin as Record<string, unknown> | null);
+  return { id: Number(row.id), source_id: row.source_id, claim: row.claim, trust_tier: row.trust_tier, write_origin: origin ?? null,
+    active: !!row.active, quarantined: !!row.quarantined };
 }

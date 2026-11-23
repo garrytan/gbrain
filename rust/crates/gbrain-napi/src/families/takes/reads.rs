@@ -1,9 +1,10 @@
-//! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard and supersession
-//! repair sites, and the reads and the delete of `gbrain extract takes` (rust/docs/store/takes-reads.md).
-//! Same shape as `../takes.rs`.
+//! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard, supersession
+//! repair and calibration admin sites, the take trust reads, and the reads and the delete of
+//! `gbrain extract takes` (rust/docs/store/takes-reads.md). Same shape as `../takes.rs`.
 
 use gbrain_store::takes::{
-    IncomingTake, McpResolvedInput, PurgeTakesInput, TakePreimageInput, TakesLeavingFence,
+    HeldFenceTakeSpec, IncomingTake, McpResolvedInput, PurgeTakesInput, TakePreimageInput,
+    TakesLeavingFence,
 };
 use napi::Env;
 use napi::bindgen_prelude::Object;
@@ -49,6 +50,19 @@ impl Brain {
         self.run(env, move |s| s.list_take_rows_for_page(page_id as i64))
     }
 
+    /// `listHeldFenceTakeRows({ sourceId, kind, ownerKey, pageId })`: the page's takes while its fence generation is held.
+    #[napi]
+    pub fn list_held_fence_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let spec: HeldFenceTakeSpec = required(spec, "listHeldFenceTakeRows spec")?;
+            s.list_held_fence_take_rows(&spec)
+        })
+    }
+
     /// `readTakePreimages({ pageId, by, gone, incoming })`: `[{ preimage, gone }]` by row number.
     #[napi]
     pub fn read_take_preimages<'env>(
@@ -60,6 +74,26 @@ impl Brain {
             let input: TakePreimageInput = required(input, "readTakePreimages input")?;
             s.read_take_preimages(&input)
         })
+    }
+
+    /// `readTakeRowTrust(pageId, rowNum)`: `{ id, claim, trust_tier }` or null.
+    #[napi]
+    pub fn read_take_row_trust<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_num: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_take_row_trust(page_id as i64, row_num as i64)
+        })
+    }
+
+    /// `readTakeTrustRef(id)`: `{ id, source_id, claim, trust_tier, write_origin, active,
+    /// quarantined }` or null.
+    #[napi]
+    pub fn read_take_trust_ref<'env>(&self, env: &'env Env, id: f64) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_take_trust_ref(id as i64))
     }
 
     /// `countMcpResolvedTakes({ sourceIds, holders, excludePrivate })`: resolves the count.
@@ -184,6 +218,22 @@ impl Brain {
             Ok(page) => s.set_take_superseded_by(page, row_num, superseded_by),
             Err(_) => Ok(()),
         })
+    }
+
+    /// `listTopResolvedTakesForHolder(holder)`: the holder's 25 heaviest active resolved takes.
+    #[napi]
+    pub fn list_top_resolved_takes_for_holder<'env>(
+        &self,
+        env: &'env Env,
+        holder: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_top_resolved_takes_for_holder(&holder))
+    }
+
+    /// `listAbandonedTakes()`: the five oldest abandoned high-conviction takes.
+    #[napi]
+    pub fn list_abandoned_takes<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_abandoned_takes())
     }
 
     /// `readLivePageIdBySlug(slug, sourceId)`: the id, or null.

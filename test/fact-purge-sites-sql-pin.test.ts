@@ -119,11 +119,13 @@ const PINS: Pin[] = [
     params: [['src-a', ['people/a'], 'req-1']],
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (purge.ts:269 at de72811022) sorted the tag aggregate and the
+    // pages with `COLLATE "C"`; the join re-applied that byte order to main's member, so the pin carries it too.
     from: 'src/core/facts/purge.ts:269 rewritePageBodies',
     member: 'listPagesForPurgeRewrite',
     run: e => e.listPagesForPurgeRewrite('src-a', [3, 4]),
-    texts: [`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
-    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug`],
+    texts: [`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
+    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug COLLATE "C"`],
     params: [['src-a', [3, 4]]],
   },
   {
@@ -218,9 +220,17 @@ const PINS: Pin[] = [
   {
     from: 'src/core/facts/purge.ts:552 submitPurgeFactMutation',
     member: 'insertTakePurge',
-    run: e => e.insertTakePurge('src-a', '*', 'hash-a', 'a0000000-0000-4000-8000-0000000000a1'),
-    texts: [`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`],
+    run: e => e.insertTakePurge({ sourceId: 'src-a', subject: '*', claimHash: 'hash-a', requestId: 'a0000000-0000-4000-8000-0000000000a1' }),
+    texts: [`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`],
     params: [['src-a', '*', 'hash-a', 'a0000000-0000-4000-8000-0000000000a1']],
+  },
+  {
+    from: 'src/core/persistence/page-purge.ts tombstonePage',
+    member: 'insertTakePurge',
+    run: e => e.insertTakePurge({ sourceId: 'src-a', subject: 'people/alice', pageId: 7, requestId: 'a0000000-0000-4000-8000-0000000000a1' }),
+    texts: [`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
+      SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING RETURNING 1 AS inserted`],
+    params: [['src-a', 'people/alice', 7, 'a0000000-0000-4000-8000-0000000000a1']],
   },
   {
     from: 'src/core/facts/purge.ts:554 submitPurgeFactMutation',
@@ -312,10 +322,12 @@ const PINS: Pin[] = [
     params: [[[3, 4]]],
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (purge.ts:591 at de72811022) sorted `ORDER BY slug COLLATE
+    // "C"`; the join re-applied that byte order to main's member, so the pin carries it too.
     from: 'src/core/facts/purge.ts:590 submitPurgeFactMutation',
     member: 'listPurgedPageRevisions',
     run: e => e.listPurgedPageRevisions('src-a', [3, 4]),
-    texts: [`SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug`],
+    texts: [`SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C"`],
     params: [['src-a', [3, 4]]],
   },
   {

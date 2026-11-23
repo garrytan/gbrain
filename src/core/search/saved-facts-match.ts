@@ -9,7 +9,7 @@
 import type { OperationContext } from '../ops/contract.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
-import { getFtsLanguage } from '../fts-language.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { hasCJK } from '../cjk.ts';
 import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { type CollapseColumns } from './entity-facts.ts';
@@ -52,14 +52,15 @@ function namedWords(heads: string[], terms: string[], words: Set<number>, stems:
   return new Set([...words].filter(i => heads.some(h => h.startsWith(terms[i - 1]!) || stems.get(h)?.has(i))));
 }
 
-/** Which query terms each name head matches after stemming with the brain's full-text language, as the keyword scan matches words; empty on a read error. */
-async function headStems(engine: OperationContext['engine'], lang: string, heads: string[], terms: string[]): Promise<Map<string, Set<number>>> {
+/**
+ * Which query terms each name head matches after stemming with the brain's full-text language, as the keyword scan
+ * matches words; empty on a read error. An engine that cannot stem in this language refuses, and that refusal is
+ * rethrown rather than read as "no names match".
+ */
+async function headStems(engine: OperationContext['engine'], heads: string[], terms: string[]): Promise<Map<string, Set<number>>> {
   if (heads.length === 0) return new Map();
-  const rows = await engine.executeRaw<{ h: string; i: unknown[] }>(
-    `SELECT h, ARRAY(SELECT t.i FROM unnest($2::text[]) WITH ORDINALITY AS t(term, i)
-       WHERE to_tsvector('${lang}'::regconfig, h) @@ plainto_tsquery('${lang}'::regconfig, t.term)) AS i
-     FROM unnest($1::text[]) AS h`, [heads, terms]).catch(() => []);
-  return new Map(rows.map(r => [r.h, new Set(r.i.map(Number))]));
+  const rows = await engine.matchHeadStems(heads, terms).catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; });
+  return new Map(rows.map(r => [r.h, new Set(r.i)]));
 }
 
 /**
@@ -116,7 +117,6 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
   if (terms.length === 0 || !ctx.emitResponseMeta) return none;
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
   const [excludePrivate, supersede] = await Promise.all([resolveExcludePrivatePages(ctx.engine, ctx.remote), savedFactsSupersedeEnabled(ctx.engine)]);
-  const lang = getFtsLanguage();
   // CJK words match as substrings; without one the scan is the any-word tsquery alone, which the facts keyword index serves.
   const pats = terms.map(t => hasCJK(t) ? `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%` : null);
   try {
@@ -142,7 +142,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
     if (supersede) {
       const cues = found.filter(n => n.cue);
       const heads = new Map(admitted.map(r => [r, nameHeads(r.fact.fact)]));
-      const stems = cues.length ? await headStems(ctx.engine, lang, [...new Set([...heads.values()].flat())], terms) : new Map<string, Set<number>>();
+      const stems = cues.length ? await headStems(ctx.engine, [...new Set([...heads.values()].flat())], terms) : new Map<string, Set<number>>();
       for (const older of admitted) {
         const names = namedWords(heads.get(older)!, terms, older.words, stems);
         // Posts saved in one flush share a time; the later id is the later post.
@@ -180,6 +180,8 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
     });
     return { facts, correctedBy };
   } catch (err) {
+    // An engine that cannot run this match (another full-text language on a Rust brain) says so; it is not "no facts".
+    rethrowCapabilityRefusal(err);
     const code = (err as { code?: unknown } | null)?.code;
     console.warn(`[search] Saved-facts match failed (SQLSTATE ${typeof code === 'string' ? code : 'unknown'}); this reply carries no saved facts, which does not mean none match.`);
     return none;

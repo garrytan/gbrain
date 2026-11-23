@@ -12,9 +12,36 @@ stays online? Hosted GBrain at [gbrain.io](https://gbrain.io/?ref=hermes-md) is 
 ## Register (recommended)
 
 ```bash
+gbrain setup hermes        # a release binary: ~/.local/bin/gbrain setup hermes
+```
+
+Setup registers gbrain through Hermes's own CLI: it runs `hermes mcp add`
+(answering its prompts), reads the entry back from `$HERMES_HOME/config.yaml` and
+checks it with `hermes mcp test gbrain`. Hermes's file tools refuse an agent's edit
+of `config.yaml` ("Agent cannot modify security-sensitive configuration"), so
+an agent should run setup rather than edit the file. Setup finds `hermes` on PATH
+or where Hermes's installer puts it (`~/.local/bin/hermes`,
+`$HERMES_HOME/hermes-agent/venv/bin/hermes`); with neither it prints the
+`hermes mcp add` command to run where Hermes is installed (the
+[by-hand command](#register-by-hand) works too). An `mcp_servers.gbrain` entry
+setup did not write (a hosted URL, say) is left alone, `--dry-run` previews and `--remove` runs `hermes mcp remove gbrain`.
+A rerun updates gbrain's own entry and keeps its member binding
+(`--stdio-member`), its connect timeout and, when `GBRAIN_HOME` is unset, the
+brain it already points at. An entry of gbrain's that carries other settings, or
+environment variables beyond `GBRAIN_HOME`, is left alone too (setup says which;
+no stored value goes on a command line). If an update of an enabled entry fails,
+setup puts the previous entry back with `hermes config set`; any failed
+registration exits 1.
+Hermes rewrites `config.yaml` as plain YAML, dropping comments, so setup sets its
+marked hook block aside around the call and puts it back. Then start a new session.
+
+### Register by hand
+
+```bash
 printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
 ```
 
+With a release binary, put `~/.local/bin/gbrain` in place of `$(which gbrain)`.
 The tool list shows the seven memory verbs (`recall`, `remember`, `entity`, …)
 plus `request_tools`; every other operation stays callable, and `request_tools`
 lists it and returns its schema. Drop `--advertise verbs` to list every
@@ -39,11 +66,8 @@ then prompts `Enable all N tools? [Y/n/select]:`. Three gotchas, all observed:
 ## Brain-first instructions
 
 Registering the MCP server only makes the tools available. Agents seldom call a
-brain nobody told them about, so finish the install with:
-
-```bash
-gbrain setup hermes --instructions-only
-```
+brain nobody told them about, so `gbrain setup hermes` also adds the brain-first
+rule (`--instructions-only` does only this part, leaving MCP alone).
 
 It writes one short marked block into `$HERMES_HOME/SOUL.md` (default `~/.hermes/SOUL.md`), after your identity
 text, which stays first and unchanged: before answering any turn,

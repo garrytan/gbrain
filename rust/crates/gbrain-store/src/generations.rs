@@ -65,12 +65,17 @@ use std::collections::BTreeSet;
 
 mod activations;
 mod atom_reads;
+mod chronicle_events;
 mod fence_evidence;
 mod fence_restore;
 mod lost_fence;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
+pub use chronicle_events::{
+    ChronicleSlugSpec, ChronicleSlugsSpec, OrphanedOwnersSpec, PageContentHashQuery,
+    RetiredItemKeysSpec,
+};
 pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 
@@ -382,6 +387,15 @@ fn pointed(read: &dyn KvRead, key: &GenerationKey, state: &str) -> Result<Option
 
 fn read_record(read: &dyn KvRead, id: u64) -> Result<Option<GenerationRecord>> {
     get_json(read, &record_key(id))
+}
+
+/// Whether the held row of `key` is held for `reason` (`state='held' AND held_reason=…`; the gate of
+/// `listHeldFenceTakeRows`).
+pub(crate) fn held_for(read: &dyn KvRead, key: &GenerationKey, reason: &str) -> Result<bool> {
+    Ok(
+        pointed_record(read, key, "held")?
+            .is_some_and(|r| r.held_reason.as_deref() == Some(reason)),
+    )
 }
 
 /// The record a pointer names; a pointer to no record is corrupt.
@@ -1281,6 +1295,55 @@ fn source_records(read: &dyn KvRead, source_id: &str) -> Result<Vec<GenerationRe
     }
 }
 
+/// One `derived_generations` row with its `derived_generation_items`, as other families read the
+/// ledger (`facts::generations`, `listUnwithdrawnFacts`).
+pub(crate) struct GenerationView {
+    pub id: u64,
+    pub owner_key: String,
+    pub generation: i32,
+    pub state: String,
+    pub created_at_us: i64,
+    pub items: Vec<GenerationItemView>,
+}
+
+/// One `derived_generation_items` row of a [`GenerationView`].
+pub(crate) struct GenerationItemView {
+    pub action: String,
+    pub preimage: Option<Value>,
+}
+
+/// The generation rows of `source_id` of `kind` with their items, in id order and item key
+/// order: the one read of this ledger outside this module.
+pub(crate) fn source_generation_views(
+    read: &dyn KvRead,
+    source_id: &str,
+    kind: &str,
+) -> Result<Vec<GenerationView>> {
+    let mut out = Vec::new();
+    for record in source_records(read, source_id)? {
+        if record.kind != kind {
+            continue;
+        }
+        let mut items = Vec::new();
+        for (_, v) in collect_prefix(read, &item_prefix(record.id), false, usize::MAX)? {
+            let item: ItemRecord = serde_json::from_slice(&v)?;
+            items.push(GenerationItemView {
+                action: item.action,
+                preimage: item.preimage,
+            });
+        }
+        out.push(GenerationView {
+            id: record.id,
+            owner_key: record.owner_key,
+            generation: record.generation,
+            state: record.state,
+            created_at_us: record.created_at_us,
+            items,
+        });
+    }
+    Ok(out)
+}
+
 /// `proposal @> jsonb_build_array(jsonb_build_object('key', slug))`: the proposal is an array
 /// with an object element whose `key` is the string `slug`.
 fn proposes_key(proposal: &Value, slug: &str) -> bool {
@@ -1323,6 +1386,17 @@ mod tests {
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
 
+    /// A stored page with no readers (a real `put_page`), so a raw write can name its readers.
+    fn put_open_page(store: &Store, slug: &str) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {"tags": ["a"]}
+        }))
+        .unwrap();
+        let opts: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        store.put_page(slug, &input, &opts).unwrap();
+    }
+
     fn key() -> GenerationKey {
         GenerationKey {
             source_id: "default".into(),
@@ -1348,6 +1422,7 @@ mod tests {
     #[test]
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
@@ -1356,7 +1431,9 @@ mod tests {
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
                 let page = keys::page("default", "notes/closed");
-                let record = json!({"id": 1, "slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&record)?)
             })
             .unwrap();
@@ -1545,6 +1622,7 @@ mod tests {
     #[test]
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         store
             .write(|tx| {
                 let record = AttemptRecord {
@@ -1558,7 +1636,9 @@ mod tests {
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
                 let page = keys::page("default", "notes/closed");
-                let page_record = json!({"id": 1, "slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut page_record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                page_record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&page_record)?)
             })
             .unwrap();

@@ -25,6 +25,7 @@ import {
   runEvalSynthesizeConceptsCli,
 } from '../src/commands/eval-synthesize-concepts.ts';
 import { surfaceSource } from './helpers/source-surface.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 describe('CLI entry (unit)', () => {
   test('--help exits 0 with dedicated help, no qrels text', async () => {
@@ -103,7 +104,7 @@ describe('subprocess smoke — end-to-end routing', () => {
     const r = spawnSync('bun', ['src/cli.ts', 'eval', 'synthesize-concepts', '--json'], {
       encoding: 'utf-8',
       timeout: 60_000,
-      env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     });
     expect(r.status).toBe(1);
     expect(r.stderr).not.toContain('--qrels');

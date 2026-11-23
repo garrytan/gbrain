@@ -36,8 +36,8 @@ export async function readPageOrigin(exec: LegacyUnscopedRead, target: PageOrigi
  * pages of `sourceId`, other than page `excludePageId`, whose origin is one of `spellings`, in slug order. On Windows
  * a stored origin is compared with `\` read as `/` and case folded, as the caller folds `spellings`.
  */
-const ORIGIN_CLAIMS_SQL = 'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) AND id<>$3 ORDER BY slug';
-const ORIGIN_CLAIMS_WIN32_SQL = "SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[]) AND id<>$3 ORDER BY slug";
+const ORIGIN_CLAIMS_SQL = 'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) AND id<>$3 ORDER BY slug COLLATE "C"';
+const ORIGIN_CLAIMS_WIN32_SQL = "SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[]) AND id<>$3 ORDER BY slug COLLATE \"C\"";
 
 export async function listOriginClaims(exec: SqlExecutor, sourceId: string, spellings: readonly string[],
   opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]> {
@@ -101,21 +101,6 @@ export async function readLivePageBody(exec: LegacyUnscopedRead, slug: string, o
   return row ?? null;
 }
 
-/** The page row columns a text projection is keyed on (page-state/projections.ts indexingContext). */
-export interface PageIndexingState { chunker_version: number | null; corpus_generation: string | null; page_kind: PageKind }
-
-/**
- * `readPageIndexingState`: page `pageId`'s stored chunker version, corpus generation and page kind, live or a tombstone,
- * or null when no page has that id. The two statements page-state/projections.ts sent, in the same order.
- */
-export async function readPageIndexingState(exec: LegacyUnscopedRead, pageId: number): Promise<PageIndexingState | null> {
-  const [projection] = await exec.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
-    'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [pageId]);
-  const [kind] = await exec.executeRaw<{ page_kind: PageKind }>('SELECT page_kind FROM pages WHERE id=$1', [pageId]);
-  if (!kind) return null;
-  return { chunker_version: projection?.chunker_version ?? null, corpus_generation: projection?.corpus_generation ?? null, page_kind: kind.page_kind };
-}
-
 /** The body columns of a page, read raw (no withdrawal overlay): NULL on a segmented page. */
 export interface InlinePageRegionsRow { compiled_truth: string | null; timeline: string | null }
 
@@ -129,6 +114,21 @@ export async function readInlinePageRegions(exec: LegacyUnscopedRead, pageId: nu
 export async function readStoredPageTier(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
   const [row] = await exec.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
   return row ? row.trust_tier : null;
+}
+
+/** The page row columns a text projection is keyed on (page-state/projections.ts indexingContext). */
+export interface PageIndexingState { chunker_version: number | null; corpus_generation: string | null; page_kind: PageKind }
+
+/**
+ * `readPageIndexingState`: page `pageId`'s stored chunker version, corpus generation and page kind, live or a tombstone,
+ * or null when no page has that id. The two statements page-state/projections.ts sent, in the same order.
+ */
+export async function readPageIndexingState(exec: LegacyUnscopedRead, pageId: number): Promise<PageIndexingState | null> {
+  const [projection] = await exec.executeRaw<{ chunker_version: number | null; corpus_generation: string | null }>(
+    'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1', [pageId]);
+  const [kind] = await exec.executeRaw<{ page_kind: PageKind }>('SELECT page_kind FROM pages WHERE id=$1', [pageId]);
+  if (!kind) return null;
+  return { chunker_version: projection?.chunker_version ?? null, corpus_generation: projection?.corpus_generation ?? null, page_kind: kind.page_kind };
 }
 
 /** Whether the brain holds any segment storage: a body staging or a segment text. The vacuum skips its sweep without either. */

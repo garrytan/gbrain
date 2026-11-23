@@ -294,7 +294,7 @@ export interface UnlinkedConversationRow {
 export async function listUnbackedConversationRows(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<UnbackedConversationRow[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to, f.entity_slug FROM facts f
       WHERE f.source_id = ${sourceId} AND f.source_markdown_slug = ANY(${slugs}::text[]) AND ${trustedSql(UNBACKED_FACT_SQL)} AND ${derivedConversationFragment()}
-      ORDER BY f.source_markdown_slug, f.id`);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.id`);
   return raw<UnbackedConversationRow>(text, params);
 }
 
@@ -302,7 +302,7 @@ export async function listUnbackedConversationRows(raw: EngineRawRead, sourceId:
 export async function listUnlinkedConversationRows(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<UnlinkedConversationRow[]> {
   const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.context, f.visibility, f.source_markdown_slug AS slug, f.attributed_to FROM facts f
       WHERE f.source_id = ${sourceId} AND f.source_markdown_slug = ANY(${slugs}::text[]) AND ${trustedSql(ACTIVE_UNLINKED_FACT_SQL)} AND ${derivedConversationFragment()}
-      ORDER BY f.source_markdown_slug, f.id`);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.id`);
   return raw<UnlinkedConversationRow>(text, params);
 }
 

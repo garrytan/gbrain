@@ -1,16 +1,20 @@
 /**
  * Source-resolution members (BrainEngine listLocalPathSources, listSourceRoutingRows, countDefaultSourceSplit): the
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
- * listStaleSyncSourceIds (the advisor's stale-sync read) and readSourceRow/lockSourceRow (one source's check columns)
+ * listStaleSyncSourceIds (the advisor's stale-sync read), listSourceIds (every source id), readSoleSourceId, readFirstSourceId, lockAllSourceRows
+ * (takes no lock) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here. countSourcePages counts one source's pages, insertSource creates a source and
  * advanceSourceCommit records the commit a git sync reached; listSourcePathPages, readRenameIdentityRows and
  * readLiveIdentityHolders are a git sync's page reads, readPageSizeRows its size-state read and listQuarantinedSlugs the
  * pages its link and timeline extraction skips; deleteSourceRecord and readSourceDeleteImpact are `sources remove` and
  * its preview (store side: the same cli_reads/sources.rs, sources.rs for advanceSourceCommit, and sources/archive.rs
- * for the delete).
+ * for the delete). readPageIdentity is the held-rename redecision read; writeSourceSyncHeartbeat and
+ * writeSourceUpstreamObservation are the sync's heartbeat and upstream observation (store side: sources.rs).
+ * readSourceLastCommit reads the commit the sync anchor last advanced to, for the resident notifier (store side:
+ * sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
@@ -52,6 +56,28 @@ export const listStaleSyncSourceIds: StoreMember<[], string[]> = async (brain) =
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 };
 
+/** Every source id, archived ones included, by id bytewise (the store's source records). */
+export const listSourceIds: StoreMember<[], string[]> = async (brain) => {
+  const rows = (await storeCall({ member: 'listSourceIds' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.map(r => r.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+};
+
+/** The only source's id, or null when the store has none or several. */
+export const readSoleSourceId: StoreMember<[], string | null> = async (brain) => {
+  const rows = (await storeCall({ member: 'readSoleSourceId' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  return rows.length === 1 ? rows[0]!.id : null;
+};
+
+/** `default` when the store has it, else the lowest id bytewise, else null. */
+export const readFirstSourceId: StoreMember<[], string | null> = async (brain) => {
+  const rows = (await storeCall({ member: 'readFirstSourceId' }, () => brain.listSourceRecords())) as SourceRecordRow[];
+  const ids = rows.map(r => r.id);
+  return ids.includes('default') ? 'default' : ids.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0] ?? null;
+};
+
+/** Takes no lock: the store's source records do not lock rows (like lockSourceRow). */
+export const lockAllSourceRows: StoreMember<[mode: 'update' | 'share'], void> = async () => {};
+
 async function sourceCheckRow(brain: StoreBrain, member: string, sourceId: string): Promise<SourceCheckRow | null> {
   const rows = (await storeCall({ member, sourceId }, () => brain.listSourceRecords())) as SourceRecordRow[];
   const row = rows.find(r => r.id === sourceId);
@@ -82,6 +108,14 @@ export const readReasonPurgeTombstones: StoreMember<[sourceId: string, pair?: Re
 export const writeReasonPurgeTombstones: StoreMember<[sourceId: string, pairs: readonly ReasonPurgeTombstone[]], number> = async (brain, sourceId, pairs) =>
   Number(await storeCall({ member: 'writeReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, pairs.map(pair => ({ commit_sha: pair.commit_sha, path: pair.path })))));
 
+/** `insertReasonPurgeTombstones` (main's member): the (commit, path) pairs zip up the two lists; the store tombstones each pair, none twice, and answers how many it added. */
+export const insertReasonPurgeTombstones: StoreMember<[sourceId: string, commits: string[], paths: string[]], number> = async (brain, sourceId, commits, paths) =>
+  Number(await storeCall({ member: 'insertReasonPurgeTombstones', sourceId }, () => brain.writeReasonPurgeTombstones(sourceId, commits.map((commit, i) => ({ commit_sha: commit, path: paths[i]! })))));
+
+/** The store's purge epoch advance (sources.rs `advance_source_purge_epoch`): the new epoch, or null for an unknown source. */
+export const advanceSourcePurgeEpoch: StoreMember<[sourceId: string], number | null> = async (brain, sourceId) =>
+  (await storeCall({ member: 'advanceSourcePurgeEpoch', sourceId }, () => brain.advanceSourcePurgeEpoch(sourceId))) as number | null;
+
 export const listSourcePathPages: StoreMember<[sourceId: string], SourcePathPageRow[]> = async (brain, sourceId) =>
   (await storeCall({ member: 'listSourcePathPages', sourceId }, () => brain.listSourcePathPages(sourceId))) as SourcePathPageRow[];
 
@@ -94,9 +128,21 @@ export const readRenameIdentityRows: StoreMember<[sourceId: string, paths: reado
 export const readLiveIdentityHolders: StoreMember<[sourceId: string, ids: readonly string[], titles: readonly string[]], LiveIdentityHolderRow[]> = async (brain, sourceId, ids, titles) =>
   (await storeCall({ member: 'readLiveIdentityHolders', sourceId }, () => brain.readLiveIdentityHolders(sourceId, [...ids], [...titles]))) as LiveIdentityHolderRow[];
 
+export const readPageIdentity: StoreMember<[pageId: number], PageIdentityRow | null> = (brain, pageId) =>
+  storeCall({ member: 'readPageIdentity' }, () => brain.readPageIdentity(pageId));
+
 /** last_sync_at is the store's clock, not a database `now()` (rust/docs/store/sources.md). */
 export const advanceSourceCommit: StoreMember<[sourceId: string, commit: string, newestContentAt?: string | null], void> = async (brain, sourceId, commit, newestContentAt) => {
   await storeCall({ member: 'advanceSourceCommit', sourceId }, () => brain.advanceSourceCommit(sourceId, commit, newestContentAt !== undefined, newestContentAt ?? null));
+};
+
+export const writeSourceSyncHeartbeat: StoreMember<[sourceId: string], void> = async (brain, sourceId) => {
+  await storeCall({ member: 'writeSourceSyncHeartbeat', sourceId }, () => brain.writeSourceSyncHeartbeat(sourceId));
+};
+
+export const writeSourceUpstreamObservation: StoreMember<[sourceId: string, observed: SourceUpstreamObservation], void> = async (brain, sourceId, observed) => {
+  await storeCall({ member: 'writeSourceUpstreamObservation', sourceId }, () =>
+    brain.writeSourceUpstreamObservation(sourceId, observed.checkedAt, observed.commit, observed.behind));
 };
 
 /**
@@ -124,3 +170,6 @@ export const readSourceDeleteImpact: StoreMember<[sourceId: string], SourceDelet
   const r = (await storeCall({ member: 'readSourceDeleteImpact', sourceId }, () => brain.readSourceDeleteImpact(sourceId))) as (Omit<SourceDeleteImpact, 'name'> & { name: string | null }) | null;
   return r && { id: r.id, name: r.name ?? r.id, pages: Number(r.pages), chunks: Number(r.chunks), embeddings: Number(r.embeddings), files: Number(r.files), facts: Number(r.facts) };
 };
+/** The commit the source's last sync advanced to, or null. */
+export const readSourceLastCommit: StoreMember<[sourceId: string], string | null> = async (brain, sourceId) =>
+  await storeCall({ member: 'readSourceLastCommit', sourceId }, () => brain.readSourceLastCommit(sourceId)) as string | null;

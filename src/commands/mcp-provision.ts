@@ -33,21 +33,22 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
   if (input.sharedSkills !== undefined && !['follow', 'memory-only'].includes(input.sharedSkills)) throw new GrantError('invalid_grant', 'Shared skills must be follow or memory-only');
   return engine.transaction(async tx => {
     const sql = sqlQueryForEngine(tx);
-    await sql`SELECT pg_advisory_xact_lock(hashtext(${registerClientNameLockKey(input.name)})::bigint)`;
-    if (input.clientId) await sql`SELECT client_id FROM oauth_clients WHERE client_id = ${input.clientId} FOR UPDATE`;
+    await tx.lockOauthClientName(registerClientNameLockKey(input.name));
+    if (input.clientId) await tx.readOauthClientForUpdate(input.clientId);
     const existing = input.clientId ? await readClientGrant(tx, input.clientId) : undefined;
     if (input.resume) {
       if (!existing || existing.revoked) throw new GrantError('invalid_grant', '--resume requires an active --client');
       if (input.profile || input.sourceId || input.sharedSkills !== undefined || Object.keys(input.patch ?? {}).length || input.dryRun) throw new GrantError('invalid_grant', '--resume only recovers delivery; run a separate grant update to change permissions');
-      const [metadata] = await sql`SELECT client_id, client_name, redirect_uris, grant_types, token_endpoint_auth_method, client_secret_expires_at FROM oauth_clients WHERE client_id = ${existing.clientId} FOR UPDATE`;
-      if (selectClientFlow(clientMetadata(metadata)) !== 'client-credentials') throw new GrantError('invalid_grant', 'Native OAuth setup uses gbrain mcp admin setup --credentials-out, not a machine credential handoff');
+      const metadata = await tx.readOauthClientForUpdate(existing.clientId);
+      if (!metadata) throw new GrantError('invalid_grant', '--resume requires an active --client');
+      if (selectClientFlow(clientMetadata({ ...metadata })) !== 'client-credentials') throw new GrantError('invalid_grant', 'Native OAuth setup uses gbrain mcp admin setup --credentials-out, not a machine credential handoff');
       if (Number(metadata.client_secret_expires_at) > 0 && Number(metadata.client_secret_expires_at) <= Math.floor(Date.now() / 1000)) throw new GrantError('invalid_grant', 'Client secret expired. Inspect the registration and arrange explicit owner-side replacement; repeating a download cannot renew it.');
       const credentials = recoverCredentialDelivery(existing.clientId, normalized.url);
       // The journal is a delivery record, never authority after secret rotation.
       // Verify the renewable credential against the current confidential client.
       try {
         if (!credentials.client_secret) throw new InvalidClientError('missing secret');
-        await new GBrainOAuthProvider({ sql }).verifyConfidentialClientSecret(existing.clientId, credentials.client_secret);
+        await new GBrainOAuthProvider({ sql, engine: tx }).verifyConfidentialClientSecret(existing.clientId, credentials.client_secret);
       } catch (error) {
         if (!(error instanceof InvalidClientError)) throw error;
         throw new Error('credential_delivery_stale: the retained handoff no longer matches the current client secret. Use the handoff from the explicit rotation; do not deliver or rotate an old secret automatically.');
@@ -99,12 +100,12 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
         { actor, expectedRevision: input.expectedRevision, dryRun: input.dryRun });
       return { grant: result.after, before: result.before, dry_run: Boolean(input.dryRun), credentials: null as HarnessCredentials | null, credential_action: 'existing_credentials_preserved' };
     }
-    const duplicate = await sql`SELECT client_id FROM oauth_clients WHERE client_name = ${input.name} AND deleted_at IS NULL`;
-    if (duplicate.length) throw new GrantError('grant_conflict', `client_already_exists: resume delivery with --resume --client ${String(duplicate[0].client_id)} --credentials-out <private-file>; no secret was rotated`);
+    const duplicate = (await tx.readLiveOauthClients()).find(c => c.client_name === input.name);
+    if (duplicate) throw new GrantError('grant_conflict', `client_already_exists: resume delivery with --resume --client ${String(duplicate.client_id)} --credentials-out <private-file>; no secret was rotated`);
     const prospective = { clientId: '', clientName: input.name, revision: 0, revoked: false, ...resolved } as ClientGrant;
     validateClientGrant(prospective, await grantValidationContext(tx));
     if (input.dryRun) return { grant: prospective, before: null, dry_run: true, credentials: null as HarnessCredentials | null, credential_action: 'none' };
-    const provider = new GBrainOAuthProvider({ sql, transaction: fn => fn(sql) });
+    const provider = new GBrainOAuthProvider({ sql, engine: tx, transaction: fn => fn(sql, tx) });
     const registered = await registerScopedClient(sql, input.name, {
         grantTypes: ['client_credentials'], scopes: prospective.scopes.join(' '), redirectUris: [], sourceId,
         federatedRead: prospective.federatedRead, tokenEndpointAuthMethod: 'client_secret_post',
@@ -113,7 +114,7 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
         boundBrainId: prospective.boundBrainId ?? undefined, boundSlugPrefixes: prospective.boundSlugPrefixes ?? undefined,
         boundMaxConcurrent: prospective.boundMaxConcurrent, budgetUsdPerDay: prospective.budgetUsdPerDay ?? undefined,
         delegatedSlugPrefixes: prospective.delegatedSlugPrefixes ?? undefined, delegatedNamespace: prospective.delegatedNamespace,
-      }, { grant: resolved });
+      }, { grant: resolved, engine: tx });
     if (!registered.clientSecret) throw new Error('credential_delivery_incomplete: confidential client returned no secret');
     const tokens = await provider.exchangeClientCredentials(registered.clientId, registered.clientSecret);
     const credentials: HarnessCredentials = { version: 1, mcp_url: normalized.url, issuer_url: normalized.url.replace(/\/mcp$/, ''),

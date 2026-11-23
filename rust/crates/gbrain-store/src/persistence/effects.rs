@@ -414,6 +414,8 @@ fn insert_source_effects_in(
     kinds: &[&str],
 ) -> Result<Vec<String>> {
     uuid_cast(&spec.request_id)?;
+    // The id as Postgres stores a uuid (canonical lowercase), so the mirror gate and the order index find it.
+    let request_id = spec.request_id.to_ascii_lowercase();
     if spec.data.is_null() {
         return Err(violation(
             "null value in column \"data\" of relation \"persistence_effects\" violates not-null constraint",
@@ -424,11 +426,11 @@ fn insert_source_effects_in(
     };
     let mut missing = Vec::new();
     for &kind in kinds {
-        if get_json::<EffectRecord>(&*tx, &effect_key(&spec.request_id, kind))?.is_none() {
+        if get_json::<EffectRecord>(&*tx, &effect_key(&request_id, kind))?.is_none() {
             missing.push(kind);
         }
     }
-    if !missing.is_empty() && request_by_id(&*tx, &spec.request_id)?.is_none() {
+    if !missing.is_empty() && request_by_id(&*tx, &request_id)?.is_none() {
         return Err(violation(format!(
             "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_request_id_fkey\": request {} is not present",
             spec.request_id
@@ -446,7 +448,7 @@ fn insert_source_effects_in(
         next_id += 1;
         let record = EffectRecord {
             id: next_id,
-            request_id: spec.request_id.clone(),
+            request_id: request_id.clone(),
             kind: (*kind).into(),
             revision: None,
             data: spec.data.clone(),
@@ -465,12 +467,12 @@ fn insert_source_effects_in(
             recovery_bytes: 0,
             claim_owner: None,
         };
-        put_json(tx, &effect_key(&spec.request_id, kind), &record)?;
+        put_json(tx, &effect_key(&request_id, kind), &record)?;
         put_json(
             tx,
             &order_key(next_id),
             &OrderEntry {
-                request_id: spec.request_id.clone(),
+                request_id: request_id.clone(),
                 kind: (*kind).into(),
             },
         )?;
@@ -524,7 +526,7 @@ impl crate::Store {
     /// A request id that is not a uuid refuses, as `$1::uuid` does.
     pub fn read_remirror_effects(&self, request_id: &str) -> Result<Vec<Value>> {
         uuid_cast(request_id)?;
-        let mut effects = request_effects(&*self.read()?, request_id)?;
+        let mut effects = request_effects(&*self.read()?, &request_id.to_ascii_lowercase())?;
         effects.sort_by(|a, b| a.kind.as_bytes().cmp(b.kind.as_bytes()));
         Ok(effects
             .iter()

@@ -405,13 +405,13 @@ test('a group admission whose cursor another run moved rolls back: no request is
   const racing = new Proxy(engine, { get(target, key) {
     if (key === 'transaction') return async (fn: (tx: BrainEngine) => Promise<unknown>) => target.transaction(async tx => {
       const out = await fn(new Proxy(tx, { get(inner, k) {
-        // The grouped request insert is the typed insertWriteRequestGroup member (engine-sql/persistence-journal.ts).
-        if (k === 'insertWriteRequestGroup') return async (group: Parameters<BrainEngine['insertWriteRequestGroup']>[0]) => {
+        // The group admission inserts its request rows through the typed insertWriteRequestGroup member (journal.ts).
+        if (k === 'insertWriteRequestGroup') return async (...a: Parameters<BrainEngine['insertWriteRequestGroup']>) => {
           if (!moved) {
             moved = true;
             await target.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,progress}','\"moved\"'::jsonb,true) WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1", [f.id]);
           }
-          return inner.insertWriteRequestGroup(group);
+          return inner.insertWriteRequestGroup(...a);
         };
         const value = Reflect.get(inner, k); return typeof value === 'function' ? value.bind(inner) : value;
       } }));

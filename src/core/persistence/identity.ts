@@ -402,6 +402,5 @@ function verifiedFromRow(local: LocalRegistration, row: LocalWriterRow | undefin
 }
 export async function revokeLocalWriter(engine: BrainEngine, id: string): Promise<boolean> {
   forgetRequestIdentity();
-  const rows = await engine.executeRaw('UPDATE persistence_local_writers SET revoked_at=COALESCE(revoked_at,now()) WHERE id=$1::uuid RETURNING id', [id]);
-  return rows.length === 1;
+  return engine.revokeLocalWriterRow(id);
 }

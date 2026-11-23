@@ -243,11 +243,10 @@ export async function forgetFactInFence(
     row.entity_slug !== null;
 
   if (!canFence) return legacyExpire();
-  if (await isWriteThroughDisabled(engine) || await readOnlyCheckout(engine, row.source_id)) return legacyExpire();
-
-  // Look up source.local_path.
+  // Look up source.local_path first: a source without a checkout expires in the database whatever its mirror mode.
   const localPath = await engine.readSourceLocalPath(row.source_id);
   if (!localPath) return legacyExpire();
+  if (await isWriteThroughDisabled(engine) || await readOnlyCheckout(engine, row.source_id)) return legacyExpire();
 
   const slug = row.source_markdown_slug!;
   const targetRowNum = row.row_num!;

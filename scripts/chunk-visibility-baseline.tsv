@@ -1,10 +1,6 @@
 # path<TAB>uncovered content_chunks readers (rows only shrink)
 src/commands/config.ts	1
-src/commands/doctor/checks/calibration.ts	1
-src/commands/doctor/checks/data-integrity.ts	1
-src/commands/doctor/checks/embedding-health.ts	2
-src/commands/doctor/checks/image-embedding-coverage.ts	1
-src/commands/doctor/checks/schema-health.ts	1
+src/commands/doctor/checks/embedding-health.ts	1
 src/commands/doctor/checks/vector-plan.ts	2
 src/commands/reindex-multimodal.ts	4
 src/core/code-graph-readiness.ts	1
@@ -27,7 +23,6 @@ src/core/facts/purge-verify.ts	1
 src/core/import-file.ts	1
 src/core/oversized-backfill.ts	2
 src/core/page-state/contextual-proof.ts	1
-src/core/page-state/projections.ts	2
 src/core/persistence/page-purge.ts	1
 src/core/pglite-engine.ts	1
 src/core/postgres-engine.ts	1

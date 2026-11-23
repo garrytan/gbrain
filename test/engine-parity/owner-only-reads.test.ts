@@ -13,15 +13,22 @@
  *    under `excludePrivate` showed other people's messages from an owner-only source to a non-owner caller.
  *  - Why existing coverage misses it: test/imessage-owner-only.test.ts runs the SQL engines only, and the parity
  *    privacy cases (private-page-reads, facts) create no owner-only source.
- *  - Seam: none. Real engines, typed methods only; the owner-only source is a harness fixture.
+ *  - Seam: none for the first three cases. Real engines, typed methods only; the owner-only source is a harness
+ *    fixture. The fourth case sends the lineage form under master's wire name: master's member
+ *    (src/core/rust-engine/store-members/private-provenance.ts, `StoreOwnerOnly`) names it `lineage` where the trunk's
+ *    names it `fn`. On the Rust arm only, it wraps the open store's native brain and renames `ownerOnly: 'fn'` to
+ *    `'lineage'` in what the members send, so the store reads exactly what master's member sends it. The SQL arms run
+ *    the same reads unwrapped. A store that knows only `fn` rejected `lineage` with `invalid_argument`, so every
+ *    privacy-filtered page, fact, keyword and vector read failed on a brain served by master's members.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { createSource, parityArms, sorted } from './harness.ts';
+import { basisEmbedding, createSource, parityArms, sorted, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { installChunks, chunk } from './chunk-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -62,6 +69,58 @@ async function reads(engine: BrainEngine) {
     defaultFacts: await facts('default', true),
     ownFactsOpen: await facts(OWN, false),
   };
+}
+
+type NativeBrain = Record<string, unknown>;
+
+/** `value` with every `ownerOnly: 'fn'` renamed to master's `'lineage'`; `count` counts the renames. */
+function toMasterWire(value: unknown, count: { renamed: number }): unknown {
+  if (Array.isArray(value)) return value.map((v) => toMasterWire(v, count));
+  if (value === null || typeof value !== 'object' || ArrayBuffer.isView(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (k === 'ownerOnly' && v === 'fn') {
+      count.renamed += 1;
+      out[k] = 'lineage';
+    } else {
+      out[k] = toMasterWire(v, count);
+    }
+  }
+  return out;
+}
+
+/**
+ * Runs `fn` with the Rust arm's store answering what master's member sends: each native call's arguments go through
+ * `toMasterWire`. The SQL arms run `fn` as is. Returns the result and how many policies were renamed.
+ */
+async function withMasterWire<T>(engine: BrainEngine, backend: ParityBackend, fn: () => Promise<T>): Promise<{ result: T; renamed: number }> {
+  const count = { renamed: 0 };
+  if (backend !== 'rust') return { result: await fn(), renamed: count.renamed };
+  const store = (engine as unknown as { openStore(member: string): { brain: NativeBrain } }).openStore('owner-only-reads');
+  const native = store.brain;
+  store.brain = new Proxy(native, {
+    get(target, prop) {
+      const member = Reflect.get(target, prop, target);
+      if (typeof member !== 'function') return member;
+      return (...args: unknown[]) => (member as (...a: unknown[]) => unknown).apply(target, args.map((a) => toMasterWire(a, count)));
+    },
+  });
+  try {
+    return { result: await fn(), renamed: count.renamed };
+  } finally {
+    store.brain = native;
+  }
+}
+
+/** Gives each fixture page one sealed chunk with the term `heliotrope` and an embedding, for the keyword and vector reads. */
+async function chunkFixture(engine: BrainEngine): Promise<void> {
+  const pages: Array<[string, string]> = [
+    ['a/thread', OWN], ['a/thread', 'default'], ['b/from-texts', 'default'], ['b/question-from-texts', 'default'],
+    ['c/open', 'default'], ['d/plain-concept', 'default'],
+  ];
+  for (const [slug, sourceId] of pages) {
+    await installChunks(engine, slug, [chunk(0, `heliotrope ledger of ${slug}`, { embedding: basisEmbedding(3), token_count: 3 })], { sourceId });
+  }
 }
 
 describe('engine parity: owner-only sources under excludePrivate', () => {
@@ -109,6 +168,36 @@ describe('engine parity: owner-only sources under excludePrivate', () => {
       expect(got.ownFacts).toEqual([]);
       expect(got.defaultFacts).toEqual(['From the notes']);
       return got;
+    },
+  );
+
+  parityTest(
+    'in an engine scope the lineage form as master\'s member names it hides the same page, fact, keyword and vector rows',
+    { methods: ['putPage', 'addLink', 'insertFact', 'sealChunks', 'listPages', 'listFactsSince', 'searchKeyword', 'searchVector'] },
+    async (engine, backend) => {
+      await fixture(engine, backend);
+      await chunkFixture(engine);
+      noteSchemaVersion(engine, LATEST_SCHEMA_VERSION);
+      const scoped = <T>(fn: () => Promise<T>) => withMasterWire(engine, backend, () => withEngineScope(engine, fn));
+      const hits = (rows: Array<{ source_id?: string; slug: string }>) => sorted([...new Set(rows.map((r) => `${r.source_id}:${r.slug}`))]);
+      const page = await scoped(async () => ids(await engine.listPages({ sort: 'slug', sourceIds: ['default', OWN], excludePrivate: true })));
+      const fact = await scoped(async () =>
+        sorted((await engine.listFactsSince('default', at('2020-01-01T00:00:00Z'), { limit: 50, excludePrivate: true })).map((f) => f.fact)));
+      const ownFact = await scoped(async () =>
+        sorted((await engine.listFactsSince(OWN, at('2020-01-01T00:00:00Z'), { limit: 50, excludePrivate: true })).map((f) => f.fact)));
+      const keyword = await scoped(async () => hits(await engine.searchKeyword('heliotrope', { limit: 50, excludePrivate: true })));
+      const vector = await scoped(async () => hits(await engine.searchVector(basisEmbedding(3), { limit: 50, excludePrivate: true })));
+      const visible = ['default:a/thread', 'default:c/open', 'default:d/plain-concept'];
+      expect(page.result).toEqual(visible);
+      expect(fact.result).toEqual(['From the notes']);
+      expect(ownFact.result).toEqual([]);
+      expect(keyword.result).toEqual(visible);
+      expect(vector.result).toEqual(visible);
+      // On the Rust arm each read sent master's `lineage`, so the case cannot pass on the trunk's `fn` alone.
+      if (backend === 'rust') {
+        for (const read of [page, fact, ownFact, keyword, vector]) expect(read.renamed).toBeGreaterThan(0);
+      }
+      return { page: page.result, fact: fact.result, ownFact: ownFact.result, keyword: keyword.result, vector: vector.result };
     },
   );
 });

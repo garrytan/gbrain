@@ -238,9 +238,13 @@ test('a batch admission whose COMMIT acknowledgment is lost replays its admitted
         let admits = false;
         const value = await original.transaction.call(brain.engine, (tx: BrainEngine) => {
           const seen = Object.create(tx) as BrainEngine;
-          // The grouped admission reads and inserts its rows through typed members.
-          seen.readWriteRequestsByRequestIds = ((...args: Parameters<BrainEngine['readWriteRequestsByRequestIds']>) => { admits = true; return tx.readWriteRequestsByRequestIds(...args); }) as BrainEngine['readWriteRequestsByRequestIds'];
-          seen.insertWriteRequestGroup = ((group: Parameters<BrainEngine['insertWriteRequestGroup']>[0]) => { admits = true; return tx.insertWriteRequestGroup(group); }) as BrainEngine['insertWriteRequestGroup'];
+          seen.executeRaw = ((sql: string, params?: unknown[], opts?: unknown) => {
+            if (sql.includes('INSERT INTO persistence_requests') || sql.includes('principal_id=$2 AND request_id=ANY($3::uuid[])')) admits = true;
+            return tx.executeRaw(sql, params, opts as never);
+          }) as BrainEngine['executeRaw'];
+          // The grouped admission reads and inserts its rows through these typed members (journal.ts admitWriteGroupInTransaction).
+          seen.readWriteRequestsByRequestIds = ((...a: Parameters<BrainEngine['readWriteRequestsByRequestIds']>) => { admits = true; return tx.readWriteRequestsByRequestIds(...a); }) as BrainEngine['readWriteRequestsByRequestIds'];
+          seen.insertWriteRequestGroup = ((...a: Parameters<BrainEngine['insertWriteRequestGroup']>) => { admits = true; return tx.insertWriteRequestGroup(...a); }) as BrainEngine['insertWriteRequestGroup'];
           return fn(seen);
         });
         if (admits && drops < times && ++drops) throw Object.assign(new Error('write CONNECTION_CLOSED 127.0.0.1:5432'), { code: 'CONNECTION_CLOSED' });

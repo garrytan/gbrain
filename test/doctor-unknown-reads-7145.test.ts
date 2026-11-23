@@ -22,10 +22,11 @@ let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
 afterAll(async () => { await engine.disconnect(); });
 
-/** The engine with every statement matching `match` failing the way a cancelled statement does. */
-function failing(match: RegExp): BrainEngine {
+/** The engine with every statement matching `match`, and every typed read named in `members`, failing the way a cancelled statement does. */
+function failing(match: RegExp, members: readonly string[] = []): BrainEngine {
   return new Proxy(engine, { get(target, key) {
     const value = Reflect.get(target, key);
+    if (typeof key === 'string' && members.includes(key)) return () => Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
     if (key !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
     return (sql: string, params?: unknown[]) => match.test(sql)
       ? Promise.reject(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }))
@@ -47,11 +48,22 @@ describe('#7145 unknown reads', () => {
     for (let n = 1; n <= MIN_ENTITY_PAGES_FOR_COVERAGE; n++) {
       await engine.putPage(`people/example-${n}`, { type: 'person', title: `Example ${n}`, compiled_truth: 'A synthetic entity.', timeline: '' });
     }
-    const broken = failing(/sample_size/);
+    const broken = failing(/$^/, ['entityFeatureCoverage']);
     for (const run of [checkEntityLinkCoverage, checkTimelineCoverage]) {
       const result = await run(broken);
       expect(result.check).toMatchObject({ status: 'warn', details: { health: 'unknown', reason: 'error' } });
       expect(result.check.message).toContain('Coverage unknown');
+      expect(result.remediations).toEqual([]);
+    }
+  });
+
+  test('coverage whose entity count failed is unknown, not "no entity pages"', async () => {
+    const broken = failing(/$^/, ['countEntityPages']);
+    for (const run of [checkEntityLinkCoverage, checkTimelineCoverage]) {
+      const result = await run(broken);
+      expect(result.check).toMatchObject({ status: 'warn', details: { health: 'unknown', reason: 'error' } });
+      expect(result.check.message).toContain('Coverage unknown');
+      expect(result.check.message).not.toContain('vacuous');
       expect(result.remediations).toEqual([]);
     }
   });

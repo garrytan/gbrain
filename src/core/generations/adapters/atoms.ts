@@ -107,8 +107,7 @@ export const atomGenerationAdapter: GenerationAdapter<AtomGenerationContext> = {
   async completeItems(tx, key, itemKeys, context) {
     const input = await atomGenerationAdapter.readInput(tx, key, context);
     if (!input || !itemKeys.length) return;
-    await tx.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-      WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [input.pin.slice(0, 16), key.sourceId, [...itemKeys]]);
+    await tx.stampPageFrontmatter({ match: 'atom_source_hash', sourceId: key.sourceId, slugs: itemKeys, sourceHash: input.pin.slice(0, 16) });
   },
   retireItems: (tx, key, itemKeys, retiredBy) => retireDerivedPagesInTransaction(tx, key.sourceId, itemKeys, retiredBy),
   restoreItem: (tx, key, itemKey, preimage) => importPageItem(tx, key.sourceId, itemKey, preimageMarkdown(preimage)),

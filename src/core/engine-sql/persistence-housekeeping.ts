@@ -332,7 +332,7 @@ export async function listPendingSegmentedProjections(exec: LegacyUnscopedRead, 
   const { rows } = await exec.run<PendingSegmentedProjection>(sqlFragment`SELECT s.id AS source_id,
       j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
     FROM page_projection_jobs j ${trustedSql(SEGMENTED_JOB_PROBES_SQL)}
-    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C" LIMIT ${Math.max(1, filter.limit)}`);
+    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C", j.source_incarnation LIMIT ${Math.max(1, filter.limit)}`);
   return rows;
 }
 
@@ -349,11 +349,17 @@ export interface ProjectionWindowRow {
  * budgets (100 recent, 400 window) inlined; the recency lane, then the key window from `cursor`.
  */
 export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
+  // The lane order never reaches output: lane is the literal 'recent' or 'window', which sorts the same in every collation, and the rows feed projection job processing.
   return sqlFragment`WITH ${residentWindowCtesFragment(cursor, retryCooldown)}
     SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
     FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
       UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
     ORDER BY r.lane,r.ord`;
+}
+
+/** `SEGMENTED_PROJECTION_CLAIMED_SQL` (projections.ts) as a fragment: a queue row `j` a live segmented claim holds. */
+export function segmentedProjectionClaimedFragment(): SqlFragment {
+  return sqlFragment`${trustedSql(SEGMENTED_PROJECTION_CLAIMED_TEXT)}`;
 }
 
 /** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
@@ -372,7 +378,7 @@ export function residentWindowCtesFragment(cursor: Pick<ProjectionScanCursor, 'a
   const slug = cursor.after.slug;
   return sqlFragment`mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
     recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
-      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC LIMIT 100),
+      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC, j.source_incarnation, j.slug COLLATE "C" LIMIT 100),
     fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
       ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT 400),
     wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") <= (${inc}::uuid,${slug} COLLATE "C") AND ${filter}

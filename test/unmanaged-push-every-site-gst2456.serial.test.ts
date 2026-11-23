@@ -17,6 +17,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { notePending } from '../src/core/git/commit-push.ts';
 import { stagedScanPublishRefusal } from '../src/core/git/range-secret-scan.ts';
 import { workspacePush } from '../src/core/workspace-push.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 import { envForFile } from './helpers/with-env.ts';
 
 /** GST-2988: these tests pin the publish refusal, which secrets.on_push refuse keeps. */
@@ -39,7 +40,7 @@ const plainCommit = (file: string, text: string, message = 'script edit') => {
 /** A credential committed by a script and removed by its next commit: only the history holds it. */
 const removedSecret = () => { plainCommit('notes.md', `deploy ${TOKEN}\n`); plainCommit('notes.md', 'removed\n'); };
 const cli = (args: string[], env: Record<string, string> = {}) => spawnSync(process.execPath, ['--no-env-file', CLI, ...args],
-  { cwd: root, encoding: 'utf8', timeout: 60_000, env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...env } });
+  { cwd: root, encoding: 'utf8', timeout: 60_000, env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1', ...env } });
 const pushLog = () => { const p = join(dir, '.gbrain', 'brain-push.log'); return existsSync(p) ? readFileSync(p, 'utf8') : ''; };
 const envelope = (stdout: string) => JSON.parse(stdout) as { code?: string; error?: string; message?: string };
 const sourcesPush = () => workspacePush({ dir: root, branch: 'main', allowUnverifiedRemote: true });

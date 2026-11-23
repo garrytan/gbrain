@@ -23,7 +23,7 @@ function isUndefinedColumnError(err: unknown): boolean {
 }
 
 /**
- * Every source, `default` first, then by id, with the columns `loadAllSources` reads. A brain whose schema lacks
+ * Every source, `default` first, then by id in byte order (`COLLATE "C"`, on any Postgres locale), with the columns `loadAllSources` reads. A brain whose schema lacks
  * `archived` or `newest_content_at` (pre-v0.26.5, pre-v109) is read again with the historical minimal columns.
  */
 export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<SourceRecordRow[]> {
@@ -31,14 +31,14 @@ export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<Sourc
     return await exec.executeRaw<SourceRecordRow>(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
          FROM sources
-       ORDER BY (id = 'default') DESC, id`,
+       ORDER BY (id = 'default') DESC, id COLLATE "C"`,
     );
   } catch (err) {
     if (!isUndefinedColumnError(err)) throw err;
     return exec.executeRaw<SourceRecordRow>(
       `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
          FROM sources
-       ORDER BY (id = 'default') DESC, id`,
+       ORDER BY (id = 'default') DESC, id COLLATE "C"`,
     );
   }
 }
@@ -47,6 +47,19 @@ export async function listSourceRecords(exec: LegacyUnscopedRead): Promise<Sourc
 export async function readSourceIncarnation(exec: LegacyUnscopedRead, sourceId: string): Promise<SourceIncarnationRow | null> {
   const [row] = await exec.executeRaw<SourceIncarnationRow>('SELECT config,incarnation FROM sources WHERE id=$1', [sourceId]);
   return row ?? null;
+}
+
+/**
+ * #9968: the ids among `sourceIds` whose bound worktree still holds a recovery record (a request on the source's
+ * worktree with `recovery IS NOT NULL`; several sources can share one worktree). Master's RETAINED_SQL scope.
+ */
+export async function readRetainedSources(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<string[]> {
+  if (sourceIds.length === 0) return [];
+  const rows = await exec.executeRaw<{ id: string }>(
+    `SELECT id FROM sources WHERE id=ANY($1::text[]) AND EXISTS (SELECT 1 FROM persistence_source_bindings b
+       JOIN persistence_requests r ON r.worktree_id=b.worktree_id WHERE b.source_id=sources.id AND r.recovery IS NOT NULL)
+     ORDER BY id COLLATE "C"`, [[...sourceIds]]);
+  return rows.map(r => r.id);
 }
 
 /** Whether the source's current incarnation has a company-brain ingestion receipt. */
@@ -139,13 +152,13 @@ export async function readDatabaseClock(exec: LegacyUnscopedRead): Promise<strin
 /** Every live page (of one source when given) with its aliases and knowledge revision, by source then slug. */
 export async function listLinkPageMetadata(exec: LegacyUnscopedRead, sourceId?: string): Promise<LinkPageMetadataRow[]> {
   return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id COLLATE "C", slug COLLATE "C"`, sourceId ? [sourceId] : []);
 }
 
 /** The live pages of one source whose slug is in `slugs`, by slug (a sync's link extraction). */
 export async function listLinkPageMetadataForSlugs(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<LinkPageMetadataRow[]> {
   return exec.executeRaw<LinkPageMetadataRow>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...slugs]]);
+        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug COLLATE "C"`, [sourceId, [...slugs]]);
 }
 
 /**

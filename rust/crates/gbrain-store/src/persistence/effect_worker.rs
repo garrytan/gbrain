@@ -497,3 +497,62 @@ impl Store {
         self.write(|tx| settle_effect_in(tx, &*self.env, action, spec))
     }
 }
+
+/// `rearmLinksEffects`'s spec: the source, the requests whose `links` effects re-arm, and optionally their slugs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinksRearm {
+    pub source_id: String,
+    pub request_ids: Vec<String>,
+    #[serde(default)]
+    pub slugs: Option<Vec<String>>,
+}
+
+impl Store {
+    /// `rearmLinksEffects(opts)`: queues again, unclaimed and due now, each `links` effect of the
+    /// requests in the source (of the slugs when given) that carries no `batch_reconciled` and no
+    /// recovery, and marks it re-armed. Returns how many re-armed. The store keeps no persistence
+    /// protocol setting, so the protocol predicate always holds.
+    pub fn rearm_links_effects(&self, spec: &LinksRearm) -> Result<u64> {
+        if spec.request_ids.is_empty() {
+            return Ok(0);
+        }
+        let ids: Vec<String> = spec
+            .request_ids
+            .iter()
+            .map(|id| pg_uuid(id))
+            .collect::<Result<_>>()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut rearmed = 0u64;
+            for mut e in all_effects(&*tx)? {
+                let slug_ok = match &spec.slugs {
+                    None => true,
+                    Some(slugs) => e
+                        .data
+                        .get("slug")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| slugs.iter().any(|w| w == s)),
+                };
+                if e.kind != "links"
+                    || e.source_id.as_deref() != Some(spec.source_id.as_str())
+                    || !ids.iter().any(|id| *id == e.request_id.to_lowercase())
+                    || !slug_ok
+                    || e.data.get("batch_reconciled").is_some()
+                    || e.recovery.is_some()
+                {
+                    continue;
+                }
+                e.state = "queued".into();
+                release(&mut e, now);
+                e.next_attempt_at_us = now;
+                e.error_code = None;
+                e.outcome = None;
+                e.data = with_key(e.data, "batch_reconciled", Value::Bool(true));
+                write_effect(tx, &e)?;
+                rearmed += 1;
+            }
+            Ok(rearmed)
+        })
+    }
+}

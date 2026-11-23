@@ -87,6 +87,32 @@ export async function deleteOpCheckpointPaths(direct: Direct, op: string, finger
 }
 
 /**
+ * The first element of each named parent's completed keys (`completed_keys->0`, NULL for an empty array), one row per
+ * parent found, in no stated order. The sync import provenance read (persistence/sync-holds.ts
+ * readSyncImportProvenances) keeps one record per page this way. Runs on the engine's own `executeRaw`, so a caller
+ * inside `transaction()` reads its own writes; the text is the statement sync-holds.ts ran, byte for byte.
+ */
+export async function readOpCheckpointRecords(raw: Raw, op: string, fingerprints: readonly string[]): Promise<unknown[]> {
+  if (!fingerprints.length) return [];
+  const rows = await raw.executeRaw<{ record: unknown }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])',
+    [op, [...fingerprints]]);
+  return rows.map(row => row.record);
+}
+
+/**
+ * Each row's parent replaced with the one-element array `[record]`, stamped now; the child paths stay. The caller
+ * passes each fingerprint once (sync-holds.ts recordSyncImportProvenances keeps the last value for a page). One
+ * statement; `$2` binds through `::text::jsonb`, never `::jsonb` (CLAUDE.md, the positional double-encode trap).
+ */
+export async function writeOpCheckpointRecords(raw: Raw, op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>): Promise<void> {
+  if (!rows.length) return;
+  await raw.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
+  [op, JSON.stringify(rows.map(({ fingerprint, record }) => ({ fingerprint, record })))]);
+}
+
+/**
  * Deletes the checkpoints whose stamp is older than `ttlDays` days and that no exemption holds, and returns how many
  * it deleted; the `op_checkpoint_paths` foreign key (`ON DELETE CASCADE`) drops their paths. The exemptions are listed
  * at op-checkpoint.ts `purgeStaleCheckpoints`, the caller, which turns a failure into 0.

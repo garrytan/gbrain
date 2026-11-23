@@ -2,7 +2,7 @@
  * Tests for probeHealth(), probeLiveness(), and HEALTH_TIMEOUT_MS in
  * src/commands/serve-http.ts.
  *
- * v0.28.10 split: /health now calls probeLiveness (engine.executeRaw('SELECT 1'));
+ * v0.28.10 split: /health now calls probeLiveness (engine.pingStore, a `SELECT 1` round trip);
  * the heavier
  * probeHealth (engine.getStats()) moved behind requireAdmin at
  * /admin/api/full-stats. Both share ProbeHealthResult so the route handlers
@@ -18,6 +18,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { HEALTH_TIMEOUT_MS, probeHealth, probeLiveness } from '../src/commands/serve-http.ts';
+import { pingStore } from '../src/core/engine-sql/health.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /**
@@ -29,7 +30,9 @@ function makeMockEngine(getStats: () => Promise<unknown>): BrainEngine {
 }
 
 /**
- * Minimal liveness engine: probeLiveness only exercises executeRaw.
+ * Minimal liveness engine: probeLiveness calls `pingStore`, which every SQL engine answers through
+ * engine-sql/health.ts `pingStore` over its executeRaw; the mock wires the same helper, so the statement and the
+ * abort signal still reach the `executeRaw` stub.
  */
 function makeMockLivenessEngine(
   executeRaw: (
@@ -38,7 +41,11 @@ function makeMockLivenessEngine(
     opts?: { signal?: AbortSignal },
   ) => Promise<unknown>,
 ): BrainEngine {
-  return { executeRaw } as unknown as BrainEngine;
+  const engine = {
+    executeRaw,
+    pingStore: (opts?: { signal?: AbortSignal }) => pingStore(engine as never, opts),
+  };
+  return engine as unknown as BrainEngine;
 }
 
 describe('HEALTH_TIMEOUT_MS', () => {

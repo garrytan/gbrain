@@ -7,7 +7,6 @@
  * ledger before it changes.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { TAKE_PREIMAGE_SQL } from '../../engine-sql/takes-reads.ts';
 import type { GenerationAdapter } from '../contract.ts';
 import type { TakePreimage } from '../../engine-sql/takes-reads.ts';
 import { fenceRowKey, publishFenceGeneration, takeRowIdentity, TAKE_FENCE_KIND, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';

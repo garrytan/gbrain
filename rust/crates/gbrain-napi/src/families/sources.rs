@@ -55,6 +55,31 @@ impl Brain {
         })
     }
 
+    /// `markSourceSynced(id, { incarnation? }?)`: whether a source was stamped.
+    #[napi]
+    pub fn mark_source_synced<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        options: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.mark_source_synced(&id, &arg(options, "markSourceSynced options")?)
+        })
+    }
+
+    /// `advanceSyncCheckpoint(input)`: `{ advanced, pinnedSlugMode }`.
+    #[napi]
+    pub fn advance_sync_checkpoint<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.advance_sync_checkpoint(&required(input, "advanceSyncCheckpoint input")?)
+        })
+    }
+
     /// `setSourceArchived(id, archived)`: whether the source exists.
     #[napi]
     pub fn set_source_archived<'env>(
@@ -94,6 +119,16 @@ impl Brain {
     #[napi]
     pub fn count_repo_bound_sources<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, |s| s.count_repo_bound_sources())
+    }
+
+    /// `readSourceLastCommit(id)`: the commit the source's last sync advanced to, or `null`.
+    #[napi]
+    pub fn read_source_last_commit<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_source_last_commit(&id))
     }
 
     /// `listSourceLocalPaths()`: every non-empty source local path.

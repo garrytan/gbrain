@@ -29,8 +29,8 @@ export const readExportWithdrawalLedgerBytes: StoreMember<[sourceId: string], nu
   storeCall({ member: 'readExportWithdrawalLedgerBytes', sourceId }, () => brain.readExportWithdrawalLedgerBytes(sourceId));
 
 /**
- * The source's withdrawals by visibility, fact hash and subject (`cli_reads::export::list_export_withdrawals`). The store
- * keeps no purge tombstones, so every row has `purged` false. `withdrawn_at` comes back a Date, as on PGLite.
+ * The source's withdrawals and fact purge tombstones (`purged` true) by visibility, fact hash and subject
+ * (`cli_reads::export::list_export_withdrawals`). `withdrawn_at` comes back a Date, as on PGLite.
  */
 export const listExportWithdrawals: StoreMember<[sourceId: string], ExportWithdrawalRow[]> = async (brain, sourceId) => {
   const rows: ExportWithdrawalRow[] = await storeCall({ member: 'listExportWithdrawals', sourceId }, () => brain.listExportWithdrawals(sourceId));
@@ -65,7 +65,7 @@ export const readBodyManifestRows: StoreMember<[pageId: number, generation: numb
 export const readBodyManifestMeta: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestMeta[]> = (brain, pageId, occurrenceIds, generation) =>
   storeCall({ member: 'readBodyManifestMeta' }, () => brain.readBodyManifestMeta(pageId, [...occurrenceIds], generation));
 
-/** The sources with an access policy (`cli_reads::export::list_access_policy_source_ids`): none, as the store keeps no folder rules. */
+/** The sources with access state, by id (`cli_reads::export::list_access_policy_source_ids`, `access_policy_state`). */
 export const listAccessPolicySourceIds: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listAccessPolicySourceIds' }, () => brain.listAccessPolicySourceIds());
 

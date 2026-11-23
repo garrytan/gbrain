@@ -44,15 +44,15 @@ const DAY_US: i64 = 86_400_000_000;
 
 /// What is stored for an ingest log row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct IngestRecord {
-    id: u64,
-    source_id: String,
-    source_type: String,
-    source_ref: String,
+pub(crate) struct IngestRecord {
+    pub(crate) id: u64,
+    pub(crate) source_id: String,
+    pub(crate) source_type: String,
+    pub(crate) source_ref: String,
     #[serde(deserialize_with = "crate::jsonb::de_value")]
-    pages_updated: Value,
-    summary: String,
-    created_at_us: i64,
+    pub(crate) pages_updated: Value,
+    pub(crate) summary: String,
+    pub(crate) created_at_us: i64,
     /// `writer_version`, `writer_host_id`, `writer_segment_reader` (migration v254): the logging
     /// binary's stamp. A record written before the stamp reads them as NULL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,6 +255,12 @@ fn json_has_nul(value: &Value) -> bool {
     }
 }
 
+/// `jsonb` keeps one value per key (the last) and orders keys by length, then bytes
+/// ([`crate::jsonb::order`]).
+pub(crate) fn jsonb_normalize(value: Value) -> Value {
+    crate::jsonb::order(value)
+}
+
 fn not_null(column: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
@@ -322,6 +328,13 @@ impl Store {
                 },
             )?
             .len())
+    }
+
+    /// `pingStore`: the liveness round trip. Opens a read snapshot and drops it; an error means
+    /// the store cannot serve a read.
+    pub fn ping_store(&self) -> Result<()> {
+        let _read = self.read()?;
+        Ok(())
     }
 
     /// `getStats`: page, chunk, embedding, link, tag and timeline counts, and live pages per
@@ -830,6 +843,30 @@ impl Store {
         }
         Ok(json!({ "baseline": baseline_rows, "today": today_rows }))
     }
+}
+
+/// The `ingest_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<IngestRecord>(read, &[keys::INGEST_LOG])?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![
+                ("summary", ProbeCell::text(&r.summary)),
+                (
+                    "pages_updated",
+                    if r.pages_updated.is_null() {
+                        ProbeCell::Null
+                    } else {
+                        ProbeCell::jsonb(&r.pages_updated)
+                    },
+                ),
+            ],
+            source_id: Some(r.source_id),
+        })
+        .collect())
 }
 
 #[cfg(test)]

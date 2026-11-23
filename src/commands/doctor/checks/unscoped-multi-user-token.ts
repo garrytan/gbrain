@@ -48,7 +48,7 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
     if (actsForAudience(row)) continue;
     credentials.push({ subject: { kind: 'legacy_token', name: String(row.name) }, grant: grantFromTokenRow(row), member: typeof row.member_id === 'string' ? row.member_id : null });
   }
-  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id')) {
+  for (const row of await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id COLLATE "C"')) {
     if (actsForAudience(row)) continue;
     const grant = grantFromRow(row);
     credentials.push({ subject: { kind: 'oauth_client', id: grant.clientId, name: grant.clientName || undefined }, grant: grantFromClient(grant), member: typeof row.member_id === 'string' ? row.member_id : null });

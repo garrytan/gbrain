@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityCardMatch, EntityCardRow, FuzzyEntityCandidateRow, IgnoredLabelPageRow, LivePageTypeRow, MentionDueQuery, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, TrigramCandidateQuery, TrigramCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, SiblingCandidateQuery, SiblingCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { callerAccessAllowedSql, currentCallerAccess, privatePagesFilterForCaller, remoteReadFloorSql, withCallerAccess, withoutCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
@@ -15,10 +15,29 @@ import { ownerOnlyFormIn, storePagePolicy, storePageTextPolicy, type StorePrivac
 export const readMentionLastPass: StoreMember<[sourceId?: string | null], string | null> = (brain, sourceId) =>
   storeCall({ member: 'readMentionLastPass', sourceId: sourceId ?? undefined }, () => brain.readMentionLastPass(sourceId ?? null));
 
+/** The mention pass's status rows (the store's mention state); a source the pass never ran on has none, and coverage counts its live pages. */
+export const readMentionIndexStatus: StoreMember<[sourceIds: readonly string[]], MentionIndexStatusRow[]> = (brain, sourceIds) =>
+  storeCall({ member: 'readMentionIndexStatus' }, () => brain.readMentionIndexStatus({ sourceIds: [...sourceIds] }));
+
+/** The source's live pages: the due count at a version no page state holds (-1), so every live page is due whatever the pass has scanned. */
+export const countLivePagesInSource: StoreMember<[sourceId: string], number> = async (brain, sourceId) =>
+  Number(await storeCall({ member: 'countLivePagesInSource', sourceId }, () => brain.countPagesDueForMentions({ sourceId, mentionVersion: -1 })));
+
+/** The source's live pages written at or after `since` that have no mention state at their content and `mentionVersion`. */
+export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number], number> = async (brain, sourceId, since, mentionVersion) =>
+  Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () => brain.countMentionDueSince({ sourceId, since, mentionVersion })));
+
+/** The compare-and-set on the source's status row's fingerprint; a source with no row is untouched. */
+export const recountMentionIndexStatus: StoreMember<[sourceId: string, recount: MentionIndexRecount], void> = async (brain, sourceId, recount) => {
+  const r = takeOptions('recountMentionIndexStatus', recount, ['pending', 'fingerprint', 'expectedFingerprint']);
+  await storeCall({ member: 'recountMentionIndexStatus', sourceId }, () =>
+    brain.recountMentionIndexStatus({ sourceId, pending: r.pending, fingerprint: r.fingerprint, expectedFingerprint: r.expectedFingerprint ?? null }));
+};
+
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
   const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);
   return Number(await storeCall({ member: 'countPagesDueForMentions', sourceId: q.sourceId ?? undefined }, () =>
-    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null })));
+    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null, mentionVersion: opts.mentionVersion, aliases: opts.aliases ?? null })));
 };
 
 export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: SiblingCandidateQuery], SiblingCandidateRow[]> = (brain, sourceId, q) => {
@@ -124,6 +143,30 @@ export const findFuzzyEntityCandidates: StoreMember<[sourceId: string, title: st
 export const findExactBasenameCandidates: StoreMember<[sourceId: string, slugs: readonly string[]], string[]> = (brain, sourceId, slugs) =>
   storeCall({ member: 'findExactBasenameCandidates', sourceId }, () => brain.findExactBasenameCandidates(sourceId, [...slugs]));
 
+/** The live page's type and frontmatter, or null; the store has no statement deadline, so `timeoutMs` is not read. */
+export const readLivePageFrontmatter: StoreMember<[sourceId: string, slug: string, opts?: { timeoutMs?: number }], IgnoredLabelPageRow | null> =
+  async (brain, sourceId, slug, opts) => {
+    takeOptions('readLivePageFrontmatter', opts, [], ['timeoutMs']);
+    return (await storeCall({ member: 'readLivePageFrontmatter', sourceId }, () => brain.readLivePageFrontmatter(sourceId, slug)) as IgnoredLabelPageRow | null) ?? null;
+  };
+
+/** The live entity page and the pages that name or link to it; the store matches the word pattern itself. */
+export const readEntityAnchoredPages: StoreMember<[sourceId: string, entitySlug: string], EntityAnchoredPages> =
+  (brain, sourceId, entitySlug) =>
+    storeCall({ member: 'readEntityAnchoredPages', sourceId }, () => brain.readEntityAnchoredPages(sourceId, entitySlug)) as Promise<EntityAnchoredPages>;
+
+/** The title of each page id, deleted or not. */
+export const readPageTitlesById: StoreMember<[ids: readonly number[]], Array<{ id: number; title: string }>> =
+  (brain, ids) =>
+    storeCall({ member: 'readPageTitlesById' }, () => brain.readPageTitlesById([...ids])) as Promise<Array<{ id: number; title: string }>>;
+
+/** The live pages at the slugs in the sources; the store's ISO date string becomes the Date both SQL engines return. */
+export const readTextMentionPages: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], TextMentionPageRow[]> =
+  async (brain, sourceIds, slugs) => {
+    const rows = await storeCall({ member: 'readTextMentionPages' }, () => brain.readTextMentionPages([...sourceIds], [...slugs])) as TextMentionPageRow[];
+    return rows.map(r => ({ ...r, date: r.date === null ? null : new Date(r.date) }));
+  };
+
 /** The store returns every live labelled page with no visibility key; the label rule itself is the TypeScript twin of the SQL. */
 export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope: { slugs: readonly string[] } | { since: string },
   opts?: { limit?: number; timeoutMs?: number }], IgnoredLabelPageRow[]> = async (brain, sourceId, scope, opts) => {
@@ -133,3 +176,17 @@ export const readIgnoredPrivacyLabelPages: StoreMember<[sourceId: string, scope:
     'slugs' in scope ? { slugs: [...new Set(scope.slugs)] } : { since: scope.since })) as IgnoredLabelPageRow[];
   return rows.filter(row => ignoredPrivacyLabels(row).length > 0).slice(0, limit);
 };
+
+export const listUnretiredPagesBySlugPattern: StoreMember<[sourceId: string, patterns: readonly string[], limit: number], SlugPatternPageRow[]> =
+  (brain, sourceId, patterns, limit) => storeCall({ member: 'listUnretiredPagesBySlugPattern', sourceId }, () =>
+    brain.listUnretiredPagesBySlugPattern(sourceId, [...patterns], Math.max(0, Math.floor(limit))));
+
+export const listNameVariantCandidates: StoreMember<[sourceId: string, q: NameVariantCandidateQuery], NameVariantCandidateRow[]> = (brain, sourceId, q) => {
+  takeOptions('listNameVariantCandidates', q, ['types', 'slugPatterns', 'probes', 'limit']);
+  return storeCall({ member: 'listNameVariantCandidates', sourceId }, () => brain.listNameVariantCandidates(sourceId, {
+    types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }));
+};
+
+export const countDistinctInboundLinkers: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], InboundLinkerCountRow[]> =
+  (brain, sourceIds, slugs) => storeCall({ member: 'countDistinctInboundLinkers' }, () =>
+    brain.countDistinctInboundLinkers([...sourceIds], [...slugs]));

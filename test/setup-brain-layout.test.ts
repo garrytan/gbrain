@@ -20,7 +20,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { runCli, type CliResult } from './helpers/cli-spawn.ts';
+import { runCli, type CliResult, envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 import { COMPANY_PAGES, LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes, askBrainShape, describeLayout, callEgress } from '../src/commands/setup-brain-layout.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -104,7 +104,7 @@ describe('setup --shape personal', () => {
     expect(facts.stdout).toContain('status: stub');
 
     const edited = '---\ntitle: Facts about me\n---\n# Facts about me\n\n- 2026-11-15: I like tea. Source: I said so.\n';
-    const put = Bun.spawnSync([b.bin, 'put', 'me/facts', '--force'], { stdin: new TextEncoder().encode(edited), stdout: 'pipe', stderr: 'pipe', env: Object.fromEntries(Object.entries({ ...process.env, ...envOf(b) }).filter(([, v]) => v !== undefined)) as Record<string, string> });
+    const put = Bun.spawnSync([b.bin, 'put', 'me/facts', '--force'], { stdin: new TextEncoder().encode(edited), stdout: 'pipe', stderr: 'pipe', env: Object.fromEntries(Object.entries({ ...envWithoutDatabaseUrl(), ...envOf(b) }).filter(([, v]) => v !== undefined)) as Record<string, string> });
     expect(put.exitCode).toBe(0);
     const again = await setup(b, ['claude-code', '--shape', 'personal']);
     expect(again.exitCode).toBe(0);
