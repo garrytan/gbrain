@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+When the check for pages a newer page replaced fails (in the ranking, or when a slug-shaped query puts a page in the top slot) (a statement timeout or a dropped connection), search and query now return the degraded marker supersede_check_failed (reason timeout or provider_error) in the response's degraded stages, and the degraded-recall notice says results may include outdated pages, in place of an unmarked ranking where the outdated page came first with no flag. The same rows come back either way; the marker only adds information. A supersedes link written while a server is running is now seen at once by the next search; a running server used to keep showing the outdated page as current for up to 5 minutes after the first link in the brain. Results on a healthy brain are identical.

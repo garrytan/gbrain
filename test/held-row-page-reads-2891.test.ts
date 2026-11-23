@@ -134,7 +134,7 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
         tokens[name] = m.token;
         if (member) await bindCredential(engine, { kind: 'token', id: m.id }, { member }); else await readsUnscopedOnPurpose(engine, m.id);
       };
-      await mint('owner', OWNER); await mint('bob', BOB); await mint('unbound'); await mint('writer', undefined, ['read', 'write']);
+      await mint('owner', OWNER); await mint('bob', BOB, ['read', 'write']); await mint('unbound'); await mint('writer', undefined, ['read', 'write']);
       await setOwner(engine, OWNER);
       for (const p of shape === 'repo' ? [LIA, MAX] : [LIA]) {
         const res = await call('writer', 'remember', { fact: p.claim, provenance: 'chat', entity: p.slug, request_id: randomUUID() });
@@ -194,10 +194,13 @@ for (const kind of testBackends()) for (const shape of ['repo', 'repo-less'] as 
     }, 60_000);
 
     test('a member still reads a held row on their own member page', async () => {
-      const slug = memberPageSlug(BOB);
-      await call('local', 'put_page', { slug, content: memberPageFrontmatter(BOB) + '# Memory\n\n## Facts\n\n' + renderFactsTable([row(1, 'Bob likes tea'), row(2, 'Bob owes rent walrusheld')] as never) + '\n', request_id: randomUUID() });
-      await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw("UPDATE facts SET visibility='private' WHERE source_markdown_slug=$1 AND fact LIKE '%walrusheld'", [slug]), TEST_WRITE_ATTRIBUTION));
-      expect(await stored('Bob owes rent walrusheld')).toEqual(['private']);
+      const slug = memberPageSlug(BOB), claim = 'Bob owes rent walrusheld';
+      await call('local', 'remember', { fact: claim, provenance: 'chat', entity: slug, visibility: 'private', request_id: randomUUID() });
+      for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND fact=$2', ['default', claim]))
+        await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier='user_confirmed' WHERE id=$1", [r.id])), TEST_WRITE_ATTRIBUTION));
+      await call('bob', 'put_page', { slug, content: memberPageFrontmatter(BOB) + '# Memory\n\n## Facts\n\n' + renderFactsTable([row(1, 'Bob likes tea'), row(2, claim)] as never) + '\n', request_id: randomUUID() });
+      expect(await stored(claim)).toEqual(['private', 'private']);
+      expect(await heldProposalRef(engine, 'default', claim)).toMatch(/^tp\d+$/);
       expect(await call('bob', 'get_page', { slug, include_content: true })).toContain('walrusheld');
       expect(await call('unbound', 'get_page', { slug, include_content: true })).not.toContain('walrusheld');
     }, 120_000);

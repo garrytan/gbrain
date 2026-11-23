@@ -21,7 +21,9 @@
  * Supersession-filtered: a page that a `supersedes` link marks stale is
  * NEVER top-injected by this tier (the organic pipeline still surfaces it,
  * downranked + stamped, via applySupersedeDownrank). Current canon wins the
- * identity slot.
+ * identity slot. When that supersession read fails the hits are kept (a failed
+ * check never hides a row) and the tier records `supersede_check_failed` on
+ * `opts.degraded`, so the response says currency was not verified.
  *
  * Wiring: applyExactLookupTier runs right after applyAliasHop on all three
  * hybrid return paths, gated on isLookupShapedQuery (pure, cheap). Hits
@@ -40,11 +42,14 @@
 import { pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
 import { hasReadPolicy } from './read-policy-sql.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { SearchResult, PageReadPolicy } from '../types.ts';
+import type { SearchResult, PageReadPolicy, DegradedStageEntry } from '../types.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { isTimeoutError, pushDegraded } from './hybrid/degraded.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { isLookupShapedQuery } from './query-intent.ts';
 import { applySupersedeDownrank } from './hybrid.ts';
-import { isExcludedIdentity } from './alias-hop.ts';
+import { identityTypeAllowed, isExcludedIdentity } from './alias-hop.ts';
 import { identifierKeywordQuery, parseIdentifier, textContainsIdentifier } from './identifier-query.ts';
 
 /** Keyword rows read for an identifier query before the containment check. */
@@ -83,6 +88,19 @@ export interface ExactLookupOpts extends PageReadPolicy {
   excludeSlugs?: string[];
   /** Resolved prefix excludes (see IdentityTierOpts in hybrid.ts). */
   excludeSlugPrefixes?: string[];
+  /**
+   * The response's degraded list. When the supersession read that keeps a replaced page out of the identity slot
+   * fails, the tier records `supersede_check_failed` here (the same stage and reasons as the post-fusion stage).
+   */
+  degraded?: DegradedStageEntry[];
+}
+
+/** The page-read keys of the tier's options: the policy the supersession read runs under, never the tier's own filters. */
+function supersedePolicy(opts: ExactLookupOpts): PageReadPolicy | undefined {
+  if (!hasReadPolicy(opts)) return undefined;
+  const { sourceId, sourceIds, excludePrivate, requireSafeChunks, takesHoldersAllowList, minTrust, suppressFlagged } = opts;
+  return Object.fromEntries(Object.entries({ sourceId, sourceIds, excludePrivate, requireSafeChunks, takesHoldersAllowList, minTrust, suppressFlagged })
+    .filter(([, value]) => value !== undefined)) as PageReadPolicy;
 }
 
 /** Max distinct sources probed for a slug-shaped query on a federated call. */
@@ -105,14 +123,9 @@ export async function structuralExactLookup(
   const seen = new Set<string>();
   // #4480 — mirror the scored arms' shape filters so the tier can never
   // inject a page the caller explicitly filtered out.
-  const typeGate = (t: string | undefined | null): boolean => {
-    if (opts.type && t !== opts.type) return false;
-    if (opts.types && opts.types.length > 0 && (t == null || !opts.types.includes(t))) return false;
-    return true;
-  };
   const push = (r: SearchResult) => {
     if (isExcludedIdentity(r.slug, opts)) return;
-    if (!typeGate(r.type)) return;
+    if (!identityTypeAllowed(r.type, opts)) return;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -197,9 +210,14 @@ export async function structuralExactLookup(
   // `superseded`); tier scores are assigned by the caller afterwards, so the
   // stage's score mutation on dropped rows is irrelevant.
   try {
-    await applySupersedeDownrank(hits, engine, hasReadPolicy(opts) ? opts : undefined);
-  } catch {
-    // fail-open: filter unavailable (pre-links schema) → keep hits
+    await applySupersedeDownrank(hits, engine, supersedePolicy(opts));
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
+    // A brain without the links table has no supersedes edge, so keeping the hits is the true answer. Any other
+    // failure is not an answer: keep the hits (never hide a row) but say currency was not verified.
+    if (!isMissingSchemaObject(err, 'table', 'links') && opts.degraded) {
+      pushDegraded(opts.degraded, 'supersede_check_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
+    }
   }
   return hits.filter((h) => h.superseded !== true).slice(0, MAX_EXACT_LOOKUP_INJECT);
 }
@@ -223,7 +241,8 @@ export async function applyExactLookupTier(
   let hits: SearchResult[];
   try {
     hits = await structuralExactLookup(engine, query, opts);
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return results;
   }
   return applyExactLookupHits(results, hits);

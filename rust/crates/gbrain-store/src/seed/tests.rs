@@ -17,6 +17,7 @@ use serde_json::json;
 const SEED: &str = "seed-1";
 const REV: &str = "11111111-1111-4111-8111-111111111111";
 const INCARNATION: &str = "22222222-2222-4222-8222-222222222222";
+const OTHER_REV: &str = "33333333-3333-4333-8333-333333333333";
 
 fn row(pairs: &[(&str, &str)]) -> SeedRow {
     pairs
@@ -554,9 +555,10 @@ fn facts_keep_ids_tiers_and_embeddings() {
     ]);
     let r = import(&s, "facts", vec![fact.clone()]);
     assert_eq!(r.imported, 1);
-    assert_eq!(r.unmapped_columns, vec!["write_request_id"]);
+    assert!(r.unmapped_columns.is_empty());
     let read = s.read().unwrap();
     let got = read_fact(&*read, 501).unwrap().unwrap();
+    assert_eq!(got.receipt.write_request_id.as_deref(), Some("req-1"));
     assert_eq!(got.fact, "Alice founded acme");
     assert_eq!(got.visibility, "world");
     assert_eq!(got.valid_from_us, us("2026-01-01T00:00:00Z"));
@@ -628,6 +630,142 @@ fn takes_keep_ids_rows_and_current_vectors() {
     assert_eq!(err.code, CONSTRAINT_VIOLATION);
 }
 
+/// The columns the store keeps since master added them: the sources' chunker version, a link's
+/// assertion tense, the tier, origin and write receipt of timeline entries and takes, a page's
+/// revision receipt and the columns of a derived page alias.
+#[test]
+fn the_columns_master_stores_are_kept_not_reported() {
+    let s = store();
+    let r = import(
+        &s,
+        "sources",
+        vec![row(&[
+            ("id", "wiki"),
+            ("name", "Wiki"),
+            ("config", "{}"),
+            ("archived", "f"),
+            ("incarnation", INCARNATION),
+            ("created_at", "2025-12-31 23:59:59+00"),
+            ("chunker_version", "3"),
+        ])],
+    );
+    assert!(r.unmapped_columns.is_empty());
+    let read = s.read().unwrap();
+    let source = crate::sources::read_source(&*read, "wiki")
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.chunker_version.as_deref(), Some("3"));
+    drop(read);
+
+    let mut page = page_row("7", "people/alice-example");
+    page.insert("revision_write_request_id".into(), Some(REV.into()));
+    page.insert("revision_principal_kind".into(), Some("token".into()));
+    page.insert("revision_principal_id".into(), Some("tok-1".into()));
+    let r = import(
+        &s,
+        "pages",
+        vec![page, page_row("9", "companies/acme-example")],
+    );
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let read = s.read().unwrap();
+    let stored = crate::pages::read_page_by_id(&*read, 7).unwrap().unwrap();
+    assert_eq!(stored.revision_receipt.request_id.as_deref(), Some(REV));
+    assert_eq!(
+        stored.revision_receipt.principal_kind.as_deref(),
+        Some("token")
+    );
+    assert_eq!(
+        stored.revision_receipt.principal_id.as_deref(),
+        Some("tok-1")
+    );
+    drop(read);
+
+    let mut link = link_row("21", "7", "9", "works_at");
+    link.insert("assertion_tense".into(), Some("past".into()));
+    let r = import(&s, "links", vec![link]);
+    assert!(r.unmapped_columns.is_empty());
+    let read = s.read().unwrap();
+    let stored: LinkRecord = get_json(&*read, &keys::link(7, 21)).unwrap().unwrap();
+    assert_eq!(stored.assertion_tense.as_deref(), Some("past"));
+    drop(read);
+
+    let receipt = [
+        ("write_request_id", REV),
+        ("write_principal_kind", "token"),
+        ("write_principal_id", "tok-1"),
+        ("last_write_request_id", OTHER_REV),
+        ("last_write_principal_kind", "owner"),
+        ("last_write_principal_id", "garry"),
+        ("last_written_at", "2026-06-01 00:00:00+00"),
+    ];
+    let mut entry = row(&[
+        ("id", "12"),
+        ("page_id", "7"),
+        ("date", "2026-05-06"),
+        ("source", "meeting"),
+        ("summary", "Raised a seed round"),
+        ("detail", ""),
+        ("created_at", "2026-05-06 10:00:00+00"),
+        ("trust_tier", "user_confirmed"),
+        ("write_origin", r#"{"kind": "cli"}"#),
+    ]);
+    entry.extend(row(&receipt));
+    let r = import(&s, "timeline_entries", vec![entry]);
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let read = s.read().unwrap();
+    let stored = crate::timeline::read_entry(&*read, 7, "2026-05-06", 12)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.trust.trust_tier.as_deref(), Some("user_confirmed"));
+    assert_eq!(stored.trust.write_origin, Some(json!({"kind": "cli"})));
+    assert_eq!(stored.receipt.write_request_id.as_deref(), Some(REV));
+    assert_eq!(
+        stored.receipt.last_write_principal_id.as_deref(),
+        Some("garry")
+    );
+    assert_eq!(
+        stored.receipt.last_written_at_us,
+        Some(us("2026-06-01T00:00:00Z"))
+    );
+    drop(read);
+
+    let mut take = take_row("31", "1", "Alice ships");
+    take.insert("trust_tier".into(), Some("user_confirmed".into()));
+    take.extend(row(&receipt));
+    let r = import(&s, "takes", vec![take]);
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let read = s.read().unwrap();
+    let stored = crate::takes::read_take(&*read, 31).unwrap().unwrap();
+    assert_eq!(stored.trust.trust_tier.as_deref(), Some("user_confirmed"));
+    assert_eq!(
+        stored.receipt.write_principal_kind.as_deref(),
+        Some("token")
+    );
+    drop(read);
+
+    let derived = row(&[
+        ("source_id", "default"),
+        ("alias_norm", "alice"),
+        ("slug", "people/alice-example"),
+        ("origin", "declared"),
+        ("case_sensitive", "t"),
+        ("alias_text", "Alice"),
+    ]);
+    let r = import(&s, "page_aliases", vec![derived]);
+    assert_eq!((r.imported, r.losses.len()), (1, 0));
+    assert!(r.unmapped_columns.is_empty());
+    let mut plain = row(&[
+        ("source_id", "default"),
+        ("alias_norm", "ally"),
+        ("slug", "people/alice-example"),
+        ("origin", "frontmatter"),
+        ("case_sensitive", "t"),
+    ]);
+    plain.insert("alias_text".into(), None);
+    let r = import(&s, "page_aliases", vec![plain]);
+    assert_eq!(r.losses.get("frontmatter_alias_columns"), Some(&1));
+}
+
 #[test]
 fn counters_never_go_down() {
     let s = seeded_pages();
@@ -682,7 +820,7 @@ fn behind_page_row(id: &str, slug: &str) -> SeedRow {
 
 fn job(s: &Store, slug: &str) -> crate::persistence::JobRecord {
     let read = s.read().unwrap();
-    crate::persistence::read_job(&*read, "default", slug)
+    crate::persistence::read_page_job(&*read, "default", slug)
         .unwrap()
         .expect("a projection job")
 }

@@ -25,6 +25,8 @@ import {
 } from '../shadow/state.ts';
 
 export interface EngineShadowDeps {
+  /** The brain this command selects (`--brain`, GBRAIN_BRAIN_ID, a mount); default resolved the way every command does. */
+  brainId?: () => string;
   /** The brain config; default loadConfig() (the host brain). */
   config?: () => Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'> | null;
   /** The addon loader `start --yes` runs; default the real loader (installed addon only, no network). */
@@ -122,7 +124,20 @@ export function shadowPlan(brain: string, primaryEngine: string, dir: string, o:
   return { plan, hash };
 }
 
-function resolveBrain(deps: EngineShadowDeps): { key: string; dir: string; engine: string } {
+/** The brain this process resolved (--brain, GBRAIN_BRAIN_ID, .gbrain-mount, a mount path); 'unresolved' when resolution fails, so the command refuses. */
+async function defaultBrainId(): Promise<() => string> {
+  const { brainRoutingArgs } = await import('../core/brain-resolver.ts');
+  return () => brainRoutingArgs()[1] ?? 'unresolved';
+}
+
+async function resolveBrain(deps: EngineShadowDeps): Promise<{ key: string; dir: string; engine: string }> {
+  // Shadow state is keyed by the host brain's config. A selected mounted brain would silently read, start or delete the host's.
+  // Loaded here, not at the top, so the command's flag table does not grow by everything the resolver imports.
+  const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
+  const selected = (deps.brainId ?? (await defaultBrainId()))();
+  if (selected !== HOST_BRAIN_ID) {
+    throw new UsageError(`Shadow mode covers the host brain only, and this command selects the brain ${selected}, so nothing was changed. Run it without --brain (and with GBRAIN_BRAIN_ID unset) to use the host brain.`);
+  }
   const config = (deps.config ?? (() => loadConfig()))();
   const id = config ? brainIdentity(config) : null;
   const key = config ? shadowBrainKey(config) : null;
@@ -150,7 +165,7 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
       });
       return await run(dir);
     }
-    const brain = resolveBrain(deps);
+    const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
     if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
     if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);

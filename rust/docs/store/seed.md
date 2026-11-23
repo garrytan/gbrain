@@ -66,10 +66,10 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `tags` | the tag and its `tag_source` | the page's `updated_at` and revisions do not move |
 | `content_chunks` | the chunk, its search meta, its vector and embedding state | a retired chunk (`retired_chunk`) and a body-segment chunk (`segment_chunk`) are dropped. An `embedding_text_hash` equal to the md5 of the chunk text becomes the store's own hash, so the chunk does not read as drifted; another hash is kept as it is |
 | `links` | the link and its three index keys | both pages, and the origin page when set, must exist |
-| `timeline_entries` | the entry and its dedup key | the page and the event page must exist |
-| `slug_aliases`, `page_aliases` | the alias | a held alias is skipped |
-| `facts` | the fact, its tier and its embedding | an id already held is skipped |
-| `takes` | the take and its row key | `claim_rev` starts at 0. The vector is kept only when it is current (hash equals the md5 of the claim, model and `embedded_at` set) |
+| `timeline_entries` | the entry, its dedup key, its tier and origin and its write receipt | the page and the event page must exist |
+| `slug_aliases`, `page_aliases` | the alias; a derived page alias (`declared`, `subject`) keeps `case_sensitive` and `alias_text` | a held alias is skipped |
+| `facts` | the fact, its tier, its write receipt and its embedding | an id already held is skipped |
+| `takes` | the take, its tier and origin, its write receipt and its row key | `claim_rev` starts at 0. The vector is kept only when it is current (hash equals the md5 of the claim, model and `embedded_at` set) |
 | `owner_only_marks` | the mark of a page | a mark on another table is dropped (`owner_only_mark_not_a_page`); the page need not exist (a hard delete leaves the mark) |
 | `slug_rename_history` | the old-to-new pair | alias rows are not touched |
 | `fact_withdrawals` | the withdrawal, with the primary's `fact_hash` and `withdrawn_at` | the hash is not computed again |
@@ -219,6 +219,7 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | `projection_job_seed_time` | the time of a projection job the page write queued when the primary row gave no job time (no job row, or one with no `updated_at`): the job keeps the seed transaction's time |
 | `vector_without_embedded_at` | the embed time of a vector with none (stored as time 0) |
 | `take_vector_not_current` | a take vector that is not current |
+| `frontmatter_alias_columns` | `case_sensitive` or `alias_text` on a `frontmatter` page alias (the store keeps both columns for the derived origins only) |
 | `owner_only_mark_not_a_page` | an owner-only mark on a table other than `pages` (the store marks pages only) |
 | `spend_hold_job_dropped` | the job of a spend hold (stored as null: jobs are not copied) |
 | `segmented_version_body` | the segments a segmented page version references (its generation and size are kept) |

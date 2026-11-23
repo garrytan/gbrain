@@ -1,21 +1,27 @@
 /**
  * Whole operations a client of a Rust brain's owner sends as one request. A write path that opens its own
  * transaction (the file and content imports) cannot run in a client, because transactions do not cross the owner
- * socket (routes.ts). Its entry point calls `forwardWholeOperation` first; on a client engine the whole operation runs
- * inside the owner, transaction included, and its result or error comes back as the in-process call would give it.
+ * socket (routes.ts). An entry point that calls `forwardWholeOperation` first has the whole operation run inside the
+ * owner, transaction included, and gets its result or error back as the in-process call would give it. No entry point
+ * calls it yet, so a client's page and memory writes still stop at write admission (persistence/admission-retry.ts),
+ * which opens a transaction, on `engine_capability_missing` reason `transactions`.
  *
  * Only data crosses: an option that is a function (a coordinator `prepare` seam) refuses with
  * `engine_capability_missing`, and so does a caller that is not the trusted local CLI (a remote MCP caller of a second
  * `gbrain serve`), whose authority the owner would not see. File paths are sent absolute, because the owner has its own
  * working directory.
  *
+ * When the owner has gone and the engine registered an election rerun (client.ts `rejoin`), the operation waits for
+ * it and goes to the new owner; when this process became the owner it ends `owner_unavailable` (`not_sent`) and the
+ * caller's retry runs it in process. An election that fails ends it with the election's own error (`rust_store_unreadable`
+ * stays permanent), and a cancel or deadline during the election ends it at once.
+ *
  * The owner side table is owner-ops.ts; it is kept apart so the import modules can call this one without a cycle.
  */
 import { resolve } from 'node:path';
-import { currentSubmissionAuthority } from '../../minions/submission-authority.ts';
-import { currentVerifiedLocalWriter } from '../../persistence/identity.ts';
-import { ownerConnectionFor } from './client.ts';
-import { ownerIpcRefusal } from './routes.ts';
+import { OperationError } from '../../ops/contract.ts';
+import { callerIsRemote, ownerConnectionFor, ownerRejoinFor, untilCallEnds, type OwnerConnection } from './client.ts';
+import { ownerGone, ownerIpcRefusal } from './routes.ts';
 
 export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
 
@@ -40,8 +46,7 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
 export function forwardWholeOperation<T>(engine: object, name: WholeOperationName, args: unknown[]): Promise<T> | undefined {
   const connection = ownerConnectionFor(engine);
   if (!connection) return undefined;
-  const caller = currentSubmissionAuthority();
-  if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
+  if (callerIsRemote()) {
     return Promise.reject(ownerIpcRefusal(name, 'a remote caller\'s whole operation is not sent to the brain owner'));
   }
   const sent = args.slice();
@@ -49,5 +54,18 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
   if (name === 'importManagedFiles' && Array.isArray(sent[0])) {
     sent[0] = (sent[0] as Array<{ filePath: string }>).map(file => ({ ...file, filePath: resolve(file.filePath) }));
   }
-  return connection.request('fn', name, sent) as Promise<T>;
+  const rejoin = connection.closed ? ownerRejoinFor(connection) : undefined;
+  if (!rejoin) return connection.request('fn', name, sent) as Promise<T>;
+  // The owner has gone: run the election again. A new owner elsewhere takes the operation; when this process became
+  // the owner it cannot run it from here, so it is not sent and the caller's retry runs it in process. An election
+  // that fails for its own reason (a store that will not open, a disconnect that won) ends the operation with that
+  // error, and a caller that cancels or passes its deadline during the election stops waiting at once.
+  const elected = untilCallEnds(name, args, rejoin()).catch((error: unknown) => {
+    if (!(error instanceof OperationError && error.code === 'owner_unavailable')) throw error;
+  });
+  return elected.then(() => {
+    const next: OwnerConnection | undefined = ownerConnectionFor(engine);
+    if (next && !next.closed) return next.request('fn', name, sent) as Promise<T>;
+    throw ownerGone(name, connection.hello.pid, false);
+  });
 }

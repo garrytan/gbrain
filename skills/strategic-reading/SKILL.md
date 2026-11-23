@@ -41,10 +41,10 @@ Where `book-mirror` personalizes a book to the reader's whole life,
 `strategic-reading` personalizes it to ONE current problem. Same shape
 (extract → analyze → mirror), different lens.
 
-**Canonical example:** a power-dynamics history book read against a
-specific gatekeeper-vs-incumbent fight, producing a tactical analysis that
-maps the book's playbook onto the situation with counter-tactics and a
-short/medium/long-term playbook.
+**Canonical example:** a military-strategy classic read against a
+startup's fight with a larger competitor, producing a tactical analysis
+that maps the book's playbook onto the situation with counter-tactics and
+a short/medium/long-term playbook.
 
 ## Inputs
 
@@ -139,10 +139,10 @@ Phase 5: Write and deliver
 
 ## Quality bar
 
-- **Every recommendation must cite the source.** Don't say "go direct to
-  the mayor" — say "go direct to the mayor, because when the protagonist
-  refused to be intimidated by a resignation threat (Ch 48), the bluff
-  that worked on five mayors finally failed."
+- **Every recommendation must cite the source.** Don't say "pick a
+  narrow market first" — say "pick a narrow market first, because the
+  author's smaller army won only where it chose ground the larger one
+  couldn't fill (Ch 6)."
 - **Direct quotes are mandatory.** The source's own words carry more
   weight than paraphrase.
 - **The analysis must be actionable.** Not "this is interesting" but "do

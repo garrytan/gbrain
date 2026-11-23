@@ -21,6 +21,15 @@ import { canonicalLookup } from '../../src/core/model-pricing.ts';
 
 let engine: PGLiteEngine;
 
+async function expectConceptHalt(reason: string) {
+  const rows = await engine.executeRaw<{ halt_count: number; halt_reasons: Record<string, number> }>(
+    "SELECT halt_count, halt_reasons FROM extract_rollup_7d WHERE kind = 'concepts'",
+  );
+  expect(rows).toHaveLength(1);
+  expect(Number(rows[0].halt_count)).toBe(1);
+  expect(rows[0].halt_reasons).toEqual({ [reason]: 1 });
+}
+
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
@@ -411,6 +420,7 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       _chat: (async () => { throw new Error('temporary provider failure'); }) as typeof import('../../src/core/ai/gateway.ts').chat,
     });
     expect((await engine.getPage('concepts/error-theme'))?.frontmatter.synthesis_mode).toBe('error_fallback');
+    await expectConceptHalt('item_error');
   });
 
   test('an empty model response is a truthful warning and error fallback', async () => {
@@ -638,6 +648,7 @@ describe('runPhaseSynthesizeConcepts — global-error halt (#3044)', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0].error).toContain('whole-run condition');
     expect(await conceptCount()).toBe(0); // pre-fix: 2 error_fallback stubs
+    await expectConceptHalt('provider_auth');
   });
 
   test('below-streak 429 skips the stub write for that group and continues', async () => {
@@ -675,6 +686,7 @@ describe('runPhaseSynthesizeConcepts — global-error halt (#3044)', () => {
     const failures = result.details?.failures as Array<{ error: string }>;
     expect(failures[2].error).toContain('3 consecutive rate_limit errors');
     expect(await conceptCount()).toBe(0);
+    await expectConceptHalt('provider_rate_limit');
   });
 });
 

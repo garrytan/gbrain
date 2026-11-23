@@ -11,7 +11,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -962,5 +962,242 @@ describe('degraded verdict never clobbers a probed cache', () => {
       else process.env.GBRAIN_HOME = prevHome;
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+// ── Failed reads are degraded or unknown, never a confident answer ───────────
+
+/** An engine whose maturity read (the only statement that touches `facts`) fails. */
+function maturityFailsEngine(sources: unknown[] = []): BrainEngine {
+  return {
+    kind: 'pglite',
+    executeRaw: async (sql: string) => {
+      if (sql.includes('FROM facts')) throw new Error('facts table unreadable');
+      if (sql.includes('FROM pages')) return [{ n: 3 }];
+      if (sql.includes('FROM sources')) return sources;
+      return [];
+    },
+  } as unknown as BrainEngine;
+}
+
+describe('computeBackupCoverage — unreadable maturity', () => {
+  test('a failed maturity read degrades the verdict instead of reading as a young brain', async () => {
+    const ws = join(tmp, 'ws-maturity');
+    mkdirSync(ws, { recursive: true });
+    writeReceipt(ws); // no repo_url → a blocking no_remote asset, so maturity is read
+
+    const s = await computeBackupCoverage(maturityFailsEngine(), { localGitProbes: true });
+
+    expect(s.overall).toBe('warn');
+    expect(s.degraded).toBe(true);
+    expect(s.maturity).toBeUndefined();
+  });
+
+  test('a degraded maturity verdict never overwrites a probed cache', async () => {
+    const ws = join(tmp, 'ws-maturity-cache');
+    mkdirSync(ws, { recursive: true });
+    writeReceipt(ws);
+    const probed = mkStatus('warn', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+    saveBackupStatus(probed);
+
+    const out = await getBackupStatus(maturityFailsEngine(), { localGitProbes: true, forceRefresh: true });
+
+    expect(out.degraded).toBe(true);
+    expect(loadBackupStatus()).toEqual(probed);
+  });
+
+  test('a cached young-brain verdict whose recount fails is degraded and drops the stale young count', async () => {
+    const young: BackupStatus = {
+      ...mkStatus('warn', new Date(Date.now() - 60_000).toISOString()),
+      maturity: { items: 1, since: new Date().toISOString() },
+    };
+    saveBackupStatus(young);
+
+    const out = await getBackupStatus(maturityFailsEngine(), { localGitProbes: true });
+
+    expect(out.degraded).toBe(true);
+    expect(out.maturity).toBeUndefined(); // coaching is due again: an unreadable count must not stay "young"
+    expect(loadBackupStatus()).toEqual(young); // the cache file is untouched
+  });
+
+  test('a failed full refresh falls back to the cache without its stale young count', async () => {
+    const ws = join(tmp, 'ws-maturity-refresh');
+    mkdirSync(ws, { recursive: true });
+    writeReceipt(ws); // a blocking no_remote asset, so the refresh reads maturity (and it fails)
+    const young: BackupStatus = {
+      ...mkStatus('warn', new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()),
+      maturity: { items: 0, since: new Date().toISOString() },
+    };
+    saveBackupStatus(young);
+
+    const out = await getBackupStatus(maturityFailsEngine(), { localGitProbes: true, forceRefresh: true });
+
+    expect(out.degraded).toBe(true);
+    expect(out.maturity).toBeUndefined(); // a degraded verdict cannot vouch that the brain is too young to coach
+    expect(loadBackupStatus()).toEqual(young); // the probed cache file is untouched
+  });
+});
+
+describe('computeBackupCoverage — receipt read', () => {
+  test('a missing receipt is legitimately empty: no bootstrap asset, verdict ok', async () => {
+    const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+    expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toBeUndefined();
+    expect(s.overall).toBe('ok');
+    expect(s.degraded).toBeUndefined();
+  });
+
+  test.each([
+    { label: 'invalid JSON', body: '{ not json' },
+    { label: 'written by a newer gbrain', body: JSON.stringify({ receipt_version: 2 }) },
+  ])('an unreadable receipt ($label) is an unknown bootstrap asset that keeps the verdict in warn', async ({ body }) => {
+    const dir = join(home(), 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), body);
+
+    const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toMatchObject({ state: 'unknown', detail: 'receipt_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+
+  test('an unreadable receipt does not hide pages that live only in the local DB', async () => {
+    const dir = join(home(), 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), '{ not json');
+
+    const s = await computeBackupCoverage(stubEngine({ pages: 7 }), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'db_content')).toMatchObject({ state: 'no_remote' });
+    expect(s.totals.pages_at_risk).toBe(7);
+  });
+
+  test('an unresolvable gbrain home is an unknown bootstrap asset, not an empty receipt', async () => {
+    process.env.GBRAIN_HOME = 'relative/home'; // configDir() refuses a non-absolute override
+
+    const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toMatchObject({ state: 'unknown', detail: 'receipt_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+});
+
+describe('computeBackupCoverage — receipt directory that cannot be searched', () => {
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0; // root ignores directory modes
+  test.skipIf(asRoot)('a receipt behind a directory that cannot be searched is unknown, not an absent receipt', async () => {
+    const dir = join(home(), 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), '{}');
+    chmodSync(dir, 0o000);
+    try {
+      const s = await computeBackupCoverage(stubEngine({}), { localGitProbes: true });
+
+      expect(s.assets.find((a) => a.kind === 'bootstrap_workspace')).toMatchObject({ state: 'unknown', detail: 'receipt_unreadable' });
+      expect(s.overall).toBe('warn');
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+  });
+});
+
+describe('computeBackupCoverage — storage config read', () => {
+  test('an unreadable gbrain.yml is an unknown db_only row, not "no db_only tiering"', async () => {
+    const repo = join(tmp, 'repo-bad-yml');
+    initRepo(repo);
+    commitFile(repo, 'a.md', 'x', 'init');
+    mkdirSync(join(repo, 'gbrain.yml')); // exists but cannot be read as a file
+
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('bad-yml-src', repo)] }), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({
+      id: 'bad-yml-src',
+      state: 'unknown',
+      detail: 'storage_config_unreadable',
+    });
+  });
+
+  /** A repo whose origin holds its HEAD: verified (verdict ok) under verifyRemoteRefs. */
+  const mkVerified = (name: string) => {
+    const bare = join(tmp, `${name}.git`);
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const work = join(tmp, name);
+    initRepo(work);
+    commitFile(work, 'a.md', 'x', 'init');
+    g(work, ['remote', 'add', 'origin', bare]);
+    g(work, ['push', '-u', 'origin', 'main']);
+    return work;
+  };
+  const probes = { localGitProbes: true, verifyRemoteRefs: true } as const;
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0; // root ignores directory modes
+
+  test('an unreadable gbrain.yml keeps an otherwise verified verdict in warn', async () => {
+    const healthy = await computeBackupCoverage(stubEngine({ sources: [srcRow('ok-src', mkVerified('repo-ok'))] }), probes);
+    expect(healthy.overall).toBe('ok'); // control: the same verified repo with no gbrain.yml
+
+    const bad = mkVerified('repo-ok-bad-yml');
+    mkdirSync(join(bad, 'gbrain.yml'));
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('bad-src', bad)] }), probes);
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({ state: 'unknown', detail: 'storage_config_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+
+  test('an unreadable gbrain.yml in the bootstrap workspace is a warning, not ok', async () => {
+    const ws = mkVerified('workspace-repo');
+    writeReceipt(ws, { repo_url: 'https://example.com/acme-example/brain.git' });
+    const engine = (id: string) => stubEngine({ sources: [srcRow(id, ws)] });
+
+    const healthy = await computeBackupCoverage(engine('ws-ok'), probes);
+    expect(healthy.overall).toBe('ok'); // control: verified workspace repo, no gbrain.yml
+
+    mkdirSync(join(ws, 'gbrain.yml')); // exists but cannot be read as a file
+    const s = await computeBackupCoverage(engine('ws-bad'), probes);
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({ id: 'ws-bad', state: 'unknown', detail: 'storage_config_unreadable' });
+    expect(s.overall).toBe('warn');
+  });
+
+  test.skipIf(asRoot)('a symlinked gbrain.yml behind a denied directory keeps the db_only row and warns', async () => {
+    const repo = mkVerified('repo-link-yml');
+    const cfgDir = join(tmp, 'cfg');
+    mkdirSync(cfgDir);
+    writeFileSync(join(cfgDir, 'real.yml'), 'storage:\n  db_tracked:\n    - people/\n  db_only:\n    - media/\n');
+    symlinkSync(join(cfgDir, 'real.yml'), join(repo, 'gbrain.yml'));
+    const engine = stubEngine({ sources: [srcRow('link-src', repo)] });
+
+    const before = await computeBackupCoverage(engine, probes);
+    expect(before.assets.find((a) => a.kind === 'db_only')).toMatchObject({ state: 'info' }); // control: the config is read
+
+    chmodSync(cfgDir, 0o000);
+    try {
+      const s = await computeBackupCoverage(engine, probes);
+
+      expect(s.assets.find((a) => a.kind === 'db_only')).toMatchObject({ id: 'link-src', state: 'unknown', detail: 'storage_config_unreadable' });
+      expect(s.overall).toBe('warn');
+    } finally {
+      chmodSync(cfgDir, 0o700);
+    }
+  });
+
+  test('a dangling gbrain.yml symlink (ENOENT) still means no config', async () => {
+    const repo = mkVerified('repo-dangling-yml');
+    symlinkSync(join(tmp, 'nowhere.yml'), join(repo, 'gbrain.yml'));
+    g(repo, ['add', '.']);
+    g(repo, ['commit', '-m', 'dangling config link']);
+    g(repo, ['push', 'origin', 'main']); // keep the tree clean and the remote current
+
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('dangling-src', repo)] }), probes);
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toBeUndefined();
+    expect(s.overall).toBe('ok');
+  });
+
+  test('a repo with no gbrain.yml has no db_only row at all', async () => {
+    const repo = join(tmp, 'repo-no-yml');
+    initRepo(repo);
+    commitFile(repo, 'a.md', 'x', 'init');
+
+    const s = await computeBackupCoverage(stubEngine({ sources: [srcRow('no-yml-src', repo)] }), { localGitProbes: true });
+
+    expect(s.assets.find((a) => a.kind === 'db_only')).toBeUndefined();
   });
 });

@@ -37,7 +37,7 @@ up. The vivid, unpolished, stream-of-consciousness phrasing captures
 something that cleaned-up prose does not. Preserve it in block quotes.
 The Analysis section can interpret; the transcript section is sacred.
 
-- ✅ `"The ambition-to-lifespan ratio has never been more fucked"`
+- ✅ `"The ambition-to-lifespan ratio has never been more lopsided"`
 - ❌ `User noted the tension between ambition and mortality`
 
 ## When to invoke

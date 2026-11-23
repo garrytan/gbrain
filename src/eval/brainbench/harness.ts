@@ -261,6 +261,10 @@ export async function runBrainBench(
     ? new BudgetTracker({ maxCostUsd: opts.budgetUsd ?? 5, label: 'brainbench:llm' })
     : undefined;
 
+  // The trust suites build their own PGLite brains: under --engine rust they would label PGLite numbers as Rust's.
+  if ((opts.engine ?? 'pglite') === 'rust' && trustFixtures.length > 0) {
+    throw new Error('--engine rust does not run the memory-trust suites yet (they always build PGLite brains); leave them out with --suite.');
+  }
   const engine = await createBenchmarkBrain(opts.engine ?? 'pglite');
   let fixturesRun = 0;
   try {

@@ -43,9 +43,9 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   };
   engine.registerBeforeDisconnect(async () => {
     try {
+      queue.stop(); // delivers the reads still queued, so the child sees them and the counters add up
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
     } finally {
-      queue.stop();
       supervisor.stop();
     }
   });

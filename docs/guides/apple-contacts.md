@@ -23,8 +23,10 @@ What it does on day one:
 - **`whois` by phone.** `gbrain whois "+1 555 555 0100"` finds the person whose `phone` or `phones` holds that
   number in any format.
 
-What it does not do: it never writes to Contacts, never copies phones or emails onto people pages, and never extracts
-facts from contact cards.
+What it does not do: syncing never copies phones or emails onto people pages and never extracts facts from contact
+cards, and it writes to Contacts only if you switch on [enrichment](#filling-in-contacts-from-your-brain), which only
+adds. Changing a contact is a separate, owner-only command that is off by default; see
+[Changing contacts](#changing-contacts).
 
 ## Privacy
 
@@ -75,7 +77,90 @@ written without a country code are read as `identity.phone_country_code` (defaul
   run ends with the same error. A contact edited down to no email and no phone counts as a deletion. A contact that comes back cancels its pending deletion. No row on a person page is
   retired by a held run, or by a full re-read that did not end complete.
 
+## Changing contacts
+
+`gbrain apple-contacts write <verb>` sends one change to GBrain Helper's write route, signed with your owner key. Every
+call carries your own words as `--owner-instruction`, which the helper keeps in its journal. The helper saves a copy of
+every contact once a day before the first change, reads each card back after saving it, and can undo a whole batch
+(`gbrain-apple-helper contacts-restore --batch <id>` at the Mac). See the helper's
+[Changing contacts](../../apple/helper/README.md#changing-contacts).
+
+- Verbs that only add: `fill` (an empty field), `add-value` (an email or phone), `create`, `group-add`.
+- Verbs that change or remove: `set` (with `--expect <the value now>`), `remove-value`, `group-remove`, `delete`
+  (with `--expect-json`, the card as last read) and `merge --card <keep> --from <remove>`.
+- `gbrain apple-contacts status` shows the switches and the helper it would use, without calling it.
+
+Three switches, all off by default:
+
+1. `gbrain config set apple_contacts.write on`. While it is `off`, every write refuses; `dry_run` prints the request and
+   sends nothing.
+2. `gbrain config set apple_contacts.destructive_writes on` lets the change-or-remove verbs through.
+3. At the Mac, `gbrain-apple-helper contacts-write on`.
+
+The owner key lives in a 0600 JSON file, `{"key_name": "<name>", "seed": "<32-byte Ed25519 seed, base64url>"}`, named
+with `gbrain config set apple_contacts.owner_key_file <absolute path>`. Register its public half at the Mac with
+`gbrain-apple-helper contacts-write key add --name <name> --public-key-file <path>`.
+
+## Filling in contacts from your brain
+
+After each pull that finishes cleanly, gbrain can send one batch of additions to your cards, using only what your own
+brain already knows. It never changes or removes anything already on a card, never deletes or merges, and never asks
+an outside service.
+
+- **Empty company and job title:** filled from the one person page the card is linked to (its `company` and `role`,
+  or a `Company:` / `Job title:` fact another writer left there). When those disagree, nothing is filled.
+- **Emails and phones you confirmed:** added beside the card's own, when they come from your Google Contacts entry that
+  shares an email or phone with that card alone, or from a fact on the linked person page that you stated, confirmed
+  or curated and that is written as `Email: <address>` or `Phone: <number>` and nothing else (an address or number
+  mentioned inside other text is never taken, nor is a fact whose validity has ended). Never a value another card
+  already has, or one an extractor guessed from mail or the web.
+- **New cards, only if you switch them on** (`gbrain config set apple_contacts.enrich.create_cards true`; off by
+  default): at most 10 a run (the helper allows 50 a day), for a Google Contacts entry that no card shares a value with
+  and whose email or phone matches exactly one person page. The helper puts each one in the group "Added by GBrain".
+- A card linked to two or more people gets nothing until you settle who it is.
+
+Switches, all off by default:
+
+1. `gbrain config set apple_contacts.enrich dry_run` works out the batch after each pull and records it without sending.
+   `on` sends it, and also needs `apple_contacts.write` = `on`.
+2. `gbrain config set apple_contacts.write_token_file <absolute path>` names a 0600 file holding the helper's
+   `write:contacts:enrich` token as `{"accessToken": "..."}`. That token can only create, fill and add.
+
+`gbrain apple-contacts enrich status` shows the last run: each change, the page its value came from, and what the
+helper did with it (the record keeps no email or phone). `gbrain apple-contacts enrich dry-run` lists what the next run
+would send, values included, and sends nothing. Every change has a fixed key, so a run that is cut off and repeated
+never applies a change twice; `gbrain-apple-helper contacts-restore --batch <id>` at the Mac undoes a batch.
+
 ## Errors
+
+### apple_contacts_write_off
+
+Contacts writes are off, on this brain (`apple_contacts.write` is not `on`) or at the Mac (`contacts-write off`).
+Nothing was changed. Turn on the one the message names.
+
+### apple_contacts_destructive_off
+
+A verb that changes or removes what is on a card was refused because `apple_contacts.destructive_writes` is not `on`.
+Nothing was changed.
+
+### apple_contacts_owner_key_file
+
+The owner key file is not set, missing, a symlink, readable by group or others, or does not hold a key name and a
+32-byte seed. Fix the file (`chmod 600`) and run the command again.
+
+### apple_contacts_write_token_file
+
+The enrichment token file is missing, is not 0600 or does not hold `{"accessToken": "..."}`.
+
+### apple_contacts_backup_failed
+
+The helper could not save its daily copy of the contacts, so it changed nothing. Check disk space on the Mac, then
+send the command again.
+
+### apple_contacts_bad_request
+
+The command or the batch was malformed (a missing flag, bad JSON, or a field the helper does not know). The message says
+what. Nothing was changed.
 
 ### apple_contacts_not_allowed
 
@@ -85,7 +170,8 @@ like to access your contacts", or switch GBrain Helper on in System Settings > P
 
 ### apple_contacts_unauthorized
 
-The helper refused the token (401, or 403 `insufficient_scope`). Put a token the helper issued with the
+The helper refused the token (401, or 403 `insufficient_scope`). For a write, it refused the owner key (an unknown
+key, a clock more than 60 seconds off, or a reused nonce) or a token without `write:contacts:enrich`. For a sync, put a token the helper issued with the
 read:contacts scope in the source's token file, `chmod 600` it, and sync again.
 
 ### apple_contacts_token_file

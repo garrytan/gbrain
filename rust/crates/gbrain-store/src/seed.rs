@@ -267,6 +267,10 @@ fn claim(tx: &mut dyn KvWrite, seed_id: &str) -> Result<SeedManifest> {
     }
     let fresh = [
         keys::meta("format"),
+        // Written by the open that made the store, once its scan found no restricted page.
+        keys::meta(crate::access_flag::SCAN_DONE),
+        // The keyword index state: a new store starts with the index on.
+        keys::keyword_index_state(),
         keys::text(keys::CONFIG, &["version"]),
         source_key(crate::sources::DEFAULT_SOURCE),
     ];

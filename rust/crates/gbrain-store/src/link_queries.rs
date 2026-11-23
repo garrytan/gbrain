@@ -7,33 +7,35 @@
 //!
 //! It also serves the three link reads of hybrid search's ranking stage
 //! (src/core/engine-sql/search-reads.ts): `hasSupersedeEdges`, `supersedingPageSlugs` and
-//! `pagesLinkingTo`.
+//! `pagesLinkingTo`, and in `site_reads` the link reads of src/core/engine-sql/link-reads.ts.
 //!
 //! Members: replaceDerivedLinks, replaceDerivedLinksBatch, removeLinksByPagesAndSource,
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
-//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo.
+//! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
+//! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
+//! listPagesTitledIn, wordLexemes.
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
 //!
 //! Keys: the `q` tag (`keys::LINK_QUERIES`) is shared with wanted_links (`wanted_links.rs`).
 //! The bytes after `q <source> \0 W` are wanted_links' bytes; this family keeps the `W` sub-tag
-//! free. This family keeps no records of its own today. `remove_source_rows` deletes everything
-//! under `q <source> \0`, so a source delete removes the records of both families.
+//! free. The link temporal records (relationship state under `R`, transitions under `T`) live in
+//! `link_temporal.rs`. `remove_source_rows` deletes everything under `q <source> \0`, so a source
+//! delete removes the records of all three.
 //!
 //! The read policy of `src/core/search/read-policy-sql.ts` (`pageReadFilter`) is modelled for the
 //! source filter and the live test (not soft-deleted, not quarantined, source not archived).
 //! `requireSafeChunks` is modelled on the relational walks (the canonical chunk's safe fence and the
-//! chain's evidence `textGate`). Trust and temporal filters are refused by the TypeScript members, and so is the
-//! privacy filter except on `getBacklinkCounts`, `getAdjacencyBoosts` and `supersedingPageSlugs`,
-//! which pass `excludePrivate` as a `PrivacyPolicy` (`GraphScope.exclude_private`). The
-//! store keeps every chunk inline, so a page's canonical chunk is its lowest `chunk_index`
-//! chunk. See rust/docs/store/link_queries.md.
+//! chain's evidence `textGate`). The privacy and trust filters ride in `GraphScope`
+//! (`exclude_private`, `min_trust`, `suppress_flagged`). A page's canonical chunk is its lowest
+//! `chunk_index` chunk among the chunks of its live body. See rust/docs/store/link_queries.md.
 
 use crate::Store;
 use crate::chunks::{in_live_body, read_chunks, read_segment_view, segmented};
 use crate::error::{INVALID_ARGUMENT, INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
-use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::{LinkBatchInput, LinkRecord, delete_link, in_links, out_links, put_link};
@@ -42,10 +44,30 @@ use crate::pages::{
 };
 use crate::sources::read_source;
 use crate::timeline_queries::jsonb_field_text;
+use crate::trust::{TrustPolicy, TrustTier};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
+
+pub(crate) mod link_temporal;
+pub use link_temporal::{
+    ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
+    InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
+    ManualWriteInput, ManualWriteResult, NoteRow, NoteRowsInput, PageStatusInput, PageStatusRow,
+    RecordMetadataInput, RecordMetadataRows, RelationshipEvidence, RelationshipKey,
+    SearchVectorCounts, StaleKeysInput, StateWrite,
+};
+mod retrieval_coverage;
+pub use retrieval_coverage::{
+    CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
+    RebuildProgress,
+};
+mod site_reads;
+pub use site_reads::{
+    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
+    JunkHubsInput, LinkContextAsk, TitledInput,
+};
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).
 const QUARANTINE_KEY: &str = "quarantine";
@@ -78,21 +100,27 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
 
 /// A `{ sourceId?, sourceIds? }` scope plus whether a read policy applies at all. `scoped` is
 /// `hasReadPolicy(opts)` for relationalFanout and `opts !== undefined` for getBacklinkCounts and
-/// getAdjacencyBoosts; relationalChainHop always applies the policy. `exclude_private`
-/// (`excludePrivate`) is the page policy `pageReadFilter` adds, as `facts/privacy.rs`
-/// `page_hidden` reads it; `None` hides nothing. getBacklinkCounts, getAdjacencyBoosts and
-/// supersedingPageSlugs send it; every page they judge (target, linking page, origin page)
-/// must pass it.
+/// getAdjacencyBoosts; relationalChainHop always applies the policy.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct GraphScope {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
     pub scoped: bool,
+    /// `excludePrivate`: the page policy `privatePagesFilterForCaller` (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust`: `pageEligibleSql`'s floor over the page's stamped tier (`trust::TrustPolicy`).
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page `activationSuppressedSql('pages')` flags.
+    pub suppress_flagged: bool,
 }
 
 impl GraphScope {
+    /// `pageReadFilter`'s `pageEligibleSql` clause: the trust floor and the flagged-page filter.
+    fn trust(&self) -> Result<TrustPolicy> {
+        TrustPolicy::parse(self.min_trust.as_deref(), self.suppress_flagged)
+    }
+
     /// `pageReadFilter`'s source clause: `sourceIds` when not empty, else a non-empty `sourceId`.
     fn source_ok(&self, source_id: &str) -> bool {
         match (&self.source_ids, &self.source_id) {
@@ -122,6 +150,8 @@ pub struct LinkSourcesOptions {
 pub struct OrphanOptions {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`: the page policy on the candidate, its link ends and their origins.
+    pub exclude_private: Option<PrivacyPolicy>,
     pub mode: Option<String>,
     pub scope_inbound: bool,
 }
@@ -160,6 +190,11 @@ pub struct FanoutOptions {
     pub source_ids: Option<Vec<String>>,
     /// `hasReadPolicy(opts)`.
     pub scoped: bool,
+    /// `excludePrivate`: the page policy on the seed, step and origin pages.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust` and `suppressFlagged`: the trust policy on the same pages ([`GraphScope`]).
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
     pub seed_refs: Option<Vec<PageRef>>,
     pub link_types: Option<Vec<String>>,
     pub direction: Option<String>,
@@ -176,6 +211,11 @@ pub struct FanoutOptions {
 pub struct ChainHopOptions {
     pub source_id: Option<String>,
     pub source_ids: Option<Vec<String>>,
+    /// `excludePrivate`: the page policy on every endpoint, origin, neighbor and evidence page.
+    pub exclude_private: Option<PrivacyPolicy>,
+    /// `minTrust` and `suppressFlagged`: the trust policy on the same pages ([`GraphScope`]).
+    pub min_trust: Option<String>,
+    pub suppress_flagged: bool,
     pub link_types: Vec<String>,
     pub toward: String,
     pub subject_types: Vec<String>,
@@ -281,6 +321,10 @@ impl<'a> Pages<'a> {
         if let Some(policy) = &scope.exclude_private
             && self.owner_only.page_hidden(self.read, page, policy)?
         {
+            return Ok(false);
+        }
+        let tier = TrustTier::stored(page.trust_tier.as_deref());
+        if !scope.trust()?.admits(self.read, "pages", page.id, tier)? {
             return Ok(false);
         }
         if !live {
@@ -510,6 +554,7 @@ fn insert_row(tx: &mut dyn KvWrite, link: &LinkBatchInput, now: i64) -> Result<b
         origin_field: text(&link.origin_field),
         resolution_type: link.resolution_type.clone(),
         created_at_us: now,
+        assertion_tense: None,
     };
     check_link(&record)?;
     if tx.get(&record.unique_key())?.is_some() {
@@ -920,7 +965,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
-            exclude_private: None,
+            ..GraphScope::default()
         };
         let scoped = scope.has_sources();
         let mut pages = Pages::new(&*read);
@@ -968,7 +1013,7 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
-            exclude_private: None,
+            ..GraphScope::default()
         };
         let islanded = options.mode.as_deref().unwrap_or("islanded") == "islanded";
         let mut pages = Pages::new(&*read);
@@ -981,6 +1026,19 @@ impl Store {
             };
             if end.deleted_at_us.is_some() {
                 return Ok(false);
+            }
+            // `privatePagesFilterForCaller(end)` and `privateLinkOriginFilterForCaller(l)`: the
+            // origin passes the page policy alone, live or not.
+            if let Some(policy) = &options.exclude_private {
+                if page_hidden(pages.read, &end, policy)? {
+                    return Ok(false);
+                }
+                if let Some(o) = link.origin_page_id {
+                    match pages.get(o)? {
+                        Some(origin) if !page_hidden(pages.read, &origin, policy)? => {}
+                        _ => return Ok(false),
+                    }
+                }
             }
             if !options.scope_inbound {
                 return Ok(true);
@@ -995,10 +1053,18 @@ impl Store {
                     .is_some_and(|p| p.deleted_at_us.is_none() && scope.source_ok(&p.source_id)),
             })
         };
-        let mut candidates: Vec<PageRecord> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| p.deleted_at_us.is_none() && scope.source_ok(&p.source_id))
-            .collect();
+        let mut candidates = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.deleted_at_us.is_some() || !scope.source_ok(&page.source_id) {
+                continue;
+            }
+            if let Some(policy) = &options.exclude_private
+                && page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
+            candidates.push(page);
+        }
         candidates.sort_by(|a, b| {
             a.slug
                 .cmp(&b.slug)
@@ -1196,7 +1262,9 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: options.scoped,
-            exclude_private: None,
+            exclude_private: options.exclude_private.clone(),
+            min_trust: options.min_trust.clone(),
+            suppress_flagged: options.suppress_flagged,
         };
         let policy = scope.scoped;
         // Without a read policy pageReadFilter renders TRUE, source clause included.
@@ -1377,7 +1445,9 @@ impl Store {
             source_id: options.source_id.clone(),
             source_ids: options.source_ids.clone(),
             scoped: true,
-            exclude_private: None,
+            exclude_private: options.exclude_private.clone(),
+            min_trust: options.min_trust.clone(),
+            suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
@@ -1610,7 +1680,7 @@ mod tests {
             source_ids: Some(vec![]),
             source_id: Some("a".into()),
             scoped: true,
-            exclude_private: None,
+            ..GraphScope::default()
         };
         assert!(empty_ids.source_ok("a") && !empty_ids.source_ok("b"));
         let blank = GraphScope {
@@ -1622,7 +1692,7 @@ mod tests {
             source_ids: Some(vec!["b".into()]),
             source_id: Some("a".into()),
             scoped: true,
-            exclude_private: None,
+            ..GraphScope::default()
         };
         assert!(ids.source_ok("b") && !ids.source_ok("a"));
     }
