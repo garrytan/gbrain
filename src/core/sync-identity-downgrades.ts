@@ -143,6 +143,9 @@ export interface IdentityRemedy {
 
 export type IdentityDowngradeEntry = IdentityDowngrade & { remedy: IdentityRemedy };
 
+/** What a remedy reads: the pages of the pair and the persistence brain id. */
+type RemedyEngine = Pick<BrainEngine, 'executeRaw' | 'readPersistenceBrainId'>;
+
 async function remedySide(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, where: string, value: string | number): Promise<IdentityRemedySide | null> {
   const [row] = await engine.executeRaw<{ id: number | string; slug: string; revision: string | null; deleted: boolean }>(
     `SELECT id, slug, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id = $1 AND ${where} = $2 LIMIT 1`, [sourceId, value]);
@@ -154,11 +157,11 @@ async function remedySide(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: str
  * is read by id (it may have moved since), the new page by its live slug. Every surface hashes these same parts, so the
  * hash a sync report or doctor prints is the one the preview saves.
  */
-export async function identityRemedyParts(engine: Pick<BrainEngine, 'executeRaw'>, record: IdentityDowngrade, disposition: IdentityRemedyDisposition) {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
+export async function identityRemedyParts(engine: RemedyEngine, record: IdentityDowngrade, disposition: IdentityRemedyDisposition) {
+  const brainId = await engine.readPersistenceBrainId();
   const old = await remedySide(engine, record.source_id, 'id', record.old_page_id);
   const fresh = record.new_slug ? await remedySide(engine, record.source_id, 'slug', record.new_slug) : null;
-  return { kind: 'rename-identity-v1', brain_id: brain?.brain_id ?? 'host', source_id: record.source_id, from: record.from, to: record.to,
+  return { kind: 'rename-identity-v1', brain_id: brainId ?? 'host', source_id: record.source_id, from: record.from, to: record.to,
     recorded_at: record.recorded_at, disposition, old, new: fresh && !fresh.deleted ? fresh : null };
 }
 export type IdentityRemedyParts = Awaited<ReturnType<typeof identityRemedyParts>>;
@@ -170,7 +173,7 @@ export function renameIdentityPreviewArgv(record: Pick<IdentityDowngrade, 'sourc
 }
 
 /** The remedy one pair names: its preview, the apply bound to the current plan hash, consent, and the hold release. */
-export async function identityRemedy(engine: Pick<BrainEngine, 'executeRaw'>, record: IdentityDowngrade, opts: { from?: boolean; managed?: boolean } = {}): Promise<IdentityRemedy> {
+export async function identityRemedy(engine: RemedyEngine, record: IdentityDowngrade, opts: { from?: boolean; managed?: boolean } = {}): Promise<IdentityRemedy> {
   const close = !!opts.managed || !record.new_slug;
   const plan_hash = previewHash(await identityRemedyParts(engine, record, close ? 'close' : 'carry'));
   const preview_argv = renameIdentityPreviewArgv(record, { from: opts.from, close });
@@ -179,7 +182,7 @@ export async function identityRemedy(engine: Pick<BrainEngine, 'executeRaw'>, re
 }
 
 /** Each record with its remedy; `--from` is named only where two open pairs share a new slug. */
-export async function withIdentityRemedies(engine: Pick<BrainEngine, 'executeRaw'>, records: readonly IdentityDowngrade[]): Promise<IdentityDowngradeEntry[]> {
+export async function withIdentityRemedies(engine: RemedyEngine, records: readonly IdentityDowngrade[]): Promise<IdentityDowngradeEntry[]> {
   if (!records.length) return [];
   const managed = await readManagedMode(engine);
   const shared = (record: IdentityDowngrade) => records.filter(other => other.source_id === record.source_id && other.new_slug === record.new_slug).length > 1;

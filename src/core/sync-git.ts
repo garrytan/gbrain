@@ -15,6 +15,7 @@ import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-con
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
 import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
@@ -86,6 +87,25 @@ export function refusedRemovedPathMessage(r: RefusedSlugResolution): string {
   );
 }
 
+/** Byte order of UTF-8 text (`COLLATE "C"`). */
+const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/**
+ * The live pages recording one of `paths` or sitting at one of `slugs`, of `sourceId` or (undefined: the legacy
+ * unscoped lane) of every source, by byte source id then byte slug, through the typed readRenameIdentityRows member.
+ */
+async function livePagesAt(engine: Pick<BrainEngine, 'readRenameIdentityRows' | 'listAllSources'>, sourceId: string | undefined,
+  paths: readonly string[], slugs: readonly string[]): Promise<Array<{ source_id: string; slug: string; source_path: string | null }>> {
+  const sources = sourceId !== undefined ? [sourceId]
+    : (await engine.listAllSources({ includeArchived: true })).map(source => source.id).sort(byteOrder);
+  const out: Array<{ source_id: string; slug: string; source_path: string | null }> = [];
+  for (const id of sources) {
+    const rows = await engine.readRenameIdentityRows(id, paths, slugs);
+    out.push(...rows.map(row => ({ source_id: id, slug: row.slug, source_path: row.source_path })).sort((a, b) => byteOrder(a.slug, b.slug)));
+  }
+  return out;
+}
+
 /**
  * #3942 — THE delete-side slug resolver. Every sync lane that turns a
  * REMOVED file path into a slug to delete (or rename away from) routes
@@ -113,6 +133,8 @@ export function refusedRemovedPathMessage(r: RefusedSlugResolution): string {
  * Fail-open on lookup errors (pre-migration schemas): a failed verification
  * query preserves the legacy fallback rather than wedging deletes — matching
  * the long-standing best-effort posture of `resolveSlugByPathOrSourcePath`.
+ * An engine capability refusal is not a lookup error: it surfaces, so an
+ * engine that cannot read the pages never deletes on unverified evidence.
  */
 export async function resolveSlugsForRemovedPaths(
   engine: BrainEngine,
@@ -130,7 +152,8 @@ export async function resolveSlugsForRemovedPaths(
       try {
         const m = await engine.resolveSlugsByPaths(paths.slice(i, i + DELETE_BATCH_SIZE), { sourceId });
         for (const [p, s] of m) exact.set(p, s);
-      } catch {
+      } catch (error) {
+        rethrowCapabilityRefusal(error);
         // Best-effort — fall through to the verified phase-2 fallback.
       }
     }
@@ -141,14 +164,11 @@ export async function resolveSlugsForRemovedPaths(
         // row's record must not name a slug for the delete side to act on),
         // and the pick is ORDER BY-deterministic when a multi-source brain
         // holds several rows for the same source_path.
-        const rows = await engine.executeRaw<{ slug: string }>(
-          `SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
-            ORDER BY source_id COLLATE "C", slug COLLATE "C" LIMIT 1`,
-          [p],
-        );
-        if (rows.length > 0 && rows[0].slug) exact.set(p, rows[0].slug);
-      } catch {
-        // Best-effort.
+        const [row] = (await livePagesAt(engine, undefined, [p], [])).filter(r => r.source_path === p);
+        if (row?.slug) exact.set(p, row.slug);
+      } catch (error) {
+        // Best-effort, but a refused read is not a miss.
+        rethrowCapabilityRefusal(error);
       }
     }
   }
@@ -157,11 +177,16 @@ export async function resolveSlugsForRemovedPaths(
   const unresolved = paths.filter(p => !exact.has(p));
   for (let i = 0; sourceId !== undefined && i < unresolved.length; i += DELETE_BATCH_SIZE) {
     try {
-      const rows = await engine.executeRaw<{ source_path: string; slugs: string[] }>(`SELECT source_path, array_agg(slug ORDER BY slug COLLATE "C") AS slugs FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) GROUP BY source_path HAVING count(*) > 1`, [sourceId, unresolved.slice(i, i + DELETE_BATCH_SIZE)]);
-      for (const row of rows) twins.set(row.source_path, row.slugs);
-    } catch {
+      const chunk = unresolved.slice(i, i + DELETE_BATCH_SIZE);
+      const byPath = new Map<string, string[]>();
+      for (const row of await livePagesAt(engine, sourceId, chunk, [])) {
+        if (row.source_path === null || !chunk.includes(row.source_path)) continue;
+        byPath.set(row.source_path, [...(byPath.get(row.source_path) ?? []), row.slug]);
+      }
+      for (const [path, claimants] of byPath) if (claimants.length > 1) twins.set(path, claimants);
+    } catch (error) {
       // Best-effort, like phase 1.
+      rethrowCapabilityRefusal(error);
     }
   }
   const fallbacks: Array<{ path: string; slug: string }> = [];
@@ -175,9 +200,9 @@ export async function resolveSlugsForRemovedPaths(
   if (fallbacks.length === 0) return { slugs, refused };
 
   // Phase 2: verify each derived slug's recorded origin before trusting it.
-  // Per-item placeholders (not ANY(array)) so the same executeRaw shape binds
-  // identically on both engines — a query error here fails OPEN, which would
-  // silently disable the guard, so the boring portable form wins.
+  // The read is the typed readRenameIdentityRows member, so every engine
+  // answers it; a query error here fails OPEN, which would silently disable
+  // the guard, so only an engine capability refusal surfaces.
   //
   // Collect ALL live rows per slug: the unscoped lane can see one row per
   // source at the same slug, and a single-value (last-row-wins) map made
@@ -189,24 +214,15 @@ export async function resolveSlugsForRemovedPaths(
   for (let i = 0; i < fallbacks.length; i += DELETE_BATCH_SIZE) {
     const chunk = fallbacks.slice(i, i + DELETE_BATCH_SIZE).map(f => f.slug);
     try {
-      const params: unknown[] = [...chunk];
-      const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-      let where = `slug IN (${placeholders}) AND deleted_at IS NULL`;
-      if (sourceId !== undefined) {
-        params.push(sourceId);
-        where += ` AND source_id = $${params.length}`;
-      }
-      const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
-        `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id COLLATE "C", slug COLLATE "C"`,
-        params,
-      );
+      const rows = (await livePagesAt(engine, sourceId, [], chunk)).filter(r => chunk.includes(r.slug));
       for (const r of rows) {
         const list = originsBySlug.get(r.slug);
         if (list) list.push(r.source_path);
         else originsBySlug.set(r.slug, [r.source_path]);
       }
-    } catch {
-      // Fail-open: without origin evidence, keep the legacy fallback.
+    } catch (error) {
+      // Fail-open: without origin evidence, keep the legacy fallback. A refused read is not missing evidence.
+      rethrowCapabilityRefusal(error);
     }
   }
   for (const f of fallbacks) {
