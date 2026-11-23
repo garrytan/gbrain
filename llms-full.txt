@@ -6179,7 +6179,18 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
   this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
-  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+  `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
+  names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
+  capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
+  starts every count over.
+- **Evidence fields.** `status --json` also carries the swap's read and search evidence for the current epoch (`report` prints
+  the same counts):
+  `reads` (successful comparisons per operation class with their minimum, and the 7-day counts of `capability_missing`,
+  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements), `child`
+  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at` and the counting
+  rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
+  fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
+  evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
   `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
   differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
