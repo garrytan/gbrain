@@ -7,9 +7,11 @@
  *  - Contract: a reservation is held only while the day stays within its cap; a held, unexpired one dispatches once; a
  *    settle moves its estimate from reserved to the actual committed amount and reports the prior status, a second settle
  *    reports it already settled; a release frees a held estimate; an expired held reservation is reclaimed as released and
- *    an expired dispatched one settles at its estimate. Equal on PGLite and Postgres (DATABASE_URL). The Rust store keeps
- *    no budget ledger yet, so the Rust engine refuses the first write by name and writes nothing.
- *  - Regression: the writes were raw SQL in the ledger, so the Rust engine refused them with no member name.
+ *    an expired dispatched one settles at its estimate. The day read (`readBudgetLedgerDay`) sees exactly what the writes
+ *    left, and answers null for a day or a resolver with no row. Equal on PGLite, Postgres (DATABASE_URL) and the Rust
+ *    store's ledger (gbrain-store budget_ledger.rs).
+ *  - Regression: the writes were raw SQL in the ledger, so the Rust engine refused them, and its day read always
+ *    answered null, so a paid call on a Rust brain got ledger_unavailable.
  *  - Why existing coverage misses it: test/budget-daily-ledger*.test.ts runs on PGLite only.
  *  - Seam: none. Typed members for the writes; the day totals through the ledger's own read.
  */
@@ -59,4 +61,27 @@ describe('engine parity: the daily budget ledger writes', () => {
     });
     return answers;
   });
+
+  parityTest('the day read sees what the ledger writes left, and nothing for another day or resolver', {
+    methods: ['reserveBudgetReservation', 'dispatchBudgetReservation', 'settleBudgetReservation', 'readBudgetLedgerDay'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const empty = await engine.readBudgetLedgerDay(KEY.scope, KEY.resolver, DAY);
+    await engine.reserveBudgetReservation(KEY, { day: DAY, estimate: '0.2500', cap: '2.0000', id: 'd1', at: AT, expiresAt: EXPIRES });
+    const held = await engine.readBudgetLedgerDay(KEY.scope, KEY.resolver, DAY);
+    await engine.dispatchBudgetReservation(KEY, 'd1', LATER);
+    await engine.settleBudgetReservation(KEY, 'd1', '0.1250');
+    const settled = await engine.readBudgetLedgerDay(KEY.scope, KEY.resolver, DAY);
+    const otherDay = await engine.readBudgetLedgerDay(KEY.scope, KEY.resolver, '2026-11-22');
+    const otherResolver = await engine.readBudgetLedgerDay(KEY.scope, 'someone-else', DAY);
+    const answers = { empty, held, settled, otherDay, otherResolver };
+    expect(answers).toEqual({
+      empty: null,
+      held: { reserved: '0.2500', committed: '0.0000', cap: '2.0000' },
+      settled: { reserved: '0.0000', committed: '0.1250', cap: '2.0000' },
+      otherDay: null, otherResolver: null,
+    });
+    return answers;
+  });
 });
+

@@ -779,9 +779,9 @@ insertOpCheckpointIfAbsent	persistence_journal	yes	2	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 readOldestSyncHoldAt	persistence_journal	yes	1	no	yes	yes	serves
 reclaimBudgetReservations	persistence_journal	yes	1	no	yes	yes	serves
-reserveBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
-dispatchBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
-settleBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
+reserveBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
+dispatchBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
+settleBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
 releaseBudgetReservation	persistence_journal	yes	1	no	yes	yes	serves
 readSourceMembership	persistence_journal	yes	101	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
@@ -2124,7 +2124,7 @@ upsertFenceCandidatePart	doctor_fence_census	yes	2	no	yes	yes	serves
 clearFenceCandidateParts	doctor_fence_census	yes	1	no	yes	yes	serves
 readFenceTrendRecords	doctor_fence_census	yes	1	no	yes	yes	serves
 countSegmentedFencePages	doctor_fence_census	yes	1	no	yes	yes	serves
-readBudgetLedgerDay	doctor_fence_census	yes	1	no	yes	yes	serves
+readBudgetLedgerDay	doctor_fence_census	yes	2	no	yes	yes	serves
 countConversationPipelinePages	doctor_facts_trust	yes	1	no	yes	yes	serves
 listPersistentWriterContention	doctor_facts_trust	yes	1	no	yes	yes	serves
 countRowTrustTiers	doctor_facts_trust	yes	1	no	yes	yes	serves

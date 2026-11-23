@@ -55,5 +55,10 @@ export const countSegmentedFencePages: Member<'countSegmentedFencePages'> = (bra
     Number(await brain.countSegmentedFencePages({ sourceIds: [...sourceIds], walkedSourceIds: [...walkedSourceIds] })));
 
 
-/** The daily budget ledger is written by the spend reservations through `executeRaw`, which a Rust brain refuses, so no ledger row exists. */
-export const readBudgetLedgerDay: Member<'readBudgetLedgerDay'> = async () => null;
+/**
+ * The daily budget ledger row of (scope, resolver, day) from the store's ledger (gbrain-store budget_ledger.rs: amounts as
+ * numeric(12,4)::text, cap null when unset), or null when the day has none. The five ledger writes
+ * (store-members/budget-ledger.ts) write the same records, so a written day reads back here.
+ */
+export const readBudgetLedgerDay: Member<'readBudgetLedgerDay'> = (brain, scope, resolver, day) =>
+  storeCall({ member: 'readBudgetLedgerDay' }, () => brain.readBudgetLedgerDay(scope, resolver, day)) as ReturnType<BrainEngine['readBudgetLedgerDay']>;
