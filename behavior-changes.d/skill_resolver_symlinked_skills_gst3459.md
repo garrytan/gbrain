@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+The skill resolver now indexes skills that are symlinked into a skills folder from somewhere else, the way gstack and other installers link their skills in from a checkout. Before, gbrain skills index build skipped every symlink that left the folder it was reading (symlink_outside_root), so a gstack install in ~/.claude/skills or ~/.codex/skills was almost entirely missing from the resolver. A symlink is followed only when it points at a skill folder (a directory with a SKILL.md) or at a SKILL.md file, and the skill is listed under the link's path; any other symlink that leaves the folder is still skipped. Your catalog picks the newly visible skills up on its next rebuild (gbrain skills index build, or the hook lane's automatic rebuild). To keep a linked skill out of the resolver, remove its link.

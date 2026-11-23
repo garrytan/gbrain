@@ -344,7 +344,7 @@ interface SetupFlags {
   team?: boolean;
 }
 
-const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {

@@ -38,8 +38,8 @@ const HASH_EPHEMERAL_KEYS: &[&str] = &[
     "trust_tier",
 ];
 
-const NEXT_PAGE_ID: &str = "next_page_id";
-const NEXT_VERSION_ID: &str = "next_version_id";
+pub(crate) const NEXT_PAGE_ID: &str = "next_page_id";
+pub(crate) const NEXT_VERSION_ID: &str = "next_version_id";
 
 /// A text column of `pages` that PGLite lets be NULL: `compiled_truth` and `timeline` (migration v248).
 ///
@@ -2353,6 +2353,18 @@ pub(crate) fn snapshot_in(
     Ok(row)
 }
 
+/// The shadow seed (`seed.rs`): stores `row`, a snapshot copied from another engine with its own
+/// id and `snapshot_at`, where `snapshot_in` stores one. `false` when the page already holds that
+/// version. The caller checked the page.
+pub(crate) fn seed_version(tx: &mut dyn KvWrite, row: &VersionRecord) -> Result<bool> {
+    let key = keys::version(row.page_id, row.id);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, row)?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Search timeline: the timeline text of the page keyword vector.
 //
@@ -2445,6 +2457,11 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     crate::timeline::remove_page_timeline(tx, page.id)?;
     crate::timeline_queries::remove_event_projections(tx, page.id)?;
     crate::cascade::remove_page_rows(tx, page)?;
+    remove_page_record(tx, page)
+}
+
+/// A page's record, its index entries and its projection job.
+fn remove_page_record(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     let stored = read_page_by_id(&*tx, page.id)?;
     let stored = stored.as_ref().unwrap_or(page);
     index_origin(tx, Some(stored), None)?;
@@ -2452,6 +2469,21 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     crate::page_projection::queue_page_projection(tx, Some(stored), None)?;
     tx.delete(&keys::page(&page.source_id, &page.slug))?;
     tx.delete(&keys::page_id(page.id))
+}
+
+/// The shadow follow (`seed/follow.rs`): removes what a page owns itself, so that a row of the same
+/// id can be stored in its place: the record with its index entries and projection job, the sealed
+/// search timeline, and the salience, extraction, contextual retrieval, embedding signature and
+/// body column records. Everything that hangs off the page (versions, chunks, links, timeline
+/// entries, takes, raw data, wanted links, the reconcile mark) stays readable.
+pub(crate) fn remove_page_own_state(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    forget_search_timeline(tx, page.id)?;
+    crate::extraction::remove_page_rows(tx, page)?;
+    crate::aliases::remove_page_rows(tx, page)?;
+    crate::page_body::clear_body_state(tx, page.id)?;
+    crate::salience::remove_page_rows(tx, page)?;
+    crate::embeddings::clear_page_signature(tx, page.id)?;
+    remove_page_record(tx, page)
 }
 
 #[cfg(test)]

@@ -12,33 +12,51 @@
  *   gbrain publish <page-path> --title "Custom Title"  # override title
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, realpathSync, statSync } from 'fs';
 import { randomBytes, createCipheriv, pbkdf2Sync } from 'crypto';
-import { dirname, basename, join } from 'path';
-import { createRequire } from 'module';
+import { dirname, basename } from 'path';
 import { frontmatterBodyOffset, validatorFrontmatterFence } from '../core/markdown.ts';
-import { FrontmatterLanguageError, scanDataFrontmatter } from '../core/data-frontmatter.ts';
+import { FRONTMATTER_SCHEMA, FrontmatterLanguageError, loadBoundedYaml, scanDataFrontmatter } from '../core/data-frontmatter.ts';
 import { GUEST_WARNING_LINE_RE } from '../core/guests/marker.ts';
 import { opError } from '../core/ops/contract.ts';
 
-// Inline marked.js so published HTML is truly self-contained (no CDN dependency)
-const require = createRequire(import.meta.url);
-const MARKED_JS = readFileSync(join(dirname(require.resolve('marked')), 'marked.umd.js'), 'utf8');
+// Inline marked.js so published HTML is truly self-contained (no CDN dependency). It is embedded at build time
+// because a compiled binary has no node_modules (#10019), and vendored because marked's exports hide the UMD file.
+import { MARKED_JS } from '../../vendor/marked/marked-source.ts';
 
 // ── Content stripping ──────────────────────────────────────────────
 
 const TIMELINE_MARKER = /<!--+\s*timeline\s*-*-->/i;
-const TIMELINE_LINE = /^[ \t]*(?:-{3,}[ \t]*timeline[ \t]*-{3,}[ \t]*$|#{1,6}[ \t]+[^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
+const TIMELINE_LINE = /^(?:[^\S\n]*-{3,}[^\S\n]*timeline[^\S\n]*-{3,}[^\S\n]*$|[ \t]*#{1,6}[ \t][^A-Za-z0-9\n]*(?:timelines?|history)\b|[^A-Za-z0-9\n]*(?:timelines?|history)\b[^\n]*\n[ \t]*(?:=+|-+)[ \t]*$)/im;
 const MANAGED_BLOCK_END = /<!--+\s*gbrain:([a-z0-9_-]+):end\b[^>]*>/gi;
 const MANAGED_BLOCK_BEGIN = /^(?:[ \t]*#{1,6}[ \t]+(?:facts|takes)[ \t]*\n(?:[ \t]*\n)*)?[^\n]*?<!--+\s*gbrain:([a-z0-9_-]+):begin\b[^>]*>/im;
 
 const WRAPPED_FRONTMATTER_WINDOW = 5;
-const FRONTMATTER_KEY_LINE = /^(?:['"][^'"\n]+['"]|[A-Za-z_][\w.-]*)[ \t]*:(?:[ \t]|$)/m;
+const LEADING_BLANK_OR_COMMENT_LINES = /^(?:[ \t]*(?:#[^\n]*)?\n)*/;
+const KEY_SEPARATOR = /:(?:[ \t]|$)/m;
+
+/**
+ * Whether a wrapped block holds frontmatter, decided by the YAML parser sync uses rather than by key shape: it parses as
+ * a mapping, or as a sequence holding one (`- key: value` items carry the same data). A block the parser rejects fails
+ * closed when it holds a `key:` separator (a colon then a space or the line end), so malformed private YAML never
+ * publishes; prose it rejects without one still does.
+ */
+function holdsFrontmatter(block: string): boolean {
+  let value: unknown;
+  try {
+    value = loadBoundedYaml(block, { schema: FRONTMATTER_SCHEMA });
+  } catch {
+    return KEY_SEPARATOR.test(block);
+  }
+  const isMapping = (node: unknown) => Object.prototype.toString.call(node) === '[object Object]';
+  return isMapping(value) || (Array.isArray(value) && value.some(isMapping));
+}
 
 /**
  * Whether a column-0 frontmatter fence pair, as parseDataFrontmatter reads one, starts on one of the first
- * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a fence
- * whose first line is a YAML key or a flow mapping, or a closed plain `---` pair with a YAML key line between the fences.
+ * WRAPPED_FRONTMATTER_WINDOW non-blank lines: an opener naming its language (`---yaml`, `---yml`, `---json`), a block
+ * starting with a `{` flow mapping, or a block that holdsFrontmatter. The block is the text between a closed pair, or
+ * for a fence that never closes the text after it, past any leading blank and # comment lines, up to the next blank line.
  * Two horizontal rules with only prose between them are not, and neither is one rule followed by prose.
  */
 function startsFrontmatterPair(text: string): boolean {
@@ -54,9 +72,9 @@ function startsFrontmatterPair(text: string): boolean {
       throw e;
     }
     if (!fenced) continue;
-    const first = /^.*\S.*$/m.exec(fenced.block)?.[0] ?? '';
-    if (fenced.language !== '' || FRONTMATTER_KEY_LINE.test(first) || first.trimStart().startsWith('{')) return true;
-    if (fenced.content != null && FRONTMATTER_KEY_LINE.test(fenced.block)) return true;
+    if (fenced.language !== '') return true;
+    const block = fenced.content != null ? fenced.block : fenced.block.replace(LEADING_BLANK_OR_COMMENT_LINES, '').split(/\n[ \t]*\n/, 1)[0]!;
+    if (/^\s*\{/.test(block) || holdsFrontmatter(block)) return true;
   }
   return false;
 }
@@ -112,7 +130,7 @@ export function makeShareable(content: string): string {
   clean = visible + clean.slice(at);
 
   // Remove [Source: ...] citations (all formats)
-  clean = clean.replace(/\s*\[Source:[^\]]*\]/g, '');
+  clean = clean.split(/\[Source:[^\]]*\]/).map((part, i, parts) => i < parts.length - 1 ? part.trimEnd() : part).join('');
 
   // Remove confirmation numbers
   clean = clean.replace(/\*\*Confirmation:\*\*\s*[A-Z0-9]{6,}/gi, '**Confirmation:** on file');
@@ -468,11 +486,36 @@ ${contentScript}
 
 // ── CLI entry point ────────────────────────────────────────────────
 
+/**
+ * Refuse an --out that names the page itself: the same real path or the same file by device and inode when it exists
+ * (a symlink, a hard link, a case variant on a case-insensitive filesystem), else the same name in the page's real
+ * parent folder. Checked before anything is written.
+ */
+function refuseOutOverPage(inputPath: string, outPath: string): void {
+  const page = statSync(inputPath);
+  const pageReal = realpathSync(inputPath);
+  let same = false;
+  try {
+    const out = statSync(outPath);
+    same = realpathSync(outPath) === pageReal || (out.dev === page.dev && out.ino === page.ino);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw e;
+    try {
+      same = basename(outPath) === basename(pageReal) && realpathSync(dirname(outPath)) === dirname(pageReal);
+    } catch {
+      same = false;
+    }
+  }
+  if (same) throw opError('invalid_params', `--out ${outPath} is the page itself, so the published copy would replace it; nothing was written.`, 'Pass a different --out path.');
+}
+
 export async function runPublish(args: string[]) {
   const inputPath = args.find(a => !a.startsWith('--'));
   const outIdx = args.indexOf('--out');
   const titleIdx = args.indexOf('--title');
   const pwIdx = args.indexOf('--password');
+  const markdownOnly = args.includes('--markdown');
 
   if (!inputPath) {
     console.error('Usage: gbrain publish <page.md> [--password ["secret"]] [--title "Title"] [--out path]');
@@ -484,12 +527,29 @@ export async function runPublish(args: string[]) {
     console.error('  --password          Auto-generate a password');
     console.error('  --password "secret" Use a specific password');
     console.error('  --title "Title"     Override the page title');
-    console.error('  --out path          Output file (default: <input-basename>.html)');
+    console.error('  --markdown          Write the stripped markdown instead of HTML, for another renderer (brain-pdf)');
+    console.error('  --out path          Output file (default: <input-basename>.html, or <input-basename>.shared.md with --markdown)');
     process.exit(1);
   }
 
+  if (markdownOnly && pwIdx >= 0) throw opError('invalid_params', '--password encrypts the HTML page, and --markdown writes plain markdown, so nothing was written.', 'Drop --password to write the stripped markdown, or drop --markdown to publish encrypted HTML.');
+
   const raw = readFileSync(inputPath, 'utf-8');
   const cleaned = makeShareable(raw);
+
+  if (markdownOnly) {
+    const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.shared.md';
+    refuseOutOverPage(inputPath, outPath);
+    mkdirSync(dirname(outPath), { recursive: true });
+    try {
+      writeFileSync(outPath, cleaned + '\n', { flag: outIdx >= 0 ? 'w' : 'wx' });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw opError('invalid_params', `${outPath} already exists, so nothing was written.`, 'Pass --out to choose the file to write.');
+      throw e;
+    }
+    console.log(`Stripped markdown: ${outPath}`);
+    return;
+  }
   const title = (titleIdx >= 0 ? args[titleIdx + 1] : null) || extractTitle(cleaned);
 
   // Handle password
@@ -507,6 +567,7 @@ export async function runPublish(args: string[]) {
 
   // Determine output path
   const outPath = outIdx >= 0 ? args[outIdx + 1] : basename(inputPath, '.md') + '.html';
+  refuseOutOverPage(inputPath, outPath);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, html);
 

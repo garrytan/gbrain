@@ -21,7 +21,7 @@ import { hostIdFor } from './identity.ts';
 import { isDatabaseOnlyPage, recordsNoFileOrigin, slugDerivedOrigin } from './unbound-pages.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
-import { digest, gitBlobOid, requireUuid, sha256, stableJson } from './digest.ts';
+import { digest, requireUuid, sha256, stableJson } from './digest.ts';
 import { SYNC_ORIGIN_DELETED_OP } from './sync-pass-row.ts';
 import { reconcileCanonical, strictReconcileKeys, validateReconcileJson, type ReconcileConflict, type ReconcileDecision } from './reconcile-merge.ts';
 import type { ParsedPage } from '../import-file.ts';
@@ -133,7 +133,7 @@ export interface DeletedDriftTarget {
   marker_digest: string | null;
 }
 /** Why a held path no longer has a deleted side to resolve; a fresh sync re-classifies it. */
-export type DeletedDriftChange = 'file_gone' | 'live_page' | 'no_deletion' | 'deleted_same';
+export type DeletedDriftChange = 'file_gone' | 'live_page' | 'no_deletion';
 export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: string, input: { path: string; sourcePath: string; pageId?: number | null }):
   Promise<DeletedDriftTarget | { changed: DeletedDriftChange }> {
   const binding = await getWorktreeBinding(engine, sourceId);
@@ -166,8 +166,6 @@ export async function readDeletedDriftTarget(engine: BrainEngine, sourceId: stri
   const [marker] = await engine.executeRaw<{ value: { kind?: string; blob_oids?: unknown } | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
     [SYNC_ORIGIN_DELETED_OP, `${sourceId}:${binding.source_incarnation}:${input.sourcePath}`]);
   if (!marker?.value || marker.value.kind === 'legacy') return { changed: 'no_deletion' };
-  const held = Array.isArray(marker.value.blob_oids) ? marker.value.blob_oids : [];
-  if (held.includes(gitBlobOid(raw, 'sha1')) || held.includes(gitBlobOid(raw, 'sha256'))) return { changed: 'deleted_same' };
   return { state: 'purged_differs', ...pin, tombstone: null, marker_digest: digest(marker.value) };
 }
 /** Whether `root` or an ancestor holds a `.git` entry (a checkout Git should answer for). */

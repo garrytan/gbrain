@@ -124,11 +124,11 @@ transaction	lifecycle	yes	312	no	yes	yes	serves
 transactionDirect	lifecycle	yes	14	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	219	yes	yes	yes	serves
-readPageSnapshot	pages	yes	66	no	yes	yes	serves
+getPage	pages	yes	220	yes	yes	yes	serves
+readPageSnapshot	pages	yes	67	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	16	no	yes	yes	serves
-putPage	pages	yes	1094	yes	yes	yes	serves
+putPage	pages	yes	1098	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -206,7 +206,7 @@ readLivePageIdBySlug	pages	yes	2	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
-searchKeyword	search	yes	43	yes	yes	yes	serves
+searchKeyword	search	yes	44	yes	yes	yes	serves
 countKeywordPages	search	yes	12	no	yes	yes	serves
 searchKeywordPages	search	yes	17	no	yes	yes	serves
 searchTitles	search	yes	21	yes	yes	yes	serves
@@ -214,8 +214,8 @@ searchVector	search	yes	15	yes	yes	yes	serves
 getEmbeddingsByChunkIds	search	yes	1	no	yes	yes	serves
 searchKeywordChunks	search	yes	16	yes	yes	yes	serves
 cosinesByChunkIds	search_reads	yes	1	no	yes	yes	serves
-hasSupersedeEdges	search_reads	yes	1	no	yes	yes	serves
-supersedingPageSlugs	search_reads	yes	11	no	yes	yes	serves
+hasSupersedeEdges	search_reads	yes	3	no	yes	yes	serves
+supersedingPageSlugs	search_reads	yes	14	no	yes	yes	serves
 aliasCanonicalRefs	search_reads	yes	11	no	yes	yes	serves
 pageCollapseFacts	search_reads	yes	3	no	yes	yes	serves
 slugsEndingIn	search_reads	yes	2	no	yes	yes	serves
@@ -285,7 +285,7 @@ deleteChunksForPages	chunks	yes	3	no	yes	yes	serves
 listContextualModeCandidates	chunks	yes	1	no	yes	yes	serves
 resolveFrozenHits	chunks	yes	6	no	yes	yes	serves
 upsertChunks	chunks	yes	56	yes	yes	yes	serves
-sealChunks	chunks	yes	84	no	yes	yes	serves
+sealChunks	chunks	yes	85	no	yes	yes	serves
 getChunks	chunks	yes	62	yes	yes	yes	serves
 getChunkPage	chunks	yes	14	no	yes	yes	serves
 getChunkWindows	chunks	yes	13	no	yes	yes	serves
@@ -327,7 +327,7 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	145	yes	yes	yes	serves
+addLink	links	yes	148	yes	yes	yes	serves
 addLinksBatch	links	yes	38	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -526,7 +526,7 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	162	yes	yes	yes	serves
+insertFact	facts	yes	163	yes	yes	yes	serves
 insertFacts	facts	yes	222	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	84	no	yes	yes	serves
@@ -543,7 +543,7 @@ listFactIdsBySourcePrefix	facts	yes	1	no	yes	yes	serves
 expireFactRows	facts	yes	1	no	yes	yes	serves
 findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	9	no	yes	yes	serves
-findTrajectory	facts	yes	6	yes	yes	yes	serves
+findTrajectory	facts	yes	7	yes	yes	yes	serves
 getFactsHealth	facts	yes	3	yes	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	29	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	28	no	yes	yes	serves
@@ -920,7 +920,7 @@ readNamedEntitySlugs	entity_reads	yes	2	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	7	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	3	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	4	no	yes	yes	serves
 listUnretiredPagesBySlugPattern	entity_reads	yes	2	no	yes	yes	serves
 listNameVariantCandidates	entity_reads	yes	2	no	yes	yes	serves
 countDistinctInboundLinkers	entity_reads	yes	2	no	yes	yes	serves
@@ -1549,7 +1549,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	180	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	181	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	4	yes	yes	yes	serves
