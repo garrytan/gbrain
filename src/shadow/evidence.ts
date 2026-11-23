@@ -23,7 +23,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { readEpoch, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
-import { exactnessArm, SHADOW_KEYWORD_RANKER } from './exactness.ts';
+import { exactnessArm, RANKED_PRIVATE_EXCEPTION, SHADOW_KEYWORD_RANKER } from './exactness.ts';
 import { ledgerDir, readAllFaults, readJsonlStrict, type ShadowLedgerRow } from './ledger.ts';
 import { readEpochRecall, RECALL_MIN_SAMPLES } from './recall.ts';
 import { zeroUsage, type OpUsage } from './mirror.ts';
@@ -73,6 +73,10 @@ export interface EvidenceStatus {
     /** Vector recall samples scored in the epoch (the fields need `RECALL_MIN_SAMPLES`), and Rust's mean overlap with the primary's top ten (agreement, not recall). */
     recall_samples: number;
     vector_overlap_with_primary?: number;
+    /** What counts into `diverged_unexplained_7d`, with the one exception (exactness.ts); printed with the count. */
+    unexplained_rule: string;
+    /** Accepted ranked-search diffs (every extra Rust row passed the per-row privacy check), per member: reported, not counted as unexplained. */
+    ranking_differences: Record<string, number>;
     /** Samples whose privacy check could not be settled in the last 7 days; any of them leaves `privacy_diverged` absent. */
     privacy_checks_unsettled_7d: number;
   };
@@ -98,6 +102,8 @@ interface ReadFold {
   rust_error_unresolved_7d: number;
   diverged_unexplained_7d: number;
   compared: number;
+  /** Accepted ranked-search diffs per member (the exception), never dropped silently. */
+  ranking_differences: Record<string, number>;
   privacy_rows: number;
   privacy_unsettled_7d: number;
   arms: { trigram: { compared: number; bad: number }; keyword_title: { compared: number; bad: number } };
@@ -107,7 +113,7 @@ interface ReadFold {
 function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | null {
   const fold: ReadFold = {
     matches: new Map(), collation: new Map(), ops: new Set(), capability_missing_7d: 0, rust_error_unresolved_7d: 0, diverged_unexplained_7d: 0,
-    compared: 0, privacy_rows: 0, privacy_unsettled_7d: 0, arms: { trigram: { compared: 0, bad: 0 }, keyword_title: { compared: 0, bad: 0 } },
+    compared: 0, ranking_differences: {}, privacy_rows: 0, privacy_unsettled_7d: 0, arms: { trigram: { compared: 0, bad: 0 }, keyword_title: { compared: 0, bad: 0 } },
   };
   const root = ledgerDir(dir);
   if (!existsSync(root)) return fold;
@@ -125,7 +131,12 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
       const recent = !(t < now - 7 * DAY_MS); // an unreadable time counts as recent: fail closed
       const arm = exactnessArm(r.op);
       const rerunDone = r.rerun === 'matched' || r.rerun === 'differed';
-      const unexplained = arm !== null && (r.outcome === 'diff' || (r.outcome === 'inconclusive' && r.rerun !== 'matched'));
+      // A ranked vector search counts only for a read under excludePrivate, and not when every extra row passed the check (the one exception).
+      const accepted = arm === 'private_ranked' && r.outcome === 'diff' && r.reason === 'extra_rows_cleared';
+      const diffCounts = arm !== 'private_ranked' || (r.private_read === true && !accepted);
+      const unexplained = arm !== null && ((r.outcome === 'diff' && diffCounts) || (r.outcome === 'inconclusive' && r.rerun !== 'matched'));
+      const leak = r.outcome === 'privacy_diverged'; // a row the caller may not read is never explained: criterion 3 fails with criterion 6
+      if (accepted) fold.ranking_differences[r.op] = (fold.ranking_differences[r.op] ?? 0) + 1;
       if (COMPARED.has(r.outcome)) fold.compared++;
       if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
       if (recent && r.outcome === 'inconclusive' && !rerunDone && r.reason?.startsWith('privacy_check_')) fold.privacy_unsettled_7d++;
@@ -133,7 +144,7 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
       if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
       if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;
       if (recent && RUST_ERRORS.has(r.outcome)) fold.rust_error_unresolved_7d++;
-      if (recent && unexplained) fold.diverged_unexplained_7d++;
+      if (recent && (unexplained || leak)) fold.diverged_unexplained_7d++;
       if ((arm === 'trigram' || arm === 'keyword_title') && COMPARED.has(r.outcome)) {
         fold.arms[arm].compared++;
         if (unexplained) fold.arms[arm].bad++;
@@ -210,6 +221,7 @@ export function buildEvidenceStatus(o: EvidenceOptions): EvidenceStatus {
     ...(epoch.build ? { build: epoch.build } : {}),
     recall_samples: recall?.length ?? 0, ...(recall?.length ? { vector_overlap_with_primary: mean((l) => l.overlap) } : {}),
     privacy_checks_unsettled_7d: fold?.privacy_unsettled_7d ?? 0,
+    unexplained_rule: RANKED_PRIVATE_EXCEPTION, ranking_differences: fold?.ranking_differences ?? {},
   };
   return out;
 }
@@ -230,6 +242,9 @@ export function renderEvidenceStatus(s: EvidenceStatus): string[] {
     }
     lines.push(`  unresolved rust_error in the last 7 days: ${s.reads.rust_error_unresolved_7d} (${e.rust_error_rule})`);
     lines.push(`  unexplained diverged in the last 7 days: ${s.reads.diverged_unexplained_7d}; capability_missing in the last 7 days: ${s.reads.capability_missing_7d}`);
+    lines.push(`    rule: ${e.unexplained_rule}`);
+    const ranked = Object.entries(e.ranking_differences).map(([op, n]) => `${op} ${n}`);
+    lines.push(`  ranking differences accepted under that exception (reported, not unexplained): ${ranked.length ? ranked.join(', ') : 'none'}`);
   }
   lines.push(s.privacy_diverged === undefined
     ? `  privacy: no evidence (nothing compared yet, or ${e.privacy_checks_unsettled_7d} privacy check(s) in the last 7 days could not be settled)`

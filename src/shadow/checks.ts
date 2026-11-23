@@ -28,7 +28,7 @@ export const RERUN_DEADLINE_MS = 30_000;
 
 /** Pages a Rust answer named that the primary's own answer did not: by id and by (source, slug). */
 export interface PageCandidates { ids: number[]; keys: string[] }
-export interface PrivacyAnswer { checked: number; violations: number; moved: boolean }
+export interface PrivacyAnswer { checked: number; violations: number; moved: boolean; /** The candidates the primary has, by id and key (ids only): a candidate not in it was not checked. */ found: { ids: number[]; keys: string[] } }
 export interface RerunAnswer { result: unknown; stamp: number; epoch_id: string }
 
 /** Runs `fn` as the captured caller, or outside any caller record when the read had none (a record changes the page policy text). */
@@ -45,11 +45,11 @@ const POLICY_GENERATION_SQL = `SELECT concat_ws('|',
 export async function policyCheck(reads: ReadSource, access: Partial<CallerAccess> | undefined, cand: PageCandidates, at: number): Promise<PrivacyAnswer> {
   const generation = (): Promise<string> => reads.read(async (tx) => String((await tx.executeRaw<{ generation: string }>(POLICY_GENERATION_SQL))[0]?.generation));
   const before = await generation();
-  const rows = await reads.read((tx) => asCaller(access, () => tx.executeRaw<{ allowed: boolean; changed: boolean }>(
-    `SELECT (${privatePagesFilterForCaller('p')}) AS allowed, p.updated_at > to_timestamp($3::double precision / 1000.0) AS changed FROM pages p
+  const rows = await reads.read((tx) => asCaller(access, () => tx.executeRaw<{ id: number | string; key: string; allowed: boolean; changed: boolean }>(
+    `SELECT p.id, p.source_id || E'\\x1f' || p.slug AS key, (${privatePagesFilterForCaller('p')}) AS allowed, p.updated_at > to_timestamp($3::double precision / 1000.0) AS changed FROM pages p
       WHERE p.id = ANY($1::bigint[]) OR (p.source_id || E'\\x1f' || p.slug) = ANY($2::text[])`, [cand.ids, cand.keys, at])));
   const moved = before !== await generation() || rows.some((r) => r.changed === true);
-  return { checked: rows.length, violations: rows.filter((r) => r.allowed !== true).length, moved };
+  return { checked: rows.length, violations: rows.filter((r) => r.allowed !== true).length, moved, found: { ids: rows.map((r) => Number(r.id)), keys: rows.map((r) => r.key) } };
 }
 
 export interface AskDeps {

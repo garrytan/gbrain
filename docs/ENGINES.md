@@ -1924,6 +1924,22 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
   displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
   next full pass.
+- **Privacy, stable rerun and vector recall evidence.** Each sampled read carries the caller's access record (none, when there was
+  none), and the shadow runs Rust under it. Every Rust row the primary's own answer lacked is judged on the primary with its read
+  policy for that caller (ids only; a row the caller may not read is `privacy_diverged` and pauses comparison, and counts against
+  criteria 6 and 3). A mismatch nothing explains is `inconclusive` and gets one stable rerun behind a barrier on the follow stream
+  (30 s, queue of 64); a rerun that still differs is a `diff`, one that matches closes unsuccessful, and one that could not run
+  stays unexplained. Vector recall@10 is scored against the primary's own search with index scans off, at most once a minute, and
+  appears after 30 scored samples in the epoch. **Reading the lane owner accepted ("as I read it", ranked-search reading):** ten reads
+  carry no source or private marker (`resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`, `getChunks`,
+  `findByTitleFuzzy`, `getStats`, `countKeywordPages`, `searchTakes`, `searchTakesVector`), so every unexplained `diff` on them counts into
+  `reads.diverged_unexplained_7d`; on the two take searches only a different row set counts, not the same rows in another order. Facts,
+  links, finds and search rows read under `excludePrivate` count a `diff` too. The one exception: a ranked `searchVector` diff
+  under `excludePrivate` whose extra Rust rows ALL passed the per-row check (same captured record, the primary's policy text) is a
+  ranking difference, because vector and default-ranker membership differences are legitimate (D17). A row the check cannot
+  evaluate (no page identity, a page the primary lacks, a failed, skipped or moved check) is unchecked, and the diff counts. Accepted
+  ranking differences are never dropped: the status and the report list them per member (`evidence.ranking_differences`) next to the
+  rule.
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `stopped`, `invalid`, `behind`,
   `following`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
   value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,

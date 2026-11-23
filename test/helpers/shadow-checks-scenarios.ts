@@ -13,6 +13,8 @@ import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { encodeValue } from '../../src/shadow/codec.ts';
 import { readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { readEpochRecall, RECALL_REFERENCE_LIMIT, type RankedKey } from '../../src/shadow/recall.ts';
+import { evaluateReadiness } from '../../src/core/engine-swap/readiness.ts';
+import { buildEvidenceStatus } from '../../src/shadow/evidence.ts';
 import { batch, sample, sleep, startRig, until, type Rig, type RigOptions } from './shadow-stable-harness.ts';
 import { installFixtureChunks } from './page-projection.ts';
 
@@ -124,6 +126,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await withCallerAccess(ALICE, () => rig.engine.listPages({ limit: 100, excludePrivate: true }));
       expect((await rig.finish())[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved', rerun: 'skipped:no_epoch' });
       expect(rig.stoppedBy).toBeNull();
+      await primary.executeRaw(`UPDATE pages SET updated_at = now() - interval '1 hour' WHERE slug = 'priv/a'`); // the later tests share this primary
     });
   
     test('a read that did not ask for the read policy is not judged', async () => {
@@ -229,6 +232,52 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect([why('skipped:queue_full'), why('skipped:closing'), why('skipped:child_closing')]).toEqual([6, 1, 63]);
       expect(all.every((r) => r.outcome === 'inconclusive')).toBe(true);
     }, 30_000);
+  });
+
+  describe('ranked vector search under excludePrivate', () => {
+    /** One ranked searchVector read as ALICE under excludePrivate; Rust answers the primary's rows plus `extra`. Returns criterion 3, the counts and the ledger rows. */
+    async function ranked(extra: (ids: Record<string, number>) => Record<string, unknown>) {
+      const primary = ctx.primary();
+      const ids = await privacyFixture(primary);
+      await vectorFixture(primary);
+      const opts = { limit: 10, excludePrivate: true };
+      const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts));
+      const rig = await start();
+      rig.rust.searchVector = async () => [...theirs, { ...theirs[0], chunk_id: 987_654, ...extra(ids) }];
+      await withCallerAccess(ALICE, () => rig.engine.searchVector(vec(3), opts));
+      const rows = await rig.finish();
+      const { evidence, ...ev } = buildEvidenceStatus({ dir: rig.dir });
+      const row3 = evaluateReadiness({ epoch_id: evidence?.epoch_id, epoch_started_at: evidence?.epoch_started_at, ...ev } as never, new Date()).criteria.find((c) => c.n === 3)!;
+      return { rows, evidence: evidence!, reads: ev.reads!, row3, stopped: rig.stoppedBy };
+    }
+    const named = (slug: string) => (ids: Record<string, number>) => ({ page_id: ids[slug], slug, source_id: 'default' });
+
+    test('every extra row passed the check: a reported ranking difference, counted per member, and out of diverged_unexplained_7d', async () => {
+      const r = await ranked(named('open/a'));
+      expect(r.rows[0]).toMatchObject({ op: 'searchVector', outcome: 'diff', reason: 'extra_rows_cleared', private_read: true });
+      expect(r.reads.diverged_unexplained_7d).toBe(0);
+      expect(r.evidence.ranking_differences).toEqual({ searchVector: 1 });
+      expect(r.row3.state).toBe('pass');
+    });
+
+    test('one extra row the caller may not read pauses mirroring and makes criterion 3 NOT READY', async () => {
+      const r = await ranked(named('priv/a'));
+      expect(r.rows[0]).toMatchObject({ outcome: 'privacy_diverged' });
+      expect(r.stopped).toBe('privacy_diverged');
+      expect(r.reads.diverged_unexplained_7d).toBe(1);
+      expect(r.row3).toMatchObject({ state: 'fail' });
+      expect(r.row3.detail).toContain('1 unexplained diverged');
+    });
+
+    test('an extra row the check cannot evaluate (no page identity, or a page the primary does not have) counts', async () => {
+      for (const extra of [() => ({ page_id: undefined, slug: undefined, source_id: undefined }), () => ({ page_id: 99_999_999, slug: 'gone/page', source_id: 'default' })]) {
+        const r = await ranked(extra);
+        expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', mismatch: 'diff', private_read: true });
+        expect(r.reads.diverged_unexplained_7d).toBe(1); // no completed rerun: unexplained
+        expect(r.evidence.ranking_differences).toEqual({});
+        expect(r.row3).toMatchObject({ state: 'fail' });
+      }
+    });
   });
 
   describe('vector recall', () => {

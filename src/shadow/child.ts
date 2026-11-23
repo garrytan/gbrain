@@ -25,11 +25,11 @@ import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { RERUN_DEADLINE_MS } from './checks.ts';
-import { createAsker, createSerialQueue, privacyVerdict, RERUN_QUEUE_BOUND } from './child-checks.ts';
+import { createAsker, createSerialQueue, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
-import { qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
+import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
@@ -186,7 +186,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     counts[c.outcome] = (counts[c.outcome] ?? 0) + 1;
     const row: ShadowLedgerRow = {
       ts, op: event.op, outcome: c.outcome, ...(c.reason ? { reason: c.reason } : {}), ...(c.mismatch ? { mismatch: c.mismatch } : {}),
-      ...(epochId ? { epoch_id: epochId } : {}), ...(rerun ? { rerun } : {}),
+      ...(epochId ? { epoch_id: epochId } : {}), ...(rerun ? { rerun } : {}), ...(policyApplies(event.args as unknown[]) ? { private_read: true } : {}),
       primary_ms: Math.round(event.primary_ms * 1000) / 1000,
       rust_ms: rustMs === null ? null : Math.round(rustMs * 1000) / 1000,
       primary_rows: rowCount(event.result), rust_rows: rustRows,
@@ -217,9 +217,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const judge = async (op: string, encodedArgs: unknown[], primary: unknown, rust: unknown, access: CallerAccess | undefined, at: number, lagged: boolean | null): Promise<Classification> => {
     const c = classifyResult(SHADOW_READ_MEMBERS[op as ShadowReadMember], encodedArgs, primary, rust);
     if (c.outcome === 'match' || c.outcome === 'privacy_diverged') return c;
-    const verdict = await privacyVerdict(ask, decodeValue(encodedArgs) as unknown[], primary, rust, access, at);
+    const args = decodeValue(encodedArgs) as unknown[];
+    const { verdict, complete } = await privacyVerdict(ask, args, primary, rust, access, at);
     if (verdict === 'violation') return { outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' };
     if (verdict !== 'clean') return { outcome: 'inconclusive', reason: verdict, mismatch: c.outcome as 'diff' | 'order_diff' };
+    if (exactnessArm(op) === 'private_ranked') {
+      // The ranked-search exception (exactness.ts RANKED_PRIVATE_EXCEPTION): reported, with its count per member, only when every extra Rust row passed the check.
+      if (!policyApplies(args)) return c;
+      if (complete) return c.outcome === 'diff' ? { ...c, reason: 'extra_rows_cleared' } : c;
+    }
     return lagged === null ? c : qualifyMismatch(op, c, lagged, { args: encodedArgs, primary, rust });
   };
 
@@ -236,6 +242,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       if (c2.outcome === 'match') record(event, c, rustMs, rows, 'matched'); // closed as unsuccessful, never a match
       else if (c2.outcome === 'privacy_diverged') record(event, c2, rustMs, rows, 'differed');
       else if (c2.outcome === 'inconclusive') skip(c2.reason ?? 'privacy_check');
+      else if (c2.reason === 'extra_rows_cleared') record(event, { outcome: 'diff', reason: 'extra_rows_cleared', mismatch: c.mismatch ?? 'diff' }, rustMs, rows, 'differed');
       else record(event, { outcome: 'diff', reason: 'rerun_differs', mismatch: c.mismatch ?? (c2.outcome as 'diff' | 'order_diff') }, rustMs, rows, 'differed');
     } catch (error) {
       recordRustError('read', error);

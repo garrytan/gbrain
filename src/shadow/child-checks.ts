@@ -31,14 +31,23 @@ function pageOf(row: Row): { id?: number; key?: string } {
   };
 }
 
-/** The pages of the Rust answer that the primary's answer did not hold. */
-export function missingPages(encodedPrimary: unknown, encodedRust: unknown): PageCandidates {
+/** The Rust rows the primary's answer did not hold, each by its page; `unidentified` counts those that name no page at all. */
+export function extraRows(encodedPrimary: unknown, encodedRust: unknown): { rows: Array<{ id?: number; key?: string }>; unidentified: number } {
   const have = rowsOf(encodedPrimary).map(pageOf);
   const ids = new Set(have.flatMap((p) => (p.id === undefined ? [] : [p.id])));
   const keys = new Set(have.flatMap((p) => (p.key === undefined ? [] : [p.key])));
-  const out: PageCandidates = { ids: [], keys: [] };
+  const out: { rows: Array<{ id?: number; key?: string }>; unidentified: number } = { rows: [], unidentified: 0 };
   for (const p of rowsOf(encodedRust).map(pageOf)) {
     if ((p.id !== undefined && ids.has(p.id)) || (p.key !== undefined && keys.has(p.key))) continue;
+    if (p.id === undefined && p.key === undefined) out.unidentified++; else out.rows.push(p);
+  }
+  return out;
+}
+
+/** The pages of the Rust answer that the primary's answer did not hold. */
+export function missingPages(encodedPrimary: unknown, encodedRust: unknown): PageCandidates {
+  const out: PageCandidates = { ids: [], keys: [] };
+  for (const p of extraRows(encodedPrimary, encodedRust).rows) {
     if (p.id !== undefined) out.ids.push(p.id);
     if (p.key !== undefined) out.keys.push(p.key);
   }
@@ -54,17 +63,27 @@ export function policyApplies(args: unknown[]): boolean {
 }
 
 export type PrivacyVerdict = 'clean' | 'violation' | 'privacy_check_moved' | 'privacy_check_unavailable';
+/** `complete`: every extra Rust row was identified and the primary judged it (or there was none). Only then is a ranked diff accepted (exactness.ts RANKED_PRIVATE_EXCEPTION). */
+export interface PrivacyResult { verdict: PrivacyVerdict; complete: boolean }
 
-/** Asks the serving process (checks.ts `policyCheck`) about every Rust page the primary's answer lacked. */
-export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, access: CallerAccess | undefined, at: number): Promise<PrivacyVerdict> {
-  if (!policyApplies(args)) return 'clean';
+/**
+ * Asks the serving process (checks.ts `policyCheck`) about every Rust page the primary's answer lacked, under the same
+ * captured caller record and the primary's own policy text. A row the check cannot evaluate (no page identity, a page the
+ * primary does not have, a failed or moved check) leaves `complete` false.
+ */
+export async function privacyVerdict(ask: Asker, args: unknown[], primary: unknown, rust: unknown, access: CallerAccess | undefined, at: number): Promise<PrivacyResult> {
+  if (!policyApplies(args)) return { verdict: 'clean', complete: false };
+  const extra = extraRows(primary, rust);
+  if (extra.rows.length === 0) return { verdict: 'clean', complete: extra.unidentified === 0 };
   const candidates = missingPages(primary, rust);
-  if (candidates.ids.length + candidates.keys.length === 0) return 'clean';
   try {
     const answer = await ask({ kind: 'privacy', access, at, candidates }, PRIVACY_ASK_TIMEOUT_MS) as PrivacyAnswer;
-    if (answer.moved) return 'privacy_check_moved';
-    return answer.violations > 0 ? 'violation' : 'clean';
-  } catch { return 'privacy_check_unavailable'; }
+    if (answer.moved) return { verdict: 'privacy_check_moved', complete: false };
+    if (answer.violations > 0) return { verdict: 'violation', complete: false };
+    const ids = new Set(answer.found.ids);
+    const keys = new Set(answer.found.keys);
+    return { verdict: 'clean', complete: extra.unidentified === 0 && extra.rows.every((r) => (r.id !== undefined && ids.has(r.id)) || (r.key !== undefined && keys.has(r.key))) };
+  } catch { return { verdict: 'privacy_check_unavailable', complete: false }; }
 }
 
 export type Asker = ((payload: Record<string, unknown>, timeoutMs: number) => Promise<unknown>) & { answer(line: { id?: number; ok?: boolean; value?: unknown; error?: { code?: string } }): void; closeAll(): void };

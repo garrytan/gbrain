@@ -103,6 +103,59 @@ describe('the status document', () => {
   });
 });
 
+describe('the residual privacy limit (reads without a privacy marker)', () => {
+  const MARKERLESS = ['resolveSlugs', 'resolveSlugWithAlias', 'getTags', 'getTimeline', 'getChunks', 'findByTitleFuzzy', 'getStats', 'countKeywordPages', 'searchTakes', 'searchTakesVector'];
+  const criterion3 = (dir: string) => {
+    const { evidence, ...ev } = status(dir);
+    return { reads: status(dir).reads, row: evaluateReadiness({ epoch_id: evidence?.epoch_id, epoch_started_at: evidence?.epoch_started_at, ...ev } as never, NOW).criteria.find((c) => c.n === 3)! };
+  };
+  const healthy = (epoch: string) => ['getPage', 'searchTakes', 'getTags'].map((op) => row(epoch, op, 'match'));
+
+  test('an injected diff on each of the ten reads counts, and takes searches fail criterion 3 through the evaluator (never an explained bucket)', () => {
+    for (const op of MARKERLESS) {
+      const { dir, epoch } = epochDir();
+      appendLedgerRows(dir, [...healthy(epoch), row(epoch, op, 'diff', { mismatch: 'diff', rerun: 'differed', reason: 'rerun_differs' })]);
+      expect([op, status(dir).reads!.diverged_unexplained_7d]).toEqual([op, 1]);
+    }
+    for (const op of ['searchTakes', 'getTags']) {
+      const { dir, epoch } = epochDir();
+      appendLedgerRows(dir, [...healthy(epoch), row(epoch, op, 'diff', { mismatch: 'diff', rerun: 'differed', reason: 'rerun_differs' })]);
+      expect(criterion3(dir).row).toMatchObject({ state: 'fail' });
+      expect(criterion3(dir).row.detail).toContain('1 unexplained diverged');
+    }
+    const clean = epochDir();
+    appendLedgerRows(clean.dir, healthy(clean.epoch));
+    expect(criterion3(clean.dir).row.state).toBe('pass');
+  });
+
+  test('on the two take searches the same rows in another order stay reported; facts, links, finds and search rows also count a diff', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [row(epoch, 'searchTakes', 'order_diff'), row(epoch, 'searchTakesVector', 'order_diff')]);
+    expect(status(dir).reads!.diverged_unexplained_7d).toBe(0);
+    for (const op of ['listFactsByEntity', 'getLinks', 'getBacklinks', 'findPages', 'findByTitleFuzzy', 'searchKeyword', 'searchKeywordChunks', 'searchTitles']) {
+      const one = epochDir();
+      appendLedgerRows(one.dir, [row(one.epoch, op, 'diff', { private_read: true, mismatch: 'diff', rerun: 'differed' })]);
+      expect([op, status(one.dir).reads!.diverged_unexplained_7d]).toEqual([op, 1]);
+    }
+  });
+
+  test('a ranked vector diff counts only under excludePrivate, and not when every extra row passed the check; the accepted ones are reported per member', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [
+      row(epoch, 'searchVector', 'diff'), // no excludePrivate: a ranking difference
+      row(epoch, 'searchVector', 'diff', { private_read: true, reason: 'extra_rows_cleared' }), // accepted
+      row(epoch, 'searchVector', 'diff', { private_read: true, reason: 'extra_rows_cleared' }),
+    ]);
+    expect(status(dir).reads!.diverged_unexplained_7d).toBe(0);
+    expect(status(dir).evidence!.ranking_differences).toEqual({ searchVector: 2 });
+    const text = renderEvidenceStatus(status(dir)).join('\n');
+    expect(text).toContain('ranking differences accepted under that exception (reported, not unexplained): searchVector 2');
+    expect(text).toContain('the one exception is a ranked vector search under excludePrivate whose extra Rust rows all passed');
+    appendLedgerRows(dir, [row(epoch, 'searchVector', 'diff', { private_read: true, mismatch: 'diff', rerun: 'differed', reason: 'rerun_differs' })]);
+    expect(status(dir).reads!.diverged_unexplained_7d).toBe(1);
+  });
+});
+
 describe('unexplained and privacy fields', () => {
   test('a rerun that matched closes the sample; one that never ran, or still differs, is unexplained; neither is a success', () => {
     const { dir, epoch } = epochDir();
@@ -111,9 +164,9 @@ describe('unexplained and privacy fields', () => {
       row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff', rerun: 'skipped:busy' }),
       row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff' }),
       row(epoch, 'getPage', 'diff', { mismatch: 'diff', rerun: 'differed', reason: 'rerun_differs' }),
-      row(epoch, 'searchVector', 'inconclusive', { mismatch: 'diff', reason: 'privacy_check_moved', rerun: 'skipped:busy' }), // not an exactness comparison
+      row(epoch, 'searchVector', 'inconclusive', { mismatch: 'diff', reason: 'privacy_check_moved', rerun: 'skipped:busy' }), // an unchecked ranked diff counts too
     ]);
-    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 3 });
+    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 4 });
     expect(status(dir).reads!.ops.find((o) => o.op === 'getPage')!.successful).toBe(0);
   });
   test('privacy_diverged is absent until something was compared, counts rows and pauses, and is absent while a check is unsettled', () => {

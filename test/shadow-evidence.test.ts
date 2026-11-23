@@ -216,12 +216,11 @@ describe('collation order', () => {
 });
 
 describe('exactness table', () => {
-  test('every exact member, the trigram arm and the three ts_rank arms must match exactly; vector and take searches do not', () => {
+  test('every exact member, the trigram arm and the three ts_rank arms must match exactly; take searches count a different row set, and vector search counts under excludePrivate', () => {
     for (const [op, kind] of Object.entries(SHADOW_READ_MEMBERS)) {
-      const expected = kind === 'exact' ? 'exact' : ({ findByTitleFuzzy: 'trigram', searchKeyword: 'keyword_title', searchKeywordChunks: 'keyword_title', searchTitles: 'keyword_title' } as Record<string, string>)[op] ?? null;
+      const expected = kind === 'exact' ? 'exact' : ({ findByTitleFuzzy: 'trigram', searchKeyword: 'keyword_title', searchKeywordChunks: 'keyword_title', searchTitles: 'keyword_title', searchTakes: 'membership', searchTakesVector: 'membership', searchVector: 'private_ranked' } as Record<string, string>)[op] ?? null;
       expect([op, exactnessArm(op)]).toEqual([op, expected]);
     }
-    expect(exactnessArm('searchVector')).toBeNull();
     expect(exactnessArm('toString')).toBeNull(); // an inherited name is not an operation
     expect(exactnessArm('putPage')).toBeNull();
   });
@@ -229,7 +228,9 @@ describe('exactness table', () => {
   test('only a mismatch on an exactness comparison is qualified; lag decides stale', () => {
     expect(qualifyMismatch('getPage', { outcome: 'diff' }, false)).toEqual({ outcome: 'inconclusive', mismatch: 'diff' });
     expect(qualifyMismatch('findByTitleFuzzy', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'stale', mismatch: 'order_diff' });
-    expect(qualifyMismatch('searchVector', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'order_diff' });
+    expect(qualifyMismatch('searchVector', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'order_diff' }); // the same rows in another order stay reported
+    expect(qualifyMismatch('searchTakes', { outcome: 'order_diff' }, true)).toEqual({ outcome: 'order_diff' });
+    expect(qualifyMismatch('searchTakes', { outcome: 'diff' }, false)).toEqual({ outcome: 'inconclusive', mismatch: 'diff' });
     expect(qualifyMismatch('getPage', { outcome: 'match' }, true)).toEqual({ outcome: 'match' });
     expect(qualifyMismatch('getPage', { outcome: 'error', reason: 'x' }, true)).toEqual({ outcome: 'error', reason: 'x' });
   });
@@ -307,13 +308,14 @@ describe('reads', () => {
     expect(status(dir, { now: new Date(NOW.getTime() + 6 * DAY) }).reads).toMatchObject({ rust_error_unresolved_7d: 0 });
   });
 
-  test('unexplained means an inconclusive or diverged exactness mismatch; stale, vector order differences and matches are not', () => {
+  test('unexplained means an inconclusive or diverged exactness mismatch; stale, vector order differences, a vector diff without excludePrivate and matches are not', () => {
     const { dir, epoch } = epochDir();
     put(dir, [
       ...rowsOf(epoch, 'getPage', { match: 4, stale: 7, inconclusive: 2 }), ...rowsOf(epoch, 'findByTitleFuzzy', { inconclusive: 1 }), ...rowsOf(epoch, 'searchKeyword', { diff: 1 }),
       ...rowsOf(epoch, 'searchVector', { order_diff: 9, diff: 3, inconclusive: 1 }), ...rowsOf(epoch, 'getStats', { privacy_diverged: 1 }),
     ]);
-    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 4, rust_error_unresolved_7d: 0 });
+    // getPage 2 + fuzzy 1 + keyword 1, the unrerun vector inconclusive 1 and the leak 1; vector order_diff and a vector diff without excludePrivate are reported only
+    expect(status(dir).reads).toMatchObject({ diverged_unexplained_7d: 6, rust_error_unresolved_7d: 0 });
   });
 
   test('absent, never zero: no epoch, a corrupt ledger day, a corrupt usage file, or nothing used', () => {
