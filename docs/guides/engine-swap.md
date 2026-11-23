@@ -67,7 +67,11 @@ never a pass. With no shadow running, every criterion is `missing`.
 6. Zero `privacy_diverged` events.
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
-   speed bar gate only turning Rust on by default, not this opt-in swap. The plan shows the numbers and any loss.
+   speed bar gate only turning Rust on by default, not this opt-in swap. The plan shows the numbers and any loss. The
+   numbers come from an engine-bench speed receipt that you load with `gbrain engine shadow bench --import
+   <receipt.json>`; they describe a benchmark corpus, not your brain. Until one is imported the row says "not measured
+   yet", and when every open row is a gap in the evidence it says "Rust not shown to be no worse (rows not measured)"
+   instead of "Rust slower".
 9. Zero panics and zero child faults in the shadow.
 10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release.
 11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
