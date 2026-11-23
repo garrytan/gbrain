@@ -1039,6 +1039,7 @@ src/core/repair/segmented-tiling.ts	execute_raw	7
 src/core/repair/settle.ts	execute_raw	1
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	5
+src/core/repair/slug-spelling-guards.ts	execute_raw	7	Carrying purge tombstones and held writes to the moved page copies and re-keys slug-keyed ledger rows in the page's own transaction, like the sibling repairs; a typed method comes with the Rust store serving these members.
 src/core/repair/slug-spelling.ts	execute_raw	10	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity); a typed method comes with the Rust store serving these members.
 src/core/repair/split-facts.ts	execute_raw	3
 src/core/repair/stale-atoms.ts	execute_raw	3
