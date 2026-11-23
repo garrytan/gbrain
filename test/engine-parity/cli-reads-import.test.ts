@@ -2,7 +2,7 @@
  * BrainEngine parity — the typed reads the CLI import and extract paths ran through `executeRaw`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
+ *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, readRetainedSources, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
  *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listLinkPageMetadataForSlugs,
  *    listAttendedOriginSlugs, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
@@ -84,6 +84,16 @@ describe('engine parity: CLI import reads', () => {
       expect(out.unknown).toEqual({ id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] });
       return out;
     });
+
+  parityTest('readRetainedSources keeps no source whose worktree holds no recovery record, and an empty list reads nothing', { methods: ['readRetainedSources'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { keep: 2 });
+    await createSource(engine, backend, 'notes', {});
+    const none = await engine.readRetainedSources([]);
+    const named = await engine.readRetainedSources(['work', 'notes', 'no-such-source']);
+    expect(none).toEqual([]);
+    expect(named).toEqual([]);
+    return { none, named };
+  });
 
   parityTest('hasCompanyBrainReceipt is false for a source with no ingestion receipt', { methods: ['hasCompanyBrainReceipt'] }, async (engine, backend) => {
     await createSource(engine, backend, 'work');

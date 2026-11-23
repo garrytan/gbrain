@@ -30,7 +30,7 @@ export async function ownerHostStaleCheck(engine: BrainEngine): Promise<Check> {
       details: { outcome: 'skipped', reason: 'raw_sql', count: 'unknown', stale_after_ms: OWNER_STALE_MS, docs: DOCS } };
     const open = await engine.executeRaw<{ worktree_id: string; open_writes: number; oldest_open: string | Date; source_ids: string[] | null }>(`
       SELECT r.worktree_id::text AS worktree_id, count(*)::int AS open_writes, min(r.created_at) AS oldest_open,
-        (SELECT array_agg(b.source_id ORDER BY b.source_id) FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
+        (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
       FROM persistence_requests r WHERE r.worktree_id IS NOT NULL AND r.state IN ('queued','deferred','running','recovering')
       GROUP BY r.worktree_id`);
     const owners = await ownerActivity(engine, open.map(row => row.worktree_id));

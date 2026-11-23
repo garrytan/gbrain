@@ -23,7 +23,10 @@ fn insert(name: &str, extra: Value) -> Value {
     base
 }
 
-fn admit(b: &Brain, spec: Value) -> gbrain_store::Result<gbrain_store::jobs::AdmitOutcome> {
+fn admit(
+    b: &gbrain_store::Store,
+    spec: Value,
+) -> gbrain_store::Result<gbrain_store::jobs::AdmitOutcome> {
     let mut spec = spec;
     if spec.get("maxSpawnDepth").is_none() {
         spec["maxSpawnDepth"] = json!(5);
@@ -32,7 +35,7 @@ fn admit(b: &Brain, spec: Value) -> gbrain_store::Result<gbrain_store::jobs::Adm
     b.admit_job(&spec)
 }
 
-fn add(b: &Brain, name: &str, extra: Value) -> i64 {
+fn add(b: &gbrain_store::Store, name: &str, extra: Value) -> i64 {
     let out = admit(b, json!({ "insert": insert(name, extra) })).unwrap();
     assert_eq!(out.outcome, "inserted");
     out.row["id"].as_i64().unwrap()
@@ -206,8 +209,22 @@ fn an_idempotency_key_coalesces_and_a_dead_holder_releases_it() {
     b.fail_job(first, "w:1", "boom", "dead", None, None)
         .unwrap()
         .unwrap();
-    let second = add(&b, "work", json!({"idempotency_key": "k1"}));
+    assert_eq!(
+        b.job_data_by_idempotency_key("k1").unwrap(),
+        Some(json!({"data": {}})),
+        "a dead row still holds its key until a new admission releases it"
+    );
+    let second = add(
+        &b,
+        "work",
+        json!({"idempotency_key": "k1", "data": {"slug": "a/b"}}),
+    );
     assert_ne!(second, first);
+    assert_eq!(
+        b.job_data_by_idempotency_key("k1").unwrap(),
+        Some(json!({"data": {"slug": "a/b"}}))
+    );
+    assert_eq!(b.job_data_by_idempotency_key("k2").unwrap(), None);
     let freed = job(&b, first);
     assert_eq!(freed["idempotency_key"], Value::Null);
     assert_eq!(freed["data"]["__released_idempotency_key"], "k1");
@@ -300,6 +317,139 @@ fn list_jobs_filters_and_orders_newest_first() {
     assert_eq!(ids(json!({"limit": 1, "offset": 1})), vec![a]);
 }
 
+#[test]
+fn a_capacity_probe_answers_a_coalesce_or_capacity_and_writes_nothing() {
+    let b = brain("jobs-capacity-probe");
+    let probe = |extra: Value, more: Value| {
+        let mut spec = json!({"insert": insert("work", extra), "capacityCheck": true});
+        for (k, v) in more.as_object().unwrap() {
+            spec[k] = v.clone();
+        }
+        admit(&b, spec).unwrap()
+    };
+    // No row yet: the probe stops where the capacity check runs, before the quota, and inserts nothing.
+    let fresh = probe(
+        json!({"idempotency_key": "k1"}),
+        json!({"quotaMaxWaiting": 0}),
+    );
+    assert_eq!(
+        (fresh.outcome, fresh.row.clone()),
+        ("capacity", Value::Null)
+    );
+    assert!(b.list_jobs(&ListFilter::default()).unwrap().is_empty());
+
+    // A live row under the key coalesces exactly as a full admission does.
+    let first = add(&b, "work", json!({"idempotency_key": "k1"}));
+    let again = probe(json!({"idempotency_key": "k1"}), json!({}));
+    assert_eq!(
+        (again.outcome, again.row["id"].as_i64()),
+        ("coalesced", Some(first))
+    );
+
+    // A dead holder is released by a full admission; the probe answers capacity and keeps no release.
+    claim(&b, "w:1").unwrap();
+    b.fail_job(first, "w:1", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
+    let released = probe(json!({"idempotency_key": "k1"}), json!({}));
+    assert_eq!(released.outcome, "capacity");
+    assert_eq!(job(&b, first)["idempotency_key"], "k1");
+    assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+}
+
+#[test]
+fn admit_job_runs_as_a_statement_of_an_open_transaction() {
+    let b = brain("jobs-admit-in-transaction");
+    let tx = b.begin_transaction(false).unwrap();
+    // The probe and the admission run on the bound store; the probe keeps nothing.
+    let probe = admit(
+        &tx,
+        json!({"insert": insert("work", json!({})), "capacityCheck": true}),
+    )
+    .unwrap();
+    assert_eq!(probe.outcome, "capacity");
+    let out = admit(&tx, json!({"insert": insert("work", json!({}))})).unwrap();
+    assert_eq!(out.outcome, "inserted");
+    let id = out.row["id"].as_i64().unwrap();
+    assert_eq!(tx.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+    tx.commit_transaction().unwrap();
+    assert_eq!(job(&b, id)["status"], "waiting");
+
+    // A transaction that rolls back keeps no admitted job.
+    let tx = b.begin_transaction(false).unwrap();
+    add(&tx, "work", json!({}));
+    tx.rollback_transaction().unwrap();
+    assert_eq!(b.list_jobs(&ListFilter::default()).unwrap().len(), 1);
+}
+
+#[test]
+fn the_idempotency_key_step_alone_coalesces_frees_or_hands_back_a_conflict() {
+    let b = brain("jobs-key-alone");
+    let app = json!({"version": 1, "kind": "application"});
+    let other = json!({"version": 1, "kind": "remote", "client": "c"});
+    assert_eq!(
+        b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap(),
+        json!({"outcome": "none"})
+    );
+    let first = add(&b, "work", json!({"idempotency_key": "k1"}));
+    let out = b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap();
+    assert_eq!(
+        (out["outcome"].as_str(), out["row"]["id"].as_i64()),
+        (Some("coalesced"), Some(first))
+    );
+    // Another authority: handed back, nothing written; the key stays held.
+    let out = b.coalesce_on_idempotency_key("k1", Some(&other)).unwrap();
+    assert_eq!(
+        (out["outcome"].as_str(), out["row"]["id"].as_i64()),
+        (Some("conflict"), Some(first))
+    );
+    assert_eq!(job(&b, first)["idempotency_key"], "k1");
+    // A dead holder frees its key, keeping it in its data, and the next read finds no row.
+    claim(&b, "w:1").unwrap();
+    b.fail_job(first, "w:1", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap(),
+        json!({"outcome": "released"})
+    );
+    let freed = job(&b, first);
+    assert_eq!(freed["idempotency_key"], Value::Null);
+    assert_eq!(freed["data"]["__released_idempotency_key"], "k1");
+    assert_eq!(
+        b.coalesce_on_idempotency_key("k1", Some(&app)).unwrap(),
+        json!({"outcome": "none"})
+    );
+    let second = add(&b, "work", json!({"idempotency_key": "k1"}));
+    assert_ne!(second, first);
+}
+
+#[test]
+fn a_released_key_is_kept_in_non_object_data_as_jsonb_concatenation_keeps_it() {
+    let b = brain("jobs-key-release-shapes");
+    let app = json!({"version": 1, "kind": "application"});
+    for (n, data, want) in [
+        (1, json!([]), json!([{"__released_idempotency_key": "a1"}])),
+        (
+            2,
+            json!("text"),
+            json!(["text", {"__released_idempotency_key": "a2"}]),
+        ),
+    ] {
+        let key = format!("a{n}");
+        let id = add(&b, "work", json!({"idempotency_key": key, "data": data}));
+        claim(&b, &format!("w:{n}")).unwrap();
+        b.fail_job(id, &format!("w:{n}"), "boom", "dead", None, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            b.coalesce_on_idempotency_key(&key, Some(&app)).unwrap(),
+            json!({"outcome": "released"})
+        );
+        assert_eq!(job(&b, id)["data"], want, "{key}");
+    }
+}
+
 /// Postgres refuses a NUL byte in text, and the claim index uses it as the queue separator: a queue named
 /// `default\0private` must not be admitted, or a worker on `default` would claim its job.
 #[test]
@@ -347,4 +497,38 @@ fn a_token_roll_up_that_overflows_an_integer_refuses_the_completion() {
         "the refused completion wrote nothing"
     );
     assert_eq!(job(&b, parent)["tokens_input"], 1_500_000_000);
+}
+
+/// A job admitted on a store bound to a transaction is one statement of it (the facts backstop
+/// effect queues its facts-absorb job inside the effect's transaction): it does not wait for a
+/// second writer, it is seen inside the transaction, and a rollback keeps no row.
+#[test]
+fn admit_inside_a_transaction_is_one_statement() {
+    let b = brain("jobs-in-tx");
+    let spec: AdmitSpec =
+        serde_json::from_value(json!({ "insert": insert("work", json!({})), "maxSpawnDepth": 5 }))
+            .unwrap();
+    let tx = b.begin_transaction(false).unwrap();
+    let out = tx.admit_job(&spec).unwrap();
+    assert_eq!(out.outcome, "inserted");
+    let id = out.row["id"].as_i64().unwrap();
+    assert!(tx.get_job(id).unwrap().is_some());
+    tx.rollback_transaction().unwrap();
+    assert!(b.get_job(id).unwrap().is_none());
+
+    let tx = b.begin_transaction(false).unwrap();
+    let kept = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    // A rolled-back admission's id is not handed out again, as Postgres `nextval` never is.
+    assert_ne!(kept, id);
+    let depth = tx.savepoint().unwrap();
+    let dropped = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    tx.rollback_savepoint(depth).unwrap();
+    assert!(tx.get_job(dropped).unwrap().is_none());
+    let after = tx.admit_job(&spec).unwrap().row["id"].as_i64().unwrap();
+    assert!(after > dropped, "{after} after the dropped {dropped}");
+    tx.commit_transaction().unwrap();
+    assert_eq!(job(&b, kept)["status"], "waiting");
+    assert_eq!(job(&b, after)["status"], "waiting");
+    // Outside a transaction the sequence continues past every id handed out.
+    assert!(add(&b, "work", json!({})) > after);
 }

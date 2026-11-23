@@ -16,6 +16,7 @@
 //! the held arm reads the widening proposals of `trust_proposals` (`trust::proposals`). See
 //! rust/docs/store/facts.md, "The fence guard's reads".
 
+use super::withdrawal_guard::preserve_withdrawal;
 use super::{FactRecord, bigint, fence_row, foreign_key, page_rows, read_fact, write_fact};
 use crate::Store;
 use crate::dream::int4;
@@ -297,7 +298,9 @@ impl Store {
     /// `expired_at`, `valid_until`, `superseded_by`, `consolidated_at` and `consolidated_into`, and
     /// the fence position `row_num` when no other row of the page holds it. Only the row of the
     /// source whose claim and visibility still match is changed; returns whether it was. Every
-    /// argument is checked first, as Postgres casts the parameters before it reads a row.
+    /// argument is checked first, as Postgres casts the parameters before it reads a row. The
+    /// withdrawal guard runs (`expired_at` is in the `SET` list): a row restored active that a
+    /// withdrawal of its claim reaches comes back expired at that withdrawal.
     pub fn restore_fact_preimage(&self, source_id: &str, p: &FactRestore) -> Result<bool> {
         const OP: &str = "restoreFactPreimage";
         let time = |what: &str, t: &Option<String>| {
@@ -353,6 +356,7 @@ impl Store {
                     new.row_num = Some(n);
                 }
             }
+            preserve_withdrawal(&*tx, &mut new)?;
             write_fact(tx, trust, Some(&old), &new)?;
             Ok(true)
         })

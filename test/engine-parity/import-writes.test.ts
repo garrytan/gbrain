@@ -26,6 +26,7 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import postgres from '#postgres';
 import { randomUUID } from 'node:crypto';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
+import { createEnUsDatabase } from '../helpers/persistence-postgres.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -362,7 +363,7 @@ describe('engine parity: import-path writes', () => {
           assertSafeE2eDatabaseUrl(url);
           const name = `gbrain_test_narrow_${randomUUID().replace(/-/g, '')}`;
           const admin = postgres(url, { max: 1, prepare: false });
-          await admin.unsafe(`CREATE DATABASE ${name}`);
+          await createEnUsDatabase(admin, name);
           dropDatabase = async () => { await admin.unsafe(`DROP DATABASE ${name} WITH (FORCE)`); await admin.end(); };
           const narrowUrl = new URL(url);
           narrowUrl.pathname = `/${name}`;

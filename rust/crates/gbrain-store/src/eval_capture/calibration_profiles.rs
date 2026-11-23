@@ -511,6 +511,26 @@ impl Store {
     }
 }
 
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_records(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![
+                (
+                    "pattern_statements",
+                    ProbeCell::text_array(&r.pattern_statements),
+                ),
+                ("domain_scorecards", ProbeCell::jsonb(&r.domain_scorecards)),
+            ],
+            source_id: Some(r.source_id),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     //! `remove_source_rows` is reached only through the whole source delete, and no member returns

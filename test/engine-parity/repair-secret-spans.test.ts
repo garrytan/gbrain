@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — batch 6c: `gbrain repair secret-spans` and the secret store behind it (secret-store/store.ts,
  * restore.ts, spool.ts, repair/secret-spans.ts; their statements are typed members in engine-sql/secret-store.ts,
- * engine-sql/secret-spans-rows.ts and engine-sql/page-projection-queue.ts, served on the Rust store by
+ * engine-sql/secret-spans-rows.ts and the queue row (engine-sql/projection-rebuild.ts), served on the Rust store by
  * secret_store.rs and repair_secret_spans.rs).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -334,7 +334,7 @@ describe('engine parity: repair secret-spans', () => {
   });
 
   parityTest('a segmented page is created through the staging, manifest and flip members and stores the same body, sealed, on every arm', {
-    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState', 'deleteUnstagedSegmentChunks',
       'readManifest', 'readSegmentTexts', 'sealSegmentedPage', 'readPageSnapshot'],
     timeout: 180_000,
   }, async engine => {
@@ -344,14 +344,14 @@ describe('engine parity: repair secret-spans', () => {
     const rows = await engine.readManifest(created.pageId);
     expect(await storedBody()).toContain(OPENAI);
     // The two members the apply sends: a staging no write opened reads null; a generation no chunk was staged for deletes nothing.
-    const unknownStaging = await engine.readBodyStagingState('99999999-9999-4999-8999-999999999999');
-    await engine.deleteStagedChunksNotIn(created.pageId, 99, []);
+    const unknownStaging = await engine.lockBodyStagingState('99999999-9999-4999-8999-999999999999');
+    await engine.deleteUnstagedSegmentChunks(created.pageId, 99, []);
     expect(unknownStaging).toBeNull();
     return { unknownStaging, body: await storedBody(), manifestRows: rows.length, sealed: snapshot!.page.text_projection_revision === snapshot!.revision };
   });
 
   parityTest('a segmented page: the apply rewrites its stored body through the staging and flip members, seals it and leaves a second preview empty', {
-    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState', 'deleteStagedChunksNotIn',
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState', 'deleteUnstagedSegmentChunks',
       'readManifest', 'readSegmentTexts', 'sealSegmentedPage', 'readPageSnapshot', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'getChunks', 'listVectorlessChunkIndexes'],
     timeout: 180_000,
   }, async engine => {
@@ -382,7 +382,7 @@ describe('engine parity: repair secret-spans', () => {
   });
 
   parityTest('the chunk probes of a segmented replace answer the same: chunked occurrences, stale rows and their retirement', {
-    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState',
       'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'readSegmentedProjectionPage'],
     timeout: 180_000,
   }, async engine => {
@@ -415,7 +415,7 @@ describe('engine parity: repair secret-spans', () => {
   });
 
   parityTest('a segmented page whose projection was never built is chunked and sealed by the projection build, and a second build has nothing left to do', {
-    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState',
       'readManifest', 'readPageSnapshot', 'readSegmentedProjectionPage', 'listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'sealSegmentedPage',
       'claimSegmentedProjection', 'getChunks'],
     timeout: 180_000,
@@ -440,7 +440,7 @@ describe('engine parity: repair secret-spans', () => {
   });
 
   parityTest('the vectors of the rows a replace retires are read back for reuse: text, vector, model, recorded input and the page fields reuse checks', {
-    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState',
       'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'stageSegmentChunks', 'readRetiredChunkVectors'],
     timeout: 180_000,
   }, async engine => {
@@ -462,7 +462,7 @@ describe('engine parity: repair secret-spans', () => {
   });
 
   parityTest('a segmented page with a withdrawn fact: the replace chunks the body under the withdrawal ledger and the apply keeps the struck row out of its chunks on PGLite and Postgres', {
-    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'readBodyStagingState',
+    methods: ['openBodyStaging', 'stageSegmentTexts', 'stageManifestRows', 'createSegmentedPageShell', 'flipBodyGeneration', 'setBodyStagingState', 'lockBodyStagingState',
       'readManifest', 'sealSegmentedPage', 'readPageSnapshot', 'insertFactWithdrawal', 'listChunkedOccurrences', 'getChunks', 'listVectorlessChunkIndexes'],
     timeout: 180_000,
   }, async (engine, backend) => {
@@ -492,7 +492,7 @@ describe('engine parity: repair secret-spans', () => {
       const after = await chunksOf();
       const snapshot = await engine.readPageSnapshot(slug, { sourceId: SRC });
       const vectorless = (await engine.listVectorlessChunkIndexes(created.pageId, column)).length;
-      // Open gap (RUST_ENGINE.md row 37): the Rust store's page snapshot does not list a page's withdrawals yet
+      // Open gap (RUST_ENGINE.md row 46): the Rust store's page snapshot does not list a page's withdrawals yet
       // (origin/rust-engine/pg-fold-gap2, 2573915b55), so the chunker there keeps the struck row. PGLite and Postgres drop it.
       if (backend !== 'rust') expect(after.join('\n')).not.toContain('lives in Lima');
       return norm({ created: created.complete, outcomes: result.outcomes, before: before.map(t => t.includes('Lima')), chunks: after.length,

@@ -92,14 +92,24 @@ export async function requireOwnerConfirmation(ctx: OperationContext, target: Co
 }
 
 /**
- * The tier trigger's database refusal (trust/schema.ts) as the registered
- * `trust_raise_refused` error, for direct writers outside the coordinator
- * (the coordinator classifies it through publication-failure.ts). Null when
- * `error` is something else.
+ * A refused trust raise as the registered `trust_raise_refused` error, for
+ * direct writers outside the coordinator (the coordinator classifies it
+ * through publication-failure.ts). PGLite and Postgres raise it from the tier
+ * trigger (trust/schema.ts, SQLSTATE P0001); the Rust store raises its own
+ * `trust_raise_refused` code with no SQLSTATE (gbrain-store trust/stamp.rs).
+ * Null when `error` is something else.
  */
 export function trustRaiseRefusal(error: unknown): OperationError | null {
-  const refusal = databaseRefusal(error);
+  const refusal = rustStoreTrustRefusal(error) ? { code: 'trust_raise_refused', message: RUST_STORE_REFUSAL } : databaseRefusal(error);
   if (refusal?.code !== 'trust_raise_refused') return null;
   return opError('trust_raise_refused', refusal.message,
     'Do not retry. Ask the user to confirm the row on the brain host, or leave its tier as it is.');
+}
+
+const RUST_STORE_REFUSAL = "The trust-tier guard refused a write: raising a tier needs the owner's confirmation. Nothing was committed.";
+
+/** The Rust store's refusal: a plain store error (not an OperationError) whose `code` is `trust_raise_refused`. */
+function rustStoreTrustRefusal(error: unknown): boolean {
+  return !(error instanceof OperationError) && typeof error === 'object' && error !== null
+    && (error as { code?: unknown }).code === 'trust_raise_refused';
 }

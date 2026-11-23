@@ -332,6 +332,49 @@ func statuses(_ reply: (Int, [String: Any])) -> [String] {
         #expect(h.store.cards == before)
     }
 
+    @Test func removeValueJournalsEveryMatchSoRestorePutsThemAllBack() throws {
+        let h = WriteHarness()
+        var a = card("a", "alice")
+        a.phones = [Labeled(label: "mobile", value: "555-010-0100"), Labeled(label: "work", value: "+1 (555) 010-0100"), Labeled(label: "home", value: "555-010-0177")]
+        h.store.cards = ["a": a]
+        #expect(statuses(h.owner("batch-rv-1", [["key": "key-k-rv-a", "op": "remove_value", "id": "a", "field": "phones", "value": "+15550100100"]])) == ["applied"])
+        #expect(h.store.cards["a"]!.phones.map(\.value) == ["555-010-0177"])
+        let saved = h.writer.journalRows().first { $0.op == "remove_value" && $0.phase == "done" }?.removed
+        #expect(saved?.map(\.label) == ["mobile", "work"])
+        let done = try h.writer.restore(batch: "batch-rv-1", dryRun: false)
+        #expect(done.steps.map(\.status) == ["undone"])
+        #expect(Set(h.store.cards["a"]!.phones.map { $0.label + "=" + $0.value }) == ["home=555-010-0177", "mobile=555-010-0100", "work=+1 (555) 010-0100"])
+    }
+
+    @Test func aMergeRefusesWhenTheOtherCardHasANonGregorianBirthday() throws {
+        let h = WriteHarness()
+        var b = card("b", "alice", phone: "555-010-0199")
+        b.nonGregorianBirthday = DateValue(month: 4, day: 5, calendar: "chinese", leapMonth: true)
+        h.store.cards = ["a": card("a", "alice"), "b": b]
+        let before = h.store.cards
+        let r = statuses(h.owner("batch-merge-5", [["key": "key-k-merge-ngb", "op": "merge", "id": "a", "from": "b"]]))
+        #expect(r.count == 1 && r[0].hasPrefix("skipped:bad_change: merge can't carry the other card's non_gregorian_birthday"))
+        #expect(h.store.cards == before)
+    }
+
+    @Test func aNonGregorianDateKeepsItsCalendarAndLeapMonth() throws {
+        var c = DateComponents()
+        c.calendar = Calendar(identifier: .chinese)
+        c.month = 4
+        c.day = 5
+        c.isLeapMonth = true
+        let value = try #require(SystemContactsStore.date(c))
+        #expect(value.calendar == "chinese" && value.leapMonth == true && value.month == 4 && value.day == 5)
+        let back = SystemContactsStore.components(try JSONDecoder().decode(DateValue.self, from: JSONEncoder().encode(value)))
+        #expect(back.calendar?.identifier == .chinese && back.isLeapMonth == true && back.month == 4 && back.day == 5)
+        var g = DateComponents()
+        g.calendar = Calendar(identifier: .gregorian)
+        g.month = 1
+        g.day = 2
+        #expect(SystemContactsStore.date(g) == DateValue(month: 1, day: 2))
+        #expect(try JSONDecoder().decode(DateValue.self, from: Data(#"{"month":1,"day":2}"#.utf8)) == DateValue(month: 1, day: 2))
+    }
+
     @Test func additiveEditsCountAgainstTheDailyEditLimit() {
         let h = WriteHarness()
         h.policy = ContactsWritePolicy(enabled: true, ownerKeys: h.policy.ownerKeys, limits: ContactsWriteLimits(newCards: 50, deletes: 25, edits: 1))

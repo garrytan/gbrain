@@ -51,9 +51,9 @@ async function targetSource(ctx: OperationContext, p: Record<string, unknown>, o
   const visible = ctx.remote === false ? '' : owner ? `AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = e.source_id AND p.slug = e.slug
       AND p.deleted_at IS NULL AND ${owner})` : `AND e.visibility = 'world' AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = e.source_id AND p.slug = e.slug
       AND p.deleted_at IS NULL AND ${remoteReadFloorSql('p')})`;
-  const rows = await ctx.engine.executeRaw<{ source_id: string }>(`SELECT DISTINCT e.source_id FROM belief_events e
+  const rows = await ctx.engine.executeRaw<{ source_id: string }>(`SELECT DISTINCT e.source_id COLLATE "C" AS source_id FROM belief_events e
     JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
-    WHERE e.slug = $1 AND e.subject_kind = 'page' AND ($2::text[] IS NULL OR e.source_id = ANY($2::text[])) ${visible} ORDER BY e.source_id`, [p.slug, scope.sourceIds ?? null]);
+    WHERE e.slug = $1 AND e.subject_kind = 'page' AND ($2::text[] IS NULL OR e.source_id = ANY($2::text[])) ${visible} ORDER BY e.source_id COLLATE "C"`, [p.slug, scope.sourceIds ?? null]);
   if (rows.length === 1) return rows[0]!.source_id;
   if (rows.length > 1) {
     throw opError('invalid_params', `${op}: ${String(p.slug)} has recorded history in several sources (${rows.map(r => r.source_id).join(', ')}).`, 'Pass source_id to name one.');

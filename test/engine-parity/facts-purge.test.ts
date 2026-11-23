@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
  *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
- *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs,
+ *    listSingleFactMetadata, listUnfencedFactRows, countUnfencedFactGroups, listHeldFenceFactRows, listWithdrawalSlugs,
  *    expireFactsByWithdrawal and listDerivedRows (one hop of the derivation walk) return the same observable result
  *    on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -706,6 +706,45 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(byName('alice').valid_from).toBeInstanceOf(Date);
     const view = (rows: typeof everywhere) => rows.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from instanceof Date }));
     return { everywhere: view(everywhere), one: seed.label(one), none };
+  });
+
+  parityTest('countUnfencedFactGroups counts the unfenced rows per source, entity and live page, and listUnfencedFactRows narrows to the fenceable ones', { methods: ['countUnfencedFactGroups', 'listUnfencedFactRows'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('people/alice', note('Alice', 'a'));
+    await engine.putPage('people/gone', note('Gone', 'g'));
+    await engine.softDeletePage('people/gone');
+    await seed.one('loose-1', { fact: 'loose 1' });
+    await seed.one('loose-2', { fact: 'loose 2' });
+    await seed.one('on-gone', { fact: 'gone page fact', entity_slug: 'people/gone' });
+    await seed.one('alice-1', { fact: 'alice 1', entity_slug: 'people/alice' });
+    await seed.one('alice-2', { fact: 'alice 2', entity_slug: 'people/alice' });
+    await seed.one('nobody', { fact: 'no page', entity_slug: 'people/nobody' });
+    const expired = await seed.one('expired', { fact: 'expired', entity_slug: 'people/alice' });
+    await engine.expireFact(expired);
+    await seed.fence([{ label: 'fenced-2', fact: 'fenced 2', row_num: 2, source_markdown_slug: 'people/alice', entity_slug: 'people/alice' }]);
+    const sorted = (groups: Awaited<ReturnType<typeof engine.countUnfencedFactGroups>>) =>
+      groups.map(({ source_id, has_entity, page_exists, n }) => ({ source_id, has_entity, page_exists, n: Number(n) }))
+        .sort((a, b) => `${a.has_entity}${a.page_exists}`.localeCompare(`${b.has_entity}${b.page_exists}`));
+    const everywhere = sorted(await engine.countUnfencedFactGroups({}));
+    const one = sorted(await engine.countUnfencedFactGroups({ sourceId: SRC }));
+    const none = await engine.countUnfencedFactGroups({ sourceId: 'elsewhere' });
+    expect(everywhere).toEqual([
+      { source_id: SRC, has_entity: false, page_exists: false, n: 2 },
+      { source_id: SRC, has_entity: true, page_exists: false, n: 2 },
+      { source_id: SRC, has_entity: true, page_exists: true, n: 2 },
+    ]);
+    expect(one).toEqual(everywhere);
+    expect(none).toEqual([]);
+    const fenceable = await engine.listUnfencedFactRows({ fenceableSourceIds: [SRC] });
+    const narrowedOne = await engine.listUnfencedFactRows({ sourceId: SRC, fenceableSourceIds: [SRC] });
+    const otherSource = await engine.listUnfencedFactRows({ fenceableSourceIds: ['elsewhere'] });
+    const noSource = await engine.listUnfencedFactRows({ fenceableSourceIds: [] });
+    expect(seed.label(fenceable)).toEqual(['alice-1', 'alice-2']);
+    expect(fenceable.every((r) => r.page_exists === true)).toBe(true);
+    expect(seed.label(narrowedOne)).toEqual(seed.label(fenceable));
+    expect(otherSource).toEqual([]);
+    expect(noSource).toEqual([]);
+    return { everywhere, one, none, fenceable: seed.label(fenceable), otherSource, noSource };
   });
 
   parityTest('listHeldFenceFactRows lists a page\'s live fence rows by position, a conversation extractor\'s rows and expired rows apart', { methods: ['listHeldFenceFactRows'] }, async (engine) => {

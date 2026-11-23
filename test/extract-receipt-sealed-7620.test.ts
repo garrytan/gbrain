@@ -50,20 +50,29 @@ const RECEIPT: Omit<ExtractReceiptInput, 'source_id' | 'run_id'> = {
 const receipt = (sourceId: string, runId: string): ExtractReceiptInput => ({ ...RECEIPT, source_id: sourceId, run_id: runId });
 const note = (title: string, body: string) => `---\ntype: note\ntitle: ${title}\n---\n\n${body}\n`;
 
-/**
- * The engine, with every directly issued statement matching `pattern` throwing, and every call of the typed `member`
- * (a statement that moved out of executeRaw into a BrainEngine member), in nested transactions too.
- */
-function failingAt(engine: BrainEngine, pattern: RegExp, member?: keyof BrainEngine): BrainEngine {
+/** Statements the write runs through typed members instead of executeRaw, by member (engine-sql/projection-rebuild.ts). */
+const TYPED_STATEMENTS: Record<string, string> = {
+  setProjectionChunkerVersion: 'UPDATE pages SET chunker_version=$3 WHERE source_id=$1 AND slug=$2',
+};
+
+/** The engine, with every directly issued statement matching `pattern` throwing, in nested transactions too. */
+function failingAt(engine: BrainEngine, pattern: RegExp): BrainEngine {
   return new Proxy(engine, {
     get(target, prop) {
-      if (member !== undefined && prop === member) return async () => { throw new Error('injected failure after the receipt page write'); };
       if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
         if (pattern.test(sql)) throw new Error('injected failure after the receipt page write');
         return target.executeRaw(sql, params);
       };
+      // A statement that moved into a typed member fails there when the pattern matches its text.
+      const typed = TYPED_STATEMENTS[prop as string];
+      if (typed && pattern.test(typed)) return async () => { throw new Error('injected failure after the receipt page write'); };
+      // The seal's chunker stamp is the typed setProjectionChunkerVersion member (engine-sql/projection-rebuild.ts, the
+      // statement `UPDATE pages SET chunker_version=...`); fail it where the pattern names that statement.
+      if (prop === 'setProjectionChunkerVersion' && pattern.test('UPDATE pages SET chunker_version=')) return async () => {
+        throw new Error('injected failure after the receipt page write');
+      };
       if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) =>
-        target.transaction(tx => fn(failingAt(tx, pattern, member)), opts as never);
+        target.transaction(tx => fn(failingAt(tx, pattern)), opts as never);
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -147,7 +156,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7620 extract recei
   test('a failure after the receipt page write rolls back the page and its chunks together', async () => {
     await addSource('source-c');
     const input = receipt('source-c', 'run-c-0001');
-    await expect(writeReceipt(failingAt(engine, /SET chunker_version=/, 'setChunkerVersion'), input)).rejects.toThrow('injected failure');
+    await expect(writeReceipt(failingAt(engine, /SET chunker_version=/), input)).rejects.toThrow('injected failure');
     expect(await pageRow('source-c', receiptSlug(input))).toBeUndefined();
     expect(await chunkCount('source-c', receiptSlug(input))).toBe(0);
   });

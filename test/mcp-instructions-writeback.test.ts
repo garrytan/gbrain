@@ -162,6 +162,14 @@ describe('legacy bearer transport serves the shared builder output (parity)', ()
         if (!dbHealthy) throw new Error('db blip');
         return rows.get(k) ?? null;
       },
+      // The typed bearer members validateToken calls since the cli-members line moved it off the raw statement above
+      // (main's validateToken still sends that statement, so this fake only faked it). They answer from the same token
+      // map, as test/http-transport.test.ts does.
+      readActiveAccessTokenByHash: async (tokenHash: string) => {
+        const row = validTokens.get(tokenHash);
+        return row ? { ...row, permissions: { takes_holders: ['world'] } } : null;
+      },
+      touchAccessTokenLastUsed: async () => {},
     };
     const server = await startHttpTransport({
       port: 0,

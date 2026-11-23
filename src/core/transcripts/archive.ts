@@ -424,6 +424,16 @@ export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: s
 }
 
 /**
+ * The archive audience config keys whose value is 'personal', by key. Typed config reads (listConfigKeys, then
+ * getConfigValues), so every engine answers, a Rust brain included: gbrain access member add reads this first.
+ */
+async function personalAudienceKeys(engine: BrainEngine): Promise<Array<{ key: string }>> {
+  const keys = await engine.listConfigKeys(AUDIENCE_PREFIX);
+  if (!keys.length) return [];
+  return (await engine.getConfigValues(keys)).filter(r => r.value === 'personal').map(r => ({ key: r.key }));
+}
+
+/**
  * The owner-only re-scope for every archive source written while the brain was personal, run by the commands that can
  * turn a brain shared (gbrain access member add and member enable, gbrain access owner set, gbrain config set
  * brain.audience) so earlier pages are kept to the owner before a second member reads them, not at the next archive
@@ -433,7 +443,7 @@ export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: s
  * but the audience stays recorded personal and the next run re-scopes again (archive_rescope_pending).
  */
 export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array<{ source_id: string; skipped: ArchiveRescopeSkip | null }>> {
-  const rows = await engine.executeRaw<{ key: string }>("SELECT key FROM config WHERE key LIKE $1 AND value = 'personal' ORDER BY key", [AUDIENCE_PREFIX + '%']);
+  const rows = await personalAudienceKeys(engine);
   if (!rows.length) return [];
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return [];
@@ -463,7 +473,7 @@ export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array
  * caller makes no change.
  */
 export async function rescopeArchiveBeforeJoin(engine: BrainEngine, memberId: string): Promise<void> {
-  const rows = await engine.executeRaw<{ key: string }>("SELECT key FROM config WHERE key LIKE $1 AND value = 'personal' ORDER BY key", [AUDIENCE_PREFIX + '%']);
+  const rows = await personalAudienceKeys(engine);
   if (!rows.length) return;
   let privacy = await resolvePrivacy(engine);
   if (!privacy.shared) {

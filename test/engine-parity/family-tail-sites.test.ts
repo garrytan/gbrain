@@ -1,9 +1,8 @@
 /**
- * BrainEngine parity: the contradiction-cycle, ontology-repair and admin statements the edge-contradictions phase
+ * BrainEngine parity: the contradiction-cycle and admin statements the edge-contradictions phase
  * (src/core/cycle/edge-contradictions.ts), the scoped contradiction reader (src/core/eval-contradictions), the two eval
- * reads, the re-key duplicate drop (src/core/facts/ontology-rekey.ts), `repair ontology-facts` and the admin operations
- * (src/core/ops/admin.ts) ran through `executeRaw` before they were members (src/core/engine-sql/contradictions-cycle.ts,
- * ontology-repair.ts, admin-reads.ts).
+ * reads and the admin operations (src/core/ops/admin.ts) ran through `executeRaw` before they were members (src/core/engine-sql/contradictions-cycle.ts,
+ * admin-reads.ts). The re-key and `repair ontology-facts` statements moved to ontology-repair-sites.test.ts.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: listEdgeContradictionCandidates answers the subjects with two live works_at employers (a person-like target
@@ -14,24 +13,30 @@
  *    is open), markEdgeProposalUndone and markRevertedEdgeProposals move its status; listLiveChunksByIds and
  *    listLiveTakesByIds re-read the judged rows a caller's policy still admits (private pages, a holder allow-list);
  *    readLastContradictionsPromptVersion answers the newest run's prompt version and listEvalCandidateQueries the newest
- *    captured queries; listRekeyLosers names the fact a re-key would duplicate (a conversation slot always loses to an
- *    ontology observation), repointSupersededToKept, clearOntologySlots and deleteRekeyLosers drop it (a conversation
- *    fact keeps its row); listOntologyFactCandidates lists the fenced and retired ontology rows with whether each would
- *    duplicate another and restoreOntologyFact restores one only while it is as the preview saw it; listVisiblePageSlugs
+ *    captured queries; listVisiblePageSlugs
  *    keeps the slugs a caller may see under each page-policy part and readPagesForVersionHistory reads the pages a version
- *    history belongs to.
+ *    history belongs to. runPhaseEdgeContradictions, end to end with a stub judge: propose mode records one dated closure
+ *    and a rejected pair is not judged again; apply mode writes the closure line, undo reopens it, and a closure line the
+ *    user deletes makes the proposal reverted_by_user. The doctor edge_validity check counts the stored proposals by
+ *    status within the source scope it is given and warns on open ones.
  *  - Regression: an engine that drops a clause hands the contradiction judge a private page's text, closes a stranger's
- *    relationship, deletes an ontology fact a re-key should have kept, restores a row that changed since the preview or
- *    names a private page to a remote caller in `most_connected`.
+ *    relationship or names a private page to a remote caller in `most_connected`.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18),
  *    so no case compared them across engines.
- *  - Seam: none. Pages come from putPage, links from addLink, facts from insertFacts and mergeOntologyFact, takes from
+ *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence; on a Rust brain that
+ *    write queues on a refused link-preparation read, so those cases stop on that typed refusal: a named known stop at
+ *    liveSlugAliases, persistence/links-preparation.ts:29, which lane 1 (rust-engine/wikilink-put-rust) serves; the pin
+ *    comes out when that lands), links from addLink or
+ *    replaceDerivedLinks, takes from
  *    addTakesBatch, runs and queries from their typed writers. Ids differ between arms, so every case maps them to slugs or
  *    to the name of the row it seeded.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { operations, type OperationContext } from '../../src/core/operations.ts';
+import { applyEdgeProposal, rejectEdgeProposal, runPhaseEdgeContradictions, undoEdgeProposal, type EdgeJudgeFn } from '../../src/core/cycle/edge-contradictions.ts';
+import { edgeValidityStats, edgeValidityVerdict } from '../../src/commands/doctor/checks/edge-validity.ts';
 import { createSource, parityArms, sorted } from './harness.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -55,8 +60,6 @@ async function idOf(engine: BrainEngine, slug: string, sourceId = 'default'): Pr
 /** A caller who reads as alice-example, as the private-page parity files do. */
 const MEMBER = { identity: ['member:alice-example'], hidePrivate: true } as const;
 const asMember = <T>(read: () => Promise<T>) => withCallerAccess({ ...MEMBER, identity: [...MEMBER.identity] }, read);
-
-const at = (iso: string) => new Date(iso);
 
 describe('engine parity: edge-contradictions phase statements', () => {
   parityTest('the candidate query lists the live works_at employers of a person, and a pack, a cutoff or a person target narrows it', {
@@ -87,6 +90,31 @@ describe('engine parity: edge-contradictions phase statements', () => {
     expect(out.employers).toEqual([`${ALICE}>${ACME}:works_at`, `${ALICE}>${WIDGET}:works_at`]);
     expect(out).toMatchObject({ otherPack: [], afterCutoff: [], contexts: ['works at Acme'], noContext: [] });
     expect(out.perSourcePack).toEqual(out.employers);
+    return out;
+  });
+
+  parityTest('listLinkContexts answers the distinct non-empty contexts of one link type between two pages', {
+    methods: ['putPage', 'addLink', 'readPageIdInSource', 'listLinkContexts'],
+  }, async (engine) => {
+    await engine.putPage(ALICE, page('Alice', 'person'));
+    await engine.putPage(ACME, page('Acme', 'company'));
+    await engine.putPage(WIDGET, page('Widget', 'company'));
+    // Two distinct contexts over four rows (a repeat and an empty one), so LIMIT 3 keeps both on every engine.
+    await engine.addLink(ALICE, ACME, 'works at Acme', 'works_at', 'manual');
+    await engine.addLink(ALICE, ACME, 'Acme engineer', 'works_at', 'markdown');
+    await engine.addLink(ALICE, ACME, 'works at Acme', 'works_at', 'frontmatter');
+    await engine.addLink(ALICE, ACME, '', 'works_at', 'mcp');
+    await engine.addLink(ALICE, ACME, 'advises Acme', 'advises', 'manual');
+    await engine.addLink(ALICE, WIDGET, 'works at Widget', 'works_at', 'manual');
+    const [alice, acme] = [await idOf(engine, ALICE), await idOf(engine, ACME)];
+    // The SQL names no order, so the case compares the contexts sorted.
+    const out = {
+      worksAt: sorted(await engine.listLinkContexts(alice, acme, 'works_at')),
+      advises: await engine.listLinkContexts(alice, acme, 'advises'),
+      reverse: await engine.listLinkContexts(acme, alice, 'works_at'),
+      otherType: await engine.listLinkContexts(alice, acme, 'invested_in'),
+    };
+    expect(out).toEqual({ worksAt: ['Acme engineer', 'works at Acme'], advises: ['advises Acme'], reverse: [], otherType: [] });
     return out;
   });
 
@@ -152,6 +180,239 @@ describe('engine parity: edge-contradictions phase statements', () => {
   });
 });
 
+/** put_page through the operation, as the phase's own unit test seeds pages: the write derives the page's links and dated evidence. */
+async function putThroughOp(engine: BrainEngine, slug: string, fm: string, body: string): Promise<void> {
+  const ctx = { engine, config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false,
+    sourceId: 'default' } as unknown as OperationContext;
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+  await operations.find(o => o.name === 'put_page')!.handler(ctx, { slug, ...(snapshot ? { expected_revision: snapshot.revision } : {}),
+    content: `---\n${fm}\n---\n\n${body}` });
+}
+
+const TWO_EMPLOYERS = [
+  'Alice works at [Acme](../companies/acme-example) and at [Widget](../companies/widget-co).', '', '## Timeline', '',
+  '- **2019-02-01** | test — joined [Acme](../companies/acme-example)',
+  '- **2024-05-01** | test — joined [Widget](../companies/widget-co)',
+].join('\n');
+
+/** Alice with two dated works_at employers (Acme from 2019, Widget from 2024), written through put_page. */
+async function seedThroughOp(engine: BrainEngine): Promise<void> {
+  await putThroughOp(engine, ACME, 'type: company\ntitle: Acme', 'A company.');
+  await putThroughOp(engine, WIDGET, 'type: company\ntitle: Widget', 'A company.');
+  await putThroughOp(engine, ALICE, 'type: person\ntitle: Alice', TWO_EMPLOYERS);
+}
+
+/** The same graph, published as derived links with the page's own dated evidence (no put_page link preparation). */
+async function seedThroughDerivedLinks(engine: BrainEngine): Promise<void> {
+  await engine.putPage(ACME, page('Acme', 'company'));
+  await engine.putPage(WIDGET, page('Widget', 'company'));
+  await engine.putPage(ALICE, { ...page('Alice', 'person'), compiled_truth: TWO_EMPLOYERS });
+  const snapshot = (await engine.readPageSnapshot(ALICE, { sourceId: 'default' }))!;
+  const link = (to: string, context: string) => ({ from_slug: ALICE, to_slug: to, link_type: 'works_at', context, link_source: 'markdown',
+    from_source_id: 'default', to_source_id: 'default' });
+  await engine.replaceDerivedLinks({ slug: ALICE, sourceId: 'default', expectedRevision: snapshot.revision, sourceIncarnation: snapshot.sourceIncarnation },
+    [link(ACME, 'works at Acme'), link(WIDGET, 'works at Widget')]);
+}
+
+const conflictJudge: EdgeJudgeFn = async () => [{ a: 1, b: 2, conflict: true, confidence: 0.9 }];
+
+/** The phase outcome without its wall-clock duration. */
+const phaseView = (r: Awaited<ReturnType<typeof runPhaseEdgeContradictions>>) => ({ status: r.status, detail: r.detail, totals: r.totals });
+
+async function liveEmployers(engine: BrainEngine): Promise<string[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await engine.listEdgeContradictionCandidates({ today, maxSubjects: 10, pendingCutoff: null,
+    personFilter: { types: ['person'], per_source: [] } });
+  return rows.map(r => r.target_slug);
+}
+
+/**
+ * The engine the phase gets: it keeps the ids recordEdgeProposal answers (the phase does not return them) and the
+ * last typed capability refusal the engine threw.
+ */
+function watched(engine: BrainEngine) {
+  const ids: number[] = [];
+  let refusal: unknown = null;
+  let refusalSite = '';
+  const wrapped = new Proxy(engine, {
+    get(target, key, receiver) {
+      const value = Reflect.get(target, key, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => {
+        // The caller's stack, taken before the call: an async refusal no longer names who made the call.
+        const site = new Error().stack ?? '';
+        const out = value.apply(target, args);
+        if (!(out instanceof Promise)) return out;
+        return out.then((r: unknown) => {
+          if (key === 'recordEdgeProposal' && typeof r === 'number') ids.push(r);
+          return r;
+        }, (e: unknown) => {
+          if ((e as { code?: unknown })?.code === 'engine_capability_missing') { refusal = e; refusalSite = site; }
+          throw e;
+        });
+      };
+    },
+  });
+  return { engine: wrapped, ids, refusal: () => refusal, refusalSite: () => refusalSite };
+}
+
+/**
+ * Known stop on Rust (lane 1 owns it, on rust-engine/wikilink-put-rust): put_page's link preparation reads the live slug
+ * aliases through executeRaw (liveSlugAliases, src/core/persistence/links-preparation.ts:29), so on a Rust brain a page
+ * with links queues instead of landing, and the two apply-mode cases stop there. The pin fails as soon as that read is
+ * served: the cases must then compare equal, and whichever of the two changes lands second removes this pin.
+ */
+const RUST_KNOWN_STOP = /at liveSlugAliases \([^)]*src\/core\/persistence\/links-preparation\.ts:29:/;
+
+/**
+ * Run a write that a missing capability can queue instead of refuse: put_page answers `write_pending` with
+ * blocked_reason engine_capability_missing when a step of its link preparation is refused. The case then stops on
+ * that typed refusal, which is what the queued write is waiting for.
+ */
+async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, backend: string, run: () => Promise<T>): Promise<T> {
+  let out: T;
+  try {
+    out = await run();
+  } catch (error) {
+    const request = (error as { writeRequest?: { blocked_reason?: unknown; write_error?: unknown } })?.writeRequest;
+    // A refused preparation step parks the request as blocked, or ends it failed with the typed refusal as its write error.
+    const blocked = request?.blocked_reason ?? request?.write_error;
+    if (blocked === 'engine_capability_missing' && w.refusal() !== null) {
+      if (backend === 'rust') expect(w.refusalSite()).toMatch(RUST_KNOWN_STOP);
+      throw w.refusal();
+    }
+    throw error;
+  }
+  // The known stop above: reaching here on Rust means the read is served, so this pin has to go.
+  if (backend === 'rust') expect('the apply-mode case ran to the end on Rust').toBe('the case stops at liveSlugAliases (RUST_KNOWN_STOP)');
+  return out;
+}
+
+describe('engine parity: the edge-contradictions phase end to end', () => {
+  parityTest('propose mode records one dated closure, reject keeps both employers, and the next run skips the known pair', {
+    methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
+      'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal', 'putPage',
+      'replaceDerivedLinks', 'rejectOpenEdgeProposal'],
+  }, async (base) => {
+    const w = watched(base);
+    const engine = w.engine;
+    await seedThroughDerivedLinks(engine);
+    await engine.setConfig('dream.edge_contradictions.mode', 'propose');
+    const before = await liveEmployers(engine);
+    const proposed = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));
+    expect(w.ids.length).toBe(1);
+    const id = w.ids[0]!;
+    const proposal = async () => {
+      const p = await engine.readEdgeProposal(id);
+      return p && { status: p.status, subject: p.subject_slug, ending: p.ending_slug, link_type: p.link_type, close_date: String(p.close_date).slice(0, 10),
+        line: p.generated_line };
+    };
+    const out = {
+      before, proposed, proposal: await proposal(),
+      afterPropose: await liveEmployers(engine),
+      reject: await rejectEdgeProposal(engine, id),
+      rejectAgain: await rejectEdgeProposal(engine, id),
+      applyRejected: await applyEdgeProposal(engine, id),
+      rejected: (await proposal())?.status,
+      rerun: phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge })),
+      afterRerun: await liveEmployers(engine),
+    };
+    expect(out).toMatchObject({ before: [ACME, WIDGET], afterPropose: [ACME, WIDGET], afterRerun: [ACME, WIDGET], rejected: 'rejected',
+      reject: { status: 'rejected' }, rejectAgain: { status: 'refused' }, applyRejected: { status: 'refused', reason: 'proposal is rejected' },
+      proposal: { status: 'proposed', subject: ALICE, ending: ACME, close_date: '2024-05-01' } });
+    expect(out.proposed.totals).toMatchObject({ judged: 1, proposed: 1, applied: 0 });
+    expect(out.rerun.totals).toMatchObject({ skipped_known: 1, judged: 0 });
+    return out;
+  });
+
+  parityTest('apply mode closes the older employer through a timeline line, undo reopens it, and the next run skips the known pair', {
+    methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
+      'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
+      'readEdgeProposalEvidence', 'readEdgeProposalHash', 'edgeClosureLanded', 'setEdgeProposalStatus', 'markEdgeProposalUndone'],
+  }, async (base, backend) => {
+    const w = watched(base);
+    const engine = w.engine;
+    return orTheQueuedRefusal(w, backend, async () => {
+      await seedThroughOp(engine);
+      await engine.setConfig('dream.edge_contradictions.mode', 'apply');
+      const before = await liveEmployers(engine);
+      const applied = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));
+      expect(w.ids.length).toBe(1);
+      const id = w.ids[0]!;
+      const out = {
+        before, applied, afterApply: await liveEmployers(engine),
+        timeline: (await engine.getPage(ALICE, { sourceId: 'default' }))?.timeline?.includes('gbrain-dream (inferred) — Ended works_at [[companies/acme-example]]'),
+        replay: await applyEdgeProposal(engine, id),
+        undo: await undoEdgeProposal(engine, id),
+        afterUndo: await liveEmployers(engine),
+        undone: (await engine.readEdgeProposal(id))?.status,
+        rerun: phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge })),
+      };
+      // One live employer is no longer a candidate group (it needs two targets).
+      expect(out).toMatchObject({ before: [ACME, WIDGET], afterApply: [], timeline: true, replay: { status: 'applied', reason: 'already applied' },
+        undo: { status: 'undone' }, afterUndo: [ACME, WIDGET], undone: 'undone' });
+      expect(out.applied.totals).toMatchObject({ judged: 1, proposed: 1, applied: 1 });
+      expect(out.rerun.totals).toMatchObject({ skipped_known: 1, judged: 0 });
+      return out;
+    });
+  });
+
+  parityTest('an applied closure line the user deletes makes the proposal reverted_by_user, and the judge is not asked again', {
+    methods: ['getConfig', 'setConfig', 'markRevertedEdgeProposals', 'listEdgeContradictionCandidates', 'listKnownEdgeProposals',
+      'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
+      'readEdgeProposalEvidence', 'readEdgeProposalHash', 'edgeClosureLanded', 'setEdgeProposalStatus'],
+  }, async (base, backend) => {
+    const w = watched(base);
+    const engine = w.engine;
+    return orTheQueuedRefusal(w, backend, async () => {
+      await seedThroughOp(engine);
+      await engine.setConfig('dream.edge_contradictions.mode', 'apply');
+      const applied = phaseView(await runPhaseEdgeContradictions(engine, { judge: conflictJudge }));
+      // The user rewrites the page without the closure line.
+      await seedThroughOp(engine);
+      let calls = 0;
+      // The revert statement takes proposals updated before now(); let the clock tick past the apply.
+      await new Promise(r => setTimeout(r, 25));
+      const again = phaseView(await runPhaseEdgeContradictions(engine, { judge: async (input) => { calls++; return conflictJudge(input); } }));
+      const out = { applied, afterRewrite: await liveEmployers(engine), again, calls };
+      expect(out.applied.totals).toMatchObject({ proposed: 1, applied: 1 });
+      expect(out).toMatchObject({ afterRewrite: [ACME, WIDGET], calls: 0 });
+      expect(out.again.totals).toMatchObject({ reverted: 1 });
+      return out;
+    });
+  });
+
+  parityTest('doctor edge_validity counts the stored proposals by status, within the source scope it is given', {
+    methods: ['putPage', 'readPageSnapshot', 'replaceDerivedLinks', 'readPageIdInSource', 'recordEdgeProposal', 'edgeValidityCounts', 'getConfig'],
+  }, async (engine, backend) => {
+    await seedThroughDerivedLinks(engine);
+    await createSource(engine, backend, 'other');
+    for (const slug of [ALICE, ACME, WIDGET]) await engine.putPage(slug, page(slug, slug === ALICE ? 'person' : 'company'), { sourceId: 'other' });
+    const record = async (sourceId: string, evidenceHash: string, status: string) => {
+      const [from, a, b] = [await idOf(engine, ALICE, sourceId), await idOf(engine, ACME, sourceId), await idOf(engine, WIDGET, sourceId)];
+      await engine.recordEdgeProposal({ sourceId, fromPageId: from, aToPageId: a, bToPageId: b, linkType: 'works_at', evidenceHash, status,
+        endingToPageId: status === 'undated_unresolved' ? null : a, closeDate: status === 'undated_unresolved' ? null : '2024-05-01',
+        bornClosed: false, model: 'judge-m1', confidence: 0.9, generatedLine: null, detail: null });
+    };
+    await record('default', 'e1', 'proposed');
+    await record('default', 'e2', 'proposed');
+    await record('default', 'e3', 'undated_unresolved');
+    await record('default', 'e4', 'applied');
+    await record('default', 'e5', 'rejected');
+    await record('other', 'e6', 'proposed');
+    await record('other', 'e7', 'applied');
+    const all = await edgeValidityStats(engine);
+    const scoped = await edgeValidityStats(engine, ['default']);
+    const verdict = edgeValidityVerdict(scoped);
+    const out = { all: all?.proposals, scoped: scoped?.proposals, none: (await edgeValidityStats(engine, ['missing']))?.proposals,
+      status: verdict.status, message: verdict.message };
+    expect(out).toMatchObject({ all: { proposed: 3, undated: 1, applied: 2 }, scoped: { proposed: 2, undated: 1, applied: 1 },
+      none: { proposed: 0, undated: 0, applied: 0 }, status: 'warn' });
+    expect(out.message).toContain('2 contradiction proposal(s) open, 1 waiting for a date');
+    return out;
+  });
+});
+
 describe('engine parity: scoped contradiction reader statements', () => {
   parityTest('the live chunk re-read keeps the chunks a caller\'s policy admits, and the take re-read adds the holder allow-list', {
     methods: ['putPage', 'sealChunks', 'getChunks', 'addTakesBatch', 'listTakes', 'readPageIdInSource', 'listLiveChunksByIds', 'listLiveTakesByIds'],
@@ -207,8 +468,8 @@ describe('engine parity: scoped contradiction reader statements', () => {
     return out;
   });
 
-  parityTest('the last contradiction prompt version is the newest run\'s, and the captured queries come newest first up to the limit', {
-    methods: ['writeContradictionsRun', 'logEvalCandidate', 'readLastContradictionsPromptVersion', 'listEvalCandidateQueries'],
+  parityTest('the last contradiction prompt version is the newest run\'s, null before any run', {
+    methods: ['writeContradictionsRun', 'readLastContradictionsPromptVersion'],
   }, async (engine) => {
     const run = (id: string, prompt_version: string) => ({
       run_id: id, judge_model: 'judge-m1', prompt_version, queries_evaluated: 20, queries_with_contradiction: 4, total_contradictions_flagged: 6,
@@ -216,110 +477,33 @@ describe('engine parity: scoped contradiction reader statements', () => {
       source_tier_breakdown: {}, report_json: {},
     });
     const pause = () => new Promise(resolve => setTimeout(resolve, 15));
+    const out: Record<string, unknown> = { noneYet: await engine.readLastContradictionsPromptVersion() };
+    await engine.writeContradictionsRun(run('run-b', 'v1'));
+    out.one = await engine.readLastContradictionsPromptVersion();
+    await pause();
+    // A later run with a smaller run_id: the newest ran_at wins, not the run_id order.
+    await engine.writeContradictionsRun(run('run-a', 'v2'));
+    out.newest = await engine.readLastContradictionsPromptVersion();
+    // A repeated run_id is not stored again, so the answer stays.
+    await pause();
+    await engine.writeContradictionsRun(run('run-b', 'v3'));
+    out.afterRepeat = await engine.readLastContradictionsPromptVersion();
+    expect(out).toEqual({ noneYet: null, one: 'v1', newest: 'v2', afterRepeat: 'v2' });
+    return out;
+  });
+
+  parityTest('the captured queries come newest first up to the limit', {
+    methods: ['logEvalCandidate', 'listEvalCandidateQueries'],
+  }, async (engine) => {
     const candidate = (query: string) => ({
       tool_name: 'query' as const, query, retrieved_slugs: [], retrieved_chunk_ids: [], source_ids: ['default'], expand_enabled: null, detail: null,
       detail_resolved: null, vector_enabled: false, expansion_applied: false, latency_ms: 1, remote: false, job_id: null, subagent_id: null,
     });
-    const out: Record<string, unknown> = { noneYet: await engine.readLastContradictionsPromptVersion(), noQueries: await engine.listEvalCandidateQueries(5) };
-    await engine.writeContradictionsRun(run('run-a', 'v1'));
-    await pause();
-    await engine.writeContradictionsRun(run('run-b', 'v2'));
-    out.newest = await engine.readLastContradictionsPromptVersion();
+    const out: Record<string, unknown> = { noQueries: await engine.listEvalCandidateQueries(5) };
     for (const q of ['first query', 'second query', 'third query']) await engine.logEvalCandidate(candidate(q));
     out.queries = await engine.listEvalCandidateQueries(100);
     out.limited = await engine.listEvalCandidateQueries(2);
-    expect(out).toEqual({ noneYet: null, noQueries: [], newest: 'v2', queries: ['third query', 'second query', 'first query'], limited: ['third query', 'second query'] });
-    return out;
-  });
-});
-
-describe('engine parity: ontology re-key and repair statements', () => {
-  const VALID_FROM = '2026-01-01T00:00:00Z';
-  const obs = (entitySlug: string, dimension: string, value: string, source: string, validFrom = VALID_FROM) =>
-    ({ entitySlug, dimension, value, source, validFrom, sourceId: 'default' });
-  const factsOf = async (engine: BrainEngine, slug: string) => (await engine.listFactsByEntity('default', slug)).map(f => f.fact);
-
-  parityTest('a re-key drops the observation the move would duplicate; a conversation slot loses and keeps its row', {
-    methods: ['mergeOntologyFact', 'insertFacts', 'listFactsByEntity', 'listRekeyLosers', 'repointSupersededToKept', 'clearOntologySlots', 'deleteRekeyLosers'],
-  }, async (engine) => {
-    // An ontology observation on the old entity, and a conversation fact on the new one holding the same key.
-    const old = await engine.mergeOntologyFact(obs('people/dan-old-example', 'location', 'Lisbon', 'meetings/chat-a'));
-    await engine.insertFacts([{ fact: 'Dan lives in Lisbon.', entity_slug: 'people/dan-example', kind: 'fact', visibility: 'private',
-      source: 'cli:extract-conversation-facts', source_markdown_slug: 'meetings/chat-a', row_num: 1, valid_from: at(VALID_FROM), dimension: 'location', value: 'Lisbon' } as never], { source_id: 'default' });
-    const conversation = (await engine.listFactsByEntity('default', 'people/dan-example'))[0]!;
-    const move = { where: 'f.entity_slug = $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: ['people/dan-old-example', 'people/dan-example'] as [unknown, unknown] };
-    const losers = await engine.listRekeyLosers('default', move);
-    const named = losers.map(l => [Number(l.id) === Number(conversation.id) ? 'conversation fact' : 'ontology fact', Number(l.keep) === Number(old.factId) ? 'ontology fact' : 'other']);
-    await engine.clearOntologySlots(losers.map(l => Number(l.id)));
-    await engine.deleteRekeyLosers(losers.map(l => Number(l.id)));
-    const out: Record<string, unknown> = { named, oldAfter: await factsOf(engine, 'people/dan-old-example'), newAfter: await factsOf(engine, 'people/dan-example') };
-
-    // Two ontology observations: the move's own row loses to the one already at the target, and supersession follows the survivor.
-    const first = await engine.mergeOntologyFact(obs('people/eve-old-example', 'location', 'Lisbon', 'meetings/chat-b', '2026-01-01T00:00:00Z'));
-    const second = await engine.mergeOntologyFact(obs('people/eve-old-example', 'location', 'Porto', 'meetings/chat-b', '2026-02-01T00:00:00Z'));
-    const target = await engine.mergeOntologyFact(obs('people/eve-example', 'location', 'Porto', 'meetings/chat-b', '2026-02-01T00:00:00Z'));
-    const eveMove = { where: 'f.entity_slug = $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: ['people/eve-old-example', 'people/eve-example'] as [unknown, unknown] };
-    const eveLosers = await engine.listRekeyLosers('default', eveMove);
-    out.eveLosers = eveLosers.map(l => [Number(l.id) === Number(second.factId) ? 'moving Porto' : 'other', Number(l.keep) === Number(target.factId) ? 'target Porto' : 'other']);
-    await engine.repointSupersededToKept(eveLosers.map(l => Number(l.id)), eveLosers.map(l => Number(l.keep)));
-    await engine.clearOntologySlots(eveLosers.map(l => Number(l.id)));
-    await engine.deleteRekeyLosers(eveLosers.map(l => Number(l.id)));
-    const left = await engine.listFactsByEntity('default', 'people/eve-old-example');
-    out.eveOld = left.map(f => [f.fact, f.superseded_by === null ? null : Number(f.superseded_by) === Number(target.factId) ? 'target Porto' : 'other']);
-    out.eveTarget = await factsOf(engine, 'people/eve-example');
-    out.nothingToDrop = (await engine.listRekeyLosers('default', { ...eveMove, params: ['people/nobody', 'people/eve-example'] })).length;
-    expect(first.factId).not.toBeNull();
-    expect(out).toMatchObject({
-      named: [['conversation fact', 'ontology fact']],
-      oldAfter: ['location: Lisbon'], newAfter: ['Dan lives in Lisbon.'],
-      eveLosers: [['moving Porto', 'target Porto']], nothingToDrop: 0,
-    });
-    return out;
-  });
-
-  parityTest('the ontology candidates list the fenced and retired rows with their class, and a restore applies only to a row as previewed', {
-    methods: ['insertFacts', 'listOntologyFactCandidates', 'restoreOntologyFact'],
-  }, async (engine) => {
-    const row = (fact: string, over: Record<string, unknown>) => ({
-      fact, entity_slug: 'people/fay-example', kind: 'fact', visibility: 'world', source: 'manual', source_markdown_slug: 'people/fay-example', row_num: null,
-      valid_from: at(VALID_FROM), dimension: 'location', value: fact, ...over,
-    });
-    await engine.insertFacts([
-      row('Lisbon', { row_num: 1 }),
-      row('Porto', { row_num: 2, expired_at: at('2026-03-01T12:34:56.789Z') }),
-      // Holds the key `Faro` would have once restored: the fenced Faro is a duplicate.
-      row('Faro', { row_num: 3 }),
-      row('Faro', { source_markdown_slug: 'manual', row_num: null }),
-      // Conversation slots are never candidates.
-      row('Braga', { source: 'cli:extract-conversation-facts', row_num: 4 }),
-      // A plain fact has no ontology slot.
-      row('plain fact', { dimension: null, value: null, row_num: 5 }),
-    ] as never, { source_id: 'default' });
-    const candidates = await engine.listOntologyFactCandidates(['default']);
-    const name = (id: number | string) => candidates.find(c => Number(c.id) === Number(id));
-    const view = candidates.map(c => ({ entity: c.entity_slug, dimension: c.dimension, row_num: c.row_num === null ? null : Number(c.row_num), page: c.page,
-      expired: c.expired_at, withdrawn: c.withdrawn, consolidated: c.consolidated, duplicate: c.duplicate }));
-    const byRow = (n: number) => candidates.find(c => Number(c.row_num) === n)!;
-    const restore = (c: (typeof candidates)[number], over: Record<string, unknown> = {}) => engine.restoreOntologyFact({ id: Number(c.id), source_id: c.source_id,
-      row_num: c.row_num === null ? null : Number(c.row_num), page: c.page, expired_at: c.expired_at, ...over });
-    const out = {
-      candidates: view,
-      restoreChangedRow: (await restore(byRow(1), { row_num: 99 })).length,
-      restoreChangedPage: (await restore(byRow(1), { page: 'people/other' })).length,
-      restoreChangedExpiry: (await restore(byRow(1), { expired_at: '2026-03-01T00:00:00.000000Z' })).length,
-      restoreDuplicate: (await restore(byRow(3))).length,
-      restoreFenced: (await restore(byRow(1))).map(r => r.expired),
-      restoreRetired: (await restore(byRow(2))).map(r => r.expired),
-      restoreAgain: (await restore(byRow(1))).length,
-      after: (await engine.listOntologyFactCandidates(['default'])).map(c => Number(c.row_num)),
-      otherSource: (await engine.listOntologyFactCandidates(['nowhere'])).length,
-    };
-    expect(name(byRow(1).id)).toBeDefined();
-    expect(candidates).toHaveLength(3);
-    expect(out).toMatchObject({ restoreChangedRow: 0, restoreChangedPage: 0, restoreChangedExpiry: 0, restoreDuplicate: 0,
-      restoreFenced: [false], restoreRetired: [false], restoreAgain: 0, after: [3], otherSource: 0 });
-    expect(view.find(c => c.row_num === 3)?.duplicate).toBe(true);
-    expect(view.find(c => c.row_num === 2)?.expired).toMatch(/^2026-03-01T12:34:56\.789000Z$/);
+    expect(out).toEqual({ noQueries: [], queries: ['third query', 'second query', 'first query'], limited: ['third query', 'second query'] });
     return out;
   });
 });

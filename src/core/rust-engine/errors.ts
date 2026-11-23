@@ -52,22 +52,12 @@ export function requireTransactions(engine: object, step: string, why: string): 
 
 /**
  * The named refusal of a managed-checkout persistence step (worktree admission, the refresh barrier, an import hold,
- * grouped admission, the background owner check) on an engine without `managed_persistence` (the Rust engine). The
+ * grouped admission, the background owner check) on an engine without `managed_persistence`. The
  * step calls it before it reads or locks anything, so nothing of the write ran. PGLite, Postgres and transaction
  * handles (no capability set) pass.
  */
 export function requireManagedPersistence(engine: object, step: string, why: string): void {
   if (!managesWorktrees(engine)) throw capabilityMissing('managed_persistence', `${step} (${why})`);
-}
-
-/**
- * The named refusal of a write whose publication still reads through raw SQL, on an engine without `raw_sql` (the Rust
- * engine): a remote write that queues a mention-links effect (persistence/effect-links.ts runs it, and a finished
- * put_pages batch re-arms it, through executeRaw). The admission calls it before it reads or writes, so no request row
- * and no counter charge exist. PGLite, Postgres and transaction handles (no capability set) pass.
- */
-export function requireRawSqlPublication(engine: object, step: string, why: string): void {
-  if (!reports(engine, 'raw_sql')) throw capabilityMissing('raw_sql', `${step} (${why})`);
 }
 
 /**
@@ -90,8 +80,8 @@ export function managesWorktrees(engine: object): boolean {
 }
 
 /**
- * Whether `engine` serves raw SQL. The owner's idle probe asks it before its one raw statement, so an engine without
- * `raw_sql` (the Rust engine) answers from typed members. PGLite, Postgres and transaction handles answer true.
+ * Whether `engine` serves raw SQL. Callers with one raw statement ask it first, so an engine without `raw_sql` (the
+ * Rust engine) answers from typed members or refuses plainly. PGLite, Postgres and transaction handles answer true.
  */
 export function servesRawSql(engine: object): boolean {
   return reports(engine, 'raw_sql');

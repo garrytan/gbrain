@@ -135,7 +135,7 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
     'gbrain access owner set <member>', 'Without an owner the default would leave the pages readable by no member.');
   const items: HandoverItem[] = [];
   const warnings: string[] = [];
-  const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+  const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(r => r.id);
   const rulesBefore = new Map<string, FolderRule[]>();
   const rulesAfter = new Map<string, FolderRule[]>();
   for (const source of sources) {

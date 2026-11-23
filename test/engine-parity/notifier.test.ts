@@ -22,7 +22,7 @@
  */
 import { describe, expect } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NotifierLeaseClaim } from '../../src/core/engine-sql/notifier.ts';
@@ -129,7 +129,8 @@ describe('engine parity: commit notifier lease and host sources', () => {
   });
 
   parityTest('listHostSources watches a bound classic checkout and skips the rest with a reason', { methods: ['listNotifierHostSourceRows'] }, async (engine, backend) => {
-    const root = mkdtempSync(join(tmpdir(), 'notifier-parity-'));
+    // git answers the real path of the checkout's .git, and macOS tmpdir() sits behind the /var -> /private/var symlink.
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'notifier-parity-')));
     try {
       const repo = join(root, 'repo');
       const plain = join(root, 'plain');

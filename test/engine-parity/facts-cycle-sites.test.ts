@@ -137,25 +137,32 @@ describe('engine parity: facts cycle, phantom redirect and fence-guard statement
     return answers;
   });
 
-  parityTest('readPageFileOrigin reads the recorded origin of a live page, null for a missing or deleted page', {
+  parityTest('readPageFileOrigin reads the recorded origin of a live page, of a deleted page only with includeDeleted, null for a missing page', {
     methods: ['readPageFileOrigin', 'refreshPageOrigin', 'softDeletePage'],
   }, async (engine) => {
     await engine.putPage('has-origin', note('A'));
     await engine.putPage('no-origin', note('B'));
     await engine.putPage('gone', note('C'));
     await engine.refreshPageOrigin('has-origin', { sourceId: SRC, sourcePath: 'notes/has-origin.md', sourceUri: 'file:///notes/has-origin.md' });
+    await engine.refreshPageOrigin('gone', { sourceId: SRC, sourcePath: 'notes/gone.md', sourceUri: 'file:///notes/gone.md' });
     await engine.softDeletePage('gone');
     const answers = {
       has: await engine.readPageFileOrigin(SRC, 'has-origin'),
+      hasWithDeleted: await engine.readPageFileOrigin(SRC, 'has-origin', { includeDeleted: true }),
       none: await engine.readPageFileOrigin(SRC, 'no-origin'),
       deleted: await engine.readPageFileOrigin(SRC, 'gone'),
-      missing: await engine.readPageFileOrigin(SRC, 'never'),
+      deletedWithDeleted: await engine.readPageFileOrigin(SRC, 'gone', { includeDeleted: true }),
+      missing: await engine.readPageFileOrigin(SRC, 'never', { includeDeleted: true }),
+      otherSource: await engine.readPageFileOrigin('other-src', 'has-origin'),
     };
     expect(answers).toEqual({
       has: { source_path: 'notes/has-origin.md', source_uri: 'file:///notes/has-origin.md' },
+      hasWithDeleted: { source_path: 'notes/has-origin.md', source_uri: 'file:///notes/has-origin.md' },
       none: { source_path: null, source_uri: null },
       deleted: null,
+      deletedWithDeleted: { source_path: 'notes/gone.md', source_uri: 'file:///notes/gone.md' },
       missing: null,
+      otherSource: null,
     });
     return answers;
   });
@@ -312,6 +319,37 @@ describe('engine parity: facts cycle, phantom redirect and fence-guard statement
     expect(held).toEqual(['people/alpha:lives on live page:memory/unattributed:true:false', 'people/zed:held row:memory/unattributed:false:false']);
     expect(orphaned).toEqual(['people/gone-page']);
     return { unfenced, held, orphaned };
+  });
+
+  parityTest('the facts home scan reports how long a held row has waited, the dimension of an unfenced row and a soft-deleted fence page', {
+    methods: ['scanUnfencedFactRows', 'listHeldFactRows', 'listFencedFactsOfMissingPages', 'insertFacts', 'putPage', 'softDeletePage'],
+  }, async (engine) => {
+    await engine.putPage('memory/unattributed', note('Held'));
+    await engine.putPage('members/ann/memory/unattributed', note('Nested'));
+    await engine.putPage('people/live', note('L'));
+    await engine.putPage('people/closed', note('C'));
+    const ids = await fenced(engine, [
+      { fact: 'about live', row_num: 1, source_markdown_slug: 'memory/unattributed', entity_slug: 'people/live' },
+      { fact: 'about a nested one', row_num: 1, source_markdown_slug: 'members/ann/memory/unattributed', entity_slug: 'people/aaa' },
+      { fact: 'about a holding page', row_num: 2, source_markdown_slug: 'memory/unattributed', entity_slug: 'members/ann/memory/unattributed' },
+      { fact: 'a slot', row_num: 3, source_markdown_slug: 'memory/unattributed', entity_slug: 'people/live', dimension: 'city', value: 'Paris' },
+      { fact: 'expired', row_num: 4, source_markdown_slug: 'memory/unattributed', entity_slug: 'people/live', expired_at: LONG_AGO },
+      { fact: 'on a closed page', row_num: 1, source_markdown_slug: 'people/closed', entity_slug: 'people/closed' },
+      { fact: 'on no page at all', row_num: 1, source_markdown_slug: 'people/never', entity_slug: 'people/never' },
+    ]);
+    expect(ids).toHaveLength(7);
+    await engine.insertFacts([{ fact: 'unfenced slot', kind: 'fact', visibility: 'world', source: 'fence', embedding: null, entity_slug: 'people/live', dimension: 'role', value: 'CEO' }] as never, { source_id: SRC });
+    await engine.softDeletePage('people/closed');
+    const young = await engine.listHeldFactRows(SRC, '30');
+    const aged = await engine.listHeldFactRows(SRC, '-1');
+    const shape = (rows: typeof young) => rows.map(r => `${r.entity_slug}|${r.from_slug}|${r.old}|${/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(r.held_since)}|${r.valid_from instanceof Date}`);
+    const unfenced = (await engine.scanUnfencedFactRows(SRC)).map(r => `${r.entity_slug}|${r.fact}|${r.dimension}|${r.page_exists}|${r.page_deleted}`);
+    const missing = (await engine.listFencedFactsOfMissingPages(SRC)).map(r => r.slug);
+    expect(shape(young)).toEqual(['people/aaa|members/ann/memory/unattributed|false|true|true', 'people/live|memory/unattributed|false|true|true']);
+    expect(shape(aged)).toEqual(['people/aaa|members/ann/memory/unattributed|true|true|true', 'people/live|memory/unattributed|true|true|true']);
+    expect(unfenced).toEqual(['people/live|unfenced slot|role|true|false']);
+    expect(missing).toEqual(['people/closed', 'people/never']);
+    return { young: shape(young), aged: shape(aged), unfenced, missing };
   });
 
   parityTest('readSourceCheckoutPath reads a source\'s checkout path, null for a source without one or none', { methods: ['readSourceCheckoutPath'] }, async (engine, backend) => {

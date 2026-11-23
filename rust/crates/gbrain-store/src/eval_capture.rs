@@ -578,6 +578,20 @@ impl Store {
     }
 }
 
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(read_all::<CandidateRecord>(read, CANDIDATE)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![("query", ProbeCell::text(&r.query))],
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     //! `remove_retrieved_slugs` is crate-private; its contract is tested here. The members are

@@ -181,6 +181,60 @@ describe('engine parity: persistence declaration', () => {
     return out;
   });
 
+  // Leak case (access checks): a write owned by a live OAuth client or legacy token with a write grant on the source is
+  // admitted; once the token is revoked or the client deleted, the same write refuses with the same text on every arm,
+  // and a client whose source moved refuses too. The credentials are seeded through the typed inserts.
+  parityTest('a write owned by a live OAuth client or legacy token is admitted, and refused once it is revoked or deleted', {
+    methods: ['readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'insertAccessToken', 'insertOauthClient', 'revokeAccessToken', 'readSourceMembership'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'elsewhere');
+    const source = await engine.readSourceMembership('default');
+    const tokenRow = (name: string) => ({ name, token_hash: `hash-${name}`, scopes: ['read', 'write'], permissions: { source_id: 'default' }, source_grant: null,
+      source_id: null, federated_read: null, allowed_operations: null, takes_holders: null });
+    const { id: live } = await engine.insertAccessToken(tokenRow('writer'));
+    const { id: revoked } = await engine.insertAccessToken(tokenRow('revoked-writer'));
+    await engine.revokeAccessToken(revoked);
+    await engine.insertOauthClient({ client_id: 'client-writer', client_name: 'writer', scope: 'read write', source_id: 'default' });
+    await engine.insertOauthClient({ client_id: 'client-moved', client_name: 'moved', scope: 'read write', source_id: 'elsewhere' });
+    await engine.insertOauthClient({ client_id: 'client-deleted', client_name: 'deleted', scope: 'read write', source_id: 'default', deleted_at: new Date('2026-02-01T00:00:00Z') });
+    const check = async (kind: 'oauth_client' | 'legacy_token', id: string) => {
+      const authority: WriteAuthority = { version: 1, principal: { kind, id }, remote: true, sourceId: 'default',
+        sourceIncarnation: source!.incarnation, scopes: ['read', 'write'], operations: null, slugPrefixes: null };
+      const seen: unknown[] = [];
+      for (const lock of [false, true]) {
+        seen.push(await authorizeWrite(engine, authority, 'put_page', 'notes/grant-check', lock).then(() => 'admitted', (e: { code?: string; message?: string }) => `${e.code}: ${e.message}`));
+      }
+      return seen;
+    };
+    const grants = {
+      token: await engine.readAccessTokenWriteGrant(live).then(g => g && { scopes: g.scopes, permissions: g.permissions, revoked: g.revoked_at != null }),
+      upper: await engine.readAccessTokenWriteGrant(live.toUpperCase()).then(g => g && g.scopes),
+      notUuid: await engine.readAccessTokenWriteGrant('writer').then(() => 'found', () => 'refused'),
+      revoked: await engine.readAccessTokenWriteGrant(revoked).then(g => g && g.revoked_at instanceof Date),
+      client: await engine.readOAuthClientWriteGrant('client-writer').then(g => g && { scope: g.scope, source_id: g.source_id, deleted: g.deleted_at != null }),
+      deleted: await engine.readOAuthClientWriteGrant('client-deleted').then(g => g && g.deleted_at instanceof Date),
+    };
+    const out = {
+      grants,
+      liveToken: await check('legacy_token', live),
+      revokedToken: await check('legacy_token', revoked),
+      liveClient: await check('oauth_client', 'client-writer'),
+      movedClient: await check('oauth_client', 'client-moved'),
+      deletedClient: await check('oauth_client', 'client-deleted'),
+    };
+    const token = 'permission_denied: The owning token is revoked.';
+    const client = 'permission_denied: The owning OAuth client is revoked or its source changed.';
+    expect(out).toEqual({
+      grants: {
+        token: { scopes: ['read', 'write'], permissions: { source_id: 'default' }, revoked: false }, upper: ['read', 'write'], notUuid: 'refused', revoked: true,
+        client: { scope: 'read write', source_id: 'default', deleted: false }, deleted: true,
+      },
+      liveToken: ['admitted', 'admitted'], revokedToken: [token, token],
+      liveClient: ['admitted', 'admitted'], movedClient: [client, client], deletedClient: [client, client],
+    });
+    return out;
+  });
+
   parityTest('a write to a managed worktree refuses on an engine without managed persistence, naming that capability', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
     requires: 'managed_persistence',
@@ -204,9 +258,8 @@ describe('engine parity: persistence declaration', () => {
     return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
   });
 
-  parityTest('a skill bundle write refuses on an engine without managed persistence, naming that capability', {
+  parityTest('a skill bundle write before shared-skill activation refuses as an unactivated shared-skill owner on every engine', {
     methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
-    requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
@@ -217,12 +270,8 @@ describe('engine parity: persistence declaration', () => {
     const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
       sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
       callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
-    // An engine without the capability refuses the bundle by name, not as a shared-skill owner that is not yet activated.
-    if (!engine.capabilities.has('managed_persistence')) {
-      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
-      throw refusal;
-    }
-    // An engine with it checks the shared-skill owner; none was activated, so nothing is accepted.
+    // Every engine checks the shared-skill owner (a Rust brain activates and publishes skills itself,
+    // shared-skills/rust-publication.ts); none was activated, so nothing is accepted.
     expect(refusal?.code).toBe('writer_not_quiesced');
     return { code: refusal?.code, message: refusal?.message };
   });
@@ -252,5 +301,45 @@ describe('engine parity: persistence declaration', () => {
       throw sync;
     }
     return { replayed: true, state: replay.state, changed, paused, sync: sync?.code };
+  });
+
+  parityTest('a write to a managed worktree that is not bound to its source is refused source_changed', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    requires: 'managed_persistence',
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_page', 'default', source!.incarnation, 'notes/parity-worktree');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'notes/parity-worktree', requestId: REQUESTS[0]!, worktreeId: WORKTREE, topologyGeneration: 1,
+      callerIntent: { body: 'x' }, intent: { body: 'x' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // A Rust brain refuses managed mode by name, before any worktree read.
+    if (!engine.capabilities.has('managed_persistence')) {
+      expect({ code: refusal?.code, reason: refusal?.reason }).toEqual({ code: 'engine_capability_missing', reason: 'managed_persistence' });
+      throw refusal;
+    }
+    // The admission reads the worktree binding; this worktree is not bound to the source, so nothing is accepted.
+    expect(refusal?.code).toBe('source_changed');
+    return { managed: engine.capabilities.has('managed_persistence'), code: refusal?.code, reason: refusal?.reason ?? null };
+  });
+
+  parityTest('a skill bundle write with no activated shared-skill owner is refused writer_not_quiesced', {
+    methods: ['readSourceMembership', 'declarePersistence', 'transaction'],
+    timeout: 60_000,
+  }, async (engine) => {
+    await registerLocalWriter(engine, 'cli');
+    const source = await engine.readSourceMembership('default');
+    const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+    const authority = await submissionAuthority(ctx, 'put_skill', 'default', source!.incarnation, 'skills/parity-pack/parity-skill');
+    const refusal = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_skill', sourceId: 'default',
+      sourceIncarnation: source!.incarnation, slug: 'skills/parity-pack/parity-skill', requestId: REQUESTS[1]!, targetKind: 'skill_bundle', protocolVersion: 2,
+      callerIntent: { name: 'parity-skill' }, intent: { name: 'parity-skill' } }).then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
+    // The admission checks the shared-skill owner; none was activated, so nothing is accepted.
+    expect(refusal?.code).toBe('writer_not_quiesced');
+    return { code: refusal?.code, message: refusal?.message };
   });
 });

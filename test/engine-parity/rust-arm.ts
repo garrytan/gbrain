@@ -80,8 +80,8 @@ export function removeBrainDir(dir: string): void {
 }
 
 /** Fixture: register a source on the Rust brain (BrainEngine has no typed "create source"). */
-export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string): Promise<void> {
-  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null });
+export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string, lastSyncAt?: string): Promise<void> {
+  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null, ...(lastSyncAt ? { last_sync_at: lastSyncAt } : {}) });
 }
 
 /** Fixture: archive a source on the Rust brain (BrainEngine has no typed "archive source"). */
@@ -92,6 +92,11 @@ export async function archiveRustSource(engine: unknown, id: string): Promise<vo
 /** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
 export function rustAccessBrain(engine: unknown) {
   return (engine as RustEngine).openStore('accessRules').brain;
+}
+
+/** Fixture: record a page purge on the Rust brain (the store's `page_purges` ledger has no typed BrainEngine writer). */
+export async function recordRustPagePurge(engine: unknown, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
+  await (engine as RustEngine).openStore('recordPagePurge').brain.recordPagePurge(sourceId, hashes, slug, requestId);
 }
 
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }

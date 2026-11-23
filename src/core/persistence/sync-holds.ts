@@ -54,6 +54,7 @@ import { VERSION } from '../../version.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
+import { READERS_FIX_EFFECT, readersHoldSteps } from './readers-request.ts';
 import { carriedKeepDeleted, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type KeepDeletedDecision } from './sync-holds-carried.ts';
 export { CARRIED_SAMPLE, carriedHolds, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type CarriedHolds, type KeepDeletedDecision } from './sync-holds-carried.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
@@ -66,7 +67,8 @@ export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-
 import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/git-holds.ts';
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
-export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
+import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
+export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export { SYNC_CONVERSION_OP };
 /** How many conversions the log keeps per source. */
@@ -179,6 +181,8 @@ export interface GitHoldMeta {
   sides?: 'database' | 'both' | 'unknown';
   /** GBRA-133 `file_drift`: the drift screen that held it; an unknown-side hold from an older screen is re-screened (#7340). */
   drift_version?: number;
+  /** GST-3328 follow-up `file_drift`: the pass's history budget ran out before it read this file's earlier versions in full, so the next sync screens it again. */
+  history_unread?: true;
   /**
    * #6712 PR 4b `file_drift`: which side a Decision is about (design v3.2 §4): `both` (the file and the page moved), `unknown`
    * (no import record says which), `deleted` (one side is a deletion, named by `state`). Absent on holds an older gbrain
@@ -685,7 +689,7 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
     || (record.code === 'invalid_fence' && (record.meta.quote_version ?? 0) < QUOTE_SCREEN_VERSION)
     // GBRA-133: an unknown-side drift held before #7340's baseline rule (a Git edit to a page with no import record) imports
     // now when the page still holds its file at the baseline commit, so it is screened once more.
-    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && (record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION)
+    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && ((record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || record.meta.history_unread === true))
     // GST-2568: a live page's drift held before version 3 may differ from its file only by a schema-pack retype's stamp, so it is screened once more.
     || (record.code === 'file_drift' && fileDriftSide(record.meta) !== 'deleted' && (record.meta.drift_version ?? 0) < 3)
     // #8007: a deletion held while gbrain.yml's storage section was invalid is decided again by every sync, so a fixed file settles it.
@@ -701,11 +705,12 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
  * to the content-repair lane's preview (#6377), #6194 concurrent-write holds
  * to the reconcile preview and a re-screen, #6278 preparation-stalled holds to
  * writer status and a re-screen (never a file repair), every other hold to the
- * frontmatter repair preview; a source with several kinds names each.
+ * frontmatter repair preview; a source with several kinds names each. `readers` (`readers_noncanonical`, a file edit no repair does) routes to a status read, the edit and a sync.
  */
 export interface HoldRepairRoute { fences: number; others: number; concurrent?: number; stalled?: number; dirty?: number;
   /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `gbrain repair file-drift`. */
   drift?: number;
+  readers?: number;
   /** #6377 `frontmatter_slug_conflict` holds, counted apart from `others` by callers that read codes (summary counts leave them in `others`). */
   slug_conflicts?: number;
   /** GBRA-542: the source is a read-only mirror, so its drift holds are carried and never resolved toward the database. */
@@ -746,9 +751,11 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which gbrain never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if gbrain should write the checkout`
-    : `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
-    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
+  const fileWins = route.mirror ? `the source is a read-only mirror, whose checkout is never written: gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews every page whose file is newer for one approval and imports each into its page database-only`
+    : `a page whose file was committed after it changed is the user's call with --prefer file (gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews them all for one approval). ${FILE_DRIFT_APPLY_STEP}`;
+  const driftText = `the ${route.drift ?? 0} file-drift hold(s) are pages that differ from their file where sync could not prove which side moved (a database edit, or no import record), so it kept each page: preview them all with gbrain repair file-drift --source ${sourceId} --held (writes nothing; --cursor pages through the rest) and relay what it lists. `
+    + `A page that equals an earlier committed version of its file needs no repair: gbrain sources retry-held ${sourceId} and the next sync import the file; ${fileWins}. A page that changed after its file, a file with uncommitted bytes (commit or restore it first) and a file that is gone stay held until the user decides. Then run gbrain sync --source ${sourceId} --no-pull`;
+  if (route.readers && !route.others && !content && !route.concurrent && !route.stalled && !route.dirty && !route.drift) return readersHoldSteps(sourceId);
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
@@ -1004,6 +1011,9 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
         why: 'Page privacy reads only the exact lowercase visibility: private; no frontmatter repair rewrites a privacy request, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'readers_noncanonical': return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} names its readers with a key page access does not read (another case, a hyphen or space instead of the underscore, or readableBy), so sync holds it instead of storing a page every member can read, and the rest of source ${source} keeps syncing. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, remove any other spelling of it, commit, then run gbrain sync --source ${source} --no-pull. ${READERS_FIX_EFFECT}`,
+        why: 'Page access reads only the exact lowercase readable_by key; no frontmatter repair rewrites who may read a page, and the hold re-screens when the file changes.', verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_null_bytes':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
@@ -1330,36 +1340,32 @@ export function syncImportParsers(schemaPack: string | null): (path: string) => 
 
 const provenanceFingerprint = (sourceId: string, incarnation: string, pageId: number) => `${sourceId}:${incarnation}:${pageId}`;
 
-export async function recordSyncImportProvenance(tx: Exec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
+/** The engine members the provenance records go through (engine-sql/op-checkpoint.ts), so a Rust brain serves them from its store. */
+type ProvenanceExec = Pick<BrainEngine, 'readOpCheckpointRecords' | 'writeOpCheckpointRecords'>;
+
+export async function recordSyncImportProvenance(tx: ProvenanceExec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
   const record: SyncImportProvenance = { ...value, validated: true, recorded_at: new Date().toISOString() };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), JSON.stringify([record])]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [{ fingerprint: provenanceFingerprint(value.source_id, value.incarnation, value.page_id), record }]);
 }
 
 /** Several pages' provenance in one statement (a waiver run); the last value for a page wins. */
-export async function recordSyncImportProvenances(tx: Exec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
+export async function recordSyncImportProvenances(tx: ProvenanceExec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
   if (!values.length) return;
   const recorded_at = new Date().toISOString();
   const rows = new Map(values.map(value => [provenanceFingerprint(value.source_id, value.incarnation, value.page_id), { ...value, validated: true, recorded_at }]));
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, JSON.stringify([...rows].map(([fingerprint, record]) => ({ fingerprint, record })))]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [...rows].map(([fingerprint, record]) => ({ fingerprint, record })));
 }
 
 /** The provenance of several pages in one statement, keyed by page id; pages without a record are absent. */
-export async function readSyncImportProvenances(engine: Exec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
+export async function readSyncImportProvenances(engine: ProvenanceExec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
   if (!pageIds.length) return new Map();
-  const rows = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])',
-    [SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))]);
-  return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
+  const records = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))) as SyncImportProvenance[];
+  return new Map(records.map(record => [Number(record.page_id), record]));
 }
 
-/** One page's import record, through the typed checkpoint read every engine serves (the first element of its keys). */
-export async function readSyncImportProvenance(engine: Pick<BrainEngine, 'readOpCheckpointRecord'>, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
-  const row = await engine.readOpCheckpointRecord(SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId));
-  return (Array.isArray(row?.completed_keys) ? row.completed_keys[0] ?? null : null) as SyncImportProvenance | null;
+export async function readSyncImportProvenance(engine: ProvenanceExec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
+  const [record] = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [provenanceFingerprint(sourceId, incarnation, pageId)]) as Array<SyncImportProvenance | null>;
+  return record ?? null;
 }
 
 export interface RecoveredFrontmatter {

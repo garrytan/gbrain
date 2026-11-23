@@ -382,18 +382,4 @@ impl Brain {
             s.set_redacted_row_text(page_id, &store, id, &column, &text)
         })
     }
-
-    /// `queuePageProjectionJob(sourceId, slug, reason)`.
-    #[napi]
-    pub fn queue_page_projection_job<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slug: String,
-        reason: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.queue_page_projection_job(&source_id, &slug, &reason)
-        })
-    }
 }

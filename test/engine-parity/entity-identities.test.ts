@@ -216,12 +216,12 @@ describe('engine parity: entity identities', () => {
   );
 
   parityTest(
-    'listEntityIdentityRows hides the identities under a folder the caller\'s record reads as nobody, on every arm',
+    'listEntityIdentityRows under excludePrivate serves a caller under a pending folder prefix the same on every arm',
     { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
     async (engine, backend) => {
       await people(engine, backend);
       await link(engine, 'g-alice', 'default', 'people/alice-example', true);
-      // The folder coverage rides on the store policy (privacy.rs FolderAccess), so Rust answers what the SQL engines do.
+      // Every arm reads the folder rules and the pending prefixes (the Rust store keeps them: rust/docs/store/access_rules.md).
       const rows = await withCallerAccess({
         identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
       }, () => list(engine, { entityId: 'g-alice', excludePrivate: true }));
@@ -343,6 +343,23 @@ describe('engine parity: entity identities', () => {
       return out;
     },
   );
+
+  parityTest(
+    'a NaN or infinite confidence is stored and listed back as the SQL engines keep it, and never breaks a listing',
+    { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
+    async (engine) => {
+      const values: Array<[string, number]> = [['people/a-nan', NaN], ['people/b-inf', Infinity], ['people/c-neg-inf', -Infinity], ['people/d-finite', 0.1 + 0.2]];
+      for (const [slug, confidence] of values) {
+        await engine.putPage(slug, page(slug));
+        await link(engine, 'g-float', 'default', slug, null, confidence);
+      }
+      const rows = await list(engine, { entityId: 'g-float' });
+      const shown = rows.map(r => `${r.slug} ${typeof r.confidence} ${String(r.confidence)}`);
+      expect(shown).toEqual(['people/a-nan number NaN', 'people/b-inf number Infinity', 'people/c-neg-inf number -Infinity', 'people/d-finite number 0.30000000000000004']);
+      // The JSON a CLI or MCP answer prints: JSON has no NaN or Infinity, so all three print as null.
+      return { shown, json: JSON.stringify(rows.map(r => ({ slug: r.slug, confidence: r.confidence }))) };
+    },
+  );
 });
 
 describe('entity identity union: a refused Rust read is not "no identity"', () => {
@@ -358,10 +375,9 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     }) as unknown as BrainEngine;
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
+    // A lineage caller still widens the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      // An audience of two members: every one must meet a page's readers, which the store policy does not carry.
-      identity: [], audience: ['member:alice-example', 'member:bob-example'],
-      audienceIdentities: [['member:alice-example'], ['member:bob-example']], hidePrivate: true,
+      identity: ['member:alice-example'], hidePrivate: true, lineage: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));

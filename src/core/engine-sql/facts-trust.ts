@@ -10,7 +10,7 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
-import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
+import { factsFtsDocument, getFtsLanguage, headStemsSql } from '../fts-language.ts';
 import { ownerReadPolicyFragment, privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
@@ -24,6 +24,7 @@ import { claimPendingSql } from '../trust/claim-state.ts';
 import { escapeLikePattern } from '../cjk.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from '../search/saved-fact-collapse.ts';
 import type { SavedFactMatch } from '../search/saved-facts-match.ts';
+import type { EntityFact } from '../search/entity-facts.ts';
 import { renderFragment, sqlFragment, trustedSql, joinFragments, type SqlFragment } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -214,7 +215,7 @@ export async function countUncomparableFacts(raw: EngineRawRead, transaction: En
   const rows = await customPlan<{ source_id: string; n: number | string }>(transaction,
     sqlFragment`WITH u AS MATERIALIZED (${uncomparable})
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${poolWhere(q.scope, q.filters)}
-     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`);
+     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id COLLATE "C"`);
   return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
 }
 
@@ -279,6 +280,53 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
        WHERE p.pool_rank <= 200
        ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`);
   return raw<SavedFactMatchRow>(text, params);
+}
+
+/** Rows `readEntityNewestFacts` reads, so copies of one claim collapse before the caller's cap (#7043). */
+const COLLAPSE_WINDOW_SQL = '50';
+export const SAVED_FACTS_COLLAPSE_WINDOW = Number(COLLAPSE_WINDOW_SQL);
+
+/** What `readEntityNewestFacts` reads: one source's entity slugs and the read policy the caller resolved. */
+export interface EntityNewestFactsQuery {
+  sourceId: string;
+  slugs: string[];
+  /** A remote caller: the private-provenance filter applies, and `worldOnly` (worldOnlyFacts) adds the visibility rule. */
+  remote: boolean;
+  worldOnly: boolean;
+  minTrust?: TrustTier;
+}
+
+export type EntityNewestFactRow = EntityFact & CollapseColumns;
+
+/**
+ * A named entity's newest active facts under the caller's read policy, with the collapse columns, newest first
+ * (search/entity-facts.ts): at most SAVED_FACTS_COLLAPSE_WINDOW rows, which the caller collapses and caps.
+ */
+export async function readEntityNewestFacts(raw: EngineRawRead, q: EntityNewestFactsQuery): Promise<EntityNewestFactRow[]> {
+  const visibility = q.remote ? `${q.worldOnly ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
+  const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${trustedSql(savedFactCollapseColumns())}
+       FROM facts f
+      WHERE f.source_id = ${q.sourceId} AND f.entity_slug = ANY(${q.slugs}::text[])
+        AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+        AND f.source != ALL(${factsAuditSources()}::text[])
+        ${trustedSql(visibility)}
+        AND ${trustedSql(projectionEligibleSql('facts', 'f', { floor: q.minTrust }))}
+      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
+      LIMIT ${trustedSql(COLLAPSE_WINDOW_SQL)}`);
+  return raw<EntityNewestFactRow>(text, params);
+}
+
+/** One name head and the 1-based indexes of the query terms it matches (`matchHeadStems`). */
+export interface HeadStemRow { h: string; i: number[] }
+
+/**
+ * Which query terms each name head matches after stemming with the brain's full-text language, as the keyword scan
+ * matches words: one row per head, in `heads` order, each with the 1-based indexes of the matching terms in `terms`
+ * order. A term the language drops as a stopword matches nothing.
+ */
+export async function matchHeadStems(raw: EngineRawRead, heads: readonly string[], terms: readonly string[]): Promise<HeadStemRow[]> {
+  const rows = await raw<{ h: string; i: unknown[] }>(headStemsSql(), [[...heads], [...terms]]);
+  return rows.map(r => ({ h: r.h, i: r.i.map(Number) }));
 }
 
 /** One fact row as the owner-action preview binds it: the 16 columns the binding hashes, with its stored tier. */
@@ -495,7 +543,12 @@ export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: stri
 
 /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
 export async function listUnarchivedSourceRows(raw: EngineRawRead): Promise<Array<{ id: string }>> {
-  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
+  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
+}
+
+/** The ids of every source that is not archived, in byte order of the id (the same read as `listUnarchivedSourceRows`). */
+export async function listAllUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +809,11 @@ export async function expireFactSuperseded(raw: EngineRawRead, factId: number, v
       WHERE id = $1 AND expired_at IS NULL`, [factId, validUntil]);
 }
 
-/** Ends an active fact on `today` (a date) and expires it. Runs in the caller's transaction. */
+/**
+ * Ends an active fact on `today` (a date) and expires it, as master's forget file-mirror stamp did. Runs in the caller's
+ * transaction. PGLite casts the day text to midnight in the session TimeZone; postgres.js turns it into a Date
+ * (`new Date(text)`), so Postgres stores UTC midnight; the Rust store stores UTC midnight.
+ */
 export async function expireFactAtDate(raw: EngineRawRead, factId: number, today: string): Promise<void> {
   await raw(`UPDATE facts SET valid_until = $1, expired_at = now()
          WHERE id = $2 AND expired_at IS NULL`, [today, factId]);
@@ -802,4 +859,43 @@ export async function readFactsFtsIndexState(raw: EngineRawRead, name: string): 
 export async function swapFactsFtsIndex(raw: EngineRawRead): Promise<void> {
   await raw('ALTER INDEX IF EXISTS idx_facts_fts RENAME TO idx_facts_fts_old');
   await raw('ALTER INDEX idx_facts_fts_next RENAME TO idx_facts_fts');
+}
+
+/**
+ * The provenance (`source_markdown_slug`) of each open stint of an entity's dimension: every unexpired, unclosed row
+ * that is not a conversation slot (belief/writers.ts `ontologyStreamSlugs`, the streams an observation can change).
+ * `dimension` is already normalised. Each slug once, in code-unit order; a row with no provenance adds nothing.
+ * The conversation test is chronicle/ontology.ts NOT_CONVERSATION_SLOT_SQL written out (both texts are pinned).
+ */
+export async function listOntologyStreamSlugs(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string): Promise<string[]> {
+  const rows = await raw<{ slug: string | null }>(`SELECT DISTINCT source_markdown_slug AS slug FROM facts
+    WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'`, [sourceId, entitySlug, dimension]);
+  return rows.map(r => r.slug).filter((slug): slug is string => slug !== null).sort();
+}
+
+/**
+ * The stint an ontology observation `excludeId` left open (trust/supersede-handlers.ts `contestOntologySupersession`):
+ * the newest open, active, non-conversation row of the entity's dimension other than `excludeId`, with its stored
+ * `trust_tier` (the caller reads it through storedTrustTier). `dimension` is already normalised. Null: no such row.
+ */
+export async function readOntologyRival(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null> {
+  const [row] = await raw<{ id: number | string; trust_tier: string }>(
+    `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
+       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
+     ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`, [sourceId, entitySlug, dimension, excludeId]);
+  return row ? { id: Number(row.id), trust_tier: row.trust_tier } : null;
+}
+
+/**
+ * The ledger stream slug of each listed row (belief/writers.ts `beliefStreamSlugs`): a fact's fence page else its
+ * entity, a take's page, a page's own slug; deleted pages included. One entry per row found, null where the row has
+ * none, in no promised order: the caller drops the invalid ones, removes repeats and sorts.
+ */
+export async function listBeliefStreamSlugs(raw: EngineRawRead, table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>> {
+  if (ids.length === 0) return [];
+  const sql = table === 'facts' ? 'SELECT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])'
+    : table === 'takes' ? 'SELECT p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($1::bigint[])'
+      : 'SELECT slug FROM pages WHERE id = ANY($1::int[])';
+  const rows = await raw<{ slug: string | null }>(sql, [[...ids]]);
+  return rows.map(r => r.slug ?? null);
 }

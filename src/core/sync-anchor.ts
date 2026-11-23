@@ -263,9 +263,9 @@ export async function writeSyncAnchor(
           return;
         }
       }
-      const iso = newestContentEpochMs === undefined ? undefined
+      const newestContentAt = newestContentEpochMs === undefined ? undefined
         : newestContentEpochMs === null ? null : new Date(newestContentEpochMs).toISOString();
-      await engine.advanceSourceCommit(sourceId, value, iso);
+      await engine.advanceSourceCommit(sourceId, value, newestContentAt);
       // GBRA-133 PR 2a: the host that advanced a classic source is the one whose resident notifier watches it.
       await (await import('./notifier/store.ts')).recordLocalSyncer(engine, sourceId);
     } else {

@@ -77,7 +77,7 @@ it writes (`checkActivationId`), so Postgres's `a.id::uuid` cast never meets one
 The repair lists take the filter `{ runId?, since?, ownerKey?, id? }` (`generations/repair.rs`): each present field
 narrows the rows as its SQL fragment does, and a row with a null `run_id` never matches a run. `since` must be an ISO
 8601 instant with a zone; the TypeScript member on every engine checks it and binds it as `YYYY-MM-DDTHH:MM:SS.ffffffZ`
-(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listSourceIncarnations`
+(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listGenerationSourceIncarnations`
 is not a store method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in
 byte order, as the statement's `ORDER BY id COLLATE "C"` does.
 
@@ -90,8 +90,8 @@ source moves too (fence-evidence.ts passes the page's own rows).
 The page row read (`generations/page_rows.rs`, `readGenerationPageRows`) adds no keys: it scans the page records of one
 source (`P source \0 slug`), deleted pages included, and keeps those the query's `match` selects. `frontmatter->>'k'`
 reads as Postgres reads it: a string is itself, JSON null or a missing key is NULL, any other value is its jsonb text,
-so `dream_generated: true` matches `'true'`. Rows come in slug byte order and tags sort by bytes; Postgres orders both
-by the database collation, and the adapters key the rows by slug. `segmented` is true when both body columns are
+so `dream_generated: true` matches `'true'`. Rows come in slug byte order and tags sort by bytes, as the statements
+order both with `COLLATE "C"` on every engine and locale. `segmented` is true when both body columns are
 NULL, as `body_storage = 'segmented'` is on PGLite.
 
 The atom reads (`generations/atom_reads.rs`) add no keys either. `readAtomOriginInput` reads one live page record; its
@@ -101,6 +101,20 @@ size is the segmented body's byte count, or the byte length of `compiled_truth` 
 `INVALID_ARGUMENT`. `listAtomWriteReceipts` scans the write request records for committed `managed_atom_page` intents
 that hold `content`, and keeps one whose `activationId` is absent or names an activated activation. Rows come in slug
 byte order; the SQL has no `ORDER BY`, and the callers fold the rows into a set.
+
+The Life Chronicle reads (`generations/chronicle_events.rs`, the members of `engine-sql/chronicle-events.ts`) add no
+keys. `readChronicleDepthRow` reads the page record of one slug (`{ id, live }`, or null when no record has the slug);
+`pageSlugExists` is true for a deleted page too. `listRetiredGenerationItemKeys` reads the ledger rows of the source and
+kind and keeps the listed item keys any of them recorded as `retired`, once each. `listLiveGenerationItems` reads the
+live row of one key and its items, retired items left out, as `{ item_key, identity_hash }` in key order.
+`listPageContentHashes` reads `ids` (deleted pages included, other sources left out) or `live_slugs` (deleted pages
+left out). `listOrphanedChronicleOwners` keeps the live rows of the kind whose depth page (the owner key past
+`depth:`) has no live record and that hold at least one live item page, oldest `updated_at` first, then id, up to the
+limit; a negative limit refuses `INVALID_ARGUMENT` as Postgres refuses `LIMIT -1`. `listChronicleEventSlotRows` reads
+`frontmatter.event` `when`, `where` and `kind` as text (deleted pages included) in slug byte order; the SQL has no
+`ORDER BY`, and the caller folds the rows into a map. The chronicle ledger (`chronicle_page_state`) has no store yet:
+`listChronicleOwnedHashes` answers no hash and `hasChronicleSkipDecision` false, which is what a SQL brain answers for a
+page the ledger holds nothing for. The four projection members are in `timeline_queries.md`.
 
 JSON values (`completeness`, `held_context`, `proposal`, `preimage`) read back in jsonb key order. A source delete
 removes the source's rows of all five tables (`cascade.rs`).

@@ -4,13 +4,13 @@
  * small eval reads (last prompt version, captured queries). The text and binds are the ones the callers built
  * inline; the engines run them through typed members.
  */
+import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { renderFragment, sqlFragment } from './fragment.ts';
 import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.ts';
 import { entityTypePredicateSql, type EntityTypeFilter } from '../schema-pack/entity-types.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
-import { ownerOnlyTakeAllowedSql } from '../search/private-visibility.ts';
 import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../search/safe-chunks.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { PageReadPolicy } from '../types.ts';
@@ -54,7 +54,7 @@ export async function listEdgeContradictionCandidates(raw: EngineRawRead, q: Edg
      ), multi AS (
        SELECT source_id, from_page_id, link_type FROM live
         GROUP BY 1, 2, 3 HAVING count(DISTINCT to_page_id) >= 2
-        ORDER BY max(refreshed_at) DESC LIMIT ${q.maxSubjects}
+        ORDER BY max(refreshed_at) DESC, from_page_id, link_type COLLATE "C" LIMIT ${q.maxSubjects}
      )
      SELECT l.source_id, l.from_page_id, l.to_page_id, l.link_type, l.valid_ranges::text AS valid_ranges,
             l.last_start, l.recorded_at, l.evidence_hash,
@@ -63,7 +63,7 @@ export async function listEdgeContradictionCandidates(raw: EngineRawRead, q: Edg
        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
          AND (${q.pendingCutoff}::timestamptz IS NULL OR f.links_extracted_at >= ${q.pendingCutoff}::timestamptz)
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-      ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`);
+      ORDER BY l.from_page_id, l.link_type COLLATE "C", l.last_start NULLS FIRST, t.slug COLLATE "C"`);
   return raw<EdgeCandidateRow>(sql.text, sql.params);
 }
 

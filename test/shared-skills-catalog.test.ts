@@ -328,6 +328,8 @@ test('queued publication policy changes reject before file effects and enumerati
   expect(readFileSync(join(f.root, 'skills/alpha/SKILL.md'), 'utf8')).toBe(before.body);
   const failing = new Proxy(f.engine, { get(target, key) {
     if (key === 'transaction') return async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(new Proxy(target, { get(tx, prop) {
+      // The heads read is a typed engine member; interrupt it where the catalog calls it.
+      if (prop === 'listSharedSkillCatalogHeads') return async () => { throw new Error('synthetic storage interruption'); };
       if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
         if (sql.includes('FROM shared_skill_heads')) throw new Error('synthetic storage interruption');
         return tx.executeRaw(sql, params);

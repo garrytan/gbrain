@@ -4,7 +4,7 @@
  * rewrite commits). Its keep plan read, vector clear and pending count are the typed members readChunkKeepState,
  * clearUnkeptChunkVectors and countPendingTextChunks (engine-sql/projection-rebuild.ts, served on the Rust store by
  * persistence/projection_rebuild.rs); the row delete, chunker stamp, seal and queue-row delete reuse deleteChunksExcept,
- * setChunkerVersion, writeTextProjectionSeal and deleteProjectionJob.
+ * setProjectionChunkerVersion, writeTextProjectionSeal and deleteProjectionJob.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on PGLite, Postgres (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1) resealing an unsealed page
@@ -55,7 +55,7 @@ async function readRows(engine: BrainEngine, slug = SLUG) {
 describe('engine parity: page chunk reseal', () => {
   parityTest('resealing an unsealed page keeps a current vector, drops a stale one, seals it and counts the embedding work left', {
     methods: ['putPage', 'upsertChunks', 'getChunks', 'readPageSnapshot', 'readChunkKeepState', 'clearUnkeptChunkVectors', 'countPendingTextChunks', 'deleteChunksExcept',
-      'setChunkerVersion', 'writeTextProjectionSeal', 'deleteProjectionJob', 'getPageSealState'],
+      'setProjectionChunkerVersion', 'writeTextProjectionSeal', 'deleteProjectionJob', 'getPageSealState'],
     timeout: 120_000,
   }, async engine => {
     const { count } = await seedUnsealed(engine);

@@ -295,6 +295,10 @@
       },
       {
         "category": "ops",
+        "name": "topology_recovery_stopped"
+      },
+      {
+        "category": "ops",
         "name": "persistence_compaction"
       },
       {

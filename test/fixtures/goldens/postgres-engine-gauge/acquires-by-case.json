@@ -30,6 +30,12 @@
     "advanceSourceCommit#newest": {
       "raw": 1
     },
+    "advanceSourcePurgeEpoch#default": {
+      "raw": 1
+    },
+    "advanceSyncCheckpoint#default": {
+      "raw": 1
+    },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
     "clearCodeEdgesLeavingChunks#default": {},
@@ -297,6 +303,9 @@
     "listQuarantinedSlugs#default": {
       "raw": 1
     },
+    "listSourceIds#default": {
+      "raw": 1
+    },
     "listSourceLocalPaths#default": {},
     "listSourcePathPages#default": {
       "raw": 1
@@ -335,6 +344,12 @@
     "listTakes#sourceId": {},
     "listTakes#sourceIds+excludePrivate": {},
     "loadContradictionsTrend#default": {},
+    "lockAllSourceRows#share": {
+      "raw": 1
+    },
+    "lockAllSourceRows#update": {
+      "raw": 1
+    },
     "lockPageKeys#default": {
       "raw": 4,
       "tx": 1
@@ -344,6 +359,9 @@
     },
     "markPagesAttendanceBlocked#default": {},
     "markPagesExtractedBatch#default": {},
+    "markSourceSynced#default": {
+      "raw": 1
+    },
     "mergeOntologyFact#corroborate": {},
     "mergeOntologyFact#insert": {},
     "mergeOntologyFact#supersede": {},
@@ -377,7 +395,13 @@
     "readEmbeddingStateCounts#ops": {
       "raw": 1
     },
+    "readFirstSourceId#default": {
+      "raw": 1
+    },
     "readLiveIdentityHolders#default": {
+      "raw": 1
+    },
+    "readPageIdentity#default": {
       "raw": 1
     },
     "readPageSizeRows#default": {
@@ -398,10 +422,16 @@
     "readRenameIdentityRows#default": {
       "raw": 1
     },
+    "readSoleSourceId#default": {
+      "raw": 1
+    },
     "readSourceChunkerVersion#default": {
       "raw": 1
     },
     "readSourceDeleteImpact#default": {},
+    "readSourceLastCommit#default": {
+      "raw": 1
+    },
     "readSourceRow#default": {
       "raw": 1
     },
@@ -551,6 +581,12 @@
     "upsertFile#default": {},
     "writeContradictionsRun#default": {},
     "writeReasonPurgeTombstones#default": {
+      "raw": 1
+    },
+    "writeSourceSyncHeartbeat#default": {
+      "raw": 1
+    },
+    "writeSourceUpstreamObservation#default": {
       "raw": 1
     }
   },

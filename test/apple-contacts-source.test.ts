@@ -285,6 +285,8 @@ describe('sync (repo-less brain)', () => {
     expect(await engine.getTags(alice.slug, { sourceId: id } as never)).toEqual(['Harbor Club']);
     expect(alice.body).toContain('mobile');
     expect(await savedCursor(id)).toBe(`seq:${s.seq}`);
+    // A clean run on a brain that is not managed records the source's last sync time (markSourceSynced).
+    expect((await engine.getSource(id))?.last_sync_at).toBeInstanceOf(Date);
 
     s.requests = [];
     const again = await run(id, cfg);

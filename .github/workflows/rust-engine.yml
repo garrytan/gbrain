@@ -58,6 +58,8 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/token-member-cli-parity.serial.test.ts'
+      - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   push:
@@ -81,6 +83,8 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/token-member-cli-parity.serial.test.ts'
+      - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   workflow_dispatch:
@@ -224,7 +228,8 @@ jobs:
     needs: scope
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # darwin-arm64 runners run about 1.3x slower; its job took 17-22 min and was cancelled at 30 min with no failed test.
+    timeout-minutes: ${{ matrix.target == 'darwin-arm64' && 45 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -310,6 +315,30 @@ jobs:
         env:
           GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
         run: bun test --timeout=60000 test/rust-cli-parity.serial.test.ts
+      # A withdrawn world claim stays out of a large page's lead on a Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON
+      # makes a missing addon an error instead of a skip, and the next step fails the lane when no test ran.
+      # This job owns the file, so the stress gate does not stress it where no addon exists.
+      - name: Withdrawn claims stay out of a Rust page lead
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts
+      - name: Fail the withdrawn-lead lane when no test ran
+        shell: bash
+        run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-store
+      # The token and member commands print the same bytes on a Rust brain as on PGLite.
+      - name: Token and member command output on a Rust brain against PGLite
+        timeout-minutes: 10
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/token-member-cli-parity.serial.test.ts
+      # The write-request receipt tools through a stdio serve on a new Rust brain answer as on PGLite.
+      - name: MCP receipt tools on a Rust brain against PGLite
+        timeout-minutes: 5
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=150000 test/rust-mcp-receipts.serial.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}

@@ -4,6 +4,10 @@ import { storeCall, type StoreMember } from './common.ts';
 export const getConfig: StoreMember<[key: string], string | null> = (brain, key) =>
   storeCall({ member: 'getConfig' }, () => brain.getConfig(key));
 
+/** The stored value (the store has no request snapshot, and its transaction reads see their own writes). */
+export const readStoredConfigValue: StoreMember<[key: string], string | null> = (brain, key) =>
+  storeCall({ member: 'readStoredConfigValue' }, () => brain.getConfig(key));
+
 export const setConfig: StoreMember<[key: string, value: string], void> = async (brain, key, value) => {
   await storeCall({ member: 'setConfig' }, () => brain.setConfig(key, value));
 };

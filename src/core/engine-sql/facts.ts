@@ -615,19 +615,26 @@ export async function findCandidateDuplicates(
     if (opts?.embedding) {
       if (!opts.embeddingModel) return [];
       const lit = toPgVectorLiteral(opts.embedding);
+      // The inner query orders by distance alone so Postgres can serve it from the HNSW index (a
+      // second sort key makes the planner sort every row instead); the outer query breaks distance
+      // ties by id inside the k rows. Which rows tie at the LIMIT boundary stays approximate, as ANN is.
+      const distance = trustedSql(vectorLiteralSql(lit, '::vector'));
       const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
-        SELECT * FROM facts
-        WHERE source_id = ${source_id}
-          AND entity_slug = ${entitySlug}
-          AND expired_at IS NULL
-          AND (valid_until IS NULL OR valid_until > now())
-          AND embedding IS NOT NULL
-          AND embedding_model=${opts.embeddingModel} AND embedded_text_hash=md5(fact)
-          AND vector_dims(embedding)=${opts.embedding.length}
-          AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
-          ${speaker}${members}
-        ORDER BY embedding <=> ${trustedSql(vectorLiteralSql(lit, '::vector'))}
-        LIMIT ${k}
+        SELECT * FROM (
+          SELECT * FROM facts
+          WHERE source_id = ${source_id}
+            AND entity_slug = ${entitySlug}
+            AND expired_at IS NULL
+            AND (valid_until IS NULL OR valid_until > now())
+            AND embedding IS NOT NULL
+            AND embedding_model=${opts.embeddingModel} AND embedded_text_hash=md5(fact)
+            AND vector_dims(embedding)=${opts.embedding.length}
+            AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
+            ${speaker}${members}
+          ORDER BY embedding <=> ${distance}
+          LIMIT ${k}
+        ) q
+        ORDER BY q.embedding <=> ${distance}, q.id
       `)).rows;
       return rows.map(rowToFact);
     }
@@ -783,7 +790,7 @@ export async function getFactsHealth(exec: LegacyUnscopedRead, source_id: string
         AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
       GROUP BY entity_slug
-      ORDER BY count DESC, entity_slug ASC
+      ORDER BY count DESC, entity_slug COLLATE "C" ASC
       LIMIT 5
     `)).rows;
     const r = totals[0] ?? {

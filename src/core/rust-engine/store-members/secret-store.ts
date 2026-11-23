@@ -1,6 +1,6 @@
 /**
  * The secret store and the page-store reads and writes of `gbrain repair secret-spans` on the Rust store
- * (engine-sql/secret-store.ts, engine-sql/secret-spans-rows.ts, engine-sql/page-projection-queue.ts;
+ * (engine-sql/secret-store.ts, engine-sql/secret-spans-rows.ts;
  * rust/crates/gbrain-store/src/secret_store.rs and repair_secret_spans.rs; rust/docs/store/secret-store.md). Each member
  * is one store call, so the engine's transaction holds a repair's writes together. The crypto stays in TypeScript
  * (secret-store/keyring.ts): the store keeps the ciphertext and MACs it is given.
@@ -129,10 +129,6 @@ export const setRawDataValue: StoreMember<[pageId: number, id: number, data: unk
 export const setRedactedRowText: StoreMember<[pageId: number, store: RedactedRowStore, id: number, column: string, text: string], void> = async (brain, pageId, store, id, column, text) => {
   await storeCall({ member: 'setRedactedRowText' }, () => brain.setRedactedRowText(wholeNumber('setRedactedRowText', 'pageId', pageId), store,
     wholeNumber('setRedactedRowText', 'id', id), column, text));
-};
-
-export const queuePageProjectionJob: StoreMember<[sourceId: string, slug: string, reason: string], void> = async (brain, sourceId, slug, reason) => {
-  await storeCall({ member: 'queuePageProjectionJob', sourceId, slug }, () => brain.queuePageProjectionJob(sourceId, slug, reason));
 };
 
 /**

@@ -5140,6 +5140,41 @@
           }
         ]
       },
+      "advanceSourcePurgeEpoch": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "advanceSyncCheckpoint": {
+        "default": [
+          {
+            "paramCount": 12,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          },
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countDefaultSourceSplit": {
         "default": [
           {
@@ -5305,6 +5340,19 @@
           }
         ]
       },
+      "listSourceIds": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listSourceLocalPaths": {
         "default": [
           {
@@ -5357,6 +5405,30 @@
           }
         ]
       },
+      "lockAllSourceRows": {
+        "share": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ],
+        "update": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "lockSourceRow": {
         "default": [
           {
@@ -5370,10 +5442,49 @@
           }
         ]
       },
+      "markSourceSynced": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readFirstSourceId": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "readLiveIdentityHolders": {
         "default": [
           {
             "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readPageIdentity": {
+        "default": [
+          {
+            "paramCount": 1,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -5444,6 +5555,19 @@
           }
         ]
       },
+      "readSoleSourceId": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "readSourceChunkerVersion": {
         "default": [
           {
@@ -5458,6 +5582,19 @@
         ]
       },
       "readSourceDeleteImpact": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "readSourceLastCommit": {
         "default": [
           {
             "paramCount": 1,
@@ -5513,6 +5650,32 @@
         "default": [
           {
             "paramCount": 3,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceSyncHeartbeat": {
+        "default": [
+          {
+            "paramCount": 1,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "writeSourceUpstreamObservation": {
+        "default": [
+          {
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -6017,7 +6180,7 @@
       "searchTakesVector": {
         "default": [
           {
-            "paramCount": 5,
+            "paramCount": 6,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -6028,7 +6191,7 @@
         ],
         "sourceId": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -6039,7 +6202,7 @@
         ],
         "sourceIds+excludePrivate": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

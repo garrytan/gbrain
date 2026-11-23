@@ -33,7 +33,6 @@ import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../s
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
 import { expandReadShared } from './read-shared.ts';
-import { sqlQueryForEngine } from '../sql-query.ts';
 import { brainServes } from '../access/serves.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
@@ -80,7 +79,7 @@ export async function credentialReadSources(engine: BrainEngine, grant: Pick<Pri
   if (!hasScope(grant.scopes, 'read')) return [];
   const stored = await storedReadSources(engine, grant);
   if (grant.readShared !== true || grant.sources.kind === 'none' || (grant.sources.kind === 'default' && grant.principal.kind === 'legacy_token')) return stored;
-  return (await expandReadShared(sqlQueryForEngine(engine), stored, member)).sources;
+  return (await expandReadShared(engine, stored, member)).sources;
 }
 
 async function storedReadSources(engine: BrainEngine, grant: Pick<PrincipalGrant, 'principal' | 'sources'>): Promise<string[]> {
@@ -141,7 +140,7 @@ export async function chatChannelCensus(engine: BrainEngine, sourceIds: readonly
        FROM pages p
       WHERE p.deleted_at IS NULL AND p.type = ANY($1::text[]) AND p.source_id = ANY($2::text[])
         ${hidePrivate ? `AND ${privatePagesFilterFragmentFast('p')}` : ''}
-      GROUP BY p.source_id ORDER BY p.source_id`,
+      GROUP BY p.source_id ORDER BY p.source_id COLLATE "C"`,
     [[...CHAT_PAGE_TYPES], [...sourceIds], [...DM_PAGE_TYPES]],
   );
   return rows.reduce((c, r) => ({ ...c, chat_pages: c.chat_pages + Number(r.chat_pages), channels: c.channels + Number(r.channels), chat_sources: [...c.chat_sources, r.source_id] }), empty);

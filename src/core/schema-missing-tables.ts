@@ -96,7 +96,7 @@ export async function readMissingTables(engine: BrainEngine): Promise<MissingTab
   const kind = catalog ? 'pglite' : sqlEngineKind(engine.kind, 'schema missing-tables check');
   const expected = GRADUATION_INVENTORY.entries.filter(e => e.kind === 'table' && e.engines[kind]
     && (atHead || (recreateStep(e.relation) !== undefined && version >= CREATED_BY[e.relation]!)));
-  const rows = catalog ? [] : await engine.executeRaw<{ relation: string }>('SELECT r AS relation FROM unnest($1::text[]) AS r WHERE to_regclass(r) IS NULL ORDER BY r',
+  const rows = catalog ? [] : await engine.executeRaw<{ relation: string }>('SELECT r AS relation FROM unnest($1::text[]) AS r WHERE to_regclass(r) IS NULL ORDER BY r COLLATE "C"',
     [expected.map(e => e.relation)]);
   const byName = new Map(expected.map(e => [e.relation, e]));
   return { status: 'checked', scope: atHead ? 'all_tables' : 'rebuildable_caches', checked: expected.length, missing: rows.map(({ relation }) => {

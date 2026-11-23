@@ -73,6 +73,33 @@ describe('the Rust arm check', () => {
     }), tally())).rejects.toThrow();
   });
 
+  // A write the coordinator refuses inside the store returns write_pending; the case's own assertion then throws.
+  const pending = async () => { throw new Error('expected committed, received { code: "write_pending" }'); };
+  const preimage = Object.assign(refusal('page_versions'), { detail: 'member=createVersion (option preimage) capability=page_versions outcome=none' });
+  const pin = { capability: 'page_versions', member: 'createVersion (option preimage)', site: 's', owner: 'o', due: 'd' } as const;
+
+  test('a write_pending behind exactly the pinned refusal is counted refused', async () => {
+    const t = tally();
+    await checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pin }, refusals: [preimage], run: pending }), t);
+    expect(t).toEqual({ compared: 0, refused: 1, diverged: 0 });
+  });
+
+  test('a write_pending with no pin still fails, even behind a typed refusal', async () => {
+    await expect(checkRustArm(rustCase({ refusals: [preimage], run: pending }), tally())).rejects.toThrow('write_pending');
+  });
+
+  test('a pin whose capability or member does not match the refusal fails and says to update it', async () => {
+    for (const wrong of [{ ...pin, capability: 'raw_sql' }, { ...pin, member: 'putPage' }]) {
+      await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: wrong }, refusals: [preimage], run: pending }),
+        tally())).rejects.toThrow('rustPendingStop');
+    }
+  });
+
+  test('a pinned case that no longer stops fails and says to remove the pin', async () => {
+    await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pin }, run: async () => 'ok',
+      reference: { backend: 'pglite', value: 'ok' } }), tally())).rejects.toThrow('remove its rustPendingStop pin');
+  });
+
   test('a divergence row passes only when both answers are equal after its normaliser, and they still differ raw', async () => {
     const ours = [{ slug: 'b', score: 0.9 }, { slug: 'a', score: 0.1 }];
     const theirs = [{ slug: 'a', score: 3 }, { slug: 'b', score: 2 }];

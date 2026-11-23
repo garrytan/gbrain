@@ -23,6 +23,7 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, STORE_CORRUPT, StoreError};
+use crate::facts::{VisibilityWidening, read_fact};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
@@ -31,6 +32,7 @@ use crate::trust::TrustTable;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
@@ -81,6 +83,15 @@ pub struct ProposalFilter {
     pub action: Option<String>,
     pub since: Option<String>,
     pub limit: Option<i64>,
+}
+
+/// `listUnreadablePrivacyHoldIds`: the proposal ids to judge and what widens the caller's
+/// world-only fact reads (`memberFactAdmitSql`, `grantedPrivateFactSql`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HoldReadQuery {
+    pub ids: Vec<i64>,
+    pub widen: VisibilityWidening,
 }
 
 /// The decider a status change records.
@@ -295,22 +306,56 @@ fn put_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
 /// Removes every proposal of a deleted source and its index entries (`ON DELETE CASCADE`).
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for record in all_records(tx)? {
-        if record.source_id != source_id {
-            continue;
+        if record.source_id == source_id {
+            delete_record(tx, &record)?;
         }
-        if record.status == "pending" {
-            let key = record.pending_key();
-            if get_id(tx, &key)? == Some(record.id) {
-                tx.delete(&key)?;
-            }
-        }
-        tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
-        if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
-            tx.delete(&row_key(table, id, record.id))?;
-        }
-        tx.delete(&by_id(record.id))?;
     }
     Ok(())
+}
+
+/// Deletes one proposal with its pending-key and row-index entries.
+fn delete_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(id)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, id, record.id))?;
+    }
+    tx.delete(&by_id(record.id))
+}
+
+/// `deletePurgeTrustProposals` (a fact purge): deletes the proposals of `source_id` whose target or
+/// related row is a purged fact (`facts`, id in `fact_ids`) or take (`takes`, id in `take_ids`);
+/// how many.
+pub(crate) fn purge_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+    take_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let names = |table: &str, id: i64| match table {
+        "facts" => fact_ids.contains(&id),
+        "takes" => take_ids.contains(&id),
+        _ => false,
+    };
+    let mut deleted = 0;
+    for record in all_records(tx)? {
+        let related = match (&record.related_table, record.related_id) {
+            (Some(table), Some(id)) => names(table, id),
+            _ => false,
+        };
+        if record.source_id == source_id
+            && (names(&record.target_table, record.target_id) || related)
+        {
+            delete_record(tx, &record)?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
 
 fn get_id(read: &dyn KvRead, key: &[u8]) -> Result<Option<u64>> {
@@ -367,6 +412,24 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The fact pairs a pending `supersede_fact` proposal between two facts covers, both ways round (the claim-conflict
+/// read leaves them out: `trust_proposals` with `status = 'pending'`, `target_table` and `related_table` `facts`).
+pub(crate) fn pending_fact_supersessions(read: &dyn KvRead) -> Result<HashSet<(i64, i64)>> {
+    let mut pairs = HashSet::new();
+    for p in all_records(read)? {
+        if p.status == "pending"
+            && p.action == "supersede_fact"
+            && p.target_table == "facts"
+            && p.related_table.as_deref() == Some("facts")
+            && let Some(related) = p.related_id
+        {
+            pairs.insert((p.target_id, related));
+            pairs.insert((related, p.target_id));
+        }
+    }
+    Ok(pairs)
 }
 
 /// The contested reference of one fact or take row (eligibility/sql.ts `contestedRefSql`): the
@@ -492,6 +555,43 @@ impl Store {
         };
         let read = self.read()?;
         Ok(read_record(&*read, id)?.map(|r| r.to_row()))
+    }
+
+    /// `listUnreadablePrivacyHoldIds(ids)`: the privacy holds among `ids` (a `supersede_fact`
+    /// proposal whose before state names a visibility) whose target fact is missing or one the
+    /// caller's widened world-only reads do not admit, ascending. A target outside `facts` reads
+    /// as a missing fact, as the SQL's `LEFT JOIN` does.
+    pub fn list_unreadable_privacy_hold_ids(&self, q: &HoldReadQuery) -> Result<Vec<i64>> {
+        let read = self.read()?;
+        let ids: std::collections::BTreeSet<i64> = q.ids.iter().copied().collect();
+        let mut out = Vec::new();
+        for id in ids {
+            let Ok(key) = u64::try_from(id) else {
+                continue;
+            };
+            let Some(p) = read_record(&*read, key)? else {
+                continue;
+            };
+            let hold = p.action == "supersede_fact"
+                && p.before_state
+                    .as_object()
+                    .is_some_and(|o| o.contains_key("visibility"));
+            if !hold {
+                continue;
+            }
+            let fact = match (p.target_table.as_str(), u64::try_from(p.target_id)) {
+                ("facts", Ok(target)) => read_fact(&*read, target)?,
+                _ => None,
+            };
+            let readable = match &fact {
+                Some(row) => q.widen.admits(&*read, row)?,
+                None => false,
+            };
+            if !readable {
+                out.push(id);
+            }
+        }
+        Ok(out)
     }
 
     /// `listTrustProposals(filter)`: by status (`pending` when absent; `all` for every status),

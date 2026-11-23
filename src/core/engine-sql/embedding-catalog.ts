@@ -7,6 +7,7 @@
  * (rust/crates/gbrain-store/src/embedding_catalog.rs).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { quoteIdentifier } from '../search/embedding-column.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -141,4 +142,46 @@ export async function countChunkVectorCoverage(raw: EngineRawRead, column: Fixed
   return rows
     .map((r) => ({ source_id: r.source_id || 'default', total: parseInt(String(r.total), 10), covered: parseInt(String(r.covered), 10) }))
     .sort((a, b) => (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
+}
+
+/** A `content_chunks` column and its type as `format_type` prints it (`vector(1024)`, `halfvec(2560)`). */
+export interface ChunkColumnType { attname: string; formatted: string }
+
+/**
+ * The type of each named `content_chunks` column that exists, in no set order (doctor embedding_column_registry's
+ * batch probe). A name with no column has no row.
+ */
+export async function readChunkColumnTypes(raw: EngineRawRead, columns: string[]): Promise<ChunkColumnType[]> {
+  return raw<ChunkColumnType>(
+    `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS formatted
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public'
+            AND c.relname = 'content_chunks'
+            AND a.attname = ANY($1::text[])
+            AND NOT a.attisdropped`,
+    [columns],
+  );
+}
+
+/** Every `content_chunks` row and the percent of them that hold a value in a column (null when there is no row). */
+export interface ChunkColumnCoverage { pct: number | null; total: number }
+
+/**
+ * How full a `content_chunks` column is over every row (every generation, soft-deleted pages too): doctor
+ * embedding_column_registry's coverage gate on the active vector column. Throws when the column is missing.
+ */
+export async function countChunkColumnCoverage(raw: EngineRawRead, column: string): Promise<ChunkColumnCoverage> {
+  const rows = await raw<{ pct: number | null; total: number }>(
+    `-- chunk-visibility-ok: doctor coverage ratio moved from doctor/checks/embedding-health.ts; it counts every chunk row, as before.
+     SELECT (
+             COUNT(*) FILTER (WHERE ${quoteIdentifier(column)} IS NOT NULL)::float
+             / NULLIF(COUNT(*), 0) * 100
+           )::float AS pct,
+           COUNT(*)::int AS total
+           FROM content_chunks`,
+  );
+  const pct = rows[0]?.pct;
+  return { pct: pct === null || pct === undefined ? null : Number(pct), total: Number(rows[0]?.total ?? 0) };
 }

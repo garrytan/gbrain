@@ -94,7 +94,7 @@ type Fail = string | ((sql: string) => string);
  * (and which aborts an open transaction). The first `skip` matching statements run untouched. With COMBINED_PROBE as
  * the marker, the matching statement is each readWriteVisibilityProbe call: a failing one sends the rewrite (of '')
  * through the same engine, with the probe's source id and slug, before the member would run. Returns how many failed
- * and a restore.
+ * and a restore. Typed engine reads (engine-sql domains) meet the same failure through the engine's `engineSql`.
  */
 function failStatements(engine: BrainEngine, marker: string, times: number, fail: Fail, skip = 0) {
   const original = engine.executeRaw as (...a: unknown[]) => Promise<unknown[]>;
@@ -138,7 +138,14 @@ function failStatements(engine: BrainEngine, marker: string, times: number, fail
     }
     return probe.call(this, sourceId, slug);
   } as BrainEngine['readWriteVisibilityProbe'];
-  return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; delete (engine as { engineSql?: unknown }).engineSql; delete (engine as { readWriteVisibilityProbe?: unknown }).readWriteVisibilityProbe; } };
+  return {
+    state,
+    restore: () => {
+      delete (engine as { executeRaw?: unknown }).executeRaw;
+      delete (engine as { engineSql?: unknown }).engineSql;
+      delete (engine as { readWriteVisibilityProbe?: unknown }).readWriteVisibilityProbe;
+    },
+  };
 }
 
 async function withFailures<T>(engine: BrainEngine, marker: string, times: number, fail: Fail, fn: () => Promise<T>, skip = 0): Promise<{ value: T; failed: number }> {

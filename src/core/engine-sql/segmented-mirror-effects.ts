@@ -30,7 +30,7 @@ export async function insertRemirrorEffects(exec: Raw, requestId: string, source
 export interface RemirrorEffectState { kind: string; state: string; error_code: string | null; recovering: boolean; parked: boolean; skipped: Array<{ slug?: string; reason?: string }> }
 
 const REMIRROR_EFFECT_STATES_SQL = `SELECT kind,state,error_code,recovery IS NOT NULL AS recovering,data ? 'parked' AS parked,
-    COALESCE(data->'skipped','[]'::jsonb) AS skipped FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`;
+    COALESCE(data->'skipped','[]'::jsonb) AS skipped FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"`;
 
 /** The effects of request row `requestId`, in kind order: state, error code, whether a recovery is open or it parked, and the pages it skipped. */
 export async function readRemirrorEffects(exec: Raw, requestId: string): Promise<RemirrorEffectState[]> {
@@ -42,7 +42,7 @@ const GLOBAL_PURGES_HEAD = `SELECT jsonb_build_object('visibility',visibility,'f
       'withdrawn_at',min(purged_at),'purged',true) AS w
     FROM fact_purges WHERE source_id=$1 AND subject='*' AND fact_hash=ANY($2::text[]) `;
 const GLOBAL_PURGES_TAIL = `
-    GROUP BY visibility,fact_hash ORDER BY visibility,fact_hash`;
+    GROUP BY visibility,fact_hash ORDER BY visibility COLLATE "C",fact_hash COLLATE "C"`;
 /** `resolveGlobalPurges`' statement, every visibility. */
 export const GLOBAL_PURGES_SQL = `${GLOBAL_PURGES_HEAD}${GLOBAL_PURGES_TAIL}`;
 /** `resolveGlobalPurges`' statement, world rows only. */

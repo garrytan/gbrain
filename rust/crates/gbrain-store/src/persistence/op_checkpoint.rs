@@ -184,8 +184,8 @@ pub(crate) fn delete_op_checkpoint_paths_in(
     Ok(())
 }
 
-/// `completed_keys` holds no NUL in any string or object key: Postgres `jsonb` cannot hold
-/// a NUL character.
+/// Whether a string or object key anywhere in `value` holds NUL: Postgres `jsonb` refuses the
+/// `\u0000` escape anywhere in a document.
 fn json_has_nul(value: &Value) -> bool {
     match value {
         Value::String(s) => s.contains('\0'),
@@ -193,6 +193,28 @@ fn json_has_nul(value: &Value) -> bool {
         Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || json_has_nul(v)),
         _ => false,
     }
+}
+
+/// `readOpCheckpointRecords(op, fingerprints)`: each found parent's first completed key
+/// (`completed_keys->0`), null when its array is empty, in the order named; a missing parent adds
+/// nothing. Postgres answers in no stated order, and the caller keys the records by page.
+pub(crate) fn read_op_checkpoint_records_in(
+    read: &dyn KvRead,
+    op: &str,
+    fingerprints: &[String],
+) -> Result<Value> {
+    let mut out = Vec::new();
+    // `fingerprint = ANY($2)` matches a parent once, however often the list names it.
+    let mut seen = std::collections::HashSet::new();
+    for fingerprint in fingerprints {
+        if !seen.insert(fingerprint.as_str()) {
+            continue;
+        }
+        if let Some(row) = get_json::<HousekeepingRow>(read, &parent_key(op, fingerprint)?)? {
+            out.push(row.completed_keys.get(0).cloned().unwrap_or(Value::Null));
+        }
+    }
+    Ok(Value::Array(out))
 }
 
 /// The parent's `completed_keys` of `(op, fingerprint)`, or `None` when there is no parent row.
@@ -264,6 +286,37 @@ pub(crate) fn list_op_checkpoint_records_in(read: &dyn KvRead, op: &str) -> Resu
         ));
     }
     Ok(Value::Array(out))
+}
+
+/// `writeOpCheckpointRecords(op, rows)`: each row's parent set to `[record]`, stamped now; the
+/// children stay. Every row is checked before any is written, so a refused batch writes nothing.
+pub(crate) fn write_op_checkpoint_records_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    rows: &[(String, Value)],
+) -> Result<()> {
+    let mut parents = Vec::with_capacity(rows.len());
+    for (fingerprint, record) in rows {
+        if json_has_nul(record) {
+            return Err(StoreError::invalid(
+                "an op checkpoint record cannot contain NUL",
+            ));
+        }
+        parents.push((parent_key(op, fingerprint)?, record));
+    }
+    let now = env.now_micros();
+    for (parent, record) in parents {
+        put_json(
+            tx,
+            &parent,
+            &HousekeepingRow {
+                completed_keys: json!([record]),
+                updated_at_us: now,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the parent's records replaced and
@@ -369,13 +422,14 @@ const NEVER_PURGED: &[&str] = &[
     "managed-sync-failure",
 ];
 
-/// The ops kept while their source incarnation lives: the Git sync holds and their records, the
+/// The ops kept while their source incarnation lives: the Git sync holds and their records, the plain-directory agreement rows (`PLAIN_DIRECTORY_AGREED_OP`), the
 /// fence census and repair rows (`FENCE_CANDIDATE_OP`, `FENCE_SCAN_OP`, `FENCE_REPAIR_ATTEMPT_OP`,
 /// `FENCE_UNCOMMITTED_OP`) and the managed sync pass rows (`SYNC_PASS_ROW_OPS`).
 const KEPT_WITH_INCARNATION: &[&str] = &[
     "sync-hold",
     "sync-hold-retry",
     "sync-import-provenance",
+    "plain-directory-agreed",
     "sync-hold-summary",
     "sync-conversions",
     "fence-candidate",
@@ -618,6 +672,16 @@ impl Store {
         paths: &[String],
     ) -> Result<()> {
         self.write(|tx| append_op_checkpoint_paths_in(tx, &*self.env, op, fingerprint, paths))
+    }
+
+    /// `readOpCheckpointRecords(op, fingerprints)`.
+    pub fn read_op_checkpoint_records(&self, op: &str, fingerprints: &[String]) -> Result<Value> {
+        read_op_checkpoint_records_in(&*self.read()?, op, fingerprints)
+    }
+
+    /// `writeOpCheckpointRecords(op, rows)`.
+    pub fn write_op_checkpoint_records(&self, op: &str, rows: &[(String, Value)]) -> Result<()> {
+        self.write(|tx| write_op_checkpoint_records_in(tx, &*self.env, op, rows))
     }
 
     /// `deleteOpCheckpoint(op, fingerprint)`.
@@ -1015,6 +1079,59 @@ mod tests {
             store
                 .write_op_checkpoint_keys("embed", "f", &strings(&["a\0b"]))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_record_write_replaces_the_parent_keeps_the_paths_and_reads_back_its_first_key() {
+        let store = store();
+        let rows = |items: &[(&str, serde_json::Value)]| -> Vec<(String, serde_json::Value)> {
+            items
+                .iter()
+                .map(|(f, v)| (f.to_string(), v.clone()))
+                .collect()
+        };
+        store
+            .append_op_checkpoint_paths("prov", "p1", &strings(&["kept.md"]))
+            .unwrap();
+        store
+            .write_op_checkpoint_records(
+                "prov",
+                &rows(&[
+                    ("p1", json!({ "page_id": 1 })),
+                    ("p2", json!({ "page_id": 2 })),
+                ]),
+            )
+            .unwrap();
+        store
+            .write_op_checkpoint_records("prov", &rows(&[("p1", json!({ "page_id": 11 }))]))
+            .unwrap();
+        store
+            .write_op_checkpoint_keys("prov", "empty", &[])
+            .unwrap();
+        let read = store
+            .read_op_checkpoint_records("prov", &strings(&["p1", "p2", "p1", "empty", "absent"]))
+            .unwrap();
+        assert_eq!(read, json!([{ "page_id": 11 }, { "page_id": 2 }, null]));
+        // The paths stay, as the Postgres upsert leaves `op_checkpoint_paths` alone.
+        assert_eq!(
+            store.read_op_checkpoint_keys("prov", "p1").unwrap()["keys"],
+            json!(["kept.md", "{\"page_id\": 11}"])
+        );
+        // A NUL anywhere in a record refuses the whole batch.
+        assert!(
+            store
+                .write_op_checkpoint_records(
+                    "prov",
+                    &rows(&[("p3", json!({ "ok": 1 })), ("p4", json!({ "k\u{0}": 1 }))]),
+                )
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .read_op_checkpoint_records("prov", &strings(&["p3"]))
+                .unwrap(),
+            json!([])
         );
     }
 

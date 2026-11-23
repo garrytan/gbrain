@@ -3,7 +3,7 @@
 //!
 //! Members: readPageRedactionRow, readPageRedactionRows, listTimelineDedupRows, listVersionBodiesForRedaction,
 //! countPageVersionRows, setRetainedVersionBody, listChunkTextsForRedaction, deleteChunksByIds, setRedactedPageFields,
-//! readRawDataValue, setRawDataValue, setRedactedRowText, queuePageProjectionJob.
+//! readRawDataValue, setRawDataValue, setRedactedRowText.
 //!
 //! This family adds no key. Every write runs through the helper its family already uses for the same change, so the
 //! indexes follow: a page rewrite is `write_page_setting_vector` (the revision bump, the keyword index, the projection
@@ -407,29 +407,6 @@ impl Store {
                 link.context = text.to_owned();
                 put_link(tx, &link)
             }
-        })
-    }
-
-    /// `queuePageProjectionJob(sourceId, slug, reason)`.
-    pub fn queue_page_projection_job(
-        &self,
-        source_id: &str,
-        slug: &str,
-        reason: &str,
-    ) -> Result<()> {
-        if [source_id, slug, reason].iter().any(|t| t.contains('\0')) {
-            return Err(StoreError::invalid(
-                "queuePageProjectionJob: text cannot contain a NUL byte",
-            ));
-        }
-        self.write(|tx| {
-            crate::persistence::projection_queue::queue_page_projection_job(
-                tx,
-                source_id,
-                slug,
-                reason,
-                self.env.now_micros(),
-            )
         })
     }
 }

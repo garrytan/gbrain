@@ -76,7 +76,7 @@ export interface EntityAliasRow { slug: string; alias_norm: string; origin: stri
  * `page_aliases` row of a listed slug in the source, by alias. The text is the card's statement, byte for byte.
  */
 export async function readEntityAliasRows(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<EntityAliasRow[]> {
-  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm`);
+  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm COLLATE "C"`);
 }
 
 /** One `slug_aliases` row: an old slug and the slug it resolves to. */

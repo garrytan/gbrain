@@ -208,7 +208,7 @@ describe('repair-page-reads.ts rendered SQL', () => {
     const { calls, exec } = recorder();
     await listOriginTwinCounts(exec, 3);
     expect(calls).toEqual([{
-      text: 'SELECT source_id, count(*)::int AS groups, (sum(n) - count(*))::int AS twins FROM (SELECT source_id, count(*) AS n FROM pages WHERE deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_id, source_path HAVING count(*) > 1) g GROUP BY source_id ORDER BY source_id LIMIT $1',
+      text: 'SELECT source_id, count(*)::int AS groups, (sum(n) - count(*))::int AS twins FROM (SELECT source_id, count(*) AS n FROM pages WHERE deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_id, source_path HAVING count(*) > 1) g GROUP BY source_id ORDER BY source_id COLLATE "C" LIMIT $1',
       params: [3],
     }]);
   });

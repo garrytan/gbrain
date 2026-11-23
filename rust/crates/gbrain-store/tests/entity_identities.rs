@@ -323,3 +323,129 @@ fn identity_decisions_link_confirmed_members_and_refuse_a_stale_revision() {
         [json!("people/bob-example")]
     );
 }
+
+#[test]
+fn a_non_finite_confidence_is_kept_exactly_and_never_breaks_a_listing() {
+    let b = Brain::new("ei-non-finite");
+    let values = [
+        ("people/a-nan", f64::NAN),
+        ("people/b-inf", f64::INFINITY),
+        ("people/c-neg-inf", f64::NEG_INFINITY),
+        ("people/d-finite", 0.1 + 0.2),
+    ];
+    for (slug, confidence) in values {
+        b.page("default", slug);
+        assert!(
+            b.store
+                .link_entity_identity(&IdentityLink {
+                    entity_id: "g".into(),
+                    slug: slug.into(),
+                    source_id: "default".into(),
+                    confidence,
+                    established_by: "manual".into(),
+                    canonical: None,
+                })
+                .unwrap()
+        );
+    }
+    // Postgres keeps every float8 and lists it back; JSON has no number for NaN or ±Infinity, so the row carries the
+    // text Postgres prints for them, and a finite value round-trips bit for bit.
+    let rows = b
+        .store
+        .list_entity_identities(&IdentityFilter::default())
+        .unwrap();
+    let got: Vec<(String, Value)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r["slug"].as_str().unwrap().to_string(),
+                r["confidence"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("people/a-nan".to_string(), json!("NaN")),
+            ("people/b-inf".to_string(), json!("Infinity")),
+            ("people/c-neg-inf".to_string(), json!("-Infinity")),
+            ("people/d-finite".to_string(), json!(0.1 + 0.2)),
+        ]
+    );
+    assert_eq!(
+        rows[3]["confidence"].as_f64().unwrap().to_bits(),
+        (0.1f64 + 0.2).to_bits()
+    );
+}
+
+#[test]
+fn identity_decisions_keep_non_empty_evidence_and_sweep_a_broken_sync_link() {
+    use gbrain_store::identity_reviews::ApplyDecisions;
+    let b = Brain::new("identity-decisions-evidence");
+    b.page("default", "companies/acme-example");
+    let decision = |id: &str, evidence: Value| {
+        json!({
+            "decision_id": id, "verdict": "different",
+            "members": [{"source_id": "default", "slug": "companies/acme-example"}],
+            "group_id": null, "entity_id": null, "canonical": null, "decided_by": "owner",
+            "decided_at": null, "origin": "database", "home_source_id": null, "git_blob": null,
+            "evidence": evidence,
+        })
+    };
+    b.store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "upsert": [
+            decision("01", json!(["linkedin:acme-example"])), decision("02", json!([])), decision("03", Value::Null),
+        ] })))
+        .unwrap();
+    let read = b.store.list_identity_decisions().unwrap();
+    let evidence: Vec<Value> = read["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["evidence"].clone())
+        .collect();
+    assert_eq!(
+        evidence,
+        [json!(["linkedin:acme-example"]), Value::Null, Value::Null]
+    );
+    // A company link the sync made ('dedupe:auto') is swept by the apply, as the SQL apply does: a
+    // group left with one member is broken, so the apply removes it along with the decision.
+    let auto = json!({ "entity_id": "company/acme", "slug": "companies/acme-example", "source_id": "default",
+        "confidence": 1.0, "established_by": "dedupe:auto", "canonical": true });
+    assert!(
+        b.store
+            .link_entity_identity(&de::<IdentityLink>(auto))
+            .unwrap()
+    );
+    assert_eq!(
+        b.members(),
+        ["company/acme:default:companies/acme-example:true"]
+    );
+    let applied = b
+        .store
+        .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "remove": ["01"] })))
+        .unwrap();
+    assert_eq!(applied["removed"], json!(1));
+    assert_eq!(
+        b.store.list_identity_decisions().unwrap()["decisions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(b.members().is_empty());
+}
+
+#[test]
+fn a_link_sent_with_a_non_finite_confidence_as_text_decodes_and_bad_text_is_refused() {
+    let link: IdentityLink = de(
+        json!({ "entity_id": "g", "slug": "s", "source_id": "default",
+        "confidence": "-Infinity", "established_by": "manual", "canonical": null }),
+    );
+    assert_eq!(link.confidence, f64::NEG_INFINITY);
+    let bad = serde_json::from_value::<IdentityLink>(
+        json!({ "entity_id": "g", "slug": "s", "source_id": "default",
+        "confidence": "high", "established_by": "manual", "canonical": null }),
+    );
+    assert!(bad.is_err());
+}

@@ -167,8 +167,8 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
   if (prepared.createRows) {
     // A create inserts its manifest rows before the flip checks its staging: a staging a fact purge aborted (and whose
     // claim-bearing texts it deleted) refuses here, not on the manifest's text foreign key.
-    const stagingState = await tx.readBodyStagingState(prepared.stagingId);
-    if (!LIVE_STAGING_STATES.includes(stagingState ?? '')) throw bodyStagingGoneError(input.slug, prepared.stagingId, stagingState);
+    const state = await tx.lockBodyStagingState(prepared.stagingId);
+    if (!LIVE_STAGING_STATES.includes(state ?? '')) throw bodyStagingGoneError(input.slug, prepared.stagingId, state);
     pageId = (await tx.createSegmentedPageShell(input.slug, input.meta, { sourceId: input.sourceId })).id;
     await tx.stageManifestRows(prepared.createRows.map(row => ({ ...row, pageId: pageId! })));
   }
@@ -176,7 +176,7 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
   const flip = await tx.flipBodyGeneration({ pageId, expectedGeneration: prepared.expectedGeneration, newGeneration: prepared.newGeneration,
     stagingId: prepared.stagingId, closeOccurrences: prepared.closeOccurrences, retireChunkOccurrences: prepared.retireChunkOccurrences,
     retireInlineChunks: input.promotion, retireMaxRows: input.retireMaxRows, body: prepared.body, meta: input.meta });
-  if (!prepared.createRows) await tx.deleteStagedChunksNotIn(pageId, prepared.newGeneration, prepared.stagedChunkIndexes);
+  if (!prepared.createRows) await tx.deleteUnstagedSegmentChunks(pageId, prepared.newGeneration, prepared.stagedChunkIndexes);
   const createChunks = prepared.createChunks?.slug === input.slug ? prepared.createChunks.chunks : null;
   if (createChunks?.length) await tx.stageSegmentChunks(pageId, prepared.newGeneration, createChunks);
   await faultPoint('segmented:flipped', { sourceId: input.sourceId });

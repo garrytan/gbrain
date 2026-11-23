@@ -173,7 +173,8 @@ Reserved tags:
 | persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
-| embedding_holds, a page's `page_embedding_budget` state and reason | `2` | `EMBEDDING_HOLD` | yes (a hard page delete removes it) |
+| session_state | `y` | `SESSION_STATE` | no |
+| access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
 | secret_store (the `secret_store` entries and `secret_store_occurrence` rows; the module owns the sub-tags) | `3` | `SECRET_STORE` | yes (a hard page delete clears the occurrences' `page_id`, the purge then removes the page's occurrences and the entries only they held; a source delete removes the source's entries) |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
@@ -563,7 +564,12 @@ store keeps the same rule in `pages.rs`.
   `engine-sql/generation-atom-reads.ts`, store in `generations/atom_reads.rs`), and the take rows
   adapter's before-state read (`readTakePreimages`, capability `takes`, SQL in `engine-sql/takes-reads.ts`, store in `takes/reads.rs`). The store answers them in `facts/fence.rs` in the default write
   context (no writer tier, nothing opened), so `listFenceFactRows` is empty until the Rust write context supplies the
-  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md).
+  writer's tier and the opened ids. See [`rust/docs/store/facts.md`](../../rust/docs/store/facts.md). The fence
+  guard's read of held timeline rows is the typed member `listHeldTimelineRows` (capability `timeline`, SQL in
+  `engine-sql/trust-fence.ts`), served from `timeline/held.rs`; see "Held timeline rows" in
+  [`rust/docs/store/timeline_queries.md`](../../rust/docs/store/timeline_queries.md). Its read of held takes is
+  `listHeldTakeRows` (capability `takes`, the same SQL text `heldRows` sent), served from `takes/held.rs`; see "Held
+  takes" in [`rust/docs/store/takes.md`](../../rust/docs/store/takes.md).
 - **Parity case:** `pages.test.ts`: putPage records source_path and refuses a second live page of the same file.
 
 #### Nullable page fields (`PageText` in `pages.rs`)
@@ -919,10 +925,22 @@ Facts and their supersession chains.
     `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions`, `readPageRevisions` and `appendFactForgetReason`, and
     `readFactWithdrawnRow` and `readFactWithdrawnBacking` for the `fact_withdrawn` refusal of a remember. The store
     serves them in `trust/withdrawal_commit.rs` (rust/docs/store/trust.md "The forget commit"). Pinned by
-    `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. Still raw on Rust:
-    the purge sweep (`facts/purge.ts`) and `memberPageWithdrawal`. The write-request forget (lane 4) reaches these
-    members and the typed `lockSourceRow`, `readFactWithdrawalClaim`, `applyDecideReviewQueue` and
-    `insertWithdrawalEffects` calls, so `recordFactWithdrawal` makes no raw statement but the ledger and fence reads.
+    `test/engine-parity/forget-commit.test.ts` and `test/engine-parity/forget-remember.test.ts`. `recordFactWithdrawal`
+    itself locks the claim with `readFactWithdrawalClaim` (`lock`) and queues its review with `applyDecideReviewQueue`,
+    so `lockFactForWithdrawal`, `queueWithdrawalReview`, `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions` and
+    `readPageRevisions` have no caller in `src/` yet. Still raw on Rust: the purge sweep's commit transaction and
+    post-commit work (`facts/purge.ts`) and the forget's post-commit chunk rebuild (`page-state/projections.ts`).
+    The write-request forget (lane 4) reaches these members and the typed `lockSourceRow`, `readFactWithdrawalClaim`,
+    `applyDecideReviewQueue` and `insertWithdrawalEffects` calls, so `recordFactWithdrawal` makes no raw statement but the
+    ledger and fence reads.
+  - The purge plan, dry run and `--match` reads are typed (`engine-sql/facts-purge.ts` from `purgeSubjectPageLive` to
+    `listNearestFactsForPurge`, and `engine-sql/facts-purge-plan.ts`, four members to `listPurgeProbeItems`). The store serves
+    them in `facts/purge_plan.rs`, `facts/purge_probe.rs` and `page_body/purge_scan.rs` (rust/docs/store/purge-plan.md);
+    it probes `links`, `timeline_entries`, `raw_data`, `wanted_links` and every other inventory table it keeps (bytea
+    `minion_attachments.content` included), answers 0 for the tables it keeps no rows of, and refuses only naming
+    `raw_data` rows. On Rust a purge plan and its dry run complete and equal PGLite. Pinned by
+    `test/engine-parity/purge-plan.test.ts`, `test/engine-parity/purge-dry-run.test.ts` and
+    `test/purge-plan-sql-pin.test.ts`.
   - The reads withdrawal discovery makes (`discoverWithdrawalTargets`, `facts/withdrawal-discovery.ts`) are one typed
     member, `readWithdrawalDiscovery(read)` (`engine-sql/withdrawal-discovery.ts`), tagged by `kind`: `claim_keys`,
     `provenance_pages`, `claim_matches`, `inline_fence_pages`, `segment_fence_rows`, `split_fence_slots`,
@@ -1320,11 +1338,11 @@ The secret store (GST-2988) and the page-store reads and writes of `gbrain repai
 
 - **Files:** `gbrain-store/src/secret_store.rs`, `gbrain-store/src/repair_secret_spans.rs`, `gbrain-store/src/timeline_queries/redaction.rs`, `gbrain-napi/src/families/secret_store.rs`, `store-members/secret-store.ts`.
 - **Tag:** `3` (`SECRET_STORE`). Cascade on page delete: yes (see the tag table).
-- **Keys:** `x 0x01 <entry id>` the entry; `x 0x02 <source> 0x00 <value mac>` the entry id; `x 0x03 <entry id> 0x00 <occurrence id BE8>` and `x 0x05 <source> 0x00 <slug> 0x00 <occurrence id BE8>` and `x 0x06 <page id BE8> <occurrence id BE8>` (empty, the occurrence indexes); `x 0x04 <occurrence id BE8>` the occurrence. `M next_secret_occurrence_id`.
-- **Members (32), capability:** `persistence_journal`: `findSecretEntryByMac`, `secretEntryExists`, `insertSecretEntry`, `insertSecretOccurrence`, `readSecretEntry`, `listSecretOccurrences`, `listSecretEntrySummaries`, `countSecretsByRule`, `listAllowedSecretMacs`, `listSecretKeysInUse`, `readSecretStoreSnapshot`, `insertBackupSecretEntry`, `readBackupEntryHold`, `insertBackupSecretOccurrence`, `deleteUnreferencedSecretEntry`, `listSecretHoldingPages`, `countUnreferencedSecretEntries`, `readRestorePageHit`, `markSecretEntryAllowed`, `readPageRedactionRow`, `readPageRedactionRows`, `listTimelineDedupRows`, `listVersionBodiesForRedaction`, `countPageVersionRows`, `setRetainedVersionBody`, `listChunkTextsForRedaction`, `deleteChunksByIds`, `setRedactedPageFields`, `readRawDataValue`, `setRawDataValue`, `setRedactedRowText`, `queuePageProjectionJob`. `deletePageViewDigests` (capability `facts`) is served with no rows.
-- **Postgres tables:** `secret_store`, `secret_store_occurrence`; SQL in `src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`, `page-projection-queue.ts`.
+- **Keys:** `3 0x01 <entry id>` the entry; `3 0x02 <source> 0x00 <value mac>` the entry id; `3 0x03 <entry id> 0x00 <occurrence id BE8>` and `3 0x05 <source> 0x00 <slug> 0x00 <occurrence id BE8>` and `3 0x06 <page id BE8> <occurrence id BE8>` (empty, the occurrence indexes); `3 0x04 <occurrence id BE8>` the occurrence. `M next_secret_occurrence_id`.
+- **Members (31), capability:** `persistence_journal`: `findSecretEntryByMac`, `secretEntryExists`, `insertSecretEntry`, `insertSecretOccurrence`, `readSecretEntry`, `listSecretOccurrences`, `listSecretEntrySummaries`, `countSecretsByRule`, `listAllowedSecretMacs`, `listSecretKeysInUse`, `readSecretStoreSnapshot`, `insertBackupSecretEntry`, `readBackupEntryHold`, `insertBackupSecretOccurrence`, `deleteUnreferencedSecretEntry`, `listSecretHoldingPages`, `countUnreferencedSecretEntries`, `readRestorePageHit`, `markSecretEntryAllowed`, `readPageRedactionRow`, `readPageRedactionRows`, `listTimelineDedupRows`, `listVersionBodiesForRedaction`, `countPageVersionRows`, `setRetainedVersionBody`, `listChunkTextsForRedaction`, `deleteChunksByIds`, `setRedactedPageFields`, `readRawDataValue`, `setRawDataValue`, `setRedactedRowText`; the queue row after a rewrite is main's `queuePageProjectionJob`. `deletePageViewDigests` (capability `facts`) is served with no rows.
+- **Postgres tables:** `secret_store`, `secret_store_occurrence`; SQL in `src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`.
 - **Parity cases:** `test/engine-parity/repair-secret-spans.test.ts`.
-- **Known gaps:** the reseal after a commit and a segmented body write run raw SQL (`docs/designs/RUST_ENGINE.md` loss row 37).
+- **Known gaps:** the reseal after a commit and a segmented body write run raw SQL (`docs/designs/RUST_ENGINE.md` loss row 46).
 
 ### timeline_queries
 
@@ -1402,7 +1420,7 @@ Chunk vectors and vector search.
 - **Files:** `gbrain-store/src/vectors.rs`, `gbrain-napi/src/families/vectors.rs`, `store-members/vectors.ts`.
 - **Tag:** `X` (`VECTOR`). Cascade on page delete: yes.
 - **Members (2), capability:** `vector_search` (1), `takes` (1).
-- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`).
+- **Store and binding:** `searchVector` (`search_vector`), `searchTakesVector` (`search_takes_vector`). `searchTakesVector` is built in the takes files: `gbrain-store/src/takes/vector_search.rs`, `gbrain-napi/src/families/takes.rs` and `store-members/takes.ts`.
 - **Postgres tables:** Chunk and take vectors (`embedding` columns), the vector index.
 - **Keys:** `X` (core sub-layout).
 - **Depends on:** Nothing. The store serves both members with an exact scan over the stored vectors (`rust/docs/store/vectors.md`).
@@ -1499,7 +1517,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes were `i x y z` when this was written (`g` is the code traversal cache); `i` and `z` are taken since, by `entity_identities` and `access_rules`, `x` is reserved for `ACCESS_MEMBERS` and `y` for `SESSION_STATE` (so `secret_store` takes the digit `3`) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive and `h` is the derived generation ledger).
+until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger). `secret_store` takes the digit `3`: every letter is taken or reserved, and tag `2` is free (the `embedding_holds` family was dropped at the main join).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|
@@ -1737,16 +1755,12 @@ The Minion job queue, cycle locks, spend and rate leases, and wake subscriptions
     counts and inserts in one write, so no second admission can see the count before the insert. The cases in
     `test/minions-admission.test.ts` stay as they are. Budget reservations (`budget-meter.ts`) and rate leases
     (`rate-leases.ts`) follow the same rule: count, check the cap, write, in one member.
-  - Delegated admission and retry: the refuse-before-write guard. `admitJob` with a delegated client's policy and
-    `retryJob` run the TypeScript policy on a narrow handle (`src/core/rust-engine/delegated-policy-handle.ts`) that
-    serves the job reads, `countOpenJobsByOwner` and `readJobSourceState` from the store. When the policy has called
-    `lockOAuthClient`, the handle records it (`handle.locked()`), and the member refuses (`engine_capability_missing`)
-    before it writes anything: the lock, the capacity count and the write are separate store calls, so they are not
-    one admission. The guard stays until admission is one store write. The store keeps no `oauth_clients` or
-    `access_tokens` table, so the policy's grant read refuses the same way, and `lockOAuthClient` called directly
-    refuses too (a lock that locks nothing would hide a missing guarantee). No production caller reaches the engine
-    member on a Rust brain: its one caller, `lockDelegatedSubmission` (`src/core/minions/delegated-admission.ts:38`),
-    runs on the handle above, so the member stays refused.
+  - Delegated admission and retry: one engine transaction. `admitJob` with a delegated client's policy runs the lock,
+    a store probe (`capacityCheck: true`, which answers a coalesce or stops where the capacity check runs and writes
+    nothing), the policy's capacity check and the store admission in one `transaction`, and `retryJob` runs its job
+    read, policy and update in one. The store admits one write transaction at a time, so the policy's count and the
+    insert are one admission. `lockOAuthClient` resolves with nothing to do: inside a transaction the store's single
+    writer holds what the row lock holds.
   - Cycle locks. PGLite's acquire (`src/core/db-lock.ts`) is an upsert that takes a held row only when
     `ttl_expires_at` has passed and `last_refreshed_at` is null or older than the steal grace, and returns the fence
     `extract(epoch from acquired_at)`. `acquireLease` does the same check and write in one member and returns the same
@@ -1934,6 +1948,9 @@ and write provenance on content rows, and the trust records.
     stamped tier and origin (`facts/trust_reads.rs`), and `listSupersessions` and the four fact list reads
     (`listFactsByEntity`, `listFactsSince`, `listFactsKeyset`, `listFactsBySession`, which hot memory reads with the
     caller's eligibility) honour a read eligibility.
+  - Built: the trust scan's cursor, claimed-source check and id ceilings are typed members
+    (`engine-sql/trust-scan.ts`), served by `trust/scan_state.rs` and `persistence/trust_scan_cursor.rs`, so a scan on a
+    Rust brain stops and resumes as on PGLite.
   - Built: the `executeRaw` reads of `trust_tier` in core memory, the eligibility scan, belief history, page history
     (`get_versions`) and valid time are typed members (`engine-sql/trust-tier-reads.ts`). The Rust store serves
     `listCorePageRows`, the pages and facts arms of `listTrustScanRows` and `countUnscannedTrustRows`,
@@ -1944,10 +1961,14 @@ and write provenance on content rows, and the trust records.
     answers false: the store keeps no `needs_rederive` queue. `beginSnapshotRead` (`engine-sql/transaction-settings.ts`) starts the valid-time,
     fuzzy `get_page` and export transactions as one `REPEATABLE READ` snapshot; the Rust member sets no isolation level, because a
     store transaction holds the one writer from its start, and it enforces `READ ONLY` with Postgres's `25006` refusal. It refuses the takes and timeline
-    scan tables, and the belief history members refuse for the missing belief ledger (TODOS.md `rust-belief-ledger`).
+    scan tables; the belief history members read the store's belief ledger (`trust/belief_history.rs`).
     The store prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same marks, and it serves the
     fence fact append's holding-page prune (`pruneHoldingPageVersions`), its occupied-row read (`readFenceRowOccupant`)
     and its page tier restore (`restorePageTrust`, through the same trust stamp as the PGLite `UPDATE`).
+    The fact purge's segmented writes are typed members the store serves (`engine-sql/segmented-purge-writes.ts`): the
+    flip's staging lock (`lockBodyStagingState`) and stale chunk delete (`deleteUnstagedSegmentChunks`), the delete of the
+    derivation rows a rewritten segment may hold (`deleteRewrittenSegmentDerivations`), the version read
+    (`listPurgeVersionBodies`, `purge_version_bodies.rs`), and `createVersion` with the purge's `preimage`.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
     title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
     refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search

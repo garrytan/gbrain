@@ -15,7 +15,8 @@ beforeAll(async () => { real = new PGLiteEngine(); await real.connect({}); await
 afterAll(async () => { await real.disconnect(); });
 
 function throwingEngine(error: unknown): BrainEngine {
-  return { executeRaw: async () => { throw error; } } as unknown as BrainEngine;
+  const fail = async () => { throw error; };
+  return { executeRaw: fail, readExtractRollup7d: fail, listRecordedHaltReasons7d: fail } as unknown as BrainEngine;
 }
 
 test('reader propagates non-schema errors and contradictory missing-column identities', async () => {
@@ -74,7 +75,7 @@ test('writer does not downgrade or retry a real error mentioning an old column',
 
 test('doctor does not retry an aggregate failure that only mentions expected_limit_count', async () => {
   let calls = 0;
-  const engine = { executeRaw: async () => {
+  const engine = { readExtractRollup7d: async () => {
     calls++;
     if (calls === 1) throw Object.assign(new Error('permission denied for expected_limit_count'), { code: '42501' });
     return [];

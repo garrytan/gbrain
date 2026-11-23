@@ -58,7 +58,10 @@ const CASES: Array<[string, Parameters<typeof refusing>[0]]> = [
   ['the alias member (readEntityAliasRows)', { member: 'readEntityAliasRows' }],
   ['the inbound edge member (readEntityInboundEdges)', { member: 'readEntityInboundEdges' }],
   ['the open-loop member (readEntityOpenLoops)', { member: 'readEntityOpenLoops' }],
-  ['the mention coverage read', { sqlMatch: /FROM mention_index_status/ }],
+  // The coverage read was a raw `FROM mention_index_status` statement on rust-engine/main; the cli-members line reads it
+  // through the typed readMentionIndexStatus member (engine-sql/entity-reads.ts, the same statement), so that is the
+  // member refused here (main join da99c637a7).
+  ['the mention coverage member (readMentionIndexStatus)', { member: 'readMentionIndexStatus' }],
   ['the outbound link member (getLinks)', { member: 'getLinks' }],
   ['the timeline member (getTimeline)', { member: 'getTimeline' }],
 ];

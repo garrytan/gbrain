@@ -303,7 +303,7 @@ pub(crate) fn out_links(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecor
 
 /// Reads the links named by an index whose keys end in `link_id` and whose values are the
 /// `from_page_id`, in id order.
-fn indexed_links(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<LinkRecord>> {
+pub(crate) fn indexed_links(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<LinkRecord>> {
     let mut refs = Vec::new();
     let mut bad = false;
     scan_prefix(read, prefix, false, &mut |k, v| {

@@ -55,7 +55,7 @@ import type { Notice } from '../core/agent-output.ts';
 import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-notice.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
-import { opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
+import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
@@ -1099,17 +1099,17 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
       const eq = arg.indexOf('=');
       if (eq > 2) {
         const key = arg.slice(2, eq).replace(/-/g, '_');
-        // CLI-local booleans: `--json=<v>` / `--dry-run=<v>` must parse as
-        // booleans, not fall through to the junk-key path (which would
-        // consume the NEXT token as a value and corrupt positional parsing).
+        // CLI-local booleans `--json=<v>` / `--dry-run=<v>` parse here, not on the junk-key
+        // path (which would eat the NEXT token). #9918: an inline boolean takes only true or
+        // false; any other value is refused (it read as true, so `--purge=0` hard-deleted).
         if (key === 'json' || key === 'dry_run') {
-          params[key] = arg.slice(eq + 1) !== 'false';
+          params[key] = opBooleanValue(op, key, arg.slice(eq + 1));
           continue;
         }
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false' : opFlagValue(op, key, def, raw, params[key]);
+          params[key] = def.type === 'boolean' ? opBooleanValue(op, key, raw) : opFlagValue(op, key, def, raw, params[key]);
           continue;
         }
       }
@@ -1372,7 +1372,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // (src/core/ops/context.ts), which widens only an unqualified read with no
   // OAuth grant; remote transports compute the same field for no-grant tokens.
   let localFederated: string[] | undefined;
-  let sourceImplicit = true;
+  let sourceImplicit = true, sourceFromCheckout = false;
   // params.source is set when a CLI flag was parsed for the op (rare; most
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   // An op that owns `source` (opOwnsSource) receives it as its own param.
@@ -1384,7 +1384,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     await withRequestConfigSnapshot(engine, async () => {
       const resolved = await resolveSourceWithTier(engine, explicit);
       sourceId = resolved.source_id;
-      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
+      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile'; sourceFromCheckout = resolved.tier === 'local_path';
       localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
     }, commandStartupConfig(engine));
   } catch (err) {
@@ -1468,7 +1468,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // brain (that would be an untrusted-caller cross-brain hole over MCP).
     brainId: activeBrainId,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
-    ...(sourceImplicit ? { localSourceImplicit: true } : {}),
+    ...(sourceImplicit ? { localSourceImplicit: true, ...(sourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     // T15/FOV-1: capture the retrieval meta for formatResult's empty-result
     // render (the local-engine twin of the MCP _meta.retrieval channel).
     emitResponseMeta: captureRetrievalMeta,
@@ -1587,7 +1587,7 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
-      const capLine = pageCapLine(meta, '--limit');
+      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
       if (capLine) process.stderr.write(capLine + '\n');
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
@@ -1602,7 +1602,7 @@ export function formatResult(
       const cliOpts = getCliOptions();
       process.stderr.write(searchTimingsLine(meta));
       const timingsLine = cliOpts.explain && meta?.timings ? require('../core/search/stage-timings.ts').formatTimingsSummary(meta.timings) + '\n' : '';
-      if (results.length === 0) return `No results.${describeEmptyRetrieval()}\n` + timingsLine;
+      if (results.length === 0) return savedFacts ? `No page results.\n${savedFacts}${timingsLine}` : `No results.${describeEmptyRetrieval()}\n` + timingsLine;
       // v0.40.4 — --explain switches to per-stage attribution formatter.
       if (cliOpts.explain) {
         // Lazy import keeps formatResult's startup hot path narrow for
@@ -1610,9 +1610,9 @@ export function formatResult(
         const { formatResultsExplain } = require('../core/search/explain-formatter.ts');
         // v0.48.2: thread the captured retrieval meta so the header lines
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
-        return formatResultsExplain(results, meta ?? undefined);
+        return formatResultsExplain(results, meta ?? undefined) + savedFacts;
       }
-      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n';
+      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n' + savedFacts;
     }
     case 'get_tags': {
       const tags = result as string[];

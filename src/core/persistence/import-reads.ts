@@ -137,6 +137,7 @@ export function sliceReads(engine: BrainEngine, slice: { sourceId: string; pageI
     }
     const id = String(params[0]);
     if (!ids.has(id)) return undefined;
+    // No COLLATE "C": `date` here is the ISO text alias, fixed-width digits and dashes, which sorts the same in every collation; the text must stay equal to STORED_TIMELINE_SQL (timeline-reads.ts).
     if (kind === TIMELINE) return once(kind, async () => byKey(await engine.executeRaw<Record<string, unknown>>(
       'SELECT page_id,id,date::text AS date,source,summary,detail FROM timeline_entries WHERE page_id=ANY($1::bigint[]) AND event_page_id IS NULL ORDER BY page_id,date,id', [pageIds]), 'page_id', true))
       .then(rows => rows.get(id) ?? []);

@@ -3,8 +3,7 @@
 The Rust store serves the secret store (GST-2988) and the page-store reads and writes of `gbrain repair secret-spans`, so
 the repair previews and applies on a Rust brain, and `gbrain secrets` lists, restores, backs up and cascades there. The SQL
 engines run the statements `secret-store/store.ts`, `restore.ts`, `spool.ts` and `repair/secret-spans.ts` ran through
-`executeRaw`; they are typed members now (`src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`,
-`page-projection-queue.ts`) and a Rust brain serves each from what the store keeps
+`executeRaw`; they are typed members now (`src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`; the queue row is main's `queuePageProjectionJob`, engine-sql/projection-rebuild.ts) and a Rust brain serves each from what the store keeps
 (`src/core/rust-engine/store-members/secret-store.ts`). The crypto stays in TypeScript (`secret-store/keyring.ts`): the
 store keeps the ciphertext, nonce, tag and MACs it is given and never sees a value. Each write member is one store write, so
 the engine's transaction holds a repair's writes together.
@@ -79,7 +78,6 @@ The purge is not a member on the Rust brain: the store runs it inside `deletePag
 | `setRedactedPageFields(pageId, fields)` | `write_page_setting_vector`: a changed field takes a new knowledge revision and clears the text projection seal, the keyword index and the projection queue follow |
 | `readRawDataValue(pageId, id)`, `setRawDataValue(pageId, id, data)` | see below |
 | `setRedactedRowText(pageId, store, id, column, text)` | timeline: `put_entry` (the dedup key moves, a taken key refuses); facts: `write_fact` (the embedding goes); takes: `rewrite_take_column` (the embedding goes, a claim change counts in `claim_rev`); links: `put_link` (the keys stay) |
-| `queuePageProjectionJob(sourceId, slug, reason)` | `queue_page_projection_job`: the live page's current revision is queued with `reason` |
 
 Segment derivations are read and retired through the existing `readSegmentDerivations` and `retireSegmentDerivations`; the receipt
 is `readOpCheckpointRecord` and `writeOpCheckpointRecord`; the page revision after a write is `readPageRevisions`; the view digests

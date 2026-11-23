@@ -56,7 +56,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
-      queuePageProjectionJob: async () => {}, // the copy queues the page's projection rebuild through the typed member
+      queuePageProjectionJob: async () => {}, // the copy queues the page's projection through the typed member
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
     } as unknown as BrainEngine;
     const source = {
@@ -104,7 +104,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
-      queuePageProjectionJob: async () => {}, // the copy queues the page's projection rebuild through the typed member
+      queuePageProjectionJob: async () => {}, // the copy queues the page's projection through the typed member
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
     } as unknown as BrainEngine;
     const source = {

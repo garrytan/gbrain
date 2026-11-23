@@ -132,6 +132,25 @@ describe('engine parity: segmented page bodies', () => {
   );
 
   parityTest(
+    'a published segmented page with no chunks counts as chunkless with content; an empty shell does not',
+    { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows',
+      'flipBodyGeneration', 'setBodyStagingState', 'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'transaction'] },
+    async (engine) => {
+      await engine.createSegmentedPageShell('notes/shell', pageMeta('Shell'), { sourceId: 'default' });
+      const shellCount = await engine.countChunklessPagesWithContent();
+      await publish(engine);
+      const count = await engine.countChunklessPagesWithContent();
+      const rows = (await engine.listChunklessPagesWithContent()).map((r) => ({ slug: r.slug, source_id: r.source_id,
+        compiled_truth: r.compiled_truth, timeline: r.timeline }));
+      const scoped = await engine.countChunklessPagesWithContent({ sourceId: 'default' });
+      // The shell's body_bytes is 0; the published page's is the byte length of its segments.
+      expect([shellCount, count, scoped]).toEqual([0, 1, 1]);
+      expect(rows.map((r) => r.slug)).toEqual(['notes/big']);
+      return { shellCount, count, rows, scoped };
+    },
+  );
+
+  parityTest(
     'a replace flips to generation 2, closes retired rows and refuses a stale generation',
     { methods: ['flipBodyGeneration', 'readManifest', 'stageSegmentChunks', 'getChunks'] },
     async (engine) => {
@@ -677,6 +696,39 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       expect(byId).toMatchObject({ id: 'the page', slug: 'notes/embed-read', source_id: 'default', body_storage: 'segmented' });
       expect(bySlug).toEqual(byId);
       return { unsealed, byId, bySlug, otherSource, missing, inline, deleted };
+    },
+  );
+
+  parityTest(
+    'a segmented seal indexes the timeline lead after the page\'s purges and withdrawals',
+    { methods: ['sealSegmentedPage', 'searchTitles', 'insertFacts', 'loadPurgeTarget', 'insertFactPurge', 'insertFactWithdrawal'] },
+    async (engine) => {
+      const slug = 'notes/sealed-ledger';
+      const { pageId } = await publishApart(engine, slug);
+      const fingerprint = async (rowNum: number, claim: string) => {
+        const out = await engine.insertFacts([{ fact: claim, entity_slug: slug, source_markdown_slug: slug, row_num: rowNum, kind: 'fact',
+          visibility: 'world', source: 'fence' }] as never, { source_id: 'default' }) as { ids: number[] };
+        return (await engine.loadPurgeTarget(out.ids[0]!, 'default'))!.fact_hash;
+      };
+      const purge = async (subject: string, factHash: string) => engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject,
+        factHash, requestId: '6f9619ff-8b86-4d01-b42d-00cf4fc964ab', actor: 'owner:local', reason: 'parity' });
+      await purge(slug, await fingerprint(1, 'Keeps quillbees'));
+      await purge('*', await fingerprint(2, 'Paints marblewood'));
+      await purge('*', await fingerprint(3, 'Sings nightjarsong'));
+      await engine.insertFactWithdrawal('default', 'world', 'Rides velocycles', slug, '2026-03-01T10:00:00.000Z');
+      const rows = ['Keeps quillbees', 'Paints marblewood', 'Rides velocycles', 'Flies kestrelkites'];
+      const lead = '<!--- gbrain:facts:begin -->\n'
+        + '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
+        + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n'
+        + rows.map((claim, i) => `| ${i + 1} | ${claim} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |\n`).join('')
+        + '<!--- gbrain:facts:end -->\n';
+      await engine.sealSegmentedPage(pageId, { timelineLead: lead });
+      const found = async (word: string) => (await engine.searchTitles(word, { limit: 5 })).some((r) => r.slug === slug);
+      const out = { slugPurge: await found('quillbees'), globalPurge: await found('marblewood'), withdrawn: await found('velocycles'),
+        struck: await found('forgotten'), kept: await found('kestrelkites') };
+      // A purged row leaves the indexed lead; title search never answers a word of a struck (withdrawn) row.
+      expect(out).toEqual({ slugPurge: false, globalPurge: false, withdrawn: false, struck: false, kept: true });
+      return out;
     },
   );
 });
