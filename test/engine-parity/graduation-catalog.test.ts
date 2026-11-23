@@ -37,7 +37,7 @@ describe('engine parity: graduation catalog', () => {
       expect({
         formatVersion: catalog.formatVersion, tags: catalog.keyspaces.length > 40,
         takeKinds: takes?.kinds.map(k => k.kind), message: String((checked as Error).message).includes('listRelations'),
-      }).toEqual({ formatVersion: 6, tags: true, takeKinds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], message: true });
+      }).toEqual({ formatVersion: 7, tags: true, takeKinds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], message: true });
       throw checked;
     }
     if (checked !== null) throw checked;
