@@ -550,10 +550,13 @@ impl PageCtx {
 }
 
 /// Every page (soft-deleted included) in page id order, with its chunks and signature.
+/// One applying hold: the page context, the ledger state, its reason and its update time in microseconds.
+type ApplyingHold = (PageCtx, String, Option<String>, i64);
+
 /// The budget holds the large-page budget reads apply to: a ledger row not `open` on a live page without
 /// `embed_skip`, whose body is over the inline limit (`body_bytes` of a segmented page, else the inline text's bytes) or
 /// whose reason is an archive or call import hold. Each with its page context, state, reason and update time.
-fn applying_holds(read: &dyn KvRead) -> Result<Vec<(PageCtx, String, Option<String>, i64)>> {
+fn applying_holds(read: &dyn KvRead) -> Result<Vec<ApplyingHold>> {
     const ALWAYS_APPLIES: [&str; 3] = ["archive_backfill", "archive_open_day", "call_import"];
     let mut out = Vec::new();
     for ctx in page_contexts(read)? {
