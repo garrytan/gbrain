@@ -961,7 +961,8 @@ Each listed page has a class:
 - `remote`: a remote write made the change. The apply restores each stamp to
   the server-written `pages` column when it has one, else to the value just
   before the first remote change, stamps the lowest cap the page had as its
-  marker, and lowers the page to it.
+  marker, and lowers the page to it. An existing `ingested_at` is never
+  removed: when the only earlier value is none, the page keeps it (#10025).
 - `ambiguous`: no recorded writer (written before write attribution). Planned
   only with `--include-ambiguous`, which changes the hash.
 - `restamp`: the classified page from #7918. The apply stamps its stored tier as
