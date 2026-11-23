@@ -364,6 +364,7 @@ src/core/minions/handlers/contextual-reindex-per-chunk.ts	execute_raw	1
 src/core/minions/handlers/embed-backfill.ts	execute_raw	2
 src/core/minions/handlers/facts-absorb.ts	execute_raw	1
 src/core/minions/handlers/ingest-capture.ts	execute_raw	3
+src/core/minions/handlers/subagent-oneshot.ts	execute_raw	1	the bounded page sample (LIMIT 5); unreachable on a Rust brain, whose rate-lease transaction is refused first (test/minions/refusal-swallow-oneshot.test.ts)
 src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
 src/core/minions/handlers/sync.ts	execute_raw	3
 src/core/minions/idempotency-coalesce.ts	execute_raw	1
