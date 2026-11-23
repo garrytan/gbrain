@@ -169,7 +169,6 @@ src/core/access/open-twins.ts	execute_raw	1
 src/core/access/read-log.ts	execute_raw	3	GST-2476 gap 1: the access read log writer (batched insert, two retention deletes) over access_read_log (v331); the access area is still raw SQL (caller.ts, members.ts) and converts with it; on Rust the write is refused and dropped (loss row 43)
 src/core/access/requester-scope.ts	execute_raw	2
 src/core/access/room.ts	execute_raw	2
-src/core/advisor/collect-chronicle.ts	execute_raw	1
 src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1

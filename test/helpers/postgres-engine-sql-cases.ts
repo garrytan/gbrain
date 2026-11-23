@@ -945,7 +945,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listFenceRetireCandidates': OOS.trustFence,
   'readFactPreimages': OOS.callerRawSql,
   'restoreFactPreimage': OOS.callerRawSql, 'listFactIdsBySourcePrefix': OOS.callerRawSql, 'readGenerationPageRows': OOS.callerRawSql, 'readAtomOriginInput': OOS.callerRawSql, 'lowerTrustTier': OOS.callerRawSql, 'countDerivedRowTaint': OOS.callerRawSql, 'stampPageFrontmatter': OOS.callerRawSql, 'listProducerVersionRows': OOS.callerRawSql, 'listAtomWriteReceipts': OOS.callerRawSql, 'expireFactRows': OOS.callerRawSql, 'readGenerationRestored': OOS.callerRawSql, 'clearTieHeldGenerationRows': OOS.callerRawSql,
-  'readChronicleDepthRow': OOS.callerRawSql, 'listChronicleOwnedHashes': OOS.callerRawSql, 'listRetiredGenerationItemKeys': OOS.callerRawSql, 'listEventProjectionRows': OOS.callerRawSql, 'listPageContentHashes': OOS.callerRawSql, 'listLiveGenerationItems': OOS.callerRawSql, 'readEventProjectionId': OOS.callerRawSql, 'pageSlugExists': OOS.callerRawSql, 'deleteEventProjections': OOS.callerRawSql, 'restoreEventProjection': OOS.callerRawSql, 'hasChronicleSkipDecision': OOS.callerRawSql, 'listOrphanedChronicleOwners': OOS.callerRawSql, 'listChronicleEventSlotRows': OOS.callerRawSql,
+  'readChronicleDepthRow': OOS.callerRawSql, 'listChronicleOwnedHashes': OOS.callerRawSql, 'listRetiredGenerationItemKeys': OOS.callerRawSql, 'listEventProjectionRows': OOS.callerRawSql, 'listPageContentHashes': OOS.callerRawSql, 'listLiveGenerationItems': OOS.callerRawSql, 'readEventProjectionId': OOS.callerRawSql, 'pageSlugExists': OOS.callerRawSql, 'deleteEventProjections': OOS.callerRawSql, 'restoreEventProjection': OOS.callerRawSql, 'hasChronicleSkipDecision': OOS.callerRawSql, 'listOrphanedChronicleOwners': OOS.callerRawSql, 'listChronicleEventSlotRows': OOS.callerRawSql, 'listChronicleCoverageGapRows': OOS.callerRawSql,
   'listFenceFactRows': OOS.trustFence,
 
 
@@ -2480,6 +2480,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('hasChronicleSkipDecision', [['default', (e) => e.hasChronicleSkipDecision({ sourceId: SRC, pageId: 1, contentHash: 'h', extractorVersion: 2, reason: 'no_events' })]]),
   ...variants('listOrphanedChronicleOwners', [['default', (e) => e.listOrphanedChronicleOwners(SRC, 'chronicle_event', 50)]]),
   ...variants('listChronicleEventSlotRows', [['default', (e) => e.listChronicleEventSlotRows(SRC, ['events/a'])]]),
+  ...variants('listChronicleCoverageGapRows', [['default', (e) => e.listChronicleCoverageGapRows()]]),
   ...variants('countDerivedRowTaint', [['takes', (e) => e.countDerivedRowTaint('takes')]]),
   ...variants('listProducerVersionRows', [['extract-atoms', (e) => e.listProducerVersionRows(SRC, ['atoms/a'], 'extract_atoms')]]),
   ...variants('listAtomWriteReceipts', [['default', (e) => e.listAtomWriteReceipts(SRC, ['atoms/a'])]]),
