@@ -5590,6 +5590,16 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 |---|---|---|---|---|---|---|
 | gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
 
+### shadow_drill_failed
+
+<a id="shadow_drill_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain engine shadow drill` did not run, or its restore drill of the shadow store did not pass; `reason` says why and the drill record under `<shadow dir>/drills/` holds the counts. | The drill copies the shadow's Rust store through its owner, checks the copy without opening it normally and opens it once; swap criterion 10 needs a passed drill in the current evidence epoch. It refuses before copying when the shadow has no seed (`no_seed`), no evidence epoch (`no_epoch`), no store (`no_store`) or no installed addon (`addon_unavailable`), when the disk has less than twice the store file plus 2 GiB free (`disk_space`), when another drill runs (`drill_running`) or when an earlier copy has not ended (`cleanup_pending`). A copy the owner stopped is `snapshot_busy`, `snapshot_cancelled`, `snapshot_disk_pressure` or `snapshot_age_budget`; a copy that differs from the owner's manifest is `copy_mismatch`, a damaged one `copy_integrity`, an unreadable one `copy_unreadable`, one that will not open `open_failed` or answer a search `search_failed`; scratch space that could not be removed is `cleanup_failed`. | Read the reason, fix it (free disk space, wait for the earlier copy, seed the shadow) and run `gbrain engine shadow drill` again; the shadow keeps following while a drill runs. Run: gbrain engine shadow status --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `no_seed`, `no_epoch`, `no_store`, `addon_unavailable`, `disk_space`, `drill_running`, `cleanup_pending`, `snapshot_busy`, `snapshot_cancelled`, `snapshot_disk_pressure`, `snapshot_age_budget`, `snapshot_failed`, `copy_mismatch`, `copy_integrity`, `copy_unreadable`, `open_failed`, `search_failed`, `cleanup_failed`, `drill_error`.
+
 ### shared_skills_unavailable
 
 <a id="shared_skills_unavailable"></a>
