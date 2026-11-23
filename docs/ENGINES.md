@@ -1917,7 +1917,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   the role check, so a stretch with no evidence cannot read as clean while the damage lasts. Two limits remain: a
   statement timeout that fires inside the trigger is not caught (the 50 ms bound keeps it far below any timeout), and
   a writer whose write lands while both evidence tables are locked by someone else at the same moment, and the locks
-  are gone before the swap reads, leaves no row. `stop` ends the bookkeeping of processes that are still open: they
+  are gone before the swap reads, leaves no row. `gbrain engine shadow stop` exits 1 and says to run it again when it could not remove the hooks (the database was unreachable); the hooks keep noting writers until a later stop removes them. `stop` ends the bookkeeping of processes that are still open: they
   note and repair only while `state.json` says shadow mode is on, and a repair acts only while the hooks file says
   `installed`. Adding or removing the triggers takes a short lock on each table (start refuses after 5 seconds
   rather than queue writers). `<shadow dir>/writer-hooks.json` is written before the first trigger, the
@@ -1936,14 +1936,15 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (disabled, replica-only, conditional, the wrong events or another function; the next note repairs it and leaves a
   gap row), a role that can write brain tables (a table privilege, or a privilege on any single column) but has no
   complete way to record evidence (INSERT on `engine_writer_coverage_gaps`, and row-level security that lets it in; the
-  session table alone is not enough, because a refresh the trigger skips can only be recorded as a gap). The roles
+  session table alone is not enough, because a refresh the trigger skips can only be recorded as a gap), plus the
+  file-side evidence: reconcile follower misses, repairs made while coverage was invalid, and a lost note. The roles
   judged are the login roles and every role a non-superuser login can `SET ROLE` to (the SET option of a membership
   on PostgreSQL 16 and newer, direct or through a chain; plain membership on older servers), because the trigger runs
   with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
   while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
   runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
-  failure instead of holding one of the brain's connections,
-  reconcile follower misses, repairs made while coverage was invalid, and a lost note. A fault or pass record that is
+  failure instead of holding one of the brain's connections.
+  A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. A write that only takes a lock,
   a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
