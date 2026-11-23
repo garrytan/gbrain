@@ -1310,7 +1310,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1393 column(s) verified against live schema",
+          "message": "1395 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -3463,6 +3463,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No released fact was confirmed with fence-row fields its release preview did not show.",
           "name": "trust_release_unpreviewed_fields",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "items": [],
+            "total": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every held write is tied to one page, or waits for its page to be created.",
+          "name": "write_gate_hold_ambiguous",
           "status": "ok"
         },
         {

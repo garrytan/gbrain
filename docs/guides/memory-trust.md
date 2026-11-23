@@ -90,6 +90,22 @@ typed-claim and attribution cells as they stand. The confirmation covers exactly
 if the hold or that row changes before the release lands, it refuses with
 `preview_changed` and the fact stays held, on every brain, with or without a
 repository.
+A held write remembers the page it was held for by the page's permanent
+id, so it stays held whatever the page is called: renaming the page (a Git
+rename caught by sync, `gbrain repair rename-identity`) never lifts it, and a
+different page that later takes the old name does not inherit it. A held
+write recorded before any page had that name matches by name until a page is
+first created there, which then claims it. Releasing a held fact publishes it
+on that page under its current name; if the page no longer exists, the release
+is refused with the fact still held, never aimed at whichever page has the old
+name. Purging a page removes the holds that belong to it and no other page's.
+Holds written before a brain upgraded to this behavior are matched to their
+page from the page that held the name and its rename history. When that cannot
+be settled (a page created after the hold now has the name, the name moved, or
+two pages fit), the hold stays held for every page it could belong to,
+`gbrain doctor` lists it as `write_gate_hold_ambiguous`, and you decide it in
+`gbrain trust review`: drop it, or remember the fact on the right page
+yourself (a release is refused for such a hold).
 With suppress, flagged items are still returned by explicit search, recall
 and `get_page`, labeled, but hook context, the context engine,
 `context_pack` and volunteer leave them out until you confirm them in
