@@ -55,7 +55,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     offer: (capture: Parameters<MirrorQueue['offer']>[0]) => queue.offer(capture),
     active: () => supervisor.active(),
   };
-  const seeded = deps.follow === undefined && readSeedRecord(dir) !== null;
+  const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
   const reads = seeded ? openReadSource(engine) : undefined;
   const follower = reads ? new ShadowFollower({
@@ -67,12 +67,12 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   reconciler?.startNightly();
   engine.registerBeforeDisconnect(async () => {
     try {
+      queue.stop(); // delivers the reads still queued, so the child sees them and the counters add up
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
       // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
       if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
     } finally {
       reconciler?.stop();
-      queue.stop();
       supervisor.stop();
       await reads?.close().catch(() => undefined);
     }

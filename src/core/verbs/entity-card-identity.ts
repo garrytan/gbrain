@@ -137,9 +137,8 @@ export interface SiblingIdentity {
 export async function readSiblingIdentity(engine: BrainEngine, sourceId: string, row: { slug: string; title: string | null },
   opts: { excludePrivate: boolean; excludeQuarantined?: boolean; policy?: MentionPolicy; pack?: PackTypes | null }): Promise<SiblingIdentity> {
   const siblings = await readIdentitySiblings(engine, sourceId, row, opts);
-  const aliasRows = await engine.executeRaw<SiblingIdentity['aliasRows'][number]>(
-    `SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm`,
-    [sourceId, [row.slug, ...siblings.pages.map(p => p.slug)]]).catch(() => []);
+  const aliasRows: SiblingIdentity['aliasRows'] = await engine.readEntityAliasRows(sourceId, [row.slug, ...siblings.pages.map(p => p.slug)])
+    .catch(() => []);
   if (!siblings.pages.length && !siblings.capped) return { aliasRows };
   return {
     aliasRows,

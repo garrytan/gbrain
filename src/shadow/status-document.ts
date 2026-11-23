@@ -7,6 +7,8 @@ import { existsSync } from 'node:fs';
 import type { EngineConfig } from '../core/types.ts';
 import { buildFollowStatus } from './follow-status.ts';
 import { readFaults, readShadowSummary } from './ledger.ts';
+import { storageReport, type StorageReport } from './managed-gate.ts';
+import { readSeedRecord, type SeedRecord } from './seed.ts';
 import { readShadowState, shadowBrainKey, shadowDirFor, shadowStatePath } from './state.ts';
 
 export type ShadowStatusDocument = ReturnType<typeof shadowStatusDocument>;
@@ -23,8 +25,18 @@ export function shadowStatusDocument(brain: { key: string; dir: string }, now: D
   return {
     schema_version: 1 as const, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
     totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-    children: summary?.children ?? 0, recent_faults: faults,
-    ...buildFollowStatus(brain.dir, state, now),
+    children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage),
+    ...buildFollowStatus(brain.dir, state, now), seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
+  };
+}
+
+/** The `seed` block of the status document: null fields until a seed finished. */
+export function seedStatus(record: SeedRecord | null): {
+  seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null; storage: StorageReport | null;
+} {
+  return {
+    seed_id: record?.seed_id ?? null, finished_at: record?.finished_at ?? null, unseeded_gap_rows_total: record?.unseeded_gap_rows_total ?? null,
+    storage: storageReport(record?.storage),
   };
 }
 

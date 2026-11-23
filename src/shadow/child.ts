@@ -11,6 +11,7 @@
  * The store is not seeded yet (seed and reconcile are plan PR S3), so once Rust implements a read, its answers
  * describe an empty store and mostly `diff`; the provisional report says so.
  */
+import { existsSync, rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
@@ -22,10 +23,15 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS } from './reads.ts';
+import { shadowStatePath } from './state.ts';
 
 export const SHADOW_CHILD_CALL_TIMEOUT_MS = 10_000;
 export const SHADOW_CHILD_QUEUE_BOUND = 1024;
 export const SHADOW_HEARTBEAT_MS = 5_000;
+/** After input ends the child drains, writes its evidence and exits; past this it flushes what it has and exits anyway (the parent's own kill timer dies with the parent). */
+export const SHADOW_CHILD_EXIT_DEADLINE_MS = 30_000;
+/** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
+export const SHADOW_CHILD_STALL_LIMIT = 4;
 
 type ShadowEngine = Pick<BrainEngine, 'connect' | 'disconnect'> & Record<string, unknown>;
 
@@ -38,6 +44,10 @@ export interface ShadowChildDeps {
   openEngine?: (addon: RustEngineAddonHandle, storePath: string) => ShadowEngine;
   timeoutMs?: number;
   heartbeatMs?: number;
+  /** Set by the process entry: called with 0 at the exit deadline. In-process callers leave it unset and get no deadline. */
+  exit?: (code: number) => void;
+  exitDeadlineMs?: number;
+  flushMs?: number;
   childId?: string;
   now?: () => number;
 }
@@ -65,6 +75,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<{ timedOut: tr
   });
 }
 
+/** The control writer for a child process's stdout. A short-lived parent (a CLI call, a cron job) closes its end before the first heartbeat; that must not kill the child before it writes evidence. */
+export function pipeControlWriter(out: NodeJS.WriteStream): (line: string) => void {
+  let closed = false;
+  // cli.ts exits on SIGPIPE and on an EPIPE from stdout (a pipeline's `| head`); this child has no pipeline, so it takes both over.
+  process.removeAllListeners('SIGPIPE');
+  process.on('SIGPIPE', () => {});
+  out.removeAllListeners('error');
+  out.on('error', () => { closed = true; }); // EPIPE: the parent is gone, so no more heartbeats
+  return (line) => { if (!closed) out.write(line); };
+}
+
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
 export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): Promise<number> {
   const now = deps.now ?? Date.now;
@@ -77,20 +98,40 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   let engine: ShadowEngine | null = null;
   let unavailable: Classification | null = null;
+  let openTimedOut = false;
   let load: Awaited<ReturnType<RustEngineAddonLoaderFn>>;
   try {
     load = await (deps.loadAddon ?? loadRustEngineAddonOffline)();
   } catch (error) {
     load = { ok: false, code: 'rust_engine_addon_missing', reason: `loader_error:${classifyError(error).reason ?? 'unknown'}`, message: 'loader threw' };
   }
+  // `stop --delete` can land while the addon loads: opening the store now would recreate the directory it removed.
+  const hadState = existsSync(shadowStatePath(shadowDir));
+  const deleted = (): boolean => !existsSync(shadowDir) || (hadState && !existsSync(shadowStatePath(shadowDir)));
   if (!load.ok) {
     unavailable = { outcome: 'addon_unavailable', reason: `${load.code}:${load.reason}` };
+  } else if (deleted()) {
+    unavailable = { outcome: 'error', reason: 'shadow_dir_deleted' };
   } else {
     try {
       const open = deps.openEngine ?? ((addon, store) => openRustEngine({ addon, databasePath: store }) as unknown as ShadowEngine);
       const storePath = join(shadowDir, 'store');
       engine = open(load.addon, storePath);
-      await engine.connect({ database_path: storePath });
+      // A connect that never returns would keep the exit deadline (armed after input ends) from ever starting; a child with a deadline gives up on it.
+      const connecting = engine.connect({ database_path: storePath });
+      if (deps.exit && (await withTimeout(connecting, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS)).timedOut) {
+        // The child gives up on this store: it closes it if the open ever finishes, and goes quiet so the parent's watchdog restarts the child.
+        const abandoned = engine;
+        void connecting.then(() => abandoned.disconnect(), () => undefined).catch(() => undefined);
+        openTimedOut = true;
+        throw Object.assign(new Error('opening the Rust store timed out'), { code: 'open_timeout' });
+      }
+      await connecting;
+      if (deleted()) {
+        await engine.disconnect().catch(() => {});
+        rmSync(shadowDir, { recursive: true, force: true });
+        throw Object.assign(new Error('shadow directory deleted while opening'), { code: 'shadow_dir_deleted' });
+      }
     } catch (error) {
       engine = null;
       unavailable = { outcome: 'error', reason: `open_failed:${classifyError(error).reason ?? 'unknown'}` };
@@ -104,8 +145,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     store: async () => { try { return (await rustEngine?.storeFor?.('follow')) ?? null; } catch { return null; } },
     owner: () => rustEngine?.ownerRole !== 'client',
   });
-  const heartbeat = setInterval(() => { follow.tick(); try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ } }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
-  try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
+  const stalled = new Set<Promise<unknown>>();
+  const heartbeat = setInterval(() => {
+    if (openTimedOut || stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
+    follow.tick();
+    try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
+  }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
+  if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
 
   const pending: ReadEvent[] = [];
   const rows: ShadowLedgerRow[] = [];
@@ -122,6 +168,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       writeSummaryFile(shadowDir, summary);
     } catch { /* a full disk loses evidence, never the child */ }
   };
+
+  // Finished comparisons reach disk within a couple of seconds even when no more reads arrive (a kill loses at most that window).
+  const flusher = setInterval(() => { if (rows.length) flush(true); }, deps.flushMs ?? 2_000);
+  (flusher as { unref?: () => void }).unref?.();
 
   const record = (event: ReadEvent, c: Classification, rustMs: number | null, rustRows: number | null): void => {
     const ts = new Date(event.at || now()).toISOString();
@@ -150,14 +200,22 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     if (unavailable || !engine) { record(event, unavailable ?? { outcome: 'error', reason: 'no_engine' }, null, null); return; }
     const fn = engine[event.op];
     if (typeof fn !== 'function') { record(event, { outcome: 'capability_missing', reason: 'not_a_member' }, null, null); return; }
-    const args = decodeValue(event.args) as unknown[];
+    if (stalled.size >= SHADOW_CHILD_STALL_LIMIT) { record(event, { outcome: 'timeout', reason: 'stalled' }, null, null); return; }
     const started = performance.now();
     try {
-      const out = await withTimeout(Promise.resolve((fn as (...a: unknown[]) => unknown).apply(engine, args)), timeoutMs);
+      const args = decodeValue(event.args) as unknown[]; // inside the try: one malformed event is recorded, never a wedged loop
+      const call = Promise.resolve((fn as (...a: unknown[]) => unknown).apply(engine, args));
+      const out = await withTimeout(call, timeoutMs);
       const rustMs = performance.now() - started;
-      if (out.timedOut) { record(event, { outcome: 'timeout' }, rustMs, null); return; }
+      if (out.timedOut) {
+        stalled.add(call);
+        const settled = (): void => { stalled.delete(call); };
+        call.then(settled, settled); // a call that never returns keeps its slot: that is what bounds the pile
+        record(event, { outcome: 'timeout' }, rustMs, null);
+        return;
+      }
       const encoded = encodeValue(out.value);
-      record(event, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded), rustMs, rowCount(encoded));
+      record(event, classifyResult(SHADOW_READ_MEMBERS[event.op], event.args, event.result, encoded, event.op), rustMs, rowCount(encoded));
     } catch (error) {
       record(event, classifyError(error), performance.now() - started, null);
     }
@@ -166,8 +224,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   let draining: Promise<void> | null = null;
   const drain = (): Promise<void> => {
     draining ??= (async () => {
-      while (pending.length > 0) await handle(pending.shift()!);
-      draining = null;
+      try { while (pending.length > 0) await handle(pending.shift()!); } finally { draining = null; }
     })();
     return draining;
   };
@@ -175,18 +232,23 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
-    let event: { t?: string; counters?: MirrorCounters };
+    let event: { t?: string; counters?: MirrorCounters; pid?: number };
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
-    if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; continue; }
+    if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
     pending.push(event as ReadEvent);
     void drain();
   }
+  if (deps.exit) {
+    const timer = setTimeout(() => { summary.child_shed += pending.length; flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
+    (timer as { unref?: () => void }).unref?.();
+  }
   await drain();
   await follow.close();
   clearInterval(heartbeat);
+  clearInterval(flusher);
   flush(true);
   if (engine) { try { await engine.disconnect(); } catch { /* exiting anyway */ } }
   return handled;

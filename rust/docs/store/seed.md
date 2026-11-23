@@ -70,7 +70,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `slug_aliases`, `page_aliases` | the alias; a derived page alias (`declared`, `subject`) keeps `case_sensitive` and `alias_text` | a held alias is skipped |
 | `facts` | the fact, its tier, its write receipt and its embedding | an id already held is skipped |
 | `takes` | the take, its tier and origin, its write receipt and its row key | `claim_rev` starts at 0. The vector is kept only when it is current (hash equals the md5 of the claim, model and `embedded_at` set) |
-| `owner_only_marks` | the mark of a page | a mark on another table is dropped (`owner_only_mark_not_a_page`); the page need not exist (a hard delete leaves the mark) |
+| `owner_only_marks` | the mark of a page | a mark on another table is dropped (`owner_only_mark_not_a_page`); the page need not exist (a hard delete leaves the mark), and the page id counter is raised past the marked id so no new page takes it |
 | `slug_rename_history` | the old-to-new pair | alias rows are not touched |
 | `fact_withdrawals` | the withdrawal, with the primary's `fact_hash` and `withdrawn_at` | the hash is not computed again |
 | `page_purges` | the purge tombstone (slug, request id, time) | |
@@ -118,7 +118,7 @@ every other op are machine-local.
 | `wake_subscriptions` | open watches are not carried and never wake. A watch copied without its job or write request would wake on the first tick, so none is copied. (`wake_crons` is copied: a lost cron would make every `watch_cron` read `not_found`) |
 | `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
 | `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries`, `page_generation_clock` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call); cached query results recompute (`page_generation_clock` is the query cache's clock, and no store read uses it) |
-| `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text (`segmented_body`) |
+| `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text or its sealed keyword vector (`segmented_body`) |
 | `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints` (except the rows below), `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again |
 
 ### Gaps: not served by the Rust store on master
@@ -211,7 +211,7 @@ ids, chunk `created_at`). `losses` counts, by reason, the rows dropped and the v
 | Reason | What was lost |
 | --- | --- |
 | `config_version_differs` | the primary's schema `version` |
-| `segmented_body` | the segments of a segmented body (the page and its body columns are kept) |
+| `segmented_body` | the segments of a segmented body (the page and its body columns are kept). The page's sealed keyword vector is not copied either, so its title search reads the title only until the page is written again |
 | `emotional_weight_without_touch` | a non-zero weight on a page with no `salience_touched_at` |
 | `corpus_generation_without_mode` | a corpus generation with no contextual-retrieval mode |
 | `retired_chunk`, `segment_chunk` | the dropped chunk rows |
@@ -351,7 +351,7 @@ of a take and the referrers of a fact; they keep their entries.
 
 The relations whose rows are looked up this way, with the column sets that are unique, are the `unique` lists of each
 relation's follow spec: `pages` (source, slug), `tags` (page, tag), `content_chunks` (page, index), `links` (from, to,
-type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `takes`
+type, source, origin), `slug_aliases`, `page_aliases`, `facts` (the markdown row fence and the stint index), `timeline_entries` (page, date, summary, source), `takes`
 (page, row), `raw_data`, `files` (storage path), `open_loops`, `wanted_links`, `trust_proposals` (the pending key),
 `code_edges_chunk`, `code_edges_symbol`, `decide_proposals`, `decide_review_proposals` and `wake_forgets`. The holder is
 found through the digest entries' identity columns, scanning the relation's entries once per call that has a row to

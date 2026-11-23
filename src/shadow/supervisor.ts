@@ -128,6 +128,10 @@ export class ShadowSupervisor implements MirrorTransport {
     if (child) {
       child.removeAllListeners('exit');
       try { child.stdin?.end(); } catch { /* already gone */ }
+      // A child stuck in native work never sees the end of its input: kill it after the hang window, not never.
+      const reaper = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, this.o.hangMs);
+      (reaper as { unref?: () => void }).unref?.();
+      child.once('exit', () => clearTimeout(reaper));
     }
   }
 
@@ -184,7 +188,7 @@ export class ShadowSupervisor implements MirrorTransport {
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
       else if (msg.t === 'resp' && typeof msg.id === 'number') {
-        this.settleRequest(msg.id, msg.value, msg.ok ? undefined : Object.assign(new Error(msg.error?.message ?? 'rpc failed'), { code: msg.error?.code ?? 'rpc_failed' }));
+        const err = msg.ok ? undefined : new Error(msg.error?.message ?? 'rpc failed') as Error & { code?: string }; if (err) err.code = msg.error?.code ?? 'rpc_failed'; this.settleRequest(msg.id, msg.value, err);
       }
       else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }
       else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');

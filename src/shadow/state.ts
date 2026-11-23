@@ -12,8 +12,8 @@
  *   reports/            the provisional report (report.ts)
  *
  * `<brain>` is the engine kind plus the first 12 hex characters of a SHA-256 over the brain's identity: the resolved
- * `database_path` for PGLite, or the host, port and database name of `database_url` for Postgres (never the user or
- * password). The engine factory reads `state.json` on every engine it builds, so `shadowStateFor` is an existsSync
+ * `database_path` for PGLite, or the user name, host, port and database name of `database_url` for Postgres (a pooler
+ * routes by user name, so it is part of the hash; it is never stored or shown, and the password is never used). The engine factory reads `state.json` on every engine it builds, so `shadowStateFor` is an existsSync
  * and, only when the file exists, one small JSON read.
  */
 import { createHash } from 'node:crypto';
@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join, resolve } from 'node:path';
 import { configDir } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
+import type { ManagedStorageRecord } from './managed-gate.ts';
 
 export const SHADOW_STATE_VERSION = 1;
 /** Default share of eligible reads mirrored (`shadow.read_sample` in the plan). */
@@ -43,6 +44,8 @@ export interface ShadowState {
   brain: string;
   /** The primary engine kind at start. */
   primary_engine: string;
+  /** Whether the brain used managed storage when `start` read it. Absent in a state written before this field existed. */
+  storage?: ManagedStorageRecord;
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
@@ -53,7 +56,9 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
       if (!config.database_url) return null;
       try {
         const url = new URL(config.database_url);
-        return { engine, identity: `postgres://${url.hostname}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}` };
+        // The user name stays: a pooler routes by it (Supabase `postgres.<project>`), so two brains share host, port and database. It is only hashed, never stored or shown.
+        const user = url.username ? `${decodeURIComponent(url.username)}@` : '';
+        return { engine, identity: `postgres://${user}${url.hostname}:${url.port || '5432'}/${decodeURIComponent(url.pathname.replace(/^\//, ''))}` };
       } catch {
         return null;
       }
@@ -94,6 +99,8 @@ export function readShadowState(dir: string): ShadowState | null {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ShadowState;
     if (!parsed || typeof parsed !== 'object' || parsed.version !== SHADOW_STATE_VERSION) return null;
+    // A hand-edited file with a bad rate or bound reads as off, never as an unbounded or always-on mirror.
+    if (!(parsed.sample_rate > 0 && parsed.sample_rate <= 1) || !Number.isInteger(parsed.queue_bound) || parsed.queue_bound < 1) return null;
     return parsed;
   } catch {
     return null;

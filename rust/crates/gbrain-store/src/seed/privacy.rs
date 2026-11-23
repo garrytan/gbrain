@@ -4,7 +4,7 @@
 use super::decode::Row;
 use super::{
     Column::{Kept, Unmapped},
-    Losses, Outcome, Relation, require_source,
+    Losses, Outcome, Relation, raise_counter, require_source,
 };
 use crate::error::Result;
 use crate::kv::KvWrite;
@@ -45,10 +45,10 @@ fn import_owner_only_mark(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Re
     if row.req("row_table")? != "pages" {
         return Ok(Outcome::Dropped("owner_only_mark_not_a_page"));
     }
-    Ok(stored(crate::owner_only_marks::seed_mark(
-        tx,
-        row.req_id("row_id")?,
-    )?))
+    let id = row.req_id("row_id")?;
+    // A mark outlives its page, so its id can exceed every surviving page: the store must never hand that id to a new page.
+    raise_counter(tx, crate::pages::NEXT_PAGE_ID, id)?;
+    Ok(stored(crate::owner_only_marks::seed_mark(tx, id)?))
 }
 
 // ---- slug_rename_history -------------------------------------------------------------------

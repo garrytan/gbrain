@@ -29,7 +29,7 @@ const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'gbrain-follow-units-')); dirs.push(d); return d; };
 
-const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
+const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
 const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' } as ShadowState;
 const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, dropped: 0, unmapped_columns: [], losses: {} };
 
@@ -370,7 +370,7 @@ describe('status --json', () => {
     ]));
     expect(json.epoch_id).toBe('seed-1');
     expect(json.follower).toEqual({
-      state: 'stopped', lag_ms: null, lag_ms_p99_24h: null, lag_ms_p99_epoch: null, queue_depth: 0, applied_rows: 0,
+      state: 'stopped', action: null, lag_ms: null, lag_ms_p99_24h: null, lag_ms_p99_epoch: null, queue_depth: 0, applied_rows: 0,
       coverage_watermark: { valid: false, through: null, invalidated_reason: 'not_started' },
     });
     expect(json.reconcile.state).toBe('never_run');
@@ -379,7 +379,7 @@ describe('status --json', () => {
       state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
       differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
     } });
-    expect(json.seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0 });
+    expect((json as { seed: unknown }).seed).toEqual({ seed_id: 'seed-1', finished_at: SEED.finished_at, unseeded_gap_rows_total: 0, storage: null });
     expect(json.allocators).toEqual({ verified: false, checked_at: null });
     expect(json.primary_refreshes).toEqual({ nonterminal_rows: null, checked_at: null });
   });
@@ -405,7 +405,7 @@ function shadowReadiness(s: Partial<FollowStatus>): 'ready' | 'not_ready' | 'fol
 describe('shadowReadiness (the S5a reading rules)', () => {
   const good = (): FollowStatus => ({
     epoch_id: 'e', epoch_started_at: 't',
-    follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
+    follower: { state: 'following', action: null, lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
     reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
     write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },
