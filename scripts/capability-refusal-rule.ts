@@ -167,8 +167,9 @@ function returnsFallback(s: ts.Node, errorName: string | undefined): boolean {
 /**
  * Whether the handler lets a capability refusal through before any fallback: one of its leading
  * statements, before the first return, branch or assignment, rethrows it. A bare block is read as
- * its statements; any other statement that can return a fallback on some path (a loop, a switch, a
- * labelled block) ends the search, since that path skips the later check.
+ * its statements; a switch ends the search outright (a case can shadow or overwrite the caught error and answer
+ * first), and any other statement that can return a fallback on some path (a loop, a labelled block) ends it too,
+ * since that path skips the later check.
  */
 export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): boolean {
   const { errorName } = site;
@@ -184,7 +185,7 @@ export function handlerRethrowsCapabilityRefusal(site: CapabilityRefusalSite): b
       if (ts.isReturnStatement(s) && s.expression && isRethrowHelperCall(s.expression, errorName)) return true;
       if (ts.isIfStatement(s) && testsCapabilityRefusal(s.expression, errorName) && thenRethrows(s.thenStatement)) return true;
       // Logging, locals and other side effects may come first; the first answer or branch ends the search.
-      if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isTryStatement(s)) return false;
+      if (ts.isReturnStatement(s) || ts.isIfStatement(s) || ts.isSwitchStatement(s) || ts.isTryStatement(s)) return false;
       if (ts.isExpressionStatement(s) && ts.isBinaryExpression(s.expression) && s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
       if (returnsFallback(s, errorName)) return false;
     }
