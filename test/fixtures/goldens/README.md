@@ -52,6 +52,8 @@ reproduce byte for byte. Each file is written by `test/helpers/golden.ts` as
   registry maximum (as the package version is `<version>`), so a migration renumber does
   not regenerate these files; `expectSchemaLatestMatchesRegistry` asserts the raw report
   names the registry maximum (`test/doctor-json-golden-latest.test.ts` pins both).
+  stderr lines are kept, except the read heartbeat's `still reading ... (N s so far)`
+  lines, which only a slow runner prints.
 - `doctor/early-stop-*.json` (`test/doctor-early-stop-golden.serial.test.ts`,
   `doctor-checks-v1`): `buildChecks` null-engine, `--fast`, connect-error and
   getStats-failure early stops.
