@@ -183,3 +183,14 @@ test('new fact arrivals do not extend the initial drain census or falsely comple
   expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeTruthy();
   expect(await engine.getConfig(MIGRATION_COMPLETED_KEY)).toBeFalsy();
 });
+
+test('legacy database model is repaired by the migration flow and repeated application is harmless', async () => {
+  await engine.setConfig('embedding_model', 'text-embedding-3-small');
+  const first = await flow();
+  expect(first.status).toBe('completed');
+  expect(await engine.getConfig('embedding_model')).toBe(model);
+  const second = await flow();
+  expect(second.status).toBe('completed');
+  expect(second).toMatchObject({ invalidated: 0, embedded: 0, schema_transitioned: false });
+  expect(await engine.getConfig('embedding_model')).toBe(model);
+});

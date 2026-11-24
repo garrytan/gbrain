@@ -1049,6 +1049,10 @@ export async function verifyMigrationComplete(
   } = {},
 ): Promise<MigrationVerify> {
   const blockers: string[] = [];
+  const storedModel = await engine.getConfig('embedding_model');
+  if (storedModel !== target.toModel) {
+    blockers.push(`database embedding_model is ${storedModel ?? '(unset)'}, target is ${target.toModel}`);
+  }
   const facts = await countStaleFactEmbeddings(engine, target.toModel, target.toDims);
   const readiness = await prepareEmbeddingProjections(engine);
   if (facts.count) blockers.push(`${facts.count} active fact(s) not in the target embedding space`);

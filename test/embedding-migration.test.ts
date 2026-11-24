@@ -616,7 +616,21 @@ describe('#4305 false target stamps + #4306 embed_skip-safe invalidation', () =>
     expect(await chunkState('skip-drift')).toEqual({ embedded: 1, nulls: 0 });
   });
 
+  test('legacy database identity blocks convergence until migration applies, then stays complete', async () => {
+    await engine.setConfig('embedding_model', 'text-embedding-3-small');
+    await engine.setConfig('embedding_dimensions', String(colDim));
+    const target = { toModel: TARGET, toDims: colDim };
+    const opts = { filePlane: { model: TARGET, dims: colDim }, ignoreMarker: true };
+    expect((await verifyMigrationComplete(engine, target, opts)).blockers.join(' ')).toMatch(/database embedding_model/);
+    const plan = await planEmbeddingMigration(engine, { to: TARGET, dim: colDim });
+    expect((await applyEmbeddingMigration(engine, plan)).status).toBe('applied');
+    expect(await engine.getConfig('embedding_model')).toBe(TARGET);
+    expect((await verifyMigrationComplete(engine, target, opts)).complete).toBe(true);
+    expect((await verifyMigrationComplete(engine, target, opts)).complete).toBe(true);
+  });
+
   test('#4306: verify reports embed_skip NULL chunks without blocking completion', async () => {
+    await engine.setConfig('embedding_model', TARGET);
     // The already-damaged shape: an embed_skip page whose chunks were NULLed
     // by a pre-fix run. Nothing re-embeds it by design — completion must not
     // wedge on it, but the verdict must SAY it.
