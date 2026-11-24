@@ -4,7 +4,8 @@
  *
  *  - `holdAppliesToPageSql`: when a hold is held for a page. A bound hold applies to its page and to no other, whatever
  *    either is called. An unbound hold applies to the page at its slug; one the upgrade marked with candidate pages
- *    (`page_candidates`) applies to every candidate as well, so its content stays out of answers until the owner decides.
+ *    (`page_candidates`) applies to every candidate as well, so its content stays out of answers until the owner decides; it also
+ *    applies to a page its slug leads to through the same source's rename record.
  *  - `carryHoldsToPage`: the identity carry. When a page's rows move to another page id (a sync rename that fell back to
  *    add semantics, `gbrain repair rename-identity`), the holds move too, never dropping a hold that differs.
  *
@@ -22,21 +23,32 @@ import type { BrainEngine } from './engine.ts';
  * more than the hold covers, which is the safe side.
  */
 export function holdAppliesToPageSql(h: string, pageId: string, slug: string): string {
-  const reached = `EXISTS (WITH RECURSIVE reach(s) AS (SELECT ${h}.slug UNION SELECT n.t FROM reach x JOIN LATERAL (
-      SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = ${h}.source_id AND a.alias_slug = x.s
-      UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = ${h}.source_id AND r.old_slug = x.s) n ON true)
-    SELECT 1 FROM reach WHERE reach.s = ${slug})`;
+  const reached = `EXISTS (${holdReachCte(h)} SELECT 1 FROM reach WHERE reach.s = ${slug})`;
   return `(${h}.page_id = ${pageId} OR (${h}.page_id IS NULL AND (${h}.slug = ${slug} OR ${pageId} = ANY(COALESCE(${h}.page_candidates, '{}'::bigint[])) OR ${reached})))`;
 }
 
 /**
+ * The slugs a hold's own slug leads to through the same source's rename record (`slug_aliases`, alias to canonical, and
+ * `slug_rename_history`, old to new; chains followed, a cycle ends), the hold's own slug included, as the CTE `reach(s)`.
+ */
+function holdReachCte(h: string): string {
+  return `WITH RECURSIVE reach(s) AS (SELECT ${h}.slug UNION SELECT n.t FROM reach x JOIN LATERAL (
+      SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = ${h}.source_id AND a.alias_slug = x.s
+      UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = ${h}.source_id AND r.old_slug = x.s) n ON true)`;
+}
+
+/**
  * The deletion half of the page lifecycle: SQL true for the holds a purge of page `pageId` deletes outright (`pageId`
- * and `slug` are SQL expressions): holds bound to its id, and unbound holds at its slug that no upgrade marked with
- * candidate pages. A candidate-marked hold is held for several pages; `dropPurgedCandidates` takes the purged page out
- * of its list instead, and deletes it only when no candidate is left.
+ * and `slug` are SQL expressions): holds bound to its id, and unbound holds with no candidate list whose slug is the
+ * purged slug (or leads to it through the rename record) while no other page row is reachable from that slug: a hold
+ * whose rename record still reaches a surviving page keeps protecting it, and goes with the last page it can reach.
+ * A candidate-marked hold is held for several pages; `dropPurgedCandidates` takes the purged page out of its list
+ * instead, and deletes it only when no candidate is left.
  */
 export function holdOwnedByDeletedPageSql(h: string, pageId: string, slug: string): string {
-  return `((${pageId}::bigint IS NOT NULL AND ${h}.page_id = ${pageId}::bigint) OR (${h}.page_id IS NULL AND ${h}.page_candidates IS NULL AND ${h}.slug = ${slug}))`;
+  const named = `(${h}.slug = ${slug} OR EXISTS (${holdReachCte(h)} SELECT 1 FROM reach WHERE reach.s = ${slug}))`;
+  const survivor = `EXISTS (${holdReachCte(h)} SELECT 1 FROM reach JOIN pages q ON q.source_id = ${h}.source_id AND q.slug = reach.s WHERE q.id IS DISTINCT FROM ${pageId}::bigint)`;
+  return `((${pageId}::bigint IS NOT NULL AND ${h}.page_id = ${pageId}::bigint) OR (${h}.page_id IS NULL AND ${h}.page_candidates IS NULL AND ${named} AND NOT ${survivor}))`;
 }
 
 /** What a purge verifier counts as left behind: the holds the purge deletes outright, and any candidate-marked hold still naming the page. */

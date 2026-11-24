@@ -1032,8 +1032,8 @@
             "params": [
               "number"
             ],
-            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at",
-            "textSha256": "2d000a4346f97ae470deece7e2078ab1e7a07e223116dbe260e2cb8f1fb3ddfa"
+            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at AND NOT EXISTS ( WITH RECURSIVE reach(s) AS (SELECT h.slug UNION SELECT n.t FROM reach x JOIN LATERAL ( SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = h.source_id AND a.alias_slug = x.s UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = h.source_id AND r.old_slug = x.s) n ON true) SELECT 1 FROM reach JOIN pages q ON q.source_id = h.source_id AND q.slug = reach.s WHERE reach.s <> h.slug AND q.id <> p.id)",
+            "textSha256": "abdbf3d681d4f24eb3298915bfce4f6d5e3130dae3e74d666e4d9429ec64b719"
           },
           {
             "event": "commit",
@@ -1119,8 +1119,8 @@
             "params": [
               "number"
             ],
-            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at",
-            "textSha256": "2d000a4346f97ae470deece7e2078ab1e7a07e223116dbe260e2cb8f1fb3ddfa"
+            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at AND NOT EXISTS ( WITH RECURSIVE reach(s) AS (SELECT h.slug UNION SELECT n.t FROM reach x JOIN LATERAL ( SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = h.source_id AND a.alias_slug = x.s UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = h.source_id AND r.old_slug = x.s) n ON true) SELECT 1 FROM reach JOIN pages q ON q.source_id = h.source_id AND q.slug = reach.s WHERE reach.s <> h.slug AND q.id <> p.id)",
+            "textSha256": "abdbf3d681d4f24eb3298915bfce4f6d5e3130dae3e74d666e4d9429ec64b719"
           },
           {
             "event": "commit",
@@ -1217,8 +1217,8 @@
             "params": [
               "number"
             ],
-            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at",
-            "textSha256": "2d000a4346f97ae470deece7e2078ab1e7a07e223116dbe260e2cb8f1fb3ddfa"
+            "sql": "UPDATE write_gate_holds h SET page_id = p.id FROM pages p WHERE p.id = $1 AND h.source_id = p.source_id AND h.slug = p.slug AND h.page_id IS NULL AND h.page_candidates IS NULL AND h.created_at <= p.created_at AND NOT EXISTS ( WITH RECURSIVE reach(s) AS (SELECT h.slug UNION SELECT n.t FROM reach x JOIN LATERAL ( SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = h.source_id AND a.alias_slug = x.s UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = h.source_id AND r.old_slug = x.s) n ON true) SELECT 1 FROM reach JOIN pages q ON q.source_id = h.source_id AND q.slug = reach.s WHERE reach.s <> h.slug AND q.id <> p.id)",
+            "textSha256": "abdbf3d681d4f24eb3298915bfce4f6d5e3130dae3e74d666e4d9429ec64b719"
           },
           {
             "event": "commit",

@@ -242,8 +242,9 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       const gone = new Set(rows.map(r => Number(r.id)));
       await scrubPurgedSlugs(tx, opts.sourceId, deleted);
       await scrubPurgedNameStores(tx, opts.sourceId, deleted);
-      await scrubPurgedSlugStores(tx, opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
+      // The holds go first: an unbound hold finds the purged page through the rename record, which the slug stores' scrub removes.
       await scrubPurgedSlugHolds(tx, opts.sourceId, rows.map(r => ({ slug: r.slug, id: Number(r.id) })));
+      await scrubPurgedSlugStores(tx, opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
       return deleted;
     });
   }
@@ -412,8 +413,8 @@ export async function purgeDeletedPages(
         const slugs = purged.map(p => p.slug);
         await scrubPurgedSlugs(tx, sourceId, slugs);
         await scrubPurgedNameStores(tx, sourceId, slugs);
+        await scrubPurgedSlugHolds(tx, sourceId, purged); // before the slug stores: their scrub removes the rename record the hold sweep reads
         await scrubPurgedSlugStores(tx, sourceId, slugs, { secretOccurrences: goneSecrets });
-        await scrubPurgedSlugHolds(tx, sourceId, purged);
       }
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length, pages: rows.map(r => ({ slug: r.slug, source_id: r.source_id, deleted_at: new Date(r.deleted_at) })) };
