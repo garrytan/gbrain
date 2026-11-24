@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 301882,
-    "stdoutSha256": "efc88a5959bf2855fe9b39c41daf3e5be6d0f67e5b9370ab50c12e22cf26917d",
+    "stdoutBytes": 303641,
+    "stdoutSha256": "c4f2fd8a343cb8d111c422a2f09687762a741871247cd41f6afd69027e5943ba",
     "toolNames": [
       "remember",
       "entity",
@@ -209,7 +209,8 @@
       "questions_status",
       "questions_refresh",
       "questions_unpin",
-      "mute_notice"
+      "mute_notice",
+      "learned"
     ],
     "tools": [
       {
@@ -9343,6 +9344,38 @@
           "type": "object"
         },
         "scope": "write"
+      },
+      {
+        "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "learned",
+        "parameters": {
+          "limit": "number?",
+          "since": "string?",
+          "stats": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "limit": {
+              "description": "Most items to return (default 15, at most 100). Every item returned is shown and stamped.",
+              "type": "number"
+            },
+            "since": {
+              "description": "ISO date or timestamp (e.g. 2026-11-20). Lists every item recorded since then, shown or not. Default: unseen items of the last 7 days (stats: the last 30 days).",
+              "type": "string"
+            },
+            "stats": {
+              "description": "Return the per-night stats instead of the items. Shows nothing, so it stamps nothing.",
+              "type": "boolean"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
       }
     ]
   },
