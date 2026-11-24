@@ -458,7 +458,6 @@
       "raw": 12,
       "tx": 1
     },
-    "replaceSourceConfig#default": {},
     "resolveSlugWithAlias#default": {},
     "resolveSlugWithAliasDetailed#default": {},
     "resolveSlugWithAliasDetailed#excludePrivate": {},
