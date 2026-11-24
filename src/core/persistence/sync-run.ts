@@ -54,7 +54,7 @@ import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
 import { checkpointSuperseded } from './sync-checkpoint-replaced.ts';
 import { publicFailureDetail } from './publication-failure.ts';
-import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
+import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, heldDeletionHeadMoved, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
 import { faultPoint } from './fault-points.ts';
 import { syncReceiptWait } from './sync-receipt-wait.ts';
 import { directoryAt, filterOwnedRefusal, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
@@ -1573,8 +1573,8 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         // #6712 PR 4b (design v3.2 §2): a pass's write refused because its file changed after admission is the level moving, not a
         // page failure: the entry is passed over and the next round classifies the new level (a level that never settles ends the
         // pass not_converged); its receipt read again (same level: an uncommitted edit) and a pinned-worktree conflict hold worktree_dirty below. So is an import whose
-        // page identity another writer changed after the freeze (a repair created the page at its slug): its page moved.
-        if (cursor.passId && ((fileChangedAfterAdmission(done) && !passedOverBefore(cursor.passId, pending.requestId)) || (done.error_code === 'page_identity_changed'
+        // page identity another writer changed after the freeze (a repair created the page at its slug): its page moved. GST-3648: a held deletion too.
+        if (cursor.passId && (((fileChangedAfterAdmission(done) || heldDeletionHeadMoved(done)) && !passedOverBefore(cursor.passId, pending.requestId)) || (done.error_code === 'page_identity_changed'
           && await liveRevision(engine, context.sourceId, pending) !== (pending.intent.expected_revision == null ? null : String(pending.intent.expected_revision))))) {
           cursor = await saveCursor(engine, key, cursor, committedPast({ ...cursor, counts: { ...cursor.counts } }, pending));
           await faultPoint('sync:passed_over', { sourceId: cursor.sourceId, path: pending.intent.path ?? undefined });
