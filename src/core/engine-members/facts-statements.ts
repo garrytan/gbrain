@@ -344,7 +344,7 @@ export interface FactsStatementMembers {
   /** Deletes the volunteer log rows and gazetteer entries of `slugs` in the source; rows per store. Writes both; run it in the purge transaction. */
   deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]): Promise<PurgeStoresSql.PurgedNameStoreRows>;
   /** Empties the query cache; the rows removed, or null when the brain has no such table. Writes query_cache; run it in the purge transaction. */
-  clearQueryCache(): Promise<number | null>;
+  clearQueryCache(sourceId?: string): Promise<number | null>;
   // The reads a page purge's receipt and verification make on the brain's own tables (engine-sql/purge-receipt.ts).
   /** Whether `table` resolves as a relation on the connection's search path (to_regclass). Reads the catalog. */
   relationExists(table: string): Promise<boolean>;

@@ -221,7 +221,6 @@ const INTERFACE_METHODS: readonly string[] = [
   'readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
   'readChunkColumnTypes', 'countChunkColumnCoverage', 'hasChunkImageVectors',
   // Semantic query-cache clear (engine-sql/query-cache.ts; covered by test/engine-parity/search-refusal-swallows.test.ts)
-  'clearQueryCache',
   // Doctor reads (engine-sql/doctor-reads.ts; covered by test/engine-parity/doctor-reads.test.ts)
   // Doctor derived reads (engine-sql/doctor-derived.ts; covered by test/engine-parity/doctor-derived.test.ts)
   'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner', 'listRecordedTombstones',

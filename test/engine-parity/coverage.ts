@@ -284,8 +284,6 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
   embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
     'readChunkColumnTypes', 'countChunkColumnCoverage', 'hasChunkImageVectors'],
-  // query_cache: the semantic query cache's clear (engine-sql/query-cache.ts)
-  query_cache: ['clearQueryCache'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],

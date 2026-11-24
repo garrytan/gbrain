@@ -457,7 +457,6 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   lockMentionSources: nothingLock,
   lockMentionEntries: nothingLock,
   // The semantic query-cache clear (engine-sql/query-cache.ts). The rust store keeps no query cache, so it clears nothing.
-  clearQueryCache: 'nothing: a clear removes every cache row in its scope, so running it again removes nothing more',
   deleteSourceMentionLinks: 'listMentionLinkOrigins for that source (no plain mention link left on the origins it deleted)',
   clearMentionSourceIndex: 'listGazetteerEntryKeys and listDerivedAliasRows for that source (both empty)',
   deleteDerivedAliasesForSlugs: 'listDerivedAliasRows for those slugs',
@@ -702,7 +701,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   releaseTerminalBytes: 'readCounterRows for that counter key',
   deletePurgedFeedbackRows: 'countPurgeProbe for that store (the store probes of the purge receipt)',
   deletePurgedNameStoreRows: 'countPurgeProbe for that store (the store probes of the purge receipt)',
-  clearQueryCache: 'nothing: it empties a cache that fills again on use, so running it again removes nothing more',
+  clearQueryCache: 'nothing: it empties a cache (or one source\'s rows of it) that fills again on use, so running it again removes nothing more',
   recordDerivationPurgeRow: 'readDerivationPurgeState for that purge request',
   continueDerivationSweep: 'readDerivationPurgeState for that purge request',
   upsertDerivedOriginPark: 'readOpCheckpointDoc for op derived-origin-park and the fingerprint <page id>: the park document it holds is the one written',

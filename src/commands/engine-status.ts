@@ -111,8 +111,6 @@ interface ProbeResult {
   /** The brain's one-way reference (src/core/brain-ref.ts); never its persistence identity. Null with a note when unread. */
   brain_ref?: string | null;
   brain_ref_note?: BrainRefNote;
-  /** A Rust brain's typed refusal (addon missing or mismatched, capability missing), reported as it is, not as a database error. */
-  refusal?: { code: string; reason?: string; message: string };
 }
 
 type BrainRefNote = 'no_persistence_identity' | 'brain_ref_unreadable' | 'locked_by_other_process' | ServeBrainRefNote;

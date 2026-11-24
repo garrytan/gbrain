@@ -19,7 +19,6 @@
 
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { BrainEngine } from '../engine.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { canonicalTypeOf, linkableTypesFor, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from './policy.ts';
 import { titleName } from './aliases.ts';

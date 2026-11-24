@@ -390,7 +390,7 @@ export class SemanticQueryCache {
   /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted (BrainEngine.clearQueryCache). */
   async clear(opts: { sourceId?: string } = {}): Promise<number> {
     try {
-      return await this.engine.clearQueryCache(opts.sourceId || undefined);
+      return (await this.engine.clearQueryCache(opts.sourceId || undefined)) ?? 0;
     } catch (e) {
       // A brain before the query_cache table has nothing to clear; an engine that cannot run the clear refuses.
       rethrowCapabilityRefusal(e);

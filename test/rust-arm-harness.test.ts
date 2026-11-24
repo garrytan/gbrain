@@ -81,11 +81,11 @@ describe('the Rust arm check', () => {
   // A write the coordinator refuses inside the store returns write_pending; the case's own assertion then throws.
   const pending = async () => { throw new Error('expected committed, received { code: "write_pending" }'); };
   const preimage = Object.assign(refusal('page_versions'), { detail: 'member=createVersion (option preimage) capability=page_versions outcome=none' });
-  const pin = { capability: 'page_versions', member: 'createVersion (option preimage)', site: 's', owner: 'o', due: 'd' } as const;
+  const pendingPin = { capability: 'page_versions', member: 'createVersion (option preimage)', site: 's', owner: 'o', due: 'd' } as const;
 
   test('a write_pending behind exactly the pinned refusal is counted refused', async () => {
     const t = tally();
-    await checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pin }, refusals: [preimage], run: pending }), t);
+    await checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pendingPin }, refusals: [preimage], run: pending }), t);
     expect(t).toEqual({ compared: 0, refused: 1, diverged: 0 });
   });
 
@@ -94,14 +94,14 @@ describe('the Rust arm check', () => {
   });
 
   test('a pin whose capability or member does not match the refusal fails and says to update it', async () => {
-    for (const wrong of [{ ...pin, capability: 'raw_sql' }, { ...pin, member: 'putPage' }]) {
+    for (const wrong of [{ ...pendingPin, capability: 'raw_sql' }, { ...pendingPin, member: 'putPage' }]) {
       await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: wrong }, refusals: [preimage], run: pending }),
         tally())).rejects.toThrow('rustPendingStop');
     }
   });
 
   test('a pinned case that no longer stops fails and says to remove the pin', async () => {
-    await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pin }, run: async () => 'ok',
+    await expect(checkRustArm(rustCase({ opts: { methods: [SERVED] as never, rustPendingStop: pendingPin }, run: async () => 'ok',
       reference: { backend: 'pglite', value: 'ok' } }), tally())).rejects.toThrow('remove its rustPendingStop pin');
   });
 
