@@ -41,6 +41,9 @@ describe('unitScope: which pull requests rightly skip the unit suite', () => {
     expect(run([{ filename: 'package.json', status: 'modified', patch: '@@ -5 +5 @@\n-  "zod": "4.3.6",\n+  "zod": "4.6.6",' }])).toBe('run');
     expect(run([{ filename: 'plugin/README.md', status: 'modified', patch: '@@ -9 +9 @@\n-old words\n+new words' }])).toBe('run');
     expect(run([{ filename: 'VERSION', status: 'modified', patch: '@@ -1 +1 @@\n-0.60.1.0\n+not-a-version' }])).toBe('run');
+    expect(run([{ filename: 'package.json', status: 'modified', patch: '@@ -3 +3 @@\n-  "version": "0.60.769.0",\n+  "version": "0.60.770.0", "scripts": {"postinstall": "x"},' }])).toBe('run');
+    expect(run([{ filename: 'plugin/README.md', status: 'modified', patch: '@@ -1 +1 @@\n-<!-- gbrain-plugin-tree-stamp: 0.60.769.0 -->\n+<!-- gbrain-plugin-tree-stamp: 0.60.770.0 --> extra text' }])).toBe('run');
+    expect(run([{ filename: 'plugin/README.md', status: 'modified', patch: '@@ -1 +1 @@\n-<!-- gbrain-plugin-tree-stamp: 0.60.769.0 -->\n+text <!-- gbrain-plugin-tree-stamp: 0.60.770.0 -->' }])).toBe('run');
     expect(run([{ filename: 'package.json', status: 'modified' }])).toBe('run');
     expect(run([{ filename: 'docs/guide.md', status: 'renamed', previous_filename: 'changelog.d/x.md', patch: '' }])).toBe('run');
     expect(run(release, release.length + 1)).toBe('run');

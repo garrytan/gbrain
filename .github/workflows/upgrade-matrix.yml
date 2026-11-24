@@ -208,7 +208,8 @@ jobs:
           name: upgrade-matrix-plan
       # Restore and save are separate bounded steps (GST-3494): a restore took about 37 minutes and the combined action's
       # post-step save then ran into the job timeout, cancelling cells whose own run had passed. A slow or failed cache
-      # only costs fresh downloads, so neither step can fail or cancel a cell.
+      # only costs fresh downloads, so neither step can fail or cancel a cell; a restore that did not finish is deleted
+      # before the cells run, so a half-extracted archive is never used or saved.
       - id: cache
         name: Restore old-release archives and the Bun package cache
         uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4
@@ -220,6 +221,9 @@ jobs:
           restore-keys: |
             upgrade-matrix-v1-${{ matrix.from }}-
             upgrade-matrix-v1-
+      - name: Drop a cache the restore did not finish
+        if: steps.cache.outcome != 'success'
+        run: rm -rf "$HOME/.cache/upgrade-matrix"
       - name: Run the cells
         env:
           FROM: ${{ matrix.from }}

@@ -209,7 +209,9 @@ seed, upgrade, checks, mixed-version probe); a job adds about two minutes of
 checkout, `bun install` and cache restore. The cache restore (8 minutes at
 most) and the save after the receipts upload (5 minutes at most, skipped on an
 exact hit) are separate steps that cannot fail a cell: a slow cache costs fresh
-downloads, never a cancelled cell whose own run passed. A full run is 4 cell jobs per
+downloads, never a cancelled cell whose own run passed. A restore that did not
+finish is deleted before the cells run, so a half-extracted archive is never
+used or saved. A full run is 4 cell jobs per
 from-version, each about four minutes on `ubicloud-standard-4`, plus the
 plan, summary and issue jobs on `ubicloud-standard-2`. With the stable window
 (on 2026-11-16, candidate v0.60.729.0: 14 from-versions) that is 56 cell jobs

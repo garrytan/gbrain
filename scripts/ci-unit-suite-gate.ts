@@ -31,14 +31,10 @@ function globMatches(glob: string, path: string): boolean {
 
 function stampMatches(pattern: string, line: string): boolean {
   const [before, after = ''] = pattern.split('{version}');
-  for (let at = line.indexOf(before!); at >= 0; at = line.indexOf(before!, at + 1)) {
-    const rest = line.slice(at + before!.length);
-    const version = rest.match(/^[0-9.]+/)?.[0] ?? '';
-    for (let cut = version.length; cut > 0; cut--) {
-      if (VERSION.test(version.slice(0, cut)) && rest.slice(cut).startsWith(after)) return true;
-    }
-  }
-  return false;
+  const trimmed = line.trim();
+  const text = after.endsWith('"') && trimmed.endsWith(',') ? trimmed.slice(0, -1) : trimmed;
+  if (text.length < before!.length + after.length || !text.startsWith(before!) || !text.endsWith(after)) return false;
+  return VERSION.test(text.slice(before!.length, text.length - after.length));
 }
 
 export function unitScope(files: PrFile[], changed: number, policy: Policy): Scope {
