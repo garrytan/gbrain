@@ -37,6 +37,7 @@ const PARITY_DIR = import.meta.dir;
 const LEGACY_DIR = join(REPO, 'test', 'e2e');
 // test-reads-source-ok[structural]: the coverage denominator is the declared BrainEngine member list.
 const ENGINE_FILE = join(REPO, 'src', 'core', 'engine.ts');
+const MEMBERS_DIR = join(REPO, 'src', 'core', 'engine-members');
 export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
 
 /**
@@ -45,6 +46,16 @@ export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
  * method forces a visible family assignment here.
  */
 export const FAMILIES: Record<string, readonly string[]> = {
+  calibration_profiles: ['insertCalibrationProfile', 'getLatestCalibrationProfile'],
+  trust: ['getWriteGateHoldRow', 'listWriteGateHoldRows', 'upsertWriteGateHold', 'listWriteGateReceiptsFor', 'upsertWriteGateReceipt', 'isFactPurged'],
+  minion_queue: ['readOauthClient', 'readScopeSourceConfigs'],
+  belief_ledger: ['readBeliefStateRows', 'markBeliefCommits'],
+  persistence_journal: ['readSegmentedGateEvidence', 'lockEffectGuard', 'failEffectRow', 'completeEffectRow', 'renewEffectClaim', 'readRequestEffects', 'renewWriteClaim', 'readSourceMembership', 'insertPublicationEffects', 'compactTerminalIntent', 'lockWriteRequestsById', 'completeWriteRow', 'lockWriteRequest', 'stampWriteClaim', 'insertWriteRequest', 'lockPersistenceCounters', 'readCounterRows', 'shareLockWriteCredential', 'readAccessTokenWriteGrant', 'readOAuthClientWriteGrant', 'readWriteRequestById', 'readWriteRequest', 'requireSynchronousCommit', 'declarePersistence'],
+  facts_recall: ['listSlotRows'],
+  facts_trust: ['listFactProvenance'],
+  purge_plan: ['listPurgeProbeItems', 'countPurgeProbe'],
+  facts_purge: ['deletePurgeDecideProposals', 'deletePurgeReviewProposals', 'deletePurgeReviewQueue', 'listPurgeEffects', 'countPagePurgeTombstones', 'probePurgeDerivations', 'setPurgeProbeTimeout', 'upsertPagePurges', 'insertTakePurge', 'insertFactPurge', 'loadPurgeTarget'],
+  reflex_reads: ['readReflexPages', 'readReflexLiveKeys'],
   trust_proposals: ['listTrustProposals', 'getTrustProposal', 'insertTrustProposal'],
   remote_links: ['readLinkTargetPages', 'deleteOwnedLinks', 'readOwnedLinks', 'setEffectTransactionLimits'],
   page_visibility: ['readWriterSlugFence', 'readWriteVisibilityProbe'],
@@ -53,7 +64,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   cli_reads_import: ['readPageTrustRows', 'listGuestSourceIds'],
   lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
     'registerBeforeDisconnect', 'withReservedConnection'],
-  pages: ['lockSourceRow', 'readSourceRow', 'readOwnerOnlySourceConfig', 'readOwnerOnlySourcesPresent', 'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
+  pages: ['readLivePageIdBySlug', 'lockSourceRow', 'readSourceRow', 'readOwnerOnlySourceConfig', 'readOwnerOnlySourcesPresent', 'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
     'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',
     'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions', 'listAllSources', 'listSourceLocalPaths', 'updateSourceConfig', 'getSource',
     'listPrefixSampledPages', 'listCorpusSample', 'getPageSealState', 'refreshPageOrigin'],
@@ -78,7 +89,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered', 'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates', 'storedTimelineRowsByPageIds'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles'],
-  takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
+  takes: ['findTakeId', 'addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
     'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows'],
   dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
@@ -99,7 +110,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   withdrawal_pages: ['listSegmentedPages', 'invalidateWithdrawnPages'],
   // withdrawal_fence: the withdrawal check a prepared import runs on a malformed facts fence
   withdrawal_fence: ['hasWithdrawnFenceClaim'],
-  import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
+  import_guards: ['beginSnapshotRead', 'readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
   cycle_locks: ['releasePageEmbeddingLease', 'renewPageEmbeddingLease', 'takePageEmbeddingLease', 'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
@@ -145,7 +156,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   open_loops: [
     'closeOpenLoop', 'listOpenLoops', 'purgeStaleAppliedCaptures', 'listPendingCoreEditNotices', 'countOpenLoopsByCounterpartyEmail', 'readEntityOpenLoops', 'upsertOpenLoop'],
   // write_misc: the small write-side reads (engine-sql/write-misc.ts)
-  write_misc: ['deleteOpCheckpoint', 'writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 
+  write_misc: ['readAudiencePrincipals', 'readMayActFor', 'readFolderAccess', 'readLiveMember', 'deleteOpCheckpoint', 'writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 
     'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
     'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
     'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
@@ -156,20 +167,37 @@ export const FAMILIES: Record<string, readonly string[]> = {
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],
 };
 
-/** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */
+/**
+ * Callable members of `interface BrainEngine`, in declaration order (`kind` excluded): its own members, then those of
+ * the interfaces it extends (src/core/engine-members/*.ts, in `extends` order).
+ */
 export function interfaceMethods(): string[] {
-  const text = readFileSync(ENGINE_FILE, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
-  const sf = ts.createSourceFile(ENGINE_FILE, text, ts.ScriptTarget.Latest, true);
   const names: string[] = [];
-  sf.forEachChild((node) => {
-    if (!ts.isInterfaceDeclaration(node) || node.name.text !== 'BrainEngine') return;
+  const declared = new Map<string, ts.InterfaceDeclaration>();
+  const load = (file: string) => {
+    const text = readFileSync(file, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    sf.forEachChild((node) => { if (ts.isInterfaceDeclaration(node)) declared.set(node.name.text, node); });
+  };
+  load(ENGINE_FILE);
+  for (const entry of readdirSync(MEMBERS_DIR).filter((f) => f.endsWith('.ts')).sort()) load(join(MEMBERS_DIR, entry));
+  const walk = (node: ts.InterfaceDeclaration) => {
     for (const member of node.members) {
       if (!member.name || !ts.isIdentifier(member.name)) continue;
       const callable = ts.isMethodSignature(member)
         || (ts.isPropertySignature(member) && member.type !== undefined && ts.isFunctionTypeNode(member.type));
       if (callable && !names.includes(member.name.text)) names.push(member.name.text);
     }
-  });
+    for (const clause of node.heritageClauses ?? []) {
+      for (const type of clause.types) {
+        const parent = ts.isIdentifier(type.expression) ? declared.get(type.expression.text) : undefined;
+        if (!parent) throw new Error(`engine-parity coverage: ${node.name.text} extends ${type.expression.getText()}, which is not declared in src/core/engine.ts or src/core/engine-members/`);
+        walk(parent);
+      }
+    }
+  };
+  const brainEngine = declared.get('BrainEngine');
+  if (brainEngine) walk(brainEngine);
   if (names.length === 0) throw new Error('engine-parity coverage: BrainEngine interface not found in src/core/engine.ts');
   return names;
 }
