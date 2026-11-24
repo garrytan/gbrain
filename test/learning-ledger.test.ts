@@ -34,6 +34,7 @@ import { countsTowardBar, formatLearnedStats, learnedStats, nightOf } from '../s
 import { formatResult } from '../src/cli/main.ts';
 import { openAsPreview } from '../src/cli/as-preview.ts';
 import { formatLearned, type LearnedView } from '../src/core/learning/read.ts';
+import { QUARANTINE_KEY } from '../src/core/quarantine.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
@@ -297,6 +298,32 @@ for (const backend of testBackends()) {
       }
     });
 
+    test('learned hides a fact whose provenance page is quarantined, as every other fact read does', async () => {
+      await importFromContent(engine, 'notes/quarantine-example', page('note', 'Quarantine', 'Quarantine notes.'), { sourceId: SRC });
+      await insertFact('The vault code is kept in the shed canaryquarantine', { visibility: 'world', entity: null, page: 'notes/quarantine-example' });
+      await derive();
+      try {
+        await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || jsonb_build_object($1::text, true) WHERE source_id = $2 AND slug = 'notes/quarantine-example'`, [QUARANTINE_KEY, SRC]);
+        expect(mentions(await local('learned', { since: '2000-01-01' }) as LearnedView, 'canaryquarantine')).toBe(false);
+      } finally {
+        await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter - $1::text WHERE source_id = $2 AND slug = 'notes/quarantine-example'`, [QUARANTINE_KEY, SRC]);
+      }
+    });
+
+    test('an impossible enriched_at date (Nov 31) skips only that page: promises still record and the phase stays ok', async () => {
+      await importFromContent(engine, 'people/frank-example', page('person', 'Frank Example', 'Frank is a stub.'), { sourceId: SRC });
+      await engine.executeRaw(`UPDATE pages SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || '{"enriched_at": "2026-11-31T00:00:00Z", "enriched_by": "cli:enrich"}'::jsonb, updated_at = now() WHERE source_id = $1 AND slug = 'people/frank-example'`, [SRC]);
+      await engine.executeRaw(`INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_slug, summary, detector)
+        VALUES ($1, 'promise-baddate', 'commitment_owed_to_me', $2, 'Bob will return the ladder', 'llm_extract')`, [SRC, ENTITY]);
+      try {
+        const phase = await derive();
+        expect(phase.status).toBe('ok');
+        expect(phase.details.recorded).toMatchObject({ promise_found: 1 });
+      } finally {
+        await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter - 'enriched_at' - 'enriched_by' WHERE source_id = $1 AND slug = 'people/frank-example'`, [SRC]);
+      }
+    });
+
     test('limit 20 prints and stamps 20: what is stamped is what is shown', async () => {
       for (let i = 1; i <= 20; i++) await insertFact(`Bob fact number ${i}`);
       await derive();
@@ -364,7 +391,9 @@ for (const backend of testBackends()) {
         return typeof value === 'function' ? value.bind(target) : value;
       } });
       const phase = await runPhaseLearningDerive(failing, { runId: '00000000-0000-4000-8000-000000000004', dryRun: false });
-      expect(phase).toMatchObject({ status: 'warn', details: { error: 'disk full (test)' } });
+      expect(phase.status).toBe('warn');
+      expect(phase.details.failed).toContainEqual({ kinds: ['fact_added', 'you_wrote'], error: 'disk full (test)' });
+      expect(await engine.getConfig(LEARNING_WATERMARK_KEY)).toBeNull();
     });
 
     test('learned refuses an invalid since or limit with invalid_params', async () => {

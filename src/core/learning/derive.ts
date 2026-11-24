@@ -34,8 +34,10 @@ const list = (values: readonly string[]) => values.map(v => `'${v}'`).join(', ')
 /** Fact sources the machine extractors write: extract_facts (the facts drain writes through it) and the conversation-facts backfill. */
 const MACHINE_FACT_SQL = `(f.source = 'mcp:extract_facts' OR (f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.source NOT IN (${list(AUDIT_ROW_SOURCES)})))`;
 const FENCE_FACT_SQL = `f.source = '${FENCE_SOURCE_DEFAULT}'`;
-const ENRICHED_AT_SQL = `CASE WHEN p.frontmatter->>'enriched_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?Z$'
-  THEN (p.frontmatter->>'enriched_at')::timestamptz END`;
+const ENRICHED_AT = `p.frontmatter->>'enriched_at'`;
+const ENRICHED_AT_SQL = `CASE WHEN ${ENRICHED_AT} ~ '^[1-9][0-9]{3}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]+)?Z$'
+  THEN CASE WHEN substr(${ENRICHED_AT}, 9, 2)::int <= extract(day FROM (substr(${ENRICHED_AT}, 1, 7) || '-01')::date + interval '1 month' - interval '1 day')
+  THEN (${ENRICHED_AT})::timestamptz END END`;
 
 /** One SELECT per kind, each yielding the pointer columns. $1 = window start, $2 = row cap. */
 const PRODUCERS: Array<{ kinds: LearningKind[]; select: string }> = [
@@ -96,24 +98,33 @@ export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId:
     const since = new Date(Number.isFinite(watermark) ? Math.max(watermark - WINDOW_OVERLAP_MS, floor) : floor).toISOString();
     const counts: Record<string, number> = Object.fromEntries(LEARNING_KINDS.filter(k => k !== 'duplicate_to_confirm').map(k => [k, 0]));
     const truncated: LearningKind[] = [];
+    const failed: Array<{ kinds: LearningKind[]; error: string }> = [];
     for (const producer of PRODUCERS) {
-      const rows = opts.dryRun
-        ? await engine.executeRaw<{ kind: string }>(`SELECT kind FROM (${producer.select}) c`, [since, cap])
-        : await engine.executeRaw<{ kind: string }>(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, subject_slug, subject_source_id, prior_revision)
-            SELECT $3::uuid, c.source_id, c.kind, c.target_table, c.target_id, c.subject_slug, c.subject_source_id, c.prior_revision FROM (${producer.select}) c
-            ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING kind`, [since, cap, opts.runId]);
+      let rows: Array<{ kind: string }>;
+      try {
+        rows = opts.dryRun
+          ? await engine.executeRaw<{ kind: string }>(`SELECT kind FROM (${producer.select}) c`, [since, cap])
+          : await engine.executeRaw<{ kind: string }>(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, subject_slug, subject_source_id, prior_revision)
+              SELECT $3::uuid, c.source_id, c.kind, c.target_table, c.target_id, c.subject_slug, c.subject_source_id, c.prior_revision FROM (${producer.select}) c
+              ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING kind`, [since, cap, opts.runId]);
+      } catch (e) {
+        rethrowCapabilityRefusal(e);
+        failed.push({ kinds: producer.kinds, error: e instanceof Error ? e.message : String(e) });
+        continue;
+      }
       for (const r of rows) counts[r.kind] = (counts[r.kind] ?? 0) + 1;
       if (rows.length >= cap) truncated.push(...producer.kinds);
     }
     const [backlog] = await engine.executeRaw<{ n: number | string }>(CONFLICT_BACKLOG_SQL, [null]);
     const pruned = opts.dryRun ? 0 : (await engine.executeRaw(PRUNE_SQL)).length;
-    if (!opts.dryRun && truncated.length === 0) await engine.setConfig(LEARNING_WATERMARK_KEY, now.toISOString());
+    if (!opts.dryRun && truncated.length === 0 && failed.length === 0) await engine.setConfig(LEARNING_WATERMARK_KEY, now.toISOString());
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     const conflictBacklog = Number(backlog?.n ?? 0);
+    for (const f of failed) console.warn(`[learning_derive] ${f.kinds.join('/')} not recorded this pass: ${f.error}`);
     return {
-      phase: 'learning_derive', status: 'ok', duration_ms: 0,
-      summary: `${opts.dryRun ? 'dry-run: would record' : 'recorded'} ${total} learning item(s)${conflictBacklog ? `; ${conflictBacklog} older claim conflict(s) wait as a count` : ''}`,
-      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated },
+      phase: 'learning_derive', status: failed.length ? 'warn' : 'ok', duration_ms: 0,
+      summary: `${opts.dryRun ? 'dry-run: would record' : 'recorded'} ${total} learning item(s)${conflictBacklog ? `; ${conflictBacklog} older claim conflict(s) wait as a count` : ''}${failed.length ? `; not recorded: ${failed.flatMap(f => f.kinds).join(', ')}` : ''}`,
+      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated, ...(failed.length ? { failed } : {}) },
     };
   } catch (e) {
     rethrowCapabilityRefusal(e);

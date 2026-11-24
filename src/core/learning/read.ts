@@ -8,7 +8,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
-import { deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { callerIsOwner, currentCallerAccess, privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
@@ -57,7 +57,7 @@ function liveFactSql(a: string, f: CallerFilters): string {
   const visibility = f.worldOnly ? ` AND ${a}.visibility = 'world'` : '';
   const provenance = f.excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy(a)}` : '';
   return `${a}.expired_at IS NULL AND (${a}.valid_until IS NULL OR ${a}.valid_until > now())${visibility}${provenance}
-    AND ${deletedPageProjectionHiddenSql('facts', a)}`;
+    AND ${projectionEligibleSql('facts', a, undefined)}`;
 }
 
 /** Window: $1 source ids (null: every source), $2 start, $3 unseen pending only, $4 row cap. */
