@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { cpus, release, tmpdir, totalmem } from 'node:os';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
@@ -31,6 +31,8 @@ const RUNS = Number(arg('--runs', '3'));
 const QUERIES = Number(arg('--queries', '60'));
 const LABEL = arg('--label', 'run')!;
 const OUT = arg('--out');
+/** `--keep <dir>`: move the last run's brain there instead of deleting it (to time a later build's format upgrade). */
+const KEEP = arg('--keep');
 const ADDON = resolve(arg('--addon') ?? process.env.GBRAIN_RUST_ENGINE_ADDON ?? '');
 const ROOT = resolve(process.env.GBRAIN_BENCH_ROOT ?? join(import.meta.dir, '..', '..', '..'));
 if (!ADDON.endsWith('.node')) throw new Error('--addon must name the addon .node file');
@@ -148,7 +150,7 @@ function timedEngine<E extends object>(engine: E, times: MemberTimes): E {
 
 type Profile = { writes: number; write_body_ns: number; commits: number; commit_ns: number; redb_commit_ns: number };
 
-async function oneRun(addon: unknown, run: number) {
+async function oneRun(addon: unknown, run: number, keep?: string) {
   const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'gbrain-keyed-bench-'));
   const engine = openRustEngine({ addon: addon as never, databasePath: dir });
   await engine.connect({ engine: 'pglite', database_path: dir } as never);
@@ -226,7 +228,8 @@ async function oneRun(addon: unknown, run: number) {
   } finally {
     Object.assign(console, quiet);
     await engine.disconnect().catch(() => undefined);
-    rmSync(dir, { recursive: true, force: true });
+    if (keep) renameSync(dir, keep);
+    else rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -250,7 +253,7 @@ async function main() {
   const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ADDON } });
   const runs = [];
   for (let r = 1; r <= RUNS; r++) {
-    const result = await oneRun(addon, r);
+    const result = await oneRun(addon, r, r === RUNS ? KEEP : undefined);
     process.stderr.write(`[keyed-bench ${LABEL}] run ${r}: ${JSON.stringify(result)}\n`);
     runs.push(result);
   }
