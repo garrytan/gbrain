@@ -218,7 +218,7 @@ readLivePageIdBySlug	pages	yes	7	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
-searchKeyword	search	yes	46	yes	yes	yes	serves
+searchKeyword	search	yes	48	yes	yes	yes	serves
 countKeywordPages	search	yes	13	no	yes	yes	serves
 searchKeywordPages	search	yes	17	no	yes	yes	serves
 searchTitles	search	yes	22	yes	yes	yes	serves
@@ -374,7 +374,7 @@ sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
 listStoredTimelineRowsOrdered	timeline	yes	4	no	yes	yes	serves
-deleteTimelineRows	timeline	yes	2	no	yes	yes	serves
+deleteTimelineRows	timeline	yes	4	no	yes	yes	serves
 storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	serves
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	serves
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	serves
@@ -387,7 +387,7 @@ listMaterializedMarkerPages	timeline	yes	3	no	yes	yes	serves
 rewriteTimelineRow	timeline	yes	2	no	yes	yes	serves
 listDateBulletPages	timeline	yes	2	no	yes	yes	serves
 listConnectorFencePages	timeline	yes	2	no	yes	yes	serves
-addTimelineEntry	timeline	yes	74	yes	yes	yes	serves
+addTimelineEntry	timeline	yes	75	yes	yes	yes	serves
 addTimelineEntriesBatch	timeline	yes	4	no	yes	yes	serves
 getTimeline	timeline	yes	33	yes	yes	yes	serves
 getTimelineForDate	timeline	yes	9	no	yes	yes	serves
@@ -440,7 +440,7 @@ listReadableFilePaths	raw_files	yes	3	no	yes	yes	serves
 hasTakeClaim	takes	yes	1	no	yes	yes	serves
 listTakeRowNums	takes	yes	1	no	yes	yes	serves
 readTakeRowTierByClaim	takes	yes	1	no	yes	yes	serves
-addTakesBatch	takes	yes	111	yes	yes	yes	serves
+addTakesBatch	takes	yes	112	yes	yes	yes	serves
 updateTakeEmbeddings	takes	yes	10	no	yes	yes	serves
 listTakes	takes	yes	56	no	yes	yes	serves
 searchTakes	takes	yes	7	no	yes	yes	serves
@@ -573,7 +573,7 @@ hasActiveFactText	facts	yes	2	no	yes	yes	serves
 readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
-insertFact	facts	yes	178	yes	yes	yes	serves
+insertFact	facts	yes	179	yes	yes	yes	serves
 insertFacts	facts	yes	240	no	yes	yes	serves
 deleteFactsForPage	facts	yes	7	no	yes	yes	serves
 expireFact	facts	yes	88	no	yes	yes	serves
@@ -1386,7 +1386,7 @@ deleteUnreferencedPurgedTexts	facts_purge	yes	3	no	yes	yes	refuses:facts
 listPurgeMatchCandidates	facts_purge	yes	3	no	yes	yes	serves
 lockPurgeSource	facts_purge	yes	2	no	yes	yes	serves
 insertHoldingPagePurges	facts_purge	yes	5	no	yes	yes	serves
-deletePurgedTakes	facts_purge	yes	4	no	yes	yes	serves
+deletePurgedTakes	facts_purge	yes	6	no	yes	yes	serves
 deletePurgeReviewQueue	facts_purge	yes	7	no	yes	yes	serves
 deletePurgeReviewProposals	facts_purge	yes	7	no	yes	yes	serves
 deletePurgeDecideProposals	facts_purge	yes	6	no	yes	yes	serves
@@ -1396,7 +1396,7 @@ deletePurgeWriteGateHolds	facts_purge	yes	4	no	yes	yes	serves
 deletePurgeWriteGateReceipts	facts_purge	yes	4	no	yes	yes	serves
 deletePurgeTakeProposals	facts_purge	yes	3	no	yes	yes	refuses:facts
 blankPurgeCoreEditNotices	facts_purge	yes	4	no	yes	yes	serves
-deletePurgedFacts	facts_purge	yes	3	no	yes	yes	serves
+deletePurgedFacts	facts_purge	yes	5	no	yes	yes	serves
 deletePurgedChunks	facts_purge	yes	3	no	yes	yes	serves
 listPurgedPageRevisions	facts_purge	yes	1	no	yes	yes	refuses:facts
 insertPurgeEffects	facts_purge	yes	1	no	yes	yes	refuses:facts
@@ -1518,7 +1518,7 @@ readLiveFactEntityPage	facts_trust	yes	2	no	yes	yes	serves
 lockAgentWritebackSetting	facts_trust	yes	2	no	yes	yes	serves
 listFactsToRetireFromPage	facts_trust	yes	2	no	yes	yes	serves
 listContestedProposalPairs	facts_trust	yes	1	no	yes	yes	serves
-recordDerivationEdges	facts_trust	yes	7	no	yes	yes	serves
+recordDerivationEdges	facts_trust	yes	8	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
 deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
 softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts

@@ -360,6 +360,7 @@ test/engine-parity/open-loops.test.ts
 test/engine-parity/open-pages.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-only-reads.test.ts
+test/engine-parity/owner-only-row-delete-marks.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
 test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-lock-anchors.test.ts
