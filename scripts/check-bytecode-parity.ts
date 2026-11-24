@@ -138,7 +138,7 @@ async function runAll(built: string, runDir: string, port: number, saveDir: stri
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: runDir, GBRAIN_HOME: runDir, TZ: 'UTC', LANG: 'C.UTF-8',
     NO_COLOR: '1', TERM: 'dumb', CI: '1', GBRAIN_SKIP_STARTUP_HOOKS: '1',
-    OPENAI_API_KEY: 'sk-bytecode-parity-stub', OPENAI_BASE_URL: `http://127.0.0.1:${port}/v1`,
+    OPENAI_API_KEY: 'stub', OPENAI_BASE_URL: `http://127.0.0.1:${port}/v1`,
   };
   const out = new Map<string, Outcome>();
   for (const step of STEPS) {
