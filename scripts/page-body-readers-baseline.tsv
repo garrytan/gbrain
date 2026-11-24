@@ -511,6 +511,7 @@ src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:seria
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	remoteCoreMarkingKept	call:serializePageToMarkdown	SEGW	lane 1d file: the remote core-marking carry moved out of prepareInlineOrSegmentedMutation (GST-2518, function size); same read as before
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
+src/core/persistence/page-prepare.ts	storedReadings	field	SEGW	the timeline-split reading of the snapshot body, for fileSnapshotDifference and frontmatterDriftWrite only (both read an inline or materialized body); segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
 src/core/persistence/page-purge.ts	purgePageInTransaction	sql	STREAM	
@@ -682,6 +683,7 @@ src/core/sweep.ts	runMaintenanceSweep	sql	STREAM	LIKE over NULL never matches a 
 src/core/think/gather.ts	renderPagesBlockDetailed	field	LEAD	segmented page: getter throws page_body_segmented
 src/core/think/gather.ts	runGather	field	LEAD	visibleLeads reads Page.compiled_truth from listPages/search: segmented page: getter throws page_body_segmented (lead source in PR 2)
 src/core/think/index.ts	composeExtractiveFallback	field	LEAD	
+src/core/think/index.ts	persistSynthesis	call:serializeMarkdown	NONE	GST-3612: renders the synthesis page think just composed (its frontmatter and the answer body) for the managed maintenance request; no stored page body is read here
 src/core/think/persist-take.ts	assertTakeFileCanonical	field	SEGW	compares the inline page body outside the takes section with the file; a segmented page reads NULL, never matches, and the take is refused before any write
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	field	STREAM	
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	sql	STREAM	
