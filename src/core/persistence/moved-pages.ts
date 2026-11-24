@@ -10,9 +10,10 @@
  *      content is the first case; later edits to the moved file do not matter;
  *   2. the stale side is untouched: the old page still holds what that blob imports (`fileMatchesSnapshot`, which reads
  *      gbrain's own database-only artefacts as derived: `alignWithStored`). A page edited in the database after the move
- *      is `both_changed`. A path with history before the deleting commit (rewritten there, or deleted earlier and added
- *      again there, when its page may be an older page sync still holds) pairs only once its page holds every line of the
- *      old page, else `survivor_differs`.
+ *      is `both_changed`. A path the deleting commit rewrote (it held other content before) pairs only once its page holds
+ *      every line of the old page, else `survivor_differs`; a path it added again after an earlier deletion, whose page may
+ *      be an older page sync still holds, pairs only once that page holds every line, the type, the tags and the frontmatter
+ *      (`holdsEveryLine`).
  * Exactly one live page of the source may descend from the blob; two or more are `several_candidates`, and a moved page that
  * another old page with the same content also claims is `shared_survivor`. A first commit counts only between the old path's add and its deletion. The file name
  * only explains a result with no candidate (a move can rename the file too), and a frontmatter `id` alone never pairs
@@ -108,7 +109,8 @@ function firstAdds(root: string, paths: string[]): Map<string, string> | null {
 /**
  * What HEAD's history holds for one blob: each path a commit added with it, with the oldest such commit (`added`), those
  * whose first add is that commit (`first`), each path a commit rewrote to it (`written`: changed to it, a symlink replaced
- * by it included, and a merge commit's rewrite against its first parent) and each path a commit deleted holding it (`deleted`).
+ * by it included, and each path a merge commit rewrote or added with it against its first parent) and each path a commit
+ * deleted holding it (`deleted`).
  */
 export interface BlobHistory { added: Map<string, string>; first: Map<string, string>; written: Set<string>; deleted: Set<string> }
 
@@ -120,7 +122,7 @@ export function readBlobHistory(root: string, blobs: string[]): Map<string, Blob
   if (entries === null) return null;
   for (const entry of entries) {
     const written = entry.status === 'M' || (entry.status === 'T' && entry.mode.startsWith('100'));
-    if (entry.merge) { if (written) history.get(entry.next)?.written.add(entry.path); continue; }
+    if (entry.merge) { if (written || entry.status === 'A') history.get(entry.next)?.written.add(entry.path); continue; }
     if (entry.status === 'A') history.get(entry.next)?.added.set(entry.path, entry.commit);
     if (written) history.get(entry.next)?.written.add(entry.path);
     if (entry.status === 'D') history.get(entry.old)?.deleted.add(entry.path);
@@ -392,8 +394,9 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   if (edited && !await holdsEveryLine(engine, sourceId, old.slug, row.slug)) {
     return held('both_changed', `${old.path} moved to ${row.source_path} (blob ${short(blob)}), but page ${old.slug} changed in the database after the move, so a fold would drop its edit; decide with the user`, [row.slug]);
   }
-  const earlier = proof.evidence === 'same_commit' ? git(root, ['log', '-1', '--format=%H', `${commit}^`, '--', ...literalPathspecs([row.source_path])]) : '';
-  if (earlier?.trim() !== '' && !await holdsEveryLine(engine, sourceId, old.slug, row.slug, { bodyOnly: true })) {
+  const existed = proof.evidence === 'same_commit' && git(root, ['cat-file', '-e', `${commit}^:./${row.source_path}`]) !== null;
+  const readded = proof.evidence === 'same_commit' && !existed && git(root, ['log', '-1', '--format=%H', `${commit}^`, '--', ...literalPathspecs([row.source_path])])?.trim() !== '';
+  if ((existed || readded) && !await holdsEveryLine(engine, sourceId, old.slug, row.slug, { bodyOnly: existed })) {
     return held('survivor_differs', `commit ${short(commit)} gave ${row.source_path}, a path with earlier history, ${old.path}'s content (blob ${short(blob)}), but page ${row.slug} does not hold every line of page ${old.slug} (sync has not imported that commit), so a fold would put ${old.slug}'s evidence under a page that never held it; sync ${row.source_path}, then preview again`, [row.slug]);
   }
   const conflicts = await twinMergeConflicts(engine, survivor.page_id, old.page_id);

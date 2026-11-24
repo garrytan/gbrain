@@ -142,6 +142,23 @@ for (const backend of testBackends()) describe(`[${backend}] GBRA-133: sync.appl
     expect((await holds(engine))['notes/a.md']?.meta.held_deletion?.refused).toBe('file_moved');
   }, { databaseUrl, setup }), 300_000);
 
+  test('keeps a held deletion committed beside another edit through every round of the sync that first sees it', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const coordinated = (sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
+    await coordinated(`DELETE FROM op_checkpoints WHERE op='sync-import-provenance'
+      AND completed_keys->0->>'page_id' IN (SELECT id::text FROM pages WHERE source_id='default' AND slug='notes/a')`);
+    await coordinated(`UPDATE pages SET knowledge_revision = $1::uuid, revision_write_request_id = NULL, updated_at = now() - interval '1 hour'
+      WHERE source_id='default' AND slug='notes/a'`, [randomUUID()]);
+    await engine.setConfig('sync.apply_held_deletions', 'true');
+    git(root, 'rm', '-q', 'notes/a.md');
+    writeFileSync(join(root, 'notes/b.md'), note('notes/b', 'An edit of notes/b in the same commit.'));
+    git(root, 'add', 'notes/b.md'); git(root, 'commit', '-qm', 'move notes/a, part one: the deletion, beside an edit of notes/b');
+    await performManagedSync(engine, OPTS);
+    expect(await live(engine)).toContain('notes/a');
+    expect((await holds(engine))['notes/a.md']).toMatchObject({ code: 'file_drift', meta: { state: 'file_gone' } });
+    expect((await holds(engine))['notes/a.md']!.meta.held_deletion).toBeUndefined();
+  }, { databaseUrl, setup }), 300_000);
+
   test('keeps a held deletion whose file moved in a commit that landed after the move check and before the deletion published', () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     const coordinated = (sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));

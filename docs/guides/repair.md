@@ -2004,9 +2004,9 @@ moved page's access, so decide with the user), `both_changed` (the old page was 
 after the move and the moved page lacks that edit: decide with the user), `first_blob_differs` (a page with the same file name started from other content),
 `same_id_body_differs`, `evidence_conflicts` (a manual link or timeline entry that differs from the moved page's),
 `history_shallow` (run `git fetch --unshallow` and preview again), `history_unknown`, `deletion_not_committed`,
-`survivor_differs` (the deleting commit gave the old file's content to a path with earlier history, either a file that
-already existed or one deleted earlier and added again, and that path's page does not hold every line of the old page's
-body and timeline, usually because sync has not imported that commit: sync the file and preview again) and `not_moved`.
+`survivor_differs` (the deleting commit gave the old file's content to a path with earlier history, and that path's
+page does not hold every line of the old page's body and timeline, or, for a path deleted earlier and added again, also
+its type, tags and frontmatter; usually sync has not imported that commit: sync the file and preview again) and `not_moved`.
 
 The apply re-checks the proof and both pages under their keys, then folds each pair in one write (a coordinated
 `managed_maintenance_fold_moved_page` maintenance write on a managed source, one maintenance transaction otherwise): the
@@ -4042,8 +4042,10 @@ by the test above, and the file did not move to another page (the move check
 with the same restore window (`gbrain restore <slug> --force`), counted by the
 mass-delete valve and the `sync.max_deletes` / `sync.max_delete_ratio` caps,
 and its write request carries `heldDeletion` (the deleting commit and the blob)
-as the page's receipt. A sync deletes only a page an earlier sync already held: the sync that first sees a deletion
-only holds it, so a file moved in two commits (the deletion, then the add) is read whole by a later sync and kept.
+as the page's receipt. A sync deletes only a page an earlier sync already held (later rounds of the same sync do not
+count): the sync that first sees a deletion only holds it, so a file moved in two commits (the deletion, then the add)
+is read whole by a later sync and kept. On a checkout where nothing else changes, that later sync is the next commit or
+the daily full round, so a held page can stay live for up to about a day.
 Any other held page stays held, and its hold records why
 (`meta.held_deletion.refused`: `content_differs`, `database_ahead_of_file`,
 `file_moved`, `not_deleted_by_commit` or `page_changed`) at the page's revision, so it is not

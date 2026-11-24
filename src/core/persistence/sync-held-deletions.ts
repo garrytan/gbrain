@@ -12,8 +12,10 @@
  *   written in the database after its file last held it is never deleted, even with equal content;
  * - the file did not move to another live page by the test `repair ghost-pages` applies (`ghostMoveVeto`); a page whose
  *   file moved stays held as `file_moved` (`move_unread`, retried, when Git could not read whether it moved);
- * - an earlier pass already held it: the pass that first sees the deletion only holds it, so a move committed as two
- *   commits (the deletion, then the add) is read whole by a later pass instead of deleted between them.
+ * - an earlier pass already held it (its hold names another `run_id`, so no later round of the same pass counts): the pass
+ *   that first sees the deletion only holds it, so a move committed as two commits (the deletion, then the add) is read
+ *   whole by a later pass instead of deleted between them. The page waits for that later pass, which runs once the source
+ *   changes again or at the daily full round.
  *
  * The deletion is an ordinary `managed_sync_delete`: a soft delete with the restore window every sync delete has, under
  * the mass-delete valve and the #7130 caps, leaving a tombstone the automatic purge holds. Its request carries
@@ -70,7 +72,7 @@ export async function readPassSwitches(engine: Pick<BrainEngine, 'executeRaw'>, 
  * the result) and marks the ones it refuses (`heldDeletionRefused`), turning a settled hold back into a `delete_drift` so
  * the pass records the refusal on it. A deletion this pass sees first stays an ordinary hold. The pass reads the switch once (`readPassSwitches`) and calls this only while it is on.
  */
-export async function applyHeldDeletions(engine: BrainEngine, level: ShadowLevel, context: ManagedSyncContext, state: HeldDeletionState): Promise<void> {
+export async function applyHeldDeletions(engine: BrainEngine, level: ShadowLevel, context: ManagedSyncContext, state: HeldDeletionState, passId: string): Promise<void> {
   const holdPath = (entry: ShadowPath) => level.scope ? entry.path.slice(level.scope.length + 1) : entry.path;
   const page = (entry: ShadowPath) => entry.slug !== null && entry.pageId !== null && entry.revision !== null && entry.state.page?.live === true;
   const resting = level.paths.filter(entry => entry.result.cls === 'held' && entry.result.settled && entry.state.level === null && !entry.state.present && page(entry));
@@ -78,7 +80,7 @@ export async function applyHeldDeletions(engine: BrainEngine, level: ShadowLevel
   const holds = new Map((await readGitSourceHolds(engine, { sourceIds: [level.sourceId] })).flatMap(source => source.incarnation === level.incarnation ? source.holds : []).map(hold => [hold.path, hold]));
   const held = resting.filter(entry => {
     const hold = holds.get(holdPath(entry));
-    return hold?.code === 'file_drift' && hold.meta.state === 'file_gone' && !hold.meta.reason && hold.meta.held_deletion?.page_revision !== entry.revision;
+    return hold?.code === 'file_drift' && hold.meta.state === 'file_gone' && !hold.meta.reason && hold.run_id !== passId && hold.meta.held_deletion?.page_revision !== entry.revision;
   });
   const batch = held.filter(entry => !state.screened.has(entry.path) && sourceDbOnlyVerdict(level.root, entry.slug!) === false).slice(0, Math.max(0, PASS_HELD_DELETION_MAX - state.screened.size));
   if (!batch.length) return;

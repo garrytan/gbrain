@@ -329,6 +329,39 @@ A line added at the move.
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend, { 'archive/older.md': OLDER })));
 
+  test(`${backend}: a ghost whose content a merge commit added as a new file, deleted later and that file edited after, is kept, never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    const trunk = git(root, 'rev-parse', '--abbrev-ref', 'HEAD');
+    git(root, 'checkout', '-q', '-b', 'side');
+    commit(root, { 'notes/side.md': '---\ntitle: Side\n---\n\nA note written on a branch.\n' }, 'a side note');
+    git(root, 'checkout', '-q', trunk);
+    git(root, 'merge', '-q', '--no-ff', '--no-commit', 'side');
+    mkdirSync(join(root, 'archive'), { recursive: true });
+    writeFileSync(join(root, 'archive/kept.md'), ALPHA); git(root, 'add', 'archive/kept.md'); git(root, 'commit', '-qm', 'merge side, adding the alpha content under a new name');
+    commit(root, {}, 'drop alpha', ['notes/alpha.md']);
+    commit(root, { 'archive/kept.md': ALPHA + '\nA line added after the move.\n' }, 'edit the added file');
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('archive/kept.md, commit_copy') });
+    expect((await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true })).outcomes ?? {}).not.toHaveProperty('soft_deleted');
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend)));
+
+  test(`${backend}: a file moved onto a re-added path whose stale page holds its lines under another type never folds into that page`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    await raw(engine, "UPDATE pages SET timeline='An edit only the database holds.', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/gamma'");
+    commit(root, {}, 'drop gamma', ['notes/gamma.md']);
+    await performManagedSync(engine, SYNC);
+    expect(await live(engine, 'notes/gamma')).toBe(true);
+    commit(root, { 'notes/gamma.md': ALPHA }, 'move alpha onto the gamma path', ['notes/alpha.md']);
+    const fold = await runner(engine, 'moved-pages', { slugs: ['notes/alpha'] });
+    expect(fold.affected).toBe(0);
+    expect(listed(fold, 'notes/alpha')).toMatchObject({ class: 'held:survivor_differs' });
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend, { 'notes/gamma.md': ALPHA.replace('title: Alpha', 'title: Gamma\ntype: person') })));
+
   test(`${backend}: a file moved onto a deleted and re-added path whose old page is still held never folds into that stale page`, () => managedBrain(async ({ engine, root }) => {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
