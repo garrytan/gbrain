@@ -662,19 +662,28 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   }
   const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
   if (dryRun) return archiveSource(engine, opts, { enabled, sourceId, privacy });
-  if (privacy.unproven) {
-    const { opError } = await import('../ops/contract.ts');
-    throw opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
-      'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
-  }
+  const { opError } = await import('../ops/contract.ts');
+  const unproven = () => opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
+    'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
+  if (privacy.unproven) throw unproven();
   // One run per source at a time: a run decides from the ledger it read at its start, so an overlapping run could publish
   // older history over what the other run just wrote.
   const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
   try {
-    return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, signal => archiveSource(engine, opts, { enabled, sourceId, privacy, signal }));
+    return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, async signal => {
+      // The audience is read again under the lock: a member add or audience change that finished after the read above
+      // re-scoped under this lock and recorded the brain shared, so writing with the earlier read would publish pages
+      // with no readers.
+      const locked = await effectiveSource(engine, opts.sourceId);
+      if (locked.sourceId !== sourceId) {
+        throw opError('archive_audience_changed', 'The brain\'s audience changed while the conversation archive was starting, so it now archives into source ' + locked.sourceId + ' instead of ' + sourceId + '; this run read and wrote nothing.',
+          'Rerun gbrain transcripts archive run.');
+      }
+      if (locked.privacy.unproven) throw unproven();
+      return archiveSource(engine, opts, { enabled, sourceId, privacy: locked.privacy, signal });
+    });
   } catch (err) {
     if (!(err instanceof LockUnavailableError)) throw err;
-    const { opError } = await import('../ops/contract.ts');
     throw opError('archive_run_busy', 'Another conversation archive run holds source ' + sourceId + ', so this run read and wrote nothing.',
       'Wait for the other run to finish, then rerun; gbrain status --section locks --json shows the holder.');
   }
