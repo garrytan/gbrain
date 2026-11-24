@@ -41,8 +41,8 @@ use std::path::Path;
 ///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
 /// - 9: the store keeps keyed lookups (`keyed_index.rs`): entries derived from page, chunk and link
-///   records that every write keeps in step, so the chunk-id, exact-title, unserved-page, supersedes
-///   and duplicate-page reads look rows up instead of reading every record. The upgrade builds every
+///   records that every write keeps in step, so the chunk-id, exact-title, unserved-page, supersedes,
+///   duplicate-page and transition-origin reads look rows up instead of reading every record. The upgrade builds every
 ///   entry in the one transaction. A build without the lookups refuses a format-9 brain, as its
 ///   writes would leave them stale.
 pub const FORMAT_VERSION: u32 = 9;

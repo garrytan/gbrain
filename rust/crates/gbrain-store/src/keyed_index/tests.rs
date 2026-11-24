@@ -5,7 +5,9 @@ use super::*;
 use crate::Store;
 use crate::alias_fanout_reads::TitleQuery;
 use crate::chunks::{ChunkInput, UpsertChunksOptions};
-use crate::link_queries::{CoverageScope, GraphScope, TitledInput};
+use crate::link_queries::{
+    ApplyTemporalInput, CoverageScope, GraphScope, KeysForOriginInput, TitledInput,
+};
 use crate::links::{AddLinkOptions, RemoveLinkOptions};
 use crate::page_ops::DuplicateQuery;
 use crate::pages::{PageInput, PutPageOptions};
@@ -89,7 +91,7 @@ fn step(store: &Store, rng: &mut Lcg) -> Option<String> {
     let slug = SLUGS[rng.next(SLUGS.len())];
     let other = SLUGS[rng.next(SLUGS.len())];
     let source = if rng.next(4) == 0 { "work" } else { "default" };
-    match rng.next(10) {
+    match rng.next(11) {
         0..=2 => put(store, rng, slug, source).map(|_| format!("put {source}:{slug}")),
         3 => {
             let rev = put(store, rng, slug, "default")?;
@@ -145,6 +147,32 @@ fn step(store: &Store, rng: &mut Lcg) -> Option<String> {
             .restore_page(slug, None)
             .ok()
             .map(|_| format!("restore {slug}")),
+        10 => {
+            // Dated evidence the page owns (`applyLinkTemporalRows`): it replaces the page's own
+            // transitions of the producer, so rows come and go.
+            let page_id = crate::pages::read_page(&*store.read().ok()?, "default", slug)
+                .ok()??
+                .id;
+            let n = rng.next(3);
+            let transitions: Vec<Value> = (0..n)
+                .map(|i| {
+                    json!({
+                        "from_slug": slug, "to_slug": other, "link_type": "works_at",
+                        "kind": if i % 2 == 0 { "start" } else { "end" },
+                        "occurred_on": format!("20{:02}-01-01", 10 + rng.next(10)),
+                        "date_precision": "day", "producer": "timeline", "line_hash": format!("h{i}"),
+                    })
+                })
+                .collect();
+            let input: ApplyTemporalInput = de(json!({
+                "pageId": page_id, "sourceId": "default", "transitions": transitions,
+                "producers": ["timeline"], "linkTypes": ["works_at"],
+            }));
+            store
+                .apply_link_temporal_rows(&input)
+                .ok()
+                .map(|_| format!("temporal {slug}>{other} x{n}"))
+        }
         8 => store
             .delete_page(slug, Some(source))
             .ok()
@@ -221,6 +249,16 @@ fn check_readers(store: &Store) {
         }
     }
     same("hasSupersedeEdges", || store.has_supersede_edges().unwrap());
+    for page_id in 1..30 {
+        same("linkRelationshipKeysForOrigin", || {
+            store
+                .link_relationship_keys_for_origin(&KeysForOriginInput {
+                    page_id,
+                    link_types: vec!["works_at".into()],
+                })
+                .unwrap()
+        });
+    }
     for scope in [
         json!({}),
         json!({"sourceId": "work"}),
@@ -279,7 +317,8 @@ fn the_index_stays_in_step_and_the_members_answer_as_the_scans() {
                 SUPERSEDES,
                 CONTENT_HASH,
                 FRONTMATTER_ID,
-                LONG_TITLE
+                LONG_TITLE,
+                TRANSITION_ORIGIN
             ]
             .into_iter()
             .collect(),

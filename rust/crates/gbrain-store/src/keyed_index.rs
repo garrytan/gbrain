@@ -6,6 +6,7 @@
 //! | `0x01` | chunk id, page id, chunk index | each chunk record `K page_id index` (its `id`) | `cosinesByChunkIds`, `getEmbeddingsByChunkIds` |
 //! | `0x02` | lower-cased title, NUL, page id | each page record: `title.to_lowercase()` and `pg_lower(title)`, when at most `RAW_TITLE_MAX` bytes | `findPagesByTitles`, `listPagesTitledIn` |
 //! | `0x07` | h(lower-cased title), page id | the same, for a longer lower-cased title | `findPagesByTitles`, `listPagesTitledIn` |
+//! | `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`) with an origin page | `applyLinkTemporalRows`, `linkRelationshipKeysForOrigin` |
 //! | `0x03` | page id | each page record whose text projection is not served | `readProjectionReadiness` |
 //! | `0x04` | from page id, link id | each link record `L from link` with `link_type = 'supersedes'` | `hasSupersedeEdges` |
 //! | `0x05` | h(source, content hash), page id | each page record with a content hash | `findDuplicatePage(s)` |
@@ -18,7 +19,7 @@
 //! there.
 //!
 //! An entry is a pure function of one record, and its key holds that record's identity (page id,
-//! chunk key or link key), so no two records derive the same entry. [`KeyedWriter`] wraps every
+//! chunk key, link key or transition key), so no two records derive the same entry. [`KeyedWriter`] wraps every
 //! `Store::write` handle (the write chain in `lib.rs`): it remembers the entries the touched
 //! records derived before the statement's first write of each key and the entries their last
 //! value derives, and [`KeyedWriter::flush`] deletes and puts only the difference, in the same
@@ -45,6 +46,10 @@ pub(crate) const SUPERSEDES: u8 = 0x04;
 pub(crate) const CONTENT_HASH: u8 = 0x05;
 pub(crate) const FRONTMATTER_ID: u8 = 0x06;
 pub(crate) const LONG_TITLE: u8 = 0x07;
+pub(crate) const TRANSITION_ORIGIN: u8 = 0x08;
+
+/// The record tag of a link transition after its source in the `q` family (`link_temporal.rs`).
+const TRANSITION_TAG: u8 = b'T';
 
 /// The longest lower-cased title kept as raw bytes (`TITLE`); a longer one is kept hashed
 /// (`LONG_TITLE`).
@@ -56,8 +61,16 @@ const SUPERSEDES_TYPE: &str = "supersedes";
 #[derive(Clone, Copy)]
 enum Family {
     Page,
-    Chunk { page_id: u64, index: u32 },
-    Link { from: u64, link: u64 },
+    Chunk {
+        page_id: u64,
+        index: u32,
+    },
+    Link {
+        from: u64,
+        link: u64,
+    },
+    /// A link transition record: `q source NUL T ...`, as `link_temporal.rs` `scan_tag` picks them.
+    Transition,
 }
 
 fn family_of(key: &[u8]) -> Option<Family> {
@@ -71,8 +84,18 @@ fn family_of(key: &[u8]) -> Option<Family> {
             from: keys::be8(&key[1..9])?,
             link: keys::be8(&key[9..17])?,
         }),
+        keys::LINK_QUERIES if is_transition_key(key) => Some(Family::Transition),
         _ => None,
     }
+}
+
+/// Whether a `q` key is a link transition's: the byte after its first NUL (after the tag) is `T`,
+/// the test `link_temporal.rs` `scan_tag` applies.
+fn is_transition_key(key: &[u8]) -> bool {
+    key.iter()
+        .skip(1)
+        .position(|b| *b == 0)
+        .is_some_and(|nul| key.get(nul + 2) == Some(&TRANSITION_TAG))
 }
 
 /// `3 kind ids...` for entries keyed by ids only.
@@ -161,6 +184,12 @@ struct ChunkId {
     id: u64,
 }
 
+/// What a transition record's entry needs of it.
+#[derive(Deserialize)]
+struct TransitionOrigin {
+    origin_page_id: Option<u64>,
+}
+
 /// What a link record's entry needs of it.
 #[derive(Deserialize)]
 struct LinkType {
@@ -168,7 +197,7 @@ struct LinkType {
 }
 
 /// The entries the record `value` stored at `key` derives (none when `value` is `None`).
-fn entries_of(family: Family, value: Option<&[u8]>) -> Result<BTreeSet<Vec<u8>>> {
+fn entries_of(family: Family, key: &[u8], value: Option<&[u8]>) -> Result<BTreeSet<Vec<u8>>> {
     let mut out = BTreeSet::new();
     let Some(value) = value else {
         return Ok(out);
@@ -184,6 +213,14 @@ fn entries_of(family: Family, value: Option<&[u8]>) -> Result<BTreeSet<Vec<u8>>>
         Family::Link { from, link } => {
             if serde_json::from_slice::<LinkType>(value)?.link_type == SUPERSEDES_TYPE {
                 out.insert(id_entry(SUPERSEDES, &[from, link]));
+            }
+        }
+        Family::Transition => {
+            if let Some(origin) = serde_json::from_slice::<TransitionOrigin>(value)?.origin_page_id
+            {
+                let mut entry = id_entry(TRANSITION_ORIGIN, &[origin]);
+                entry.extend_from_slice(key);
+                out.insert(entry);
             }
         }
     }
@@ -217,12 +254,12 @@ impl<'a> KeyedWriter<'a> {
         let Some(family) = family_of(key) else {
             return Ok(());
         };
-        let after = entries_of(family, value)?;
+        let after = entries_of(family, key, value)?;
         if let Some(touch) = self.touched.get_mut(key) {
             touch.after = after;
             return Ok(());
         }
-        let before = entries_of(family, self.inner.get(key)?.as_deref())?;
+        let before = entries_of(family, key, self.inner.get(key)?.as_deref())?;
         self.touched.insert(key.to_vec(), Touch { before, after });
         Ok(())
     }
@@ -304,10 +341,10 @@ impl KvWrite for KeyedWriter<'_> {
 pub(crate) fn expected_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     let mut out = BTreeSet::new();
     let mut failure = None;
-    for tag in [keys::PAGE, keys::CHUNK, keys::LINK] {
+    for tag in [keys::PAGE, keys::CHUNK, keys::LINK, keys::LINK_QUERIES] {
         scan_prefix(read, &[tag], false, &mut |k, v| {
             if let Some(family) = family_of(k) {
-                match entries_of(family, Some(v)) {
+                match entries_of(family, k, Some(v)) {
                     Ok(entries) => out.extend(entries),
                     Err(e) => failure = Some(e),
                 }
@@ -516,6 +553,28 @@ pub(crate) fn pages_holding_chunks(
         })?;
     }
     Ok(pages.into_iter().collect())
+}
+
+/// The record keys of the link transitions whose `origin_page_id` is `page_id`, in key order (the
+/// order `link_temporal.rs` `scan_tag` reads them in). The caller reads each record and applies its
+/// own test.
+pub(crate) fn transitions_by_origin(read: &dyn KvRead, page_id: u64) -> Result<Vec<Vec<u8>>> {
+    let mut out = Vec::new();
+    if full_scan() {
+        scan_prefix(read, &[keys::LINK_QUERIES], false, &mut |k, _| {
+            if is_transition_key(k) {
+                out.push(k.to_vec());
+            }
+            true
+        })?;
+        return Ok(out);
+    }
+    let prefix = id_entry(TRANSITION_ORIGIN, &[page_id]);
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        out.push(k[prefix.len()..].to_vec());
+        true
+    })?;
+    Ok(out)
 }
 
 /// Whether any stored link has `link_type = 'supersedes'`. Each entry's link record is read back

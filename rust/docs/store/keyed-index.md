@@ -2,8 +2,8 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-Store format 9 keeps a few small indexes beside the records, so six members look their rows up by key instead of
-reading every page, chunk or link record (`crates/gbrain-store/src/keyed_index.rs`, tag `3`). The answers do not
+Store format 9 keeps a few small indexes beside the records, so these members look their rows up by key instead of
+reading every page, chunk, link or link transition record (`crates/gbrain-store/src/keyed_index.rs`, tag `3`). The answers do not
 change: each member reads the records an index names and applies its own test to them, then sorts as before.
 
 | Kind | Entry | Derived from | Read by |
@@ -15,16 +15,17 @@ change: each member reads the records an index names and applies its own test to
 | `0x05` | h(source, content hash), page id | each page record with a content hash | `findDuplicatePage`, `findDuplicatePages` |
 | `0x06` | h(source, frontmatter `id`), page id | each page record whose frontmatter `id` is not null | `findDuplicatePage`, `findDuplicatePages` |
 | `0x07` | h(lower-cased title), page id | the `0x02` titles longer than 512 bytes | `findPagesByTitles`, `listPagesTitledIn` |
+| `0x08` | origin page id, the transition's record key | each link transition record (`q source NUL T ...`, as `link_temporal.rs` `scan_tag` picks them) with an origin page | `applyLinkTemporalRows` (the page's own transitions it replaces), `linkRelationshipKeysForOrigin` |
 
 `h` is the first 16 bytes of the SHA-256 of the parts joined by NUL. Every value is empty. Soft-deleted pages keep
 their entries; the members filter them as before.
 
 ## How the entries stay right
 
-- Every entry is a pure function of one record, and its key holds that record's identity (page id, chunk key or link
-  key), so no two records derive the same entry.
+- Every entry is a pure function of one record, and its key holds that record's identity (page id, chunk key, link
+  key or transition key), so no two records derive the same entry.
 - `KeyedWriter` wraps every `Store::write` handle (the write chain in `lib.rs`, inside the keyword and flagging
-  writers). For each page, chunk or link key a statement puts or deletes, it remembers the entries the record derived
+  writers). For each page, chunk, link or transition key a statement puts or deletes, it remembers the entries the record derived
   before the statement's first write of that key and the entries its last value derives. At the end of the statement
   it deletes and puts only the difference, in the same statement, so the entries commit or roll back with the records.
   A savepoint rollback drops both; an OCC rerun starts a fresh writer.

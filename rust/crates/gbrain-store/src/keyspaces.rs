@@ -92,6 +92,11 @@ pub const KEYED_INDEX_KINDS: &[KeyKind] = &[
         crate::keyed_index::FRONTMATTER_ID,
         "keyed_page_frontmatter_id",
     ),
+    k(crate::keyed_index::LONG_TITLE, "keyed_page_long_title"),
+    k(
+        crate::keyed_index::TRANSITION_ORIGIN,
+        "keyed_transition_origin",
+    ),
 ];
 
 /// The `keyword` family's kind bytes (`keys::KW_*`).
