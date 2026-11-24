@@ -213,13 +213,16 @@ and deletes fact rows. Two rules govern it.
 - **Re-auditing an EXISTING shared brain:** the shared brain IS the target, so
   edits are in place on the SHARED repo (cd into the shared repo, never the
   personal `sync.repo_path`). Fact-row removal + re-sync applies to the shared
-  source's DB. The team can already read every page in it, so the history
-  purge's export list is simply every file now in the six folders. Write it
-  from the shared repo before Phase 5:
+  source's DB. Before Phase 5's history purge, once Phase 4 passes, run this
+  in your sanitized checkout of the shared repo. The purge clones the remote
+  fresh and takes the sanitized tree only from `$STAGING`, so copy the six
+  folders there. The team can already read every page in them, so the export
+  list is every file they now hold:
 
   ```bash
   STAGING="$HOME/.gbrain/backups/brainify-reaudit-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$STAGING" && chmod 700 "$STAGING"
+  for d in people meetings daily companies projects analysis; do [ -d "$d" ] && rsync -a "$d/" "$STAGING/$d/"; done
   for d in people meetings daily companies projects analysis; do [ -d "$d" ] && find "$d" -type f; done \
     | LC_ALL=C sort > "$STAGING.export-list"
   ```
