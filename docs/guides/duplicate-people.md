@@ -48,6 +48,11 @@ Email evidence comes from the email pages already in your brain (`type: email`, 
 machine and sent nowhere. A brain with no email or chat pages works the same, with fewer signals. gbrain has no Signal
 reader, so Signal chats add nothing. A role or team address turns email evidence off for that pair.
 
+A large chat page stored in segments (one over 1 MiB) is read whole up to 24 MiB. A bigger one, or one that can't be
+read as one body, is set aside: its chat adds no evidence, the run carries on, and the output lists it on its own line
+(`messaging.segmented_page` in `--json`, with `read`, `set_aside` and the `pages`). Reading only part of a chat could
+hide speakers and make a group chat look one-to-one, so a part is never used.
+
 ## Web search (Exa)
 
 Web search is off unless you set `EXA_API_KEY` and turn it on with `gbrain config set dedupe.exa on`. When it is
