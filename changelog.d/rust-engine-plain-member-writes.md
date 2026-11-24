@@ -5,3 +5,4 @@
 
 ### Known gap
 - On the Rust engine, a plain member's write to a page that names readers or sits under a folder rule can still be refused, because those visibility checks in `src/core/persistence/page-visibility.ts` still read the page with raw SQL.
+- On the Rust engine, the brain owner's own remote `put_page` is refused, because it reads the stored page's privacy with raw SQL. This does not depend on the labelled-only grant.
