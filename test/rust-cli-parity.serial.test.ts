@@ -536,7 +536,7 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     for (const backend of ['pglite', 'rust'] as const) {
       const brain = brains[backend];
       // `auth create --sources` still refuses on Rust (raw SQL), so the key is switched with a rescope, which runs.
-      for (const args of [['auth', 'create', 'k-shared'], ['auth', 'rescope', '--token', 'k-shared', '--sources', 'default', '--read-shared', 'on']]) {
+      for (const args of [['auth', 'create', 'k-plain'], ['auth', 'create', 'k-shared'], ['auth', 'rescope', '--token', 'k-shared', '--sources', 'default', '--read-shared', 'on']]) {
         const run = await cli(brain, args);
         expect({ backend, args, exitCode: run.exitCode, stderr: run.exitCode ? run.stderr : '' }).toEqual({ backend, args, exitCode: 0, stderr: '' });
       }
@@ -545,6 +545,8 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       out[backend] = { text: mark(text.stdout), json: normalize(parseJson(json.stdout), pathsOf(brain)) };
     }
     expect(out.pglite!.text).toContain('    write: default  reads: default (+ shared)');
+    // Only the switched key gets the line: the plain key's row is followed by another row or the end, never a write line.
+    expect(out.pglite!.text.split('\n').filter(l => l.startsWith('    write: ')).length).toBe(1);
     expect(out.rust).toEqual(out.pglite);
     table.push({ command: 'auth list (read-shared key)', state: 'equal', note: '' });
   }, 300_000);
