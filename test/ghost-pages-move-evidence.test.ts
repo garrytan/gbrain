@@ -298,6 +298,19 @@ A line added at the move.
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend, { 'archive/older.md': OLDER })));
 
+  test(`${backend}: a ghost whose content an earlier commit rewrote another file to, deleted later and that file edited after, is kept, never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, { 'archive/older.md': ALPHA }, 'rewrite older with the alpha content');
+    commit(root, {}, 'drop alpha', ['notes/alpha.md']);
+    commit(root, { 'archive/older.md': ALPHA + '\nA line added after the move.\n' }, 'edit the rewritten file');
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('archive/older.md, commit_copy') });
+    expect((await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true })).outcomes ?? {}).not.toHaveProperty('soft_deleted');
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend, { 'archive/older.md': OLDER })));
+
   test(`${backend}: a page edited in the database after its deleting commit rewrote another file to its content folds into that file's page`, () => managedBrain(async ({ engine, root }) => {
     await movedAway(engine, () => rewriteOlder(root));
     const preview = await runner(engine, 'ghost-pages');
