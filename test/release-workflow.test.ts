@@ -13,6 +13,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
+import { RELEASE_ADDON_TARGETS, RUST_ADDON_MANIFEST_ASSET, rustAddonAssetName } from '../src/core/rust-engine/addon-manifest.ts';
 
 const ROOT = join(import.meta.dir, '..');
 const WORKFLOW = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -24,6 +25,9 @@ const EXPECTED_ASSETS = (
     ['linux', 'x64'],
   ] as const
 ).map(([p, a]) => expectedAssetName(p, a) as string);
+
+/** The Rust engine addon files `gbrain engine install rust` downloads from a release (addon-install.ts). */
+const RUST_ADDON_ASSETS = [...RELEASE_ADDON_TARGETS.map(rustAddonAssetName), RUST_ADDON_MANIFEST_ASSET];
 
 describe('release.yml ↔ binary-self-update asset contract', () => {
   test('release compiler is covered by the required native runtime matrix', () => {
@@ -68,8 +72,10 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
 
   test('idempotency completeness check names every expected asset', () => {
     // The version job only skips when the existing release carries ALL assets;
-    // its sorted-join comparison string must stay in sync with the matrix.
-    expect(WORKFLOW).toContain([...EXPECTED_ASSETS].sort().join(','));
+    // its sorted-join comparison string must stay in sync with the matrix and
+    // with the Rust engine addon files `gbrain engine install rust` downloads.
+    const all = [...EXPECTED_ASSETS, ...RUST_ADDON_ASSETS, 'gbrain-skill-resolver.mjs', 'gbrain-skill-resolver.mjs.sha256'];
+    expect(WORKFLOW).toContain(`if [ "$assets" = "${all.sort().join(',')}" ]`);
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {
@@ -133,6 +139,47 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(WORKFLOW).toContain('GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0');
     // Force-push semantics preserved (history-less template publish).
     expect(WORKFLOW).toMatch(/git push --force "https:\/\/github\.com\/\$\{TEMPLATE_REPO\}\.git" HEAD:main/);
+  });
+});
+
+describe('release.yml ↔ gbrain engine install rust', () => {
+  const job = (name: string) => {
+    const start = WORKFLOW.indexOf(`\n  ${name}:\n`);
+    expect(start).toBeGreaterThan(-1);
+    const next = WORKFLOW.slice(start + 1).search(/\n  [a-z0-9-]+:\n/);
+    return WORKFLOW.slice(start, next < 0 ? undefined : start + 1 + next);
+  };
+
+  test('every release target is built on a native runner from the gated commit, with no build cache', () => {
+    const build = job('rust-addon');
+    for (const target of RELEASE_ADDON_TARGETS) expect(build).toContain(`addon_target: ${target}`);
+    expect(build).toContain('ref: ${{ needs.ci-gate.outputs.sha }}');
+    expect(build).toContain('bun run rust:build');
+    expect(build).toContain('bun rust/scripts/release-addon.ts stage --target "${{ matrix.addon_target }}"');
+    expect(build).not.toContain('actions/cache');
+  });
+
+  test('the addons and their manifest are attested by this workflow and attached to the release', () => {
+    const pkg = job('rust-addon-package');
+    expect(pkg).toContain('attest-build-provenance');
+    for (const asset of RUST_ADDON_ASSETS) {
+      expect(pkg).toContain(`rust-addon/${asset}`);
+      expect(job('release')).toContain(`artifacts/gbrain-engine-rust/${asset}`);
+    }
+    expect(pkg).toContain('--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"');
+    // A failed addon build blocks publication: the release job waits on the package job, which waits on every build.
+    expect(job('release')).toMatch(/needs: \[[^\]]*rust-addon-package[^\]]*\]/);
+    expect(pkg).toMatch(/needs: \[[^\]]*rust-addon[,\]]/);
+  });
+
+  test('after publication the released executable installs the addon and opens a Rust brain with no override', () => {
+    const smoke = job('rust-addon-smoke');
+    expect(smoke).toMatch(/needs: \[[^\]]*release[^\]]*\]/);
+    for (const asset of EXPECTED_ASSETS) expect(smoke).toContain(`executable: ${asset}`);
+    expect(smoke).toContain('unset GBRAIN_RUST_ENGINE_ADDON');
+    expect(smoke).toContain('engine install rust --json');
+    expect(smoke).toContain('.rust_addon.installed == true and .rust_addon.override == false and .probe.ok == true');
+    expect(smoke).toContain('"$gbrain" stats --json');
   });
 });
 
