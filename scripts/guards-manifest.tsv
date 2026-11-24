@@ -64,6 +64,7 @@ check-skills-lock-history.ts	repostate	exempt	GBRA-225: skills/skills.lock.histo
 check-moved-skills.ts	repostate	exempt	G3: once skills/moved-skills.json names a destination, every skill folder under skills/ is on its kept or moved list (new content skills go to the destination); skipped while the destination is null; unit: test/moved-skills.test.ts
 check-tool-catalog-fresh.sh	buildfresh	exempt	regenerates + diffs
 check-wasm-embedded.sh	buildfresh	exempt	binary embed check
+check-bytecode-parity.ts	buildfresh	exempt	builds the release compile line with and without --bytecode --format=esm and diffs stdout/stderr/exit of a fixed command set on a temp PGLite brain; not in verify CHECKS: runs directly as a test.yml verify-job step
 check-bootstrap-tag.sh	repostate	exempt	VERSION stamp drift check
 check-install-ref.ts	scanner	yes	install pins, runbook and setup-helper fetches name INSTALL_REF (src/core/install-ref.ts); git ls-files under GBRAIN_GUARD_ROOT; unit tests in test/install-ref.test.ts
 check-cli-executable.sh	repostate	exempt	file-mode check
