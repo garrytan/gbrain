@@ -58,6 +58,8 @@ export interface FailbackDeps {
   progress?: (line: string) => void;
   /** Test-only: runs after the copy, before the verification. */
   beforeVerify?: () => Promise<void>;
+  /** Runs before the route probe: the CLI closes both engines here, so a fresh process can open the old one. */
+  beforeProbe?: () => Promise<void>;
 }
 
 export interface FailbackPlan {
@@ -235,6 +237,7 @@ export async function runFailback(deps: FailbackDeps, expect: string): Promise<S
     await dropGraduationFence(tx);
     await setSourceState(tx, record.run_id, 'rolled_back');
   });
+  await deps.beforeProbe?.();
   const probe = await deps.prober();
   record.failback!.probe = { ...probe, at: (deps.now?.() ?? new Date()).toISOString() };
   if (!probeOk(probe, previous)) {

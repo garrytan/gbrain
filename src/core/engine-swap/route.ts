@@ -74,6 +74,13 @@ export function switchAuthority(store: string, saved?: SavedRoute): PreviousAuth
 }
 
 /** Puts the previous engine back (the probe failed or the run is rolled back before success). */
+/** The database_url the switch saved for this run (a Postgres brain), or null. Never logged. */
+export function savedDatabaseUrl(saved: SavedRoute): string | null {
+  const path = savedRoutePath(saved);
+  if (!existsSync(path)) return null;
+  return (JSON.parse(readFileSync(path, 'utf8')) as { database_url?: string }).database_url ?? null;
+}
+
 export function restoreAuthority(previous: PreviousAuthority, saved?: SavedRoute): void {
   const file = loadConfigFileOnly();
   if (!file) return;

@@ -9,8 +9,8 @@
  *   --status [--json]          prints the run record, without opening any engine.
  *
  * Dispatched before connectEngine() from `gbrain engine`. Without `--yes` the run gives `confirmation_required`
- * (exit 3) with the plan hash; it never prompts. Every refusal comes before the first write. A PGLite brain swaps
- * today; failback (`--to pglite`) and a Postgres source come later.
+ * (exit 3) with the plan hash; it never prompts. Every refusal comes before the first write. A PGLite
+ * or Postgres brain swaps; `--to pglite|postgres` is failback (src/commands/engine-swap-failback.ts).
  *
  * Exit codes: 0 done (plan shown, run succeeded, status shown); 1 refused or failed; 2 usage; 3 confirmation, a
  * topology decision, a mounted brain (`team_brain`), managed storage (`managed_storage`) or no shadow (`no_shadow`). `--json` prints one document on stdout; progress goes to stderr.
@@ -38,6 +38,7 @@ import { shadowBrainKey, shadowDirFor } from '../shadow/state.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
 import { mountedBrainError, swapRefusal, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
 import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
+import { failbackRecordPath, runEngineFailback, type FailbackCliDeps } from './engine-swap-failback.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 
 export interface EngineSwapArgs {
@@ -64,14 +65,17 @@ export function parseEngineSwapArgs(args: readonly string[]): EngineSwapArgs {
   return out;
 }
 
-const HELP = `gbrain engine swap — move this brain to the Rust engine
+const HELP = `gbrain engine swap — move this brain to the Rust engine, or back
 
   gbrain engine swap --to rust --plan [--json]            the plan and its hash; writes nothing
   gbrain engine swap --to rust --yes --expect <hash>     run the swap the plan describes
   gbrain engine swap --to rust --resume [--json]         continue a stopped run from its last state
   gbrain engine swap --status [--json]                   the recorded run, without opening the brain
+  gbrain engine swap --to pglite|postgres --plan [--json]   failback: what is copied back and every loss; writes nothing
+  gbrain engine swap --to pglite|postgres --yes --expect <hash>   copy Rust's writes back, verify, move authority back
+  gbrain engine swap --to pglite|postgres --resume       finish a failback that stopped after its switch
 
-A PGLite brain swaps today; failback (--to pglite) and a Postgres brain come later.
+A PGLite or Postgres brain swaps to rust; failback returns it to the engine it swapped from.
 See docs/guides/engine-swap.md.
 `;
 
@@ -157,6 +161,8 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
     pgTools?: PgTools;
     checkpointFreeBytes?: (dir: string) => number | null;
   };
+  /** Failback's seams (`--to pglite|postgres`). */
+  failback?: FailbackCliDeps;
 }
 
 function loadedConfig(): GBrainConfig {
@@ -218,6 +224,8 @@ function renderStatus(r: SwapRecord | null): string {
     r.switch ? `  authority switched at ${r.switch.at} (was ${r.switch.previous.engine})` : '',
     r.probe ? `  route probe: ${r.probe.effective_engine ?? 'none'} ${r.probe.ok ? 'answered' : 'failed'}` : '',
     r.error ? `  stopped at ${r.error.state}: ${r.error.code}${r.error.reason ? ` (${r.error.reason})` : ''}, diagnostic ${r.error.diagnostic_id}. Continue with --resume.` : '',
+    r.failback ? `  failback to ${r.failback.target} (plan ${r.failback.plan_hash}): ${r.failback.state}${r.failback.copy ? `; ${r.failback.copy.pages} page(s) and ${r.failback.copy.facts} fact(s) copied back` : ''}` : '',
+    r.failback?.error ? `  failback stopped at ${r.failback.error.state}: ${r.failback.error.code}, diagnostic ${r.failback.error.diagnostic_id}.` : '',
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -232,7 +240,9 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
   if (parsed.unsupported.length) return writeError(usage(`Not a flag of engine swap: ${parsed.unsupported.join(' ')}.`), parsed);
   const modes = [parsed.plan, parsed.yes || parsed.expect !== undefined, parsed.resume, parsed.status].filter(Boolean).length;
   if (modes > 1) return writeError(usage('Use one of --plan, --yes --expect <hash>, --resume or --status.'), parsed);
-  if (!parsed.status && parsed.to !== 'rust') return writeError(usage(`--to ${parsed.to ?? '(missing)'} is not available: this build moves a brain to rust only.`), parsed);
+  if (!parsed.status && parsed.to !== 'rust' && parsed.to !== 'pglite' && parsed.to !== 'postgres') {
+    return writeError(usage(`--to ${parsed.to ?? '(missing)'} is not an engine: use rust, or pglite / postgres to fail back.`), parsed);
+  }
   if (parsed.yes && !parsed.expect) return writeError(usage('--yes needs --expect <plan hash>: read it with gbrain engine swap --to rust --plan.'), parsed);
   let brainId: string;
   // The global --brain flag is stripped into getCliOptions() before dispatch; a local one wins.
@@ -241,9 +251,18 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
   if (brainId !== HOST_BRAIN_ID) return writeError(mountedBrainError(brainId), parsed);
   if (parsed.status) {
     try {
-      const record = readSwapRecord(swapRecordPath(brainKeyOf(loadedConfig())));
+      const statusPath = failbackRecordPath(loadedConfig()) ?? swapRecordPath(brainKeyOf(loadedConfig()));
+      const record = readSwapRecord(statusPath);
       out(parsed.json ? JSON.stringify({ schema_version: 1, run: record }, null, 2) : renderStatus(record));
       return 0;
+    } catch (e) { return writeError(e, parsed); }
+  }
+  if (parsed.to === 'pglite' || parsed.to === 'postgres') {
+    const env = deps.env ?? process.env;
+    const home = deps.home ?? env.HOME ?? '';
+    try {
+      return await runEngineFailback({ to: parsed.to, plan: parsed.plan, json: parsed.json, yes: parsed.yes, expect: parsed.expect, resume: parsed.resume },
+        { out, err, envNames: ENGINE_SELECTING_ENV.filter(v => (env[v] ?? '') !== ''), services: home ? serviceDefinitions(home) : [] }, deps.failback);
     } catch (e) { return writeError(e, parsed); }
   }
   const running = parsed.yes || parsed.resume;

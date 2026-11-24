@@ -8,8 +8,8 @@
  * in production can.
  */
 import type { PreviousAuthority } from './route.ts';
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
 
@@ -86,6 +86,26 @@ export function swapRunDir(brainKey: string): string {
 
 export function swapRecordPath(brainKey: string): string {
   return join(swapRunDir(brainKey), 'run.json');
+}
+
+/**
+ * The run record of this brain: under its own key, or, once the config names the Rust store (after a swap, whose key
+ * is the store's), the record whose `rust_store` is that store.
+ */
+export function findSwapRecordPath(brainKey: string | null, rustStore?: string | null): string | null {
+  if (brainKey && existsSync(swapRecordPath(brainKey))) return swapRecordPath(brainKey);
+  if (!rustStore) return brainKey ? swapRecordPath(brainKey) : null;
+  const root = join(configDir(), 'engine-swap');
+  let keys: string[] = [];
+  try { keys = readdirSync(root).sort(); } catch { return brainKey ? swapRecordPath(brainKey) : null; }
+  for (const key of keys) {
+    const path = swapRecordPath(key);
+    try {
+      const record = readSwapRecord(path);
+      if (record && resolve(record.rust_store) === resolve(rustStore)) return path;
+    } catch { /* not a record this build reads: skip it */ }
+  }
+  return brainKey ? swapRecordPath(brainKey) : null;
 }
 
 export function readSwapRecord(path: string): SwapRecord | null {
