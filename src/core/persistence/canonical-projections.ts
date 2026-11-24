@@ -827,7 +827,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
       // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline. The expire uses the
       // generation's retire predicate under the page lock, so it runs only when that generation found rows to retire.
-      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig, kept },
+      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, pageId: id, incoming, rows: factRows, cfg: loadWriteGateConfig, kept },
         () => pipelined(tx, factGeneration.retiring ? [expireFacts(factGeneration.retireIds), ...timelineRows] : timelineRows)));
       if (factsHeld) await step('timeline', () => pipelined(tx, timelineRows));
       if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId })); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
