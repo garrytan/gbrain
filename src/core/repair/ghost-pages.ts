@@ -328,7 +328,7 @@ async function readGhostMoves(engine: BrainEngine, sourceId: string, root: strin
 }
 
 /** Move reads of one apply run, keyed by checkout root and HEAD: a read depends on Git only once candidates are named, so one HEAD shares it. */
-const runMoves = { key: '', moves: new Map<string, GhostMove | undefined>() };
+const runMoves = { checkout: '', moves: new Map<string, GhostMove | undefined>() };
 const headOf = (root: string) => { try { return syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { return null; } };
 const moveKey = (ghost: GhostPage) => `${ghost.page_id}:${ghost.revision}:${ghost.path}`;
 
@@ -337,7 +337,7 @@ async function primeGhostMoves(engine: BrainEngine, sourceId: string, root: stri
   const head = headOf(root);
   if (!head || !ghosts.length) return;
   const moves = await readGhostMoves(engine, sourceId, root, ghosts, await readDeletionProvenance(root, ghosts.map(ghost => ghost.path)));
-  runMoves.key = `${root}\0${head}`;
+  runMoves.checkout = `${root}\0${head}`;
   runMoves.moves = new Map(ghosts.map(ghost => [moveKey(ghost), moves.get(ghost.page_id)]));
 }
 
@@ -350,7 +350,7 @@ export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner
   if (!binding?.local_path) return null;
   const root = join(binding.local_path, binding.relative_path);
   const head = headOf(root);
-  const cached = head !== null && runMoves.key === `${root}\0${head}` && runMoves.moves.has(moveKey(ghost));
+  const cached = head !== null && runMoves.checkout === `${root}\0${head}` && runMoves.moves.has(moveKey(ghost));
   const move = cached ? runMoves.moves.get(moveKey(ghost))
     : (await readGhostMoves(engine, ghost.source_id, root, [ghost], await readDeletionProvenance(root, [ghost.path]))).get(ghost.page_id);
   const code = moveCode(move);
