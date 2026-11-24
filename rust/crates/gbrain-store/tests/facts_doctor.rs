@@ -724,6 +724,38 @@ fn embedding_coverage_counts_missing_stale_and_partial_rows() {
     // Another width makes every embedded row stale; none is partial then.
     let narrow: Vec<_> = cov(Some("default"), 1024.0).iter().map(row).collect();
     assert_eq!(narrow, [("default".to_string(), 1, 7, 0)]);
+    // countStaleFactEmbeddings: the same stale rows, counted with their length in characters.
+    let stale = |source_id: Option<&str>, dims: f64| {
+        b.count_stale_fact_embeddings(&CoverageQuery {
+            source_id: source_id.map(String::from),
+            model: model.to_string(),
+            dims,
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        stale(None, 1536.0),
+        json!({ "count": 3, "chars": 9 + 11 + 1 })
+    );
+    assert_eq!(
+        stale(Some("old"), 1536.0),
+        json!({ "count": 0, "chars": 0 })
+    );
+    // An emoji is one character, as Postgres `length()` counts it.
+    assert_eq!(
+        stale(Some("default"), 1024.0),
+        json!({ "count": 7, "chars": 5 + 9 + 11 + 8001 + 8000 + 4001 + 2500 })
+    );
+    assert!(
+        b.count_stale_fact_embeddings(&CoverageQuery {
+            source_id: None,
+            model: model.into(),
+            dims: 1.5
+        })
+        .unwrap_err()
+        .to_string()
+        .contains("countStaleFactEmbeddings: invalid input syntax for type integer")
+    );
     assert!(
         b.count_fact_embedding_coverage(&CoverageQuery {
             source_id: None,

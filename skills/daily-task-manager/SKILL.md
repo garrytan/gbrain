@@ -17,7 +17,6 @@ tools:
   - put_page
   - add_timeline_entry
 mutating: true
-upstream: daily-task-manager@fc834ee
 ---
 
 # Daily Task Manager

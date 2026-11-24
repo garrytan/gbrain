@@ -97,6 +97,15 @@ describe('gbrain doctor --json goldens (PGLite + early stops)', () => {
     expectGolden('doctor/json-pglite-degraded', c.degraded, DOCTOR_JSON);
   }, 240_000);
 
+  test('a run slow enough to print read-heartbeat lines normalizes like a fast one', () => {
+    const start = '[gbrain] reading doctor checks; large brains can take minutes. Progress prints here every 10 s; the result prints on stdout when it is ready.';
+    const run = (stderr: string[]): GbrainRun => ({ args: ['doctor', '--json'], exitCode: 0, stdout: '{}', stderr: stderr.join('\n') + '\n', json: {}, roots: {} });
+    const fast = DOCTOR_JSON.apply(run([start]));
+    const slow = DOCTOR_JSON.apply(run([start, '[gbrain] still reading doctor checks (10 s so far); no result yet.', '[gbrain] still reading doctor checks (20 s so far); no result yet.']));
+    expect(slow).toEqual(fast);
+    expect((fast as { stderr: string[] }).stderr).toEqual([start]);
+  });
+
   test('no config, unreachable Postgres, unreachable Postgres --fast', async () => {
     const c = await expectNormalizerStable(captureEarlyStops, ALL);
     expectGolden('doctor/json-no-config', c.noConfig, DOCTOR_JSON);

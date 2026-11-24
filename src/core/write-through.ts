@@ -378,15 +378,12 @@ export async function resolvePageWriteTarget(
   let filePath: string;
   let writeRoot: string;
   let scanRoot: string;
-  const srcRows = await engine.executeRaw<{ local_path: string | null }>(
-    `SELECT local_path FROM sources WHERE id = $1`,
-    [sourceId],
-  );
+  const srcRow = await engine.getSource(sourceId);
   // gbrain#2955: heal an msys-style local_path (`/c/Users/x`, recorded by a
   // Git Bash `sources add --path` on Windows) before it is joined — raw, it
   // resolves to a phantom `C:\c\Users\x` and every write silently misses the
   // real vault. Identity on POSIX and for already-native paths.
-  const rawLocalPath = srcRows[0]?.local_path ?? null;
+  const rawLocalPath = srcRow?.local_path ?? null;
   const sourceLocalPath = rawLocalPath ? msysToNativePath(rawLocalPath) : null;
 
   const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(

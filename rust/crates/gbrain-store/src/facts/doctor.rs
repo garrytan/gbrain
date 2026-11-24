@@ -81,7 +81,7 @@ pub struct CoverageQuery {
 
 /// Every fact row of every source, source by source. A fact names a source that exists, so this
 /// is every row of the `facts` table.
-fn every_fact(read: &dyn KvRead) -> Result<Vec<FactRecord>> {
+pub(crate) fn every_fact(read: &dyn KvRead) -> Result<Vec<FactRecord>> {
     let mut out = Vec::new();
     for source in all_sources(read)? {
         out.extend(source_rows(read, &source.id)?);
@@ -554,9 +554,10 @@ impl Store {
     /// Calls `f` with every embeddable fact of `q`'s sources and whether its vector is stale for
     /// `q.model` and `q.dims`. Embeddable is `eligibleFactEmbedding`: the fact is not expired,
     /// superseded, past `valid_until` or an audit row, its source is not archived, and its page
-    /// (`source_markdown_slug`) is not soft-deleted. The store keeps no `fact_withdrawals` (the
-    /// Rust engine refuses `executeRaw`, their only writer), so none hides a fact.
-    fn for_each_embeddable_fact(
+    /// (`source_markdown_slug`) is not soft-deleted, and no withdrawal covers it (`retainedFactEmbedding`:
+    /// a withdrawal of its source and visibility under either fingerprint, whose subject is the
+    /// fact's member page for a fact on `memory/members/...`, else `*` or the fact's entity).
+    pub(crate) fn for_each_embeddable_fact(
         &self,
         op: &str,
         q: &CoverageQuery,

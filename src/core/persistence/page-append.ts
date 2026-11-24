@@ -20,6 +20,7 @@
  * which mines those bytes alone (#7122, effect-links.ts); timeline rows and fence projections of the appended text follow
  * PR 4's incremental derivation.
  */
+import { normalizeSlug } from '../utils.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -176,7 +177,7 @@ export async function admitPageAppend(ctx: OperationContext, input: AppendPageIn
   } catch (error) {
     if (!(error instanceof OperationError) || (error.canonical ?? error.code) !== 'tail_changed') throw error;
     const sourceId = String(error.receiptFields?.source_id ?? input.source_id ?? ctx.sourceId ?? 'default');
-    const slug = String(error.receiptFields?.slug ?? input.slug).toLowerCase();
+    const slug = normalizeSlug(String(error.receiptFields?.slug ?? input.slug));
     const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId });
     const found = snapshot && !snapshot.page.deleted_at ? await regionTail(ctx.engine, snapshot, intent.region) : null;
     const tail = found && !(ctx.remote !== false && found.guarded) ? found : null;

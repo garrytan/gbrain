@@ -2,6 +2,7 @@ import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
+import { carryHoldsToPage } from '../write-gate-binding.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -124,8 +125,9 @@ export async function moveSlugBindings(
  * semantics (#5431) onto the row that materialized at the destination, before
  * the stale row is soft-deleted: edges where it is the source, target or
  * origin, its timeline entries, its version history and its secret store
- * occurrences (the purge cascade finds a page's originals by page id). Rows the surviving
- * page already holds under the same unique key (`links` composite key,
+ * occurrences (the purge cascade finds a page's originals by page id) and its quarantine holds
+ * (`carryHoldsToPage`: a hold that differs from one the surviving page already has is kept and marked, never dropped).
+ * Rows the surviving page already holds under the same unique key (`links` composite key,
  * timeline dedup indexes) are dropped from the stale side, never duplicated.
  * Runs inside the caller's transaction and is idempotent.
  */
@@ -154,4 +156,5 @@ export async function movePageIdReferences(
     [`UPDATE secret_store_occurrence SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
   ];
   for (const [sql, params] of statements) await tx.executeRaw(sql, params);
+  await carryHoldsToPage(tx, fromPageId, toPageId);
 }
