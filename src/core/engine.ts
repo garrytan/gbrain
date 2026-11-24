@@ -1925,6 +1925,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readCredentialBindingForUpdate(target: AccessMembersSql.CredentialTarget, opts: { readsUnscoped: boolean }): Promise<AccessMembersSql.CredentialBindingRow | undefined>;
   /** The member a credential is bound to (a revoked or deleted one too, nothing locked), or null. */
   readCredentialMemberId(target: AccessMembersSql.CredentialTarget): Promise<string | null>;
+  /** The brain-audience heuristic's binding read: each live token (by name) and live OAuth client (by client id) among `names`, with its member. */
+  listCredentialMemberBindings(names: readonly string[]): Promise<AccessMembersSql.CredentialMemberBinding[]>;
   /** The enabled member linked to (system, externalId), with its groups, or null (access/actor.ts linkedMember). */
   readLinkedMember(system: string, externalId: string): Promise<AccessMembersSql.LinkedMemberRow | null>;
   /** Writes a credential's member, may_act_for and attest columns. */

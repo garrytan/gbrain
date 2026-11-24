@@ -3077,6 +3077,19 @@ const PINS: Pin[] = [
           WHERE p.deleted_at IS NULL FOR SHARE OF p`],
   },
   {
+    from: 'src/core/facts/writeback-audience.ts:82 classifyBrainAudience (the credential binding read, at b7b18e5ab3)',
+    case: { method: 'listCredentialMemberBindings', variant: 'default', run: e => e.listCredentialMemberBindings(['alice-laptop', 'alice-agent']) },
+    texts: [`SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL
+       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/search/facts-arm.ts:417 applyFactSourcePages (the fact source page read, at b7b18e5ab3)',
+    case: { method: 'listFactSourcePages', variant: 'default', run: e => e.listFactSourcePages([1, 2]) },
+    texts: [`SELECT f.id, p.id AS page_id, p.slug, p.title, p.type FROM facts f
+       JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
+       WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`],
+  },
+  {
     from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
     case: { method: 'listAttendedOriginSlugs', variant: 'default', run: e => e.listAttendedOriginSlugs('default') },
     texts: [`SELECT DISTINCT o.slug FROM links l

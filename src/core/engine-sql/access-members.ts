@@ -151,6 +151,22 @@ export async function readCredentialMemberId(exec: Pick<SqlExecutor, 'executeRaw
   return row?.member_id ?? null;
 }
 
+/** One live credential named in a usage log row and the member it is bound to (null: bound to nobody). */
+export interface CredentialMemberBinding { name: string; member_id: string | null }
+
+/**
+ * The brain-audience heuristic's binding read (facts/writeback-audience.ts classifyBrainAudience): for each name, the
+ * tokens not revoked with that name and the OAuth clients not deleted with that client id, each with its member. A
+ * name can match several credentials; an empty list reads nothing. The rows come in no set order.
+ */
+export async function listCredentialMemberBindings(exec: Pick<SqlExecutor, 'executeRaw'>, names: readonly string[]): Promise<CredentialMemberBinding[]> {
+  if (!names.length) return [];
+  const rows = await exec.executeRaw<{ name: string; member_id: string | null }>(
+    `SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL
+       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL`, [[...names]]);
+  return rows.map(r => ({ name: r.name, member_id: r.member_id ?? null }));
+}
+
 /** An enabled member linked to a person of a trusted system, with its groups in `group_id` order. */
 export interface LinkedMemberRow { id: string; groups: string[] | null }
 

@@ -413,6 +413,7 @@ test/engine-parity/recall-members.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
 test/engine-parity/refusal-swallow-sites.test.ts
+test/engine-parity/refusal-swallows-lane4.test.ts
 test/engine-parity/relational-reads.test.ts
 test/engine-parity/remember-members.test.ts
 test/engine-parity/remember-meta.test.ts

@@ -3121,6 +3121,17 @@
           "src-a"
         ]
       },
+      "listCredentialMemberBindings#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listDerivedAliasRows#default": {
         "flagOffLanes": [
           "pool"
@@ -3304,6 +3315,17 @@
         "flagOnScopes": []
       },
       "listFactProvenance#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "listFactSourcePages#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -9562,6 +9584,7 @@
         "listCorePageRows": "none",
         "listCorpusSample": "direct",
         "listCoveredSources": "none",
+        "listCredentialMemberBindings": "none",
         "listCredentialResealHoldRows": "none",
         "listDanglingFederatedReads": "none",
         "listDateBulletPages": "none",
@@ -9625,6 +9648,7 @@
         "listFactProvenance": "none",
         "listFactRelinkOutcomes": "none",
         "listFactRowsByIds": "none",
+        "listFactSourcePages": "none",
         "listFactWithdrawalDates": "none",
         "listFactWithdrawalKeys": "none",
         "listFactsAbsorbFailureGroups": "none",

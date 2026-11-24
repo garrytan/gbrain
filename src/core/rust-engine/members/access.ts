@@ -72,6 +72,7 @@ export const ACCESS_MEMBERS = {
   listAccessMemberLinks: 'access_control',
   readCredentialBindingForUpdate: 'access_control',
   readCredentialMemberId: 'access_control',
+  listCredentialMemberBindings: 'access_control',
   readLinkedMember: 'access_control',
   writeCredentialBinding: 'access_control',
   writeCredentialReadsUnscoped: 'access_control',

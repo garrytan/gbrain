@@ -1586,6 +1586,8 @@ export const DOMAIN_OF: Record<string, string> = {
   'deleteAccessMemberLink': OOS.callerRawSql,
   'listAccessMemberLinks': OOS.callerRawSql,
   'readCredentialMemberId': OOS.callerRawSql,
+  'listCredentialMemberBindings': OOS.callerRawSql,
+  'listFactSourcePages': OOS.callerRawSql,
   'pingStore': OOS.callerRawSql,
   'readJobDataByIdempotencyKey': OOS.callerRawSql,
   'coalesceOnIdempotencyKey': OOS.callerRawSql,
@@ -2772,6 +2774,8 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listSweepStalePages', [['default', (e) => e.listSweepStalePages({ sourceId: SRC, since: '2026-01-01T00:00:00.000Z', limit: 8, exclude: ['a'] })]]),
   ...variants('listSweepDeferredPages', [['default', (e) => e.listSweepDeferredPages({ sourceId: SRC, since: '2026-01-01T00:00:00.000Z', slugs: ['a'] })]]),
   ...variants('listPageRefsForSlugs', [['default', (e) => e.listPageRefsForSlugs(['a', 'b'])]]),
+  ...variants('listCredentialMemberBindings', [['default', (e) => e.listCredentialMemberBindings(['alice-laptop', 'alice-agent'])]]),
+  ...variants('listFactSourcePages', [['default', (e) => e.listFactSourcePages([1, 2])]]),
   ...variants('readJournalLimitRows', [['default', (e) => e.readJournalLimitRows()]]),
   ...variants('readHeldPageRows', [['default', (e) => e.readHeldPageRows(['1', '2'])]]),
   ...variants('readHeldCoverageRows', [
