@@ -9,6 +9,6 @@ important: data-loss
 - With `sync.apply_held_deletions` on, a file moved in two commits (the deletion first, then the add) could be deleted by a sync that ran between them, even when the deletion commit also changed other files. A sync now deletes only a page an earlier sync already held, so a later sync that sees the add keeps the page as `file_moved`.
 
 ### Changed
-- With `sync.apply_held_deletions` on, a held page is deleted one sync later than before. On a checkout where nothing else changes, that later sync is the next commit or the daily full sync, so the page can stay live for up to about a day. If the add of a two-commit move lands after that later sync, the page is still deleted (restorable for 72 hours).
+- With `sync.apply_held_deletions` on, a held page is deleted one sync later than before. On a checkout where nothing else changes, that later sync is the next commit or the daily full sync, so the page can stay live for up to about a day. If the add of a two-commit move lands after that later sync, the page is still deleted (restorable for 72 hours); a large catch-up that one `gbrain sync` runs as several passes can reach that later pass within the same command.
 
 <!-- behavior-change: ghost_pages_merge_readd_split_gst3688 -->
