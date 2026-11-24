@@ -532,7 +532,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 200756
+                "used_bytes": 200716
               },
               "inspected": 2,
               "outstanding": [],
@@ -542,7 +542,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 200756 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 200716 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -4037,6 +4037,26 @@
           {
             "category": "brain",
             "details": {
+              "by_source": {},
+              "complete": true,
+              "items": [],
+              "items_truncated": false,
+              "row_budget": 5000,
+              "scanned": 0,
+              "stranded": {
+                "no_page": 0,
+                "page_deleted": 0,
+                "renamed": 0
+              }
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No held write names a page that is missing (0 held write(s) read).",
+            "name": "write_gate_holds_stranded",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "bad_config": [],
               "chars_limit": 4000,
               "chars_used": 0,
@@ -6136,7 +6156,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 200756
+                "used_bytes": 200716
               },
               "inspected": 2,
               "outstanding": [],
@@ -6146,7 +6166,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 200756 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 200716 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -9648,6 +9668,26 @@
             "elapsed_ms": "<volatile>",
             "message": "Every held write is tied to one page, or waits for its page to be created.",
             "name": "write_gate_hold_ambiguous",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": {},
+              "complete": true,
+              "items": [],
+              "items_truncated": false,
+              "row_budget": 5000,
+              "scanned": 0,
+              "stranded": {
+                "no_page": 0,
+                "page_deleted": 0,
+                "renamed": 0
+              }
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No held write names a page that is missing (0 held write(s) read).",
+            "name": "write_gate_holds_stranded",
             "status": "ok"
           },
           {

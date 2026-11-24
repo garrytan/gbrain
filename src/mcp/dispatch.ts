@@ -6,6 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { remoteAccessRefusal } from './engine-access-refusal.ts';
 import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from './saved-facts-notice.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -1005,6 +1006,9 @@ export async function dispatchToolCall(
   // context_pack and delta stay world-only for every caller unless a trusted local one passes include_private, so no grant widens them.
   // GBRA-498: a room declaration only marks the answer; its argument is taken out here, before any validation,
   // handler, cache, retry call or stored write intent sees it, and a trusted local caller's is ignored.
+  // An engine without `access_control` (the Rust engine) answers only the trusted local caller (mcp/engine-access-refusal.ts).
+  const accessRefusal = remoteAccessRefusal(engine, name, opts.remote);
+  if (accessRefusal) return errorResult(accessRefusal, opts, { op: name });
   const roomRead = readRoomDeclaration(opts.remote === false ? undefined : opts.room, params);
   params = roomRead.args;
   const roomDeclaration = opts.remote === false ? undefined : roomRead.declaration ?? undefined;

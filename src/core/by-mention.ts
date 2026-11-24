@@ -43,6 +43,7 @@ import { siblingVerdict, type SiblingCandidate } from './mentions/siblings.ts';
 import { isShortCode } from './mentions/short-codes.ts';
 import { bodyBlocks } from './page-body/segment-blocks.ts';
 import { OperationError } from './ops/contract.ts';
+import { retiredPageSql } from './entities/resolve.ts';
 
 /**
  * The four types that are always linkable, whatever the schema pack says. The
@@ -530,7 +531,8 @@ export async function buildGazetteer(
             frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
      FROM pages
      WHERE type = ANY($1::text[])
-       AND deleted_at IS NULL`,
+       AND deleted_at IS NULL
+       AND NOT ${retiredPageSql('pages')}`,
     [allTypes, ...HANDLE_FRONTMATTER_KEYS],
   )).filter(r => linkable(r.source_id, r.type));
   const stubPages = new Set(rows.filter(r => r.connector_stub).map(r => `${r.source_id ?? 'default'}\0${r.slug}`));
@@ -552,7 +554,8 @@ export async function buildGazetteer(
        FROM page_aliases pa
        JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
        WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL`,
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}`,
       [allTypes],
     )).filter(r => linkable(r.source_id, r.type));
   } catch (err) {

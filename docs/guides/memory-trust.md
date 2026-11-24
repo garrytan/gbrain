@@ -419,3 +419,20 @@ Claim your own sources first, so your notes are not treated as unverified.
   for all of its candidates, and a release is refused for it. Its fix is
   `gbrain trust review`, where you drop each one with `gbrain trust drop`. The
   check is read-only.
+- `write_gate_holds_stranded` finds held writes (quarantined facts and takes)
+  that no live page matches. A hold remembers its page by id, so a rename
+  leaves a bound hold on its page, and the check ignores it, as it ignores an
+  unbound hold that the rename record leads to a live page: both still hide
+  their text. A hold that names a slug where no live page is (a bound hold
+  whose page is gone, or an unbound one whose slug and rename record lead to no
+  live page) is one that no page shows: the check warns about those whose
+  rename record or history leads from the held name to a live page (a suspected
+  strand, since the history can name more than one page). Holds whose page was
+  soft-deleted, or that name a page that never existed (for example a write
+  held before its page was created), are listed as informational only. A scan
+  that stops at its 5000-row limit or its time limit warns that the count is
+  unknown instead of reporting ok. So does a database role with row-level
+  security active on the holds, the aliases, the rename history or the pages (a
+  hidden table reads as empty, not as an error, and gbrain does not judge
+  policies; run it as the table owner or a role that bypasses row security),
+  and so does an engine that refuses the read.

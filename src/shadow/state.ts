@@ -66,6 +66,9 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
     case 'pglite':
       if (!config.database_path) return null;
       return { engine, identity: `pglite:${resolve(config.database_path)}` };
+    case 'rust':
+      // A brain already on the Rust engine has no other engine to shadow: no shadow identity, so shadow mode does not start.
+      return null;
     default: {
       const unreachable: never = engine;
       return unreachable;
