@@ -15,6 +15,7 @@
  *     when DATABASE_URL is set, on Postgres (testBackends). Holds are inserted as a pre-v337 writer would have (no page
  *     columns, which the test removes first); pages and renames go through the engine.
  */
+import { withEnv } from './helpers/with-env.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -188,7 +189,8 @@ for (const backend of backends) {
     // Its own brain: the test takes it back to v336 and replays the schema over it.
     let engine: BrainEngine, close: () => Promise<void>;
     beforeAll(async () => {
-      if (backend === 'pglite') { const e = new PGLiteEngine(); await e.connect({}); await e.initSchema(); engine = e; close = () => e.disconnect(); }
+      // Cold PGLite: the unit runner's schema-snapshot fast path (GBRAIN_PGLITE_SNAPSHOT) would skip the replay this case pins.
+      if (backend === 'pglite') { const e = new PGLiteEngine(); await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, async () => { await e.connect({}); await e.initSchema(); }); engine = e; close = () => e.disconnect(); }
       else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 4); engine = pg.engine; close = pg.close; }
     }, 180_000);
     afterAll(async () => { await close(); });
@@ -200,7 +202,7 @@ for (const backend of backends) {
         `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload) VALUES ('fact', $1, 'notes/early', 'fp-early', 2, 'external_untrusted', '{"fact":"early"}'::jsonb) RETURNING id::text AS id`, [sourceId]);
       expect((await engine.executeRaw("SELECT 1 FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name='page_id'")).length).toBe(0);
 
-      await engine.initSchema();
+      await withEnv({ GBRAIN_PGLITE_SNAPSHOT: undefined }, () => engine.initSchema());
 
       const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
       expect(columns).toEqual(['page_candidates', 'page_id']);
