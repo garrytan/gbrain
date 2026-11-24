@@ -15,7 +15,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { nameWords } from '../entities/name-variants.ts';
-import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** Keyword rows read for one name; a full read reports the total as a floor (`capped`). */
 export const TEXT_MENTION_POOL = 50;
@@ -88,7 +88,7 @@ async function probe(
     });
   } catch (e) {
     // A capability refusal is not a failed read: the engine cannot serve the probe at all.
-    rethrowCapabilityMissing(e);
+    rethrowCapabilityRefusal(e);
     return { pages: [], total: 0, capped: false, unread: 'read_failed' };
   }
   const exclude = new Set(opts.exclude ?? []);
