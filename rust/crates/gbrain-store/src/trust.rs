@@ -25,6 +25,8 @@
 //!   `t 0x0b` (the claim fingerprint index): the belief ledger's events ([`belief_events`]).
 //! - `t 0x0a`: the belief ledger's page lifetimes ([`belief_lifetimes`]).
 //! - `t 0x0c`: the belief ledger's suppressions ([`belief_redactions`]).
+//! - `t 0x0e page_id` (8-byte big-endian) -> `{"tier", "set_at_us"}`: a page's label guard
+//!   ([`label_guards`]).
 //!
 //! The belief ledger's history and source reads ([`belief_history`]) and its coverage reads
 //! ([`belief_coverage`]) have no keys of their own.
@@ -54,8 +56,11 @@ pub mod belief_state;
 pub mod derivation;
 mod eligibility;
 pub(crate) mod fingerprint;
+#[cfg(test)]
+mod fingerprint_corpus;
 pub(crate) use fingerprint::fact_fingerprint_v1;
 pub mod held_rows;
+pub mod label_guards;
 pub mod proposals;
 mod row_trust;
 pub mod scan_state;

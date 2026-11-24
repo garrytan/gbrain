@@ -81,32 +81,23 @@ export function chronicleReceipt(decision: Pick<ChronicleDecision, 'state' | 're
 
 /** Automatic judge calls left in the rolling 24 h window. */
 export async function chronicleDailyRemaining(engine: BrainEngine, limit: number): Promise<number> {
-  const [row] = await engine.executeRaw<{ n: number | string }>(
-    "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'");
-  return Math.max(0, limit - Number(row?.n ?? 0));
+  return Math.max(0, limit - await engine.countRecentChronicleReservations());
 }
 
 /**
  * E3: take one automatic judge slot immediately before the call. Serialized
- * across every executor by a transaction-scoped advisory lock, so concurrent
- * hosts cannot both take the last slot. false = the limit is used up.
+ * across every executor (a transaction-scoped advisory lock on the SQL engines,
+ * one store write transaction on Rust; engine-sql/chronicle-ledger.ts), so
+ * concurrent hosts cannot both take the last slot. false = the limit is used up.
  */
 export async function reserveChronicleSlot(engine: BrainEngine, limit: number,
   key: { sourceId: string; pageId: number; contentHash: string }): Promise<boolean> {
-  return engine.transaction(async (tx) => {
-    await tx.executeRaw("SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))");
-    const [row] = await tx.executeRaw<{ n: number | string }>(
-      "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'");
-    if (Number(row?.n ?? 0) >= limit) return false;
-    await tx.executeRaw('INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
-      [key.sourceId, key.pageId, key.contentHash]);
-    return true;
-  });
+  return engine.reserveChronicleJudgeSlot(limit, key);
 }
 
 /** Reservations older than the window serve nothing; keep two days for doctor. */
 export async function pruneChronicleReservations(engine: BrainEngine): Promise<void> {
-  await engine.executeRaw("DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'");
+  await engine.pruneChronicleReservations();
 }
 
 export interface ChronicleRowWrite {
@@ -132,24 +123,12 @@ export interface ChronicleRowWrite {
  * (#6199): its stamp is cleared, and only campaign.ts writes one.
  */
 export async function upsertChronicleRow(engine: BrainEngine, w: ChronicleRowWrite): Promise<boolean> {
-  const written = await engine.executeRaw(
-    `INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
-       principal_kind, principal_id, request_id, no_extract, next_attempt_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
-     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
-       slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
-       principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
-       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
-       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
-     WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
-       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
-         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
-           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
-     RETURNING page_id`,
-    [w.sourceId, w.pageId, w.contentHash, CHRONICLE_EXTRACTOR_VERSION, w.slug, w.state, w.reason, w.trigger,
-      w.principalKind ?? null, w.principalId ?? null, w.requestId ?? null, w.noExtract === true,
-      w.nextAttemptAt ? w.nextAttemptAt.toISOString() : null]);
-  return written.length > 0;
+  return engine.upsertChronicleRow({
+    sourceId: w.sourceId, pageId: w.pageId, contentHash: w.contentHash, extractorVersion: CHRONICLE_EXTRACTOR_VERSION,
+    slug: w.slug, state: w.state, reason: w.reason, trigger: w.trigger,
+    principalKind: w.principalKind ?? null, principalId: w.principalId ?? null, requestId: w.requestId ?? null,
+    noExtract: w.noExtract === true, nextAttemptAt: w.nextAttemptAt ? w.nextAttemptAt.toISOString() : null,
+  });
 }
 
 /** Does an extracted generation with events exist for this page (so an ineligible revision must retire it)? */
@@ -178,8 +157,7 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   const page = snapshot.page;
   if (!DECIDING_OPERATIONS.has(row.operation) && !(row.operation === 'submit_job' && kind && DECIDING_INTENTS.has(kind))) {
     // #9636: add_link authors no content; it only carries a still-pending automatic decision to the revision it publishes.
-    if (row.operation !== 'add_link' || !(await tx.executeRaw(`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
-      AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`, [row.source_id, Number(page.id), CHRONICLE_EXTRACTOR_VERSION])).length) return;
+    if (row.operation !== 'add_link' || !(await tx.hasPendingAutoChronicleRow(row.source_id, Number(page.id), CHRONICLE_EXTRACTOR_VERSION))) return;
   }
   const base = { sourceId: row.source_id, pageId: Number(page.id), contentHash: String(page.content_hash), slug: page.slug,
     trigger: 'auto' as const, principalKind: row.principal_kind ?? null, principalId: row.principal_id ?? null, requestId: row.id };
@@ -192,13 +170,13 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
   const [enabledRaw, settings] = await Promise.all([tx.getConfig('auto_chronicle').catch(() => null), chronicleSettings(tx)]);
   // The first decision after the upgrade activates the automatic path; earlier revisions stay history.
   if (!settings.activatedAt) {
-    await tx.executeRaw("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [CHRONICLE_ACTIVATED_AT_KEY, new Date().toISOString()]);
+    await tx.insertConfigIfAbsent(CHRONICLE_ACTIVATED_AT_KEY, new Date().toISOString());
   }
   const now = new Date();
   const setting = autoChronicleSetting(enabledRaw);
   const decisionPage: ChronicleDecisionPage = isSegmentedPage(page) ? { type: page.type, slug: page.slug, frontmatter: page.frontmatter,
     effective_date: page.effective_date, effective_date_source: page.effective_date_source, body_storage: page.body_storage, body_bytes: page.body_bytes,
-    compiled_truth: (await tx.executeRaw<{ truth_lead: string | null }>('SELECT truth_lead FROM pages WHERE id=$1', [page.id]))[0]?.truth_lead } : page;
+    compiled_truth: await tx.readPageTruthLead(Number(page.id)) } : page;
   const decision = decideChronicle({ page: decisionPage, authority: row.authority ?? null, noExtract,
     enabled: setting === 'on', invalidSetting: setting === 'invalid', settings, now });
   const receiptCtx: ChronicleReasonContext = { sourceId: base.sourceId, since: now.toISOString().slice(0, 10),
@@ -217,8 +195,5 @@ export async function recordChronicleDecision(tx: BrainEngine, row: DecidingRequ
 }
 
 export async function readChronicleRow(engine: BrainEngine, key: { sourceId: string; pageId: number; contentHash: string }): Promise<ChronicleLedgerRow | null> {
-  const [row] = await engine.executeRaw<ChronicleLedgerRow>(
-    'SELECT * FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4',
-    [key.sourceId, key.pageId, key.contentHash, CHRONICLE_EXTRACTOR_VERSION]);
-  return row ?? null;
+  return engine.readChronicleRow({ sourceId: key.sourceId, pageId: key.pageId, contentHash: key.contentHash, extractorVersion: CHRONICLE_EXTRACTOR_VERSION });
 }

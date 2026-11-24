@@ -83,7 +83,7 @@ fn pair(alias: &str, refs: &[&str]) -> (String, Vec<String>) {
 
 fn canonical(store: &Store, slug: &str, sources: &[&str]) -> Option<(String, String, usize)> {
     store
-        .resolve_slug_with_alias_detailed(slug, &strings(sources))
+        .resolve_slug_with_alias_detailed(slug, &strings(sources), None)
         .unwrap()
         .map(|m| (m.canonical_slug, m.source_id, m.matches))
 }

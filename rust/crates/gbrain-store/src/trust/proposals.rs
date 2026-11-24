@@ -23,6 +23,7 @@
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, STORE_CORRUPT, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::facts::{VisibilityWidening, read_fact};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
@@ -33,6 +34,8 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
+
+pub(crate) mod purge;
 
 const PROPOSAL: u8 = 0x06;
 const PENDING: u8 = 0x07;
@@ -768,6 +771,39 @@ impl Store {
             Ok(true)
         })
     }
+}
+
+/// The `trust_proposals` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), every source's, in id
+/// order. The proposer's principal is not kept (NULL, see the module docs).
+pub(crate) fn probe_proposals(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<ProposalRecord>(read, &[keys::TRUST, PROPOSAL], &mut |_, p| {
+        f(ProbeRow {
+            source_id: Some(p.source_id.clone()),
+            cells: vec![
+                ("action", ProbeCell::text(&p.action)),
+                ("source_id", ProbeCell::text(&p.source_id)),
+                ("target_table", ProbeCell::text(&p.target_table)),
+                (
+                    "related_table",
+                    ProbeCell::opt_text(p.related_table.as_deref()),
+                ),
+                ("before_state", ProbeCell::jsonb(&p.before_state)),
+                ("after_state", ProbeCell::jsonb(&p.after_state)),
+                ("proposer", ProbeCell::text(&p.proposer)),
+                ("proposer_principal_kind", ProbeCell::Null),
+                ("proposer_principal_id", ProbeCell::Null),
+                ("status", ProbeCell::text(&p.status)),
+                (
+                    "decided_principal_kind",
+                    ProbeCell::opt_text(p.decided_principal_kind.as_deref()),
+                ),
+                (
+                    "decided_principal_id",
+                    ProbeCell::opt_text(p.decided_principal_id.as_deref()),
+                ),
+            ],
+        })
+    })
 }
 
 /// The shadow follow (`seed/follow.rs`): removes the proposal `id` with its index entries. `false`

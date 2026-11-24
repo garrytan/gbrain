@@ -71,6 +71,19 @@ impl Store {
         self.write(|tx| tx.put(&key, value.as_bytes()))
     }
 
+    /// Sets `key` only when it has no value; returns true when it wrote. Mirrors `insertConfigIfAbsent`
+    /// (`INSERT ... ON CONFLICT (key) DO NOTHING`).
+    pub fn insert_config_if_absent(&self, key: &str, value: &str) -> Result<bool> {
+        let key = config_key(key)?;
+        self.write(|tx| {
+            if tx.get(&key)?.is_some() {
+                return Ok(false);
+            }
+            tx.put(&key, value.as_bytes())?;
+            Ok(true)
+        })
+    }
+
     /// Removes `key`; returns how many rows were removed (0 or 1). Mirrors `unsetConfig`.
     pub fn unset_config(&self, key: &str) -> Result<u32> {
         let key = config_key(key)?;

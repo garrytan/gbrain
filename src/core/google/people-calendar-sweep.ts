@@ -30,6 +30,7 @@ import { CalendarClient, calendarUnreadableStatus, CONTACT_PERSON_FIELDS, Google
 import { calendarRelPath, contactIdSlug, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
 import { contactHoldKey, DEFAULT_CALENDAR_ID, eventHoldKey, type CalendarEventData, type ContactData, type GoogleSourceState } from './types.ts';
 import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 // ── Contacts sweep ───────────────────────────────────────────────────────────
 
@@ -264,9 +265,8 @@ async function resolveContactGroups(
   }
 }
 
-/** Existing calendar page's source_path for an event id, or null. */
-/** Existing person page's source_path for a google contact id, or null. */
-async function contactPageRelPathByContactId(
+/** Existing person page's source_path for a google contact id, or null (exported for tests). */
+export async function contactPageRelPathByContactId(
   deps: GoogleSyncDeps,
   resourceName: string,
 ): Promise<string | null> {
@@ -280,12 +280,15 @@ async function contactPageRelPathByContactId(
     );
     return rows[0]?.source_path ?? null;
   } catch (error) {
+    // An engine that cannot run the lookup refuses: a null here would write the item as a new page beside the old one.
+    rethrowCapabilityRefusal(error);
     if (deps.managed) throw error;
     return null;
   }
 }
 
-async function calendarPageRelPathByEventId(
+/** Existing calendar page's source_path for an event id, or null (exported for tests). */
+export async function calendarPageRelPathByEventId(
   deps: GoogleSyncDeps,
   eventId: string,
 ): Promise<string | null> {
@@ -299,6 +302,8 @@ async function calendarPageRelPathByEventId(
     );
     return rows[0]?.source_path ?? null;
   } catch (error) {
+    // An engine that cannot run the lookup refuses: a null here would write the item as a new page beside the old one.
+    rethrowCapabilityRefusal(error);
     if (deps.managed) throw error;
     return null;
   }

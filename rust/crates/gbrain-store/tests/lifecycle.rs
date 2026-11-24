@@ -385,7 +385,7 @@ fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
 fn an_older_build_refuses_a_brain_in_the_new_format() {
     // What an older build does with this build's brains: `check_version` refuses any version it
     // does not list. This build lists 1 to 4; the oldest one is 1.
-    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }

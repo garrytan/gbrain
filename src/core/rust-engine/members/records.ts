@@ -86,6 +86,15 @@ export const RECORDS_MEMBERS = {
   // retention prune, the MCP usage reads and the chat usage ledger; the store serves every member
   // (rust/docs/store/telemetry.md).
   recordSearchTelemetry: 'telemetry',
+  // the write-time chronicle decision's ledger rows and judge reservations (engine-sql/chronicle-ledger.ts) and the
+  // chronicle executor's statements (engine-sql/chronicle-executor.ts)
+  upsertChronicleRow: 'telemetry',
+  readChronicleRow: 'telemetry',
+  hasPendingAutoChronicleRow: 'telemetry',
+  countRecentChronicleReservations: 'telemetry',
+  reserveChronicleJudgeSlot: 'telemetry',
+  pruneChronicleReservations: 'telemetry',
+  chronicleStore: 'telemetry',
   readSearchStats: 'telemetry',
   readClientOpUsage: 'telemetry',
   readMcpRollupPrunedBefore: 'telemetry',

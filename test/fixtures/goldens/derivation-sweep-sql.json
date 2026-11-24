@@ -1,0 +1,96 @@
+{
+  "statements": [
+    {
+      "params": 1,
+      "text": "SELECT set_config('statement_timeout',$1,true)"
+    },
+    {
+      "params": 4,
+      "text": "SELECT request_id::text AS request_id, needles, patterns, page_ids, phase, recheck, found, cursor_page,\n            cursor_pipeline, cursor_occurrence::text AS cursor_occurrence, LEAST(COALESCE(batch_rows, $4), $4) AS batch_rows\n          FROM page_segment_derivation_purges WHERE source_id=$1 AND stalled_at IS NULL AND NOT (request_id = ANY($3::uuid[]))\n          ORDER BY COALESCE(request_id = $2::uuid, false) DESC, created_at, request_id LIMIT 1 FOR UPDATE SKIP LOCKED"
+    },
+    {
+      "params": 9,
+      "text": "WITH batch AS MATERIALIZED (\n            SELECT d.page_id, d.pipeline, d.occurrence_id, (d.page_id = ANY($2::int[]) OR p.deleted_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM page_body_manifest m\n    WHERE m.page_id = d.page_id AND m.occurrence_id = d.occurrence_id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.sha256 = d.segment_sha256)) AS swept FROM page_segment_derivations d\n            JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ($5::int IS NULL OR (d.page_id, d.pipeline, d.occurrence_id) > ($5::int, $6::text, $7::bigint))\n              AND ($9::int[] IS NULL OR d.page_id = ANY($9::int[]))\n            ORDER BY d.page_id, d.pipeline, d.occurrence_id LIMIT $8\n          ), scope AS MATERIALIZED (\n            SELECT d.page_id, d.pipeline, d.occurrence_id, d.output, d.receipt, replace(translate(lower(COALESCE(d.output::text, '') || ' ' || COALESCE(d.receipt::text, '')), 'ς', 'σ'), 'i̇', 'i') LIKE ANY ($4::text[]) AS candidate\n            FROM batch b JOIN page_segment_derivations d ON d.page_id = b.page_id AND d.pipeline = b.pipeline AND d.occurrence_id = b.occurrence_id\n            WHERE b.swept\n          ), hits AS MATERIALIZED (\n            SELECT s.page_id, s.pipeline, s.occurrence_id FROM scope s WHERE s.candidate AND CASE WHEN replace(translate(lower(COALESCE(s.output::text, '') || ' ' || COALESCE(s.receipt::text, '')), 'ς', 'σ'), 'i̇', 'i') LIKE ANY ($4::text[]) THEN EXISTS (SELECT 1 FROM (VALUES (s.output), (s.receipt)) doc(j),\n    LATERAL (SELECT jsonb_path_query(doc.j, 'strict $.** ? (@.type() == \"string\")') #>> '{}' AS t\n      UNION ALL SELECT jsonb_path_query(doc.j, 'strict $.** ? (@.type() == \"object\").keyvalue().key') #>> '{}') s\n    WHERE CASE WHEN replace(translate(lower(s.t), 'ς', 'σ'), 'i̇', 'i') LIKE ANY ($4::text[]) THEN EXISTS (SELECT 1 FROM unnest($3::text[]) k(n)\n      WHERE strpos(' ' || replace(translate(gbrain_fact_normalize(s.t), 'ς', 'σ'), 'i̇', 'i') || ' ', k.n) > 0) ELSE false END) ELSE false END\n          ), gone AS (\n            DELETE FROM page_segment_derivations x USING hits h WHERE x.page_id = h.page_id AND x.pipeline = h.pipeline\n              AND x.occurrence_id = h.occurrence_id RETURNING x.page_id\n          ), last AS (\n            SELECT b.page_id, b.pipeline, b.occurrence_id::text AS occurrence_id FROM batch b ORDER BY b.page_id DESC, b.pipeline DESC, b.occurrence_id DESC LIMIT 1\n          ), per_page AS (\n            SELECT s.page_id, count(*)::int AS swept, count(*) FILTER (WHERE s.candidate)::int AS normalized,\n              (SELECT count(*)::int FROM gone g WHERE g.page_id = s.page_id) AS deleted FROM scope s GROUP BY s.page_id\n          ) SELECT pp.page_id, COALESCE(pp.swept, 0) AS swept, COALESCE(pp.normalized, 0) AS normalized, COALESCE(pp.deleted, 0) AS deleted,\n            (SELECT count(*)::int FROM batch) AS scanned, l.page_id AS last_page, l.pipeline AS last_pipeline, l.occurrence_id AS last_occurrence\n          FROM (SELECT 1) one LEFT JOIN last l ON true LEFT JOIN per_page pp ON true ORDER BY pp.page_id"
+    },
+    {
+      "params": 5,
+      "text": "UPDATE page_segment_derivation_purges SET cursor_page=$2, cursor_pipeline=$3, cursor_occurrence=$4::bigint, found=$5, pending_reason = NULL\n          WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 1,
+      "text": "SELECT pg_try_advisory_xact_lock(hashtextextended('gbrain:derivation-scope:' || $1::text, 0)) AS held"
+    },
+    {
+      "params": 1,
+      "text": "DELETE FROM page_segment_derivation_purge_pages WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 1,
+      "text": "UPDATE page_segment_derivation_purges SET phase = 'verify', recheck = NULL, cursor_page = NULL, cursor_pipeline = NULL, cursor_occurrence = NULL, found = 0, pending_reason = NULL WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 1,
+      "text": "DELETE FROM page_segment_derivation_purge_pages WHERE request_id=$1::uuid RETURNING page_id"
+    },
+    {
+      "params": 1,
+      "text": "DELETE FROM page_segment_derivation_purges WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 0,
+      "text": "DELETE FROM page_segment_derivation_purge_pages n WHERE NOT EXISTS (SELECT 1 FROM page_segment_derivation_purges x\n      WHERE x.request_id = n.request_id)"
+    },
+    {
+      "params": 9,
+      "text": "WITH batch AS MATERIALIZED (\n        SELECT d.page_id, d.pipeline, d.occurrence_id, (d.page_id = ANY($2::int[]) OR p.deleted_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM page_body_manifest m\n    WHERE m.page_id = d.page_id AND m.occurrence_id = d.occurrence_id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.sha256 = d.segment_sha256)) AS swept FROM page_segment_derivations d\n        JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ($5::int IS NULL OR (d.page_id, d.pipeline, d.occurrence_id) > ($5::int, $6::text, $7::bigint)) AND ($9::int[] IS NULL OR d.page_id = ANY($9::int[]))\n        ORDER BY d.page_id, d.pipeline, d.occurrence_id LIMIT $8\n      ) SELECT (SELECT count(*)::int FROM batch) AS scanned, count(*) FILTER (WHERE CASE WHEN replace(translate(lower(COALESCE(d.output::text, '') || ' ' || COALESCE(d.receipt::text, '')), 'ς', 'σ'), 'i̇', 'i') LIKE ANY ($4::text[])\n          THEN CASE WHEN replace(translate(lower(COALESCE(d.output::text, '') || ' ' || COALESCE(d.receipt::text, '')), 'ς', 'σ'), 'i̇', 'i') LIKE ANY ($4::text[]) THEN EXISTS (SELECT 1 FROM (VALUES (d.output), (d.receipt)) doc(j),\n    LATERAL (SELECT jsonb_path_query(doc.j, 'strict $.** ? (@.type() == \"string\")') #>> '{}' AS t\n      UNION ALL SELECT jsonb_path_query(doc.j, 'strict $.** ? (@.type() == \"object\").keyvalue().key') #>> '{}') s\n    WHERE CASE WHEN replace(translate(lower(s.t), 'ς', 'σ'), 'i̇', 'i') LIKE ANY ($4::text[]) THEN EXISTS (SELECT 1 FROM unnest($3::text[]) k(n)\n      WHERE strpos(' ' || replace(translate(gbrain_fact_normalize(s.t), 'ς', 'σ'), 'i̇', 'i') || ' ', k.n) > 0) ELSE false END) ELSE false END ELSE false END)::int AS hits\n        FROM batch b JOIN page_segment_derivations d ON d.page_id = b.page_id AND d.pipeline = b.pipeline AND d.occurrence_id = b.occurrence_id WHERE b.swept"
+    },
+    {
+      "params": 2,
+      "text": "UPDATE page_segment_derivation_purges SET phase = 'recheck', recheck = $2::int[], cursor_page = NULL, cursor_pipeline = NULL, cursor_occurrence = NULL, found = 0, pending_reason = NULL WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 5,
+      "text": "UPDATE page_segment_derivation_purges SET cursor_page = COALESCE($2::int, cursor_page), cursor_pipeline = COALESCE($3::text, cursor_pipeline),\n      cursor_occurrence = COALESCE($4::bigint, cursor_occurrence), found = $5, pending_reason = NULL WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 2,
+      "text": "SELECT set_config('statement_timeout',$1,true), set_config('lock_timeout',$2,true)"
+    },
+    {
+      "params": 1,
+      "text": "UPDATE page_segment_derivation_purges SET pending_reason = 'scope_lock_busy' WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 1,
+      "text": "SELECT pg_advisory_xact_lock(hashtextextended('gbrain:derivation-scope:' || $1::text, 0))"
+    },
+    {
+      "params": 2,
+      "text": "SELECT request_id::text AS request_id, needles, patterns, page_ids, phase, recheck, found, cursor_page,\n            cursor_pipeline, cursor_occurrence::text AS cursor_occurrence, LEAST(COALESCE(batch_rows, $2), $2) AS batch_rows\n          FROM page_segment_derivation_purges WHERE request_id=$1::uuid AND stalled_at IS NULL FOR UPDATE SKIP LOCKED"
+    },
+    {
+      "params": 2,
+      "text": "UPDATE page_segment_derivation_purges SET batch_rows=$2 WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 6,
+      "text": "SELECT d.page_id, d.pipeline,\n              d.occurrence_id::text AS occurrence_id, (d.page_id = ANY($2::int[]) OR p.deleted_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM page_body_manifest m\n    WHERE m.page_id = d.page_id AND m.occurrence_id = d.occurrence_id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.sha256 = d.segment_sha256)) AS swept FROM page_segment_derivations d\n            JOIN pages p ON p.id = d.page_id WHERE p.source_id = $1 AND ($3::int IS NULL OR (d.page_id, d.pipeline, d.occurrence_id) > ($3::int, $4::text, $5::bigint)) AND ($6::int[] IS NULL OR d.page_id = ANY($6::int[]))\n            ORDER BY d.page_id, d.pipeline, d.occurrence_id LIMIT 1"
+    },
+    {
+      "params": 5,
+      "text": "UPDATE page_segment_derivation_purges SET cursor_page=$2, cursor_pipeline=$3, cursor_occurrence=$4::bigint, found=found + $5, pending_reason = NULL\n            WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 6,
+      "text": "DELETE FROM page_segment_derivations d USING pages p WHERE d.page_id=$1 AND d.pipeline=$2\n              AND d.occurrence_id=$3::bigint AND p.id = d.page_id AND p.source_id = $4 AND d.pipeline = ANY($6::text[]) AND (d.page_id = ANY($5::int[]) OR p.deleted_at IS NOT NULL OR NOT EXISTS (SELECT 1 FROM page_body_manifest m\n    WHERE m.page_id = d.page_id AND m.occurrence_id = d.occurrence_id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.sha256 = d.segment_sha256)) RETURNING 1"
+    },
+    {
+      "params": 2,
+      "text": "UPDATE page_segment_derivation_purges SET stalled_at = now(), stalled_reason = $2, pending_reason = NULL WHERE request_id=$1::uuid"
+    },
+    {
+      "params": 1,
+      "text": "UPDATE page_segment_derivation_purges SET stalled_at = NULL, stalled_reason = NULL, pending_reason = NULL WHERE request_id=$1::uuid"
+    }
+  ]
+}

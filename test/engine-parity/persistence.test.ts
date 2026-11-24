@@ -2,7 +2,7 @@
  * BrainEngine parity — the write-journal members (engine-sql/persistence-journal.ts and persistence-claims.ts): the
  * limit read, the hold reads (held pages, held coverage, git sync holds, held fence results), one request's admission, claim and completion (in a transaction and member by member),
  * the publication's effects insert and the receipt's read of them, the claim upkeep (renewal, expiry, the claimable probe, the FIFO head read) and the admission reads (source membership, topology changes,
- * the ledger's source view).
+ * the ledger's source view), and the head-blocker probe (the earlier head a queued request waits behind).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the journal limit rows, the held-page and held-coverage reads, and the request lifecycle (lock the
@@ -19,8 +19,8 @@
  */
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
-import { chunk, installChunks } from './chunk-fixtures.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
+import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { fenceHoldEntries, fenceReadOf } from '../../src/core/generations/fence.ts';
 import { projectFactFenceGeneration } from '../../src/core/generations/adapters/fact-rows.ts';
@@ -578,6 +578,44 @@ describe('engine parity: write journal', () => {
     return result;
   });
 
+  parityTest('readSourcePurgeEpoch reads a fresh source as 0 and an unknown source as null; readReasonPurgeTombstones finds none', {
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+  }, async (engine) => {
+    const seen = {
+      epoch: String(await engine.readSourcePurgeEpoch('default')),
+      absent: await engine.readSourcePurgeEpoch('no-such-source'),
+      tombstones: await engine.readReasonPurgeTombstones('default'),
+      absentTombstones: await engine.readReasonPurgeTombstones('no-such-source'),
+    };
+    expect(seen).toEqual({ epoch: '0', absent: null, tombstones: [], absentTombstones: [] });
+    return seen;
+  });
+
+  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
+  // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
+  parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
+    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'purged');
+    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
+    if (backend === 'rust') {
+      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
+      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
+      throw write;
+    }
+    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
+      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
+    const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
+    const seen = {
+      epoch: String(await engine.readSourcePurgeEpoch('purged')),
+      defaultEpoch: String(await engine.readSourcePurgeEpoch('default')),
+      purged: order(await engine.readReasonPurgeTombstones('purged')),
+      other: order(await engine.readReasonPurgeTombstones('default')),
+    };
+    expect(seen).toEqual({ epoch: '3', defaultEpoch: '0', purged: [{ commit_sha: 'c1', path: 'notes/a.md' }, { commit_sha: 'c2', path: 'notes/b.md' }], other: [{ commit_sha: 'c3', path: 'notes/c.md' }] });
+    return seen;
+  });
+
   parityTest('each journal member works on its own, outside a transaction', {
     methods: ['readLedgerSource', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readWriteRequestById', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow'],
   }, async (engine) => {
@@ -905,6 +943,47 @@ describe('engine parity: write journal', () => {
       empty: null,
       queued: { config: b1, on: b1, off: b1, fifo: b1, leaseHolder: b1, seen: b1, excluded: null, otherExcluded: b1, laneFirst: b1, laneFifo: null },
       behindRunning: null, claimed: null,
+    });
+    return answers;
+  });
+
+  parityTest('readHeadBlockerRows names the earlier head a queued request waits behind, queued then running, readRecoveringHeadRow finds no recovering head, and a malformed uuid refuses', {
+    methods: ['readHeadBlockerRows', 'readRecoveringHeadRow', 'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim'],
+  }, async (engine) => {
+    const b1 = 'b0000000-0000-4000-8000-0000000000b1';
+    const b2 = 'b0000000-0000-4000-8000-0000000000b2';
+    const unknown = 'a0000000-0000-4000-8000-0000000000a9';
+    const probe = async (ids: string[], priority?: boolean) => (await engine.readHeadBlockerRows(ids, HOST, priority === undefined ? {} : { priority }))
+      .map(row => ({
+        request: row.request_id, worktree: row.worktree_id, owner: row.owner_host_id, worktreeState: row.worktree_state, backoff: row.backoff_until,
+        claimable: row.claimable, fence: row.fence, effectRecovery: row.effect_recovery, mirrors: row.mirrors, requestRecovery: row.request_recovery,
+        earlier: row.earlier?.map(e => ({ request: e.request_id, state: e.state, token: e.execution_token, lapsed: e.claim_lapsed,
+          publication: e.publication_started, recovery: e.recovery, principal: `${e.principal_kind}:${e.principal_id}` })) ?? null,
+        ahead: row.ahead,
+      }))
+      .sort((a, b) => a.request.localeCompare(b.request));
+    const empty = await probe([unknown]);
+    const first = await admitDirect(engine, b1);
+    const second = await admitDirect(engine, b2);
+    const queued = { config: await probe([first, second, unknown]), on: await probe([second], true), off: await probe([second], false) };
+    await engine.stampWriteClaim(first, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+    const behindRunning = await probe([first, second]);
+    const recovering = { queued: await engine.readRecoveringHeadRow(second), unknown: await engine.readRecoveringHeadRow(unknown) };
+    const refusal = (run: () => Promise<unknown>) => run().then(() => 'answered', (e: Error) => /invalid input syntax for type uuid/.test(e.message) ? 'uuid refusal' : e.message);
+    const malformed = { host: await refusal(() => engine.readHeadBlockerRows([second], 'not-a-uuid')), id: await refusal(() => engine.readHeadBlockerRows(['not-a-uuid'], HOST)),
+      recovering: await refusal(() => engine.readRecoveringHeadRow('not-a-uuid')) };
+    const answers = { empty, queued, behindRunning, recovering, malformed };
+    const ref = (request: string, state: string, token: string | null) => ({ request, state, token, lapsed: false, publication: false, recovery: false,
+      principal: `${PRINCIPAL.kind}:${PRINCIPAL.id}` });
+    const row = (request: string, claimable: boolean, earlier: ReturnType<typeof ref>[] | null) => ({ request, worktree: null, owner: null, worktreeState: null, backoff: null,
+      claimable, fence: null, effectRecovery: null, mirrors: null, requestRecovery: null, earlier, ahead: null });
+    const waiting = row(b2, false, [ref(b1, 'queued', null)]);
+    expect(answers).toEqual({
+      empty: [],
+      queued: { config: [row(b1, true, null), waiting], on: [waiting], off: [waiting] },
+      behindRunning: [row(b2, false, [ref(b1, 'running', TOKEN)])],
+      recovering: { queued: null, unknown: null },
+      malformed: { host: 'uuid refusal', id: 'uuid refusal', recovering: 'uuid refusal' },
     });
     return answers;
   });

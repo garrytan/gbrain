@@ -145,7 +145,7 @@ pub(crate) fn floor_hides(
     row: &FactRecord,
     floor: &RemoteFloor,
 ) -> Result<bool> {
-    if fact_owner_only(read, &row.source_id, floor.owner_only)? {
+    if fact_owner_only(read, row.id, &row.source_id, floor.owner_only)? {
         return Ok(true);
     }
     let policy = PrivacyPolicy {

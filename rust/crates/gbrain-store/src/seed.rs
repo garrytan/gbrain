@@ -303,6 +303,8 @@ fn claim(tx: &mut dyn KvWrite, seed_id: &str) -> Result<SeedManifest> {
         // The keyword index state: a new store starts with the index on.
         keys::keyword_index_state(),
         crate::shared_skill_members::state_key(),
+        // The open-time repair of the derivation sweep records' source index leaves its done marker.
+        crate::page_body::purge_record::repair_done_key(),
         source_key(crate::sources::DEFAULT_SOURCE),
     ];
     // The config rows a new store's open writes: the schema version, the trust and write-gate marks (migrations v226 and

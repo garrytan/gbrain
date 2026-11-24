@@ -1833,13 +1833,8 @@ export function makeResolver(
       if (attendanceCache.has(cacheKey)) return attendanceCache.get(cacheKey)!;
       const slugs = value.includes('/') ? [value] : [...new Set(hints.flatMap(hint =>
         [normalizeBasename(value), slugifySegment(value)].map(form => `${hint}/${form}`)))];
-      const matches = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages
-        WHERE source_id=$1 AND deleted_at IS NULL AND type='person'
-          AND (slug=ANY($2::text[]) OR lower(title)=lower($3)
-            OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(frontmatter->'aliases')='array'
-              THEN frontmatter->'aliases' ELSE '[]'::jsonb END) alias WHERE lower(alias)=lower($3))) LIMIT 2`,
-      [opts.sourceId ?? 'default', slugs, value]);
-      const resolved = matches.length === 1 ? matches[0].slug : null;
+      const matches = await engine.listAttendanceMatches(opts.sourceId ?? 'default', slugs, value);
+      const resolved = matches.length === 1 ? matches[0] : null;
       if (attendanceCache.size >= attendanceCacheLimit) attendanceCache.clear();
       attendanceCache.set(cacheKey, resolved);
       return resolved;

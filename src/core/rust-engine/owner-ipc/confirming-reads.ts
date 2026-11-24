@@ -123,11 +123,12 @@ export const OWNER_IPC_WHOLE_OP_CONFIRMING_READS: Readonly<Record<string, string
 
 /**
  * What the advice adds for a write whose confirming read cannot answer every case. Both decide reads list only due
- * rows (`next_attempt_at <= now()` and fewer than 5 attempts).
+ * rows (`next_attempt_at <= now()` and fewer than 5 attempts). The extract rollup's day row is shared by parallel extractions.
  */
 export const OWNER_IPC_CONFIRMING_NOTES: Readonly<Record<string, string>> = {
   applyDecideReviewQueue: 'That read lists only due rows: a defer or clear that committed takes the row out of it, so a row still listed means the call did not commit, and an enqueue that committed shows its row.',
   applyDecideSweepDeferred: 'That read lists only due rows: a defer or clear that committed takes the row out of it, so a row still listed means the call did not commit. A defer of a fact that had no row is never listed, so the read cannot tell; a rerun of a defer that did commit only adds one attempt and pushes the next try back.',
+  upsertExtractRollupDay: 'Parallel extractions add to the same row, so that read cannot confirm this one delta, and a rerun can double-count the day: the rollup is a report-only cache that the JSONL audit can rebuild, and the rollup writer never reruns a call whose reply was lost.',
 };
 
 const MEMBER_TOKEN = /\b[a-z]+[A-Z]\w*\b/g;

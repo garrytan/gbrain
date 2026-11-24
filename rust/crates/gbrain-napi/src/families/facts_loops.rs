@@ -40,6 +40,21 @@ impl Brain {
         })
     }
 
+    /// `countOpenLoopsByCounterpartyEmail(sourceId, emails, loopType)`: resolves `{ email, n }`
+    /// per email with any open loop of that type in the source.
+    #[napi]
+    pub fn count_open_loops_by_counterparty_email<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        emails: Vec<String>,
+        loop_type: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_open_loops_by_counterparty_email(&source_id, &emails, &loop_type)
+        })
+    }
+
     /// `closeOpenLoop(sourceId | null, id, status, closedBy)`: resolves the closed row, or null.
     #[napi]
     pub fn close_open_loop<'env>(

@@ -36,9 +36,13 @@ use std::path::Path;
 ///   purge tombstones, whose reads scanned them (`facts/key_split.rs`). The upgrade moves each mute
 ///   in the one transaction, or refuses a record under `F 0x10` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `F 0x10` refuses a format-7 brain.
-pub const FORMAT_VERSION: u32 = 7;
+/// - 8: the shared-skill catalog's token secret is at `x 0x0d`, no longer at `x 0x04` beside the
+///   access member links, whose scans started on it (`access_key_split.rs`). The upgrade moves the
+///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
+///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
+pub const FORMAT_VERSION: u32 = 8;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

@@ -13,7 +13,7 @@ name: Rust engine
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to
 #              PGLite, refused with a typed refusal, or has no Rust engine; only a diverged command
 #              fails), then uploads the .node file. Each target (Linux and macOS) is two matrix
-#              halves, each under 30 minutes: both build the addon and run the smoke test, each
+#              halves, each under 45 minutes: both build the addon and run the smoke test, each
 #              runs half of the parity files, and the CLI parity steps are divided between them
 #              (see the addon job).
 #   addon-linux-gate, addon-darwin-gate  one check per target named like the old single cell
@@ -241,8 +241,8 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
     # darwin-arm64 runners run about 1.3x slower; one cell took 43 min in run 45126845000 (the parity loop took 33 min of it).
-    # Each target is therefore two halves (shard 1 and 2 of 2), and every cell has the same 30 minute cap.
-    timeout-minutes: 30
+    # Each target is therefore two halves (shard 1 and 2 of 2), and every cell has the same 45 minute cap.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -395,7 +395,7 @@ jobs:
     needs: [scope, addon]
     if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"linux-x64-glibc"') }}
     runs-on: ubicloud-standard-2-ubuntu-2404
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       actions: read
@@ -411,9 +411,19 @@ jobs:
         run: |
           set -euo pipefail
           want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
-          rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.conclusion // \"running\")] | @tsv")
-          printf '%s\n' "$rows"
+          # filter=all, newest attempt per half: re-running only this check leaves the halves in an earlier
+          # attempt, which filter=latest drops. Wait (bounded) while a half shows no conclusion: the jobs API
+          # can lag a half that finished seconds before this job started.
+          deadline=$(( $(date +%s) + ${GATE_POLL_SECS:-240} ))
+          while :; do
+            rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.run_attempt // 1), (.conclusion // \"running\")] | @tsv" \
+              | sort -t $'\t' -k1,1 -k2,2n | awk -F'\t' 'NF { last[$1] = $3 } END { for (n in last) print n "\t" last[n] }' | sort)
+            printf '%s\n' "$rows"
+            printf '%s\n' "$rows" | awk -F'\t' '$2 == "running"' | grep -q . || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep "${GATE_POLL_INTERVAL:-10}"
+          done
           have=$(printf '%s\n' "$rows" | grep -c . || true)
           ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
           echo "$TARGET halves expected $want, found $have, passed $ok"
@@ -424,7 +434,7 @@ jobs:
     needs: [scope, addon]
     if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"darwin-arm64"') }}
     runs-on: ubicloud-standard-2-ubuntu-2404
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       actions: read
@@ -440,9 +450,19 @@ jobs:
         run: |
           set -euo pipefail
           want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
-          rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.conclusion // \"running\")] | @tsv")
-          printf '%s\n' "$rows"
+          # filter=all, newest attempt per half: re-running only this check leaves the halves in an earlier
+          # attempt, which filter=latest drops. Wait (bounded) while a half shows no conclusion: the jobs API
+          # can lag a half that finished seconds before this job started.
+          deadline=$(( $(date +%s) + ${GATE_POLL_SECS:-240} ))
+          while :; do
+            rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.run_attempt // 1), (.conclusion // \"running\")] | @tsv" \
+              | sort -t $'\t' -k1,1 -k2,2n | awk -F'\t' 'NF { last[$1] = $3 } END { for (n in last) print n "\t" last[n] }' | sort)
+            printf '%s\n' "$rows"
+            printf '%s\n' "$rows" | awk -F'\t' '$2 == "running"' | grep -q . || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep "${GATE_POLL_INTERVAL:-10}"
+          done
           have=$(printf '%s\n' "$rows" | grep -c . || true)
           ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
           echo "$TARGET halves expected $want, found $have, passed $ok"
