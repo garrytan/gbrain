@@ -149,6 +149,13 @@ export function readWriteRequestsByRequestIds(exec: LegacyUnscopedRead, principa
     [principalKind, principalId, requestIds]);
 }
 
+/** The owner host's checkout path of worktree `worktreeId` (its host binding's `local_path`), or null when it has no owner or no binding. */
+export async function readOwnerHostBinding(exec: LegacyUnscopedRead, worktreeId: string): Promise<string | null> {
+  const [binding] = await exec.executeRaw<{ local_path: string | null }>(`SELECT h.local_path FROM persistence_host_bindings h
+      JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [worktreeId]);
+  return binding?.local_path ?? null;
+}
+
 /** The request with journal id `id`, or null. */
 export async function readWriteRequestById(exec: LegacyUnscopedRead, id: string, opts?: QueryOpts): Promise<WriteRequest | null> {
   const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [id], opts);

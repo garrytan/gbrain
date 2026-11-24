@@ -64,7 +64,7 @@ const SWEPT: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   countSearchVectorRows: (e) => e.countSearchVectorRows(),
   listVersionTrustTiers: (e) => e.listVersionTrustTiers([1]),
   listVersionReasonWriters: (e) => e.listVersionReasonWriters([1]),
-  listPageTypesByIds: (e) => e.listPageTypesByIds([1]),
+  listPageRefsByIds: (e) => e.listPageRefsByIds([1]),
   readWithdrawalDiscovery: (e) => e.readWithdrawalDiscovery({ kind: 'sample_slugs', sourceId: 'default', ids: [1] }),
 };
 

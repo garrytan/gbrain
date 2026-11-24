@@ -46,10 +46,7 @@ export function fileBodyMatchesStored(fileBytes: string, slug: string, stored: S
 
 /** The live page's stored body, or null when there is no live page. `lock` takes the row lock (inside a transaction). */
 export async function readStoredBody(engine: BrainEngine, sourceId: string, slug: string, lock = false): Promise<StoredBody | null> {
-  const [row] = await engine.executeRaw<StoredBody>(
-    `SELECT compiled_truth, timeline FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL${lock ? ' FOR UPDATE' : ''}`,
-    [sourceId, slug]);
-  return row ?? null;
+  return engine.readLiveStoredBody(sourceId, slug, lock);
 }
 
 async function storedBodyUnchanged(tx: BrainEngine, sourceId: string, slug: string, expected: StoredBody): Promise<boolean> {

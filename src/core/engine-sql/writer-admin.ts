@@ -97,6 +97,12 @@ const WRITER_ADMIN_STATE_SQL = `SELECT jsonb_build_object(
       WHERE NOT starts_with(id, $1))
   )::text AS state`;
 
+/** The worktree's recorded manifest; null when it has none or the worktree is missing. */
+export async function readWorktreeManifest(engine: RawSql, worktreeId: string): Promise<StoredWorktreeManifest | null> {
+  const [row] = await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [worktreeId]);
+  return row?.manifest ?? null;
+}
+
 /** The content-receipt store over a transaction-bound engine. */
 export function sqlContentReceiptStore(tx: RawSql): ContentReceiptStore {
   return {

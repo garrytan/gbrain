@@ -64,6 +64,9 @@ const BACKUP_SOURCES_QUERY = /\bfrom\s+sources\b(?!\s+read_source)/i;
 const engineStub = {
   kind: 'pglite',
   getConfig: async () => null,
+  // Search reads result trust through this typed member; the stub has no pages.
+  readPageTrustRows: async () => [],
+  readRowTrustRows: async () => [],
   resolveCaseSensitiveAliases: async () => [],
   executeRaw: async (sql: string) => {
     rawCalls.push(String(sql));

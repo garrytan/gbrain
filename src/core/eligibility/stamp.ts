@@ -14,6 +14,17 @@ import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
 import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
+/**
+ * Stamps `trust_tier` + `origin` (eligibility/labels.ts) onto page-derived
+ * read rows (search/query hits, evidence, fetch results) after ranking, so
+ * label mode never changes ordering (A7). A chunk's tier is its page's tier,
+ * lowered to the row tier when its text carries a facts-fence trust marker
+ * (fence-overlay.ts, ENG-1); a marker can only lower.
+ * One batched lookup per call; a failed lookup labels the rows `unknown` /
+ * `unrecorded` rather than dropping them or leaving them unlabeled.
+ */
+import type { RowTrustLookup } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
@@ -25,6 +36,8 @@ interface PageRef {
 }
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+type HeldExec = Pick<BrainEngine, 'listHeldFenceCells'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
@@ -35,26 +48,16 @@ const trustColumns = (guestSql: (config: string, id: string) => string) => `page
 /**
  * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
  * its source's config and guest_sources (guests/marker.ts guestSourceSql), and carries origin `guest`, the external tier and its guest mark (one batched guest_marks read, only
- * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare). The writer is
+ * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare, and a refused read refuses the caller). The writer is
  * shown only with `guestWriter` (an owner caller); `includeDeleted` also resolves soft-deleted pages by slug.
  */
-export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts: { guestWriter?: boolean; includeDeleted?: boolean } = {}): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
+export async function loadPageTrust(engine: TrustExec, refs: readonly PageRef[], opts: { guestWriter?: boolean; includeDeleted?: boolean } = {}): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
   const byId = new Map<number, TrustFields>();
   const byKey = new Map<string, TrustFields>();
   const ids = [...new Set(refs.map(r => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)))];
   const slugRefs = refs.filter(r => typeof r.page_id !== 'number');
-  const rows = await withGuestSourceSql(async guestSql => {
-    const found: Array<TrustRow & { byId: boolean }> = [];
-    if (ids.length) {
-      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)} WHERE pages.id = ANY($1::int[])`, [ids])) found.push({ ...row, byId: true });
-    }
-    if (slugRefs.length) {
-      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)}
-          WHERE ${opts.includeDeleted ? '' : 'pages.deleted_at IS NULL AND '}(pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-        [slugRefs.map(r => r.source_id ?? 'default'), slugRefs.map(r => r.slug)])) found.push({ ...row, byId: false });
-    }
-    return found;
-  });
+  const rows = ids.length || slugRefs.length ? await engine.readPageTrustRows({ ids, keys: slugRefs.map(r => ({ source_id: r.source_id ?? 'default', slug: r.slug })),
+    includeDeleted: opts.includeDeleted === true }) : [];
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {
     const base = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
@@ -77,7 +80,7 @@ export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts
  * `loadPageTrust` started early over the rows these rows were copied from.
  * `hideHeld` (worldOnlyFacts for the caller) also drops the fence rows held from the caller (`dropHeldFenceRows`).
  */
-export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[], floor?: TrustTier,
+export async function stampPageTrust<T extends PageRef>(engine: TrustExec, rows: T[], floor?: TrustTier,
   pageTrust?: ReturnType<typeof loadPageTrust>, hideHeld = false): Promise<T[]> {
   if (rows.length === 0) return rows;
   if (hideHeld) rows = await dropHeldFenceRows(engine, rows);
@@ -86,7 +89,7 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
   factRows.forEach((row, i) => Object.assign(row, factTrust[i]));
   const pageRows = rows.filter(row => typeof row.fact_row?.id !== 'number');
   let found: Awaited<ReturnType<typeof loadPageTrust>> | null = null;
-  try { found = pageRows.length ? await (pageTrust ?? loadPageTrust(engine, pageRows)) : null; } catch { found = null; }
+  try { found = pageRows.length ? await (pageTrust ?? loadPageTrust(engine, pageRows)) : null; } catch (err) { rethrowCapabilityRefusal(err); found = null; }
   for (const row of pageRows) {
     const fields = (typeof row.page_id === 'number' ? found?.byId.get(row.page_id) : undefined)
       ?? found?.byKey.get(key(row.source_id, row.slug))
@@ -140,18 +143,15 @@ function holdsText(text: string): boolean {
 /**
  * GST-2891: per row, the line numbers of the facts-fence row lines of its text held from a caller whose fact reads are
  * world-only (heldRowSql: a world cell whose fact is stored narrower, a widening the owner has not accepted), whenever
- * the text was cut. One batched lookup; a failed lookup, or a row that names no source, returns every fence row line
- * (fail closed).
+ * the text was cut. One batched lookup (BrainEngine listHeldFenceCells); a failed lookup, or a row that names no source,
+ * returns every fence row line (fail closed).
  */
-export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
+export async function heldFenceLines(engine: HeldExec, rows: readonly PageRef[]): Promise<Array<Set<number>>> {
   const perRow = rows.map(row => typeof row.chunk_text === 'string' ? fenceRowLines(row.chunk_text) : []);
-  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => [src, row.slug, l.rowNum, l.claim, l.partial] as const); });
+  const keys = rows.flatMap((row, i) => { const src = row.source_id; return src == null ? [] : perRow[i]!.map(l => ({ sourceId: src, slug: row.slug, rowNum: l.rowNum, claim: l.claim, partial: l.partial })); });
   let held: Set<string> | null = new Set();
   if (keys.length) try {
-    const found = await engine.executeRaw<{ source_id: string; slug: string; row_num: number; claim: string }>(
-      `SELECT DISTINCT k.source_id, k.slug, k.row_num, k.claim FROM unnest($1::text[], $2::text[], $3::int[], $4::text[], $5::text[]) AS k(source_id, slug, row_num, claim, partial)
-        WHERE ${heldRowSql('k.source_id', 'k.slug', 'k.row_num', 'k.claim', "k.partial = 't'")}`,
-      [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2]), keys.map(k => k[3]), keys.map(k => (k[4] ? 't' : 'f'))]);
+    const found = await engine.listHeldFenceCells(keys);
     held = new Set(found.map(f => `${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}\u0000${f.claim}`));
   } catch { held = null; }
   return rows.map((row, i) => new Set(perRow[i]!
@@ -159,7 +159,7 @@ export async function heldFenceLines(engine: Exec, rows: readonly PageRef[]): Pr
 }
 
 /** GST-2891: removes from each row's text the fence row lines held from the caller (heldFenceLines), and drops a row left with nothing to read. */
-export async function dropHeldFenceRows<T extends PageRef>(engine: Exec, rows: T[]): Promise<T[]> {
+export async function dropHeldFenceRows<T extends PageRef>(engine: HeldExec, rows: T[]): Promise<T[]> {
   const drops = await heldFenceLines(engine, rows);
   return rows.filter((row, i) => {
     const drop = drops[i]!;
@@ -197,7 +197,8 @@ const FENCE_ROW_SQL = `SELECT DISTINCT ON (f.source_id, f.source_markdown_slug, 
  * proposal), so a chunk cut before a flag, a confirmation or a tier change
  * never reads as more trusted than its rows. A chunk led by a fence trust
  * marker gets the marker rewritten to that state, and an external one has
- * its rows wrapped as data. A failed lookup keeps the stored labels.
+ * its rows wrapped as data. A failed lookup keeps the stored labels; an engine that refuses the read
+ * (`engine_capability_missing`) refuses the caller too.
  */
 async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): Promise<void> {
   const perRow = rows.map(row => fenceRowNumbers(row.chunk_text));
@@ -205,7 +206,7 @@ async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): P
   rows.forEach((row, i) => { for (const n of perRow[i]!) keys.push([row.source_id ?? 'default', row.slug, n]); });
   if (!keys.length) return;
   let found: Array<{ source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }>;
-  try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch { return; }
+  try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch (err) { rethrowCapabilityRefusal(err); return; }
   const state = new Map(found.map(f => [`${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}`, f]));
   rows.forEach((row, i) => {
     const facts = perRow[i]!.map(n => state.get(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${n}`)).filter(f => f !== undefined);
@@ -225,28 +226,32 @@ async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): P
   });
 }
 
+type RowTrustExec = Pick<BrainEngine, 'readRowTrustRows'>;
+
 const ROW_TABLES = { facts: 'facts', takes: 'takes', timeline_entries: 'timeline_entries' } as const;
 
 /**
  * Sets `trust_tier` + `origin` on fact, take or timeline rows by id (one
- * batched read). Rows whose tier cannot be read are labeled `unknown` /
- * `unrecorded`, never left looking confirmed.
+ * batched typed read, `readRowTrustRows`). Rows whose tier cannot be read are
+ * labeled `unknown` / `unrecorded`, never left looking confirmed. A database
+ * error reads as that label; an engine that refuses the read
+ * (`engine_capability_missing`) refuses the caller too, so a brain that cannot
+ * read row trust never answers as if every row were unrecorded.
  */
 export async function stampRowTrust<T extends object>(
-  engine: Exec, table: keyof typeof ROW_TABLES, rows: T[], idOf: (row: T) => number | string,
+  engine: RowTrustExec, table: RowTrustLookup['table'], rows: T[], idOf: (row: T) => number | string,
 ): Promise<Array<T & TrustFields>> {
   if (rows.length === 0) return [];
   const ids = [...new Set(rows.map(r => Number(idOf(r))).filter(Number.isFinite))];
   const byId = new Map<number, TrustFields>();
   try {
-    const contested = table === 'timeline_entries' ? 'NULL' : contestedRefSql(table, 'r');
-    const found = await engine.executeRaw<{ id: number | string; trust_tier: string; write_origin: unknown; flagged: boolean; contested: string | null }>(
-      `SELECT r.id, r.trust_tier, r.write_origin, ${activationSuppressedSql(table, 'r')} AS flagged, ${contested} AS contested FROM ${ROW_TABLES[table]} r WHERE r.id = ANY($1::bigint[])`, [ids]);
-    for (const row of found) {
+    for (const row of await engine.readRowTrustRows({ table, ids })) {
       const fields = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
       const c = parseContested(row.contested);
       byId.set(Number(row.id), c ? { ...fields, contested: c } : fields);
     }
-  } catch { /* labeled unknown below */ }
+  } catch (err) {
+    rethrowCapabilityRefusal(err); /* otherwise labeled unknown below */
+  }
   return rows.map(row => ({ ...row, ...(byId.get(Number(idOf(row))) ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' }) }));
 }

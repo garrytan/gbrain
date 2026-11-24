@@ -34,10 +34,29 @@ async function recordStatements<T>(engine: BrainEngine, fn: () => Promise<T>): P
     statements.push(String(args[0]).replace(/\s+/g, ' ').trim());
     return original.apply(this, args).finally(() => { inFlight--; });
   };
+  // The typed keyed config read (config-values.ts) is a statement too: record it so a config read never goes unseen.
+  const originalConfig = target.getConfigValues!;
+  target.getConfigValues = function (this: unknown, ...args: unknown[]) {
+    if (inFlight === 0) waves++;
+    inFlight++;
+    statements.push(`getConfigValues FROM config ${JSON.stringify(args[0])}`);
+    return originalConfig.apply(this, args).finally(() => { inFlight--; });
+  };
+  // The journal limits read is a typed member too (readJournalLimitRows, engine-sql/persistence-journal.ts): it reads
+  // the config table in one statement.
+  const originalLimits = target.readJournalLimitRows!;
+  target.readJournalLimitRows = function (this: unknown, ...args: unknown[]) {
+    if (inFlight === 0) waves++;
+    inFlight++;
+    statements.push('readJournalLimitRows FROM config');
+    return originalLimits.apply(this, args).finally(() => { inFlight--; });
+  };
   try {
     return { result: await fn(), waves, statements };
   } finally {
     delete target.executeRaw;
+    delete target.getConfigValues;
+    delete target.readJournalLimitRows;
   }
 }
 
@@ -102,8 +121,10 @@ for (const kind of testBackends()) {
       await engine.executeRaw(`INSERT INTO config(key,value) VALUES ('persistence.capacity.warn_days','11'),('persistence.capacity.fail_days','3'),
         ('persistence.receipt_retention_days','9'),('persistence.capacity.background_pause_pct','60')
         ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`);
+      // The config keys and the journal limits are typed engine reads (getConfigValues, readJournalLimitRows); the
+      // recorder counts each as a config statement, so the snapshot makes exactly those two and no raw config read.
       const { result, statements } = await recordStatements(engine, () => cachedCapacitySnapshot(engine, Date.now() + 1e9));
-      expect(configReads(statements)).toHaveLength(2);
+      expect(configReads(statements).map(s => s.split(' ')[0]).sort()).toEqual(['getConfigValues', 'readJournalLimitRows']);
       expect(result.status).toBe('ok');
       expect(result.pause_pct).toBe(60);
       const forecast = await readCapacityForecast(engine, { light: true });

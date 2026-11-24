@@ -25,6 +25,7 @@ import { admitsTrust, compareTrust, storedTrustTier, type TrustTier } from '../t
 import type { PageReadPolicy } from '../types.ts';
 import { renderResolutionCommand } from './auto-supersession.ts';
 import type { ContradictionFinding, PairMember } from './types.ts';
+import type { LiveChunkRow } from '../engine-sql/contradictions-cycle.ts';
 
 export interface ScopedMember extends PairMember {
   source_id: string;
@@ -42,7 +43,7 @@ export interface ScopedFinding extends Omit<ContradictionFinding, 'a' | 'b' | 'c
 }
 
 interface Labels { trust_tier: TrustTier; origin: string; unconfirmed?: true; contested?: Contested }
-interface LiveChunk { id: number; page_id: number; slug: string; source_id: string; chunk_text: string }
+type LiveChunk = LiveChunkRow;
 interface LiveTake { id: number; page_id: number; slug: string; source_id: string; row_num: number; claim: string; holder: string }
 type LabeledChunk = LiveChunk & Labels & { judged_text: string };
 type LabeledTake = LiveTake & Labels;
@@ -50,34 +51,17 @@ type LabeledTake = LiveTake & Labels;
 const finiteIds = (values: Array<number | null | undefined>) =>
   [...new Set(values.map(Number).filter(n => Number.isSafeInteger(n) && n > 0))];
 
-async function loadChunks(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
+async function loadChunks(engine: Pick<BrainEngine, 'executeRaw' | 'listLiveChunksByIds' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
   if (!ids.length) return new Map<number, LabeledChunk>();
-  const params: unknown[] = [ids];
-  const pageSql = pageReadFilter('p', { ...policy, ...(floor ? { minTrust: floor } : {}) }, params, true);
-  const safe = requiresSafeChunks(policy) ? ` AND ${safeChunksFilter('p')}` : '';
-  const rows = await engine.executeRaw<LiveChunk>(
-    `SELECT cc.id, cc.page_id, cc.chunk_text, p.slug, p.source_id
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.id = ANY($1::int[]) AND ${pageSql} AND ${chunkVisibleFilter('p', 'cc')}${safe}`, params);
+  const rows = await engine.listLiveChunksByIds(ids, policy, floor);
   const live = rows.map(r => ({ ...r, id: Number(r.id), page_id: Number(r.page_id), judged_text: r.chunk_text } as LiveChunk & { judged_text: string; trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested }));
   const stamped = await stampPageTrust(engine, live, floor);
   return new Map(stamped.map((r): [number, LabeledChunk] => [r.id, { ...r, trust_tier: storedTrustTier(r.trust_tier), origin: r.origin ?? 'unrecorded' }]));
 }
 
-async function loadTakes(engine: Pick<BrainEngine, 'executeRaw'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
+async function loadTakes(engine: Pick<BrainEngine, 'executeRaw' | 'listLiveTakesByIds' | 'readRowTrustRows'>, ids: number[], policy: PageReadPolicy, floor: TrustTier | undefined) {
   if (!ids.length) return new Map<number, LabeledTake>();
-  const params: unknown[] = [ids];
-  const pageSql = pageReadFilter('p', policy, params, true);
-  let holderSql = '';
-  if (policy.takesHoldersAllowList !== undefined) {
-    params.push(policy.takesHoldersAllowList);
-    holderSql = ` AND t.holder = ANY($${params.length}::text[])`;
-  }
-  const rows = await engine.executeRaw<LiveTake>(
-    `SELECT t.id, t.page_id, t.row_num, t.claim, t.holder, p.slug, p.source_id
-       FROM takes t JOIN pages p ON p.id = t.page_id
-      WHERE t.id = ANY($1::bigint[]) AND t.active AND ${pageSql}${holderSql}${policy.excludePrivate ? ownerOnlyTakeAllowedSql('t') : ''}
-        AND ${projectionEligibleSql('takes', 't', floor ? { floor } : undefined)}`, params);
+  const rows = await engine.listLiveTakesByIds(ids, policy, floor);
   const stamped = await stampRowTrust(engine, 'takes', rows.map(r => ({ ...r, id: Number(r.id), page_id: Number(r.page_id), row_num: Number(r.row_num) })), r => r.id);
   return new Map(stamped
     .map((r): LabeledTake => ({ ...r, trust_tier: storedTrustTier(r.trust_tier) }))
@@ -104,7 +88,7 @@ function supersedeSides(f: ScopedFinding): { target: ScopedMember; winner: Scope
 
 /** Resolve stored findings for a scoped reader; findings with a hidden, missing or changed side are dropped. */
 export async function resolveScopedFindings(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'listLiveChunksByIds' | 'listLiveTakesByIds' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells'>,
   findings: ContradictionFinding[],
   policy: PageReadPolicy,
   floor: TrustTier | undefined,

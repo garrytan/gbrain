@@ -106,9 +106,9 @@ export function quotePageText(text: string, slug: string, type: string | null | 
 }
 
 /** Each page id's stored type (one read), for reads whose rows name only their page_id (get_timeline, get_chunks). */
-export async function pageTypesById(engine: Pick<BrainEngine, 'listPageTypesByIds'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
+export async function pageTypesById(engine: Pick<BrainEngine, 'listPageRefsByIds'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
   if (!ids.length) return new Map();
-  const rows = await engine.listPageTypesByIds(ids);
+  const rows = await engine.listPageRefsByIds(ids);
   return new Map(rows.map(r => [r.id, r.type]));
 }
 

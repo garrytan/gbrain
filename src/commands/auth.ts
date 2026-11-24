@@ -178,10 +178,10 @@ export function renderTokenScopes(scopes: unknown): string {
 }
 
 async function list(json: boolean) {
-  await withConfiguredSql(async (sql, engine) => {
-    // The engine read is SELECT *, so every schema generation reads (private_pages and private_facts arrive with their migrations; absent reads as none).
+  await withConfiguredSql(async (_sql, engine) => {
+    // Every schema generation lists (private_pages and private_facts arrive with their migrations; absent reads as none).
     const rows = await engine.listAccessTokens();
-    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(sql, rows);
+    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(engine, rows);
     if (json) {
       console.log(JSON.stringify(rows.map(r => ({
         id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
@@ -197,10 +197,10 @@ async function list(json: boolean) {
     console.log('─'.repeat(158));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
-      const name = (r.name as string).padEnd(20);
+      const name = r.name.padEnd(20);
       const scopes = renderTokenScopes(r.scopes).padEnd(21);
-      const created = new Date(r.created_at as string).toISOString().slice(0, 19);
-      const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
+      const created = r.created_at.toISOString().slice(0, 19);
+      const lastUsed = r.last_used_at ? r.last_used_at.toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = (r.revoked_at ? 'REVOKED' : (memberStatus(r) ?? 'enabled') !== 'enabled' ? 'refused' : 'active').padEnd(7);
       const facts = privatePagesFromColumn(r.private_facts) === 'granted_sources' ? 'granted-sources' : 'none';
       console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${facts.padEnd(15)}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);

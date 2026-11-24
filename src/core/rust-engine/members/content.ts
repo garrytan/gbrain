@@ -3,7 +3,10 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MemberClass } from '../members.ts';
 
 export const CONTENT_MEMBERS = {
+  readStoredConfigValue: 'pages', // held: no Rust store member yet; served later as 'config'
   readSegmentedEmbedPage: 'page_body',
+  deleteRewrittenSegmentDerivations: 'page_body',
+  hasUnsealedPages: 'chunks',
   readPageEmbeddingBudget: 'pages', // held: no Rust store member yet; served later as 'embeddings'
   recordPageEmbeddingHold: 'pages', // held: no Rust store member yet; served later as 'embeddings'
   openPageEmbeddingHold: 'pages', // held: no Rust store member yet; served later as 'embeddings'
@@ -13,4 +16,11 @@ export const CONTENT_MEMBERS = {
   lockEffectClaimRow: 'pages', // held: no Rust store member yet; served later as 'embeddings'
   lockEmbeddingSwitch: 'pages', // held: no Rust store member yet; served later as 'embeddings'
   installChunkEmbeddings: 'pages', // held: no Rust store member yet; served later as 'embeddings'
+  readLinkContextMatches: 'links',
+  readLinkContextOriginPages: 'links',
+  // reindex-search-vector's steps (engine-sql/search-vector.ts): no-ops under the store's one language
+  countSearchVectorRows: 'pages', // held: no Rust store member yet; served later as 'keyword_search'
+  readRowTrustRows: 'timeline',
+  listStoredTimelineRowsOrdered: 'timeline',
+  deleteTimelineRows: 'timeline',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

@@ -8,5 +8,7 @@ export const ACCESS_MEMBERS = {
   hasLabelledOnlyMember: 'access_control',
   readMayActFor: 'access_control',
   readAudiencePrincipals: 'access_control',
+  readAccessMembers: 'access_control',
+  listAccessTokens: 'minion_queue',
   readLinkedMember: 'access_control',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

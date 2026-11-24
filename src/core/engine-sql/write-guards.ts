@@ -14,6 +14,20 @@ import { sqlFragment, trustedSql } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { PageKind } from '../types.ts';
 
+/** The page an origin check is about: its id, slug, recorded origin and tombstone time (null while live). */
+export interface PageOriginRow { id: number; slug: string; source_path: string | null; deleted_at: Date | string | null }
+
+/** Which page: by id within the source when `pageId` is given, else by slug. */
+export interface PageOriginTarget { sourceId: string; pageId?: number | null; slug?: string | null }
+
+/** The page `target` names (live or a tombstone), or null when there is none or neither `pageId` nor `slug` is given. */
+export async function readPageOrigin(exec: LegacyUnscopedRead, target: PageOriginTarget): Promise<PageOriginRow | null> {
+  const [row] = target.pageId != null
+    ? await exec.executeRaw<PageOriginRow>('SELECT id, slug, source_path, deleted_at FROM pages WHERE id=$1 AND source_id=$2', [target.pageId, target.sourceId])
+    : target.slug ? await exec.executeRaw<PageOriginRow>('SELECT id, slug, source_path, deleted_at FROM pages WHERE source_id=$1 AND slug=$2', [target.sourceId, target.slug]) : [];
+  return row ?? null;
+}
+
 /** The closing seal of a coordinated import (page-state/projections.ts `sealImportedPage`). */
 export interface ImportedPageSeal { sourceId: string; revision: string | null; timelineText: string; chunkerVersion: number }
 

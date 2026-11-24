@@ -14,7 +14,9 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __resetCapacityNoticesForTests, cachedCapacitySnapshot, CAPACITY_SNAPSHOT_TTL_MS, capacityNotices,
   capacitySnapshotWithin } from '../src/core/persistence/capacity-snapshot.ts';
+import { readCapacityForecast } from '../src/core/persistence/capacity-forecast.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
+import { deadlineBoundEngine, StatementDeadlineError, withStatementDeadline } from '../src/core/statement-deadline.ts';
 import { freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -26,22 +28,24 @@ const setIds = (engine: BrainEngine, used: number) => engine.transaction(async t
 });
 const codes = (notices: Array<{ code: string }>) => notices.map(n => n.code);
 
-/** The engine with the snapshot's counter read delayed by `delayMs›, or failing once as a cancelled statement. */
+/**
+ * The engine with the snapshot's counter read delayed by `delayMs›, or failing once as a cancelled statement. The counter
+ * read is one statement of the typed `readCapacityForecastInputs` (engine-sql/persistence-housekeeping.ts), so that member
+ * is the one controlled.
+ */
 function controlled(engine: BrainEngine) {
   const state = { delayMs: 0, cancelNext: false, fetches: 0 };
   const proxy = new Proxy(engine, {
     get(target, key) {
-      if (key === 'executeRaw') {
-        return async (sql: string, params?: unknown[], opts?: unknown) => {
-          if (/FROM persistence_counters/.test(sql)) {
-            state.fetches++;
-            if (state.cancelNext) {
-              state.cancelNext = false;
-              throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
-            }
-            if (state.delayMs) await new Promise(r => setTimeout(r, state.delayMs));
+      if (key === 'readCapacityForecastInputs') {
+        return async (opts?: { light?: boolean }) => {
+          state.fetches++;
+          if (state.cancelNext) {
+            state.cancelNext = false;
+            throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
           }
-          return target.executeRaw(sql, params, opts as never);
+          if (state.delayMs) await new Promise(r => setTimeout(r, state.delayMs));
+          return target.readCapacityForecastInputs(opts);
         };
       }
       const value = Reflect.get(target, key, target);
@@ -119,3 +123,24 @@ for (const kind of testBackends()) {
     });
   });
 }
+
+describe('#6803 a forecast read past its deadline', () => {
+  test('rejects once with the deadline refusal and leaves no unhandled rejection behind', async () => {
+    // The deadline wrapper refuses a typed read on the call itself; the reads already issued must not be orphaned.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (error: unknown) => { unhandled.push(error); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const engine = { kind: 'pglite', readJournalLimitRows: async () => [], getConfigValues: async () => [],
+        readCapacityForecastInputs: async () => ({ counters: [], reclaim: null, tableBytes: 0, history: null, days: [] }) };
+      const startedAt = Date.now() - 10;
+      const read = withStatementDeadline({ startedAt, deadlineAt: startedAt + 1, expired: false },
+        () => readCapacityForecast(deadlineBoundEngine(engine) as never, { light: true }));
+      await expect(read).rejects.toBeInstanceOf(StatementDeadlineError);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});

@@ -3,7 +3,7 @@
  * `executeRaw` (src/core/engine-sql/trust-tier-reads.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listPageTypesByIds names each listed page's type by id, deleted pages included, for the GST-687 quoting
+ *  - Contract: listPageRefsByIds names each listed page (its type included) by id, deleted pages included, for the GST-687 quoting
  *    reads; listVersionTrustTiers and listVersionReasonWriters are compared with master's statements on the same rows
  *    in test/n3-sql-move-parity.test.ts. The Rust arm (GBRAIN_TEST_RUST_ARM=1) holds these members as raw_sql: each
  *    case ends on the typed refusal.
@@ -24,8 +24,8 @@ const { parityTest } = parityArms(testBackends());
 
 describe('engine parity: typed trust tier reads', () => {
   // GST-687 quoting: get_timeline, the chronicle reads and get_chunks look up each row's page type by page id. Ids differ between arms, so answers are keyed by slug.
-  parityTest('listPageTypesByIds, pageTypesById and quoteTimelineRows read each page\'s type by id: deleted pages and other sources included, unknown ids absent', {
-    methods: ['putPage', 'getPage', 'softDeletePage', 'listPageTypesByIds'],
+  parityTest('listPageRefsByIds, pageTypesById and quoteTimelineRows read each page by id: deleted pages and other sources included, unknown ids absent', {
+    methods: ['putPage', 'getPage', 'softDeletePage', 'listPageRefsByIds'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('quote/chat', { type: 'chat' as never, title: 'Chat', compiled_truth: 'chat body', timeline: '' });
@@ -40,11 +40,14 @@ describe('engine parity: typed trust tier reads', () => {
     const byName = Object.fromEntries(Object.entries(ids).map(([name, id]) => [name, types.get(id) ?? null]));
     expect(byName).toEqual({ chat: 'chat', note: 'note', gone: 'transcript', elsewhere: 'person' });
     expect({ size: types.size, missing: types.has(missing), empty: (await pageTypesById(engine, [])).size }).toEqual({ size: 4, missing: false, empty: 0 });
-    const asked = await engine.listPageTypesByIds([ids.elsewhere, ids.gone, ids.note, ids.chat, ids.note, missing]);
-    const refs = asked.map(r => ({ name: Object.entries(ids).find(([, id]) => id === r.id)![0], type: r.type }));
-    expect(refs).toEqual([{ name: 'chat', type: 'chat' }, { name: 'note', type: 'note' }, { name: 'gone', type: 'transcript' }, { name: 'elsewhere', type: 'person' }]
-      .sort((a, b) => ids[a.name as keyof typeof ids] - ids[b.name as keyof typeof ids]));
-    expect(await engine.listPageTypesByIds([])).toEqual([]);
+    const refs = (await engine.listPageRefsByIds([ids.elsewhere, ids.gone, ids.note, ids.chat, ids.note, missing])).map(({ id, ...ref }) => ref);
+    expect(refs).toEqual([
+      { source_id: 'default', slug: 'quote/chat', type: 'chat' },
+      { source_id: 'default', slug: 'quote/note', type: 'note' },
+      { source_id: 'default', slug: 'quote/gone', type: 'transcript' },
+      { source_id: 'other', slug: 'quote/elsewhere', type: 'person' },
+    ]);
+    expect(await engine.listPageRefsByIds([])).toEqual([]);
     const rows = [
       { page_id: ids.chat, summary: 'said a thing', trust_tier: 'operator_curated' },
       { page_id: ids.note, summary: 'wrote a thing', trust_tier: 'operator_curated' },
@@ -53,4 +56,5 @@ describe('engine parity: typed trust tier reads', () => {
     expect(quoted.map(r => ('quoted' in r ? r.quoted : null))).toEqual(['transcript', null]);
     return { byName, refs, quoted: quoted.map(r => ({ quoted: 'quoted' in r ? r.quoted : null, summary: r.summary })) };
   });
+
 });

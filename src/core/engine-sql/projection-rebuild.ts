@@ -79,6 +79,13 @@ export async function setProjectionChunkerVersion(raw: EngineRawRead, sourceId: 
         WHERE source_id=$1 AND slug=$2`, [sourceId, slug, version]);
 }
 
+/** Whether a queue row of a live inline page (with `media`, or a sealable image) is queued and not marked failed. */
+export async function hasDrainableProjectionJob(raw: EngineRawRead, opts: { media?: boolean } = {}): Promise<boolean> {
+  return (await raw(`SELECT 1 FROM page_projection_jobs j
+      ${projectionJobProbes({ media: opts.media })}
+      WHERE j.reason<>'rebuild_failed' LIMIT 1`)).length > 0;
+}
+
 /** #7172: `<claim>:<token>`, the reason while a continuation holds a deferred chunk replacement (renewed each step). */
 export const DEFERRED_CHUNK_CLAIM = 'chunk_replacement_continuing';
 /** #7172: the queue reason of a revision whose publication left its chunk replacement to `continueDeferredProjection`. */

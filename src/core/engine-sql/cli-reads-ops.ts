@@ -6,6 +6,24 @@ import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 /** The engine's `executeRaw` (bound), with the two bounds these reads use. */
 export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean; prepare?: boolean }) => Promise<R[]>;
 
+/** One facts-fence cell of a page's text: its row number (-1 for a fragment), its claim, and whether a chunk boundary cut it. */
+export interface HeldFenceCellKey { sourceId: string; slug: string; rowNum: number; claim: string; partial: boolean }
+/** A fence cell held from the current caller (fence-overlay.ts `heldRowSql`). */
+export interface HeldFenceCellRow { source_id: string; slug: string; row_num: number; claim: string }
+
+/**
+ * GST-2891: the fence cells among `keys` held from the current caller, whose fact reads are world-only
+ * (fence-overlay.ts `heldRowSql`, rendered for the caller in context: its member page and its private-facts grant). One
+ * row per distinct held (source, slug, row number, claim); the order is not defined.
+ */
+export async function listHeldFenceCells(raw: EngineRawRead, keys: readonly HeldFenceCellKey[]): Promise<HeldFenceCellRow[]> {
+  if (!keys.length) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT k.source_id, k.slug, k.row_num, k.claim FROM unnest(${keys.map(k => k.sourceId)}::text[], ${keys.map(k => k.slug)}::text[], ${keys.map(k => k.rowNum)}::int[], ${keys.map(k => k.claim)}::text[], ${keys.map(k => (k.partial ? 't' : 'f'))}::text[]) AS k(source_id, slug, row_num, claim, partial)
+        WHERE ${trustedSql(heldRowSql('k.source_id', 'k.slug', 'k.row_num', 'k.claim', "k.partial = 't'"))}`);
+  const rows = await raw<{ source_id: string; slug: string; row_num: number | string; claim: string }>(text, params);
+  return rows.map(r => ({ source_id: r.source_id, slug: r.slug, row_num: Number(r.row_num), claim: r.claim }));
+}
+
 /** One world fence row of a page body, as the fence overlay asks about it: its row number, claim, visibility and hold fingerprint (null: no hold check). */
 export interface FenceOverlayIncomingRow { row_num: number; claim: string; visibility: string; fp: string | null }
 /**

@@ -25,6 +25,7 @@ import { sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { refreshRelationships, type RelationshipKey } from '../link-relationships.ts';
 import { isTemporalLinkType, relationshipFilterSql, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, annotateTemporalRow } from '../link-validity.ts';
 import type { LinkReadScope } from '../link-validity.ts';
+import { refreshRelationshipsSql } from './link-temporal.ts';
 
 /** Bounded link reads annotate rows with relationship status (never filter) when a temporal read is requested. */
 function finishTemporal(rows: unknown[], opts?: LinkReadScope): Link[] {
@@ -151,7 +152,7 @@ export async function addLink(
     if (!result?.from_exists) throw new PageMissingError('addLink', 'from', from, fromSrc);
     if (!result.to_exists) throw new PageMissingError('addLink', 'to', to, toSrc);
     if (isTemporalLinkType(linkType)) {
-      await refreshRelationships(exec, [{ from_page_id: Number(result.from_id), to_page_id: Number(result.to_id), link_type: linkType! }]);
+      await refreshRelationshipsSql(exec, [{ from_page_id: Number(result.from_id), to_page_id: Number(result.to_id), link_type: linkType! }]);
     }
   }
 
@@ -209,7 +210,7 @@ export async function addCodeReferenceLinks(exec: Pick<SqlExecutor, 'executeRaw'
     [sourceId, slug],
     [{ rows }],
   );
-  await refreshRelationships(exec, written);
+  await refreshRelationshipsSql(exec, written);
   return written.length;
 }
 

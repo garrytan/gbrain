@@ -89,3 +89,9 @@ export async function readConfigMap(engine: ConfigReader | Pick<BrainEngine, 'ge
   opts: { signal?: AbortSignal } = {}): Promise<Map<string, string>> {
   return new Map((await readConfigRows(engine, keys, opts)).map(row => [row.key, row.value]));
 }
+
+/** The stored value of `key`, or undefined when it has no row. */
+export async function readConfigValue(engine: ConfigReader | Pick<BrainEngine, 'getConfigValues'>, key: string,
+  opts: { signal?: AbortSignal } = {}): Promise<string | undefined> {
+  return (await readConfigRows(engine, [key], opts)).find(row => row.key === key)?.value;
+}

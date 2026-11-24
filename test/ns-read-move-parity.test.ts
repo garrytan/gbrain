@@ -7,7 +7,7 @@
  * second block compares the text the Postgres engine sends with master's text, byte for byte.
  *
  * 1. Protects: hasExtractedEvents (chronicle/ledger.ts), readMaxTimelineEntryId (doctor timeline_history),
- *    notifierCoverageRecorded (notifier/status.ts), storedTimelineRowsByPageIds, countSegmentedTimelinePages and
+ *    hasNotifierCoverage (notifier/status.ts), storedTimelineRowsByPageIds, countSegmentedTimelinePages and
  *    countTimelineCommentMarkupRows (repair/timeline.ts) answer what the statement they replaced answered, on rows that
  *    sit on each side of every predicate (state, event rows, soft-deleted pages, other sources, segmented or not).
  *    listOpenLoops and readEntityOpenLoops (no caller moved yet) answer what loops-store.ts and entity-card.ts asked.
@@ -218,11 +218,11 @@ describe('the Postgres members send master\'s statement text (no database)', () 
     return { engine, sent: () => fake.statements().map(s => ({ text: s.text, params: s.params })) };
   }
 
-  test('hasExtractedEvents, readMaxTimelineEntryId and notifierCoverageRecorded send the call site\'s text and binds', async () => {
+  test('hasExtractedEvents, readMaxTimelineEntryId and hasNotifierCoverage send the call site\'s text and binds', async () => {
     const { engine, sent } = recording();
     await engine.hasExtractedEvents('src-a', 7);
     await engine.readMaxTimelineEntryId();
-    await engine.notifierCoverageRecorded();
+    await engine.hasNotifierCoverage();
     expect(sent()).toEqual([
       { text: MASTER_HAS_EXTRACTED, params: ['src-a', 7] },
       { text: MASTER_MAX_ENTRY, params: [] },
@@ -364,16 +364,16 @@ for (const kind of testBackends()) {
       expect(await engine.readMaxTimelineEntryId()).toBeLessThan(max);
     });
 
-    test('notifierCoverageRecorded: false with no row or only unobserved rows, true once any row is observed', async () => {
-      expect(await engine.notifierCoverageRecorded()).toBe(await before.notifierCovered());
-      expect(await engine.notifierCoverageRecorded()).toBe(false);
+    test('hasNotifierCoverage: false with no row or only unobserved rows, true once any row is observed', async () => {
+      expect(await engine.hasNotifierCoverage()).toBe(await before.notifierCovered());
+      expect(await engine.hasNotifierCoverage()).toBe(false);
       await newSource(engine, 'work');
       await engine.executeRaw(`INSERT INTO sync_notifier_sources (source_id) VALUES ('default')`);
-      expect(await engine.notifierCoverageRecorded()).toBe(await before.notifierCovered());
-      expect(await engine.notifierCoverageRecorded()).toBe(false);
+      expect(await engine.hasNotifierCoverage()).toBe(await before.notifierCovered());
+      expect(await engine.hasNotifierCoverage()).toBe(false);
       await engine.executeRaw(`INSERT INTO sync_notifier_sources (source_id, observed_at) VALUES ('work', now())`);
-      expect(await engine.notifierCoverageRecorded()).toBe(await before.notifierCovered());
-      expect(await engine.notifierCoverageRecorded()).toBe(true);
+      expect(await engine.hasNotifierCoverage()).toBe(await before.notifierCovered());
+      expect(await engine.hasNotifierCoverage()).toBe(true);
     });
 
     /** Pages with own rows, event rows, a second source, a soft-deleted page and a segmented page, for the repair reads. */

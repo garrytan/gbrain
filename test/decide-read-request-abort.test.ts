@@ -83,7 +83,7 @@ const MOVED_CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listActiveAccessMembers: (e) => e.listActiveAccessMembers(),
   hasLabelledOnlyMember: (e) => e.hasLabelledOnlyMember(),
   listAccessTokens: (e) => e.listAccessTokens(),
-  notifierCoverageRecorded: (e) => e.notifierCoverageRecorded(),
+  hasNotifierCoverage: (e) => e.hasNotifierCoverage(),
   readOpCheckpointKeys: (e) => e.readOpCheckpointKeys('op', 'fingerprint'),
   readHealthMemoClock: (e) => e.readHealthMemoClock(),
   listSynopsisSourceIds: (e) => e.listSynopsisSourceIds(),
@@ -107,6 +107,7 @@ const MOVED_CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   upsertOpenLoop: (e) => e.upsertOpenLoop(any),
   closeOpenLoop: (e) => e.closeOpenLoop('default', 1, 'done', 'test'),
   listOpenLoops: (e) => e.listOpenLoops(),
+  countOpenLoopsByCounterpartyEmail: (e) => e.countOpenLoopsByCounterpartyEmail('default', ['a@example.com'], 'waiting_on_me'),
   readEntityOpenLoops: (e) => e.readEntityOpenLoops('people/a', 'default', 10),
 };
 
