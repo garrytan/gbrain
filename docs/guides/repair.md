@@ -2104,9 +2104,9 @@ Each page in the preview is one of:
   reaches the moved page through the rename record, so its content stays out of delivered text, including a hold a writer
   records under the old spelling while or after the move runs. `gbrain trust review` lists them as before. The apply takes the page lock of the stored spelling as well as the
   normal one, so an edit under way waits for the move (or the move refuses, below). When row-level security applies to
-  any table of the brain for the database role, a policy can hide rows from it (another page with the same name, a fact, a
-  withdrawal, an alias, an attachment, a tombstone), so the preview and the apply refuse with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) naming the table, before anything
-  moves, whatever policies the role has. Run the repair as the table owner (with FORCE ROW LEVEL SECURITY off) or as a role
+  any table of any schema on the search path for the database role, a policy can hide rows from it (another page with the same name, a fact, a
+  withdrawal, an alias, an attachment, a tombstone), so the preview and the apply refuse with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) before anything
+  moves, whatever policies the role has. The refusal names the tables the move reads or re-keys first and counts the rest. Run the repair as the table owner (with FORCE ROW LEVEL SECURITY off) or as a role
   with BYPASSRLS. On a Postgres database whose encoding is not UTF8 the repair refuses with
   [`slug_spelling_encoding`](error-codes.md#slug_spelling_encoding) before it reads anything: finding every stored spelling
   of a name compares composed Unicode, which only a UTF8 database can evaluate.
