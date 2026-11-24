@@ -34,7 +34,7 @@ The `dream_synthesis_completions` archive (`rust/crates/gbrain-store/src/jobs/sy
 
 | Key | Holds |
 | --- | --- |
-| `a <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `a <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
+| `f <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `f <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
 
 Integers are big-endian, signed ones with the sign bit flipped. Every call reads the store clock once, as one
 Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` microseconds. The one
@@ -77,6 +77,7 @@ said.
 | `brain.detachChildJob(childId)` | null; parent cleared, `updated_at` moves, no status guard |
 | `brain.updateJobProgress(id, token, progress)` / `addJobTokens(id, token, { input, output, cache_read })` | true when the `active` row this token holds was updated (a JSON null progress is SQL NULL) |
 | `brain.delayActiveJob(id, token, { errorText, delayMs, appendStack, clearTimeout })` | the `delayed` row, or null: `delay_until = now + delayMs`, `started_at` and the lock cleared, the stack optionally appended, `timeout_at` optionally cleared |
+| `brain.delayHeldClaim(id, token, delayMs)` | true when a row this token locks went back to `delayed` (the worker's pause release at 60 000 ms and quiet-hours deferral at 900 000 ms): the lock cleared, `delay_until = now + delayMs`, `updated_at` moves; `started_at`, `error_text`, the stack, the attempt counts and `timeout_at` stay. No status guard, as the SQL statement has none |
 | `brain.releaseWatchdogClaim(id, token, errorText, mark)` / `markJobWatchdogSuspect(id, mark)` | true/null; the first returns an `active` co-runner to `waiting` with the mark appended once; the second appends the mark once on any row and leaves `updated_at` alone |
 | `brain.retryJobUpdate(id)` | the row, or null: a `failed`/`dead` row back to a fresh `waiting` row |
 | `brain.promoteDelayedJobs()` | the `delayed` rows whose `delay_until` has passed, now `waiting` |
@@ -88,6 +89,7 @@ said.
 | `brain.postInboxMessage(jobId, sender, payload)` / `readJobInbox(jobId, token)` / `readChildCompletions(parentId, token, since?)` | the inbox row; the unread rows marked read (only for an `active` job under the token); the `child_done` payloads sent after `since`, by `sent_at`. A missing job or a null payload is `constraint_violation` |
 | `brain.listOpenJobIdsInQueue(queue)` / `renewPrivateQueueLease(queue, ownerToken, leaseMs)` / `listOwnedPrivateQueues(prefix, maxQueues)` / `readPrivateQueueState(queue)` | the live ids; the rows renewed (a lease only ever grows); queue names with owner metadata, oldest first; the recovery classifier's counts (`active_healthy`, `owner_ids`, `metadata_rows`, `live_owner_rows`, `nonterminal_owner_rows`, `max_lease_until`, `future_lease_rows`, `recently_touched`) |
 | `brain.listStaleWaitingJobIds(name, hours, limit)` / `countTtlExpiredWaiting(name, hours)` | ids, oldest `updated_at` first; a count |
+| `brain.listUnfinishedJobsByName(names)` | `[{ id, name, status }]` of every live row (any status but completed, failed, dead, cancelled) whose name is listed, by id, in one read with no limit |
 | `brain.readJobStats(since, queue)` / `readQueueFamilyStats(since, prefix)` | `{ by_status, types, drained, depth, stalled, wedge }`; one row per queue family, by family name |
 | `brain.hasOverdueWatchdogSuspect({ queue, names, mark, waitMs })` | true when a `waiting` row with an authority is marked and untouched for `waitMs` |
 | `brain.listUnreviewedJobs()` / `getFailedJobForRetry(id)` | `{ id, submission_authority }` of live rows whose authority is not exactly the application one (NULL included); `{ name, data }` of a `failed`/`dead` row |

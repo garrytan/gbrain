@@ -26,6 +26,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult } from '../types.ts';
 import { chunkManifestJoin, chunkManifestReads, chunkVisibleFilter } from './safe-chunks.ts';
 
@@ -77,7 +78,9 @@ export async function segmentRegions(engine: Pick<BrainEngine, 'kind' | 'execute
         WHERE cc.id = ANY($1::int[]) AND m.byte_start IS NOT NULL AND ${chunkVisibleFilter('p', 'cc')}`, [ids]);
       return new Map(rows.map(r => [Number(r.id), Number(r.byte_start)]));
     });
-  } catch {
+  } catch (e) {
+    // A failed read leaves every page under the inline rule; an engine that cannot serve it refuses instead.
+    rethrowCapabilityRefusal(e);
     return new Map();
   }
 }

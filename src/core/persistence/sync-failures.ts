@@ -5,7 +5,6 @@ import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import type { SyncCursorOptions } from './sync-prepare.ts';
 import { resolveManagedSyncContext, syncGit, syncGitPath } from './sync-discovery.ts';
-import { readGitHold } from './sync-holds.ts';
 import { pruneMirrorOnlyManagedFailures } from './managed-sync-orphans.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { VERSION } from '../../version.ts';
@@ -114,24 +113,20 @@ export async function unsettledReason(engine: BrainEngine, run: ManagedSyncImpor
   if (failure.path.startsWith('<')) return 'no_recorded_file';
   const gitPath = syncGitPath(run, failure.path);
   const present = blobAt(run.gitRoot, run.target, gitPath) !== null;
-  const live = await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) LIMIT 1', [run.sourceId, [failure.path, gitPath]]);
+  const live = await engine.listLiveOriginPages(run.sourceId, [failure.path, gitPath]);
   if (!present) return live.length ? 'not_deleted' : null;
   if (!live.length) return 'not_imported';
-  return await readGitHold(engine, run.sourceId, run.incarnation, failure.path) ? 'held' : null;
+  return await engine.readGitHoldRow(run.sourceId, run.incarnation, failure.path) ? 'held' : null;
 }
 
 async function deleteFailure(engine: BrainEngine, key: string, failure: ManagedSyncFailure): Promise<boolean> {
-  const removed = await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1
-    AND completed_keys->0->>'observation_id'=$2 RETURNING fingerprint`, [key, failure.observation_id]);
-  if (removed.length) try { clearManagedSyncFailure(key); } catch { }
-  return removed.length > 0;
+  const removed = await engine.deleteManagedSyncFailureObservation(key, failure.observation_id);
+  if (removed) try { clearManagedSyncFailure(key); } catch { }
+  return removed;
 }
 
 async function sourceFailureRows(engine: BrainEngine, sourceId: string): Promise<Array<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>> {
-  const rows = await engine.executeRaw<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>(`SELECT f.fingerprint AS key,f.completed_keys->0 AS failure,
-      EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS unfinished
-    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint COLLATE "C"`, [sourceId]);
-  return rows;
+  return engine.listSourceManagedSyncFailures<ManagedSyncFailure>(sourceId);
 }
 
 /**

@@ -23,7 +23,8 @@ import type { DegradedStageEntry } from '../types.ts';
 import { readAka, selectAcrossSources, type EntityLookupScope, type EntityNameMatch } from './entity-card.ts';
 import { readSiblingIdentity } from './entity-card-identity.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
-import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { redactFindings } from '../secret-scan.ts';
 import type { Notice } from '../agent-output.ts';
 import { readRowReferences, type RowReferences } from './entity-references.ts';
@@ -103,9 +104,10 @@ async function lookupOne(engine: BrainEngine, sourceId: string, name: string, sc
   const siblingPages = identity_siblings?.pages ?? [];
   const bodies = new Map<string, string | null>([[row.slug, row.compiled_truth]]);
   if (siblingPages.length) {
-    const sib = await engine.executeRaw<{ slug: string; source_id: string; compiled_truth: string | null }>(
-      `SELECT slug, source_id, ${boundedBodyPrefixSql('pages')} AS compiled_truth FROM pages WHERE source_id = $1 AND slug = ANY($2::text[]) AND deleted_at IS NULL`,
-      [sourceId, siblingPages.map(p => p.slug)]).catch(() => []);
+    // The entity card's hydrate read (engine-sql/entity-reads.ts readEntityCardRows): the same bounded body prefix of the
+    // live pages at those slugs. A capability refusal surfaces; any other failure leaves the siblings without a lead.
+    const sib = await engine.readEntityCardRows(sourceId, { slugs: siblingPages.map(p => p.slug) })
+      .catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; });
     for (const s of await overlaidBoundedRows(engine, sib)) bodies.set(s.slug, s.compiled_truth);
   }
   return {

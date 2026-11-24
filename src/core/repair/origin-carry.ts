@@ -20,6 +20,7 @@
  * and receipt reads a Rust brain does not serve, so both purges check the list in persistence/purge-path-members.ts first:
  * an engine missing one of them refuses by name, with its owner lane, before any write and the page stays live.
  */
+import { normalizeSlug } from '../utils.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { assertPurgeAge } from '../engine-errors.ts';
@@ -151,7 +152,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const { finishPagePurge } = await import('../persistence/page-purge.ts');
   p.request_id ??= randomUUID();
   const batch = `derived-origin-carry:${String(p.request_id)}`;
-  const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
+  const slug = typeof p.slug === 'string' ? normalizeSlug(p.slug) : null;
   if (p.purge !== true) {
     const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(capabilityOrNull) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });

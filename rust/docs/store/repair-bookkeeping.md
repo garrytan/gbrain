@@ -188,15 +188,37 @@ as the SQL filters its rows (`repair_fence_scans.rs`).
 A segmented page has no compiled truth on any engine, so an atom whose source page is segmented
 counts as `origin_unread` everywhere.
 
-On Rust, the origin-twins plan always takes its no-owner path, because the worktree binding is not
-served yet, and its apply finds `pages_live_origin_key` present. So the kind previews and applies.
+On Rust, the origin-twins plan reads the source's owner binding, then groups live pages by origin. The store
+refuses a second live page per exact origin (`pages_live_origin_key` is always present), so a group on Rust is a
+pair of spellings of one file (case, or a legacy scope prefix). The kind previews and applies in both modes. Merge
+mode runs the twin merge (`mergeTwinInto`) on the engine's transaction: every statement is a typed member, the four
+fact rekey members (`listRekeyLosers`, `repointSupersededToKept`, `clearOntologySlots`, `deleteRekeyLosers`, which
+`dropRekeyDuplicates` calls between the page-children move and the fact move, `store-members/ontology-repair.ts`)
+among them. The verdict reads each claimant through `listOriginClaimants` (below) and the pair's revisions through
+`listRepairScanPages`; `droppedFrontmatter` reads both pages' frontmatter with `getPage`
+(`test/engine-parity/repair-twin-merge.test.ts`, equal on all 3 engines). The merge's moves are all served:
+
+| JS member | Store fn (`repair_twin_merge.rs`) | Mirrors |
+| --- | --- | --- |
+| `movePageVersions(fromPageId, toPageId)` | `move_page_versions` (`repair_versions.rs`) | each version re-keyed under the survivor; a missing survivor refused as the foreign key does; the ids in id order |
+| `moveTwinRelationships({ twinId, survivorId })` | `move_twin_relationships` | the twin's link and transition keys, the colliding rows dropped (the `listTwinMergeLosers` link and transition losers), the rest re-pointed `from`, `to` and `origin` onto the survivor except the rows between the pair, then the survivor's keys. Links go through `delete_link` / `put_link` (the four link keys), transitions through `delete_transition` / `put_moved_transition` (their key holds the relationship). Keys come back in key order (links, then transitions), the moved link ids in id order |
+| `moveTwinPageChildren({ twinId, survivorId, sourceId, twinSlug, survivorSlug })` | `move_twin_page_children` | in statement order: timeline rows and events (`timeline_queries/twin_move.rs`: repeats of the survivor's `(date, summary, source)` dropped, rows moved through `put_entry` so the stamps, the dedup key and the event index follow, repeated event dates dropped, the rest re-pointed at the survivor as event page, `G` recomputed), raw data of a source the survivor lacks (`move_raw_data`), the survivor's import-owned tag claimed `added` when the twin's was, files re-attached with the survivor's slug (`move_files`), page aliases the survivor does not repeat (`move_twin_page_aliases`; a repeated row stays on the twin, unlike the rename's move), then the `added` or unclaimed tags the survivor lacks, which advance both pages' revisions as the tag trigger does. The moved tags come back in the twin's tag order (Postgres' order is unspecified) |
+| `moveTwinFacts(sourceId, twinSlug, survivorSlug)` | `move_twin_facts` | the source's facts about the twin slug that another page (or none) asserts take the survivor slug, each through `write_fact`; the ids in id order |
+| `listOriginClaimants({ sourceId, ids, policy })` | `list_origin_claimants` (`repair_scans.rs`) | the verdict inputs of the live pages with these ids, by id: `md5(compiled_truth) \|\| md5(timeline)` (null for a segmented body), `frontmatter ->> 'id'`, the trust tier (`unknown` when unstamped), `private` (the no-caller page policy of `privatePagesFilterFragment('p')` keeps the page, judged by `page_hidden_with` from the policy flags the member sends, as `readLinkRelationshipEvidence` does), and `restricted` (a fact withdrawal, or a purge of either visibility, keyed to the slug) |
+| `recordRenameAlias(sourceId, oldSlug, newSlug)` | `record_rename_alias` (`aliases.rs`) | the rename history and slug alias statements of `updateSlug`, for a caller that moved or merged the page itself; the same slug records nothing |
+
+The twin and its survivor being one page refuses with `invalid_argument`; a page id that is not a page id
+names no page; a survivor page that does not exist refuses as the foreign key does, with nothing written.
+The history half of `recordRenameAlias` (`slug_rename_history`) has no typed read on the SQL engines, so the
+parity case compares the alias half and the cargo test `record_rename_alias_records_the_history_and_aliases_without_moving_a_page`
+pins the history. The cargo tests in `tests/repair_twin_merge.rs` pin the indexes the moves keep.
 The safe-chunks apply re-seals chunks, a B6 writer. Pinned by
 `test/engine-parity/repair-page-scans.test.ts` and the store tests
 `scans_answer_what_the_sql_filters` and `repair_scan_pages_answer_each_query_shape`.
 
 The ghost-pages and legacy-twins plans stop off the owner host until the worktree binding is
 served. With a binding, ghost-pages previews and applies on Rust; legacy-twins finds its pairs and
-then reads `twinMergeConflicts` (`persistence/twin-merge.ts`), which still runs raw SQL.
+then reads `twinMergeConflicts` (`persistence/twin-merge.ts`) and merges the pair on Rust like the SQL engines (`test/engine-parity/repair-owner-kinds.test.ts`).
 
 ## Repair plan scans
 

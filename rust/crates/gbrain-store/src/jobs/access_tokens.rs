@@ -21,8 +21,8 @@
 //! The two private grants (`private_pages`, `private_facts`) are kept with their CHECK lists, `'none'` at insert; a
 //! record written before they were kept reads `'none'`. Not kept: the `trust_generation_update` trigger. `member_id` and `may_act_for` are set by the insert (when it
 //! names them), by a member insert that binds the token, and by the credential binding write. `last_used_at` is
-//! stamped by the bearer check (`touch_access_token_last_used`) and NULL before. Only `readLiveAccessToken` returns
-//! `token_hash`. Setting the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
+//! stamped by the bearer check (`touch_access_token_last_used`) and NULL before. Only `readLiveAccessToken` and doctor's
+//! whole-row `listActiveAccessTokenRows` (`doctor_credentials.rs`) return `token_hash`. Setting the floor of an id no token has changes nothing (Postgres also refuses an id that is not a UUID with 22P02; the
 //! caller here always passes the id `findActiveAccessTokens` returned).
 
 use super::*;
@@ -352,6 +352,29 @@ impl TokenRecord {
             "reads_unscoped": t.reads_unscoped.map(iso), "private_facts": t.private_facts,
             "read_shared_revision": t.read_shared_revision,
         })
+    }
+
+    /// The whole row with its hash, every column of `access_tokens` named: `SELECT *` as the SQL engines return it
+    /// (doctor's active-token read; the parity case compares every column).
+    pub(super) fn row_with_hash(&self) -> Value {
+        let mut row = self.whole_row();
+        row["token_hash"] = json!(self.token_hash);
+        row
+    }
+
+    /// The row as `to_jsonb(t)` prints it in a UTC session: `row_with_hash` with the times as `to_jsonb` text
+    /// (`+00:00`, no trailing fraction zeros).
+    pub(super) fn to_jsonb_row(&self) -> Value {
+        let mut row = self.row_with_hash();
+        for (name, micros) in [
+            ("created_at", Some(self.created_at)),
+            ("last_used_at", self.last_used_at),
+            ("revoked_at", self.revoked_at),
+            ("reads_unscoped", self.reads_unscoped),
+        ] {
+            row[name] = micros.map_or(Value::Null, |m| json!(super::oauth_clients::jsonb_time(m)));
+        }
+        row
     }
 
     /// The row `listAccessTokens` returns: the columns `gbrain auth list` prints.

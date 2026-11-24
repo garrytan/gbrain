@@ -397,6 +397,44 @@ fn member_access_allows(
     )
 }
 
+/// `accessAllowedSql(alias, identity)` for one page under a caller record's page policy: the
+/// member-access part alone (readers, folder rules, restricted origin, owner-only), with no privacy
+/// part (the who-can-read report, src/commands/access.ts).
+pub(crate) fn page_access_allowed(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let owner_only = OwnerOnlySources::read(read)?;
+    member_access_allows(read, page, identity, policy, false, &owner_only)
+}
+
+/// `folderRulesAllowedSql(alias, satisfied)` for one page under a caller record's page policy:
+/// every rule stamped on the page is in `satisfied`, and no prefix of the record (or, outside a
+/// record, no pending prefix the store holds) covers it.
+pub(crate) fn page_folder_rules_allowed(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    satisfied: &[String],
+    policy: &PrivacyPolicy,
+) -> Result<bool> {
+    let pending = pending_covers(read, &page.source_id, &page.slug)?;
+    let rules = if policy.caller_record && pending {
+        kept_rules(read, &page.source_id, page.id)?
+    } else {
+        stamped_rules(read, page)?
+    };
+    let folders = FolderAccess {
+        satisfied,
+        coverage: &policy.folder_coverage,
+        record: policy.caller_record,
+    };
+    Ok(folders.satisfies_all(rules.iter())
+        && !folders.covers(page)
+        && (policy.caller_record || !pending))
+}
+
 /// `orPrivateReadableSource`: the page's source is in the private-readable grant and the page
 /// does not carry `pinned_question`.
 fn private_source_open(page: &PageRecord, policy: &PrivacyPolicy) -> bool {

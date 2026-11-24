@@ -189,7 +189,7 @@ fn octets(text: &str) -> i64 {
 
 /// `to_jsonb(timestamptz)` with TimeZone UTC: `2026-01-03T00:00:00.215+00:00`, trailing fraction
 /// zeros dropped.
-fn jsonb_timestamptz(micros: i64) -> String {
+pub(crate) fn jsonb_timestamptz(micros: i64) -> String {
     format!("{}:00", timestamptz_text(micros).replacen(' ', "T", 1))
 }
 

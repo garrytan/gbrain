@@ -103,18 +103,18 @@ function call(sourceId: string, remote: boolean): Call {
  * through executeRaw (own-property shadows, so transaction handles keep their connection).
  */
 async function countHoldReads<T>(run: () => Promise<T>): Promise<{ value: T; reads: number }> {
-  const target = engine as unknown as Record<'executeRaw' | 'readHeldPageRows' | 'readHeldCoverageRows', (this: unknown, ...args: unknown[]) => Promise<unknown>>;
+  const target = engine as unknown as Record<'executeRaw' | 'readHeldPageRows' | 'readHeldCoverageRows' | 'readHeldHitRows', (this: unknown, ...args: unknown[]) => Promise<unknown>>;
   const proto = Object.getPrototypeOf(engine) as typeof target;
   let reads = 0;
   target.executeRaw = function (sql, params) {
     if (Array.isArray(params) && (params[0] === 'sync-hold' || params[0] === 'sync-hold-summary')) reads++;
     return proto.executeRaw.call(this, sql, params);
   };
-  for (const name of ['readHeldPageRows', 'readHeldCoverageRows'] as const) {
+  for (const name of ['readHeldPageRows', 'readHeldCoverageRows', 'readHeldHitRows'] as const) {
     target[name] = function (...args) { reads++; return proto[name].apply(this, args); };
   }
   try { return { value: await run(), reads }; }
-  finally { for (const name of ['executeRaw', 'readHeldPageRows', 'readHeldCoverageRows'] as const) delete (target as Partial<typeof target>)[name]; }
+  finally { for (const name of ['executeRaw', 'readHeldPageRows', 'readHeldCoverageRows', 'readHeldHitRows'] as const) delete (target as Partial<typeof target>)[name]; }
 }
 
 test('the held-page read joins each hold to its page by key, not by a text cast of every page id', () => eachEngine(async () => {
