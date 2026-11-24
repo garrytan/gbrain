@@ -238,6 +238,26 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       }
     }), 120_000);
 
+    test('the doctor check never reports ok when row security hides pages from the role: the count is unknown', () => withEnv(env, async () => {
+      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
+      await engine.putPage('notes/seed-doctor-hidden', { type: 'note', title: 'Hidden page', compiled_truth: 'x', timeline: '' }, { sourceId });
+      await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', ['Notes/Doctor-Hidden', 'notes/seed-doctor-hidden', sourceId]);
+      const [{ rowsecurity }] = await engine.executeRaw<{ rowsecurity: boolean }>("SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename='pages'");
+      await openAllBut('pages');
+      if (!rowsecurity) await engine.executeRaw('ALTER TABLE pages ENABLE ROW LEVEL SECURITY');
+      await engine.executeRaw(`CREATE POLICY ${ROLE}_open ON pages FOR SELECT TO ${ROLE} USING (false)`);
+      try {
+        const { legacySlugSpellingsEntry } = await import('../src/commands/doctor/checks/legacy-slug-spellings.ts');
+        const [finding] = (await legacySlugSpellingsEntry.run({ engine: scoped } as never)) as unknown as Array<{ status: string; details?: Record<string, unknown>; message: string }>;
+        expect({ status: finding?.status, count: finding?.details?.count, names: finding?.message.includes('row-level security') }).toEqual({ status: 'warn', count: 'unknown', names: true });
+      } finally {
+        await engine.executeRaw(`DROP POLICY IF EXISTS ${ROLE}_open ON pages`);
+        if (!rowsecurity) await engine.executeRaw('ALTER TABLE pages DISABLE ROW LEVEL SECURITY');
+        await openAllBut(null);
+      }
+    }), 120_000);
+
     for (const hidden of ['take_purges', 'fact_purges']) {
       test(`${hidden} hidden from the role: the move is refused before anything moves, also once the role has policies, and the owner moves it`, () => withEnv(env, async () => {
         _resetCliExitVerdictForTests();
