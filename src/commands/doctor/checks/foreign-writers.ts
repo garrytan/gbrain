@@ -27,8 +27,9 @@ import { execFileSync } from '../../../core/spawn.ts';
 import { GIT_READ_ENV, gitChildEnv } from '../../../core/git-env.ts';
 import type { Check } from '../../doctor.ts';
 import { ledgerFiles, readLedger, messageDigest } from '../../../core/git/commit-ledger.ts';
+import { readForeignWriterReviews } from '../../foreign-writer-review.ts';
 import { readPendingWriteThrough } from '../../../core/git/commit-push.ts';
-import { GUARD_ENFORCE_MARKER, GUARD_HOOK, OWNER_HOOKS_DIR } from '../../../core/git/commit-guard.ts';
+import { GUARD_ENFORCE_MARKER, GUARD_HOOK, OWNER_HOOKS_DIR, ownerGuardStatus } from '../../../core/git/commit-guard.ts';
 import { existingHostIdFor } from '../../../core/persistence/identity.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { doctorVerify, infoCheck } from '../check-fix.ts';
@@ -226,14 +227,14 @@ function enforceGuardSince(gitDir: string | null): number | null {
 
 interface RepoReport {
   common: string; checkouts: string[]; ledger: boolean; window_from: string | null; ledger_start: string | null; oldest_reflog: string | null;
-  uncovered: number; foreign: ForeignCommit[]; unconfirmed: ForeignCommit[]; unknown: { ref: string; old: string; new: string; time: string }[];
+  uncovered: number; foreign: ForeignCommit[]; contained: ForeignCommit[]; unconfirmed: ForeignCommit[]; unknown: { ref: string; old: string; new: string; time: string }[];
 }
 
 function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: boolean; reason?: string } {
   let ledger: ReturnType<typeof readLedger>;
   try { ledger = readLedger(repo.common); }
   catch (error) {
-    const report: RepoReport = { common: repo.common, checkouts: [...repo.checkouts.keys()], ledger: false, window_from: null, ledger_start: null, oldest_reflog: null, uncovered: 0, foreign: [], unconfirmed: [], unknown: [] };
+    const report: RepoReport = { common: repo.common, checkouts: [...repo.checkouts.keys()], ledger: false, window_from: null, ledger_start: null, oldest_reflog: null, uncovered: 0, foreign: [], contained: [], unconfirmed: [], unknown: [] };
     return { report, partial: true, reason: `the commit ledger in ${ledgerFiles(repo.common).dir} could not be read (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}), so no commit there was attributed` };
   }
   const ledgered = new Set<string>();
@@ -253,7 +254,7 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
   if (start === null && ledger.length) start = Date.parse(ledger[0]!.t);
   const startSec = start === null ? null : Math.floor(start / 1000);
   const report: RepoReport = { common: repo.common, checkouts: [...repo.checkouts.keys()], ledger: ledger.length > 0, window_from: null,
-    ledger_start: start === null ? null : new Date(start).toISOString(), oldest_reflog: null, uncovered: 0, foreign: [], unconfirmed: [], unknown: [] };
+    ledger_start: start === null ? null : new Date(start).toISOString(), oldest_reflog: null, uncovered: 0, foreign: [], contained: [], unconfirmed: [], unknown: [] };
   const anyTop = [...repo.checkouts.keys()][0]!;
   const candidates = new Map<string, Candidate>();
   let oldest: number | null = null;
@@ -316,7 +317,23 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
       (matched ? report.unconfirmed : report.foreign).push(commit);
     }
   }
+  try {
+    const reviews = readForeignWriterReviews(repo.common);
+    for (const commit of [...report.foreign]) {
+      const checkout = repo.checkouts.get(commit.checkout);
+      const guard = checkout && ownerGuardStatus(checkout.top);
+      const activeEnforceGuard = guard?.installed === true && guard.mode === 'enforce';
+      if (activeEnforceGuard && checkout && reviews.some(review => review.sha === commit.sha && checkout.source_ids.includes(review.source_id))) {
+        report.foreign.splice(report.foreign.indexOf(commit), 1);
+        report.contained.push(commit);
+      }
+    }
+  } catch (error) {
+    partial = true;
+    return { report, partial, reason: `the foreign-writer review record in ${ledgerFiles(repo.common).dir} could not be read (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}), so no historical commit was contained` };
+  }
   report.foreign.sort((a, b) => b.time.localeCompare(a.time));
+  report.contained.sort((a, b) => b.time.localeCompare(a.time));
   return { report, partial };
 }
 
@@ -356,12 +373,13 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
   const isOld = (d: Dirty) => d.age_ms > FOREIGN_DIRTY_WARN_MS;
   dirty.sort((a, b) => Number(isOld(b)) - Number(isOld(a)) || a.checkout.localeCompare(b.checkout) || a.path.localeCompare(b.path));
   const foreign = reports.flatMap(r => r.foreign).sort((a, b) => b.time.localeCompare(a.time) || a.sha.localeCompare(b.sha));
+  const contained = reports.flatMap(r => r.contained).sort((a, b) => b.time.localeCompare(a.time) || a.sha.localeCompare(b.sha));
   const unconfirmed = reports.flatMap(r => r.unconfirmed);
   const unknown = reports.flatMap(r => r.unknown);
   const old = dirty.filter(isOld).sort((a, b) => b.age_ms - a.age_ms);
   const details = {
     window: reports.map(r => ({ common: r.common, from: r.window_from, to: new Date(now).toISOString(), ledger_start: r.ledger_start, oldest_reflog: r.oldest_reflog, uncovered: r.uncovered, ledger: r.ledger })),
-    foreign, unconfirmed, unknown, dirty: dirty.slice(0, MAX_LISTED), dirty_count: dirty.length, dirty_warn_after_minutes: FOREIGN_DIRTY_WARN_MS / 60_000, partial, partial_reasons: reasons,
+    foreign, contained, contained_count: contained.length, unconfirmed, unknown, dirty: dirty.slice(0, MAX_LISTED), dirty_count: dirty.length, dirty_warn_after_minutes: FOREIGN_DIRTY_WARN_MS / 60_000, partial, partial_reasons: reasons,
   };
   const scope = `${repos.length} repositor${repos.length === 1 ? 'y' : 'ies'}${partial ? ' (partial)' : ''}`;
   if (foreign.length) {
@@ -370,15 +388,16 @@ async function runForeignWriters(ctx: DoctorContext): Promise<Check[]> {
     const trailed = foreign.filter(c => c.gbrain_trailer);
     const older = trailed.length ? ` ${trailed.length} of them carry a gbrain- commit trailer (${trailed.slice(0, 3).map(c => c.sha.slice(0, 12)).join(', ')}): possibly an older gbrain without the commit ledger, co-installed on this host; upgrade every gbrain that writes to this checkout (a trailer alone does not prove gbrain made the commit).` : '';
     checks.push({ name: 'foreign_writers', status: 'fail', details,
-      message: `${foreign.length} commit(s) in ${scope} were made by a writer outside gbrain: ${foreign.slice(0, 5).map(c => `${c.sha.slice(0, 12)} ${label(c)} by ${c.committer}`).join(', ')}${foreign.length > 5 ? ', ...' : ''}. ${line}.${older}`,
+      message: `${foreign.length} commit(s) in ${scope} were made by a writer outside gbrain: ${foreign.slice(0, 5).map(c => `${c.sha.slice(0, 12)} ${label(c)} by ${c.committer}`).join(', ')}${foreign.length > 5 ? ', ...' : ''}.${contained.length ? ` ${contained.length} reviewed historical commit(s) remain visible as contained warnings.` : ''} ${line}.${older}`,
       fix: { ask_user: true, argv: ['git', '-C', newest.checkout, 'show', '--stat', newest.sha], consent: [], actor: 'user', requires_exclusive: false,
         why: `${line}. A commit made around gbrain skips its writer lock and leaves files no import recorded; finding and rerouting the writer (a cron, a script, an agent running plain git, or an older gbrain without the commit ledger) is the user's call.`,
         user_message: `A writer outside gbrain committed ${newest.sha.slice(0, 12)} ("${newest.subject}") in ${newest.checkout} at ${newest.time}. Which job or agent makes these commits, so it can be switched to gbrain git commit-push or a page write?`,
         verify: doctorVerify('foreign_writers') } });
     return checks;
   }
-  if (unconfirmed.length || unknown.length || old.length || partial) {
+  if (contained.length || unconfirmed.length || unknown.length || old.length || partial) {
     const parts = [
+      contained.length ? `${contained.length} reviewed historical foreign commit(s) remain contained only while this worktree's enforce guard stays active; their exact SHAs and review reasons remain in the separate local audit record: ${contained.slice(0, 5).map(c => c.sha.slice(0, 12)).join(', ')}` : '',
       partial ? `the scan did not finish (${reasons.join('; ')}), so part of the window is unchecked` : '',
       unconfirmed.length ? `${unconfirmed.length} commit(s) match a gbrain intent whose commit line is missing (a crash between git commit and the ledger append): ${unconfirmed.slice(0, 5).map(c => c.sha.slice(0, 12)).join(', ')}; they are not written back to the ledger` : '',
       unknown.length ? `${unknown.length} ref move(s) whose commits could not be read: ${unknown.slice(0, 5).map(u => `${u.ref} -> ${u.new.slice(0, 12)}`).join(', ')}` : '',

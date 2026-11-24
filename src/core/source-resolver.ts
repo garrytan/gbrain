@@ -326,9 +326,9 @@ export function resolveSourceIdEngineFree(
  * v34+ — fall back to the column-less query on older brains (rows then carry
  * no `archived` key and are treated as active, the pre-v34 behavior).
  */
-type RegisteredSource = { id: string; local_path: string; archived?: boolean };
+export type RegisteredSource = { id: string; local_path: string; archived?: boolean };
 
-async function listRegisteredLocalPathSources(
+export async function listRegisteredLocalPathSources(
   engine: BrainEngine,
 ): Promise<RegisteredSource[]> {
   const pending = requestSourceRows(engine);
