@@ -9,3 +9,5 @@
 <!-- behavior-change: transcripts_try_it_get_gbra789 -->
 - gbrain learned and learned --stats start their default window at the brain's creation on a brain younger than the window, instead of naming a date before the brain existed.
 <!-- behavior-change: learned_window_brain_start_gbra789 -->
+- gbrain status reads a keyless repo-less brain as healthy (repo-less, embed=off) and shows a completed gbrain dream as the last full cycle.
+<!-- behavior-change: status_keyless_repo_less_gbra789 -->

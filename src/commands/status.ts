@@ -56,6 +56,9 @@ import {
 import { formatSyncFreshness, readSyncFreshness, type SourceFreshness } from '../core/persistence/sync-freshness.ts';
 import { pendingProposalSummary } from '../core/persistence/memory-proposals.ts';
 import { withReadMeta } from '../core/read-heartbeat.ts';
+import { embeddingsDisabled } from '../core/embedding-disabled.ts';
+import { isGitCheckout } from '../core/persistence/git-gap.ts';
+import { readDreamFullCycle } from '../core/dream-last-cycle.ts';
 
 const SCHEMA_VERSION = 1 as const;
 
@@ -161,6 +164,10 @@ export interface StatusReport {
   generated_at: string;
   mode: 'local' | 'thin-client';
   sync?: SyncStatusReport;
+  /** Sources that keep their pages in the database (no Git checkout) and never synced: nothing to sync (local mode). */
+  repo_less_sources?: string[];
+  /** Embeddings are off on purpose (`init --no-embedding`), so coverage is not a gap (local mode). */
+  embeddings_off?: boolean;
   /** #6858 ask 6: commit→searchable / commit→embedded latency of each managed source (local mode, with the sync section). */
   freshness?: SourceFreshness[];
   cycle?: CycleSnapshot;
@@ -273,7 +280,10 @@ export async function buildCycleSnapshot(engine: BrainEngine): Promise<CycleSnap
   } catch {
     /* fall through */
   }
-  return { last_full: toCycleRow(fullRow), last_targeted: toCycleRow(targetedRow) };
+  const dream = await readDreamFullCycle(engine);
+  const autopilotFull = toCycleRow(fullRow);
+  const lastFull = dream && (!autopilotFull?.finished_at || dream.finished_at > autopilotFull.finished_at) ? dream : autopilotFull;
+  return { last_full: lastFull, last_targeted: toCycleRow(targetedRow) };
 }
 
 // ---------------------------------------------------------------------------
@@ -507,10 +517,15 @@ async function buildLocalReport(
             local_path: string | null;
             config: Record<string, unknown> | null;
           }>(`SELECT id, name, local_path, config FROM sources ORDER BY id`);
-          return buildSyncStatusReport(
+          const sync = await buildSyncStatusReport(
             engine,
             sources.map((s) => ({ id: s.id, name: s.name, local_path: s.local_path, config: s.config ?? {} })),
           );
+          const repoLess = sync.sources.filter((src) => src.last_sync_at === null
+            && (!src.local_path || !existsSync(src.local_path) || !isGitCheckout(src.local_path))).map((src) => src.source_id);
+          if (repoLess.length) report.repo_less_sources = repoLess;
+          if (await embeddingsDisabled(engine)) report.embeddings_off = true;
+          return sync;
         })(),
         remaining(),
         () => markStale('sync'),
@@ -667,13 +682,16 @@ export function renderHuman(report: StatusReport): string {
     if (report.sync.sources.length === 0) {
       lines.push('  (no sources registered)');
     } else {
+      const repoLess = new Set(report.repo_less_sources ?? []);
+      const embed = (s: SyncStatusReport['sources'][number]) => report.embeddings_off ? 'off' : `${s.embedding_coverage_pct.toFixed(0)}%`;
       for (const s of report.sync.sources) {
+        if (repoLess.has(s.source_id)) {
+          lines.push(`  [OK] ${s.source_id.padEnd(20)} repo-less (pages live in the database; nothing to sync)  pages=${s.pages}  embed=${embed(s)}`);
+          continue;
+        }
         const last = s.last_sync_at ?? 'never';
         const stale = s.staleness_class === 'fresh' ? 'OK' : s.staleness_class.toUpperCase();
-        lines.push(
-          `  [${stale}] ${s.source_id.padEnd(20)} ${last}  pages=${s.pages}  ` +
-            `embed=${s.embedding_coverage_pct.toFixed(0)}%`,
-        );
+        lines.push(`  [${stale}] ${s.source_id.padEnd(20)} ${last}  pages=${s.pages}  embed=${embed(s)}`);
       }
       if (report.sync.unacknowledged_failures > 0) {
         lines.push(`  ${report.sync.unacknowledged_failures} unacknowledged sync failure(s)`);
