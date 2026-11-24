@@ -1612,8 +1612,8 @@ older approval names it:
 
 | Class | What it means | Route |
 |---|---|---|
-| `ghost_never_committed` | No commit ever held the recorded file (a page written in the database only, or a file removed before any commit), so the page holds the only copy of its content. | Write the file from the page with `gbrain repair file-drift --source <id> --slug <slug> --prefer database`, commit it and sync, or keep the page. |
-| `ghost_worktree_only` | HEAD still holds the file; only the working tree lost it. | Restore it with `git -C <source root> checkout -- <path>` and sync. If the removal is intended, commit the deletion, sync, then preview again. |
+| `ghost_never_committed` | No commit ever held the recorded file (a page written in the database only, or a file removed before any commit), or sync last imported it from an uncommitted edit that the deleting commit never held, so the page holds the only copy of its content. | Write the file from the page with `gbrain repair file-drift --source <id> --slug <slug> --prefer database`, commit it and sync, or keep the page. |
+| `ghost_worktree_only` | HEAD still holds the file; only the working tree lost it. | Restore it with `git -C '<source root>' checkout HEAD -- '<path>'` and sync. If the removal is intended, commit the deletion, sync, then preview again. |
 | `database_ahead_of_file` | The page was written in the database after its file last held it. | Recreate the file from the page (`--prefer database` above), or keep the page. |
 | `ghost_history_unknown` | Git cannot say which commit deleted the file (the source is not a Git checkout, its history is shallow, or the history read failed). | Recreate the file from the page. In a shallow clone, fetch the full history (`git fetch --unshallow`) and preview again. In a folder that is not a Git checkout, delete the page by hand (`gbrain delete <slug>`) if you meant to remove it. |
 
@@ -3712,7 +3712,7 @@ by where the deletion stands in Git:
 
 | The file is | Route | `--prefer database` | `--prefer file` |
 |---|---|---|---|
-| deleted in the worktree but still committed at HEAD (staged or not) | Not file drift: to keep the page, restore the file from Git (`git checkout -- <path>`) and sync; to remove it, commit the deletion and sync. [`gbrain repair ghost-pages`](#ghost-pages) lists it apart (`ghost_worktree_only`) and removes nothing while HEAD holds the file. The file-drift preview lists it `deletion_uncommitted` and resolves nothing. | — | — |
+| deleted in the worktree but still committed at HEAD (staged or not) | Not file drift: to keep the page, restore the file from Git (`git checkout HEAD -- '<path>'`) and sync; to remove it, commit the deletion and sync. [`gbrain repair ghost-pages`](#ghost-pages) lists it apart (`ghost_worktree_only`) and removes nothing while HEAD holds the file. The file-drift preview lists it `deletion_uncommitted` and resolves nothing. | — | — |
 | gone from the last commit (a committed deletion sync held because the page changed, or a checkout with no commit) | `gbrain repair file-drift --source <id> --slug <slug> --prefer database\|file` | Recreates the canonical file from the page through the reconcile apply; the page is unchanged. Git durability commits the file; when it is off the preview warns, and you commit the file yourself, or the next sync imports the committed deletion again | Soft-deletes exactly that page (purged after 72 h; `gbrain restore <slug> --force` undoes it until then) |
 
 Both are preview-first and bound to the page revision and the observed

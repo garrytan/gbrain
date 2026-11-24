@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ghostPageNow } from '../src/core/ghost-pages.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { readSyncImportProvenance } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { ghostBacking, retireGhost } from '../src/core/repair/ghost-pages.ts';
@@ -57,7 +58,7 @@ for (const backend of testBackends()) describe('[' + backend + '] GST-3637: ghos
     const detail = (item: string) => preview.listing!.find(entry => entry.item === item)!.detail;
     expect(detail('default:' + STUB)).toContain('holds the only copy');
     expect(detail('default:' + STUB)).toContain('gbrain repair file-drift --source default --slug ' + STUB + ' --prefer database');
-    expect(detail('default:notes/worktree')).toContain('git -C ' + root + ' checkout -- notes/worktree.md');
+    expect(detail('default:notes/worktree')).toContain("git -C '" + root + "' checkout HEAD -- 'notes/worktree.md'");
     expect(preview.warnings!.some(line => line.includes('ghost_never_committed'))).toBe(true);
     expect(preview.warnings!.some(line => line.includes('ghost_worktree_only'))).toBe(true);
 
@@ -83,6 +84,27 @@ for (const backend of testBackends()) describe('[' + backend + '] GST-3637: ghos
     // A deletion Git cannot place keeps the page as well.
     const stub = (await ghostPageNow(engine, 'default', STUB))!;
     expect(await ghostBacking(engine, stub.ghost!, stub.owner!, { kind: 'unknown' })).toBe('ghost_history_unknown');
+  }, { databaseUrl, setup }), 120_000);
+
+  test('a page last imported from an uncommitted edit is kept when the deleting commit never held that edit', () => managedBrain(async ({ engine, root }) => {
+    const sync = (workingTree = false) => performManagedSync(engine, { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true, workingTree });
+    expect((await sync()).status).toBe('first_sync');
+    // Both notes are edited in the working tree and synced from there; only notes/kept's edit is committed before its file is removed.
+    for (const name of ['committed', 'kept']) writeFileSync(join(root, 'notes/' + name + '.md'), note('notes/' + name) + '\nAn edit made after the last commit.\n');
+    await sync(true);
+    git(root, 'add', 'notes/kept.md'); git(root, 'commit', '-qm', 'commit the kept edit');
+    git(root, 'rm', '-qf', 'notes/committed.md', 'notes/kept.md'); git(root, 'commit', '-qm', 'remove both', '--date=' + new Date(Date.now() + 2000).toISOString());
+
+    const lost = (await ghostPageNow(engine, 'default', 'notes/committed'))!;
+    const record = await readSyncImportProvenance(engine, 'default', lost.owner!.source_incarnation, lost.ghost!.page_id);
+    expect(record).toMatchObject({ working: true, revision: lost.ghost!.revision });
+
+    const preview = await (await repairRunner(engine, { apply: false, logger })).run('ghost-pages', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' });
+    const classes = Object.fromEntries(preview.listing!.map(entry => [entry.item, entry.class]));
+    expect(classes['default:notes/committed']).toBe('ghost_never_committed');
+    expect(classes['default:notes/kept']).toBe('canonical_file_missing');
+    expect(preview.affected).toBe(1);
+    expect(await ghostBacking(engine, lost.ghost!, lost.owner!)).toBe('ghost_never_committed');
   }, { databaseUrl, setup }), 120_000);
 
   test('a ghost whose deletion Git cannot place is listed apart and the soft-delete refuses it', () => managedBrain(async ({ engine, ctx, root }) => {

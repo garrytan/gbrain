@@ -44,7 +44,7 @@ for (const backend of testBackends()) describe(`[${backend}] #7967 code ghost on
     const kept = await repair(engine);
     expect(kept).toMatchObject({ affected: 0, residuals: { ghosts: 0, worktree_only: 1 } });
     expect(kept.listing).toEqual([expect.objectContaining({ item: `default:${CODE_SLUG}`, class: 'ghost_worktree_only' })]);
-    expect(kept.listing![0]!.detail).toContain(`checkout -- ${CODE_PATH}`);
+    expect(kept.listing![0]!.detail).toContain(`checkout HEAD -- '${CODE_PATH}'`);
     git(root, 'rm', '-q', '--', CODE_PATH);
     git(root, 'commit', '-q', '-m', 'remove the decisions file', `--date=${new Date(Date.now() + 2000).toISOString()}`);
 

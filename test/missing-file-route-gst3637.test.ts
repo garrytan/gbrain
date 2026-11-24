@@ -5,7 +5,7 @@ import { missingFileRoute } from '../src/core/persistence/reconcile-state.ts';
 describe('missingFileRoute (gst3637)', () => {
   test('in_head: restore to keep, commit to remove, ghost-pages removes nothing', () => {
     const route = missingFileRoute('src-a', 'people/alice-example', 'people/alice-example.md', 'in_head');
-    expect(route).toContain('git checkout -- people/alice-example.md');
+    expect(route).toContain("git checkout HEAD -- 'people/alice-example.md'");
     expect(route).toContain('commit the deletion and sync');
     expect(route).toContain('removes nothing while HEAD still holds the file');
     expect(route).not.toMatch(/remove the page with gbrain repair ghost-pages/);
@@ -14,7 +14,7 @@ describe('missingFileRoute (gst3637)', () => {
   test('unknown: worktree-only deletion routes to restore or commit, not ghost-pages', () => {
     const route = missingFileRoute('src-a', 'people/alice-example', 'people/alice-example.md', 'unknown' as never);
     expect(route).toContain('Git could not say');
-    expect(route).toContain('git checkout -- people/alice-example.md');
+    expect(route).toContain("git checkout HEAD -- 'people/alice-example.md'");
     expect(route).not.toContain('gbrain repair ghost-pages');
   });
 

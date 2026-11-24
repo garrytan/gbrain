@@ -55,7 +55,7 @@ import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { nativeFileTarget } from '../persistence/native-file-target.ts';
 import { clearDeletionHold, readSyncImportProvenance } from '../persistence/sync-holds.ts';
 import { readRevisionAttestations } from '../persistence/sync-pass.ts';
-import { readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
+import { blobBeforeDeletion, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
@@ -269,7 +269,7 @@ export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: st
   if (code === NEVER_COMMITTED_CODE) return `file ${ghost.path} is gone and no commit ever held it, so page ${ghost.slug} holds the only copy of its content; not soft-deleted. `
     + `Write the file from the page with ${recreateFile(ghost)}, then commit it and sync the source, or keep the page as it is`;
   if (code === WORKTREE_ONLY_CODE) return `file ${ghost.path} is deleted in the working tree only: HEAD still holds it; not soft-deleted. `
-    + `Restore it with git -C ${root ?? '<source root>'} checkout -- ${ghost.path} and sync the source; if the removal is intended, commit the deletion, sync, then preview again`;
+    + `Restore it with git -C '${root ?? '<source root>'}' checkout HEAD -- '${ghost.path}' and sync the source; if the removal is intended, commit the deletion, sync, then preview again`;
   return `Git could not say which commit deleted ${ghost.path} (the source is not a Git checkout, its history is shallow, or the history read failed), so page ${ghost.slug} may hold the only copy of its content; not soft-deleted. `
     + `Write the file from the page with ${recreateFile(ghost)}; in a shallow clone, fetch the full history (git fetch --unshallow) and preview again; `
     + `in a folder that is not a Git checkout, delete the page by hand (gbrain delete ${ghost.slug}) if its removal is intended`;
@@ -280,7 +280,9 @@ export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: st
  * removed, since only then does Git still hold what the file held: a file no commit ever held leaves the page as the only
  * copy (`ghost_never_committed`), a file HEAD still holds was lost from the working tree only (`ghost_worktree_only`),
  * and a deletion Git cannot place is kept too (`ghost_history_unknown`). A committed deletion counts only when the live
- * revision is file-backed: the revision sync last imported from the file (the import record), or one a committed sync
+ * revision is file-backed: the revision sync last imported from the file (the import record; an import of working-tree
+ * bytes counts only when the deleting commit's parent held those bytes, else the page holds the only copy of them:
+ * `ghost_never_committed`), or one a committed sync
  * write or a Git-published write produced (the attestation sync's own deletion proof reads). Any other revision of a
  * recorded page was written in the database after its file last held it (`database_ahead_of_file`). A page with no
  * import record is judged against the date of the commit that deleted its file. `provenance` is the path's deletion
@@ -289,12 +291,18 @@ export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: st
 export async function ghostBacking(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner, provenance?: DeletionProvenance): Promise<'file_backed' | GhostKeptCode> {
   const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
   if (!binding?.local_path) return HISTORY_UNKNOWN_CODE;
-  const deletion = provenance ?? (await readDeletionProvenance(join(binding.local_path, binding.relative_path), [ghost.path])).get(ghost.path);
+  const root = join(binding.local_path, binding.relative_path);
+  const deletion = provenance ?? (await readDeletionProvenance(root, [ghost.path])).get(ghost.path);
   if (deletion?.kind === 'never_committed') return NEVER_COMMITTED_CODE;
   if (deletion?.kind === 'deletion_uncommitted') return WORKTREE_ONLY_CODE;
   if (deletion?.kind !== 'deleted_by_commit') return HISTORY_UNKNOWN_CODE;
-  const recorded = (await readSyncImportProvenance(engine, ghost.source_id, owner.source_incarnation, ghost.page_id))?.revision;
-  if (recorded === ghost.revision) return 'file_backed';
+  const record = await readSyncImportProvenance(engine, ghost.source_id, owner.source_incarnation, ghost.page_id);
+  const recorded = record?.revision;
+  if (recorded === ghost.revision) {
+    if (!record!.working) return 'file_backed';
+    const deleted = await blobBeforeDeletion(root, deletion.commit, ghost.path);
+    return deleted !== null && (deleted === record!.blob_oid || deleted === record!.disk_blob_oid) ? 'file_backed' : NEVER_COMMITTED_CODE;
+  }
   const [page] = await engine.executeRaw<{ request_id: string | null; source_path: string | null; updated_ms: number }>(
     'SELECT revision_write_request_id::text AS request_id, source_path, (extract(epoch FROM updated_at) * 1000)::float8 AS updated_ms FROM pages WHERE id=$1 AND knowledge_revision::text=$2', [ghost.page_id, ghost.revision]);
   if (!page) return DATABASE_AHEAD_CODE;
