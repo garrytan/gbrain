@@ -326,7 +326,7 @@ test('gbrain.io source on an unmanaged brain: the same window walk, tiers and sk
   }
 }), 120_000);
 
-test('gbrain.io source: a run stopped only by a usage limit after landing pages says so; one that landed nothing, or a real failure, does not', async () => withEnv(env, async () => {
+test('gbrain.io source: a run stopped only by a usage limit says so, even when it landed nothing; a real failure or a bare 403 does not', async () => withEnv(env, async () => {
   for (const engine of engines) {
     const config = gbrainioConfig();
     const f = await source(engine, config);
@@ -342,7 +342,14 @@ test('gbrain.io source: a run stopped only by a usage limit after landing pages 
     fakeGbrainio(MAIL, { override: (args) => args[3] === 'search' ? limit : null });
     const listing = await runGoogleSync(engine, f.id, cfg, options);
     expect(listing.status).toBe('partial');
-    expect((listing as { stopped_on?: string }).stopped_on).toBeUndefined();
+    expect((listing as { stopped_on?: string }).stopped_on).toBe('usage_limit');
+    expect(listing.added + listing.modified + listing.deleted).toBe(0);
+
+    fakeGbrainio(MAIL.map((m) => m.tid === 'b2b2b2b2b2b2b200' ? { ...m, id: m.id.slice(0, -1) + 'f', ms: NOW_MS - 60_000 } : m),
+      { override: (args) => { if (args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200') throw new Error('Gmail API HTTP 403: forbidden'); return null; } });
+    const denied = await runGoogleSync(engine, f.id, cfg, options);
+    expect(denied.status).toBe('partial');
+    expect((denied as { stopped_on?: string }).stopped_on).toBeUndefined();
 
     fakeGbrainio(MAIL, { override: (args) => args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200' ? { exitCode: 1, stdout: '', stderr: 'upstream error' } : null });
     const failed = await runGoogleSync(engine, f.id, cfg, options);

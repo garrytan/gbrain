@@ -42,8 +42,9 @@ export function firstSyncRunning(sourceId: string, display: string, snap: { hold
 /**
  * GST-3452: `freshSinceMs` is sync_freshness's fail age (without it no run reads as usage-limited). A sync job that is running now reads as a first sync in progress
  * (between two runs of a long first sync no sync lock is held), and a last run inside that age that stopped only at a
- * provider usage or rate limit after landing pages is `sync_usage_limited` (warn): the unread range stays open and the next
- * sync resumes it. Older records, failed items, held files and a run that landed nothing keep `sync_no_successful_sync` (fail).
+ * provider usage or rate limit is `sync_usage_limited` (warn) while the newest such run that landed pages, through newer runs
+ * that only hit the limit, is inside that age: the unread range stays open and the next sync resumes it. Older records, failed
+ * items, held files and limited runs that land nothing past the age keep `sync_no_successful_sync` (fail).
  */
 export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, display: string, managed: boolean, freshSinceMs?: number): Promise<{ issue: string; entry: SyncOutcomeEntry }> {
   const stale = managed ? (await staleOwnedContent(engine, [sourceId]).catch(error => { if (isOwnedContentSchemaMissing(error)) return []; throw error; }))[0] : undefined;
@@ -55,8 +56,8 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
     entry: { ...base, code: 'sync_first_run_in_progress', reason: 'first_sync_running',
       fix: waitFix(`Sync job #${attempt.job_id} of ${sourceId} is running; it stamps last_sync_at only when it succeeds, so wait and re-run this check rather than starting a second sync.`) },
   };
-  if (attempt.usage_limited && attempt.state === 'last_attempt_unsuccessful' && attempt.last_attempt_at && freshSinceMs !== undefined && Date.parse(attempt.last_attempt_at) >= freshSinceMs) return {
-    issue: `Source ${display}: first sync stopped at a usage limit (last attempt ${attempt.last_attempt_at}), no successful sync yet; the next sync resumes where it stopped`,
+  if (attempt.usage_limited_since && attempt.state === 'last_attempt_unsuccessful' && freshSinceMs !== undefined && Date.parse(attempt.usage_limited_since) >= freshSinceMs) return {
+    issue: `Source ${display}: first sync stopped at a usage limit (last attempt ${attempt.last_attempt_at}, pages last landed ${attempt.usage_limited_since}), no successful sync yet; the next sync resumes where it stopped`,
     entry: { ...base, held: 0, code: 'sync_usage_limited', reason: 'usage_limit',
       fix: waitFix(`The last sync of ${sourceId} stopped at the provider's usage limit with nothing else failed; the unread range stays open and the next scheduled sync resumes it. Starting one now would hit the same limit.`) },
   };

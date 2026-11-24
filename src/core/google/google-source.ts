@@ -378,7 +378,7 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
     g.summary.failedFiles++;
     g.deps.log(threadFailureMessage(tid, rateLimited, e));
     if (wasHeld && !rateLimited) return { kind: 'skipped' };
-    if (rateLimited) {
+    if (rateLimited && isUsageLimit(e)) {
       g.summary.limitStopped = true;
       g.summary.limitedItems = (g.summary.limitedItems ?? 0) + 1;
     } else g.summary.status = 'partial';
@@ -1226,7 +1226,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       embedded: summary.embedded,
       pagesAffected: summary.pagesAffected,
       ...(summary.failedFiles > 0 ? { failedFiles: summary.failedFiles } : {}),
-      ...(stoppedOnUsageLimit && changed && !holds.summary().held ? { stopped_on: 'usage_limit' as const } : {}),
+      ...(stoppedOnUsageLimit && !holds.summary().held ? { stopped_on: 'usage_limit' as const } : {}),
       ...(loopsEnqueue ? { loops_enqueue: loopsEnqueue } : {}),
       ...connectorHoldsResult(sourceId, holds.summary()),
     };

@@ -26,16 +26,24 @@ export interface SyncAttempt {
   unreadable?: string;
   /** GST-3452: the newest sync job is running now (active, its job lock not expired). */
   live_job?: true;
-  /** GST-3452: the last attempt ended partial only because it stopped at a provider usage or rate limit (`stopped_on: usage_limit`). */
-  usage_limited?: true;
+  /**
+   * GST-3452: when the newest attempt stopped only at a provider usage or rate limit (`stopped_on: usage_limit`), the newest
+   * such run that landed pages, reached through newer runs that also only hit the limit (or skipped); ISO.
+   */
+  usage_limited_since?: string;
 }
 
+/** GST-3452: how many recent sync jobs of a source are read back to find the last limited run that landed pages. */
+const USAGE_LIMIT_LOOKBACK = 50;
+
 const JOB_SQL = `SELECT id AS job_id, status, result->>'status' AS result_status, result->>'failedFiles' AS failed_files,
-    result->>'stopped_on' AS stopped_on, (status='active' AND lock_until > now()) AS live, COALESCE(finished_at, started_at, created_at) AS at
+    result->>'stopped_on' AS stopped_on, result->>'skipped' AS skipped, (status='active' AND lock_until > now()) AS live,
+    COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) AS landed,
+    COALESCE(finished_at, started_at, created_at) AS at
   FROM minion_jobs WHERE name='sync'
     AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
       AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1))))
-  ORDER BY created_at DESC, id DESC LIMIT 1`;
+  ORDER BY created_at DESC, id DESC LIMIT $2`;
 
 const iso = (value: unknown): string | null => {
   if (value === null || value === undefined) return null;
@@ -45,9 +53,9 @@ const iso = (value: unknown): string | null => {
 
 async function lastSyncJob(engine: BrainEngine, sourceId: string): Promise<Omit<SyncAttempt, 'managed_next'> | null> {
   let rows: Array<{ job_id: number | string | null; status: string | null; result_status: string | null; failed_files: string | null; stopped_on: string | null;
-    live: boolean | null; at: unknown }>;
+    skipped: string | null; live: boolean | null; landed: number | string | null; at: unknown }>;
   try {
-    rows = await engine.executeRaw(JOB_SQL, [sourceId]);
+    rows = await engine.executeRaw(JOB_SQL, [sourceId, USAGE_LIMIT_LOOKBACK]);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', 'minion_jobs')) return null;
     throw error;
@@ -56,6 +64,13 @@ async function lastSyncJob(engine: BrainEngine, sourceId: string): Promise<Omit<
   if (!row || row.job_id === null || row.job_id === undefined || typeof row.status !== 'string') return null;
   const queued = ['waiting', 'delayed', 'active', 'waiting-children', 'paused'].includes(row.status);
   const failed = Number(row.failed_files ?? 0);
+  const limited = (r: typeof row) => r.status === 'completed' && r.result_status === 'partial' && r.stopped_on === 'usage_limit';
+  let since: string | null = null;
+  for (const r of limited(row) ? rows : []) {
+    if (r.status === 'completed' && r.skipped === 'true') continue;
+    if (!limited(r)) break;
+    if (Number(r.landed ?? 0) > 0) { since = iso(r.at); break; }
+  }
   return {
     state: queued ? 'attempt_queued' : 'last_attempt_unsuccessful',
     last_attempt_at: iso(row.at),
@@ -63,7 +78,7 @@ async function lastSyncJob(engine: BrainEngine, sourceId: string): Promise<Omit<
     held: Number.isFinite(failed) ? failed : 0,
     job_id: Number(row.job_id),
     ...(row.live === true ? { live_job: true as const } : {}),
-    ...(row.status === 'completed' && row.result_status === 'partial' && row.stopped_on === 'usage_limit' ? { usage_limited: true as const } : {}),
+    ...(since ? { usage_limited_since: since } : {}),
   };
 }
 
@@ -87,7 +102,7 @@ export async function readLastSyncAttempt(engine: BrainEngine, sourceId: string,
       job_id: job?.job_id ?? null,
       managed_next: status.next,
       ...(job?.live_job ? { live_job: true as const } : {}),
-      ...(newerJob && job!.usage_limited ? { usage_limited: true as const } : {}),
+      ...(newerJob && job!.usage_limited_since ? { usage_limited_since: job!.usage_limited_since } : {}),
     };
   } catch (error) {
     return { ...none, unreadable: error instanceof Error ? error.message : String(error) };

@@ -65,7 +65,7 @@ const entries = (d: Record<string, unknown> | undefined) => d?.no_successful_syn
 describe('GST-3452 sync_freshness: a first sync stopped by a usage limit', () => {
   test('a run that stopped only on a usage limit is warn with a wait fix, not "no successful sync"', async () => {
     await addSource('mail');
-    const jobId = await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', failedFiles: 2 });
+    const jobId = await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3, failedFiles: 2 });
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('warn');
     expect(result.message).toContain("Source 'mail': first sync stopped at a usage limit");
@@ -75,9 +75,36 @@ describe('GST-3452 sync_freshness: a first sync stopped by a usage limit', () =>
     expect(next(entry!.fix)).toBe('wait');
   });
 
+  test('a later run that landed nothing before the same limit keeps the warning while a landing run is inside the window', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 5 });
+    await addSyncJob('mail', 'completed', { skipped: true, reason: 'sync_in_progress' }, { finishedHoursAgo: 4 });
+    const jobId = await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 0 }, { finishedHoursAgo: 1 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited', job_id: jobId });
+  });
+
+  test('limited runs that land nothing, with no landing run inside the window, stay fail', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 24 * 30 });
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 0 }, { finishedHoursAgo: 1 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync' });
+  });
+
+  test('a run that failed in between ends the chain: the older landing run no longer counts', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 5 });
+    await addSyncJob('mail', 'completed', { status: 'partial', failedFiles: 1 }, { finishedHoursAgo: 3 });
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 0 }, { finishedHoursAgo: 1 });
+    expect((await checkSyncFreshness(engine)).status).toBe('fail');
+  });
+
   test('the same run past the freshness window stays fail', async () => {
     await addSource('mail');
-    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', failedFiles: 2 }, { finishedHoursAgo: 24 * 30 });
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3, failedFiles: 2 }, { finishedHoursAgo: 24 * 30 });
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
     expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', reason: 'last_attempt_unsuccessful' });
