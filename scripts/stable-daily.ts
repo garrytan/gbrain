@@ -71,6 +71,9 @@ export const IMPORTANT_LABEL = 'stable:important';
 export const WEEKLY_FLOOR_DAYS = 7;
 /** The soak gates a scheduled promotion requires (pass === true in every cell); the latency gates stay record-only. */
 export const INTEGRITY_GATES = ['privacy_leaks', 'read_errors', 'version_skew', 'residents_alive', 'session_refusals'] as const;
+/** The search speed gate (production-soak/search-gate.ts) a scheduled promotion requires in the soak's 2 ms cell; the 65 ms cell records it only. */
+export const SEARCH_GATES = ['search_gate_jit_on', 'search_gate_jit_off'] as const;
+export const SEARCH_GATE_RTT_MS = 2;
 /** The full soak a scheduled promotion requires: production-soak.yml's default cells, hours and fixture pages, with privacy probes run. */
 export const SOAK_SHAPE = { rtts: [65, 2], hours: 2, pages: 600_000 } as const;
 const DAY_MS = 86_400_000;
@@ -117,6 +120,16 @@ export function integrityFailures(boards: Scoreboard[]): string[] {
     }
   }
   return failures;
+}
+
+/** Search speed gate failures in the 2 ms cell; a missing cell or gate fails closed. An overridden gate carries pass: true. */
+export function searchGateFailures(boards: Scoreboard[]): string[] {
+  const cell = boards.find(b => b.rtt_ms === SEARCH_GATE_RTT_MS);
+  if (!cell) return [`no ${SEARCH_GATE_RTT_MS} ms cell for the search speed gate`];
+  return SEARCH_GATES.flatMap(id => {
+    const gate = cell.gates?.find(g => g.id === id);
+    return gate?.pass === true ? [] : [`${cell.label ?? 'cell'}: ${id} ${gate ? (gate.pass === null ? 'has no data' : 'failed') : 'missing'}`];
+  });
 }
 
 /** Ways a soak falls short of the full default soak (SOAK_SHAPE): a missing cell, a short run, a small requested fixture, no clean privacy probes. */
@@ -269,7 +282,7 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     let chosen: SoakRunRow | null = null;
     for (const run of passed) {
       const boards = await deps.scoreboards(run.id);
-      const failures = [...integrityFailures(boards), ...shapeFailures(boards)];
+      const failures = [...integrityFailures(boards), ...searchGateFailures(boards), ...shapeFailures(boards)];
       if (failures.length === 0) { chosen = run; break; }
       deps.log(`[stable-daily] not promotable: v${rel.version} soak ${run.html_url}: ${failures.join(', ')}.`);
     }

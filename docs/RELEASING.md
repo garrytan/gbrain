@@ -928,7 +928,8 @@ and keeps stable between one day and one week behind what matters:
   commit is on master and whose exact tree passed a successful
   `STABLE_SOAK_WORKFLOW` run with the integrity gates (`privacy_leaks`,
   `read_errors`, `version_skew`, `residents_alive`, `session_refusals`)
-  passing in every cell; the latency gates stay record-only. The soak must be
+  passing in every cell and the [search speed gate](#search-speed-gate)
+  passing in the 2 ms cell; the other latency gates stay record-only. The soak must be
   the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
   on the requested 600,000-page fixture, with privacy probes run and none
   erroring, so a smaller smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
@@ -1002,6 +1003,64 @@ and keeps stable between one day and one week behind what matters:
   stable. Without it they stay on the bad release, because clients on stable never
   downgrade on their own. The daily check stays paused until the next manual
   promotion.
+
+<a id="search-speed-gate"></a>
+### Search speed gate
+
+Every release gets the production soak on its tag: `release.yml`'s `soak` job
+dispatches `production-soak.yml` right after it publishes. After each cell's
+soak, `scripts/bench/production-soak/search-gate.ts` measures warm search on
+that cell's 600,000-page brain the way a remote MCP caller sees it:
+
+- **State.** It first parks 9,400 upgrade rows on image pages: queued
+  `protocol_activation` rebuilds that only an operator clears, which a brain
+  upgraded across migration v153 keeps and a fresh soak load never has. The
+  warm-search regression of v0.60.723.0 to v0.60.759.0 cost about 2 s per
+  search only in that state, so the soak's own search numbers never moved.
+- **Measure.** With Postgres JIT on (the stock default) and then off, a fresh
+  `gbrain serve` runs 5 warm-up and 60 timed searches from a fixed query list
+  (mock embedding 200 ms and rerank 300 ms, like real providers).
+- **Judge.** Each arm fails when p50 reaches 2 s or p95 reaches 3 s, when a search fails, or
+  when p50 (p95) is both 1.5 times and 250 ms (400 ms) above the last release
+  whose soak passed this gate with the same settings, read from that run's
+  artifact. A failing arm is measured once more on a fresh server and keeps
+  the better reading whole, so one noisy reading cannot fail a release. When
+  an earlier release's result cannot be read (GitHub down or rate-limited, a
+  corrupt artifact) or the soak did not run the 600,000-page fixture, the arm
+  fails with the cause named instead of silently skipping the regression
+  check; the first release after this gate shipped, which has no earlier
+  result at all, is checked on the fixed bars alone. The p95 bar
+  is 3 s, not 2 s, because on good builds the slowest searches (four-word
+  queries, whose title arm takes about 1.3 s) already sit near 2 s.
+
+The 2 ms cell blocks: a failure turns the soak run red with a message naming
+the arm, the numbers, the slowest timed part and the last release's numbers,
+and the [daily stable check](#daily-stable-check) never promotes that release.
+The 65 ms cell records the same numbers without failing. `search-gate.md` in
+the cell's artifact and the run summary hold the table; `search-gate.json`
+holds every reading.
+
+**The regression check could not run** (the message says why): re-dispatch
+the soak on the same tag once GitHub recovers, or, to release on the fixed bars
+alone, re-dispatch it with `search_gate_override` set to the reason, as below.
+
+**A failure you believe is noise** (the second reading failed too, so rare):
+look at `search-gate-calls.jsonl` first. Then either re-dispatch the soak on
+the same tag (`gh workflow run production-soak.yml --ref v<VERSION>`) and let a
+clean run qualify the release, or, when the slowdown is known and accepted,
+re-dispatch it with a reason: `gh workflow run production-soak.yml --ref
+v<VERSION> -f search_gate_override="<issue link and why>"`. An overridden run
+still measures and reports; the gate passes with the reason and the actor
+recorded in `search-gate.json` and the scoreboard, and the run summary warns.
+An overridden run never serves as the next release's baseline. To compare two
+builds on one loaded brain, run the script again with `--repo <other
+checkout>`.
+
+Cost: each release now gets its own soak, about 9.5 hours of Ubicloud
+standard-16 time (about $6 at $0.010 a minute), so the daily cost is $6 times
+the releases cut that day, and soaks on consecutive tags run at the same time.
+Before this, a soak was dispatched by hand on nearly every release. The gate
+itself adds about 10 to 15 minutes per cell, about $0.30.
 
 ### The `publish-template` job
 
