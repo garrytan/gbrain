@@ -3814,8 +3814,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    */
   getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats>;
   getHealth(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainHealth>;
-  /** The liveness round trip (`/health`, doctor's ops-tier connection check): resolves when the store answers. */
-  pingStore(opts?: { signal?: AbortSignal }): Promise<void>;
+  /** The liveness round trip (`/health`, doctor's connection check, the minion worker's probe): resolves when the store answers. `direct`: a SQL engine's direct lane (Rust has one lane). */
+  pingStore(opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
 
   // The admin operations' statements (engine-sql/admin-reads.ts).
   /** The slugs among `slugs` that name a live page the policy part admits, within the source scope (`null` admits every source). Reads pages. */

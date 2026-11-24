@@ -195,6 +195,36 @@ export async function releaseWatchdogClaim(tx: Raw, id: number, lockToken: strin
   return rows.length > 0;
 }
 
+/**
+ * A claim a worker just took and will not run, handed back because the pause marker appeared after the claim
+ * (worker.ts `releaseClaimForPause`): the row this token locks goes to `delayed` for a minute with its lock cleared.
+ * Its start time, error text, attempt counts and timeout are left as the claim set them. No status guard: only a claim
+ * holds a token. Nothing is returned (a stale token matches no row).
+ */
+export async function releaseClaimForPause(tx: Raw, id: number, lockToken: string): Promise<void> {
+  await tx.executeRaw(
+    `UPDATE minion_jobs
+         SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+             delay_until = now() + interval '1 minute',
+             updated_at = now()
+         WHERE id = $1 AND lock_token = $2`,
+    [id, lockToken]);
+}
+
+/**
+ * The same hand-back for a quiet-hours deferral (worker.ts `handleQuietHoursDefer`, verdict `defer`): the row goes to
+ * `delayed` for fifteen minutes so the claim query does not take it again at once. Everything else as above.
+ */
+export async function deferClaimForQuietHours(tx: Raw, id: number, lockToken: string): Promise<void> {
+  await tx.executeRaw(
+    `UPDATE minion_jobs
+           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+               delay_until = now() + interval '15 minutes',
+               updated_at = now()
+           WHERE id = $1 AND lock_token = $2`,
+    [id, lockToken]);
+}
+
 /** Appends `WATCHDOG_SUSPECT_MARK` once to a job's stacktrace, in any status, without touching `updated_at`. */
 export async function markJobWatchdogSuspect(tx: Raw, id: number): Promise<void> {
   await tx.executeRaw(

@@ -1190,7 +1190,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'resumeJob': OOS.minionJobs, 'resolveParentJob': OOS.minionJobs, 'failParentJob': OOS.minionJobs,
   'resolveStrandedParents': OOS.minionJobs, 'detachChildJob': OOS.minionJobs, 'updateJobProgress': OOS.minionJobs,
   'readLiveJobIds': OOS.minionJobs,
-  'addJobTokens': OOS.minionJobs, 'delayActiveJob': OOS.minionJobs, 'releaseWatchdogClaim': OOS.minionJobs,
+  'addJobTokens': OOS.minionJobs, 'delayActiveJob': OOS.minionJobs, 'releaseWatchdogClaim': OOS.minionJobs, 'releaseClaimForPause': OOS.minionJobs, 'deferClaimForQuietHours': OOS.minionJobs,
   'markJobWatchdogSuspect': OOS.minionJobs, 'promoteDelayedJobs': OOS.minionJobs, 'cancelJobs': OOS.minionJobs,
   'killTimedOutJobs': OOS.minionJobs, 'killWallClockJobs': OOS.minionJobs, 'pruneJobs': OOS.minionJobs,
   'listSynthesisCompletionKeys': OOS.minionJobs, 'listRecentSynthesisCompletions': OOS.minionJobs,

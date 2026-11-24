@@ -238,7 +238,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs',
     'readJobDataByIdempotencyKey', 'coalesceOnIdempotencyKey'],
   minion_queue: ['deleteTerminalJob', 'pauseJob', 'resumeJob', 'resolveParentJob', 'failParentJob', 'resolveStrandedParents',
-    'detachChildJob', 'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
+    'detachChildJob', 'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'releaseClaimForPause', 'deferClaimForQuietHours', 'markJobWatchdogSuspect',
     'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob', 'postInboxMessage',
     'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions',
     'readJobInbox', 'readChildCompletions', 'listOpenJobIdsInQueue', 'renewPrivateQueueLease', 'listOwnedPrivateQueues',

@@ -54,8 +54,6 @@ const SITES: Record<Member, Record<string, { count: number; why: string }>> = {
     'src/core/vector-index.ts': { count: 1, why: 'returns first unless engine.kind is postgres' },
   },
   executeRawDirect: {
-    'src/core/minions/db-probe.ts': { count: 1, why: 'assertWorkerDbReadiness returns first unless engine.kind is postgres' },
-    'src/core/minions/worker.ts': { count: 1, why: 'the direct probe exists only when the Postgres dual pool is active' },
     'src/core/persistence/consumer-lane.ts': { count: 1, why: 'consumerStatementEngine returns the engine unchanged unless engine.kind is postgres' },
     'src/core/persistence/effect-journal.ts': { count: 1, why: 'renews a managed-persistence effect claim; a Rust brain refuses managed persistence at admission (rust-engine/errors.ts)' },
     'src/core/persistence/journal.ts': { count: 1, why: 'reclaims a managed-persistence write; a Rust brain refuses managed persistence at admission (rust-engine/errors.ts)' },

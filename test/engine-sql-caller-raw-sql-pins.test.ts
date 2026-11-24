@@ -2511,6 +2511,30 @@ const PINS: Pin[] = [
     texts: ['SELECT 1'],
   },
   {
+    // The minion worker's health probe sent this text on the direct lane (worker.ts probeDatabase, db-probe.ts assertWorkerDbReadiness).
+    from: 'src/core/minions/worker.ts:403 and :405, the worker health probe (at a6e972420c)',
+    case: { method: 'pingStore', variant: 'direct', run: e => e.pingStore({ direct: true }) },
+    texts: ['SELECT 1'],
+  },
+  {
+    from: 'src/core/minions/worker.ts:997-1003 releaseClaimForPause (at a6e972420c)',
+    case: { method: 'releaseClaimForPause', variant: 'default', run: e => e.releaseClaimForPause(7, 'w1:a') },
+    texts: [`UPDATE minion_jobs
+         SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+             delay_until = now() + interval '1 minute',
+             updated_at = now()
+         WHERE id = $1 AND lock_token = $2`],
+  },
+  {
+    from: 'src/core/minions/worker.ts:1041-1047 handleQuietHoursDefer, verdict defer (at a6e972420c)',
+    case: { method: 'deferClaimForQuietHours', variant: 'default', run: e => e.deferClaimForQuietHours(7, 'w1:a') },
+    texts: [`UPDATE minion_jobs
+           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+               delay_until = now() + interval '15 minutes',
+               updated_at = now()
+           WHERE id = $1 AND lock_token = $2`],
+  },
+  {
     from: 'src/commands/serve-http-webhooks.ts:303 legacyIngestJob (at 1bc04e66a8)',
     case: { method: 'readJobDataByIdempotencyKey', variant: 'default', run: e => e.readJobDataByIdempotencyKey('ingest:pin') },
     texts: ['SELECT data FROM minion_jobs WHERE idempotency_key = $1'],

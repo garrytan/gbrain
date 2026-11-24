@@ -4767,7 +4767,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   // Stats + health
-  pingStore(opts?: { signal?: AbortSignal }) { return healthImpl.pingStore(this, opts); }
+  pingStore(opts?: { signal?: AbortSignal; direct?: boolean }) { return healthImpl.pingStore(opts?.direct ? { executeRaw: (sql, params, o) => this.executeRawDirect(sql, params, o) } : this, opts); }
   async getStats(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<BrainStats> {
     // #4592: optional source scope — parity with postgres-engine.getStats.
     // Bound as $1 (NEVER interpolated: remote callers influence the value).
@@ -5128,6 +5128,8 @@ export class PGLiteEngine implements BrainEngine {
   async addJobTokens(id: number, lockToken: string, tokens: JobTokenCounts) { return jobsQueue.addJobTokens(this, id, lockToken, tokens); }
   async delayActiveJob(id: number, lockToken: string, spec: DelayActiveJobSpec, opts?: { signal?: AbortSignal }) { return jobsQueue.delayActiveJob(this, id, lockToken, spec, opts); }
   async releaseWatchdogClaim(id: number, lockToken: string, errorText: string) { return jobsQueue.releaseWatchdogClaim(this, id, lockToken, errorText); }
+  async releaseClaimForPause(id: number, lockToken: string) { return jobsQueue.releaseClaimForPause(this, id, lockToken); }
+  async deferClaimForQuietHours(id: number, lockToken: string) { return jobsQueue.deferClaimForQuietHours(this, id, lockToken); }
   async markJobWatchdogSuspect(id: number) { return jobsQueue.markJobWatchdogSuspect(this, id); }
   async promoteDelayedJobs() { return jobsQueue.promoteDelayedJobs(this); }
   async cancelJobs(ids: readonly number[], spec?: CancelJobsSpec) { return this.transaction(tx => jobsQueue.cancelJobs(tx, ids, spec)); }

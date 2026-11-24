@@ -302,6 +302,42 @@ fn progress_tokens_delay_release_mark_and_retry() {
 // ------------------------------------------------------------------ sweeps
 
 #[test]
+fn a_held_claim_goes_back_to_delayed_with_its_start_error_and_attempts_kept() {
+    let b = brain("s2-held-claim");
+    let id = add(&b, "work", json!({"timeout_ms": 5000}));
+    claim(&b, "w:1").unwrap();
+    let held = job(&b, id);
+
+    // A stale token changes nothing.
+    assert!(!b.delay_held_claim(id, "w:2", 60_000.0).unwrap());
+    assert_eq!(job(&b, id), held);
+
+    b.clock.advance(SEC);
+    assert!(b.delay_held_claim(id, "w:1", 60_000.0).unwrap());
+    let row = job(&b, id);
+    assert_eq!(row["status"], "delayed");
+    assert_eq!(row["lock_token"], Value::Null);
+    assert_eq!(row["lock_until"], Value::Null);
+    assert_eq!(row["delay_until"], "2027-01-15T08:01:01.000000Z");
+    assert_ne!(row["updated_at"], held["updated_at"]);
+    for kept in [
+        "started_at",
+        "timeout_at",
+        "error_text",
+        "stacktrace",
+        "attempts_made",
+        "attempts_started",
+        "stalled_counter",
+    ] {
+        assert_eq!(row[kept], held[kept], "{kept} stays as the claim set it");
+    }
+
+    // The token is gone, so a second release matches no row.
+    assert!(!b.delay_held_claim(id, "w:1", 900_000.0).unwrap());
+    assert_eq!(job(&b, id), row);
+}
+
+#[test]
 fn cancel_cascades_posts_child_done_and_resolves_parents() {
     let b = brain("s2-cancel");
     let grand = add(&b, "grand", json!({}));

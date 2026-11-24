@@ -41,6 +41,7 @@ import {
   type TickResult,
 } from './lock-renewal-tick.ts';
 import { clampLockDurationMs } from './handler-timeouts.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import {
   runDbProbe,
   assertWorkerDbReadiness,
@@ -401,9 +402,9 @@ export class MinionWorker extends EventEmitter {
     const dualPool = getConnectionRouting(this.engine)?.isDualPoolActive?.() === true;
     const getDiag = (this.engine as { getPoolDiagnostics?: () => PoolDiagnostics | null }).getPoolDiagnostics;
     return runDbProbe({
-      probeRead: async signal => { await this.engine.executeRaw('SELECT 1', undefined, { signal }); },
+      probeRead: async signal => { await this.engine.pingStore({ signal }); },
       ...(dualPool ? {
-        probeDirect: async (signal: AbortSignal) => { await this.engine.executeRawDirect('SELECT 1', undefined, { signal }); },
+        probeDirect: async (signal: AbortSignal) => { await this.engine.pingStore({ signal, direct: true }); },
       } : {}),
       ...(typeof getDiag === 'function' ? { getDiagnostics: () => getDiag.call(this.engine) } : {}),
       timeoutMs: this.opts.dbProbeTimeoutMs,
@@ -1009,14 +1010,7 @@ export class MinionWorker extends EventEmitter {
    */
   private async releaseClaimForPause(job: MinionJob, lockToken: string): Promise<void> {
     try {
-      await this.engine.executeRaw(
-        `UPDATE minion_jobs
-         SET status = 'delayed', lock_token = NULL, lock_until = NULL,
-             delay_until = now() + interval '1 minute',
-             updated_at = now()
-         WHERE id = $1 AND lock_token = $2`,
-        [job.id, lockToken],
-      );
+      await this.engine.releaseClaimForPause(job.id, lockToken);
     } catch (e) {
       // A capability refusal is not a failed UPDATE: the engine cannot release a claim at all, so the claim would expire
       // on every pause. Let it out (the worker loop stops loudly) instead of logging one line per job.
@@ -1056,14 +1050,7 @@ export class MinionWorker extends EventEmitter {
       } else {
         // Defer: release back to delayed, push delay ~15 minutes to avoid
         // immediate re-claim loops when the claim query re-runs.
-        await this.engine.executeRaw(
-          `UPDATE minion_jobs
-           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
-               delay_until = now() + interval '15 minutes',
-               updated_at = now()
-           WHERE id = $1 AND lock_token = $2`,
-          [job.id, lockToken],
-        );
+        await this.engine.deferClaimForQuietHours(job.id, lockToken);
         console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
       }
     } catch (e) {
