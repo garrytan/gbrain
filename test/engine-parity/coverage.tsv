@@ -328,7 +328,7 @@ listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
 addLink	links	yes	148	yes	yes	yes	serves
-addLinksBatch	links	yes	38	yes	yes	yes	serves
+addLinksBatch	links	yes	39	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
@@ -1702,7 +1702,7 @@ recordAccessMigrationPhase	write_misc	yes	1	no	yes	yes	serves
 switchAccessMigration	write_misc	yes	1	no	yes	yes	serves
 listAccessPolicySources	write_misc	yes	1	no	yes	yes	serves
 countPeopleFolderPages	write_misc	yes	1	no	yes	yes	serves
-countOpenPages	write_misc	yes	3	no	yes	yes	serves
+countOpenPages	write_misc	yes	4	no	yes	yes	serves
 readAccessMembers	write_misc	yes	15	no	yes	yes	serves
 readAccessCredentials	write_misc	yes	5	no	yes	yes	serves
 revokeAccessTokensNamed	write_misc	yes	4	no	yes	yes	serves
@@ -1814,7 +1814,7 @@ readWriterSlugFence	page_visibility	yes	2	no	yes	yes	serves
 setEffectTransactionLimits	remote_links	yes	1	no	yes	yes	serves
 readOwnedLinks	remote_links	yes	1	no	yes	yes	serves
 deleteOwnedLinks	remote_links	yes	1	no	yes	yes	serves
-readLinkTargetPages	remote_links	yes	2	no	yes	yes	serves
+readLinkTargetPages	remote_links	yes	3	no	yes	yes	serves
 rearmLinksEffects	remote_links	yes	1	no	yes	yes	serves
 hasPendingFactsExtraction	facts_backstop	yes	1	no	yes	yes	serves
 hasCompletedFactsExtraction	facts_backstop	yes	1	no	yes	yes	serves

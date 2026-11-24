@@ -20,10 +20,12 @@ origin index of `links.rs` and pages through `pages.rs`. Which targets get an ed
 An id that is not a bigint refuses with `invalid input syntax for type bigint: "<id>"`.
 
 The writer's read policy is gathered by `persistence/page-visibility.ts` (`writerReadPolicy`). The TypeScript member
-renders it as PGLite renders it and serves it only when the text equals the no-caller member-access rendering or a fresh
-record's rendering for the writer's one reader identity; the store then judges each page with `page_hidden`
-(facts/privacy.rs), as `readCallerPageAccess` does. Any other writer (folder rules, an owner record, a labelled-only
-grant, several identities, an empty policy object) refuses `engine_capability_missing` before any read.
+renders it as PGLite renders it and serves it only when the text equals the no-caller member-access rendering, a fresh
+record's rendering for the writer's one reader identity, or, for a writer with no identity, a fresh record of its own
+folder coverage (sent as `folder_coverage` with `caller_record`, so the record's prefixes replace the store's live
+pending prefixes, as `coverageSql` reads them inside a record); the store then judges each page with `page_hidden`
+(facts/privacy.rs), as `readCallerPageAccess` does. Any other writer (satisfied folder rules, an owner record, a
+labelled-only grant, several identities) refuses `engine_capability_missing` before any read.
 
 An OAuth client writer (the HTTP transport) is not served: `readWriterSlugFence` refuses for `oauth_client`, since the
 store keeps no OAuth client write grant yet.

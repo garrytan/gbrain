@@ -44,6 +44,12 @@ function writerPolicy(policy: WriterReadPolicy): StorePrivacyPolicy {
   const fragment = (record: Parameters<typeof renderForStoreCaller>[0]) =>
     `(${renderForStoreCaller(record, () => callerAccessAllowedSql('p'))} AND TRUE)`;
   if (text === fragment({})) return off;
+  // A writer with no identity (an unbound or anonymous writer): its policy renders in a record of its own folder
+  // coverage, so the store reads that coverage instead of the live pending prefixes (callerRecord).
+  const folderCoverage = policy.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix }));
+  if (!policy.identities.length && text === fragment({ identity: [], satisfiedRuleIds: [], folderCoverage })) {
+    return { ...off, identity: [], ...(folderCoverage.length ? { folderCoverage } : {}), callerRecord: true };
+  }
   const [identity] = policy.identities;
   if (policy.identities.length === 1 && identity && text === fragment({ identity: [...identity], privateReadableSources: [], hidePrivate: true })) {
     return { ...off, identity: [...identity], privateReadableSources: [] };
