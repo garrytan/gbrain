@@ -120,3 +120,79 @@ pub(crate) fn store_on_file(file: &FlakyFile) -> Store {
     let kv = RedbKv::open_backend(Box::new(file.clone())).unwrap();
     Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
 }
+
+/// A record store whose write transactions fail the way a failing disk does: a `put` or a `scan`
+/// inside a write transaction returns `code` once `fail_on` accepts the key (a scan's start key),
+/// so a test can make one step of a format upgrade hit an I/O or storage error. Reads through a
+/// snapshot, and every other call, go to the wrapped store.
+pub(crate) struct FaultyKv {
+    pub(crate) inner: Arc<dyn crate::kv::Kv>,
+    pub(crate) code: &'static str,
+    pub(crate) fail_on: fn(&[u8]) -> bool,
+}
+
+struct FaultyWrite {
+    inner: Box<dyn crate::kv::KvWrite>,
+    code: &'static str,
+    fail_on: fn(&[u8]) -> bool,
+}
+
+impl FaultyWrite {
+    fn check(&self, key: &[u8]) -> crate::Result<()> {
+        if (self.fail_on)(key) {
+            return Err(crate::StoreError::new(
+                self.code,
+                "injected storage failure",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl crate::kv::KvRead for FaultyWrite {
+    fn get(&self, key: &[u8]) -> crate::Result<Option<Vec<u8>>> {
+        self.inner.get(key)
+    }
+    fn scan(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        reverse: bool,
+        f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+    ) -> crate::Result<()> {
+        self.check(start)?;
+        self.inner.scan(start, end, reverse, f)
+    }
+}
+
+impl crate::kv::KvWrite for FaultyWrite {
+    fn put(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
+        self.check(key)?;
+        self.inner.put(key, value)
+    }
+    fn delete(&mut self, key: &[u8]) -> crate::Result<()> {
+        self.inner.delete(key)
+    }
+    fn commit(self: Box<Self>) -> crate::Result<u64> {
+        self.inner.commit()
+    }
+}
+
+impl crate::kv::Kv for FaultyKv {
+    fn snapshot(&self) -> crate::Result<Box<dyn crate::kv::KvRead>> {
+        self.inner.snapshot()
+    }
+    fn begin_write(&self) -> crate::Result<Box<dyn crate::kv::KvWrite>> {
+        self.begin_write_exclusive()
+    }
+    fn begin_write_exclusive(&self) -> crate::Result<Box<dyn crate::kv::KvWrite>> {
+        Ok(Box::new(FaultyWrite {
+            inner: self.inner.begin_write_exclusive()?,
+            code: self.code,
+            fail_on: self.fail_on,
+        }))
+    }
+    fn version(&self) -> crate::Result<u64> {
+        self.inner.version()
+    }
+}

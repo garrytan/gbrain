@@ -215,6 +215,93 @@ fn an_old_record_this_build_cannot_carry_refuses_the_open_with_the_reseed_steps(
     assert_eq!(dump(&*kv.snapshot().unwrap()), before);
 }
 
+/// The re-seed message tells a person the exact commands that re-seed and turn shadow mode on:
+/// `gbrain engine shadow start` alone only prints a plan (`src/commands/engine-shadow.ts`).
+#[test]
+fn the_reseed_steps_end_with_the_two_step_start_that_turns_shadow_mode_on() {
+    let steps = super::RESEED_STEPS;
+    let plan = steps
+        .find("gbrain engine shadow start --plan")
+        .expect(steps);
+    let on = steps
+        .find("gbrain engine shadow start --yes --expect <plan_hash>")
+        .expect(steps);
+    let seed = steps.find("gbrain engine shadow seed").expect(steps);
+    let stop = steps
+        .find("gbrain engine shadow stop --delete")
+        .expect(steps);
+    assert!(stop < seed && seed < plan && plan < on, "{steps}");
+    assert!(steps.ends_with("to turn shadow mode on again"), "{steps}");
+}
+
+#[test]
+fn a_refused_open_gives_the_steps_that_turn_shadow_mode_back_on() {
+    let kv = old_records(|records| {
+        for (k, v) in records.iter_mut() {
+            if k.starts_with(&[keys::FACT, 0x0E]) {
+                let mut g: Value = serde_json::from_slice(v).unwrap();
+                g["source_id"] = json!("gone");
+                *v = serde_json::to_vec(&g).unwrap();
+            }
+        }
+    });
+    let err = Store::open_kv(kv, Arc::new(SystemEnv), OpenOptions::default())
+        .err()
+        .expect("the open must be refused");
+    assert_eq!(err.code, "shadow_reseed_required");
+    assert!(
+        err.message
+            .contains("gbrain engine shadow start --yes --expect <plan_hash>"),
+        "{}",
+        err.message
+    );
+}
+
+/// Opens the v0.60.766.0 records on a record store whose write transactions fail with `code` on
+/// the keys `fail_on` accepts; the open must report that error as it is, and change nothing.
+fn open_old_records_on_failing_disk(code: &'static str, fail_on: fn(&[u8]) -> bool) {
+    let inner = old_records(|_| {});
+    let before = dump(&*inner.snapshot().unwrap());
+    let kv: Arc<dyn crate::kv::Kv> = Arc::new(crate::test_support::FaultyKv {
+        inner: inner.clone(),
+        code,
+        fail_on,
+    });
+    let err = Store::open_kv(kv, Arc::new(SystemEnv), OpenOptions::default())
+        .err()
+        .expect("the open must fail");
+    assert_eq!(err.code, code, "{}", err.message);
+    assert!(
+        !err.message.contains("Re-seed") && !err.message.contains("gbrain engine shadow"),
+        "an I/O or storage error must not tell the person to re-seed: {}",
+        err.message
+    );
+    assert_eq!(dump(&*inner.snapshot().unwrap()), before);
+}
+
+#[test]
+fn an_io_error_reading_the_old_records_is_reported_as_store_io_not_as_a_reseed() {
+    open_old_records_on_failing_disk(crate::error::STORE_IO, |key| {
+        key.starts_with(&[keys::FACT, 0x0C])
+    });
+}
+
+#[test]
+fn a_corrupt_record_store_while_reading_the_old_records_is_reported_as_store_corrupt() {
+    open_old_records_on_failing_disk(crate::error::STORE_CORRUPT, |key| {
+        key.starts_with(&[keys::FACT, 0x0C])
+    });
+}
+
+#[test]
+fn an_io_error_writing_a_carried_over_generation_is_reported_as_store_io_not_as_a_reseed() {
+    // The generation step writes through the seed's own writers; an error from them that is not
+    // about the record (the disk failed) is not a reason to re-seed.
+    open_old_records_on_failing_disk(crate::error::STORE_IO, |key| {
+        key.first() == Some(&keys::DERIVED_GENERATION)
+    });
+}
+
 fn dump(read: &dyn KvRead) -> Vec<(Vec<u8>, Vec<u8>)> {
     let mut out = Vec::new();
     scan_prefix(read, &[], false, &mut |k, v| {

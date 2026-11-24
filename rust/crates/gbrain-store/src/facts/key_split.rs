@@ -302,6 +302,39 @@ mod tests {
         assert_eq!(stored.format_version, 6);
     }
 
+    /// Opens a format-6 brain on a record store whose write transactions fail with `code` when a
+    /// scan starts under the take purge prefix: the open reports that error as it is, says
+    /// nothing about re-seeding, and changes nothing.
+    fn open_on_failing_disk(code: &'static str) {
+        let inner = old_brain(6);
+        let before = dump(&inner);
+        let kv: Arc<dyn Kv> = Arc::new(crate::test_support::FaultyKv {
+            inner: inner.clone(),
+            code,
+            fail_on: |key| key.starts_with(&[keys::FACT, TAKE_PURGE]),
+        });
+        let Err(e) = open(&kv) else {
+            panic!("the brain opened");
+        };
+        assert_eq!(e.code, code, "{}", e.message);
+        assert!(
+            !e.message.contains("Re-seed") && !e.message.contains("gbrain engine shadow"),
+            "an I/O or storage error must not tell the person to re-seed: {}",
+            e.message
+        );
+        assert_eq!(dump(&inner), before, "the failed open changed the brain");
+    }
+
+    #[test]
+    fn an_io_error_sorting_the_records_is_reported_as_store_io_not_as_a_reseed() {
+        open_on_failing_disk(crate::error::STORE_IO);
+    }
+
+    #[test]
+    fn a_corrupt_record_store_while_sorting_the_records_is_reported_as_store_corrupt() {
+        open_on_failing_disk(crate::error::STORE_CORRUPT);
+    }
+
     #[test]
     fn a_record_under_the_prefix_that_is_neither_kind_refuses_the_brain_and_changes_nothing() {
         let junk = |name: &str, key: &[u8], value: &[u8]| {
