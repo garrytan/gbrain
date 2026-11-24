@@ -382,7 +382,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/sync-upstream.ts:71 recordUpstreamObservation',
     case: { method: 'writeSourceUpstreamObservation', variant: 'default', run: e => e.writeSourceUpstreamObservation('default', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 }) },
-    texts: ['UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
+    texts: ['UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,\n  upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
   },
   {
     from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
@@ -393,6 +393,21 @@ const PINS: Pin[] = [
     from: 'src/core/belief/purge.ts:50 bumpPurgeEpoch',
     case: { method: 'advanceSourcePurgeEpoch', variant: 'default', run: e => e.advanceSourcePurgeEpoch('default') },
     texts: ['UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch'],
+  },
+  {
+    // Moved after 7470c703ed: the statement is copied verbatim from the caller at 51df179097.
+    from: 'src/core/page-body/segment-derive.ts:355 derivationNeedles',
+    case: { method: 'listDerivationClaimForms', variant: 'default', run: e => e.listDerivationClaimForms(['Alice likes tea']) },
+    texts: [`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
+  },
+  {
+    // Moved after 7470c703ed: the statement is copied verbatim from segment-derive.ts recordDerivationPurge at 4e49050bff.
+    from: 'src/core/page-body/segment-derive.ts:421 recordDerivationPurge',
+    case: { method: 'recordDerivationPurgeRow', variant: 'default', run: e => e.recordDerivationPurgeRow({ requestId: '00000000-0000-4000-8000-0000000000a1', sourceId: 'src-a',
+      needles: [' alice likes tea '], patterns: ['%alice%likes%tea%'], pageIds: [1, 2] }) },
+    texts: [`INSERT INTO page_segment_derivation_purges (request_id, source_id, needles, patterns, page_ids)
+    VALUES ($1::uuid, $2, $3::text[], $4::text[], $5::int[]) ON CONFLICT (request_id) DO NOTHING`],
   },
   {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
@@ -886,7 +901,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/ops/facts.ts:706 withProvenance, at 0a68889b57',
     case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance('default', [1, 2]) },
-    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
+    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id'],
   },
   {
     from: 'src/core/belief/writers.ts:41 ontologyStreamSlugs, at 432ac446f4',
@@ -2820,10 +2835,48 @@ const PINS: Pin[] = [
     WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`],
   },
   {
+    from: 'src/core/persistence/connector-state.ts:151 recordConnectorSyncAttempt (at 0eb4da776e)',
+    case: { method: 'recordConnectorSyncAttempt', variant: 'default', rows: [[/^SELECT incarnation::text AS incarnation FROM sources/, [{ incarnation: '1' }]]],
+      run: e => e.recordConnectorSyncAttempt('default', '2026-01-01T00:00:00.000Z', [{ version: 1 }]) },
+    texts: ['SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_set(op_checkpoints.completed_keys, ARRAY['0','first_attempt_at'], to_jsonb($4::text), true), updated_at=now()
+    WHERE op_checkpoints.completed_keys->0->>'first_attempt_at' IS NULL`],
+  },
+  {
+    from: 'src/core/connectors/db-cursor.ts:37 writeConnectorDbCursor (at 0eb4da776e)',
+    case: { method: 'writeConnectorDbCursor', variant: 'default', run: e => e.writeConnectorDbCursor('cursor-key', [{ version: 1, state: {}, last_run: null }]) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'state',EXCLUDED.completed_keys->0->'state',
+      'last_run',COALESCE(EXCLUDED.completed_keys->0->'last_run',op_checkpoints.completed_keys->0->'last_run'))),updated_at=now()`],
+  },
+  {
+    from: 'src/core/link-extraction.ts:1836 makeResolver resolveAttendance (at 34057d8e2f)',
+    case: { method: 'listAttendanceMatches', variant: 'default', run: e => e.listAttendanceMatches('default', ['people/a'], 'A') },
+    texts: [`SELECT slug FROM pages
+        WHERE source_id=$1 AND deleted_at IS NULL AND type='person'
+          AND (slug=ANY($2::text[]) OR lower(title)=lower($3)
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(frontmatter->'aliases')='array'
+              THEN frontmatter->'aliases' ELSE '[]'::jsonb END) alias WHERE lower(alias)=lower($3))) LIMIT 2`],
+  },
+  {
+    from: 'src/core/meetings/meetings-source.ts:297 existingPath (at 34057d8e2f)',
+    case: { method: 'readMeetingPage', variant: 'default', run: e => e.readMeetingPage('default', 'm-1') },
+    texts: [`SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'meeting_id'=$2 ORDER BY id LIMIT 1`],
+  },
+  {
     from: 'src/core/persistence/sync-holds.ts:1168 readSyncConversions (at 77ac0ed0e9)',
     case: { method: 'readSyncConversionRows', variant: 'default', run: e => e.readSyncConversionRows(['default']) },
     texts: [`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
     FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1157 recordSyncConversion (at c03c5edfa2)',
+    case: { method: 'recordSyncConversion', variant: 'default', run: e => e.recordSyncConversion('default', '1', { request_id: 'r1', path: null, slug: null, run_id: 'run-1', outcome: 'held', converted_at: '2026-01-01T00:00:00.000Z' }) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
+      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
+        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`],
   },
   {
     from: 'src/core/persistence/sync-pass-row.ts:178 readPassRow (at 8b80bd80ab)',
@@ -2945,6 +2998,57 @@ const PINS: Pin[] = [
     from: 'src/commands/extract.ts:497 loadSlugAliasTargets (at a18d118d27)',
     case: { method: 'listSlugAliases', variant: 'default', run: e => e.listSlugAliases('default') },
     texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/persistence/links-preparation.ts:29 liveSlugAliases (at 0af1a6ecf0)',
+    case: { method: 'readLiveSlugAliases', variant: 'default', run: e => e.readLiveSlugAliases('default', ['a', 'b']) },
+    texts: [`SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
+      WHERE a.source_id=$1 AND a.alias_slug IN (SELECT unnest($2::text[]))
+        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
+        AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`],
+  },
+  {
+    // An equivalent statement: links-preparation.ts:46/55 (at 0af1a6ecf0) sent the fingerprint with the slugs above the
+    // known max id, or the fingerprint with every slug; this one statement answers both (afterId 0 lists every slug).
+    from: 'src/core/persistence/links-preparation.ts:46 refreshSourceSlugIndex (at 0af1a6ecf0)',
+    case: { method: 'readSourceSlugProbe', variant: 'default', run: e => e.readSourceSlugProbe('default', 0) },
+    texts: [`SELECT
+      count(*)::int AS n, coalesce(sum(hashtextextended(slug, 0)), 0)::text AS h, coalesce(max(id), 0)::int AS m,
+      coalesce(array_agg(slug) FILTER (WHERE id > $2), '{}') AS added,
+      coalesce(sum(hashtextextended(slug, 0)) FILTER (WHERE id > $2), 0)::text AS added_h
+      FROM pages WHERE source_id=$1`],
+  },
+  {
+    from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
+    case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
+    texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
+     authored AS (
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
+       UNION ALL
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`]; },
+  },
+  {
+    from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy relaxed (at 0af1a6ecf0)',
+    case: { method: 'readFederationExposedPages', variant: 'relaxed', run: e => e.readFederationExposedPages('default', false) },
+    texts: () => { const hidden = ''; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
+     authored AS (
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
+       UNION ALL
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`]; },
   },
   {
     from: 'src/core/quarantine.ts:116 quarantinedSlugs (at 90ede8f55a)',
@@ -3083,6 +3187,62 @@ const PINS: Pin[] = [
       WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
         AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
       ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:134 upsertChronicleRow, at dded7edc51',
+    case: { method: 'upsertChronicleRow', variant: 'default', run: e => e.upsertChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2, slug: 'p', state: 'skipped', reason: 'r', trigger: 'auto', principalKind: null, principalId: null, requestId: null, noExtract: false, nextAttemptAt: null }) },
+    texts: [`INSERT INTO chronicle_page_state AS c (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger,
+       principal_kind, principal_id, request_id, no_extract, next_attempt_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13::timestamptz)
+     ON CONFLICT (source_id, page_id, content_hash, extractor_version) DO UPDATE SET
+       slug=EXCLUDED.slug, state=EXCLUDED.state, reason=EXCLUDED.reason, trigger=EXCLUDED.trigger,
+       principal_kind=EXCLUDED.principal_kind, principal_id=EXCLUDED.principal_id, request_id=EXCLUDED.request_id,
+       no_extract=EXCLUDED.no_extract, next_attempt_at=EXCLUDED.next_attempt_at, decided_at=now(), updated_at=now(),
+       campaign_id=NULL, attempt_cap_usd=NULL, max_attempts=NULL, pricing_policy=NULL, campaign_max_usd=NULL
+     WHERE NOT (EXCLUDED.trigger='auto' AND c.trigger='backfill' AND c.state IN ('pending','failed'))
+       AND (c.state <> 'extracted' OR EXISTS (SELECT 1 FROM chronicle_page_state newer
+         WHERE newer.source_id=c.source_id AND newer.page_id=c.page_id AND newer.content_hash<>c.content_hash
+           AND newer.state='extracted' AND newer.updated_at > c.updated_at))
+     RETURNING page_id`],
+  },
+  // The write-time chronicle decision's other statements (engine-sql/chronicle-ledger.ts), from ledger.ts at ac7d551949.
+  {
+    from: 'src/core/chronicle/ledger.ts:219 readChronicleRow, at ac7d551949',
+    case: { method: 'readChronicleRow', variant: 'default', run: e => e.readChronicleRow({ sourceId: 'default', pageId: 1, contentHash: 'h', extractorVersion: 2 }) },
+    texts: ['SELECT * FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:181 recordChronicleDecision (the add_link pending read), at ac7d551949',
+    case: { method: 'hasPendingAutoChronicleRow', variant: 'default', run: e => e.hasPendingAutoChronicleRow('default', 1, 2) },
+    texts: [`SELECT 1 FROM chronicle_page_state WHERE source_id=$1 AND page_id=$2 AND state='pending'
+      AND trigger='auto' AND no_extract=false AND extractor_version=$3 LIMIT 1`],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:84 chronicleDailyRemaining, at ac7d551949',
+    case: { method: 'countRecentChronicleReservations', variant: 'default', run: e => e.countRecentChronicleReservations() },
+    texts: ["SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'"],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:92 reserveChronicleSlot, at e4420913f5',
+    case: { method: 'reserveChronicleJudgeSlot', variant: 'default', run: e => e.reserveChronicleJudgeSlot(2, { sourceId: 'default', pageId: 1, contentHash: 'h' }) },
+    texts: ["SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
+      "SELECT count(*) AS n FROM chronicle_judge_reservations WHERE reserved_at > now() - interval '24 hours'",
+      'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:107 pruneChronicleReservations, at e4420913f5',
+    case: { method: 'pruneChronicleReservations', variant: 'default', run: e => e.pruneChronicleReservations() },
+    texts: ["DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'"],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:195 recordChronicleDecision (the activation insert), at ac7d551949',
+    case: { method: 'insertConfigIfAbsent', variant: 'default', run: e => e.insertConfigIfAbsent('chronicle.activated_at', '2026-01-01T00:00:00.000Z') },
+    texts: ['INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING'],
+  },
+  {
+    from: 'src/core/chronicle/ledger.ts:201 recordChronicleDecision (the truth-lead read), at ac7d551949',
+    case: { method: 'readPageTruthLead', variant: 'default', run: e => e.readPageTruthLead(1) },
+    texts: ['SELECT truth_lead FROM pages WHERE id=$1'],
   },
   {
     from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',

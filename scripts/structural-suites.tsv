@@ -114,7 +114,7 @@ test/cycle-patterns.test.ts	patterns private-queue keepalive wiring	1	readFileSy
 test/cycle-phase-deadline-drift.test.ts	propose_takes deadline < job timeout (#4168)	4	readFileSync
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutes	6	source-surface-helper
 test/cycle/nightly-probe-routes.test.ts	resolveNightlyProbeModelRoutesForDaemon (autopilot step dep)	3	source-surface-helper
-test/deletion-inventory.test.ts	deletion inventory	3	readFileSync
+test/deletion-inventory.test.ts	deletion inventory	5	readFileSync
 test/derived-state-maintainers-7637.test.ts	owner behaviour is unchanged	6	readFileSync
 test/destructive-guard.test.ts	FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)	9	readFileSync
 test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
@@ -185,6 +185,7 @@ test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on p
 test/extract-atoms-drain.test.ts	protected-names register comment names the real trust mechanism	1	readFileSync
 test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	2	readFileSync
 test/extract-include-frontmatter-config.serial.test.ts	no extraction path hardcodes includeFrontmatter	1	readFileSync
+test/fact-purge-path-members.test.ts	the fact purge calls only what the list names	18	readFileSync
 test/facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback remedy verb (#4489)	3	readFileSync
 test/facts-eligibility.test.ts	#6232 facts_backstop opt-out	1	readFileSync
 test/facts-relink.test.ts	relink reasons	1	readFileSync
@@ -393,7 +394,7 @@ test/scripts/require-executed-tests.test.ts	require-executed-tests	9	readFileSyn
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/rust-cli-parity-workflow.test.ts	Rust CLI parity workflow	5	readFileSync
-test/scripts/rust-engine-addon-shards-workflow.test.ts	Rust engine addon job shards	7	readFileSync
+test/scripts/rust-engine-addon-shards-workflow.test.ts	Rust engine addon job shards	9	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
 test/scripts/silent-read-catches.test.ts	what counts	10	readFileSync
 test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	2	readFileSync

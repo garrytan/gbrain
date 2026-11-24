@@ -71,3 +71,8 @@ export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: stri
 /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
 export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
   storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));
+/**
+ * `purgeStaleAppliedCaptures`: the store keeps no applied captures (every writer, ingestion/applied-captures.ts, goes
+ * through `executeRaw`, which this engine refuses), so none is stale.
+ */
+export const purgeStaleAppliedCaptures: StoreMember<[ttlDays: number], number> = async () => 0;

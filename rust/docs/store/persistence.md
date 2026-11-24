@@ -331,6 +331,15 @@ Differences from the SQL engines:
   each adjustment is a compare-and-replace.
 - `read_at` of a pass row is the process clock at the read; the SQL engines use the database clock.
 
+Two connector rows have their own store writes (`persistence/connector_attempts.rs`), each one store transaction:
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.recordConnectorSyncAttempt(sourceId, at, seed)` | `false` for an unknown source; otherwise `true` after it stamps the source's first connector sync attempt: a missing `managed-connector-state` row (keyed `connectorStateKey`, the SHA-256 of the sorted compact `{ incarnation, sourceId }`) is created with `seed`, a row whose first record has no `first_attempt_at` gets `at` there, and a stamped row is left as it is | `recordConnectorSyncAttempt` (`engine-sql/connector-attempts.ts`) |
+| `brain.writeConnectorDbCursor(key, record)` | the `connector-db-cursor` row `key`: created as `record`, or rewritten as `[{ version: 1, state, last_run }]` with `last_run` kept only when `record` has no `last_run` key (a JSON null is a value, as jsonb `->` reads it) | `writeConnectorDbCursor` (`engine-sql/connector-db-cursor.ts`) |
+
+Both write in jsonb key order, so the rows read back as the same JSON text as on the SQL engines.
+
 ## Commit notifier
 
 The resident commit notifier's host lease, host source list, per-source rows and freshness reads
@@ -407,6 +416,25 @@ purge runs in a store transaction, which holds the writer until it ends. Rows co
 | `brain.listGitEffectsCarryingReason({ sourceId, needle, escaped, foldedJson })` | the source's Git effects whose data, as jsonb text lowered as Postgres `lower()` does, holds one of the three needles | `listGitEffectsCarryingReason` |
 | `brain.listPageGitEffectsForStrip({ sourceId, slug })` | the slug's Git effects whose data holds a `commit_line`, `commit_trailers` or `commit_trailer` key (a JSON null counts) | `listPageGitEffectsForStrip` |
 | `brain.setPurgeEffectData({ effectId, data })` | replaces one effect's data (`data` is JSON text); an id no effect holds changes nothing, an id that is not a bigint or data with a NUL refuses as Postgres does | `setPurgeEffectData` |
+
+## The page purge's journal statements
+
+The journal statements of a page purge's sweep and intent redaction (`persistence/journal_redaction.rs`,
+src/core/engine-sql/page-purge-journal.ts). Every statement reads or writes the request, effect or counter records, so each
+is a store call. A request keeps its source and slug, so each read is one scan of the request records. Matching follows
+Postgres: the lowered text of a jsonb column is `lower()` of its text form (a SQL NULL and a JSON null are the empty text), an
+empty needle matches every request, and the chunk's needles arrive lowercased. A malformed uuid or bigint argument refuses as
+Postgres does. Sequences travel as text (a bigint). `lockWriteRequestsById` takes no row lock: the store admits one write
+transaction at a time, so the purge's transaction already holds the writer.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.listRequestsForSlugs(sourceId, slugs, limit, after)` | the source's requests under one of the slugs that are not compacted and still hold an intent, with a sequence past `after`, in numeric sequence order, at most `limit`; rows are `{ id, principal_kind, principal_id, sequence }` | `listRequestsForSlugs` |
+| `brain.readJournalCeiling(sourceId)` | the source's highest request sequence as text; `null` when it has no request | `readJournalCeiling` |
+| `brain.sweepJournalChunk({ sourceId, needles, after, ceiling, limit, ids, exclude })` | the source's requests with `after < sequence <= ceiling` (no bound for a null `ceiling`), among `ids` when given and but for `exclude`, in sequence order, at most `limit`; of that chunk only the requests whose intent, outcome, error detail or error message holds a needle, or that are still pending (queued, deferred, running, recovering, or holding a recovery record), come back with the 0-based indexes of the needles they hold (`hits`); `scanned` is the chunk's size and `last` its last sequence (`null` when empty) | `sweepJournalChunk` |
+| `brain.readEffectBytes(requestId)` | the bytes the request's effect rows hold on its receipt; 0 when it has none | `readEffectBytes` |
+| `brain.redactWriteRequestRow({ id, terminalReservation, outcome, errorDetail })` | removes the request's intent and error message, marks it compacted and replaces its terminal reservation, outcome and error detail (`outcome` and `errorDetail` are JSON text, `null` stores none); an id no request has changes nothing | `redactWriteRequestRow` |
+| `brain.releaseTerminalBytes(key, bytes)` | lowers the counter's `terminal_bytes` by `bytes` but never below zero; a key no counter has changes nothing | `releaseTerminalBytes` |
 
 ## Effect scans
 
@@ -539,6 +567,53 @@ recovering (unless it is in `retryingTopologies`); or a deferred write's refresh
 "Owner scans"). A worktree row is read as described in "Worktree rows". `projection_last` is the last key window row
 (`null` when the window is empty) and `high_water` is the newest job's `updated_at` text. A host id that
 is not a uuid refuses with the uuid cast message.
+
+## Head-blocker probe
+
+`brain.readHeadBlockerRows({ ids, priority })` answers `readHeadBlockerRows` (`engine-sql/head-blocker.ts`):
+one row per request in `ids` that is `queued`, in no fixed order. `claimable` is the claim rules above
+with no excluded or lane roots. `earlier` lists, by sequence, the pending requests of the same source
+incarnation with a lower sequence that the request may not pass (the queued-sync rule with `priority`),
+each as `{ request_id, state, claim_phase, execution_token, claim_lapsed, publication_started, recovery,
+principal_kind, principal_id }`, or is `null` when there is none. `backoff_until` is the stored
+`next_attempt_at` while it is later than now. The worktree, fence, effect recovery, request recovery,
+mirror and `ahead` fields join a worktree, and a Rust brain has none, so they are `null`. The host id
+decides only worktree ownership, so the store does not take it. An id that is not a uuid refuses with
+the uuid cast message. `readRecoveringHeadRow` needs a worktree too, so the TypeScript member answers
+`null` without a store call.
+
+## Checkpoint validation
+
+The managed sync checkpoint's three reads (`engine-sql/checkpoint-validation.ts`), over the request
+records. `brain.readIncompleteSyncReceipt({ worktreeId, runId, superseded, ranges })` answers the
+request id of the receipt that blocks the run's checkpoint, or `null`: a request with a recovery
+record, else an open (`queued`, `running`, `recovering`) page receipt of the run (`managed_sync_import`
+or `managed_sync_delete`), else a non-committed page receipt of the run with no committed receipt of
+the same source and run at the same index, that is not in `superseded` and, when it is `failed`,
+`cancelled` or `conflict` with no recovery record, is not inside a settled `ranges` pair (inclusive).
+`brain.readIncompleteSyncReceiptRows(spec)` takes the same spec and answers up to 20 blocking
+receipts by sequence as `{ request_id, slug, state, code, index, recovery }`.
+`brain.readOpenPassWork({ worktreeId, selfRequestId, ownRecovery })` answers the first request with
+a recovery record (not the stamp's own when `ownRecovery`), else the first other open
+`managed_sync_import`, `managed_sync_delete` or `managed_sync_checkpoint` request, or `null`. A
+request matches the worktree through the `worktree_id` the TypeScript journal members store beside
+the record, and a Rust brain stores none (an insert that names a worktree refuses), so on a brain
+that admitted its writes natively every read answers `null` or an empty list, as Postgres answers a
+worktree with no rows. The statements fix no order inside a probe; the store answers in sequence
+order. A worktree or own-request id that is not a uuid refuses with the uuid cast message, and a stored
+index that is not an integer refuses with the integer cast message. The caller maps a statement
+timeout to `checkpoint_validation_timeout`; the store has none.
+
+## Identity-downgrade read
+
+`brain.readIdentityDowngradeRows({ op, sourceIds })` answers `readIdentityDowngradeRows`
+(`engine-sql/sync-status-reads.ts`) from the op's checkpoint rows. A row whose fingerprint is the
+decimal id of a page reads when that page is soft-deleted at the record's `old_deleted_at` (parsed as
+`::timestamptz` parses ISO with `Z` or the Postgres text form), the record has no `disposition`, the
+page is in the record's `source_id`, and, when `sourceIds` is given, in one of them. Text that is not a
+time refuses with the cast's message. Rows order by `recorded_at`, then the fingerprint, in byte order.
+`new_slugs` lists the live pages of the old page's source at the record's `to` path, in byte order, or
+is `null` when there is none. Pages are read one at a time, once per source that an open record names.
 
 ## No-op embedding settle
 
@@ -675,7 +750,8 @@ answered here by `persistence/writer_status.rs`:
 
 - `readWriterDiagnosticRows(abandonedCutoff, excludedOrigins)`: the request, counter and claim row
   sets of the diagnostics block. A running claim untouched since the cutoff is abandoned. A cutoff
-  that is not an ISO time refuses, as the SQL cast does.
+  that is not an ISO time refuses, as the SQL cast does. The blocker list also holds a request
+  that carries a recovery record, whatever its state.
 - `readWriterStatusRows(hostId, sourceId)`: the source bindings with the host's root, and the
   stopped retire requests.
 - `listOnboardingSources(sourceId)`: the active sources of the onboarding preflight.

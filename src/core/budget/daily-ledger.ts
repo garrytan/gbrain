@@ -26,6 +26,7 @@ import { CANONICAL_PRICING, type ModelPricing } from '../model-pricing.ts';
 import type { CapSource } from '../consent.ts';
 import { priceFor, type PricingOverrides, type PricingSource } from './reservation-cost.ts';
 import { noPricingGuidance, type NoPricingGuidance } from './no-pricing.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw' | 'readBudgetLedgerDay'>;
 
@@ -182,7 +183,8 @@ export function dailyLedger(engine: Exec, key: LedgerKey, opts: { now?: () => Da
   };
 
   const release = async (id: string): Promise<boolean> => {
-    try { return (await engine.executeRaw(RELEASE_SQL, params(id))).length === 1; } catch { return false; }
+    // An engine that cannot run the ledger refuses; false would leave the hold in place with no reason.
+    try { return (await engine.executeRaw(RELEASE_SQL, params(id))).length === 1; } catch (e) { rethrowCapabilityRefusal(e); return false; }
   };
 
   return { reserve, dispatch, settle, release, reclaimExpired, readDay };

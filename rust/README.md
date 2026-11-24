@@ -166,6 +166,27 @@ GBRAIN_SIM_SEEDS=10000 cargo test --release -p gbrain-store --test sim -- --noca
 GBRAIN_SIM_SEED=1234 cargo test -p gbrain-store --test sim     # repeat one seed
 ```
 
+### Fact fingerprints and property tests
+
+Withdrawals and purge tombstones match claims by fingerprint, so the Rust `fact_fingerprint` and
+`fact_fingerprint_v1` must equal the SQL functions byte for byte. `crates/gbrain-store/tests/fixtures/fact_fingerprints.json`
+holds PGLite's answers: `lower()` and `[[:space:]]` for every code point, and both fingerprints for a
+corpus of hand-written claims (every whitespace class, Turkish I, sharp s, final sigma, ligatures,
+combining marks, NFC/NFD pairs, RTL, CJK, emoji, long text) plus seeded random ones. The Rust tests
+check every per-character port and both fingerprints against it, plus proptest properties.
+`test/fact-fingerprint-corpus.test.ts` fails when the fixture is stale and, on Postgres, prints where
+the host's `lower()` or `[[:space:]]` differs from PGLite (a glibc host counts U+1680 and not U+0085).
+
+```sh
+bun rust/scripts/fact-fingerprint-fixture.ts           # check the fixture against PGLite
+bun rust/scripts/fact-fingerprint-fixture.ts --write   # rewrite it after a deliberate change
+```
+
+Other proptest suites: `crates/gbrain-store/tests/store_props.rs` (put then get, delete leaves no
+row, a withdrawn claim stays withdrawn after reopen) and `crates/gbrain-napi/src/boundary_props.rs`
+(hostile JSON never panics a Brain method); `rust/smoke/cases.ts` fuzzes the built addon from
+JavaScript. proptest is a dev-dependency with default features off, so it writes no files.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:

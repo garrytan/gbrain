@@ -227,7 +227,7 @@ describe('store listings come out by byte', () => {
     expect(Object.keys((await readChronicleLedgerStats(engine)).last7d.reasons)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('derivationNeedles lists claim needles by byte', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('derivationNeedles lists claim needles by byte', { methods: ['listDerivationClaimForms'] }, async (engine) => {
     const { needles } = await derivationNeedles(engine, ['ab', 'a b', 'a c']);
     expect(needles).toEqual([' a b ', ' a c ', ' ab ']);
   });

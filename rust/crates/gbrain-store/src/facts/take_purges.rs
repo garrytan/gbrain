@@ -245,6 +245,53 @@ impl Store {
         Ok(rows.into_iter().collect())
     }
 
+    /// `deleteTakePurgesByRequests`: removes the source's take tombstones of these purge requests; how many.
+    pub fn delete_take_purges_by_requests(
+        &self,
+        source_id: &str,
+        request_ids: &[String],
+    ) -> Result<u64> {
+        let op = "deleteTakePurgesByRequests";
+        no_nul(op, &[("sourceId", source_id)])?;
+        let mut wanted = BTreeSet::new();
+        for id in request_ids {
+            if !is_uuid(id) {
+                return Err(StoreError::invalid(format!(
+                    "{op}: requestIds holds a value that is not a UUID"
+                )));
+            }
+            wanted.insert(id.to_lowercase());
+        }
+        self.write(|tx| {
+            let mut doomed = Vec::new();
+            let mut failed = None;
+            scan_prefix(&*tx, &key(&[source_id]), false, &mut |k, v| {
+                match serde_json::from_slice::<TakePurgeRecord>(v) {
+                    Ok(r) => {
+                        if r.request_id.as_ref().is_some_and(|id| wanted.contains(id)) {
+                            doomed.push(k.to_vec());
+                        }
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        return false;
+                    }
+                }
+                true
+            })?;
+            if let Some(e) = failed {
+                return Err(StoreError::invalid(format!(
+                    "{op}: corrupt take purge record: {e}"
+                )));
+            }
+            let count = doomed.len() as u64;
+            for k in doomed {
+                tx.delete(&k)?;
+            }
+            Ok(count)
+        })
+    }
+
     /// `insertTakePurge`, either form: false when no tombstone was new.
     pub fn insert_take_purge_row(&self, row: &TakePurgeRow) -> Result<bool> {
         match row {

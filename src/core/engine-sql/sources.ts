@@ -83,6 +83,12 @@ export async function updateSourceConfig(exec: SqlExecutor, sourceId: string, pa
     return affectedRows > 0;
   }
 
+/** Sets the source's display `name` (`sources rename`). Returns whether the source exists; an unknown id changes nothing. */
+export async function renameSource(exec: SqlExecutor, sourceId: string, name: string): Promise<boolean> {
+  const { affectedRows } = await exec.run(sqlFragment`UPDATE sources SET name = ${name} WHERE id = ${sourceId}`);
+  return affectedRows > 0;
+}
+
 /** One source row with the columns a source check reads: its checkout path, raw config and archived flag. */
 export interface SourceCheckRow { id: string; local_path: string | null; config: unknown; archived: boolean }
 
@@ -96,6 +102,15 @@ export async function readSourceRow(exec: LegacyUnscopedRead, sourceId: string):
 export async function lockSourceRow(exec: SqlExecutor, sourceId: string): Promise<SourceCheckRow | null> {
   const [row] = await exec.executeRaw<SourceCheckRow>('SELECT id, local_path, config, archived FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
   return row ?? null;
+}
+
+/**
+ * Takes the source row's lock (`SELECT id FROM sources WHERE id=$1 FOR UPDATE`) for the rest of the caller's transaction,
+ * reading nothing back; an unknown source is a no-op. The publication transaction of a `sourceExclusive` mutation takes it
+ * before any other publication statement (persistence/coordinator.ts).
+ */
+export async function lockSourceForUpdate(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
 }
 
 /**

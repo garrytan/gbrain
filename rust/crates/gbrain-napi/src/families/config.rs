@@ -30,6 +30,17 @@ impl Brain {
         self.run(env, move |s| s.set_config(&key, &value))
     }
 
+    /// `insertConfigIfAbsent(key, value)`: true when the key had no value and was set.
+    #[napi]
+    pub fn insert_config_if_absent<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        value: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.insert_config_if_absent(&key, &value))
+    }
+
     /// `unsetConfig(key)`: the number of rows removed (0 or 1).
     #[napi]
     pub fn unset_config<'env>(&self, env: &'env Env, key: String) -> napi::Result<Object<'env>> {
