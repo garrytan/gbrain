@@ -6,5 +6,6 @@
 
 ### For contributors
 - `src/core/google/contact-identity.ts` settles the links through `linkContactPage` (apple-contacts/identity-match.ts), which now takes a link origin, the owner's "different" sets and a dry-run flag, and returns `different` for a single match the owner rejected. With `contactName` it returns `name_disagrees` for a single match whose page name clearly disagrees (`namesAgree`, entities/name-variants.ts), which waits as a review.
-- `google_contacts.identity_links` (default off) is the switch `sweepContacts` reads; `--apply` and `--unlink` set it.
+- `google_contacts.identity_links` (default off) is the switch `sweepContacts` reads; `--apply` and `--unlink` set it. It is one switch for the whole brain, not one per Google source.
+- `gbrain dedupe reject <entity id>` on a group a contacts source joined records one person member (the canonical one when there is one) and the contact pages, never every member another writer linked. `linkContactPage` checks the owner's "different" sets against every member of the person's group, so a reject holds whichever member's email or phone matched. Apple Contacts reads those sets once per sync.
 - test/google-contacts-identity-links.test.ts covers the dry run, apply, reviews, reject, a removed contact, another writer's link and `--unlink` on a repo-less brain.
