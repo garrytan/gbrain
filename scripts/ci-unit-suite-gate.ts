@@ -17,25 +17,41 @@ export type Policy = { stamp_files?: string[]; stamp_patterns?: string[] };
 export type Scope = { unit: 'skip' | 'run'; why: string };
 
 const CHANGELOG = /^(changelog\.d\/[^/]+\.md|CHANGELOG\.md)$/;
-const VERSION_TEXT = '\\d+(?:\\.\\d+){2,3}';
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const VERSION = /^\d+(?:\.\d+){2,3}$/;
 
 function changedLines(patch: string): string[] {
   return patch.split('\n').filter(line => /^[+-]/.test(line)).map(line => line.slice(1));
 }
 
+function globMatches(glob: string, path: string): boolean {
+  const want = glob.split('/');
+  const got = path.split('/');
+  return want.length === got.length && want.every((part, i) => part === got[i] || (part === '*' && got[i] !== ''));
+}
+
+function stampMatches(pattern: string, line: string): boolean {
+  const [before, after = ''] = pattern.split('{version}');
+  for (let at = line.indexOf(before!); at >= 0; at = line.indexOf(before!, at + 1)) {
+    const rest = line.slice(at + before!.length);
+    const version = rest.match(/^[0-9.]+/)?.[0] ?? '';
+    for (let cut = version.length; cut > 0; cut--) {
+      if (VERSION.test(version.slice(0, cut)) && rest.slice(cut).startsWith(after)) return true;
+    }
+  }
+  return false;
+}
+
 export function unitScope(files: PrFile[], changed: number, policy: Policy): Scope {
   if (!files.length || files.length !== changed) return { unit: 'run', why: `the file list has ${files.length} of ${changed} files` };
-  const stampFile = (policy.stamp_files ?? []).map(glob => new RegExp(`^${escape(glob).replace(/\\\*/g, '[^/]+')}$`));
-  const stampLine = (policy.stamp_patterns ?? []).map(pattern => new RegExp(escape(pattern).replace(escape('{version}'), VERSION_TEXT)));
+  const patterns = (policy.stamp_patterns ?? []).filter(pattern => pattern.includes('{version}'));
   let stamps = false;
   for (const file of files) {
     if (CHANGELOG.test(file.filename) && (!file.previous_filename || CHANGELOG.test(file.previous_filename))) continue;
     if (file.status === 'renamed' || file.status === 'removed' || file.status === 'added' || typeof file.patch !== 'string') return { unit: 'run', why: `${file.filename} is not a stamp-only change` };
     const lines = changedLines(file.patch);
     const ok = file.filename === 'VERSION'
-      ? lines.every(line => new RegExp(`^${VERSION_TEXT}$`).test(line.trim()))
-      : stampFile.some(re => re.test(file.filename)) && lines.every(line => stampLine.some(re => re.test(line)));
+      ? lines.every(line => VERSION.test(line.trim()))
+      : (policy.stamp_files ?? []).some(glob => globMatches(glob, file.filename)) && lines.every(line => patterns.some(pattern => stampMatches(pattern, line)));
     if (!lines.length || !ok) return { unit: 'run', why: `${file.filename} changes more than a release stamp` };
     stamps = true;
   }
