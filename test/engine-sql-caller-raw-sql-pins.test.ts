@@ -11,6 +11,7 @@
  *    and these members live outside them.
  *  - Seam: the fake postgres.js driver (test/helpers/fake-postgres-sql.ts) records the text; no database runs.
  */
+import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { describe, expect, test } from 'bun:test';
 import { makeEngineWithFake, runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
@@ -341,13 +342,14 @@ const PINS: Pin[] = [
     texts: () => { return ['SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL']; },
   },
   {
-    from: 'src/core/by-mention.ts:527 (at 0af1a6ecf0)',
+    from: 'src/core/by-mention.ts:527 (at 0af1a6ecf0; the retired-page filter is master #9944)',
     case: { method: 'listGazetteerPages', variant: 'default', run: e => e.listGazetteerPages(['person'], ['x_handle', 'twitter', 'twitter_handle', 'x']) },
     texts: () => { return [`SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
             frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
      FROM pages
      WHERE type = ANY($1::text[])
-       AND deleted_at IS NULL`]; },
+       AND deleted_at IS NULL
+       AND NOT ${retiredPageSql('pages')}`]; },
   },
   {
     from: 'src/core/by-mention.ts:550 (at 0af1a6ecf0)',
@@ -356,7 +358,8 @@ const PINS: Pin[] = [
        FROM page_aliases pa
        JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
        WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL`]; },
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}`]; },
   },
   {
     from: 'src/commands/extract.ts:207 (at 0af1a6ecf0)',
