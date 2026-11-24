@@ -232,11 +232,16 @@ const BASIC_BARE = 'basic\\s{1,16})([A-Za-z0-9+/=]{16,2048})(?![A-Za-z0-9+/=])';
  */
 const URL_PASSWORD_PLACEHOLDER_RE = /^(?:<[^<>]*>|\$\{[^{}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\*+|[xX]+)$/;
 
-/** `url_credentials` validate: the password segment is not a placeholder. */
+/**
+ * `url_credentials` validate: the password segment before its first raw `@` is
+ * not a placeholder. Judging only that piece keeps a value such as `<a@b>`,
+ * which reads as a placeholder only when joined, redacted.
+ */
 function urlPasswordIsReal(value: string): boolean {
   const schemeEnd = value.indexOf('://') + 3;
   const colon = value.indexOf(':', schemeEnd);
-  return !URL_PASSWORD_PLACEHOLDER_RE.test(value.slice(colon + 1, -1));
+  const firstPiece = value.slice(colon + 1, -1).split('@', 1)[0];
+  return !URL_PASSWORD_PLACEHOLDER_RE.test(firstPiece);
 }
 
 /**

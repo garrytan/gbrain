@@ -136,6 +136,21 @@ describe('a raw @ inside a URL password is redacted whole', () => {
     expect(text).toBe(`git clone ${REDACTED('url_credentials')}host.example/path.git`);
     for (const part of parts) expect(text.includes(part)).toBe(false);
   });
+
+  test('url_credentials redacts a password that reads as a placeholder only when its pieces are joined', () => {
+    for (const [open, close] of [['<', '>'], ['${', '}']]) {
+      const parts = [rand(10), rand(10)];
+      const url = userinfoUrl('https', 'u', `${open}${parts.join(at)}${close}`);
+      const { text } = redactFindings(url);
+      expect(text).toBe(`${REDACTED('url_credentials')}host.example/path`);
+      for (const part of parts) expect(text.includes(part)).toBe(false);
+    }
+  });
+
+  test('url_credentials still leaves a whole placeholder password alone', () => {
+    const url = userinfoUrl('https', 'u', '<password>');
+    expect(redactFindings(url).text).toBe(url);
+  });
 });
 
 describe('A3 basic_auth: a Basic credential that decodes to user:pass', () => {
