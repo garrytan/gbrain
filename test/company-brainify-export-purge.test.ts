@@ -92,18 +92,18 @@ describe('company-brainify export: only files that got the read ship', () => {
     expect(text).not.toContain("holds nothing the pass didn't read");
   });
 
-  test('re-auditing an existing shared brain writes the export list the purge checks, so the purge passes on a fully read scope', () => {
+  test('re-auditing an existing shared brain lists every page already in it, so the purge runs', () => {
     const block = fenceContaining('brainify-reaudit-');
     const dir = tmp();
     const shared = join(dir, 'shared');
     write(shared, 'people/alice-example.md', 'Staff engineer.\n');
+    write(shared, 'people/bob-example.md', 'Never flagged by a scan.\n');
     write(shared, 'meetings/staff-sync.md', 'Payments review.\n');
-    const scope = join(dir, 'scope.txt');
-    writeFileSync(scope, 'people/alice-example.md\nmeetings/staff-sync.md\nconversations/chat.md\n');
-    const run = bash(block.replaceAll('/tmp/brainify-scope.txt', scope) + '\necho "STAGING=$STAGING"', shared, { HOME: join(dir, 'home') });
+    write(shared, 'conversations/chat.md', 'Outside the purged folders.\n');
+    const run = bash(block + '\necho "STAGING=$STAGING"', shared, { HOME: join(dir, 'home') });
     expect(run.status).toBe(0);
     const staging = run.stdout.match(/STAGING=(.*)/)![1];
-    expect(readFileSync(`${staging}.export-list`, 'utf8')).toBe('meetings/staff-sync.md\npeople/alice-example.md\n');
+    expect(readFileSync(`${staging}.export-list`, 'utf8')).toBe('meetings/staff-sync.md\npeople/alice-example.md\npeople/bob-example.md\n');
     const step1 = fenceContaining('Sanitize: strip sensitive content before history purge');
     const guard = step1.slice(step1.indexOf(`for d in ${PURGE_DIRS}; do\n  [ -d "$STAGING/$d" ]`), step1.indexOf('SANITIZED=""'));
     const purge = bash(guard, shared, { STAGING: staging });
