@@ -10,8 +10,10 @@
  *      addon (or take it from `--from <file>`) into a staging directory under `<home>/engines/rust/`.
  *   4. Check the addon's SHA-256 and size against the manifest, and check both files against their build-provenance
  *      attestation from this repository's release workflow (verifyIntegrity, as the binary self-update does).
- *   5. Rename the addon to `<engine_build>/<target>.node`, then write `manifest-<version>.json` last, so the loader
- *      never sees a manifest whose addon is not in place.
+ *   5. Rename the addon to `<engine_build>/<target>-<sha256>.node`, then write `manifest-<version>.json` last, so the
+ *      loader never sees a manifest whose addon is not in place. The checksum in the name means installing one release
+ *      never replaces a file another release's manifest names; an addon already there with that checksum (a release
+ *      that left rust/ unchanged) is kept and not downloaded again.
  * A missing release asset is `not_published`; a network or HTTP failure is `fetch_failed`; a checksum or attestation
  * that does not match is `verification_failed`. Every failure deletes the staging directory and leaves the installed
  * addon as it was. Nothing here loads the addon: the loader checks engine_abi, target and engine_build when it opens it.
@@ -106,7 +108,7 @@ function installedAddon(deps: RustAddonInstallDeps, target: string): RustAddonIn
   const manifest = readCachedManifest(deps.rustDir, deps.version);
   const entry = manifest?.targets[target];
   if (!manifest || !entry) return null;
-  const path = addonPath(deps.rustDir, manifest.engine_build, target);
+  const path = addonPath(deps.rustDir, manifest.engine_build, target, entry.sha256);
   if (!existsSync(path)) return null;
   let digest: string;
   try {
@@ -116,6 +118,15 @@ function installedAddon(deps: RustAddonInstallDeps, target: string): RustAddonIn
   }
   if (digest !== entry.sha256) return null;
   return { status: 'already_installed', version: deps.version, target, engine_build: manifest.engine_build, sha256: digest, path: homeRelative(path) };
+}
+
+/** True when the file at `path` has this SHA-256; false when it differs or cannot be read. */
+function sameDigest(deps: RustAddonInstallDeps, path: string, sha256: string): boolean {
+  try {
+    return deps.computeDigest(path) === sha256;
+  } catch {
+    return false; // silent-read-ok: an unreadable file is replaced by a checked download, which is what false asks for
+  }
 }
 
 async function fetchOrRefuse(deps: RustAddonInstallDeps, name: string): Promise<Uint8Array> {
@@ -184,21 +195,22 @@ export async function installRustAddon(opts: { from?: string } = {}, overrides: 
       throw addonMissing('not_published', `The gbrain v${deps.version} release publishes no Rust engine addon for ${target}.`);
     }
 
-    const stagedAddon = join(staging, entry.asset);
-    if (opts.from !== undefined) copyFileSync(opts.from, stagedAddon);
-    else writeSynced(stagedAddon, await fetchOrRefuse(deps, entry.asset));
-    const digest = deps.computeDigest(stagedAddon);
-    if (digest !== entry.sha256) {
-      throw addonMismatch('verification_failed', `${opts.from ?? entry.asset} has SHA-256 ${digest}; the gbrain v${deps.version} manifest names ${entry.sha256}. It was not installed.`);
+    const dest = addonPath(deps.rustDir, manifest.engine_build, target, entry.sha256);
+    if (!existsSync(dest) || !sameDigest(deps, dest, entry.sha256) || opts.from !== undefined) {
+      const stagedAddon = join(staging, entry.asset);
+      if (opts.from !== undefined) copyFileSync(opts.from, stagedAddon);
+      else writeSynced(stagedAddon, await fetchOrRefuse(deps, entry.asset));
+      const digest = deps.computeDigest(stagedAddon);
+      if (digest !== entry.sha256) {
+        throw addonMismatch('verification_failed', `${opts.from ?? entry.asset} has SHA-256 ${digest}; the gbrain v${deps.version} manifest names ${entry.sha256}. It was not installed.`);
+      }
+      await verifyAttested(deps, stagedAddon, entry.asset);
+      mkdirSync(join(deps.rustDir, manifest.engine_build), { recursive: true, mode: 0o700 });
+      renameSync(stagedAddon, dest);
     }
-    await verifyAttested(deps, stagedAddon, entry.asset);
-
-    const dest = addonPath(deps.rustDir, manifest.engine_build, target);
-    mkdirSync(join(deps.rustDir, manifest.engine_build), { recursive: true, mode: 0o700 });
-    renameSync(stagedAddon, dest);
     renameSync(stagedManifest, cachedManifestPath(deps.rustDir, deps.version));
     installed = true;
-    return { status: 'installed', version: deps.version, target, engine_build: manifest.engine_build, sha256: digest, path: homeRelative(dest) };
+    return { status: 'installed', version: deps.version, target, engine_build: manifest.engine_build, sha256: entry.sha256, path: homeRelative(dest) };
   } finally {
     rmSync(staging, { recursive: true, force: true });
     // A refused first install leaves no empty engines/rust directory behind.
@@ -234,7 +246,7 @@ export function rustAddonStatus(env: Record<string, string | undefined>, overrid
   const manifest = readCachedManifest(deps.rustDir, deps.version);
   const entry = target ? manifest?.targets[target] : undefined;
   if (!manifest || !entry || !target) return status;
-  const path = addonPath(deps.rustDir, manifest.engine_build, target);
+  const path = addonPath(deps.rustDir, manifest.engine_build, target, entry.sha256);
   status.pinned_sha256 = entry.sha256;
   status.engine_build = manifest.engine_build;
   if (!existsSync(path)) return status;

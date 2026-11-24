@@ -683,6 +683,12 @@ succeed on the release commit.
   commit carries the same VERSION with unreleased changes, so the gate then
   refuses and names the re-run of the release commit's push Release run.
   Other refs are refused.
+- **Rust engine addon dry run:** `gh workflow run release.yml --ref <branch> -f addon_dry_run=true`
+  builds both addons from that branch, writes the manifest and installs the
+  packaged addon on each platform with the real installer. It publishes
+  nothing: ci-gate and every publishing job are skipped, no attestation is
+  made, and it runs in its own concurrency group. Without the input the
+  dispatch is the backfill above.
 - The gate waits up to 110 minutes, then fails naming the re-run of the
   Release run.
 - **Reused push run:** a push run that reused a passed full-suite run of its

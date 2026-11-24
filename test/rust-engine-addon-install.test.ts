@@ -3,7 +3,7 @@
  * loader finds it with no GBRAIN_RUST_ENGINE_ADDON.
  *
  * Authoring gate (docs/TESTING.md):
- * 1. Protects: an install puts `manifest-<version>.json` and `<engine_build>/<target>.node` under the gbrain home only
+ * 1. Protects: an install puts `manifest-<version>.json` and `<engine_build>/<target>-<sha256>.node` under the gbrain home only
  *    after the addon's SHA-256 matches the release manifest and both files carry this repository's release-workflow
  *    attestation; the loader then loads it with no environment variable. Every refusal (unsupported platform with no
  *    network call, a release with no addon, a failed download, a bad checksum or attestation) leaves the gbrain home
@@ -30,7 +30,7 @@ import {
 import { loadRustAddon, loadRustEngineAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { RUST_ADDON_MANIFEST_ASSET, RUST_ENGINE_ABI, rustAddonAssetName } from '../src/core/rust-engine/addon-manifest.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
-import { configuredBrainUsesRust, runEngineInstall } from '../src/commands/engine-install.ts';
+import { configuredBrainUsesRust, installAddonWithInstalledBinary, runEngineInstall } from '../src/commands/engine-install.ts';
 import type { EngineConfig } from '../src/core/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 
@@ -125,7 +125,7 @@ describe('installRustAddon', () => {
     const r = fakeRelease();
     const result = await installRustAddon({}, r.deps);
     expect(result).toMatchObject({ status: 'installed', version: VERSION, target: TARGET, engine_build: BUILD, sha256: sha256(r.addon) });
-    expect(tree(r.rustDir)).toEqual([`${BUILD}/`, `${BUILD}/${TARGET}.node ${sha256(r.addon)}`, `manifest-${VERSION}.json ${sha256(r.assets.get(RUST_ADDON_MANIFEST_ASSET)!)}`]);
+    expect(tree(r.rustDir)).toEqual([`${BUILD}/`, `${BUILD}/${TARGET}-${sha256(r.addon)}.node ${sha256(r.addon)}`, `manifest-${VERSION}.json ${sha256(r.assets.get(RUST_ADDON_MANIFEST_ASSET)!)}`]);
     const addon = await loadRustAddon({ env: {}, rustDir: r.rustDir, version: VERSION, target: TARGET, dlopen: fakeDlopen() });
     expect(addon.engineBuild).toBe(BUILD);
   });
@@ -136,6 +136,28 @@ describe('installRustAddon', () => {
     r.fetched.length = 0;
     expect((await installRustAddon({}, r.deps)).status).toBe('already_installed');
     expect(r.fetched).toEqual([]);
+  });
+
+  test('a later release with the same engine_build but other bytes leaves the earlier release loadable', async () => {
+    const a = fakeRelease();
+    await installRustAddon({}, a.deps);
+    const otherBytes = new TextEncoder().encode('a rebuilt addon');
+    const b = fakeRelease({ addon: otherBytes, version: '9.9.9.10', manifest: manifestFor(otherBytes, { version: '9.9.9.10' }) });
+    b.deps.rustDir = a.rustDir;
+    await installRustAddon({}, b.deps);
+    for (const [version, bytes] of [[VERSION, a.addon], ['9.9.9.10', otherBytes]] as const) {
+      const addon = await loadRustAddon({ env: {}, rustDir: a.rustDir, version, target: TARGET, dlopen: fakeDlopen(), computeDigest: (p) => sha256(readFileSync(p)) });
+      expect({ version, build: addon.engineBuild, sha: rustAddonStatus({}, { ...a.deps, version }).sha256 }).toEqual({ version, build: BUILD, sha: sha256(bytes) });
+    }
+  });
+
+  test('a later release that pins the same addon bytes downloads only its manifest', async () => {
+    const a = fakeRelease();
+    await installRustAddon({}, a.deps);
+    const b = fakeRelease({ addon: a.addon, version: '9.9.9.10', manifest: manifestFor(a.addon, { version: '9.9.9.10' }) });
+    b.deps.rustDir = a.rustDir;
+    expect((await installRustAddon({}, b.deps)).status).toBe('installed');
+    expect(b.fetched).toEqual([`9.9.9.10/${RUST_ADDON_MANIFEST_ASSET}`]);
   });
 
   test('an unsupported or unknown platform refuses with no network call and writes nothing', async () => {
@@ -164,11 +186,12 @@ describe('installRustAddon', () => {
     const r = fakeRelease();
     await installRustAddon({}, r.deps);
     const before = tree(r.rustDir);
+    const next = manifestFor(new TextEncoder().encode('the next addon'), { version: '9.9.9.10' });
     const deps = { ...r.deps, version: '9.9.9.10', fetchAsset: async (_v: string, name: string) => {
-      if (name === RUST_ADDON_MANIFEST_ASSET) return manifestFor(r.addon, { version: '9.9.9.10' });
+      if (name === RUST_ADDON_MANIFEST_ASSET) return next;
       throw new Error('connection reset');
     } };
-    r.attested.set(RUST_ADDON_MANIFEST_ASSET, sha256(manifestFor(r.addon, { version: '9.9.9.10' })));
+    r.attested.set(RUST_ADDON_MANIFEST_ASSET, sha256(next));
     expect(await refusal(installRustAddon({}, deps))).toEqual({ code: 'rust_engine_addon_missing', reason: 'fetch_failed' });
     expect(tree(r.rustDir)).toEqual(before);
   });
@@ -273,6 +296,19 @@ describe('the post-upgrade refresh', () => {
     expect(configuredBrainUsesRust(null)).toBe(false);
     expect(configuredBrainUsesRust({ engine: 'pglite', database_path: join(tmp(), 'brain.pglite') } as EngineConfig)).toBe(false);
     expect(configuredBrainUsesRust({ engine: 'rust', database_path: join(tmp(), 'brain.rust') } as EngineConfig)).toBe(true);
+  });
+});
+
+describe('the addon install after a swap-only upgrade', () => {
+  test('runs the new binary\'s install for a Rust brain only, and never throws', () => {
+    const calls: string[][] = [];
+    const run = (_cmd: string, args: string[]) => { calls.push(args); return ''; };
+    expect(installAddonWithInstalledBinary({}, run, () => false)).toBe(false);
+    expect(calls).toEqual([]);
+    expect(installAddonWithInstalledBinary({}, run, () => true)).toBe(true);
+    expect(calls).toEqual([['engine', 'install', 'rust', '--json']]);
+    expect(installAddonWithInstalledBinary({}, () => { throw new Error('exit 1'); }, () => true)).toBe(false);
+    expect(installAddonWithInstalledBinary({}, run, () => { throw new Error('bad config'); })).toBe(false);
   });
 });
 

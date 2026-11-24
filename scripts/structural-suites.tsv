@@ -304,6 +304,7 @@ test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structur
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	source-surface-helper
+test/release-workflow.test.ts	release.yml addon_dry_run publishes nothing	3	readFileSync
 test/release-workflow.test.ts	release.yml publish-template skip is visible (D-10)	1	readFileSync
 test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	12	readFileSync
 test/release-workflow.test.ts	release.yml ↔ gbrain engine install rust	3	readFileSync

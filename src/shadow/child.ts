@@ -21,7 +21,8 @@ import type { BrainEngine } from '../core/engine.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.ts';
 import { policyHash, READINESS_POLICY } from '../core/engine-swap/policy.ts';
 import { RUST_ENGINE_ABI } from '../core/rust-engine/addon-manifest.ts';
-import type { RustAddon } from '../core/rust-engine/addon-loader.ts';
+import { installedAddonPath, type RustAddon } from '../core/rust-engine/addon-loader.ts';
+import { VERSION } from '../version.ts';
 import { servedCapabilities } from '../core/rust-engine/store-capabilities.ts';
 import { loadRustEngineAddonOffline, type RustEngineAddonLoaderFn } from './addon.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
@@ -74,7 +75,8 @@ export interface ShadowChildDeps {
 
 /** SHA-256 of the addon file the loader opened: the development override, else the cached build (addon-loader.ts). */
 function addonFileSha256(addon: RustAddon): string | null {
-  const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || join(gbrainPath('engines', 'rust'), String(addon.engineBuild), `${String(addon.target)}.node`);
+  const path = process.env.GBRAIN_RUST_ENGINE_ADDON?.trim() || installedAddonPath(gbrainPath('engines', 'rust'), VERSION, String(addon.target));
+  if (!path) return null;
   try { return createHash('sha256').update(readFileSync(path)).digest('hex'); } catch { return null; } // silent-read-ok: null is the typed marker; the epoch records `unreadable`, never a digest
 }
 

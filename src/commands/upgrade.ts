@@ -289,6 +289,8 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   // next launch so the autopilot silent channel can swap + relaunch without
   // freezing its tick. connectEngine's pending-migration probe + runPostUpgrade run on boot.
   if (swapOnly) {
+    // The relaunch runs no post-upgrade, so a Rust or shadow brain gets the new release's addon from the new binary here.
+    if (!unchanged) (await import('./engine-install.ts')).installAddonWithInstalledBinary(upgradeEnv);
     return;
   }
   // Run post-upgrade feature discovery (reads migration files from the NEW binary).

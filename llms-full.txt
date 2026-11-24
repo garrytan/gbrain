@@ -5860,7 +5860,7 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   or the refusal `rust_engine_addon_missing` or `rust_engine_addon_mismatch` with its `reason` (`gbrain errors
   <code>`), before the brain is touched. It uses `GBRAIN_RUST_ENGINE_ADDON` (an absolute path to a build from `bun run
   rust:build`; it skips only the release checksum pin) first, then an addon cached at
-  `<gbrain home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this gbrain
+  `<gbrain home>/engines/rust/<engine_build>/<target>-<sha256>.node` whose SHA-256 equals the cached manifest of this gbrain
   version. It never reaches the network and writes nothing: with no cached addon it refuses with reason
   `not_installed`, and a cached file that fails a check stays as it was. `gbrain engine install rust` fills that
   cache (below). Only the Rust engine's open path may import the loader, lazily, so a PGLite or
@@ -5870,7 +5870,7 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   attests all three files. `gbrain engine install rust [--json]` (`src/core/rust-engine/addon-install.ts`) downloads
   the manifest and this machine's addon from the release of the running version and checks the addon's SHA-256 against
   the manifest. It then checks both files' build attestations from this repository's release workflow on master, as
-  `gbrain self-upgrade` does for the executable. Only then does it write `<engine_build>/<target>.node` and, last,
+  `gbrain self-upgrade` does for the executable. Only then does it write `<engine_build>/<target>-<sha256>.node` (the checksum in the name keeps every release's pinned file; a file already there with that checksum is not downloaded again) and, last,
   `manifest-<version>.json`. It is idempotent: an installed addon that still matches makes no network call.
   `--from <file>` installs a copy of the release addon you already have (the manifest is still read online). Every
   refusal leaves the installed addon as it was: `unsupported_target` (no network call), `not_published` (that release
