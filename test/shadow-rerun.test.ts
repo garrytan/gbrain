@@ -12,6 +12,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { requestSignal, withRequestSignal } from '../src/core/request-signal.ts';
+import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { makeAskHandler } from '../src/shadow/checks.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { SampleRegistry } from '../src/shadow/samples.ts';
@@ -172,5 +174,18 @@ describe('rerun attempts', () => {
     expect(samples.get(sid)!.reruns!.size).toBe(8);
     expect(await handler({ id: 4, kind: 'privacy', sid, phase: 'rerun', attempt: a1.attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('the child\'s questions run in a context of their own', () => {
+  test('a question asked after the request that spawned the child was cancelled does not inherit that request\'s aborted signal, and has a signal and deadline of its own', async () => {
+    const seen: Array<{ aborted: boolean; own: boolean }> = [];
+    const supervisor = new ShadowSupervisor({ dir: '/none', argv: [], onAsk: async () => { const s = requestSignal(); seen.push({ aborted: s?.aborted === true, own: s !== undefined }); return 'answer'; } });
+    const cancelled = new AbortController();
+    await withRequestSignal(cancelled.signal, async () => { // the request that spawned the child; the child's stdout callbacks inherit its context
+      cancelled.abort();
+      await (supervisor as unknown as { answerAsk(a: { id: number; kind: string }, from: unknown, session: string): Promise<void> }).answerAsk({ id: 1, kind: 'privacy' }, null, '');
+    });
+    expect(seen).toEqual([{ aborted: false, own: true }]);
   });
 });

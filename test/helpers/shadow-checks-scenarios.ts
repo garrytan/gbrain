@@ -270,11 +270,11 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   describe('ranked vector search under excludePrivate', () => {
     type Rows = Array<Record<string, unknown>>;
     /** One ranked searchVector read as ALICE under excludePrivate; Rust answers `answer(primary's rows, a real spare row, page ids)`. Returns criterion 3, the counts and the ledger rows. */
-    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void>; child?: Partial<ShadowChildDeps>; noRecall?: boolean } = {}) {
+    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void>; child?: Partial<ShadowChildDeps>; noRecall?: boolean; opts?: Record<string, unknown> } = {}) {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
       await vectorFixture(primary);
-      const opts = { limit: 10, excludePrivate: true };
+      const opts = { limit: 10, excludePrivate: true, ...o.opts };
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
       const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten
       const rig = await start(o.child ? { child: o.child } : {});
@@ -367,6 +367,54 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     test('the primary\'s own page and chunk with a substituted title or flag are unexplained, not a ranking difference', async () => {
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], title: 'SUBSTITUTED TITLE' }]));
       counts(await ranked((theirs) => [...theirs.slice(0, 9), { ...theirs[9], stale: true }]));
+    });
+
+    test('an extra row on a permitted page and chunk is cleared only when every non-ranking field is the primary\'s stored one: a substituted title, a field the primary does not have, a dropped field, a flag, the type or the chunk index', async () => {
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, title: 'SUBSTITUTED TITLE' }]));
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, message_id: 'm-substituted' }]));
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, stale: true }]));
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, type: 'person' }]));
+      counts(await ranked((theirs, spare) => [...theirs, { ...spare, chunk_index: 7 }]));
+      counts(await ranked((theirs, spare) => { const { effective_date: _dropped, ...rest } = spare; return [...theirs, rest]; }));
+      const control = await unmoved(() => ranked((theirs, spare) => [...theirs, spare])); // the primary's own stored row still clears
+      expect(control.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' });
+    });
+
+    test('an extra row the primary\'s stored row cannot be read for (the primary cannot answer the check) is unexplained, never cleared', async () => {
+      const primary = ctx.primary();
+      try {
+        counts(await ranked((theirs, spare) => [...theirs, spare], { onPrivacyAsk: async () => { (primary as unknown as { searchVector: unknown }).searchVector = async () => { throw new Error('unreadable'); }; } })); // the stored row is read after the sample, inside the check
+      } finally { delete (primary as unknown as { searchVector?: unknown }).searchVector; } // back to the engine's own method
+    });
+
+    test('an extra row the caller\'s own query filters would exclude is unexplained: a slug named in exclude_slugs is not a ranking difference', async () => {
+      const primary = ctx.primary();
+      await vectorFixture(primary);
+      const all = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { limit: 12, excludePrivate: true })) as unknown as Rows;
+      const banned = all[11]!; // a real chunk the caller may read, that this query excludes
+      const opts = { exclude_slugs: [String(banned.slug)] };
+      counts(await ranked((theirs) => [...theirs, banned], { opts }));
+      const control = await unmoved(() => ranked((theirs, spare) => [...theirs, spare], { opts })); // the same query with a row it allows still clears
+      expect(control.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' });
+    });
+
+    test('a privacy check that fails only in the rerun stays unsettled: the ledger row carries the reason and privacy_checks_unsettled_7d counts it, so criterion 6 has no evidence', async () => {
+      const unidentified = (theirs: Rows, spare: Record<string, unknown>): Rows => [...theirs, { ...spare, page_id: undefined, slug: undefined, source_id: undefined }]; // the first check asks nothing and is not complete: the rerun is the first ask
+      const failed = await ranked(unidentified, { settle: true, noRecall: true, onPrivacyAsk: async () => { throw new Error('privacy ask failed'); } });
+      expect(failed.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:privacy_check_unavailable', reason: 'privacy_check_unavailable' });
+      expect(failed.evidence.privacy_checks_unsettled_7d).toBe(1);
+    });
+
+    test('a rerun whose privacy check moves every time (the three reruns used up) stays unsettled for privacy, not just unresolved', async () => {
+      const probe = 'a2_unsettled_probe';
+      await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+      await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+      try {
+        const mixed = (theirs: Rows, spare: Record<string, unknown>): Rows => [...theirs, spare, { ...spare, page_id: undefined, slug: undefined, source_id: undefined }]; // one row to judge, one that has no identity: the first check holds but is not complete
+        const moved = await ranked(mixed, { settle: true, noRecall: true, child: { random: () => 0.5, sleep: async () => undefined }, onPrivacyAsk: async (n) => { if (n >= 2) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } }); // every check of the reruns moves
+        expect(moved.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:moved', reason: 'privacy_check_moved' });
+        expect(moved.evidence.privacy_checks_unsettled_7d).toBe(1);
+      } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
     });
 
     test('a policy dependency changed between the read and the check without a page timestamp (a deleted page, a source or config row, a provenance link) leaves the sample unresolved', async () => {
@@ -821,6 +869,26 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       } finally { await real.close(); }
     });
 
+    test('the reference applies the caller\'s own filters: a slug named in exclude_slugs, a slug prefix and a page type are not in it', async () => {
+      const primary = ctx.primary();
+      const chunkOf = await vectorFixture(primary);
+      const real = openReadSource(primary);
+      try {
+        const top = String(chunkOf.get(0)); // a chunk of a page the filters below exclude
+        const [page] = await primary.executeRaw<{ slug: string }>(`SELECT p.slug FROM pages p JOIN content_chunks c ON c.page_id = p.id WHERE c.id = $1`, [Number(top)]);
+        const reference = async (opts: Record<string, unknown>): Promise<string[]> => untilNotMoved(async () => {
+          const samples = new SampleRegistry();
+          const handler = makeAskHandler({ engine: primary, reads: real, dir: '/none', samples, rpc: (async () => ({})) as never });
+          const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, ...opts }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100);
+          return ((await handler({ id: 1, kind: 'vector', sid })) as RankedKey[]).map((r) => r.k);
+        });
+        expect(await reference({})).toContain(top); // control: without a filter the chunk is in the reference
+        expect(await reference({ exclude_slugs: [page!.slug] })).not.toContain(top);
+        expect(await reference({ exclude_slug_prefixes: [page!.slug] })).not.toContain(top);
+        expect(await reference({ types: ['person'] })).not.toContain(top);
+      } finally { await real.close(); }
+    });
+
     test('a reference is refused (moved) when the corpus changed after the sample was captured, and when no fingerprint was captured with it', async () => {
       const primary = ctx.primary();
       await vectorFixture(primary);
@@ -1213,6 +1281,36 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await expect(during).rejects.toMatchObject({ code: 'moved' });
         // control: none at either end, the reference is used
         prepared = 0;
+        expect(await untilNotMoved(async () => handler({ id: 3, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100), phase: 'sample' }))).toBeInstanceOf(Array);
+      } finally { await real.close(); }
+    });
+
+    test('a server in recovery (a hot standby) never proves fresh: the token is blind at the capture and the end of the check refuses (pg_is_in_recovery is stubbed: this cluster is a primary)', async () => {
+      const primary = ctx.primary();
+      await vectorFixture(primary);
+      const real = openReadSource(primary);
+      let recovering = false;
+      const stubbed = { ...real, read: <T>(fn: Parameters<typeof real.read<T>>[0]) => real.read((tx, q) => fn(new Proxy(tx, { get: (t, p) => (p === 'executeRaw' ? async (text: string, ...a: never[]) => {
+        const out = await (t.executeRaw as Function).call(t, text, ...a) as Array<Record<string, unknown>>;
+        return out.map((r) => ('recovery' in r ? { ...r, recovery: recovering } : r)); // the capture row and the end-of-check row both say whether the server is in recovery
+      } : Reflect.get(t, p, t)) }) as BrainEngine, q)) };
+      try {
+        const watch = createLsnWatch(stubbed);
+        const samples = new SampleRegistry();
+        const args = encodeValue([vec(3), { limit: 10 }]);
+        let clock = 0;
+        const handler = makeAskHandler({ engine: primary, reads: stubbed, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
+        recovering = true; // a standby: replayed writers are in no list, so nothing it says about its own xmax proves anything
+        const blind = await watch.live();
+        expect(blind.split('|')[1]).toBe('!');
+        await expect(handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: blind }, 100), phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
+        recovering = false; // a token taken on a primary, a server that is in recovery at the end of the check: refused as well
+        const clear = await watch.live();
+        expect(clear.split('|')[1]).not.toBe('!');
+        const during = handler({ id: 2, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: clear }, 100), phase: 'sample' });
+        recovering = true;
+        await expect(during).rejects.toMatchObject({ code: 'moved' });
+        recovering = false; // control: a primary at both ends
         expect(await untilNotMoved(async () => handler({ id: 3, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100), phase: 'sample' }))).toBeInstanceOf(Array);
       } finally { await real.close(); }
     });

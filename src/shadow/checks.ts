@@ -8,7 +8,8 @@
  *            the ranking ones is held; a row that has a primary row's page and chunk but another payload, or claims a chunk
  *            it does not identify, is unexplained; any other row is judged here, in one read-only snapshot, with the existing
  *            policy fragment (private-visibility.ts `privatePagesFilterForCaller`) under the captured `CallerAccess`, the
- *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used. The answer is a
+ *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used; a ranked vector search's extra row clears
+ *            only when it is also the primary's own stored row (the same read, widened, same filters) in every field but the ranking ones. The answer is a
  *            verdict (`clean` with `complete`, `violation`, `moved`), never content. It is `moved` unless this process can PROVE
  *            nothing was written since the primary read started: the primary's freshness token (`createLsnWatch`: the snapshot's xmax and the transactions in progress),
  *            known before that read started, must still hold at the end of the check (a commit to any table, the catalog, or a change
@@ -36,7 +37,7 @@ import { chunkVisibleFilter, requiresSafeChunks, safeChunksFilter } from '../cor
 import { buildVectorSearchStatement } from '../core/search/vector-statement.ts';
 import type { SearchOpts } from '../core/types.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { candidatesOf, extraIds, membersDigest, resultDigest, rowIdentities, type ExtraRow, type RowIdentity } from './child-checks.ts';
+import { candidatesOf, extraIds, matchesStored, membersDigest, resultDigest, rowIdentities, storedPayloads, type ExtraRow, type RowIdentity } from './child-checks.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import type { ShadowFollower } from './follower.ts';
 import type { ReadSource } from './read-pool.ts';
@@ -81,6 +82,8 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
  * listed by its xid and asked about at the end. Writes that carry no xid and change no data a read could see (a read pruning dead rows,
  * a checkpoint, a standby snapshot, a vacuum of another database, a hint bit) move the WAL position but never the snapshot's xmax, and so move nothing here.
  * The snapshot's xids are xid8 (an epoch and a 32-bit xid): they are kept and compared whole, as BigInt, never as 32-bit values.
+ * Primary only: a server in recovery (a hot standby) replays writers that are in neither list (no `xip` entry, no local `backend_xid`), so
+ * its xmax proves nothing; the token is blind there and the end of a check refuses.
  */
 const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap)
   SELECT
@@ -88,7 +91,8 @@ const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap)
     (SELECT string_agg(x::text, ',') FROM s, pg_snapshot_xip(s.snap) x) AS xip,
     (SELECT string_agg(a.backend_xid::text, ',') FROM pg_stat_activity a WHERE a.backend_xid IS NOT NULL AND a.pid <> pg_backend_pid()) AS backend,
     (SELECT count(*) FROM pg_stat_activity WHERE backend_type IS NULL AND pid <> pg_backend_pid())::int AS blind,
-    (SELECT count(*) FROM pg_prepared_xacts)::int AS prepared`; // a row this role may not see has every column NULL, its backend type too
+    (SELECT count(*) FROM pg_prepared_xacts)::int AS prepared,
+    pg_is_in_recovery() AS recovery`; // a row this role may not see has every column NULL, its backend type too; a server in recovery (a hot standby) never proves fresh
 
 const XID_RANGE = 4294967296n;
 
@@ -127,12 +131,12 @@ export const xmaxMoved = (captured: bigint, now: bigint): boolean => now !== cap
  * subtransaction's writes visible), and whether a prepared (two-phase) transaction exists or a session cannot be seen into (blind, `!`: never proven).
  */
 async function captureToken(reads: ReadSource): Promise<string> {
-  const [row] = await reads.read((tx) => tx.executeRaw<{ xmax: string; xip: string | null; backend: string | null; blind: number; prepared: number }>(XIP_SQL));
+  const [row] = await reads.read((tx) => tx.executeRaw<{ xmax: string; xip: string | null; backend: string | null; blind: number; prepared: number; recovery: boolean | null }>(XIP_SQL));
   if (!row || !/^[0-9]+$/.test(String(row.xmax))) throw new Error('no snapshot');
   const xmax = BigInt(row.xmax);
   const list = (text: string | null | undefined): bigint[] => (text ? text.split(',').map((x) => BigInt(x)) : []);
   const xids = [...list(row.xip), ...list(row.backend).map((x) => widenXid(x, xmax))];
-  return composeToken(xmax, xids, Number(row.blind) > 0 || Number(row.prepared) > 0);
+  return composeToken(xmax, xids, Number(row.blind) > 0 || Number(row.prepared) > 0 || row.recovery !== false); // in recovery, or not known to be a primary: never proven
 }
 
 /**
@@ -144,11 +148,12 @@ async function captureToken(reads: ReadSource): Promise<string> {
 async function unchangedSince(reads: ReadSource, token: string | undefined): Promise<boolean> {
   const t = parseToken(token);
   if (!t || t.blind) return false; // sessions of other roles that this one cannot see into, or a prepared transaction at the capture: nothing can be proven
-  const [row] = await reads.read((tx) => tx.executeRaw<{ xmax: string; moved: boolean; prepared: boolean }>(
+  const [row] = await reads.read((tx) => tx.executeRaw<{ xmax: string; moved: boolean; prepared: boolean; recovery: boolean | null }>(
     `SELECT pg_snapshot_xmax(pg_current_snapshot())::text AS xmax,
       COALESCE((SELECT bool_or(COALESCE(pg_xact_status(x::xid8), 'committed') NOT IN ('in progress', 'aborted')) FROM unnest($1::text[]) x), false) AS moved,
-      EXISTS (SELECT 1 FROM pg_prepared_xacts) AS prepared`, [t.xids.map(String)])); // a prepared transaction at the end of the check: never proven, whatever it was at the capture
-  return !!row && /^[0-9]+$/.test(String(row.xmax)) && !xmaxMoved(t.xmax, BigInt(row.xmax)) && row.moved === false && row.prepared === false;
+      EXISTS (SELECT 1 FROM pg_prepared_xacts) AS prepared,
+      pg_is_in_recovery() AS recovery`, [t.xids.map(String)])); // a prepared transaction at the end of the check: never proven, whatever it was at the capture; nor is a server in recovery
+  return !!row && /^[0-9]+$/.test(String(row.xmax)) && !xmaxMoved(t.xmax, BigInt(row.xmax)) && row.moved === false && row.prepared === false && row.recovery === false;
 }
 
 /**
@@ -188,7 +193,7 @@ interface Base { at: number; gen?: number; lsn?: string }
  * sample's own, or the stable rerun's). `generation` reads this process's write generation NOW (follower.published), before and
  * after the snapshot, when it has a follower. `moved` is true unless everything the policy reads is proven unchanged.
  */
-async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> | undefined, cand: PageCandidates, safe: boolean, base: Base | undefined, generation: () => number | undefined, hasFollower: boolean) {
+async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> | undefined, cand: PageCandidates, safe: boolean, base: Base | undefined, generation: () => number | undefined, hasFollower: boolean, stored?: () => Promise<Map<string, string>>) {
   const accessGeneration = (): Promise<string> => reads.read(async (tx) => String((await tx.executeRaw<{ generation: string }>(POLICY_GENERATION_SQL))[0]?.generation));
   const gen0 = generation();
   const before = await accessGeneration();
@@ -202,6 +207,7 @@ async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> |
     // 1 ms of slack: a write that finished before the read can carry a microsecond time past the read's millisecond.
     changed: base ? (await tx.executeRaw<{ changed: boolean }>(CHANGED_AFTER_SQL, [base.at + 1]))[0]?.changed === true : true,
   }));
+  const payloads = stored ? await stored().catch(() => new Map<string, string>()) : new Map<string, string>(); // read here, before the proof below ends: the proof covers it; a row that cannot be read is not held
   const gen1 = generation();
   // The proof: nothing was committed between the token known before the primary read started and the end of this check (any table, the catalog, or a change undone again).
   const held = await unchangedSince(reads, base?.lsn);
@@ -209,8 +215,25 @@ async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> |
   const moved = unproven || !held || changed || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
   return {
     moved, violations: rows.filter((r) => r.allowed !== true).length,
-    pages: rows.map((r) => ({ id: Number(r.id), key: r.key })), chunks: chunks.map((c) => ({ id: Number(c.id), page_id: Number(c.page_id), sum: c.sum })),
+    payloads, pages: rows.map((r) => ({ id: Number(r.id), key: r.key })), chunks: chunks.map((c) => ({ id: Number(c.id), page_id: Number(c.page_id), sum: c.sum })),
   };
+}
+
+/** The most rows the primary's stored copy of a ranked vector search holds: the caller's limit widened (never below this many, never above the cap). */
+export const STORED_ROWS_FLOOR = 50;
+export const STORED_ROWS_CAP = 500;
+
+/**
+ * The primary's own stored rows for a ranked vector search, to compare an extra Rust row with: the same read as the sample (the caller's
+ * access, filters, scope and ranking) with the limit widened and no offset, so a row the caller's own filters exclude is simply not in it.
+ * Row identity (page and chunk) maps to the digest of every field but the ranking ones. A read that fails holds nothing (no extra row clears).
+ */
+async function storedVectorRows(d: AskDeps, sample: Sample, args: unknown[]): Promise<Map<string, string>> {
+  const [embedding, opts] = args as [Float32Array, SearchOpts | undefined];
+  const asked = Number(opts?.limit ?? 20);
+  const limit = Math.min(STORED_ROWS_CAP, Math.max(STORED_ROWS_FLOOR, Number.isFinite(asked) ? asked * 5 : 0));
+  const rows = await asCaller(sample.access, () => (d.engine as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>).searchVector!(embedding, { ...opts, limit, offset: 0 }));
+  return storedPayloads(rowIdentities(encodeValue(rows)));
 }
 
 const isRowIdentity = (v: unknown): v is RowIdentity => {
@@ -239,7 +262,9 @@ async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown;
   const extra = extraIds(rowIdentities(primary), rows);
   if (extra.rows.length === 0) return { verdict: 'clean', complete: whole && extra.unidentified === 0 };
   const args = decodeValue(sample.args) as unknown[];
-  const snap = await policySnapshot(d.reads, sample.access, candidatesOf(extra.rows), safeFenceApplies(args), base, () => d.follower?.published, d.follower !== undefined);
+  // Only a ranked vector search clears extra rows (exactness.ts): its stored rows are the ones read for the comparison; for any other read none are, so none clears.
+  const snap = await policySnapshot(d.reads, sample.access, candidatesOf(extra.rows), safeFenceApplies(args), base, () => d.follower?.published, d.follower !== undefined,
+    sample.op === 'searchVector' ? () => storedVectorRows(d, sample, args) : undefined);
   if (snap.moved) return { verdict: 'privacy_check_moved', complete: false };
   if (snap.violations > 0) return { verdict: 'violation', complete: false };
   const pageIds = new Map(snap.pages.map((p) => [p.id, p.key]));
@@ -252,7 +277,9 @@ async function privacyAnswer(d: AskDeps, sample: Sample, ask: { phase?: unknown;
     const c = chunks.get(r.chunk.id);
     return !!c && c.page_id === page && r.chunk.sum !== null && c.sum === r.chunk.sum; // the chunk is that page's, visible and fenced as the primary served it, with the text the primary stores
   };
-  return { verdict: 'clean', complete: whole && extra.unidentified === 0 && extra.rows.every(judged) };
+  // Every other field too: the row must be the primary's stored row for that page and chunk, field for field (a title, a flag, a field the primary does not have).
+  const stored = (r: ExtraRow): boolean => judged(r) && matchesStored(snap.payloads, r);
+  return { verdict: 'clean', complete: whole && extra.unidentified === 0 && extra.rows.every(stored) };
 }
 
 export interface AskDeps {

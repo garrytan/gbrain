@@ -139,7 +139,7 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
     if (accepted) fold.ranking_differences[r.op] = (fold.ranking_differences[r.op] ?? 0) + 1;
     if (COMPARED.has(r.outcome)) fold.compared++;
     if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
-    if (recent && r.outcome === 'inconclusive' && !rerunDone && r.reason?.startsWith('privacy_check_')) fold.privacy_unsettled_7d++;
+    if (recent && r.outcome === 'inconclusive' && !rerunDone && (r.reason?.startsWith('privacy_check_') || r.rerun?.startsWith('skipped:privacy_check_'))) fold.privacy_unsettled_7d++; // a rerun closed by a privacy check that never settled counts too, whatever the first check said
     if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
     if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
     if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;

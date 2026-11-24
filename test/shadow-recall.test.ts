@@ -10,7 +10,7 @@
  * something was compared and while a privacy check is unsettled, and counts pauses.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
@@ -286,5 +286,37 @@ describe('the wait before a rerun after a moved check', () => {
     expect(worst).toBe(13_125);
     expect(worst).toBeLessThanOrEqual(RERUN_BACKOFF_TOTAL_MS);
     expect(RERUN_BACKOFF_JITTER).toBeLessThan(1);
+  });
+});
+
+describe('the recall record at the shadow directory', () => {
+  const score = { vector: 1, primary: 1, overlap: 1, ref_size: 10 };
+  test('a late recall score never recreates a deleted shadow directory, and one for another epoch than the directory\'s current one is not written', () => {
+    const { dir, epoch } = epochDir();
+    appendRecall(dir, { ts, epoch_id: epoch, ...score }, { currentEpochOnly: true });
+    expect(readEpochRecall(dir, epoch)).toHaveLength(1); // control: the current epoch's score is written
+    appendRecall(dir, { ts, epoch_id: 'an-older-epoch', ...score }, { currentEpochOnly: true });
+    expect(readEpochRecall(dir, 'an-older-epoch')).toEqual([]); // another epoch than the one the directory holds
+    rmSync(dir, { recursive: true, force: true }); // `engine shadow stop --delete`
+    appendRecall(dir, { ts, epoch_id: epoch, ...score }, { currentEpochOnly: true }); // a reference that finished after it
+    expect(existsSync(dir)).toBe(false); // the root is not brought back, nor anything under it
+  });
+
+  test('a recall directory that cannot be read yields unavailable recall, not a throw out of the status: a file where the directory belongs', () => {
+    const { dir, epoch } = epochDir();
+    writeFileSync(join(dir, 'recall'), 'not a directory');
+    expect(readEpochRecall(dir, epoch)).toBeNull();
+    expect(() => status(dir)).not.toThrow();
+    expect(status(dir).search).toBeUndefined(); // the recall fields stay absent
+    expect(status(dir).evidence).toBeDefined(); // the rest of the evidence document is still returned
+  });
+});
+
+describe('a privacy check that failed only in the rerun', () => {
+  test('a row closed as skipped by a privacy check that was never settled counts as unsettled even when the first check named no reason (rows written before the reason was kept)', () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [row(epoch, 'searchVector', 'inconclusive', { private_read: true, mismatch: 'diff', rerun: 'skipped:privacy_check_unavailable' })]);
+    expect(status(dir).evidence?.privacy_checks_unsettled_7d).toBe(1);
+    expect(status(dir).privacy_diverged).toBeUndefined();
   });
 });

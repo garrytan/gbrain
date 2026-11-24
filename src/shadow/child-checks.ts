@@ -64,7 +64,7 @@ export function hasMalformedElement(encoded: unknown, list = false): boolean {
 }
 
 export interface RowIdentity { id?: number; key?: string; chunk?: ChunkIdentity; payload: string }
-export interface ExtraRow { id?: number; key?: string; chunk?: { id: number; sum: string | null } }
+export interface ExtraRow { id?: number; key?: string; chunk?: { id: number; sum: string | null }; /** The digest of every field but the ranking ones (see `RowIdentity`). */ payload: string }
 
 export function rowIdentities(encoded: unknown): RowIdentity[] {
   return rowsOf(encoded).map((r) => ({ ...pageOf(r), ...(chunkOf(r) === undefined ? {} : { chunk: chunkOf(r) }), payload: sha(canonicalJson(stripScores(r))) }));
@@ -89,10 +89,17 @@ export function extraIds(primary: RowIdentity[], rust: RowIdentity[]): { rows: E
     const pages = pageSigs(r);
     if (pages.some((p) => full.has(`${p}|${chunkSig(r.chunk)}|${r.payload}`))) continue;
     if (pages.length === 0 || r.chunk === 'invalid' || (chunky && r.chunk === undefined) || pages.some((p) => ident.has(`${p}|${chunkSig(r.chunk)}`))) { out.unidentified++; continue; }
-    out.rows.push({ ...(r.id === undefined ? {} : { id: r.id }), ...(r.key === undefined ? {} : { key: r.key }), ...(r.chunk ? { chunk: r.chunk as { id: number; sum: string | null } } : {}) });
+    out.rows.push({ ...(r.id === undefined ? {} : { id: r.id }), ...(r.key === undefined ? {} : { key: r.key }), ...(r.chunk ? { chunk: r.chunk as { id: number; sum: string | null } } : {}), payload: r.payload });
   }
   return out;
 }
+
+/** The identities one row answers to (its page by id and by slug, with its chunk), each mapped to the digest of its non-ranking fields: how the primary's stored rows are looked up. */
+export function storedPayloads(rows: RowIdentity[]): Map<string, string> {
+  return new Map(rows.flatMap((r) => pageSigs(r).map((p): [string, string] => [`${p}|${chunkSig(r.chunk)}`, r.payload])));
+}
+/** Does the primary's stored row for this extra row's page and chunk carry exactly its non-ranking fields? A row the primary does not hold, or holds with any other field, does not. */
+export const matchesStored = (stored: Map<string, string>, r: ExtraRow): boolean => pageSigs(r).some((p) => stored.get(`${p}|${chunkSig(r.chunk)}`) === r.payload);
 
 export const extraRows = (encodedPrimary: unknown, encodedRust: unknown): { rows: ExtraRow[]; unidentified: number } => extraIds(rowIdentities(encodedPrimary), rowIdentities(encodedRust));
 

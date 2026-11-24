@@ -16,6 +16,8 @@ import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
+import { withoutReadDeadline } from '../core/read-deadline.ts';
+import { withRequestSignal } from '../core/request-signal.ts';
 import { spawn as defaultSpawn } from '../core/spawn.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
@@ -45,6 +47,9 @@ export interface ShadowSupervisorOptions {
   /** The child asks the serving process a question (privacy check, stable rerun, vector reference; checks.ts); the value goes back as an `answer` line. */
   onAsk?: (ask: { id: number; kind: string; [key: string]: unknown }) => Promise<unknown>;
 }
+
+/** The longest one question of the child may hold the serving process (past the 30 s a stable rerun is allowed): its own signal cancels its reads then. */
+export const ASK_DEADLINE_MS = 45_000;
 
 /** The only codes an `ask` failure carries back to the child: never an exception message (it can hold content). */
 export const ASK_CODES: ReadonlySet<string> = new Set([
@@ -225,7 +230,10 @@ export class ShadowSupervisor implements MirrorTransport {
     let line: Record<string, unknown>;
     try {
       if (!this.o.onAsk) throw Object.assign(new Error('no handler'), { code: 'unsupported' });
-      line = { t: 'answer', id: ask.id, session, ok: true, value: await this.o.onAsk(ask) };
+      // This callback runs in the context of whichever request spawned the child (its stdout listener was made there): a cancelled request's
+      // signal and a preparation's read deadline must not reach a later ask. Each ask gets a signal and a deadline of its own.
+      const onAsk = this.o.onAsk;
+      line = { t: 'answer', id: ask.id, session, ok: true, value: await withoutReadDeadline(() => withRequestSignal(AbortSignal.timeout(ASK_DEADLINE_MS), () => onAsk(ask))) };
     } catch (error) {
       line = { t: 'answer', id: ask.id, session, ok: false, error: { code: askCode(error) } }; // a code from the allowlist, never an exception message
     }

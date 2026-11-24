@@ -14,6 +14,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { readEpoch } from './evidence-epoch.ts';
 import { readJsonlStrict } from './ledger.ts';
 
 export const RECALL_TOP = 10;
@@ -97,7 +98,14 @@ export class IntervalGate {
 
 const recallDir = (dir: string): string => join(dir, 'recall');
 
-export function appendRecall(dir: string, line: RecallLine): void {
+/**
+ * Appends one score line. Never creates the shadow directory itself: after `engine shadow stop --delete`, a reference that finishes late
+ * must not bring the evidence back (the usage and ledger writers follow the same rule). With `currentEpochOnly` (the child's writer) it also
+ * writes nothing when the directory's current epoch is not the line's: a score of a replaced epoch is dropped, never restamped.
+ */
+export function appendRecall(dir: string, line: RecallLine, opts: { currentEpochOnly?: boolean } = {}): void {
+  if (!existsSync(dir)) return;
+  if (opts.currentEpochOnly && readEpoch(dir)?.epoch_id !== line.epoch_id) return;
   mkdirSync(recallDir(dir), { recursive: true, mode: 0o700 });
   appendFileSync(join(recallDir(dir), `${line.ts.slice(0, 10)}.jsonl`), JSON.stringify(line) + '\n', { mode: 0o600 });
 }
@@ -118,7 +126,9 @@ export function validRecallLine(l: unknown): l is RecallLine {
 export function readEpochRecall(dir: string, epochId: string): RecallLine[] | null {
   if (!existsSync(recallDir(dir))) return [];
   const out: RecallLine[] = [];
-  for (const name of readdirSync(recallDir(dir)).sort()) {
+  let names: string[];
+  try { names = readdirSync(recallDir(dir)).sort(); } catch { return null; } // silent-read-ok: null is the unreadable marker (a file where the directory belongs, no permission, a deletion while listing); recall stays unavailable, never zero
+  for (const name of names) {
     if (!name.endsWith('.jsonl')) continue;
     const lines = readJsonlStrict<unknown>(join(recallDir(dir), name));
     if (lines === null) return null;
