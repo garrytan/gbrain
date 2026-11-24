@@ -362,6 +362,9 @@ export const listTopologyRecoveries: StoreMember<[hostId: string, after: string 
   ((await storeCall({ member: 'listTopologyRecoveries' }, () => brain.listTopologyRecoveries(hostId, after, limit))) as unknown[]).map(row => topologyRow(row)!);
 
 /** The lifecycle receipt of (principal, request id), or null; its two timestamps as Dates, as PGLite returns them. */
+export const readTopologyChangeDigest: StoreMember<[requestId: string, sourceId: string], string | null> = async (brain, requestId, sourceId) =>
+  (await storeCall({ member: 'readTopologyChangeDigest' }, () => brain.readTopologyChangeDigest(requestId, sourceId))) as string | null;
+
 export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
   topologyRow(await storeCall({ member: 'readTopologyChange' }, () => brain.readTopologyChange(principalId, requestId)));
 

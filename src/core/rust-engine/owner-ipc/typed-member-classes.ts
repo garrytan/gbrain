@@ -27,6 +27,12 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readRawDataValue',
   // repair-rust batch 9: the segmented-mirror, fence bookkeeping and last-job reads
   'listGlobalPurgeWithdrawals', 'listSourceCheckpointRecords', 'readOldestSyncHoldAt', 'readLastFinishedJobAt', 'readRemirrorEffects',
+  // The page-list, slug-source, access and source-add reads that moved off raw SQL together: plain SELECTs.
+  'listSourcePathRows', 'readTopologyChangeDigest', 'listLiveSlugSourceIds', 'resolveChainAnchorRows', 'probeTargetRows', 'readCompanyBrainEvidenceRows', 'listCardRows', 'readShelfPageRows', 'findCardRows', 'readFirstLiveSlugAtPath', 'listPathTwinSlugs', 'listLiveSlugOrigins',
+  'probeRetypeRows', 'listAliasCandidatePages', 'listLinkCandidatePages', 'countLivePagesByType', 'listTypeOrphanRows', 'readStaleMentionScan',
+  'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow', 'listEmailAliasPages', 'readUploadSessionByRequest', 'readSourceIncarnationArchived', 'listEnabledLabelledOnlyMemberIds', 'readChatCensusRows',
+  'readWhoCanReadRows', 'readPageAccessAllowed', 'readPageFolderRulesAllowed', 'countLineageClosingRules', 'readOpCheckpointCompletedKeys',
+  'readForecastPredictions', 'readPredictionLedgerEvents', 'readTakeHorizonRows', 'readLatestTakeGrades', 'readBeliefCoverageEvents',
   // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
   // readMentionPageRevisions and readMentionGenerations take row locks (FOR SHARE) only, so they stay reads.
   'readSegmentedPageSealed',
@@ -508,7 +514,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   expireFactAtDate: 'readFactActivity for that fact', expireFactInPlace: 'readFactActivity for that fact',
   expireFactSuperseded: 'readFactActivity for that fact', expireFactsByIds: 'readFactActivity for that fact',
   expireFactsByWithdrawal: 'readFactActivity for that fact',
-  expireFactsOfGonePages: 'readFactActivity for that fact', expireSupersededFact: 'readFactActivity for that fact',
+  expireFactsOfGonePages: 'readFactActivity for that fact', expireSupersededFact: 'readFactActivity for that fact', retireSupersededFact: 'readFactActivity for that fact',
   reattributeSessionFacts: 'readFactActivity for that fact', restoreSupersededFact: 'readFactActivity for that fact',
   setFactSupersededBy: 'readFactActivity for that fact', updateFenceFactCells: 'readFactActivity for that fact',
   advanceEffectRow: 'readRequestEffects for that request', completeEffectRow: 'readRequestEffects for that request',

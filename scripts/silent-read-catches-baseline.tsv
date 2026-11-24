@@ -893,7 +893,6 @@ src/core/github-source.ts#fetchChecks	catch_empty	1
 src/core/github-source.ts#readStoredUpdatedAt	catch_empty	1
 src/core/github-source.ts#runGitHubSyncInner	catch_empty	1
 src/core/github-source.ts#touchSourceRow	catch_empty	1
-src/core/google/counterparty.ts#emailAliasElsewhere	capability_refusal_swallowed	1
 src/core/google/file-modes.ts#scanGoogleFileModes	catch_empty	1
 src/core/google/google-clients.ts#GoogleApiClient.fetchJSON	promise_catch_empty	1
 src/core/google/google-source.ts#runGoogleSyncInner	catch_empty	2
@@ -1638,7 +1637,6 @@ src/core/sync-cost-gate.ts#runInlineCostGate	capability_refusal_swallowed	1
 src/core/sync-cost-gate.ts#runInlineCostGate	catch_empty	3
 src/core/sync-cost-gate.ts#runInlineCostGate	promise_catch_empty	1
 src/core/sync-git.ts#resolveSlugByPathOrSourcePath	catch_empty	1
-src/core/sync-git.ts#resolveSlugsForRemovedPaths	capability_refusal_swallowed	3
 src/core/sync-git.ts#resolveSlugsForRemovedPaths	catch_empty	4
 src/core/sync-identity-downgrades.ts#identityRemedyParts	capability_refusal_swallowed	1
 src/core/sync-identity-downgrades.ts#identityRemedyParts	promise_catch_empty	1

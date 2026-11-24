@@ -5379,6 +5379,19 @@
           }
         ]
       },
+      "listSourcePathRows": {
+        "default": [
+          {
+            "paramCount": 0,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": true
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "listSourceRoutingRows": {
         "default": [
           {

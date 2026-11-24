@@ -9,7 +9,8 @@ reader and writer of the table (verify, list, revoke, rescope, rotate, the read-
 brain.
 touch. The SQL for the PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts` (mint, floor) and
 `src/core/engine-sql/access-credentials.ts` (list, grant read, liveness, revokes, the bearer check); the store serves the
-same members. Only `readLiveAccessToken` returns a token hash (the member-key setup compares it to the key file); the
+same members. Only `readLiveAccessToken` (the member-key setup compares it to the key file) and doctor's
+`listActiveAccessTokenRows` (the whole `SELECT *` row, cli-reads-doctor-acc.md) return a token hash; the
 store never logs one. The member binding columns (`member_id`, `may_act_for`, the four attest columns and
 `reads_unscoped`) are read and written by the credential binding members below. The grant edits of `gbrain auth rescope
 --token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`) and `--migrate-legacy` use the grant write members

@@ -145,6 +145,8 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   deleteFactsForPage: { tables: ['facts', 'owner_only_marks'], plan: (a) => [{ relation: 'facts', sel: { source_id: a[1], source_markdown_slug: a[0] }, del: true }, ...OWNER_MARKS] },
   expireFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
   consolidateFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]) } }] },
+  // The remember consumer's supersede: one UPDATE of the old fact row (expired_at, superseded_by, valid_until).
+  retireSupersededFact: { tables: ['facts'], plan: (a) => [{ relation: 'facts', sel: { id: id(a[0]?.oldId) } }] },
   migrateFactsToCanonical: { tables: ['facts', 'owner_only_marks'] },
   mergeOntologyFact: { tables: ['facts', 'owner_only_marks'] },
   // Takes
@@ -243,6 +245,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'purgeSubjectPageLive', 'rankEntities', 'recentWriterVersions', 'scanExactBatch', 'scanUnfencedFactRows',
   'selectClaimableEffect', 'selectClaimableWrite', 'selectProjectionWindowJobs', 'sourceIdExists',
   'staleLinkRelationshipKeys', 'wordLexemes',
+  // Lane 15 reads whose names carry no read prefix: the schema-pack retype probe and the explain-target probe.
+  'probeRetypeRows', 'probeTargetRows',
 ]);
 
 /**

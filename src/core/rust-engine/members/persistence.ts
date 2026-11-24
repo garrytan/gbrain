@@ -226,6 +226,7 @@ export const PERSISTENCE_MEMBERS = {
   listOwnerProposalRows: 'persistence_journal',
   readSourceMembership: 'persistence_journal',
   findTopologyChanges: 'persistence_journal',
+  readTopologyChangeDigest: 'persistence_journal',
   listTopologyRecoveries: 'managed_persistence',
   readTopologyChange: 'persistence_journal',
   insertTopologyChange: 'persistence_journal',

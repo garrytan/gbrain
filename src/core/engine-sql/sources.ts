@@ -331,6 +331,9 @@ export async function countRepoBoundSources(exec: LegacyUnscopedRead): Promise<n
   return Number(rows[0]?.n ?? 0);
 }
 
+/** A source id and its local path (`listSourcePathRows`). */
+export interface SourcePathRow { id: string; local_path: string }
+
 /** A source with a local path and its archived flag (`listLocalPathSources`). */
 export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
 
@@ -344,6 +347,12 @@ export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: num
  * Sources that have a local path, with `archived`, in no particular order. Unscoped on master (source resolution
  * tier 4 read it through `executeRaw`). Throws on a brain older than the `archived` column; the caller falls back.
  */
+/** Every source with a local path, archived ones included, as `{ id, local_path }`, in no particular order: the other
+ * sources' directories `sources add` checks an API-backed kind's --dir against (sources-ops.ts insertApiSource). */
+export async function listSourcePathRows(exec: LegacyUnscopedRead): Promise<SourcePathRow[]> {
+  return exec.executeRaw<SourcePathRow>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL');
+}
+
 export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
 }

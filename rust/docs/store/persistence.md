@@ -165,6 +165,7 @@ lifecycle retry finds its earlier receipt. Rows are never deleted on this engine
 | `brain.insertTopologyChange(row)` | the stored `TopologyChange`. `constraint_violation` for a state the table refuses, a negative byte count, a malformed UUID, or a request id the principal already used | `insertTopologyChange` |
 | `brain.readTopologyChange(principalId, requestId)` | the `TopologyChange` or `null` | `readTopologyChange` |
 | `brain.findTopologyChanges(principalId, requestIds)` | `[{ request_id }]` for each listed request id the principal used | `findTopologyChanges` |
+| `brain.readTopologyChangeDigest(requestId, sourceId)` | the `digest` of the change with this request id for this source, whichever principal recorded it, or `null`. A request id that is not a uuid refuses | `readTopologyChangeDigest` (source-default-search.ts, the `sources add` replay) |
 | `brain.listTopologyRecoveries(hostId, after, limit)` | the changes with a recovery whose `recovery.worktreeId` names a worktree host `hostId` owns, after id `after` when given (null: from the start), in id order, at most `limit`. A host id, cursor or `worktreeId` that is not a uuid refuses with the uuid syntax message; a `worktreeId` that names no worktree, or one another host owns, is left out | `listTopologyRecoveries` (topology-recovery.ts `recoverSourceTopologies`) |
 
 The counter charges that go with a lifecycle receipt, and the settle, supersede and release updates,

@@ -288,6 +288,16 @@
           }
         ]
       },
+      "listSourcePathRows": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [],
+            "sql": "SELECT id,local_path FROM sources WHERE local_path IS NOT NULL",
+            "textSha256": "0f4fb68d64199c147205fa85ee3e47caf77eae76e1a7378795057c79ed23c99f"
+          }
+        ]
+      },
       "listSourceRoutingRows": {
         "default": [
           {

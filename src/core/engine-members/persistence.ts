@@ -356,6 +356,8 @@ export interface PersistenceMembers {
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
+  /** The digest a topology change with this request id recorded for this source, or null (the `sources add` replay). */
+  readTopologyChangeDigest(requestId: string, sourceId: string): Promise<string | null>;
   /** The topology changes with a recovery whose worktree host `hostId` owns, after change id `after`, in id order, at most `limit`. */
   listTopologyRecoveries(hostId: string, after: string | null, limit: number): Promise<TopologyChange[]>;
   readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;

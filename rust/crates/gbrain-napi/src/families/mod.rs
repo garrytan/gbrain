@@ -167,3 +167,5 @@ mod withdrawal_pages;
 mod decide_proposals;
 mod source_cr_mode;
 mod synopsis_tier;
+// The page-list, slug-source, access and connector-status reads (rust/docs/store/list-reads.md).
+mod list_reads;

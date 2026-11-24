@@ -1642,4 +1642,17 @@ impl Brain {
             s.find_topology_changes(&principal_id, &request_ids)
         })
     }
+
+    /// `readTopologyChangeDigest(requestId, sourceId)`: the digest text, or `null`.
+    #[napi]
+    pub fn read_topology_change_digest<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_topology_change_digest(&request_id, &source_id)
+        })
+    }
 }

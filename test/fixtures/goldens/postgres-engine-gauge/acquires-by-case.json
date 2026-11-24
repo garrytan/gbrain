@@ -310,6 +310,9 @@
     "listSourcePathPages#default": {
       "raw": 1
     },
+    "listSourcePathRows#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
