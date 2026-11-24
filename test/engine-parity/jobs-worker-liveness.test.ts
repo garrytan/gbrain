@@ -237,7 +237,7 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
       // The SQL engines refuse the lock-clearing UPDATE of an active row (the queue-protocol trigger), log it and resolve.
       expect(after?.status).toBe('active');
       expect(skip.errors.length).toBe(1);
-      return { after, errors: skip.errors };
+      return { after, errors: skip.errors.map(e => e.replace(`job ${id}:`, 'job <id>:')) };
     });
 
   parityTest('pingStore answers on the default and the direct lane, and rejects once the store is closed',
