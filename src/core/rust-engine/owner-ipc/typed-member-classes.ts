@@ -283,7 +283,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The derived-generation ledger, its fence evidence and repair, the chronicle event, atom and take/fact preimage
   // reads (SELECTs only; the Rust store answers each from a read snapshot).
   'countDerivedRowTaint', 'hasBodylessPageVersion', 'hasChronicleSkipDecision', 'heldGenerationRowsForInput',
-  'listAtomWriteReceipts', 'listChronicleEventSlotRows', 'listChronicleOwnedHashes', 'listEventProjectionRows',
+  'listAtomWriteReceipts', 'listChronicleCoverageGapRows', 'listChronicleEventSlotRows', 'listChronicleOwnedHashes', 'listEventProjectionRows',
   'listFactIdsBySourcePrefix', 'listFenceVersionBodies', 'listGenerationOrphanCandidates',
   'listGenerationSourceIncarnations', 'listHeldGenerationRows', 'listLiveGenerationItems',
   'listOrphanedChronicleOwners', 'listOwnedGenerationItems', 'listPageContentHashes', 'listPendingGenerationMembers',

@@ -183,6 +183,8 @@ export interface PersistenceMembers {
   hasChronicleSkipDecision(decision: ChronicleEventsSql.ChronicleSkipDecision): Promise<boolean>;
   listOrphanedChronicleOwners(sourceId: string, kind: string, limit: number): Promise<string[]>;
   listChronicleEventSlotRows(sourceId: string, slugs: readonly string[]): Promise<ChronicleEventsSql.ChronicleEventSlotRow[]>;
+  /** The chronicle advisor's coverage-gap read: recent chronicle-shaped pages that no event projection covers yet. */
+  listChronicleCoverageGapRows(): Promise<ChronicleEventsSql.ChronicleCoverageGapRow[]>;
   /** The atom adapter's reads (engine-sql/generation-atom-reads.ts): a live page origin's input pin, the stored versions a producer wrote, committed managed atom receipts. */
   readAtomOriginInput(sourceId: string, slug: string): Promise<AtomOriginInputRow | null>;
   listProducerVersionRows(sourceId: string, slugs: readonly string[], producer: GenerationVersionProducer): Promise<ProducerVersionRow[]>;

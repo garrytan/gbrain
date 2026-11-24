@@ -3036,6 +3036,17 @@
         ],
         "flagOnScopes": []
       },
+      "listChronicleCoverageGapRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listChronicleEventSlotRows#default": {
         "flagOffLanes": [
           "pool"
@@ -9554,6 +9565,7 @@
         "listCheckoutFiles": "none",
         "listCheckoutRoots": "none",
         "listCheckpointBlockedSources": "none",
+        "listChronicleCoverageGapRows": "none",
         "listChronicleEventSlotRows": "none",
         "listChronicleOwnedHashes": "none",
         "listChunklessPagesWithContent": "direct",

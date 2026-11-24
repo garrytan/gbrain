@@ -133,6 +133,7 @@ export const PERSISTENCE_MEMBERS = {
   hasChronicleSkipDecision: 'persistence_journal',
   listOrphanedChronicleOwners: 'persistence_journal',
   listChronicleEventSlotRows: 'persistence_journal',
+  listChronicleCoverageGapRows: 'persistence_journal',
   readAtomOriginInput: 'persistence_journal',
   listProducerVersionRows: 'persistence_journal',
   listAtomWriteReceipts: 'persistence_journal',

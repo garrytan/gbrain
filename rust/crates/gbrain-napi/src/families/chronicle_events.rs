@@ -156,6 +156,15 @@ impl Brain {
         })
     }
 
+    /// `listChronicleCoverageGapRows()`: resolves `[{ type, effective_date, effective_date_source, fm_date, fm_start }]`.
+    #[napi]
+    pub fn list_chronicle_coverage_gap_rows<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_chronicle_coverage_gap_rows())
+    }
+
     /// `listChronicleEventSlotRows(spec)`: resolves `[{ slug, when, where, kind }]`.
     #[napi]
     pub fn list_chronicle_event_slot_rows<'env>(
