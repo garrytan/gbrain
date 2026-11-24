@@ -26,7 +26,7 @@ import { shadowStatusDocument } from '../src/shadow/status-document.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const CONFIG = { engine: 'pglite' as const, database_path: '/brains/example.pglite' };
-const PG_CONFIG = { engine: 'postgres' as const, database_url: 'postgres://u:p@db.example:5432/brain' };
+const PG_CONFIG = { engine: 'postgres' as const, database_url: 'postgres://db.example:5432/brain' };
 const STATE: ShadowState = { version: SHADOW_STATE_VERSION, enabled: true, started_at: '2026-11-01T00:00:00.000Z', sample_rate: 0.1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
 const COMMIT = 'a'.repeat(40);
 const ADDON = 'b'.repeat(64);
