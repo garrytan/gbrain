@@ -132,6 +132,11 @@ whose email or phone is exactly the same as one of the contact's, the rule
 the Apple Contacts source uses:
 
 - A name alone never links.
+- The same person page copied into other sources (the same slug, the same
+  matching email or phone, and a name that agrees, as with a read-only
+  mirror) counts as one person: the contact links to every copy, with the
+  default source's page as the main one. A copy that carries a different
+  email or phone is another candidate.
 - A contact whose email or phone matches two or more people, or one person
   whose page has another name (a shared or reused address), stays unlinked
   and waits for you: `gbrain sync status --source <id>` lists it, and
@@ -152,7 +157,8 @@ every link the source made and sets it off.
 lists every contact that waits, under `reviews`: its `contact_slug`, the
 `reason` (`several_people` or `name_disagrees`) and each candidate as
 `source:slug` with what matched it (`email`, `phone` or both, never the
-address or number). Write your choice for each one into a JSON file:
+address or number); copies of one page in other sources are listed once,
+under `mirrors`, and `link` or `reject` on it covers every copy. Write your choice for each one into a JSON file:
 
 ```json
 [

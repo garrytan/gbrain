@@ -3,7 +3,9 @@
  * candidate read behind whois (engine-sql/exact-identity.ts) and the identity groups of entity-identity.ts:
  *
  *   - exactly one person: the contact page joins that person's identity group (one is made, with the person page as
- *     its canonical member, when the person page has none). Only entity_identities rows are written; the person page
+ *     its canonical member, when the person page has none). With collapseMirrors (the Google Contacts linker), copies
+ *     of one person page in other sources (the same slug, the same matched keys and a name that agrees: mirrorSets)
+ *     are one person, and all of them join the group, with the default source's copy as canonical. Only entity_identities rows are written; the person page
  *     itself, its file and its frontmatter, are never touched.
  *   - no person: no link (a link this source made earlier is removed).
  *   - two or more: no link. The case is recorded as an identity review for the owner, which gbrain sync status lists
@@ -31,6 +33,7 @@ import { linkEntityIdentity, listEntityIdentities, unlinkEntityIdentity } from '
 import { decidedSets } from '../entities/identity-decisions.ts';
 import { namesAgree } from '../entities/name-variants.ts';
 import { CONNECTOR_KINDS_SQL } from '../persistence/connector-kinds.ts';
+import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import type { IdentityMemberRef } from '../engine-sql/identity-decisions.ts';
 
 export const APPLE_CONTACTS_LINK_ORIGIN = 'apple-contacts';
@@ -49,7 +52,8 @@ export interface IdentityReview {
   decided?: 'different';
 }
 
-export type MatchOutcome = { kind: 'one'; entityId: string; person: IdentityMemberRef } | { kind: 'none' } | { kind: 'many'; candidates: IdentityMemberRef[] }
+/** person: the canonical page; members: every matched page of that person (copies of one page in other sources included). */
+export type MatchOutcome = { kind: 'one'; entityId: string; person: IdentityMemberRef; members: IdentityMemberRef[] } | { kind: 'none' } | { kind: 'many'; candidates: IdentityMemberRef[] }
   | { kind: 'different'; candidates: IdentityMemberRef[] } | { kind: 'name_disagrees'; candidates: IdentityMemberRef[] } | { kind: 'ignored' };
 
 /** Which of a contact's keys matched a candidate: the kind only, never the value. */
@@ -63,13 +67,23 @@ const strings = (value: unknown): string[] => { const v = decoded(value); return
 const refKey = (m: IdentityMemberRef) => `${m.source_id}\t${m.slug}`;
 
 /** The person pages (outside this source) whose email or phone equals one of the contact's, exactly, with the kinds of key that matched. */
-export async function exactPersonMatches(engine: BrainEngine, sourceId: string, emails: string[], phones: string[], countryCode: string): Promise<{ pages: IdentityMemberRef[]; truncated: boolean; titles: Map<string, string>; matched: Map<string, MatchedKey[]> }> {
+export interface ExactPersonMatches {
+  pages: IdentityMemberRef[];
+  truncated: boolean;
+  titles: Map<string, string>;
+  /** By candidate (source_id, tab, slug): the kinds of key that matched. */
+  matched: Map<string, MatchedKey[]>;
+  /** By candidate: the normalized keys that matched, for comparing copies of one page; never printed. */
+  keys: Map<string, string[]>;
+}
+
+export async function exactPersonMatches(engine: BrainEngine, sourceId: string, emails: string[], phones: string[], countryCode: string): Promise<ExactPersonMatches> {
   const emailKeys = [...new Set(emails.map(e => identityEmailKey(e)).filter((e): e is string => !!e))];
   const phoneKeys = [...new Set(phones.map(p => canonicalPhone(p, countryCode)).filter((p): p is string => !!p))];
-  if (!emailKeys.length && !phoneKeys.length) return { pages: [], truncated: false, titles: new Map(), matched: new Map() };
+  if (!emailKeys.length && !phoneKeys.length) return { pages: [], truncated: false, titles: new Map(), matched: new Map(), keys: new Map() };
   const sourceIds = (await engine.executeRaw<{ id: string }>(
     `SELECT id FROM sources WHERE archived IS NOT TRUE AND id <> $1 AND COALESCE(config->>'kind','') NOT IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`, [sourceId])).map(r => r.id);
-  if (!sourceIds.length) return { pages: [], truncated: false, titles: new Map(), matched: new Map() };
+  if (!sourceIds.length) return { pages: [], truncated: false, titles: new Map(), matched: new Map(), keys: new Map() };
   const { text, params } = exactIdentityStatement({
     probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: [...new Set([...emails.map(e => e.trim()), ...emailKeys])],
       phones: [...new Set(phoneKeys.flatMap(p => phoneProbeDigits(p, countryCode)))] },
@@ -77,35 +91,68 @@ export async function exactPersonMatches(engine: BrainEngine, sourceId: string, 
   });
   const rows = await engine.executeRaw<ExactIdentityRow>(text, params);
   const matched = new Map<string, MatchedKey[]>();
+  const keys = new Map<string, string[]>();
   for (const row of rows.slice(0, CANDIDATE_CAP)) {
-    const kinds: MatchedKey[] = [];
-    if ([...strings(row.email), ...strings(row.emails)].some(v => { const k = identityEmailKey(v); return !!k && emailKeys.includes(k); })) kinds.push('email');
-    if ([...strings(row.phone), ...strings(row.phones)].some(v => { const k = canonicalPhone(v, countryCode); return !!k && phoneKeys.includes(k); })) kinds.push('phone');
-    if (kinds.length) matched.set(refKey(row), kinds);
+    const mails = [...strings(row.email), ...strings(row.emails)].map(v => identityEmailKey(v)).filter((k): k is string => !!k && emailKeys.includes(k));
+    const nums = [...strings(row.phone), ...strings(row.phones)].map(v => canonicalPhone(v, countryCode)).filter((k): k is string => !!k && phoneKeys.includes(k));
+    if (!mails.length && !nums.length) continue;
+    matched.set(refKey(row), [...(mails.length ? ['email' as const] : []), ...(nums.length ? ['phone' as const] : [])]);
+    keys.set(refKey(row), [...new Set([...mails.map(k => `email:${k}`), ...nums.map(k => `phone:${k}`)])].sort());
   }
   const matches = rows.slice(0, CANDIDATE_CAP).filter(row => matched.has(refKey(row)));
   return { pages: matches.map(r => ({ source_id: r.source_id, slug: r.slug })), truncated: rows.length > CANDIDATE_CAP,
-    titles: new Map(matches.filter(r => r.title).map(r => [refKey(r), r.title!])), matched };
+    titles: new Map(matches.filter(r => r.title).map(r => [refKey(r), r.title!])), matched, keys };
 }
 
-/** Matched pages counted as people: pages in one identity group are one person. */
-async function outcomeOf(engine: BrainEngine, pages: IdentityMemberRef[], truncated: boolean): Promise<MatchOutcome> {
+/**
+ * Copies of one page: candidates with the same slug in several sources that carry exactly the same matched keys under
+ * names that agree, as when a person page is mirrored into read-only copies of other sources. Each set lists the
+ * default source's copy first; every other candidate is a set of one. Copies that disagree on a key stay apart.
+ */
+export function mirrorSets(pages: IdentityMemberRef[], m: Pick<ExactPersonMatches, 'keys' | 'titles'>): IdentityMemberRef[][] {
+  const bySlug = new Map<string, IdentityMemberRef[]>();
+  for (const page of pages) bySlug.set(page.slug, [...bySlug.get(page.slug) ?? [], page]);
+  const sig = (page: IdentityMemberRef) => (m.keys.get(refKey(page)) ?? []).join('\n');
+  const out: IdentityMemberRef[][] = [];
+  for (const copies of bySlug.values()) {
+    const first = copies[0]!;
+    const name = m.titles.get(refKey(first));
+    const one = copies.length > 1 && !!sig(first) && !!name && copies.every(c => {
+      const t = m.titles.get(refKey(c));
+      return sig(c) === sig(first) && !!t && (t === name || namesAgree(name, t) === true);
+    });
+    if (!one) { for (const c of copies) out.push([c]); continue; }
+    out.push([...copies].sort((a, b) => Number(b.source_id === DEFAULT_SOURCE_ID) - Number(a.source_id === DEFAULT_SOURCE_ID) || (a.source_id < b.source_id ? -1 : 1)));
+  }
+  return out;
+}
+
+/**
+ * Matched pages counted as people: pages in one identity group are one person, and so are the copies of one page
+ * (mirrorSets) when at most one identity group holds any of them.
+ */
+async function outcomeOf(engine: BrainEngine, pages: IdentityMemberRef[], truncated: boolean, m: Pick<ExactPersonMatches, 'keys' | 'titles'> | null): Promise<MatchOutcome> {
   if (!pages.length) return { kind: 'none' };
+  const entityOf = new Map(await Promise.all(pages.map(async page => [refKey(page), (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: page.source_id }))
+    .find(x => x.slug === page.slug && x.source_id === page.source_id)?.entity_id ?? null] as const)));
   const groups = new Map<string, IdentityMemberRef[]>();
-  const members = await Promise.all(pages.map(async page => ({ page, entity: (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: page.source_id }))
-    .find(m => m.slug === page.slug && m.source_id === page.source_id)?.entity_id ?? null })));
-  for (const { page, entity } of members) {
-    const key = entity ? `entity:${entity}` : `page:${refKey(page)}`;
-    groups.set(key, [...groups.get(key) ?? [], page]);
+  for (const set of m ? mirrorSets(pages, m) : pages.map(p => [p])) {
+    const entities = [...new Set(set.map(p => entityOf.get(refKey(p))).filter((e): e is string => !!e))];
+    for (const unit of entities.length > 1 ? set.map(p => [p]) : [set]) {
+      const entity = unit.map(p => entityOf.get(refKey(p))).find(e => !!e);
+      const key = entity ? `entity:${entity}` : `page:${refKey(unit[0]!)}`;
+      groups.set(key, [...groups.get(key) ?? [], ...unit]);
+    }
   }
   if (groups.size > 1 || truncated) return { kind: 'many', candidates: pages };
-  const [key, [person]] = [...groups][0]!;
-  return { kind: 'one', person: person!, entityId: key.startsWith('entity:') ? key.slice('entity:'.length)
-    : `person-${createHash('sha256').update(refKey(person!)).digest('hex').slice(0, 16)}` };
+  const [key, members] = [...groups][0]!;
+  const person = members.find(p => p.source_id === DEFAULT_SOURCE_ID) ?? members[0]!;
+  return { kind: 'one', person, members, entityId: key.startsWith('entity:') ? key.slice('entity:'.length)
+    : `person-${createHash('sha256').update(refKey(person)).digest('hex').slice(0, 16)}` };
 }
 
 /** otherWriter: the contact page is in an identity group another writer made, which is left as it is. matched: by candidate (source_id, tab, slug). */
-export interface LinkResult { outcome: MatchOutcome['kind']; linked: boolean; unlinked: boolean; candidates?: IdentityMemberRef[]; otherWriter?: boolean; matched?: Map<string, MatchedKey[]>; titles?: Map<string, string> }
+export interface LinkResult { outcome: MatchOutcome['kind']; linked: boolean; unlinked: boolean; candidates?: IdentityMemberRef[]; otherWriter?: boolean; matched?: Map<string, MatchedKey[]>; titles?: Map<string, string>; sets?: IdentityMemberRef[][] }
 
 export interface LinkOptions {
   /** established_by of the rows this linker writes; only its own rows are moved or removed. */
@@ -116,6 +163,8 @@ export interface LinkOptions {
   dryRun?: boolean;
   /** The contact's name: a single match whose page names clearly disagree with it is not linked (outcome name_disagrees). */
   contactName?: string;
+  /** Count the copies of one page in other sources as one person (mirrorSets); the Google Contacts linker sets it. */
+  collapseMirrors?: boolean;
 }
 
 /** Match one contact page and bring its identity link in line with the outcome. */
@@ -125,7 +174,8 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
   const apart = opts.apart ?? decidedSets(await engine.listIdentityDecisions()).apart;
   const contact = refKey({ source_id: sourceId, slug });
   const decided = apart.filter(set => set.some(m => refKey(m) === contact));
-  const { pages, truncated, titles, matched } = await exactPersonMatches(engine, sourceId, emails, phones, countryCode);
+  const found = await exactPersonMatches(engine, sourceId, emails, phones, countryCode);
+  const { pages, truncated, titles, matched } = found;
   let outcome: MatchOutcome;
   if (decided.some(set => set.length === 1)) outcome = { kind: 'ignored' };
   else {
@@ -139,7 +189,7 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
       }
       kept.push(page);
     }
-    outcome = pages.length && !kept.length ? { kind: 'different', candidates: pages } : await outcomeOf(engine, kept, truncated);
+    outcome = pages.length && !kept.length ? { kind: 'different', candidates: pages } : await outcomeOf(engine, kept, truncated, opts.collapseMirrors ? found : null);
     if (outcome.kind === 'one' && kept.length < pages.length) outcome = { kind: 'many', candidates: kept };
     else if (outcome.kind === 'one' && opts.contactName) {
       const verdicts = kept.map(p => titles.get(refKey(p))).filter((t): t is string => !!t).map(t => namesAgree(opts.contactName!, t));
@@ -150,26 +200,34 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
   // Another writer's link (the owner's manual link or a dedupe confirm) is a person's decision: never moved or removed here.
   if (current && current.established_by !== origin) return { outcome: outcome.kind, linked: false, unlinked: false, otherWriter: true };
   if (outcome.kind === 'one') {
-    if (current?.entity_id === outcome.entityId) return { outcome: 'one', linked: false, unlinked: false };
-    if (opts.dryRun) return { outcome: 'one', linked: true, unlinked: !!current };
-    const group = await listEntityIdentities(engine, { entityId: outcome.entityId });
-    if (!group.some(m => m.slug === outcome.person.slug && m.source_id === outcome.person.source_id)) {
-      await linkEntityIdentity(engine, { entityId: outcome.entityId, slug: outcome.person.slug, sourceId: outcome.person.source_id, establishedBy: origin, canonical: true });
+    const { entityId, person } = outcome;
+    const group = await listEntityIdentities(engine, { entityId });
+    const missing = outcome.members.filter(p => !group.some(g => g.slug === p.slug && g.source_id === p.source_id));
+    const moves = current?.entity_id !== entityId;
+    if (!moves && !missing.length) return { outcome: 'one', linked: false, unlinked: false };
+    if (opts.dryRun) return { outcome: 'one', linked: moves, unlinked: moves && !!current };
+    const hasCanonical = group.some(g => g.canonical);
+    for (const p of missing) {
+      await linkEntityIdentity(engine, { entityId, slug: p.slug, sourceId: p.source_id, establishedBy: origin, canonical: !hasCanonical && refKey(p) === refKey(person) });
     }
+    if (!moves) return { outcome: 'one', linked: false, unlinked: false };
     if (current) await unlinkContact(engine, current.entity_id, slug, sourceId, origin);
-    await linkEntityIdentity(engine, { entityId: outcome.entityId, slug, sourceId, establishedBy: origin, canonical: false });
+    await linkEntityIdentity(engine, { entityId, slug, sourceId, establishedBy: origin, canonical: false });
     return { outcome: 'one', linked: true, unlinked: !!current };
   }
   if (current && !opts.dryRun) await unlinkContact(engine, current.entity_id, slug, sourceId, origin);
-  return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' || outcome.kind === 'name_disagrees' ? { candidates: outcome.candidates, matched, titles } : {}) };
+  return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' || outcome.kind === 'name_disagrees' ? { candidates: outcome.candidates, matched, titles, ...(opts.collapseMirrors ? { sets: mirrorSets(outcome.candidates, found) } : {}) } : {}) };
 }
 
-/** Remove this source's link of a contact page, and the person page's row this source made when it is left alone in the group. */
+/**
+ * Remove this source's link of a contact page, and the person page rows this source made (the page and its copies in
+ * other sources) when no other contact of the source and no other writer's row is left in the group.
+ */
 export async function unlinkContact(engine: BrainEngine, entityId: string, slug: string, sourceId: string, origin = APPLE_CONTACTS_LINK_ORIGIN): Promise<void> {
   await unlinkEntityIdentity(engine, { entityId, slug, sourceId });
   const rest = await listEntityIdentities(engine, { entityId });
-  if (rest.length === 1 && rest[0]!.established_by === origin) {
-    await unlinkEntityIdentity(engine, { entityId, slug: rest[0]!.slug, sourceId: rest[0]!.source_id });
+  if (rest.length && rest.every(r => r.established_by === origin && r.source_id !== sourceId)) {
+    for (const r of rest) await unlinkEntityIdentity(engine, { entityId, slug: r.slug, sourceId: r.source_id });
   }
 }
 

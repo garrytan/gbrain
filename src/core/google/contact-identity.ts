@@ -50,7 +50,8 @@ export interface ContactReviewLine {
   contact_slug: string;
   title: string | null;
   reason: 'several_people' | 'name_disagrees';
-  candidates: Array<{ candidate: string; title: string | null; matched: MatchedKey[] }>;
+  /** One entry per person: copies of one page in other sources (mirrorSets) are listed under mirrors. */
+  candidates: Array<{ candidate: string; title: string | null; matched: MatchedKey[]; mirrors?: string[] }>;
 }
 
 const list = (v: unknown): string[] => (Array.isArray(v) ? v : [v]).filter((s): s is string => typeof s === 'string' && s.trim() !== '');
@@ -94,7 +95,7 @@ export async function linkGoogleContacts(engine: BrainEngine, sourceId: string, 
   for (const row of pages) {
     counts.contacts++;
     const link = await linkContactPage(engine, sourceId, row.slug, row.emails, row.phones, countryCode,
-      { origin: GOOGLE_CONTACTS_LINK_ORIGIN, apart, dryRun: !opts.apply, ...(row.title ? { contactName: row.title } : {}) });
+      { origin: GOOGLE_CONTACTS_LINK_ORIGIN, apart, dryRun: !opts.apply, collapseMirrors: true, ...(row.title ? { contactName: row.title } : {}) });
     if (link.unlinked) counts.unlinked++;
     if (link.otherWriter) counts.other_writer++;
     else if (link.outcome === 'one') counts[link.linked ? 'linked' : 'already_linked']++;
@@ -102,8 +103,9 @@ export async function linkGoogleContacts(engine: BrainEngine, sourceId: string, 
     else if (link.outcome === 'ignored') counts.ignored++;
     else if (link.outcome === 'none') counts.no_match++;
     const waits = (reason: ContactReviewLine['reason']) => {
-      if (opts.listReviews) listed.push({ contact_slug: row.slug, title: row.title, reason, candidates: link.candidates!.map(c => ({
-        candidate: `${c.source_id}:${c.slug}`, title: link.titles?.get(refKey(c)) ?? null, matched: link.matched?.get(refKey(c)) ?? [] })) });
+      if (opts.listReviews) listed.push({ contact_slug: row.slug, title: row.title, reason, candidates: (link.sets ?? link.candidates!.map(c => [c])).map(([c, ...mirrors]) => ({
+        candidate: `${c!.source_id}:${c!.slug}`, title: link.titles?.get(refKey(c!)) ?? null, matched: link.matched?.get(refKey(c!)) ?? [],
+        ...(mirrors.length ? { mirrors: mirrors.map(m => `${m.source_id}:${m.slug}`) } : {}) })) });
     };
     if (link.outcome === 'name_disagrees' && !link.otherWriter) {
       counts.name_disagrees++;

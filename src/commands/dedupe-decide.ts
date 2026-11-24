@@ -2,13 +2,14 @@
  * The owner's own decisions for the contacts of a Google Contacts source that wait for a person (gbrain dedupe decide,
  * GST-3609). A choices file holds one line per contact, `{ contact_slug, action, candidate? }`:
  *
- *   - link:   the contact and the one candidate named are the same person (a "same" decision for exactly that pair; the
+ *   - link:   the contact and the one candidate named are the same person (a "same" decision for exactly that pair, or
+ *             for the contact and every copy of the candidate in other sources when it is mirrored: mirrorSets; the
  *             contact joins the candidate's identity group, or a new one with the candidate as its canonical page);
  *   - new:    none of the candidates: a person page named after the contact is made in the default source and the
  *             contact is linked to it: on a brain with a repository the page file is committed with the decisions and
  *             then imported, so git has it first; without one it is written through put_page;
- *   - reject: the contact is a different person from each candidate listed (`candidate` or `candidates`), or from every
- *             current candidate when none is listed: one "different" decision per pair, so the contact still waits on
+ *   - reject: the contact is a different person from each candidate listed (`candidate` or `candidates`, with its
+ *             copies in other sources), or from every current candidate when none is listed: one "different" decision per pair, so the contact still waits on
  *             any candidate not rejected;
  *   - ignore: not a person (a shared inbox, a service): a one-member "different" decision, which keeps the contact out of
  *             every identity group and off the list of contacts that wait;
@@ -28,7 +29,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
 import { decidedSets, decisionId, identityHome, memberKey, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import { listEntityIdentities } from '../core/entity-identity.ts';
-import { exactPersonMatches } from '../core/apple-contacts/identity-match.ts';
+import { exactPersonMatches, mirrorSets } from '../core/apple-contacts/identity-match.ts';
 import { parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../core/phone-key.ts';
 import { slugifyEntity } from '../core/enrichment-service.ts';
 import { importFromFile } from '../core/import-file.ts';
@@ -102,6 +103,9 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
     const current = (await listEntityIdentities(engine, { slug: row.slug, slugSourceId: sourceId })).find(m => m.slug === row.slug && m.source_id === sourceId) ?? null;
     const otherGroup = current && current.established_by !== GOOGLE_CONTACTS_LINK_ORIGIN ? current.entity_id : null;
     const p: Planned = { line, decisions: [], contact, unlinkFirst: false };
+    const found = await exactPersonMatches(engine, sourceId, row.emails, row.phones, countryCode);
+    const sets = mirrorSets(found.pages, found);
+    const setOf = (m: IdentityMemberRef) => sets.find(set => set.some(x => memberKey(x) === memberKey(m))) ?? [m];
 
     if (line.action === 'ignore') {
       if (otherGroup) { refuse('contact_in_other_group', `${line.contact_slug} is in identity group ${otherGroup}, which another writer made; remove it from that group first.`); continue; }
@@ -112,10 +116,10 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
       if (listed.length) {
         const refs = listed.map(parseRef);
         if (refs.some(r => !r)) { refuse('invalid_candidate', 'A candidate is written source:slug.'); continue; }
-        targets = refs as IdentityMemberRef[];
+        targets = [...new Map((refs as IdentityMemberRef[]).flatMap(setOf).map(m => [memberKey(m), m])).values()];
       } else {
         const rejected = new Set(apart.filter(set => set.some(m => memberKey(m) === key)).flatMap(set => set.map(memberKey)));
-        targets = (await exactPersonMatches(engine, sourceId, row.emails, row.phones, countryCode)).pages.filter(m => !rejected.has(memberKey(m)));
+        targets = found.pages.filter(m => !rejected.has(memberKey(m)));
         if (!targets.length) { refuse('no_candidates', `${line.contact_slug} has no candidate left to reject.`); continue; }
       }
       const missing = [];
@@ -124,6 +128,7 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
       for (const t of targets) p.decisions.push({ verdict: 'different', members: [contact, t], group_id: null, entity_id: null, canonical: null, decided_by: DECIDED_BY });
     } else {
       let person: IdentityMemberRef;
+      let people: IdentityMemberRef[];
       let entityId: string;
       if (line.action === 'link') {
         if (e.candidate === undefined) { refuse('candidate_required', 'link names the one candidate: candidate: "source:slug".'); continue; }
@@ -132,11 +137,16 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
         const page = await engine.getPage(cand.slug, { sourceId: cand.source_id });
         if (!page || memberKey(cand) === key) { refuse('unknown_candidate', `No live page ${text(cand)} to link.`); continue; }
         if (page.type !== 'person') { refuse('not_a_person_page', `${text(cand)} is a ${page.type} page, not a person page.`); continue; }
-        const pair = decisionId([contact, cand]);
-        const apartSet = apart.find(set => decisionId(set) !== pair && set.some(m => memberKey(m) === key) && set.some(m => memberKey(m) === memberKey(cand)));
+        people = setOf(cand);
+        const same = decisionId([contact, ...people]);
+        const apartSet = apart.find(set => decisionId(set) !== same && set.some(m => memberKey(m) === key) && set.some(m => people.some(x => memberKey(x) === memberKey(m))));
         if (apartSet) { refuse('rejected_pair', `${line.contact_slug} and ${text(cand)} are recorded as different people (decision ${decisionId(apartSet)}).`); continue; }
-        person = cand;
-        entityId = (await listEntityIdentities(engine, { slug: cand.slug, slugSourceId: cand.source_id })).find(m => m.slug === cand.slug && m.source_id === cand.source_id)?.entity_id ?? entityFor(cand);
+        person = people[0]!;
+        let held: string | undefined;
+        for (const m of [cand, ...people]) {
+          held ??= (await listEntityIdentities(engine, { slug: m.slug, slugSourceId: m.source_id })).find(x => x.slug === m.slug && x.source_id === m.source_id)?.entity_id;
+        }
+        entityId = held ?? entityFor(person);
       } else {
         if (!row.title?.trim()) { refuse('no_title', `${line.contact_slug} has no name to give a new person page.`); continue; }
         const base = slugifyEntity(row.title, 'person');
@@ -145,13 +155,14 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
           || await engine.getPage(slug, { sourceId: DEFAULT_SOURCE_ID, includeDeleted: true }); i++) slug = `${base}-${i}`;
         taken.add(slug);
         person = { source_id: DEFAULT_SOURCE_ID, slug };
+        people = [person];
         p.newPage = { ref: person, title: row.title.trim() };
         entityId = entityFor(person);
         line.page = text(person);
       }
       if (otherGroup && otherGroup !== entityId) { refuse('contact_in_other_group', `${line.contact_slug} is in identity group ${otherGroup}, which another writer made; remove it from that group first.`); continue; }
       p.unlinkFirst = !!current && !otherGroup;
-      p.decisions.push({ verdict: 'same', members: [contact, person], group_id: null, entity_id: entityId, canonical: person, decided_by: DECIDED_BY });
+      p.decisions.push({ verdict: 'same', members: [contact, ...people], group_id: null, entity_id: entityId, canonical: person, decided_by: DECIDED_BY });
     }
     if (home) {
       const blocked = (await unpublishableMembers(engine, home.sourceId, p.decisions)).find(b => b !== null);
