@@ -7,3 +7,5 @@
 <!-- behavior-change: keyless_no_embedding_held_notice_gbra789 -->
 - gbrain transcripts ingest suggests gbrain get <slug> for the page it wrote instead of a query for the slug string.
 <!-- behavior-change: transcripts_try_it_get_gbra789 -->
+- gbrain learned and learned --stats start their default window at the brain's creation on a brain younger than the window, instead of naming a date before the brain existed.
+<!-- behavior-change: learned_window_brain_start_gbra789 -->

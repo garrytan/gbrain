@@ -51,6 +51,18 @@ export async function callerFilters(engine: BrainEngine, ctx: OperationContext):
 }
 
 const iso = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+/**
+ * A default window's start: `days` before now, or the brain's creation when the brain is younger, so the view never
+ * names a date before the brain existed. The brain's creation is its earliest source row (initSchema seeds the default
+ * source when the brain is created); no ledger row can be older than it.
+ */
+export async function defaultWindowStart(engine: BrainEngine, now: Date, days: number): Promise<Date> {
+  const windowStart = new Date(now.getTime() - days * 86_400_000);
+  const created = (await engine.getSource('default'))?.created_at;
+  const brainStart = created ? new Date(created) : null;
+  return brainStart && brainStart > windowStart && brainStart <= now ? brainStart : windowStart;
+}
 const ITEM_COLUMNS = `li.id, li.kind, li.state, li.source_id, li.subject_slug, li.prior_revision, ${iso('li.created_at')} AS created_at, ${iso('li.shown_at')} AS shown_at`;
 
 function liveFactSql(a: string, f: CallerFilters): string {
@@ -158,7 +170,7 @@ export interface LearnedView {
 export async function readLearned(engine: BrainEngine, ctx: OperationContext,
   opts: { sourceIds: string[] | null; since?: Date; limit: number; now?: Date }): Promise<LearnedView> {
   const now = opts.now ?? new Date();
-  const since = opts.since ?? new Date(now.getTime() - LEARNED_WINDOW_DAYS * 86_400_000);
+  const since = opts.since ?? await defaultWindowStart(engine, now, LEARNED_WINDOW_DAYS);
   const f = await callerFilters(engine, ctx);
   const items = await liveItems(engine, ctx, f, { sourceIds: opts.sourceIds, since, unseenOnly: opts.since === undefined, limit: opts.limit });
   const singleUserPipe = ctx.transport === 'stdio' && !ctx.auth && currentCallerAccess().identity.length === 0 && !(await ownerMemberId(engine));
