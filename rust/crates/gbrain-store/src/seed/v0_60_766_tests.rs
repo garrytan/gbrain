@@ -265,6 +265,10 @@ fn open_old_records_on_failing_disk(code: &'static str, fail_on: fn(&[u8]) -> bo
     let kv: Arc<dyn crate::kv::Kv> = Arc::new(crate::test_support::FaultyKv {
         inner: inner.clone(),
         code,
+        ops: &[
+            crate::test_support::FaultOp::Scan,
+            crate::test_support::FaultOp::Put,
+        ],
         fail_on,
     });
     let err = Store::open_kv(kv, Arc::new(SystemEnv), OpenOptions::default())

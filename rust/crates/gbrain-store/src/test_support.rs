@@ -121,25 +121,40 @@ pub(crate) fn store_on_file(file: &FlakyFile) -> Store {
     Store::open_kv(Arc::new(kv), Arc::new(SystemEnv), OpenOptions::default()).unwrap()
 }
 
-/// A record store whose write transactions fail the way a failing disk does: a `put` or a `scan`
-/// inside a write transaction returns `code` once `fail_on` accepts the key (a scan's start key),
-/// so a test can make one step of a format upgrade hit an I/O or storage error. Reads through a
-/// snapshot, and every other call, go to the wrapped store.
+/// The calls of a write transaction `FaultyKv` can fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FaultOp {
+    /// `get`, with the key read.
+    Get,
+    /// `scan`, with the start key.
+    Scan,
+    /// `put`, with the key written.
+    Put,
+    /// `delete`, with the key deleted.
+    Delete,
+}
+
+/// A record store whose write transactions fail the way a failing disk does: a call in `ops`
+/// inside a write transaction returns `code` once `fail_on` accepts its key (a scan's start
+/// key), so a test can make one step of a format upgrade hit an I/O or storage error. Reads
+/// through a snapshot, and every other call, go to the wrapped store.
 pub(crate) struct FaultyKv {
     pub(crate) inner: Arc<dyn crate::kv::Kv>,
     pub(crate) code: &'static str,
+    pub(crate) ops: &'static [FaultOp],
     pub(crate) fail_on: fn(&[u8]) -> bool,
 }
 
 struct FaultyWrite {
     inner: Box<dyn crate::kv::KvWrite>,
     code: &'static str,
+    ops: &'static [FaultOp],
     fail_on: fn(&[u8]) -> bool,
 }
 
 impl FaultyWrite {
-    fn check(&self, key: &[u8]) -> crate::Result<()> {
-        if (self.fail_on)(key) {
+    fn check(&self, op: FaultOp, key: &[u8]) -> crate::Result<()> {
+        if self.ops.contains(&op) && (self.fail_on)(key) {
             return Err(crate::StoreError::new(
                 self.code,
                 "injected storage failure",
@@ -151,6 +166,7 @@ impl FaultyWrite {
 
 impl crate::kv::KvRead for FaultyWrite {
     fn get(&self, key: &[u8]) -> crate::Result<Option<Vec<u8>>> {
+        self.check(FaultOp::Get, key)?;
         self.inner.get(key)
     }
     fn scan(
@@ -160,17 +176,18 @@ impl crate::kv::KvRead for FaultyWrite {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> crate::Result<()> {
-        self.check(start)?;
+        self.check(FaultOp::Scan, start)?;
         self.inner.scan(start, end, reverse, f)
     }
 }
 
 impl crate::kv::KvWrite for FaultyWrite {
     fn put(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
-        self.check(key)?;
+        self.check(FaultOp::Put, key)?;
         self.inner.put(key, value)
     }
     fn delete(&mut self, key: &[u8]) -> crate::Result<()> {
+        self.check(FaultOp::Delete, key)?;
         self.inner.delete(key)
     }
     fn commit(self: Box<Self>) -> crate::Result<u64> {
@@ -189,6 +206,7 @@ impl crate::kv::Kv for FaultyKv {
         Ok(Box::new(FaultyWrite {
             inner: self.inner.begin_write_exclusive()?,
             code: self.code,
+            ops: self.ops,
             fail_on: self.fail_on,
         }))
     }
