@@ -12,3 +12,5 @@
 - gbrain status reads a keyless repo-less brain as healthy (repo-less, embed=off) and shows a completed gbrain dream as the last full cycle.
 <!-- behavior-change: status_keyless_repo_less_gbra789 -->
 - The page anatomy guide lists the timeline forms gbrain reads (bold-date bullets with `|`, `###` date headings, dated `[Source: …]` citations) and says a plain dated list makes no row.
+- Brain-page pointers name the exact get_page or entity {name} call and how to reach get_page from the starter tool list; entity called with slug says to pass it as name.
+<!-- behavior-change: pointers_name_exact_calls_gbra789 -->

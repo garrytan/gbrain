@@ -31,6 +31,7 @@ import type { GBrainConfig } from '../config.ts';
 import { extractCandidatesFromWindow, type WindowTurn } from './entity-salience.ts';
 import {
   renderPointerLine,
+  GET_PAGE_REACH,
   resolveEntitiesToPointers,
   DEFAULT_MAX_POINTERS,
   type ReflexPointer,
@@ -513,7 +514,7 @@ function render(
   if (!pointers.length && !volunteered.length && !facts.length) return '';
   const lines: string[] = [TURN_CONTEXT_ENVELOPE];
   if (pointers.length) {
-    lines.push('', '## Brain pages mentioned this turn');
+    lines.push('', '## Brain pages mentioned this turn', GET_PAGE_REACH);
     for (const p of pointers) lines.push(renderPointerLine(p));
   }
   if (volunteered.length) {
@@ -935,8 +936,14 @@ const cardTitle = (c: EntityCard, untrusted: boolean): string => (untrusted && c
 /** #6723: a card from outside the pack's home source names its source, so a follow-up reads the right page. */
 const sourceNote = (c: EntityCard, home?: string): string =>
   home !== undefined && c.entity.source_id !== undefined && c.entity.source_id !== home ? ` (source ${c.entity.source_id})` : '';
+/** The exact entity and get_page calls for a card, naming its source when it is outside the pack's home. */
+const cardCalls = (c: EntityCard, home?: string): string => {
+  const source = sourceNote(c, home) ? `, source_id: ${JSON.stringify(c.entity.source_id)}` : '';
+  const slug = JSON.stringify(c.entity.slug);
+  return `use entity {name: ${slug}${source}} or get_page {slug: ${slug}${source}} before relying on details`;
+};
 export const renderCardLine = (c: EntityCard, home?: string, untrusted = false): string =>
-  `- **${cardTitle(c, untrusted)}** → \`${c.entity.slug}\`${sourceNote(c, home)}${c.summary ? ` — ${cardSummary(c, c.summary)}` : c.trust_tier ? ` — ${cardSummary(c, '')}` : ''}${c.relationship_note ? ` [${c.relationship_note}]` : ''} (use get_page/entity before relying on details)`;
+  `- **${cardTitle(c, untrusted)}** → \`${c.entity.slug}\`${sourceNote(c, home)}${c.summary ? ` — ${cardSummary(c, c.summary)}` : c.trust_tier ? ` — ${cardSummary(c, '')}` : ''}${c.relationship_note ? ` [${c.relationship_note}]` : ''} (${cardCalls(c, home)})`;
 export const renderThreadLine = (t: EntityOpenThread): string =>
   `- [${t.kind}] ${labeled(t, t.text)}${t.date ? ` (${t.date})` : ''}`;
 /** A quoted fact's fence closes on its own line (GST-687): its label rides the marker line and the slug and confidence follow the fence. */
