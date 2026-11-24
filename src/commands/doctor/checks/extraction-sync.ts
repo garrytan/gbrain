@@ -1331,8 +1331,7 @@ export async function checkSyncFreshness(
       if (!source.last_sync_at) {
         const never = contentDirectory ? receiptContentDirectory(contentDirectory, display) : await noSuccessfulSync(engine, source.id, display, managed, now - failMs);
         issues.push(never.issue); outcomes.push(never.entry);
-        if (never.entry.code === 'sync_first_run_in_progress' || never.entry.code === 'sync_usage_limited') hasWarnings = true;
-        else hasFailures = true;
+        if (never.entry.code === 'sync_first_run_in_progress' || never.entry.code === 'sync_usage_limited') hasWarnings = true; else hasFailures = true;
         stale_count++;
         continue;
       }
