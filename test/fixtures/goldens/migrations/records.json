@@ -5,7 +5,9 @@
       17,
       18,
       19,
-      100
+      100,
+      334,
+      335
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -112,7 +114,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 336,
+    "latest": 338,
     "records": [
       {
         "handler": {
@@ -5456,7 +5458,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "10a674d363ae7a28877463b53dd38ec5318b5af6032003bef6d418c0fabfa298"
+          "sha256": "b3e28bd19003786e18352f36fc69f202ac3a4a4a3357dbcc3d8fa480028c21ac"
         },
         "idempotent": true,
         "name": "byte_order_slug_indexes",
@@ -5467,7 +5469,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 334
+        "version": 336
       },
       {
         "handler": {
@@ -5485,7 +5487,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "cae7702f46ea534af7390afe6eae231d490766f15466750915bf3dc0d4456c05"
+          "sha256": "367fa984867657f686051860323e319da26c0ec063ca77b58688c39dc69fc93f"
         },
         "idempotent": true,
         "name": "projection_jobs_byte_order_index",
@@ -5496,7 +5498,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 335
+        "version": 337
       },
       {
         "handler": {
@@ -5515,7 +5517,7 @@
             "quietMigrationNotices",
             "tableRows"
           ],
-          "sha256": "75deb6b1017149b7eb5efd26ab80e67b2ed2fa3bb9e585566ed8c3580562a614"
+          "sha256": "004c049a34032b1ddb2e6463019a208b2a0aeeac1836c20b5f6520d7c1507cac"
         },
         "idempotent": true,
         "name": "pages_projection_waiting_haystack_trgm",
@@ -5526,7 +5528,7 @@
         "sqlFor": "absent",
         "transaction": false,
         "verify": "absent",
-        "version": 336
+        "version": 338
       }
     ],
     "versions": [
@@ -5858,9 +5860,9 @@
       331,
       332,
       333,
-      334,
-      335,
-      336
+      336,
+      337,
+      338
     ]
   },
   "normalizer": "migrations-record-v1"
