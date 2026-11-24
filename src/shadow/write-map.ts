@@ -232,7 +232,7 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'ownsSchemaTables', 'pageAwaitsRederive', 'pageHasFrontmatterKey', 'pageHasTimelineEntries', 'pagePrefixSamples',
   'pageSlugExists', 'pageTypeTotals', 'pendingTrustProposalsFor', 'pickValidTimeEdition', 'pingStore', 'planFactPurgeIds',
   'planFactPurgeTakes', 'probeIdleWork', 'probeLiveConsumerRows', 'probeNoopEmbeddingSettle', 'probePageTypes',
-  'probeProjectionWindowCandidates', 'probePurgeDerivations', 'probeTornPages', 'projectionRebuildProgress',
+  'probeProjectionWindowCandidates', 'probePurgeDerivations', 'probeSourceSlugFingerprint', 'probeTornPages', 'projectionRebuildProgress',
   'purgeSubjectPageLive', 'rankEntities', 'recentWriterVersions', 'scanExactBatch', 'scanUnfencedFactRows',
   'selectClaimableEffect', 'selectClaimableWrite', 'selectProjectionWindowJobs', 'sourceIdExists',
   'staleLinkRelationshipKeys', 'wordLexemes',
