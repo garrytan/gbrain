@@ -251,6 +251,14 @@ describe('replay child (in-memory arms)', () => {
     expect((await run()).text).toBe(first.text);
   });
 
+  test('a report with differences is byte-identical when the same epoch is replayed at another time', async () => {
+    const { run } = await replayOnFakes({ dropWrites: true });
+    const first = await run();
+    expect(first.report.diffs.length).toBeGreaterThan(0);
+    await Bun.sleep(1100);
+    expect((await run()).text).toBe(first.text);
+  });
+
   test('the read-back sweep catches a write the Rust arm dropped while returning the right receipt', async () => {
     const { run } = await replayOnFakes({ dropWrites: true });
     const { report } = await run();
@@ -437,6 +445,18 @@ describe('review fixes (ship pass 1, adversarial)', () => {
     expect(existsSync(epochDir(cap, id))).toBe(false);
   });
 
+  test('a retried replay runs without the Postgres arm, whose copy was replayed in place and reseeded', async () => {
+    const { cap, id, deps } = sealedEpoch();
+    const m = JSON.parse(readFileSync(join(basesDir(cap, id), 'manifest.json'), 'utf8'));
+    writeFileSync(join(basesDir(cap, id), 'manifest.json'), JSON.stringify({ ...m, postgres: true }));
+    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc', verified: true });
+    const specs: RunSpec[] = [];
+    const watching = { ...deps, spawnChild: (runDir: string) => { specs.push(JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'))); return { exited: Promise.resolve(1), kill() {} }; } } as typeof deps;
+    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
+    await expect(runNightlyReplay(watching)).rejects.toThrow(/without a report/);
+    expect(specs.map(s => !!s.arms.postgres)).toEqual([true, false]);
+  });
+
   test('a seed that fails reports its own error, not a purge', async () => {
     const { cap, deps } = sealedEpoch();
     writePrivateJson(join(cap, 'state.json'), { version: 1, enabled: true, turned_on_at: '2026-11-22T00:00:00.000Z' });
@@ -569,8 +589,9 @@ describe('isolation', () => {
 
   test('a scratch Postgres URL that could leave the machine is refused before any row is sent', () => {
     expect(checkLocalPostgresUrl('postgresql://localhost:5433/replay').database).toBe('replay');
-    expect(checkLocalPostgresUrl('postgresql:///replay?host=/var/run/postgresql').host).toBe('/var/run/postgresql');
-    for (const bad of ['postgresql://db.example.com/replay', 'postgresql://localhost,db.example.com/replay', 'postgresql://localhost/replay?host=db.example.com', 'postgresql://10.0.0.5/replay']) {
+    for (const bad of ['postgresql://db.example.com/replay', 'postgresql://localhost,db.example.com/replay', 'postgresql://localhost/replay?host=db.example.com', 'postgresql://10.0.0.5/replay',
+      // The driver would not route a socket path (it dials localhost:5432), so socket URLs are refused too.
+      'postgresql://localhost/replay?host=/var/run/postgresql']) {
       expect(() => checkLocalPostgresUrl(bad)).toThrow(/shadow_replay_postgres_not_local/);
     }
     expect(() => checkLocalPostgresUrl('postgresql://localhost/brain', 'postgresql://localhost:5432/brain')).toThrow(/shadow_replay_postgres_not_owned/);

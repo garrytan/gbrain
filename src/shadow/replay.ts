@@ -97,7 +97,7 @@ export class NormState {
   private n = 0;
   constructor(readonly known: ReadonlySet<string>, readonly window: { from: number; to: number }) {}
 
-  private volatile(s: string): boolean {
+  volatile(s: string): boolean {
     if (this.known.has(s)) return false;
     if (UUID_RE.test(s)) return true;
     if (!ISO_RE.test(s)) return false;
@@ -272,8 +272,15 @@ export function keyedHash(key: Buffer, value: string): string {
   return createHmac('sha256', key).update(value).digest('hex').slice(0, 16);
 }
 
-function outcomeText(o: Outcome | undefined): string {
-  return !o ? 'absent' : o.ok ? canonicalJson(o.value) : `threw:${o.code}`;
+/** Volatile ids and times inside longer text. */
+const TOKEN_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/gi;
+
+/** The outcome as hashed in a report: ids and times the replay itself produced (see NormState) read as one placeholder. */
+function outcomeText(o: Outcome | undefined, norm: NormState): string {
+  const stable = (v: unknown): unknown => typeof v === 'string'
+    ? (norm.volatile(v) ? '<volatile>' : v.replace(TOKEN_RE, t => (norm.volatile(t) ? '<volatile>' : t)))
+    : Array.isArray(v) ? v.map(stable) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, stable(x)])) : v;
+  return !o ? 'absent' : o.ok ? canonicalJson(stable(o.value)) : `threw:${o.code}`;
 }
 
 /** The sorted, deterministic report document. */
@@ -424,7 +431,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
       if (cls === 'match' && liveOk === true && arms.every(a => outs[a] && !outs[a]!.ok)) { cls = 'replay_diverged'; path = ['$outcome']; }
       if (cls === 'match') return;
       const hashes: Partial<Record<ArmName, string>> = {};
-      for (const a of arms) hashes[a] = keyedHash(key, outcomeText(outs[a]));
+      for (const a of arms) hashes[a] = keyedHash(key, outcomeText(outs[a], norms.rust));
       diffs.push({ ref, member, path: redactPath(path, key), class: cls, hashes });
     };
     for (const unit of plan.units) {

@@ -141,14 +141,15 @@ export function checkLocalPostgresUrl(raw: string, primaryUrl?: string | null): 
   let url: URL;
   try { url = new URL(raw); } catch { throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch Postgres URL does not parse'); }
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL is not a postgres URL');
-  const qHost = url.searchParams.get('host') ?? url.searchParams.get('hostaddr');
-  for (const name of ['host', 'hostaddr']) for (const v of url.searchParams.getAll(name)) {
-    if (!v.startsWith('/') || v.includes(',')) throw new ReplayError('shadow_replay_postgres_not_local', `the scratch URL's ${name} option is not a Unix socket path`);
+  // The driver does not route a Unix-socket host option (it would dial localhost:5432 instead), so only TCP to
+  // localhost is accepted, and any host override in the query string is refused.
+  for (const name of ['host', 'hostaddr']) if (url.searchParams.has(name)) {
+    throw new ReplayError('shadow_replay_postgres_not_local', `the scratch URL sets ${name} in its options; name localhost (and a port) as the URL's host instead`);
   }
   if (url.hostname.includes(',') || (url.hostname && !LOCAL_HOSTS.has(url.hostname))) {
     throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch Postgres host is not localhost or a Unix socket');
   }
-  if (!url.hostname && !qHost) throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL names no host');
+  if (!url.hostname) throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL names no host; use localhost');
   const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
   if (!database) throw new ReplayError('shadow_replay_postgres_not_local', 'the scratch URL names no database');
   if (primaryUrl) {
@@ -159,7 +160,7 @@ export function checkLocalPostgresUrl(raw: string, primaryUrl?: string | null): 
       }
     } catch (e) { if (e instanceof ReplayError) throw e; }
   }
-  return { host: url.hostname || qHost!, port: url.port || '5432', database };
+  return { host: url.hostname, port: url.port || '5432', database };
 }
 
 /**
@@ -172,6 +173,7 @@ export async function resetScratchPostgres(engine: BrainEngine, brainKey: string
     const [own] = await engine.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1');
     if (own?.brain !== brainKey) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database belongs to another brain\'s replay');
   } else {
+    if (await objectsOutsidePublic(engine) > 0) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database holds objects in another schema, which dropping public could reach');
     // Every relation (tables, views, materialized views, sequences), function and standalone type in public counts,
     // except what an installed extension (vector) owns.
     const [count] = await engine.executeRaw<{ n: number }>(`SELECT (
@@ -191,6 +193,21 @@ export async function resetScratchPostgres(engine: BrainEngine, brainKey: string
     throw new ReplayError('shadow_replay_postgres_privilege', `the scratch role cannot reset its database (${(e as { code?: string }).code ?? 'error'})`);
   }
 }
+
+/**
+ * User objects (relations, functions, types) in any schema but public and the system ones: DROP SCHEMA public CASCADE
+ * could reach them (a column of type public.vector, say), so a scratch database must have none.
+ */
+export async function objectsOutsidePublic(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
+  const [row] = await engine.executeRaw<{ n: number }>(`SELECT (
+      (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE ${USER_SCHEMA} AND NOT EXISTS (
+        SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
+    + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE ${USER_SCHEMA} AND NOT EXISTS (
+        SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))
+    )::int AS n`);
+  return row?.n ?? 0;
+}
+const USER_SCHEMA = "n.nspname NOT IN ('public', 'pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'";
 
 /** The brain a scratch database's owner marker names, or null when it has none. */
 export async function scratchOwner(engine: BrainEngine): Promise<string | null> {

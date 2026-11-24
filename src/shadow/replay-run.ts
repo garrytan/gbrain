@@ -167,8 +167,11 @@ function seedLosses(m: BaseManifest): boolean {
     || r.unmapped_columns.length > 0 || Object.values(r.losses).some(n => n > 0));
 }
 
-async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer, budgetMs: number): Promise<{ report: ReplayReport; dir: string }> {
+async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer, budgetMs: number, retry = false): Promise<{ report: ReplayReport; dir: string }> {
   const manifest = JSON.parse(readFileSync(join(basesDir(cap, sealed.id), 'manifest.json'), 'utf8')) as BaseManifest;
+  // The Postgres copy is one database, replayed in place and reseeded for the next epoch: a retry cannot start from
+  // this epoch's snapshot there, so a retry runs on PGLite and Rust only.
+  if (retry) manifest.postgres = false;
   const runDir = join(deps.shadowDir, 'replay', `run-${(deps.now?.() ?? new Date()).toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${sealed.id.slice(-8)}`);
   const paths = prepareRun(runDir, epochDir(cap, sealed.id), basesDir(cap, sealed.id));
   let scratchUrl: string | null = null;
@@ -234,7 +237,7 @@ function readRetained(cap: string): Retained | null {
 async function replayAndRetire(deps: NightlyDeps, cap: string, sealed: EpochPointer, attempts: number, budgetMs: number, home: string) {
   try {
     if (purgeLogChanged(sealed.purge_log, home)) throw new ReplayError('shadow_replay_purged', 'before the replay');
-    const out = await replayEpoch(deps, cap, sealed, budgetMs);
+    const out = await replayEpoch(deps, cap, sealed, budgetMs, attempts > 0);
     deleteEpochData(cap, sealed.id);
     rmSync(retryPath(cap), { force: true });
     return out;

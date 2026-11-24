@@ -216,6 +216,11 @@ export async function dropScratchPostgres(cap: string): Promise<boolean> {
     // table). Anything else, a database recreated or reused since, is never touched; its record is just forgotten.
     const owned = marker?.present === true
       && (await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain === rec.brain;
+    // Objects in another schema could depend on public (a public.vector column): leave the drop pending, never cascade.
+    if (owned) {
+      const { objectsOutsidePublic } = await import('./replay-copy.ts');
+      if (await objectsOutsidePublic(e) > 0) return false;
+    }
     if (!owned) {
       rmSync(recordPath, { force: true });
       rmSync(scratchPendingPath(cap), { force: true });

@@ -44,7 +44,8 @@ the brain cannot be opened, the run stops with `shadow_replay_seed_failed` befor
 recording waits for the next run. A Postgres brain needs no window.
 
 Optional third arm: set `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` to an empty Postgres database on this machine
-(`localhost` or a Unix socket). Any other host is refused before a row is sent. The seed records the URL in
+(`postgresql://<user>@localhost:<port>/<database>`). Any other host, and any host or socket option in the URL, is
+refused before a row is sent. The database must also hold nothing in any other schema. The seed records the URL in
 `capture/scratch-postgres.json` (owner-only), after it has checked the database is empty or its own and written an owner
 marker naming this brain, so that a purge in any process can drop the copy. Cleanup drops only a database whose marker
 names this brain at that moment; a database recreated or reused since is never touched. A purge drops the copy through a plain connection of its own, so a process that holds the brain on
