@@ -2106,7 +2106,8 @@ Each page in the preview is one of:
   normal one, so an edit under way waits for the move (or the move refuses, below). A database role that row-level security
   keeps from `fact_purges` or `take_purges` reads them as empty, so the preview and the apply refuse
   with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) naming the table, before anything moves;
-  give the role the policy `docs/ENGINES.md#purge-and-withdrawal-guards` describes, or run it as the table owner.
+  give the role select and insert policies on them (the select policies in `docs/ENGINES.md#purge-and-withdrawal-guards`
+  show the shape), or run it as the table owner.
 - **needs_human** ([`slug_spelling_collision`](error-codes.md#slug_spelling_collision)): another page (live or
   soft-deleted) already holds the normal slug, or two stored spellings share it. Nothing moves, because that would merge
   two pages. The listing names the pages to compare; keep the content you want in one, soft-delete the other with
