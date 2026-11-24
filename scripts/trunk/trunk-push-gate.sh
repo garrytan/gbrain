@@ -18,6 +18,15 @@
 #                  test/rust-vector-search-cli.serial.test.ts, one bun process per file, GBRAIN_TEST_RUST_ADDON_REQUIRED=1, no
 #                  DATABASE_URL. A skipped test fails the step: with the addon required, nothing may skip. This step stands
 #                  in for a rust-engine.yml line until the .github freeze ends (20:30Z Nov 24); drop it when that line lands.
+#   3c addon-job   everything else the rust-engine.yml addon job runs with the addon (added 2026-11-22 after rust-engine/main
+#                  720bc21296 passed this gate and then failed the "Rust engine" workflow): test/rust-cli-parity.serial.test.ts
+#                  (GBRAIN_TEST_RUST_ADDON_REQUIRED=1) and test/rust-engine-withdrawn-lead.test.ts through
+#                  scripts/run-with-receipt.sh (GBRAIN_TEST_REQUIRE_RUST_ADDON=1, a receipt dir), then
+#                  scripts/require-executed-tests.ts rust-store. First it reads the addon job out of the checked-out
+#                  rust-engine.yml and fails if that job names a test or script file, or a GBRAIN_ variable, that this
+#                  script does not know, so the list cannot drift from the workflow.
+#   TMPDIR         parity-arm and addon-job run with TMPDIR set to $G/linktmp, a symlink to $G/realtmp, as macOS tmpdir() goes
+#                  through /var -> /private/var (the export-bytes and notifier tests failed there only). Removed after each step.
 #   4 unit-lane    DATABASE_URL unset. The full CI unit lane (40 shards, serial lane) takes about 100 minutes here and
 #                  does not fit. This runs a fixed subset: the census files (scripts/ci-census-tests.sh --run) and
 #                  GATE_UNIT_SHARD_PAIRS (default 0) pairs of test.yml's `test` shards, picked by the sha
@@ -159,14 +168,6 @@ cd "$WT"
 s_dupfn() { python3 /var/tmp/trunk/dupfn-check.py "$WT/rust"; }
 step dupfn 0 0 s_dupfn
 
-# ---- full CI E2E on this exact sha (Ember ruling ~10:00 PM PST Nov 20): the diff-selected subset below
-# missed 2 PG reds on 78d30a2be4. Push the sha to vorflux/trunk-stage-<short>, dispatch e2e.yml there, wait green.
-s_fullci() { bash /var/tmp/trunk/full-e2e-ci.sh "$SHA"; }
-step e2e-full-ci 0 0 s_fullci
-# ---- full CI Test (unit) on this exact sha (added 2026-11-21 after sync 7: the unit-lane subset below missed
-# test/serve-cli-socket-off.test.ts, Test 44912109708). Dispatch test.yml on the staging branch with e2e.yml.
-s_testci() { bash /var/tmp/trunk/full-test-ci.sh "$SHA"; }
-step test-full-ci 0 0 s_testci
 s_cargo() { cd "$WT/rust" && T env CARGO_BUILD_JOBS=3 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo build --workspace --locked && T env CARGO_BUILD_JOBS=3 CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 cargo clippy --all-targets --locked -- -D warnings && T env CARGO_BUILD_JOBS=3 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 cargo test --workspace --locked; }
 step cargo-test 1 0 s_cargo
 
@@ -175,15 +176,30 @@ s_build() { cd "$WT" && T env CARGO_BUILD_JOBS=3 bun run rust:build && test -f "
 ADDON=$WT/rust/target/addon/gbrain_engine.linux-x64-glibc.node
 step rust-build 0 0 s_build
 
+# ---- symlinked temp dir: tmpdir() on macOS is /var/folders/... reached through the /var -> /private/var symlink
+link_tmp() {   # run inside a step function (a subshell): TMPDIR becomes a symlink to a real directory, removed when the step ends
+  rm -rf "$G/realtmp" "$G/linktmp"
+  mkdir -p "$G/realtmp" && ln -s realtmp "$G/linktmp" || return 1
+  trap 'rm -rf "$G/realtmp" "$G/linktmp"' EXIT
+  export TMPDIR="$G/linktmp"
+  [ "$(readlink -f "$TMPDIR")" != "$TMPDIR" ] || { echo "ERROR: TMPDIR $TMPDIR is not reached through a symlink"; return 1; }
+  echo "TMPDIR=$TMPDIR -> $(readlink -f "$TMPDIR")"
+}
+
 # ---- 3 Rust parity arm
+# The files rust-engine.yml's "Rust engine store tests and the parity suite's Rust arm" step runs; the addon-job step checks the workflow against this.
+PARITY_HEAD_FILES=(test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts)
+PARITY_GLOB='test/engine-parity/*.test.ts'
 s_parity() {
   cd "$WT"
+  link_tmp || return 1
   export GBRAIN_RUST_ENGINE_ADDON=$ADDON GBRAIN_TEST_RUST_ARM=1 GBRAIN_TEST_RUST_ADDON_REQUIRED=1
   export DATABASE_URL=$DB GBRAIN_TEST_ALLOW_DATABASE_URL=1
   echo "== store, shell and differential tests"
-  F bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts || { echo "PARITY_FAIL rust-engine store/shell/differential"; return 1; }
+  F bun test --timeout=60000 "${PARITY_HEAD_FILES[@]}" || { echo "PARITY_FAIL rust-engine store/shell/differential"; return 1; }
   local file
-  for file in test/engine-parity/*.test.ts; do
+  # shellcheck disable=SC2086
+  for file in $PARITY_GLOB; do
     echo "== $file"
     F bun test --timeout=60000 "$file" || { echo "PARITY_FAIL $file"; return 1; }
   done
@@ -208,6 +224,59 @@ s_addon_serial() {
   done
 }
 step addon-serial 1 0 s_addon_serial
+
+# ---- 3c the rest of the rust-engine.yml addon job (see header): CLI parity, withdrawn-lead with its receipt, the receipt check
+ADDON_JOB_FILES=(test/rust-cli-parity.serial.test.ts test/token-member-cli-parity.serial.test.ts test/rust-mcp-receipts.serial.test.ts test/rust-engine-withdrawn-lead.test.ts scripts/run-with-receipt.sh scripts/require-executed-tests.ts)
+ADDON_JOB_VARS=(GBRAIN_TEST_RUST_ADDON_REQUIRED GBRAIN_TEST_RUST_ARM GBRAIN_TEST_REQUIRE_RUST_ADDON GBRAIN_TEST_RECEIPT_DIR GBRAIN_RUST_ENGINE_ADDON)
+addon_job_drift() {   # fail when the workflow's addon job names a file or GBRAIN_ variable this script does not run or set
+  local wf=.github/workflows/rust-engine.yml job known tok bad=0
+  [ -f "$wf" ] || { echo "PARITY_FAIL $wf does not exist"; return 1; }
+  job=$(awk '/^  addon:[[:space:]]*$/ { on=1; next } on && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { exit } on' "$wf" | grep -Ev '^[[:space:]]*#')
+  [ -n "$job" ] || { echo "PARITY_FAIL no addon job found in $wf"; return 1; }
+  set -f   # the workflow names a glob (test/engine-parity/*.test.ts): compare it as text, never expand it
+  known=" ${PARITY_HEAD_FILES[*]} $PARITY_GLOB ${ADDON_JOB_FILES[*]} scripts/ci-bun-install.ts "
+  for tok in $(printf '%s\n' "$job" | grep -oE '(^|[^A-Za-z0-9_/.-])(test|scripts)/[A-Za-z0-9_./*-]+\.(ts|sh)' | sed -E 's/^[^ts]//' | sort -u); do
+    case "$known" in *" $tok "*) ;; *) echo "PARITY_FAIL $wf addon job names $tok, which trunk-push-gate.sh does not run (add it to ADDON_JOB_FILES and s_addon_job)"; bad=1 ;; esac
+  done
+  known=" ${ADDON_JOB_VARS[*]} "
+  for tok in $(printf '%s\n' "$job" | grep -oE 'GBRAIN_[A-Z0-9_]+' | sort -u); do
+    case "$known" in *" $tok "*) ;; *) echo "PARITY_FAIL $wf addon job sets $tok, which trunk-push-gate.sh does not know (add it to ADDON_JOB_VARS and s_addon_job)"; bad=1 ;; esac
+  done
+  set +f
+  [ "$bad" -eq 0 ] && echo "addon job of $wf: every test file, script and GBRAIN_ variable is covered by this gate"
+  return "$bad"
+}
+s_addon_job() {
+  cd "$WT"
+  addon_job_drift || return 1
+  link_tmp || return 1
+  export GBRAIN_RUST_ENGINE_ADDON=$ADDON
+  local out rc dir="$G/receipts"
+  rm -rf "$dir"; mkdir -p "$dir"
+  echo "== test/rust-cli-parity.serial.test.ts"
+  out="$G/addon-job-cli.out"
+  F env -u DATABASE_URL -u GBRAIN_TEST_ALLOW_DATABASE_URL -u GBRAIN_TEST_RUST_ARM GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test --timeout=60000 test/rust-cli-parity.serial.test.ts > "$out" 2>&1; rc=$?
+  cat "$out"
+  [ "$rc" -eq 0 ] || { echo "PARITY_FAIL test/rust-cli-parity.serial.test.ts"; return 1; }
+  if grep -Eq '^ *[1-9][0-9]* skip$' "$out" || ! grep -Eq '^ *[1-9][0-9]* pass$' "$out"; then echo "PARITY_FAIL test/rust-cli-parity.serial.test.ts skipped or ran no test with the addon required"; return 1; fi
+  # The other addon-required serial files the workflow's addon job runs (a file the checkout lacks is skipped: older bases).
+  local f t
+  for f in test/token-member-cli-parity.serial.test.ts:60000 test/rust-mcp-receipts.serial.test.ts:150000; do
+    t=${f#*:}; f=${f%%:*}
+    [ -f "$f" ] || continue
+    echo "== $f"
+    out="$G/addon-job-$(basename "$f" .ts).out"
+    F env -u DATABASE_URL -u GBRAIN_TEST_ALLOW_DATABASE_URL -u GBRAIN_TEST_RUST_ARM GBRAIN_TEST_RUST_ADDON_REQUIRED=1 bun test --timeout="$t" "$f" > "$out" 2>&1; rc=$?
+    cat "$out"
+    [ "$rc" -eq 0 ] || { echo "PARITY_FAIL $f"; return 1; }
+    if grep -Eq '^ *[1-9][0-9]* skip$' "$out" || ! grep -Eq '^ *[1-9][0-9]* pass$' "$out"; then echo "PARITY_FAIL $f skipped or ran no test with the addon required"; return 1; fi
+  done
+  echo "== test/rust-engine-withdrawn-lead.test.ts (with a receipt)"
+  F env -u DATABASE_URL -u GBRAIN_TEST_ALLOW_DATABASE_URL -u GBRAIN_TEST_RUST_ARM GBRAIN_TEST_REQUIRE_RUST_ADDON=1 GBRAIN_TEST_RECEIPT_DIR="$dir" bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts || { echo "PARITY_FAIL test/rust-engine-withdrawn-lead.test.ts"; return 1; }
+  echo "== scripts/require-executed-tests.ts (the withdrawn-lead lane ran, nothing skipped)"
+  F bun scripts/require-executed-tests.ts "$dir" rust-store || { echo "PARITY_FAIL scripts/require-executed-tests.ts rust-store"; return 1; }
+}
+step addon-job 1 0 s_addon_job
 
 # ---- 4 unit lane (subset, see header)
 s_unit() {
@@ -257,5 +326,13 @@ s_guard12() {
 }
 step guard12 1 0 s_guard12
 
+# ---- last: Rust CI on the exact sha (waits for queued runs, so it runs after every local step)
+# Minder CI rule (8:18 AM PST Nov 23, PR 10131 c7106926275): no hand-dispatched e2e.yml/test.yml on rust-engine
+# branches, so the full-CI steps are replaced by Rust engine + Rust CLI parity green on the exact sha. Full Test/E2E/macOS
+# run only after queue: on a master PR. Old steps: trunk-push-gate.sh.bak-20261123-fullci.
+s_rustci() { bash /var/tmp/trunk/rust-ci-green.sh "$SHA" rust-engine.yml; }
+step rust-engine-ci 0 0 s_rustci
+s_parityci() { bash /var/tmp/trunk/rust-ci-green.sh "$SHA" rust-cli-parity.yml; }
+step rust-cli-parity-ci 0 0 s_parityci
 say "GATE PASS $SHA $(( $(date +%s) - WALL0 ))"
 exit 0
