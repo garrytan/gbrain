@@ -2648,6 +2648,7 @@
     "d_sel_too_small": 1,
     "database_error": 1,
     "dedupe_decision_store_mismatch": 1,
+    "dedupe_decision_unknown": 1,
     "dedupe_exa_off": 1,
     "dedupe_group_not_confirmable": 1,
     "dedupe_group_unknown": 1,

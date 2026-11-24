@@ -10,7 +10,10 @@
  *     as needing a person. It settles itself on a later run once the owner confirms the candidates are one person
  *     (gbrain dedupe confirm: they then share one identity group) or records them as different people (gbrain dedupe
  *     reject: the review stays, marked decided, and the contact stays unlinked).
- *   - one person the owner recorded as a different person from the contact (gbrain dedupe reject): no link.
+ *   - a candidate the owner recorded as a different person from the contact (gbrain dedupe reject or decide) is dropped,
+ *     pair by pair: with none left there is no link (outcome different); with some left the contact waits on them.
+ *   - a contact the owner marked as not a person (a one-member "different" decision, gbrain dedupe decide ignore): no
+ *     link and no review (outcome ignored).
  *
  * The Google Contacts linker (google/contact-identity.ts) uses the same rule under its own link origin, and also holds
  * back a single match whose page name clearly disagrees with the contact's (LinkOptions.contactName, names compared by
@@ -47,7 +50,10 @@ export interface IdentityReview {
 }
 
 export type MatchOutcome = { kind: 'one'; entityId: string; person: IdentityMemberRef } | { kind: 'none' } | { kind: 'many'; candidates: IdentityMemberRef[] }
-  | { kind: 'different'; candidates: IdentityMemberRef[] } | { kind: 'name_disagrees'; candidates: IdentityMemberRef[] };
+  | { kind: 'different'; candidates: IdentityMemberRef[] } | { kind: 'name_disagrees'; candidates: IdentityMemberRef[] } | { kind: 'ignored' };
+
+/** Which of a contact's keys matched a candidate: the kind only, never the value. */
+export type MatchedKey = 'email' | 'phone';
 
 const decoded = (value: unknown): unknown => {
   if (typeof value !== 'string' || !/^[[{"]/.test(value)) return value;
@@ -56,25 +62,30 @@ const decoded = (value: unknown): unknown => {
 const strings = (value: unknown): string[] => { const v = decoded(value); return (Array.isArray(v) ? v : [v]).filter((s): s is string => typeof s === 'string'); };
 const refKey = (m: IdentityMemberRef) => `${m.source_id}\t${m.slug}`;
 
-/** The person pages (outside this source) whose email or phone equals one of the contact's, exactly. */
-export async function exactPersonMatches(engine: BrainEngine, sourceId: string, emails: string[], phones: string[], countryCode: string): Promise<{ pages: IdentityMemberRef[]; truncated: boolean; titles: Map<string, string> }> {
+/** The person pages (outside this source) whose email or phone equals one of the contact's, exactly, with the kinds of key that matched. */
+export async function exactPersonMatches(engine: BrainEngine, sourceId: string, emails: string[], phones: string[], countryCode: string): Promise<{ pages: IdentityMemberRef[]; truncated: boolean; titles: Map<string, string>; matched: Map<string, MatchedKey[]> }> {
   const emailKeys = [...new Set(emails.map(e => identityEmailKey(e)).filter((e): e is string => !!e))];
   const phoneKeys = [...new Set(phones.map(p => canonicalPhone(p, countryCode)).filter((p): p is string => !!p))];
-  if (!emailKeys.length && !phoneKeys.length) return { pages: [], truncated: false, titles: new Map() };
+  if (!emailKeys.length && !phoneKeys.length) return { pages: [], truncated: false, titles: new Map(), matched: new Map() };
   const sourceIds = (await engine.executeRaw<{ id: string }>(
     `SELECT id FROM sources WHERE archived IS NOT TRUE AND id <> $1 AND COALESCE(config->>'kind','') NOT IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`, [sourceId])).map(r => r.id);
-  if (!sourceIds.length) return { pages: [], truncated: false, titles: new Map() };
+  if (!sourceIds.length) return { pages: [], truncated: false, titles: new Map(), matched: new Map() };
   const { text, params } = exactIdentityStatement({
     probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: [...new Set([...emails.map(e => e.trim()), ...emailKeys])],
       phones: [...new Set(phoneKeys.flatMap(p => phoneProbeDigits(p, countryCode)))] },
     sourceIds, types: { types: ['person'], per_source: [] }, limit: CANDIDATE_CAP + 1,
   });
   const rows = await engine.executeRaw<ExactIdentityRow>(text, params);
-  const matches = rows.slice(0, CANDIDATE_CAP).filter(row =>
-    [...strings(row.email), ...strings(row.emails)].some(v => { const k = identityEmailKey(v); return !!k && emailKeys.includes(k); })
-    || [...strings(row.phone), ...strings(row.phones)].some(v => { const k = canonicalPhone(v, countryCode); return !!k && phoneKeys.includes(k); }));
+  const matched = new Map<string, MatchedKey[]>();
+  for (const row of rows.slice(0, CANDIDATE_CAP)) {
+    const kinds: MatchedKey[] = [];
+    if ([...strings(row.email), ...strings(row.emails)].some(v => { const k = identityEmailKey(v); return !!k && emailKeys.includes(k); })) kinds.push('email');
+    if ([...strings(row.phone), ...strings(row.phones)].some(v => { const k = canonicalPhone(v, countryCode); return !!k && phoneKeys.includes(k); })) kinds.push('phone');
+    if (kinds.length) matched.set(refKey(row), kinds);
+  }
+  const matches = rows.slice(0, CANDIDATE_CAP).filter(row => matched.has(refKey(row)));
   return { pages: matches.map(r => ({ source_id: r.source_id, slug: r.slug })), truncated: rows.length > CANDIDATE_CAP,
-    titles: new Map(matches.filter(r => r.title).map(r => [refKey(r), r.title!])) };
+    titles: new Map(matches.filter(r => r.title).map(r => [refKey(r), r.title!])), matched };
 }
 
 /** Matched pages counted as people: pages in one identity group are one person. */
@@ -93,8 +104,8 @@ async function outcomeOf(engine: BrainEngine, pages: IdentityMemberRef[], trunca
     : `person-${createHash('sha256').update(refKey(person!)).digest('hex').slice(0, 16)}` };
 }
 
-/** otherWriter: the contact page is in an identity group another writer made, which is left as it is. */
-export interface LinkResult { outcome: MatchOutcome['kind']; linked: boolean; unlinked: boolean; candidates?: IdentityMemberRef[]; otherWriter?: boolean }
+/** otherWriter: the contact page is in an identity group another writer made, which is left as it is. matched: by candidate (source_id, tab, slug). */
+export interface LinkResult { outcome: MatchOutcome['kind']; linked: boolean; unlinked: boolean; candidates?: IdentityMemberRef[]; otherWriter?: boolean; matched?: Map<string, MatchedKey[]>; titles?: Map<string, string> }
 
 export interface LinkOptions {
   /** established_by of the rows this linker writes; only its own rows are moved or removed. */
@@ -111,16 +122,28 @@ export interface LinkOptions {
 export async function linkContactPage(engine: BrainEngine, sourceId: string, slug: string, emails: string[], phones: string[], countryCode: string,
   opts: LinkOptions = {}): Promise<LinkResult> {
   const origin = opts.origin ?? APPLE_CONTACTS_LINK_ORIGIN;
-  const { pages, truncated, titles } = await exactPersonMatches(engine, sourceId, emails, phones, countryCode);
-  let outcome = await outcomeOf(engine, pages, truncated);
-  if (outcome.kind === 'one') {
-    const apart = opts.apart ?? decidedSets(await engine.listIdentityDecisions()).apart;
-    const contact = refKey({ source_id: sourceId, slug });
-    const people = new Set([...pages, ...await listEntityIdentities(engine, { entityId: outcome.entityId })].map(refKey));
-    if (apart.some(set => { const keys = set.map(refKey); return keys.includes(contact) && keys.some(k => k !== contact && people.has(k)); })) outcome = { kind: 'different', candidates: pages };
-    else if (opts.contactName) {
-      const verdicts = pages.map(p => titles.get(refKey(p))).filter((t): t is string => !!t).map(t => namesAgree(opts.contactName!, t));
-      if (verdicts.length && verdicts.every(v => v === false)) outcome = { kind: 'name_disagrees', candidates: pages };
+  const apart = opts.apart ?? decidedSets(await engine.listIdentityDecisions()).apart;
+  const contact = refKey({ source_id: sourceId, slug });
+  const decided = apart.filter(set => set.some(m => refKey(m) === contact));
+  const { pages, truncated, titles, matched } = await exactPersonMatches(engine, sourceId, emails, phones, countryCode);
+  let outcome: MatchOutcome;
+  if (decided.some(set => set.length === 1)) outcome = { kind: 'ignored' };
+  else {
+    const rejected = new Set(decided.flatMap(set => set.map(refKey)).filter(k => k !== contact));
+    const kept: IdentityMemberRef[] = [];
+    for (const page of pages) {
+      if (rejected.size) {
+        const entity = (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: page.source_id })).find(m => m.slug === page.slug && m.source_id === page.source_id)?.entity_id;
+        const people = entity ? (await listEntityIdentities(engine, { entityId: entity })).map(refKey) : [refKey(page)];
+        if (people.some(k => rejected.has(k))) continue;
+      }
+      kept.push(page);
+    }
+    outcome = pages.length && !kept.length ? { kind: 'different', candidates: pages } : await outcomeOf(engine, kept, truncated);
+    if (outcome.kind === 'one' && kept.length < pages.length) outcome = { kind: 'many', candidates: kept };
+    else if (outcome.kind === 'one' && opts.contactName) {
+      const verdicts = kept.map(p => titles.get(refKey(p))).filter((t): t is string => !!t).map(t => namesAgree(opts.contactName!, t));
+      if (verdicts.length && verdicts.every(v => v === false)) outcome = { kind: 'name_disagrees', candidates: kept };
     }
   }
   const current = (await listEntityIdentities(engine, { slug, slugSourceId: sourceId })).find(m => m.slug === slug && m.source_id === sourceId) ?? null;
@@ -138,7 +161,7 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
     return { outcome: 'one', linked: true, unlinked: !!current };
   }
   if (current && !opts.dryRun) await unlinkContact(engine, current.entity_id, slug, sourceId, origin);
-  return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' || outcome.kind === 'name_disagrees' ? { candidates: outcome.candidates } : {}) };
+  return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' || outcome.kind === 'name_disagrees' ? { candidates: outcome.candidates, matched, titles } : {}) };
 }
 
 /** Remove this source's link of a contact page, and the person page's row this source made when it is left alone in the group. */

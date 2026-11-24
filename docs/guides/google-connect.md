@@ -146,6 +146,50 @@ the Apple Contacts source uses:
 the contacts it changed and settles the waiting ones. `--unlink` removes
 every link the source made and sets it off.
 
+#### Decide the contacts that wait
+
+`gbrain dedupe link-contacts --source <id> --json` (without `--apply`) also
+lists every contact that waits, under `reviews`: its `contact_slug`, the
+`reason` (`several_people` or `name_disagrees`) and each candidate as
+`source:slug` with what matched it (`email`, `phone` or both, never the
+address or number). Write your choice for each one into a JSON file:
+
+```json
+[
+  { "contact_slug": "people/c-alice", "action": "link", "candidate": "default:people/alice-example" },
+  { "contact_slug": "people/c-bob", "action": "reject" },
+  { "contact_slug": "people/c-carol", "action": "reject", "candidate": "default:people/carol-other" },
+  { "contact_slug": "people/c-dana", "action": "new" },
+  { "contact_slug": "people/c-noreply", "action": "ignore" },
+  { "contact_slug": "people/c-erin", "action": "skip" }
+]
+```
+
+- `link`: the contact and that one candidate are the same person.
+- `new`: none of them; a person page named after the contact is made in the
+  default source and the contact is linked to it.
+- `reject`: a different person from each candidate listed (`candidate`, or a
+  `candidates` list), or from every candidate when none is listed. Each pair
+  is recorded on its own, so a contact that still matches someone you did not
+  reject keeps waiting on that one.
+- `ignore`: not a person (a shared inbox, a service): never linked and never
+  listed again.
+- `skip`: nothing, for now.
+
+```bash
+gbrain dedupe decide --source <id> --file choices.json --dry-run   # what each line would do; writes nothing
+gbrain dedupe decide --source <id> --file choices.json
+```
+
+Every line prints its decision ids and the command that undoes it,
+`gbrain dedupe undo <id>...` (plus `gbrain delete <slug> --source default`
+for a page `new` made). A line that can't apply (an unknown contact, a
+missing candidate, a pair you recorded as different) is set aside with its
+reason and the rest are still recorded. The decisions are kept with your other
+duplicate decisions: in `.gbrain/identity/` in the brain's repository, in one
+commit with any page `new` made, so a database rebuilt from git keeps them,
+or in the database on a brain with no repository.
+
 ### What a contact page carries
 
 Each page records the contact's names, email addresses, organization and
