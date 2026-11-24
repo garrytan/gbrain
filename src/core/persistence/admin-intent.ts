@@ -1,29 +1,22 @@
 import type { SqlEngine } from './model.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
-import { PAGE_EMBEDDING_LEASE_PREFIX } from '../page-embedding-lease.ts';
+import { readWriterAdminState as readWriterAdminStateOver } from '../engine-sql/writer-admin.ts';
 import type { BrainEngine } from '../engine.ts';
 
 type WriterAdminStateEngine = Pick<BrainEngine, 'readWriterAdminState'>;
 
 export const WRITER_INSPECTION_HINT = 'Inspect gbrain sources writer status --json on the selected brain host first to identify the designated owner and any recovery. Routine repair must not claim, activate, or transfer ownership. Ask the operator to review docs/architecture/topologies.md before a deliberate topology change.';
 
-/** A page embedding lease is per-page vector work, not writer topology, so it never invalidates a reviewed state. */
-export async function writerAdminState(engine: SqlEngine): Promise<string> {
-  const [row] = await engine.executeRaw<{ state: string }>(`SELECT jsonb_build_object(
-    'brain', (SELECT jsonb_build_object('id',brain_id,'enabled',enabled,
-      'skill_bundles_enabled',to_jsonb(persistence_brain)->'skill_bundles_enabled',
-      'writer_protocol_floor',to_jsonb(persistence_brain)->'writer_protocol_floor',
-      'mode_epoch',to_jsonb(persistence_brain)->'mode_epoch') FROM persistence_brain WHERE singleton=1),
-    'sources', (SELECT jsonb_agg(jsonb_build_array(id,incarnation,archived,local_path,config->>'kind') ORDER BY id) FROM sources),
-    'fallback', (SELECT value FROM config WHERE key='sync.repo_path'),
-    'worktrees', (SELECT jsonb_agg(jsonb_build_array(id,owner_host_id,owner_epoch::text,topology_generation::text,state,manifest) ORDER BY id) FROM persistence_worktrees),
-    'bindings', (SELECT jsonb_agg(jsonb_build_array(source_id,source_incarnation,worktree_id,relative_path,topology_generation::text) ORDER BY source_id) FROM persistence_source_bindings),
-    'hosts', (SELECT jsonb_agg(jsonb_build_array(worktree_id,host_id,local_path,coordination_path,git_durability) ORDER BY worktree_id,host_id) FROM persistence_host_bindings),
-    'legacy_locks', (SELECT jsonb_agg(jsonb_build_array(id,holder_pid,holder_host,acquisition_token,acquired_at) ORDER BY id) FROM gbrain_cycle_locks
-      WHERE NOT starts_with(id, $1))
-  )::text AS state`, [PAGE_EMBEDDING_LEASE_PREFIX]);
-  return sha256(row.state);
+/**
+ * The digest a reviewed `--expected-state` names: the SHA-256 of the writer topology's jsonb text. It is read through the
+ * one statement (engine-sql/writer-admin.ts `readWriterAdminState`, source ids in byte order) that `assertWriterAdminState`
+ * checks it against, so a digest taken here is never stale on arrival, whatever the server's locale. An engine that carries
+ * the typed member answers it (a Rust brain does); an `executeRaw`-only handle (a persistence SqlEngine) runs the same statement.
+ * A page embedding lease is per-page vector work, not writer topology, so it never invalidates a reviewed state.
+ */
+export async function writerAdminState(engine: SqlEngine | WriterAdminStateEngine): Promise<string> {
+  return sha256('readWriterAdminState' in engine ? await engine.readWriterAdminState() : await readWriterAdminStateOver(engine));
 }
 
 /** Inside a transaction, `lock` holds the brain row and the topology tables until commit (a no-op on a Rust brain). */
