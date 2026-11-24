@@ -675,12 +675,11 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     if stored.format_version <= 5 {
         let from = stored.format_version;
         seed::carry_over_format_5(&mut *tx).map_err(|e| {
-            StoreError::new(
-                error::SHADOW_RESEED_REQUIRED,
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: carrying over its records failed"),
                 format!(
-                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over: {}; nothing was changed. Re-seed the shadow store: {}",
-                    e.message,
-                    seed::RESEED_STEPS
+                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over"
                 ),
             )
         })?;
@@ -690,12 +689,11 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     if stored.format_version <= 6 {
         let from = stored.format_version;
         facts::key_split::split_take_purges_from_loop_mutes(&mut *tx).map_err(|e| {
-            StoreError::new(
-                error::SHADOW_RESEED_REQUIRED,
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its take purges from its loop mutes failed"),
                 format!(
-                    "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes: {}; nothing was changed. Re-seed the shadow store: {}",
-                    e.message,
-                    seed::RESEED_STEPS
+                    "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes"
                 ),
             )
         })?;
@@ -704,6 +702,28 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
+}
+
+/// What the open reports when a format carry-over step fails. A record the step cannot convert is
+/// `shadow_reseed_required`, naming the record and the re-seed steps. A file system or storage
+/// engine failure (`StoreError::is_storage_failure`) keeps its own code and says nothing about
+/// re-seeding, because it is not about the records and a re-seed would not fix it. Either way the
+/// transaction is dropped and nothing changed.
+fn carry_over_failure(e: StoreError, failed: String, refused: String) -> StoreError {
+    if e.is_storage_failure() {
+        return StoreError::new(
+            e.code,
+            format!("{failed}: {}; nothing was changed", e.message),
+        );
+    }
+    StoreError::new(
+        error::SHADOW_RESEED_REQUIRED,
+        format!(
+            "{refused}: {}; nothing was changed. Re-seed the shadow store: {}",
+            e.message,
+            seed::RESEED_STEPS
+        ),
+    )
 }
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the

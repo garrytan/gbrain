@@ -10,12 +10,15 @@
 //! - a take purge: key `F 0x10 source \0 subject \0 claim_hash \0` (three NULs after the prefix,
 //!   the last one trailing) and a JSON object of exactly `purged_at_us` and, optionally,
 //!   `request_id`;
-//! - a loop mute: key `F 0x10 source \0 kind \0 value` (two NULs, none trailing), `kind` `sender`
-//!   or `thread`, and a JSON object of exactly `id` and `created_at_us`.
+//! - a loop mute: key `F 0x10 source \0 kind \0 value` (exactly two NULs; the value may be empty,
+//!   so the key can end in the second NUL), `kind` `sender` or `thread`, and a JSON object of
+//!   exactly `id` and `created_at_us`.
 //!
 //! A record that is neither, or whose key and value disagree, is refused: the caller turns the
 //! error into `shadow_reseed_required` naming the key, and the transaction is dropped, so nothing
-//! changes. A mute whose new key is already taken is refused the same way.
+//! changes. A mute whose new key is already taken is refused the same way. A file system or
+//! storage engine failure (`store_io`, `store_corrupt`) in any step is not a refusal: the caller
+//! reports it with its own code (`carry_over_failure` in lib.rs), and nothing changes either.
 
 use super::loops::mutes::SUPPRESSION;
 use super::take_purges::TAKE_PURGE;
@@ -58,7 +61,9 @@ fn classify(key: &[u8], value: &[u8]) -> Result<Kind> {
     let nuls = rest.iter().filter(|b| **b == 0).count();
     let key_kind = match (nuls, rest.last()) {
         (3, Some(0)) => Kind::TakePurge,
-        (2, Some(last)) if *last != 0 => Kind::LoopMute,
+        // A mute with an empty value ends in its second NUL (`F 0x10 source \0 kind \0`), which the
+        // old writer accepts; a take purge key has three.
+        (2, Some(_)) => Kind::LoopMute,
         _ => return Err(refuse("neither a take purge key nor a loop mute key")),
     };
     let json: Value = serde_json::from_slice(value).map_err(|_| refuse("not JSON"))?;
@@ -122,7 +127,7 @@ mod tests {
     use crate::facts::take_purges::TakePurgeInsert;
     use crate::kv::{Kv, scan_prefix};
     use crate::sources::SourceInput;
-    use crate::test_support::mem_kv;
+    use crate::test_support::{FaultOp, FaultyKv, mem_kv};
     use crate::{OpenOptions, Store, StoredFormat, SystemEnv, get_json, put_json};
     use serde_json::json;
     use std::sync::Arc;
@@ -205,6 +210,11 @@ mod tests {
                 take_fps: vec![HASH.into(), "bbbb".into(), "alerts@bank-example.test".into()],
             }).unwrap().fps,
         })
+    }
+
+    /// The tombstones the take purges answer.
+    fn answers_of_purges(store: &Store) -> serde_json::Value {
+        answers(store)["tombstones"].clone()
     }
 
     fn expected() -> serde_json::Value {
@@ -300,6 +310,158 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.format_version, 6);
+    }
+
+    /// Opens a format-6 brain on a record store whose write transactions fail with `code` on `ops`
+    /// when `fail_on` accepts the key: the open reports that error as it is, says nothing about
+    /// re-seeding, and changes nothing; then the same brain opens and converts once the disk works.
+    fn open_on_failing_disk(
+        code: &'static str,
+        ops: &'static [FaultOp],
+        fail_on: fn(&[u8]) -> bool,
+    ) {
+        let inner = old_brain(6);
+        let before = dump(&inner);
+        let kv: Arc<dyn Kv> = Arc::new(FaultyKv {
+            inner: inner.clone(),
+            code,
+            ops,
+            fail_on,
+        });
+        let Err(e) = open(&kv) else {
+            panic!("the brain opened");
+        };
+        assert_eq!(e.code, code, "{ops:?}: {}", e.message);
+        assert!(
+            !e.message.contains("Re-seed") && !e.message.contains("gbrain engine shadow"),
+            "an I/O or storage error must not tell the person to re-seed: {}",
+            e.message
+        );
+        assert_eq!(dump(&inner), before, "the failed open changed the brain");
+        let stored: StoredFormat = get_json(&*inner.snapshot().unwrap(), &keys::meta("format"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.format_version, 6);
+        // The disk works again: the brain converts and answers as it would have.
+        let store = open(&inner).unwrap();
+        assert_eq!(store.info().format_version, 7);
+        assert_eq!(answers(&store), expected());
+    }
+
+    fn under_purge_prefix(key: &[u8]) -> bool {
+        key.starts_with(&[keys::FACT, TAKE_PURGE])
+    }
+
+    fn under_mute_prefix(key: &[u8]) -> bool {
+        key.starts_with(&[keys::FACT, SUPPRESSION])
+    }
+
+    #[test]
+    fn an_io_error_reading_the_records_is_reported_as_store_io_not_as_a_reseed() {
+        open_on_failing_disk(crate::error::STORE_IO, &[FaultOp::Scan], under_purge_prefix);
+    }
+
+    #[test]
+    fn a_corrupt_record_store_while_reading_the_records_is_reported_as_store_corrupt() {
+        open_on_failing_disk(
+            crate::error::STORE_CORRUPT,
+            &[FaultOp::Scan],
+            under_purge_prefix,
+        );
+    }
+
+    #[test]
+    fn an_io_error_checking_the_new_key_is_reported_as_store_io_not_as_a_reseed() {
+        open_on_failing_disk(crate::error::STORE_IO, &[FaultOp::Get], under_mute_prefix);
+    }
+
+    #[test]
+    fn an_io_error_deleting_an_old_mute_is_reported_as_store_io_not_as_a_reseed() {
+        open_on_failing_disk(
+            crate::error::STORE_IO,
+            &[FaultOp::Delete],
+            under_purge_prefix,
+        );
+    }
+
+    #[test]
+    fn an_io_error_writing_a_moved_mute_is_reported_as_store_io_not_as_a_reseed() {
+        open_on_failing_disk(crate::error::STORE_IO, &[FaultOp::Put], under_mute_prefix);
+    }
+
+    #[test]
+    fn a_corrupt_record_store_while_writing_a_moved_mute_is_reported_as_store_corrupt() {
+        open_on_failing_disk(
+            crate::error::STORE_CORRUPT,
+            &[FaultOp::Put],
+            under_mute_prefix,
+        );
+    }
+
+    /// The failure comes after the first mute was moved and before the second: the moves of
+    /// the first are rolled back with the rest.
+    #[test]
+    fn a_failure_after_the_first_moved_mute_leaves_the_brain_as_it_was_and_a_reopen_converts_it() {
+        open_on_failing_disk(crate::error::STORE_IO, &[FaultOp::Put], |key| {
+            key.starts_with(&[keys::FACT, SUPPRESSION, b'g', b'1', 0, b't'])
+        });
+    }
+
+    /// The old writer accepts an empty mute value (`addLoopSuppression('g1', 'sender', '')`),
+    /// which is stored at `F 0x10 g1 \0 sender \0`: two separators, the last byte a NUL.
+    #[test]
+    fn a_format_6_brain_with_empty_valued_mutes_converts_and_keeps_them() {
+        for version in [6, 5] {
+            let kv = old_brain(version);
+            let mute = br#"{"id":40,"created_at_us":5}"#;
+            put(
+                &kv,
+                &[&[keys::FACT, TAKE_PURGE][..], b"g1\0sender\0"].concat(),
+                mute,
+            );
+            put(
+                &kv,
+                &[&[keys::FACT, TAKE_PURGE][..], b"g1\0thread\0"].concat(),
+                mute,
+            );
+            let store = open(&kv).unwrap_or_else(|e| panic!("format {version}: {e:?}"));
+            assert_eq!(store.info().format_version, 7);
+            let mutes = store.list_loop_suppressions("g1").unwrap();
+            for (kind, value) in [("sender", ""), ("thread", "")] {
+                assert!(
+                    mutes.contains(&json!({ "kind": kind, "value": value })),
+                    "format {version}: {mutes:?} lacks the empty {kind} mute"
+                );
+            }
+            drop(store);
+            let moved = dump(&kv)
+                .into_iter()
+                .filter(|(k, _)| k.starts_with(&[keys::FACT, SUPPRESSION]))
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>();
+            for kind in ["sender", "thread"] {
+                let key = [
+                    &[keys::FACT, SUPPRESSION][..],
+                    b"g1\0",
+                    kind.as_bytes(),
+                    b"\0",
+                ]
+                .concat();
+                assert!(moved.contains(&key), "format {version}: no {kind} key");
+            }
+            assert!(
+                dump(&kv)
+                    .iter()
+                    .filter(|(k, _)| k.starts_with(&[keys::FACT, TAKE_PURGE]))
+                    .all(|(k, _)| k[2..].iter().filter(|b| **b == 0).count() == 3),
+                "a mute stayed under F 0x10"
+            );
+            // The two take purges still answer.
+            assert_eq!(
+                answers_of_purges(&open(&kv).unwrap()),
+                expected()["tombstones"]
+            );
+        }
     }
 
     #[test]
