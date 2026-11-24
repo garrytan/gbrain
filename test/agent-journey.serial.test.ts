@@ -11,11 +11,14 @@
  *   doctor --remediate (no authorization)  exit 3, consent payload, nothing mutated
  *                                          (also on a pending-migration brain: schema version unchanged)
  *   the user agrees → the fix argv verbatim → remediation runs, migrations apply after consent
- *   serve --surface verbs                  remember/recall, degraded notice as a separate prefixed
- *                                          block + _meta.gbrain_notices, caller mistake → one-block
+ *   serve --surface verbs                  remember/recall with no degraded notice (keyless on purpose);
+ *                                          a brain missing the key it is configured to use gets the
+ *                                          degraded notice as a separate prefixed block +
+ *                                          _meta.gbrain_notices, caller mistake → one-block
  *                                          envelope whose fix runs; a second serve on the locked brain
  *                                          completes the handshake in status-only mode naming the owner
- *   serve --surface full                   search with the degraded notice, list_pages caller mistake → fix
+ *   serve --surface full                   search with no degraded notice (with one on the missing-key
+ *                                          brain), list_pages caller mistake → fix
  *   doctor --json                          health >= 90 with capped_by
  *
  * Machine timings (init, initialize, first remember, first recall) are printed
@@ -47,6 +50,7 @@ const MARKER = 'quokka-journey-marker';
 const PAGES = 3;
 const timings: Record<string, number> = {};
 /** The background onboarding refresh races these calls; test/mcp-onboarding.test.ts owns those notices, this journey pins the degraded one. */
+const MISSING_KEY_INIT = ['init', '--pglite', '--embedding-model', 'openai:text-embedding-3-small', '--skip-embed-check', '--json'];
 const QUIET_ONBOARDING = { GBRAIN_NO_ONBOARD_NUDGE: '1' };
 
 function brainPath(home: string): string { return join(home, '.gbrain', 'brain.pglite'); }
@@ -212,17 +216,23 @@ for (const stdin of ['devnull', 'silent'] as StdinMode[]) {
 
 describe('H1a keyless MCP journey (stdio)', () => {
   let home = '';
+  /** An embedding model configured, its provider key absent: search is keyword-only by accident, so it is degraded. */
+  let missingKeyHome = '';
   const open: McpSession[] = [];
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'gbrain-journey-mcp-'));
     expect((await gb(home, ['init', '--pglite', '--no-embedding', '--json'], { timeoutMs: 120_000 })).exitCode).toBe(0);
     expect((await gb(home, ['import', writeNotes(home), '--no-embed', '--json'], { timeoutMs: 120_000 })).exitCode).toBe(0);
+    missingKeyHome = mkdtempSync(join(tmpdir(), 'gbrain-journey-mcp-missing-key-'));
+    expect((await gb(missingKeyHome, MISSING_KEY_INIT, { timeoutMs: 120_000 })).exitCode).toBe(0);
+    expect((await gb(missingKeyHome, ['import', writeNotes(missingKeyHome), '--no-embed', '--json'], { timeoutMs: 120_000 })).exitCode).toBe(0);
   }, 300_000);
 
   afterAll(async () => {
     for (const s of open) await s.close();
     rmSync(home, { recursive: true, force: true });
+    rmSync(missingKeyHome, { recursive: true, force: true });
     try {
       mkdirSync(join(REPO, '.context'), { recursive: true });
       writeFileSync(join(REPO, '.context', 'agent-journey-timings.json'), `${JSON.stringify({ recorded_at: new Date().toISOString(), ...timings }, null, 2)}\n`);
@@ -230,7 +240,7 @@ describe('H1a keyless MCP journey (stdio)', () => {
     console.log(`[agent-journey] machine timings (ms): ${JSON.stringify(timings)}`);
   });
 
-  test('surface verbs: remember/recall, the degraded notice block, a caller mistake with a runnable fix, status-only second serve', async () => {
+  test('surface verbs: remember/recall, the degraded notice block only for a missing key, a caller mistake with a runnable fix, status-only second serve', async () => {
     const verbs = await mcp(home, ['--surface', 'verbs'], { env: QUIET_ONBOARDING });
     open.push(verbs);
     timings.initialize_ms = verbs.initMs;
@@ -254,14 +264,26 @@ describe('H1a keyless MCP journey (stdio)', () => {
     expect(JSON.stringify(result)).toContain(MARKER);
     // The imported pages, plus memory/unattributed: a fact remembered without an entity is a row of its fence (GBRA-190 G4).
     expect(result.results.length).toBe(PAGES + 1);
-    // The degraded notice is its own prefixed block (the model sees it) and mirrored in _meta.
-    // A recall that passes only `query` also carries the recall_hint (TC7) naming `question`.
-    const blocks = noticeBlocks(recalled);
+    // Keyless on purpose: keyword-only is how this brain was set up, not a degraded result, so no degraded notice.
+    // A recall that passes only `query` still carries the recall_hint (TC7) naming `question`.
+    expect(noticeBlocks(recalled).map(b => b.split('\n')[0])).toEqual(['[gbrain notice recall_hint kind=info]']);
+    expect(recalled._meta?.gbrain_notices?.map((n: { code: string }) => n.code)).toEqual(['recall_hint']);
+    expect(result.facts_order).toBe('newest');
+
+    // A brain missing the key it is configured to use still gets the degraded notice: its own prefixed block
+    // (the model sees it), mirrored in _meta.
+    const missingKey = await mcp(missingKeyHome, ['--surface', 'verbs'], { env: QUIET_ONBOARDING });
+    open.push(missingKey);
+    const degraded = await call(missingKey, 'recall', { query: MARKER });
+    expect(degraded.isError).toBeFalsy();
+    expect(degraded.content[0].text.startsWith(NOTICE_PREFIX)).toBe(false);
+    expect(JSON.stringify(body(degraded))).toContain(MARKER);
+    const blocks = noticeBlocks(degraded);
     expect(blocks.map(b => b.split('\n')[0])).toEqual(['[gbrain notice degraded_recall kind=degraded]', '[gbrain notice recall_hint kind=info]']);
     expect(blocks[0]).toContain('never as "the brain has nothing on this"');
-    expect(recalled._meta?.gbrain_notices?.map((n: { code: string }) => n.code)).toEqual(['degraded_recall', 'recall_hint']);
-    expect(result.facts_order).toBe('newest');
-    journeyGolden('recall-degraded.json', recalled, { home });
+    expect(degraded._meta?.gbrain_notices?.map((n: { code: string }) => n.code)).toEqual(['degraded_recall', 'recall_hint']);
+    journeyGolden('recall-degraded.json', degraded, { home: missingKeyHome });
+    await missingKey.close();
 
     // Caller mistake: one block, an envelope with a fix the agent runs as given.
     const mistake = await call(verbs, 'recall', { query: MARKER, limit: 'abc' });
@@ -294,7 +316,7 @@ describe('H1a keyless MCP journey (stdio)', () => {
     await verbs.close();
   }, 240_000);
 
-  test('surface full: search carries the degraded notice; a list_pages caller mistake carries a fix that runs', async () => {
+  test('surface full: search carries the degraded notice only for a missing key; a list_pages caller mistake carries a fix that runs', async () => {
     const full = await mcp(home, ['--surface', 'full'], { env: QUIET_ONBOARDING });
     open.push(full);
     const tools = (await full.client.listTools()).tools.map(t => t.name);
@@ -303,8 +325,17 @@ describe('H1a keyless MCP journey (stdio)', () => {
     expect(found.isError).toBeFalsy();
     expect(Array.isArray(body(found))).toBe(true);
     expect(JSON.stringify(body(found))).toContain(MARKER);
-    expect(noticeBlocks(found).map(b => b.split('\n')[0])).toEqual(['[gbrain notice degraded_recall kind=degraded]']);
-    expect(found._meta?.gbrain_notices?.[0]?.code).toBe('degraded_recall');
+    expect(noticeBlocks(found).map(b => b.split('\n')[0])).toEqual([]);
+    expect((found._meta?.gbrain_notices ?? []).map((n: { code: string }) => n.code)).not.toContain('degraded_recall');
+
+    const missingKey = await mcp(missingKeyHome, ['--surface', 'full'], { env: QUIET_ONBOARDING });
+    open.push(missingKey);
+    const degraded = await call(missingKey, 'search', { query: MARKER });
+    expect(degraded.isError).toBeFalsy();
+    expect(JSON.stringify(body(degraded))).toContain(MARKER);
+    expect(noticeBlocks(degraded).map(b => b.split('\n')[0])).toEqual(['[gbrain notice degraded_recall kind=degraded]']);
+    expect(degraded._meta?.gbrain_notices?.[0]?.code).toBe('degraded_recall');
+    await missingKey.close();
 
     const mistake = await call(full, 'list_pages', { sort: 'bogus', limit: 2 });
     const env = expectOneBlockError(mistake, 'list_pages sort:"bogus"');

@@ -204,15 +204,7 @@ async function snapshotStampTimes(
   const versionMs = Date.parse(versionTs);
   for (let i = 0; i < refs.length; i += BATCH_SIZE) {
     const batch = refs.slice(i, i + BATCH_SIZE);
-    const rows = await engine.executeRaw<{ slug: string; source_id: string; updated_at_iso: string }>(
-      `SELECT p.slug, p.source_id,
-              to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
-         FROM pages p
-         JOIN unnest($1::text[], $2::text[]) AS v(slug, source_id)
-           ON p.slug = v.slug AND p.source_id = v.source_id
-        WHERE p.deleted_at IS NULL`,
-      [batch.map(r => r.slug), batch.map(r => r.source_id)],
-    );
+    const rows = await engine.readPageStampTimes(batch.map(r => r.slug), batch.map(r => r.source_id));
     for (const r of rows) {
       const iso = Date.parse(r.updated_at_iso) >= versionMs ? r.updated_at_iso : versionTs;
       out.set(`${r.source_id}\u0000${r.slug}`, iso);
@@ -494,7 +486,7 @@ function loadFsPageTypes(files: ReadonlyArray<{ path: string; relPath: string }>
 async function loadSlugAliasTargets(engine: BrainEngine, sourceId: string, allSlugs: Set<string>): Promise<Map<string, string>> {
   let rows: Array<{ alias_slug: string; canonical_slug: string }> = [];
   try {
-    rows = await engine.executeRaw('SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1', [sourceId]);
+    rows = await engine.listSlugAliases(sourceId);
   } catch (error) {
     if (!isMissingSchemaObject(error, 'table', 'slug_aliases')) throw error;
   }
@@ -1305,7 +1297,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     }
     if (result.timeline_refused) setCliExitVerdict(1);
   } catch (e) {
-    if ((await import('../core/rust-engine/errors.ts')).isCapabilityMissing(e)) (await import('../cli/cli-error.ts')).exitCliError(e, 'extract', { json: jsonMode }); // keeps its code under --json
+    if ((await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(e)) (await import('../cli/cli-error.ts')).exitCliError(e, 'extract', { json: jsonMode }); // keeps its code under --json
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }
@@ -2596,8 +2588,7 @@ async function extractMentionsFromDb(
         let pageRemoved = 0;
         let pageCreated = 0;
         await engine.transaction(async (tx) => {
-          const [current] = await tx.executeRaw<{ revision: string }>(
-            'SELECT knowledge_revision::text AS revision FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR SHARE', [source_id, slug]);
+          const [current] = await tx.readPageRevisionForShare(source_id, slug);
           if (current?.revision !== scannedRevision) throw new PageRevisionConflictError(scannedRevision, current?.revision ?? null);
           pageRemoved = await tx.removeLinksByPagesAndSource(
             [{ slug, source_id }],

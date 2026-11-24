@@ -33,6 +33,14 @@
  * The write journal's typed reads (persistence/authority.ts) rewrite the publication authorization's two locking reads
  * one-for-one: the source membership read is readSourceMembership's statement (incarnation and archived only) and the
  * local writer read is readLocalWriterRow's; same statements, same order.
+ * The cli-members line's byte-order pass (on that line before the main join da99c637a7; the fixture was not re-pinned
+ * there) adds `COLLATE "C"` to four statement texts one-for-one: the page snapshot read (the source tie-break, the tag
+ * aggregate and the withdrawal and purge aggregates), the source-path collision read (`ORDER BY slug`) and the config
+ * read (`ORDER BY key`); same statements, same order. The PGLite entries were re-captured; the Postgres entries carry the
+ * same insertions by hand and have not been re-captured on Postgres.
+ * The managed sync checkpoint moved from sync-prepare.ts's raw UPDATE to the typed advanceSyncCheckpoint member
+ * (engine-sql/sources.ts; rust-engine/sync-checkpoint-callers): the pass stamp's one statement changes text (the member's
+ * parameter order and spacing), same statement, same place; that one entry was re-captured on PGLite and on Postgres.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

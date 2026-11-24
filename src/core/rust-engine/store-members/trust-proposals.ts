@@ -5,10 +5,13 @@
  * `normalizeTrustProposal` turns them into the rows the SQL engines return. The proposer principal and write request read
  * NULL on the store (rust/docs/store/trust.md, "Trust proposals"). `listPendingContradictions` reads the pending
  * `decide_proposals` (the store keeps them under the eval-capture family) with their two facts.
+ * `listUnreadablePrivacyHoldIds` sends the store what widens the caller's world-only
+ * fact reads (storeVisibility, store-members/fact-visibility.ts): a caller the store cannot model refuses there.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { normalizeTrustProposal, trustProposalLimit, type PendingContradictionRow } from '../../engine-sql/trust-proposals.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { storeVisibility } from './fact-visibility.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -27,6 +30,14 @@ export const insertTrustProposal: Member<'insertTrustProposal'> = async (brain, 
 export const getTrustProposal: Member<'getTrustProposal'> = async (brain, id) => {
   const row: Record<string, unknown> | null = await storeCall({ member: 'getTrustProposal' }, () => brain.getTrustProposal(id));
   return row ? normalizeTrustProposal(row) : null;
+};
+
+export const listUnreadablePrivacyHoldIds: Member<'listUnreadablePrivacyHoldIds'> = async (brain, ids) => {
+  if (!ids.length) return [];
+  const widen = storeVisibility('listUnreadablePrivacyHoldIds', ['world']).widen ?? { privateFactSources: [] };
+  const out: number[] = await storeCall({ member: 'listUnreadablePrivacyHoldIds' },
+    () => brain.listUnreadablePrivacyHoldIds({ ids: ids.map(Number), widen }));
+  return out.map(Number);
 };
 
 export const listTrustProposals: Member<'listTrustProposals'> = async (brain, filter = {}) =>

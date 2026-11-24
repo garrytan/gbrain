@@ -8,12 +8,19 @@
  *
  * The writer's tier (`gbrain.write_trust_tier`) and the opened fact ids (`gbrain.write_open_facts`) are transaction-local
  * settings the SQL reads itself; this member passes neither.
+ *
+ * `listHeldTimelineRows` is `heldRows`' read of the timeline rows a write may not delete or overwrite (rows above the
+ * writer, and rows an open `forget` contest holds), the statement `heldRows` sent through `executeRaw` for
+ * `timeline_entries`, with the named writer's rank bound as a number.
+ *
+ * `listHeldTakeRows` is the same read for `takes`: the statement `heldRows` sent through `executeRaw`, byte for byte
+ * (the named writer bound as text and ranked by the tier CASE), now one member PGLite, Postgres and the Rust store serve.
  */
 import type { BrainEngine } from '../engine.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
-import { trustRankSql } from '../trust/tier.ts';
+import { TRUST_TIER_RANK, trustRankArmsSql, trustRankSql, type TrustTier } from '../trust/tier.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** SQL for the writer's trust rank: the transaction's declared tier (`gbrain.write_trust_tier`), `unknown` when undeclared. */
 export const WRITER_RANK_SQL = trustRankSql(`COALESCE(NULLIF(current_setting('gbrain.write_trust_tier', true), ''), 'unknown')`);

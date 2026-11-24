@@ -29,7 +29,6 @@ tools:
   - web_fetch
 mutating: true
 writes_pages: false
-upstream: fact-check@fc834ee
 ---
 
 # Fact-Check — Claim-by-Claim Verification Before Anything Ships
@@ -428,7 +427,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - **Producer as verifier.** Re-running the query that produced a claim proves nothing; it reproduces the bug. Independent path or it isn't verification.
 - **Affiliation promoted to authorship.** "They co-occur in three meeting pages" is not "she founded it." Typed edges or explicit page statements only.
 - **Web-searching data-derived claims.** The web cannot verify what your pipeline asserted about your own brain. Wrong authoritative source.
-- **Shipping with hard fails.** The data-derived lane is a gate. A report listing known-false claims that ships anyway is documentation of negligence.
+- **Shipping with hard fails.** The data-derived lane is a gate. Fix or remove every known-false claim before the report ships.
 - **Over-hedging verified claims.** Don't add "reportedly" to things you confirmed with 2 sources.
 - **Under-hedging unverifiable claims.** "Estimated $500M" is different from "$500M."
 - **Skipping the correction step.** A report without applied fixes is documentation of known errors.

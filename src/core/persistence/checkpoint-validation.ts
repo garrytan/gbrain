@@ -22,6 +22,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import { PERSISTENCE_REQUEST_ONLINE_INDEXES, PERSISTENCE_SYNC_RUN_INDEXES } from './schema.ts';
 import { docsAnchor } from './connector-errors.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
@@ -31,29 +32,7 @@ export const CHECKPOINT_VALIDATION_TIMEOUT = 'checkpoint_validation_timeout';
 export const CHECKPOINT_VALIDATION_TIMEOUT_MESSAGE = 'The sync checkpoint validation timed out on a large request table; the checkpoint did not commit.';
 export const REQUEST_INDEXES_REPAIR_COMMAND = 'gbrain repair request-indexes --apply';
 
-const SYNC_PAGE_KINDS = "r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete')";
-/**
- * #6643: clause 3 skips a terminal, recovery-free receipt the cursor settled another way: one the run converted in place
- * ($3, #5988) and one at an index the cursor passed without a commit (waived or held: the settled ranges $4..$5).
- * #6712 retired the knock-on exemption ($6): no page is cancelled for another page's failure any more, and the cursor
- * converts a legacy knock-on it meets in place (sync-run.ts `refreezeInPlace`).
- */
-const incompleteSyncReceiptSql = (limit: number) => `(SELECT r.request_id::text AS request_id FROM persistence_requests r
-    WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL LIMIT ${limit})
-  UNION ALL (SELECT r.request_id::text FROM persistence_requests r
-    WHERE r.worktree_id=$1::uuid AND r.intent->>'runId'=$2 AND r.state<>'committed' AND ${SYNC_PAGE_KINDS}
-      AND r.state IN ('queued','running','recovering') LIMIT ${limit})
-  UNION ALL (SELECT r.request_id::text FROM persistence_requests r
-    LEFT JOIN LATERAL (SELECT true AS found FROM persistence_requests committed WHERE committed.source_id=r.source_id
-        AND committed.intent->>'runId'=$2 AND committed.intent->>'index'=r.intent->>'index'
-        AND committed.state='committed' AND committed.intent ? 'runId' LIMIT 1) sibling ON true
-    WHERE r.worktree_id=$1::uuid AND r.intent->>'runId'=$2 AND r.state<>'committed' AND ${SYNC_PAGE_KINDS}
-      AND sibling.found IS NULL
-      AND NOT (r.request_id::text=ANY($3::text[]))
-      AND NOT (r.state IN ('failed','cancelled','conflict') AND r.recovery IS NULL
-        AND EXISTS (SELECT 1 FROM unnest($4::int[], $5::int[]) AS settled(lo, hi) WHERE (r.intent->>'index')::int BETWEEN settled.lo AND settled.hi)) LIMIT ${limit})
-  LIMIT ${limit}`;
-export const INCOMPLETE_SYNC_RECEIPT_SQL = incompleteSyncReceiptSql(1);
+export { INCOMPLETE_SYNC_RECEIPT_SQL, OPEN_PASS_WORK_SQL, incompleteSyncReceiptSql } from './checkpoint-validation-sql.ts';
 
 /** #6643: the index ranges a cursor passed without a commit, and the index it began recording them at. */
 export interface SyncSettledIndexes { from: number; ranges: Array<[number, number]> }
@@ -65,13 +44,11 @@ export interface SyncSettledIndexes { from: number; ranges: Array<[number, numbe
  * `settled` (#6643) is the cursor's record of the indexes it passed without a
  * commit; null for a checkpoint frozen before #6643, whose whole run predates it.
  */
-export async function findIncompleteSyncReceipt(tx: Pick<BrainEngine, 'executeRaw'>, worktreeId: string, runId: string, superseded: string[] = [],
+export async function findIncompleteSyncReceipt(tx: Pick<BrainEngine, 'readIncompleteSyncReceipt'>, worktreeId: string, runId: string, superseded: string[] = [],
   settled: SyncSettledIndexes | null = null): Promise<string | null> {
   try {
     const ranges = settled?.ranges ?? [];
-    const [row] = await tx.executeRaw<{ request_id: string }>(INCOMPLETE_SYNC_RECEIPT_SQL,
-      [worktreeId, runId, superseded, ranges.map(range => range[0]), ranges.map(range => range[1])]);
-    return row?.request_id ?? null;
+    return await tx.readIncompleteSyncReceipt({ worktreeId, runId, superseded, ranges });
   } catch (error) {
     const failure = error as { code?: string; message?: string };
     if (failure?.code !== '57014' || !/statement timeout/.test(String(failure.message))) throw error;
@@ -81,14 +58,6 @@ export async function findIncompleteSyncReceipt(tx: Pick<BrainEngine, 'executeRa
   }
 }
 
-/** The pass stamp's validation statement (`findOpenPassWork`): `$1` the worktree, `$2` the stamp's own request id. */
-export const OPEN_PASS_WORK_SQL = `(SELECT r.request_id::text AS request_id FROM persistence_requests r
-    WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL LIMIT 1)
-  UNION ALL (SELECT r.request_id::text FROM persistence_requests r
-    WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running','recovering') AND r.request_id<>$2::uuid
-      AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete','managed_sync_checkpoint') LIMIT 1)
-  LIMIT 1`;
-
 /**
  * #6712 PR 4b (design v3.2 §3.3, clause 2): a live pass's stamp commits only with no recovery row on the worktree and no
  * other open managed-sync request of it (page kinds and the checkpoint, filtered on the row). The open read is served by
@@ -96,13 +65,11 @@ export const OPEN_PASS_WORK_SQL = `(SELECT r.request_id::text AS request_id FROM
  * `persistence_requests_recovery`. Returns the blocking request id, or null. A statement timeout is the typed
  * `checkpoint_validation_timeout`, as clause 1 of the cursor validation.
  */
-export async function findOpenPassWork(tx: Pick<BrainEngine, 'executeRaw'>, worktreeId: string, selfRequestId: string,
+export async function findOpenPassWork(tx: Pick<BrainEngine, 'readOpenPassWork'>, worktreeId: string, selfRequestId: string,
   /** A writeback's folded stamp: its own recovery record is the file publication's journal, which its commit resolves. */
   ownRecovery = false): Promise<string | null> {
   try {
-    const [row] = await tx.executeRaw<{ request_id: string }>(ownRecovery ? OPEN_PASS_WORK_SQL.replace('r.recovery IS NOT NULL LIMIT 1', 'r.recovery IS NOT NULL AND r.request_id<>$2::uuid LIMIT 1') : OPEN_PASS_WORK_SQL,
-      [worktreeId, selfRequestId]);
-    return row?.request_id ?? null;
+    return await tx.readOpenPassWork({ worktreeId, selfRequestId, ownRecovery });
   } catch (error) {
     const failure = error as { code?: string; message?: string };
     if (failure?.code !== '57014' || !/statement timeout/.test(String(failure.message))) throw error;
@@ -127,12 +94,10 @@ export async function probeCheckpointBlocker(...args: Parameters<typeof findInco
  * #6643: every receipt (up to 20) that would block the run's checkpoint now, with what `sync status` needs to tell a
  * knock-on from a root; read-only. The checkpoint itself names only the first (`findIncompleteSyncReceipt`).
  */
-export async function listIncompleteSyncReceipts(engine: Pick<BrainEngine, 'executeRaw'>, worktreeId: string, runId: string, superseded: string[] = [],
+export async function listIncompleteSyncReceipts(engine: Pick<BrainEngine, 'readIncompleteSyncReceiptRows'>, worktreeId: string, runId: string, superseded: string[] = [],
   settled: SyncSettledIndexes | null = null): Promise<Array<{ request_id: string; slug: string; state: string; code: string | null; index: number | null; recovery: boolean }>> {
   const ranges = settled?.ranges ?? [];
-  return engine.executeRaw(`SELECT r.request_id::text AS request_id, r.slug, r.state, r.error_code AS code, (r.intent->>'index')::int AS index, r.recovery IS NOT NULL AS recovery
-      FROM persistence_requests r WHERE r.request_id::text IN (SELECT request_id FROM (${incompleteSyncReceiptSql(20)}) blockers) ORDER BY r.sequence LIMIT 20`,
-    [worktreeId, runId, superseded, ranges.map(range => range[0]), ranges.map(range => range[1])]);
+  return engine.readIncompleteSyncReceiptRows({ worktreeId, runId, superseded, ranges });
 }
 
 /** #6643: `settled` with `[from, to]` added, merged into the last range when contiguous. */
@@ -152,10 +117,13 @@ export interface RequestIndexState {
 /**
  * A fresh read of the online-built request indexes (#5762's checkpoint pair and #6511's slug index by default): valid,
  * missing, INVALID, or still being built by another session. The checkpoint timeout hint reads the pair it depends on.
+ * An engine without raw SQL (Rust) has no SQL indexes, so every name reads as valid.
  */
 export async function readRequestIndexStates(engine: Pick<BrainEngine, 'executeRaw' | 'kind'>,
   indexes: ReadonlyArray<{ name: string }> = PERSISTENCE_REQUEST_ONLINE_INDEXES): Promise<RequestIndexState[]> {
   const names = indexes.map(index => index.name);
+  // The Rust store keeps no SQL indexes: its request keys serve these reads, so there is nothing to build or rebuild.
+  if (lacksRawSql(engine)) return names.map(name => ({ name, state: 'valid' }));
   if (engine.kind !== 'postgres') {
     const rows = await engine.executeRaw<{ name: string; present: boolean }>(
       'SELECT n.name, to_regclass(n.name) IS NOT NULL AS present FROM unnest($1::text[]) AS n(name)', [names]);

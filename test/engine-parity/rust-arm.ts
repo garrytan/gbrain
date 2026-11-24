@@ -80,13 +80,45 @@ export function removeBrainDir(dir: string): void {
 }
 
 /** Fixture: register a source on the Rust brain (BrainEngine has no typed "create source"). */
-export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string): Promise<void> {
-  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null });
+export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string, lastSyncAt?: string): Promise<void> {
+  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null, ...(lastSyncAt ? { last_sync_at: lastSyncAt } : {}) });
 }
 
 /** Fixture: archive a source on the Rust brain (BrainEngine has no typed "archive source"). */
 export async function archiveRustSource(engine: unknown, id: string): Promise<void> {
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
+}
+
+/** Fixture: put a whole op checkpoint row on the Rust brain (the identity-downgrade recorder writes it through executeRaw). */
+export async function putRustOpCheckpointRow(engine: unknown, op: string, fingerprint: string, completedKeys: unknown[]): Promise<void> {
+  await (engine as RustEngine).openStore('putOpCheckpointRow').brain.putOpCheckpointRow(op, fingerprint, completedKeys);
+}
+
+/** Fixture: a page's `deleted_at` as the Rust store keeps it (ISO with microseconds; the engine member hands back a Date). */
+export async function rustPageDeletedAt(engine: unknown, sourceId: string, slug: string): Promise<string | null> {
+  const row = await (engine as RustEngine).openStore('readPageOrigin').brain.readPageOrigin({ sourceId, slug }) as { deleted_at: string | null } | null;
+  return row?.deleted_at ?? null;
+}
+
+/** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
+export function rustAccessBrain(engine: unknown) {
+  return (engine as RustEngine).openStore('accessRules').brain;
+}
+
+/** Fixture: record a page purge on the Rust brain (the store's `page_purges` ledger has no typed BrainEngine writer). */
+export async function recordRustPagePurge(engine: unknown, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
+  await (engine as RustEngine).openStore('recordPagePurge').brain.recordPagePurge(sourceId, hashes, slug, requestId);
+}
+
+/** A member the fixture seeds: an id, an optional email, a kind and groups, enabled unless `state` says otherwise. */
+export interface MemberSeed { id: string; email?: string; kind?: 'person' | 'audience'; groups?: readonly string[]; state?: 'disabled' | 'removed' }
+
+/** Fixture: seed an access member on the Rust brain through the store's typed member writes (BrainEngine has no typed member write here). */
+export async function createRustMember(engine: unknown, seed: MemberSeed): Promise<void> {
+  const brain = (engine as RustEngine).openStore('createMember').brain;
+  await brain.insertAccessMember({ id: seed.id, displayName: null, email: seed.email ?? null, kind: seed.kind ?? 'person', groups: [...(seed.groups ?? [])] });
+  if (seed.state === 'disabled') await brain.setAccessMemberDisabled(seed.id, true);
+  if (seed.state === 'removed') await brain.tombstoneAccessMember(seed.id);
 }
 
 export interface DivergenceRow { file: string; name: string; normalizer: string; reason: string }

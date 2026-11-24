@@ -1,5 +1,4 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { GrantError, grantFromClient, type ClientGrant, type PrincipalGrant } from '../core/grants/model.ts';
 import { credentialReadSources } from '../core/grants/shared-exposure.ts';
 import { sharedReadSources } from '../core/grants/read-shared.ts';
@@ -24,7 +23,7 @@ export async function readSetLines(engine: BrainEngine, grant: Pick<PrincipalGra
   if (grant.readShared !== true || s.kind === 'none') {
     return [`  writes: ${write}. reads: ${(await credentialReadSources(engine, grant as PrincipalGrant, member)).join(', ') || 'nothing'}.`];
   }
-  const shared = await sharedReadSources(sqlQueryForEngine(engine), member).catch(() => null);
+  const shared = await sharedReadSources(engine, member).catch(() => null);
   const lines = [`  writes: ${write}. reads: ${stored.join(', ')}, plus every shared source (now: ${shared ? shared.join(', ') : 'unreadable, so only the sources listed'}; `
     + 'sources shared later join automatically; guest sources and other members\' own sources are never included).'];
   if (shared && shared.every(id => id === 'default')) lines.push('  No other source is shared yet; share one with gbrain sources federate <id>.');
@@ -36,7 +35,7 @@ export async function clientReadsChange(engine: BrainEngine, clientId: string, b
   const [row] = await engine.executeRaw<{ member_id: unknown }>('SELECT to_jsonb(c)->>\'member_id\' AS member_id FROM oauth_clients c WHERE c.client_id = $1', [clientId]);
   const member = typeof row?.member_id === 'string' ? row.member_id : null;
   const [was, now] = [await credentialReadSources(engine, grantFromClient(before), member), await credentialReadSources(engine, grantFromClient(after), member)];
-  const shared = after.readShared === true && !after.sourcesNone ? await sharedReadSources(sqlQueryForEngine(engine), member).catch(() => undefined) : undefined;
+  const shared = after.readShared === true && !after.sourcesNone ? await sharedReadSources(engine, member).catch(() => undefined) : undefined;
   return { before: was, after: now, stops_reading: was.filter(s => !now.includes(s)), ...(shared ? { shared_now: shared } : {}) };
 }
 

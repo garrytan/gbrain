@@ -238,6 +238,9 @@ export function maintenanceDriftRefusal(sourceId: string, slug: string): Operati
 export const PUBLISHES_WITHOUT_FILE: ReadonlySet<string> = new Set(['managed_maintenance_chronicle_event', 'managed_maintenance_chronicle_retire', 'managed_maintenance_retire_stale_atoms',
   'managed_maintenance_retire_ghost_page', 'managed_maintenance_restore_reextract_atom']);
 
+/** GST-3612: `think --take` on a managed brain, a takes_add of the anchor page at the synthesis's derived tier (the take is the derived row). */
+export const THINK_TAKE_INTENT = 'managed_maintenance_think_take';
+
 /** #6696 (A12): `source_changed` / `canonical_file_missing` before admission: the page's recorded file is gone; never a new request. */
 export function maintenanceGhostRefusal(sourceId: string, slug: string): OperationError {
   return opError('source_changed', 'The canonical file was removed outside coordinated publication.',
@@ -408,16 +411,7 @@ interface EvidencePage { slug: string; revision: string; id: number; }
 
 /** Whole fact rows as comparable snapshots; `lock` takes FOR UPDATE inside a transaction. */
 export async function readFacts(engine: BrainEngine, sourceId: string, ids: number[], lock = false): Promise<FactSnapshot[]> {
-  const rows = await engine.executeRaw<FactSnapshot>(`SELECT f.id,jsonb_build_object(
-      'source_id',f.source_id,'entity_slug',f.entity_slug,'source_markdown_slug',f.source_markdown_slug,'row_num',f.row_num,
-      'fact',f.fact,'kind',f.kind,'visibility',f.visibility,'notability',f.notability,'context',f.context,
-      'valid_from',f.valid_from,'valid_until',f.valid_until,'expired_at',f.expired_at,'superseded_by',f.superseded_by,
-      'consolidated_at',f.consolidated_at,'consolidated_into',f.consolidated_into,
-      'source',f.source,'source_session',f.source_session,'confidence',f.confidence,
-      'claim_metric',f.claim_metric,'claim_value',f.claim_value,'claim_unit',f.claim_unit,'claim_period',f.claim_period,
-      'event_type',f.event_type,'dimension',f.dimension,'value',f.value,'dim_status',f.dim_status,'attributed_to',f.attributed_to
-    ) AS value FROM facts f
-    WHERE f.source_id=$1 AND f.id=ANY($2::integer[]) ORDER BY f.id${lock ? ' FOR UPDATE' : ''}`, [sourceId, ids]);
+  const rows = await engine.readFactSnapshots(sourceId, ids, lock);
   return rows.map(row => ({ ...row, id: Number(row.id) }));
 }
 
@@ -665,8 +659,9 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
  * #5575 I2: a maintenance intent that carries a derivation declaration
  * publishes at the declared tier (never above agent_written), lowers its
  * derived row when the publication changed no content column, and records
- * the complete input edges (ENG-7). A consolidation's takes fence edit
- * keeps the entity page's tier (page-prepare's fence-edit rule).
+ * the complete input edges (ENG-7). A consolidation's or a think take's takes
+ * fence edit keeps the entity page's tier (page-prepare's fence-edit rule);
+ * the take row it wrote (`take_id`) is the derived row.
  * #7918: a declaration that is present but unreadable publishes at `unknown`
  * (fail closed) with no input edges. #7917: a page the publication lowered
  * files a `lower_page` proposal the owner sees in `gbrain trust review`.
@@ -676,12 +671,12 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
   const trust = derivationWriteTrust(row.intent);
   if (!trust) return prepared;
   const declaration = readDerivationDeclaration(row.intent?.derivation);
-  const consolidation = row.intent?.kind === 'managed_maintenance_consolidate';
+  const takeWrite = row.intent?.kind === 'managed_maintenance_consolidate' || row.intent?.kind === THINK_TAKE_INTENT;
   return { ...prepared, trust, apply: async (tx, preimage) => {
-    const snapshot = consolidation ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
+    const snapshot = takeWrite ? null : await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
     const prior = snapshot ? { tier: await storedPageTier(tx, row.source_id, row.slug), revision: snapshot.revision } : null;
     const outcome = await prepared.apply(tx, preimage);
-    const [derived] = consolidation ? (outcome.take_id ? [{ table: 'takes' as const, id: Number(outcome.take_id) }] : [])
+    const [derived] = takeWrite ? (outcome.take_id ? [{ table: 'takes' as const, id: Number(outcome.take_id) }] : [])
       : (await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]))
         .map(page => ({ table: 'pages' as const, id: Number(page.id) }));
     if (derived) {
@@ -713,6 +708,15 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_deleted_page_facts_expire') return (await import('../cycle/extract-facts.ts')).prepareDeletedPageFactsExpiry(engine, row);
   if (row.intent?.kind === 'managed_maintenance_takes_reextract') return (await import('../cycle/extract-takes.ts')).prepareTakesReextract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
+  if (row.intent?.kind === THINK_TAKE_INTENT) {
+    const prepared = await prepareTakesMutation(engine, { ...row, operation: 'takes_add', intent: { ...row.intent, kind: 'take' } }, config, undefined, derivationWriteTrust(row.intent));
+    return { ...prepared, apply: async (tx, preimage) => {
+      const outcome = await prepared.apply(tx, preimage);
+      if (outcome.row_num === undefined) return outcome;
+      const [take] = await tx.executeRaw<{ id: number }>('SELECT id FROM takes WHERE page_id=$1 AND row_num=$2', [row.page_id, outcome.row_num]);
+      return take ? { ...outcome, take_id: Number(take.id) } : outcome;
+    } };
+  }
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
   if (row.intent?.kind === 'managed_maintenance_page') {

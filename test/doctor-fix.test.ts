@@ -8,6 +8,7 @@ import { join } from "path";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { spawnSync, execSync } from "child_process";
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const CLI = join(import.meta.dir, "..", "src", "cli.ts");
 const REPO_ROOT = join(import.meta.dir, "..");
@@ -54,7 +55,7 @@ function runDoctor(cwd: string, args: string[]): { stdout: string; stderr: strin
   const res = spawnSync("bun", [CLI, "doctor", "--fast", ...args], {
     cwd,
     encoding: "utf-8",
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...envWithoutDatabaseUrl(), NO_COLOR: "1" },
   });
   return { stdout: res.stdout, stderr: res.stderr, status: res.status ?? -1 };
 }

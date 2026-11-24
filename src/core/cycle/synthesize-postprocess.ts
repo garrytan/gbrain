@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
@@ -48,11 +49,7 @@ const sameBody = (content: unknown, page: { compiled_truth: string; timeline?: s
 
 /** Committed-or-pending requests on the output page after the child's put_page, oldest first. */
 async function laterRequests(engine: BrainEngine, output: WriteRequest): Promise<WriteRequest[]> {
-  return engine.executeRaw<WriteRequest>(
-    `SELECT * FROM persistence_requests
-      WHERE source_id=$1 AND source_incarnation=$2 AND slug=$3 AND sequence > $4
-        AND state IN ('queued','running','recovering','committed')
-      ORDER BY sequence`, [output.source_id, output.source_incarnation, output.slug, output.sequence]);
+  return engine.listLaterPersistenceRequests(output.source_id, output.source_incarnation, output.slug, output.sequence);
 }
 
 const localMaintenance = (r: WriteRequest) => r.operation === 'submit_job' && r.intent?.kind === 'managed_maintenance_page' && r.authority?.remote === false;
@@ -62,7 +59,7 @@ const receiptFix = (requestId: string): Action => readFix(`Reads postprocess req
   { argv: ['gbrain', 'write-request', '--', requestId] });
 
 /** The slug submitPageMutation journals for a client slug: it lowercases it (page-mutations.ts). */
-export const journaledPageSlug = (slug: string): string => slug.toLowerCase();
+export const journaledPageSlug = (slug: string): string => normalizeSlug(slug);
 
 /**
  * #6616: each child's completed `brain_put_page` call joined to the committed
@@ -96,19 +93,13 @@ async function retainedPutPageCalls(engine: BrainEngine, childIds: number[]): Pr
   });
 }
 
-/**
- * #6757: the committed journal row of each retained call, looked up by request id (a uuid, as the column is) within
- * the cycle's source, which `persistence_requests_request_id` serves; a text cast of the column defeats every index.
- */
-export const COMMITTED_OUTPUT_REQUESTS_SQL = `SELECT row_to_json(p) AS request FROM persistence_requests p
-      WHERE p.source_id=$2 AND p.request_id=ANY($1::uuid[]) AND p.source_incarnation=$3
-        AND p.operation='put_page' AND p.state='committed'
-      ORDER BY p.sequence DESC`;
+// #6757: the statement lives with the other dream-cycle statements; tests read it from here.
+export { COMMITTED_OUTPUT_REQUESTS_SQL } from '../engine-sql/dream-cycle.ts';
 
 async function committedRequestsFor(engine: BrainEngine, authority: MaintenanceAuthority, calls: RetainedCall[]): Promise<RetainedOutput[]> {
   if (!calls.length) return [];
-  const requests = await engine.executeRaw<{ request: WriteRequest }>(COMMITTED_OUTPUT_REQUESTS_SQL,
-    [[...new Set(calls.map(c => c.requestId))], authority.writer.sourceId, authority.writer.sourceIncarnation]);
+  const requests = await engine.listCommittedOutputRequests(
+    [...new Set(calls.map(c => c.requestId))], authority.writer.sourceId, authority.writer.sourceIncarnation);
   return requests.flatMap(({ request }) => calls
     .filter(c => c.requestId === String(request.request_id) && c.slug === request.slug && c.revision === request.outcome?.revision)
     .map(c => ({ job_id: c.job_id, job_key: c.job_key, input_slug: c.input_slug, request, ...(c.verification ? { verification: c.verification } : {}) })));

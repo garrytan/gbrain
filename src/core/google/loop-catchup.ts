@@ -39,6 +39,7 @@ import { NO_EXCLUSION, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { muteRecheckThreads } from '../loops/loops-store.ts';
 import { loopsSpendGate } from './loops-spend.ts';
 import type { GmailThreadData, GoogleSourceState, LoopGraceHold } from './types.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const GRACE_HOLDS_CAP = 2_000;
 export const GRACE_BACKFILL_DAYS = 14;
@@ -122,13 +123,13 @@ export async function seedLoopRechecks(engine: BrainEngine, sourceId: string, st
   let backfill = 0;
   if (!state.loop_automated_backfill_done) {
     backfill = seed(await engine.executeRaw<{ thread_id: string; page_slug: string | null }>(
-      `SELECT DISTINCT ON (counterparty_email) thread_id, page_slug, n, last_activity_at FROM (
+      `SELECT DISTINCT ON (counterparty_email COLLATE "C") thread_id, page_slug, n, last_activity_at FROM (
          SELECT counterparty_email, thread_id, page_slug, last_activity_at,
                 count(*) OVER (PARTITION BY counterparty_email) AS n
            FROM open_loops
           WHERE source_id = $1 AND status = 'open' AND loop_type = 'unanswered_inbound'
             AND counterparty_email IS NOT NULL AND thread_id IS NOT NULL) l
-        ORDER BY counterparty_email, last_activity_at DESC`, [sourceId])
+        ORDER BY counterparty_email COLLATE "C", last_activity_at DESC`, [sourceId])
       .then((rows) => (rows as Array<{ thread_id: string; page_slug: string | null; n: number; last_activity_at: Date | string | null }>)
         .sort((a, b) => Number(b.n) - Number(a.n)).slice(0, WITHHELD_BACKFILL_SENDERS)
         .filter((r) => walkFromMs == null || r.last_activity_at == null || new Date(r.last_activity_at).getTime() < walkFromMs + DAY_MS)));
@@ -266,7 +267,9 @@ export async function pendingLoopsExtractDepth(engine: BrainEngine, sourceId: st
       `SELECT count(*)::text AS n FROM minion_jobs
         WHERE name = $1 AND status IN ('waiting', 'delayed', 'active') AND data->>'sourceId' = $2`, [LOOPS_EXTRACT_JOB, sourceId]);
     return parseInt(rows[0]?.n ?? '0', 10) || 0;
-  } catch {
+  } catch (e) {
+    // A brain before the queue table counts nothing; an engine that cannot read the queue says so instead of 0.
+    rethrowCapabilityRefusal(e);
     return 0;
   }
 }
@@ -303,8 +306,9 @@ export async function runLoopsCatchup(ctx: {
   const cu = ctx.state.loops_catchup ??= { version: 1, floor_ms: now - LOOPS_EXTRACT_WINDOW_DAYS * DAY_MS, retried: [], done: false };
   const pages = await ctx.engine.executeRaw<{ slug: string; thread_id: string; date: string }>(
     `SELECT slug, frontmatter->>'thread_id' AS thread_id, frontmatter->>'date' AS date FROM pages
-      WHERE source_id=$1 AND type='email' AND deleted_at IS NULL AND frontmatter->>'thread_id' IS NOT NULL AND frontmatter->>'date' >= $2
-      ORDER BY frontmatter->>'date' DESC`, [ctx.sourceId, new Date(cu.floor_ms).toISOString()]);
+      WHERE source_id=$1 AND type='email' AND deleted_at IS NULL AND frontmatter->>'thread_id' IS NOT NULL AND (frontmatter->>'date') COLLATE "C" >= $2
+        AND COALESCE(frontmatter->>'extract_atoms', '') <> 'false'
+      ORDER BY (frontmatter->>'date') COLLATE "C" DESC`, [ctx.sourceId, new Date(cu.floor_ms).toISOString()]);
   const outcomes = await readLoopsExtractOutcomes(ctx.engine, ctx.sourceId);
   const keyOf = (slug: string, rev: number) => `loops-catchup:${ctx.sourceId}:${slug}:${rev}`;
   const candidates = pages.map(p => ({ ...p, rev: Date.parse(p.date) })).filter(p => Number.isFinite(p.rev));

@@ -4,6 +4,8 @@ import type { ReadQuery } from '../search/read-enrichment.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rowToPage } from '../utils.ts';
 import type { GlobalPurgeMarker, PageSnapshot, PageSnapshotOptions, PageWithdrawal } from './types.ts';
+import type { BrainEngine } from '../engine.ts';
+import { GLOBAL_PURGES_SQL, GLOBAL_WORLD_PURGES_SQL } from '../engine-sql/segmented-mirror-effects.ts';
 import { PageSnapshotAmbiguousError, REVISION_BACKFILL_PENDING } from './types.ts';
 
 /**
@@ -23,10 +25,7 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
   if (!marker || marker.count <= 0) return [];
   const hashes = fenceClaimHashes(normalizedTexts);
   if (!hashes.length) return [];
-  const rows = await query<{ w: PageWithdrawal }>(`SELECT jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,
-      'withdrawn_at',min(purged_at),'purged',true) AS w
-    FROM fact_purges WHERE source_id=$1 AND subject='*' AND fact_hash=ANY($2::text[]) ${marker.world_only ? "AND visibility='world'" : ''}
-    GROUP BY visibility,fact_hash ORDER BY visibility,fact_hash`, [sourceId, hashes]);
+  const rows = await query<{ w: PageWithdrawal }>(marker.world_only ? GLOBAL_WORLD_PURGES_SQL : GLOBAL_PURGES_SQL, [sourceId, hashes]);
   return rows.map(r => typeof r.w === 'string' ? JSON.parse(r.w) as PageWithdrawal : r.w);
 }
 
@@ -36,15 +35,44 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
  */
 export async function overlayCanonicalBodies(query: ReadQuery, body: string, timeline: string, withdrawals: PageWithdrawal[],
   global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
-  const pending = global?.marker && global.marker.count > 0 ? global : undefined;
-  if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
-  if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
-  const [normalized] = await query<{ body: string; timeline: string }>(`SELECT
+  return overlayWith({
+    normalize: async () => (await query<{ body: string; timeline: string }>(`SELECT
     (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
       FROM unnest(string_to_array($1::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS body,
     (SELECT string_agg(regexp_replace(lower(line),'[[:space:]]+',' ','g'),chr(10) ORDER BY ord)
-      FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]);
-  const resolved = pending ? await resolveGlobalPurges(query, pending.sourceId, pending.marker, [normalized.body ?? '', normalized.timeline ?? '']) : [];
+      FROM unnest(string_to_array($2::text,chr(10))) WITH ORDINALITY AS lines(line,ord)) AS timeline`, [body, timeline]))[0],
+    purges: (sourceId, marker, texts) => resolveGlobalPurges(query, sourceId, marker, texts),
+  }, body, timeline, withdrawals, global);
+}
+
+/**
+ * `overlayCanonicalBodies` through typed engine members: the line normalization is `normalizeFenceLines` and the `*`
+ * purge lookup is `listGlobalPurgeWithdrawals`, so an engine without raw SQL (the Rust engine) overlays the same way.
+ */
+export async function overlayCanonicalBodiesTyped(engine: Pick<BrainEngine, 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals'>, body: string, timeline: string,
+  withdrawals: PageWithdrawal[], global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
+  return overlayWith({
+    normalize: async () => (await engine.normalizeFenceLines([body], [timeline]))[0],
+    purges: async (sourceId, marker, texts) => {
+      if (!marker || marker.count <= 0) return [];
+      const hashes = fenceClaimHashes(texts);
+      return hashes.length ? engine.listGlobalPurgeWithdrawals(sourceId, hashes, marker.world_only === true) : [];
+    },
+  }, body, timeline, withdrawals, global);
+}
+
+interface OverlayReads {
+  normalize(): Promise<{ body: string | null; timeline: string | null } | undefined>;
+  purges(sourceId: string, marker: GlobalPurgeMarker, normalizedTexts: readonly string[]): Promise<PageWithdrawal[]>;
+}
+
+async function overlayWith(reads: OverlayReads, body: string, timeline: string, withdrawals: PageWithdrawal[],
+  global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
+  const pending = global?.marker && global.marker.count > 0 ? global : undefined;
+  if (!withdrawals.length && !pending) return { compiled_truth: body, timeline };
+  if (!body.includes('gbrain:facts:begin') && !timeline.includes('gbrain:facts:begin')) return { compiled_truth: body, timeline };
+  const normalized = (await reads.normalize()) ?? { body: '', timeline: '' };
+  const resolved = pending ? await reads.purges(pending.sourceId, pending.marker!, [normalized.body ?? '', normalized.timeline ?? '']) : [];
   const all = resolved.length ? [...withdrawals, ...resolved] : withdrawals;
   return { compiled_truth: overlayWithdrawalBody(body, normalized.body ?? '', all),
     timeline: overlayWithdrawalBody(timeline, normalized.timeline ?? '', all) };
@@ -99,10 +127,10 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     : `pages p WHERE p.slug=$1${and}`;
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
     SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${candidates}
-    ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
+    ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id COLLATE "C" ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
+    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
@@ -110,11 +138,11 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
-      ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
+      ORDER BY w.visibility COLLATE "C",w.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
         FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
         ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb)
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
-        ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
+        ORDER BY x.visibility COLLATE "C",x.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug
           ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) x), '[]'::jsonb) AS snapshot_withdrawals,
       (SELECT jsonb_build_object('count',count(*),'latest',max(g.purged_at)) FROM fact_purges g WHERE g.source_id=p.source_id AND g.subject='*'

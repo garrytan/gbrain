@@ -9,13 +9,15 @@ import { checkSyncFreshness, computeExtractHealthCheck } from '../src/commands/d
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { readRecordedHaltReasons7d, upsertExtractRollup } from '../src/core/extract/rollup-writer.ts';
 import { isMissingSchemaObject } from '../src/core/utils.ts';
+import { upsertExtractRollupDay as rollupDaySql } from '../src/core/engine-sql/extract-bookkeeping.ts';
 
 let real: PGLiteEngine;
 beforeAll(async () => { real = new PGLiteEngine(); await real.connect({}); await real.initSchema(); }, 60_000);
 afterAll(async () => { await real.disconnect(); });
 
 function throwingEngine(error: unknown): BrainEngine {
-  return { executeRaw: async () => { throw error; } } as unknown as BrainEngine;
+  const fail = async () => { throw error; };
+  return { executeRaw: fail, readExtractRollup7d: fail, listRecordedHaltReasons7d: fail } as unknown as BrainEngine;
 }
 
 test('reader propagates non-schema errors and contradictory missing-column identities', async () => {
@@ -66,7 +68,10 @@ test('writer does not downgrade or retry a real error mentioning an old column',
   for (const column of ['expected_limit_count', 'halt_reasons']) {
     let calls = 0;
     const error = Object.assign(new Error(`permission denied for ${column} diagnostic`), { code: '42501' });
-    const engine = { executeRaw: async () => { if (++calls === 1) throw error; return []; } } as unknown as BrainEngine;
+    const engine = {
+      executeRaw: async () => { if (++calls === 1) throw error; return []; },
+      upsertExtractRollupDay(d: never, o?: { preV141?: boolean }) { return rollupDaySql(engine, d, o); },
+    } as unknown as BrainEngine;
     expect(await upsertExtractRollup(engine, { kind: `denied-${column}`, source_id: 'default', halt_delta: 1 })).toEqual({ ok: false, error: error.message });
     expect(calls).toBe(1);
   }
@@ -74,7 +79,7 @@ test('writer does not downgrade or retry a real error mentioning an old column',
 
 test('doctor does not retry an aggregate failure that only mentions expected_limit_count', async () => {
   let calls = 0;
-  const engine = { executeRaw: async () => {
+  const engine = { readExtractRollup7d: async () => {
     calls++;
     if (calls === 1) throw Object.assign(new Error('permission denied for expected_limit_count'), { code: '42501' });
     return [];
@@ -99,11 +104,10 @@ test('sync freshness surfaces real errors from the owned-content probe instead o
   await real.executeRaw(`INSERT INTO sources (id, name, local_path, last_sync_at) VALUES ('w17-fresh', 'w17-fresh', '/tmp/w17-fresh', now())`);
   const failing = (error: Error) => new Proxy(real, {
     get(target, prop, receiver) {
-      if (prop !== 'executeRaw') return Reflect.get(target, prop, receiver);
-      return async (sql: string, params?: unknown[]) => {
-        if (sql.includes('persistence_source_bindings')) throw error;
-        return target.executeRaw(sql, params as never);
-      };
+      // The owned-content probe is the typed listOwnedContentRows read (engine-sql/owned-content.ts).
+      if (prop === 'listOwnedContentRows') return async () => { throw error; };
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
     },
   }) as BrainEngine;
   const denied = Object.assign(new Error('role "gbrain_reader" does not exist'), { code: '42704' });

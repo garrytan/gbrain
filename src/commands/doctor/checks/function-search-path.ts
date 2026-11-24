@@ -27,7 +27,7 @@ export async function functionSearchPathProblems(engine: BrainEngine): Promise<{
             quote_ident(n.nspname) || '.' || quote_ident(p.proname) || '(' || oidvectortypes(p.proargtypes) || ')' AS qualified,
             ${PINNED_PATH_SQL} AS path
        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
-      WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proname = ANY($1::text[]) AND c.setting LIKE 'search_path=%' ORDER BY 1`,
+      WHERE n.nspname = 'public' AND p.prokind = 'f' AND p.proname = ANY($1::text[]) AND c.setting LIKE 'search_path=%' ORDER BY p.oid::regprocedure::text COLLATE "C"`,
     [[...PINNED_FUNCTION_NAMES]]);
   const bad = rows.filter(r => !/(^|,)\s*pg_temp$/i.test(r.path));
   return {

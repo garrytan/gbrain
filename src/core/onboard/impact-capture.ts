@@ -23,10 +23,10 @@
 // onboard/autopilot/manual runs can't misattribute deltas to the wrong
 // remediation.
 
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { BrainEngine } from './../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { loadOrphanPolicyOverrides, shouldExcludeFromOrphanReporting } from '../orphan-policy.ts';
-import { LINK_COVERAGE_FEATURE, TIMELINE_COVERAGE_FEATURE, visibleEntityCoverageSql } from './checks.ts';
 import { resolveEntityTypes } from '../schema-pack/entity-types.ts';
 
 export type MetricName =
@@ -99,21 +99,16 @@ export async function captureMetric(
       }
       case 'entity_link_coverage':
       case 'timeline_coverage': {
-        const feature = metric === 'entity_link_coverage' ? LINK_COVERAGE_FEATURE : TIMELINE_COVERAGE_FEATURE;
+        const feature = metric === 'entity_link_coverage' ? 'links' : 'timeline';
         const entityTypes = await resolveEntityTypes(engine, null);
         if (entityTypes.status === 'pack_unavailable') return null;
-        const sql = visibleEntityCoverageSql(feature, entityTypes.filter);
-        const [row] = await engine.executeRaw<{ sample_size: number; matched: number }>(sql.text, sql.params);
-        const population = Number(row?.sample_size ?? 0);
+        const row = await engine.entityFeatureCoverage(entityTypes.filter, feature);
+        const population = Number(row.sampleSize);
         // An empty population is vacuously covered.
-        return population === 0 ? 1 : Number(row?.matched ?? 0) / population;
+        return population === 0 ? 1 : Number(row.matched) / population;
       }
-      case 'takes_count': {
-        const rows = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count FROM takes`,
-        );
-        return rows.length > 0 ? Number(rows[0].count) : 0;
-      }
+      case 'takes_count':
+        return await engine.countTakes(); // engine-sql/takes-reads.ts: `SELECT COUNT(*) AS count FROM takes`
     }
   } catch (err) {
     process.stderr.write(
@@ -157,6 +152,7 @@ export async function writeImpactLogRow(
       ],
     );
   } catch (err) {
+    rethrowCapabilityRefusal(err); // closeStepImpact reports a refused write on the step; it is not a failed one
     process.stderr.write(
       `[impact-capture] failed to write log row for ${attribution.remediation_id}: ${err instanceof Error ? err.message : String(err)}\n`,
     );
@@ -186,7 +182,9 @@ export async function openStepImpact(engine: BrainEngine, step: ImpactStep): Pro
 /**
  * Read the metric again now that the step's job is terminal and write the
  * step's history row. Never throws: a failed read records null and a failed
- * write only logs (A17).
+ * write only logs (A17). An engine that refuses the write (a Rust brain keeps no
+ * migration_impact_log) throws its typed refusal; the remediation run marks the
+ * step `impact_log: not_recorded` and keeps the job's status.
  */
 export async function closeStepImpact(
   engine: BrainEngine,

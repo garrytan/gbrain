@@ -6,7 +6,7 @@
  * Every statement here ran on master from alias-fanout.ts. They keep master's predicates and run on master's raw path
  * (`exec.executeRaw`) unscoped, as before; each value is a bound parameter (`sqlFragment`). Three reads gain an
  * `ORDER BY` where master left the order to the plan, each in byte order (`COLLATE "C"`) so every engine sorts alike:
- * `findPagesByTitles` (source, then slug), `resolveCaseSensitiveAliases` (source, slug, alias) and `readPageAliasRows`
+ * `findPagesByTitles` (source, then slug), `resolveCaseSensitiveAliases` (slug, alias, alias text: the rows carry no source) and `readPageAliasRows`
  * (source, slug, alias, origin). The caller takes the first title hit as the group's lead and keeps the first alias row
  * of equal rank, so a fixed order fixes an answer master left to the plan; no other caller reads these rows. The
  * caller keeps master's fail-open `.catch(() => [])`: any failure, a refused capability included, reads as no rows,
@@ -51,7 +51,7 @@ export async function resolveCaseSensitiveAliases(exec: LegacyUnscopedRead, alia
   if (!aliasNorms.length || !sourceIds.length) return [];
   return rows<CaseSensitiveAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, alias_text FROM page_aliases
     WHERE alias_norm = ANY(${[...aliasNorms]}::text[]) AND case_sensitive AND source_id = ANY(${[...sourceIds]}::text[])
-    ORDER BY source_id COLLATE "C", slug COLLATE "C", alias_norm COLLATE "C"`);
+    ORDER BY slug COLLATE "C", alias_norm COLLATE "C", alias_text COLLATE "C"`);
 }
 
 /** The title of the page at `(sourceId, slug)`, soft-deleted pages included (master's read); null with no page. */
@@ -76,5 +76,17 @@ export interface EntityAliasRow { slug: string; alias_norm: string; origin: stri
  * `page_aliases` row of a listed slug in the source, by alias. The text is the card's statement, byte for byte.
  */
 export async function readEntityAliasRows(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[]): Promise<EntityAliasRow[]> {
-  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm`);
+  return rows<EntityAliasRow>(exec, sqlFragment`SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = ${sourceId} AND slug = ANY(${[...slugs]}::text[]) ORDER BY alias_norm COLLATE "C"`);
+}
+
+/** One `slug_aliases` row: an old slug and the slug it resolves to. */
+export interface SlugAliasRow { alias_slug: string; canonical_slug: string }
+
+/**
+ * Every `slug_aliases` row of the source (extract.ts `loadSlugAliasTargets`, which maps old slugs of renamed pages to
+ * their current slug so a link written before a rename still resolves). The text is the caller's statement, byte for
+ * byte; it has no order, as the caller builds a map. The caller keeps its missing-table fallback.
+ */
+export async function listSlugAliases(exec: LegacyUnscopedRead, sourceId: string): Promise<SlugAliasRow[]> {
+  return rows<SlugAliasRow>(exec, sqlFragment`SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = ${sourceId}`);
 }

@@ -5,9 +5,9 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage, readLivePageBody,
- *    readPageIndexingState, readInlinePageRegions, readStoredPageTier and hasSegmentStorage return the same observable result, and leave the
- *    same page columns, on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
- *    test/engine-parity/harness.ts).
+ *    readInlinePageRegions, readStoredPageTier, readPageIndexingState and hasSegmentStorage return the same observable
+ *    result, and leave the same page columns, on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust
+ *    arm through test/engine-parity/harness.ts).
  *  - Regression: an engine that answers one of these differently (a tombstone read as absent, a claim from a deleted
  *    page or from the page being written, a bind that overwrites an origin it was told to keep, a seal that moves the
  *    text projection of a stale revision) lets two pages claim one file or loses a page's provenance; the Rust engine

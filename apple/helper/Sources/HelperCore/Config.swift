@@ -69,20 +69,23 @@ public struct Config: Codable, Equatable {
     public var dbPath: String?
     public var listen: ListenSetting?
     public var send: SendSetting?
+    public var contactsWrite: ContactsWriteSetting?
 
     enum CodingKeys: String, CodingKey {
         case port, tokens, sources, listen, send
         case dbPath = "db_path"
+        case contactsWrite = "contacts_write"
     }
 
     public init(port: Int, tokens: [TokenEntry] = [], sources: [String: SourceSetting] = [:], dbPath: String? = nil,
-                listen: ListenSetting? = nil, send: SendSetting? = nil) {
+                listen: ListenSetting? = nil, send: SendSetting? = nil, contactsWrite: ContactsWriteSetting? = nil) {
         self.port = port
         self.tokens = tokens
         self.sources = sources
         self.dbPath = dbPath
         self.listen = listen
         self.send = send
+        self.contactsWrite = contactsWrite
     }
 
     public static func sendSwitchedOn(path: String) -> Bool {
@@ -141,8 +144,23 @@ public struct Config: Codable, Equatable {
                 tailnetPeers.insert(parsed)
             }
         }
+        var writePolicy = ContactsWritePolicy.off
+        if let write = contactsWrite {
+            var keys: [String: [UInt8]] = [:]
+            for key in write.ownerKeys {
+                guard !key.name.isEmpty, keys[key.name] == nil, let raw = Base64URL.decode(key.publicKey), raw.count == 32 else {
+                    throw ConfigError(description: "contacts_write.owner_keys: every key needs a unique name and a 32-byte Ed25519 public key in base64url")
+                }
+                keys[key.name] = raw
+            }
+            let limits = write.limits ?? .standard
+            guard [limits.newCards, limits.deletes, limits.edits].allSatisfy({ (0...ContactsWriter.maxChanges * 10).contains($0) }) else {
+                throw ConfigError(description: "contacts_write.limits must each be 0 to \(ContactsWriter.maxChanges * 10)")
+            }
+            writePolicy = ContactsWritePolicy(enabled: write.enabled, ownerKeys: keys, limits: limits)
+        }
         return ValidatedConfig(port: UInt16(port), grants: grants, enabled: enabled, dbPath: dbPath ?? Config.defaultDBPath,
-                               tailnet: listen?.tailnet == nil ? nil : TailnetListen(host: tailnetHost, peers: tailnetPeers))
+                               tailnet: listen?.tailnet == nil ? nil : TailnetListen(host: tailnetHost, peers: tailnetPeers), contactsWrite: writePolicy)
     }
 
     public func write(path: String) throws {
@@ -151,7 +169,10 @@ public struct Config: Codable, Equatable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(self)
+        try Self.writePrivate(try encoder.encode(self), path: path)
+    }
+
+    public static func writePrivate(_ data: Data, path: String) throws {
         let temp = path + ".tmp-\(getpid())-\(UUID().uuidString)"
         let fd = Darwin.open(temp, O_WRONLY | O_CREAT | O_EXCL, 0o600)
         guard fd >= 0 else { throw ConfigError(description: "could not write \(path)") }
@@ -171,26 +192,48 @@ public final class LiveGrants {
     var loaded = false
     var stamp: FileStamp?
     var grants: [TokenGrant] = []
+    var enabled: Set<String> = []
+    var write = ContactsWritePolicy.off
 
     public init(path: String) {
         self.path = path
     }
 
     public func current() -> [TokenGrant] {
+        reload().grants
+    }
+
+    public func enabledSources() -> Set<String> {
+        reload().enabled
+    }
+
+    public func contactsWrite() -> ContactsWritePolicy {
+        _ = reload()
+        lock.lock()
+        defer { lock.unlock() }
+        return write
+    }
+
+    func reload() -> (grants: [TokenGrant], enabled: Set<String>) {
         lock.lock()
         defer { lock.unlock() }
         let now = FileStamp(path: path)
-        if loaded && now == stamp { return grants }
+        if loaded && now == stamp { return (grants, enabled) }
         loaded = true
         stamp = now
         do {
-            grants = try Config.load(path: path).validated().grants
+            let config = try Config.load(path: path).validated()
+            grants = config.grants
+            enabled = config.enabled
+            write = config.contactsWrite
             Log.line("config loaded: \(grants.count) token(s)")
         } catch {
             grants = []
+            enabled = []
+            write = .off
             Log.line("config unreadable, refusing every token until it is fixed: \(error)")
         }
-        return grants
+        return (grants, enabled)
     }
 }
 
@@ -223,4 +266,5 @@ public struct ValidatedConfig {
     public let enabled: Set<String>
     public let dbPath: String
     public let tailnet: TailnetListen?
+    public let contactsWrite: ContactsWritePolicy
 }

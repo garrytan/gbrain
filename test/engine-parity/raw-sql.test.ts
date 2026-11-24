@@ -21,6 +21,8 @@
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
+import { entityLookupFault, FAULT_MESSAGE } from '../helpers/entity-lookup-fault.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -89,6 +91,32 @@ describe('engine parity: raw_sql', () => {
       const after = (await engine.getPage('notes/bounded'))?.title ?? null;
       expect([read, thrown, after]).toEqual([[{ slug: 'notes/bounded' }], 'read refused', 'Bounded']);
       return { read, thrown, after };
+    },
+  );
+
+  // The `entity` card finds its page through the typed `readEntityCardRows` member (arm 2). A read that fails is never a
+  // miss: the card is marked `entity_lookup_failed` on every arm, the Rust engine included (the injected failure stands in
+  // for a timeout or a permission error). Not a raw-SQL case: the member is typed, so the Rust arm serves it.
+  parityTest(
+    'entity: a failed page lookup read is marked degraded, never found:false alone',
+    { methods: ['putPage', 'readEntityCardRows', 'getPage'] },
+    async (engine) => {
+      await engine.putPage('people/alice-example', PAGE('Alice Example', 'Alice Example runs operations at Acme Example.'));
+      const card = (e: typeof engine) => buildEntityCard(e, 'default', 'people/alice-example', { remote: false, variants: false });
+      const failing = await card(entityLookupFault(engine, { arm2: () => new Error(FAULT_MESSAGE) }));
+      const healthy = await card(engine);
+      const present = await engine.getPage('people/alice-example');
+      const observed = {
+        failing: { found: failing.found, degraded: failing.degraded ?? null },
+        healthy: { found: healthy.found, degraded: healthy.degraded ?? null, slug: healthy.card?.entity.slug ?? null },
+        pagePresent: present !== null,
+      };
+      expect(observed).toEqual({
+        failing: { found: false, degraded: [{ stage: 'entity_lookup_failed', reason: 'provider_error' }] },
+        healthy: { found: true, degraded: null, slug: 'people/alice-example' },
+        pagePresent: true,
+      });
+      return observed;
     },
   );
 });

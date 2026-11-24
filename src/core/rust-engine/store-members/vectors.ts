@@ -97,7 +97,7 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     console.warn(`[gbrain] Warning: search limit clamped from ${o.limit} to ${cap}`);
   }
   // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
-  const policy = storePagePolicy('searchVector', o.excludePrivate);
+  const policy = storePagePolicy('searchVector', o.excludePrivate, { callerReaders: true });
   const options = {
     limit,
     offset: jsNumber(Number(o.offset || 0)),
@@ -135,16 +135,19 @@ export const searchTakesVector: StoreMember<
   [embedding: Float32Array, opts?: SearchOpts & { takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility }],
   TakeHit[]
 > = async (brain, embedding, opts = {}) => {
-  const o = takeOptions('searchTakesVector', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility'], TAKES_IGNORED) as
-    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility };
+  const o = takeOptions('searchTakesVector', opts, ['limit', 'takesHoldersAllowList', 'sourceId', 'sourceIds', 'eligibility', 'excludePrivate'], TAKES_IGNORED) as
+    { limit?: number; takesHoldersAllowList?: string[]; sourceId?: string; sourceIds?: string[]; eligibility?: ReadEligibility; excludePrivate?: boolean };
   const policy = o.eligibility;
-  if (policy?.floor) refuseMember('searchTakesVector', 'option eligibility.floor');
-  if (policy?.suppressFlagged) refuseMember('searchTakesVector', 'option eligibility.suppressFlagged');
+  // The store applies the whole read-eligibility policy (the trust floor over each take's stamped tier and flag
+  // suppression) and the caller's page policy, as the SQL's projectionEligibleSql and privacy predicate do.
   const options = {
     limit: clampSearchLimit(o.limit, 30, 100),
     allow_list: o.takesHoldersAllowList ?? null,
     source_ids: sourceScope(o),
     eligible_only: !!policy,
+    min_trust: policy?.floor ?? null,
+    suppress_flagged: policy?.suppressFlagged === true,
+    exclude_private: storePagePolicy('searchTakesVector', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   const query = Array.from(embedding);
   const rows: TakeHit[] = await storeCall({ member: 'searchTakesVector' }, () => brain.searchTakesVector(query, options));

@@ -12,10 +12,11 @@
 //! `queue_page_projection` keeps the queue in step with every page write as PGLite's
 //! `gbrain_queue_page_projection` trigger does. The segmented projector's queue writes
 //! (`claimSegmentedProjection`, `renewSegmentedProjectionClaim`, `releaseSegmentedProjectionClaim`,
-//! `deleteProjectionJob`, `markProjectionRebuildFailed` of `page-body/projection.ts`) are the
-//! other writers; each runs in one `Store::write`. `chunk_replacement_continuing` and
-//! `protocol_activation` still have no store writer, and the reads apply the full reason
-//! filters. A source delete removes each page first (`cascade.rs`), and the hook removes the
+//! `deleteProjectionJob`, `markProjectionRebuildFailed` of `page-body/projection.ts`) and the
+//! rebuild's (`renewDeferredReplacementClaim`, `rekeyProjectionJob`, `stampDeferredProjectionJob`,
+//! `touchUnclaimedProjectionJob`, `deferProjectionJob` of `page-state/projections.ts`) are the
+//! other writers; each runs in one `Store::write`. `protocol_activation` still has no store
+//! writer, and the reads apply the full reason filters. A source delete removes each page first (`cascade.rs`), and the hook removes the
 //! page's job, so no job outlives its source.
 
 use super::{QUEUE, uuid_param};
@@ -201,17 +202,17 @@ pub(crate) fn compact_format_2_jobs(tx: &mut dyn KvWrite) -> Result<()> {
 
 /// A job with its key fields.
 #[derive(Debug, Clone)]
-struct Job {
-    incarnation: String,
-    slug: String,
-    record: JobRecord,
+pub(super) struct Job {
+    pub(super) incarnation: String,
+    pub(super) slug: String,
+    pub(super) record: JobRecord,
 }
 
 fn prefix() -> [u8; 2] {
     [keys::PERSISTENCE, QUEUE]
 }
 
-fn job_key(incarnation: &str, slug: &str) -> Vec<u8> {
+pub(super) fn job_key(incarnation: &str, slug: &str) -> Vec<u8> {
     let mut key = prefix().to_vec();
     key.extend_from_slice(incarnation.as_bytes());
     key.push(0);
@@ -264,8 +265,61 @@ pub(crate) fn queue_page_projection(
     Ok(())
 }
 
+/// The shadow seed's job columns of one page (`page_projection_jobs` joined on the page's source
+/// incarnation and slug): each null when the primary queued no job.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SeedJob {
+    pub revision: Option<String>,
+    pub reason: Option<String>,
+    pub updated_at_us: Option<i64>,
+}
+
+/// Stores the primary's projection job of `page` after the seed wrote the page. A job row keeps
+/// its revision, reason and time as the primary stored them. Returns false when the stored job
+/// has the seed transaction's time instead of the primary's: the primary row gave no time (no
+/// job row, or a job row without `updated_at`) while the page write queued a job.
+pub(crate) fn seed_job(tx: &mut dyn KvWrite, page: &PageRecord, primary: SeedJob) -> Result<bool> {
+    let key = job_key(&incarnation_of(&*tx, &page.source_id)?, &page.slug);
+    let stored = read_job(&*tx, &key)?;
+    if primary.revision.is_none() && primary.reason.is_none() && primary.updated_at_us.is_none() {
+        return Ok(stored.is_none());
+    }
+    let has_time = primary.updated_at_us.is_some();
+    let updated_at_us = match (primary.updated_at_us, &stored) {
+        (Some(time), _) => time,
+        (None, Some(job)) => job.updated_at_us,
+        (None, None) => transaction_clock::transaction_now().ok_or_else(|| {
+            StoreError::invalid("a seed job write ran outside a store write transaction")
+        })?,
+    };
+    let job = JobRecord {
+        revision: primary
+            .revision
+            .or_else(|| stored.as_ref().map(|j| j.revision.clone()))
+            .unwrap_or_else(|| page.knowledge_revision.clone()),
+        reason: primary
+            .reason
+            .or_else(|| stored.as_ref().map(|j| j.reason.clone()))
+            .unwrap_or_else(|| CANONICAL_CHANGE.into()),
+        updated_at_us,
+    };
+    put_job(tx, &key, &job)?;
+    Ok(has_time)
+}
+
+/// The job of `(source_id, slug)`, if the queue holds one.
+#[cfg(test)]
+pub(crate) fn read_page_job(
+    read: &dyn KvRead,
+    source_id: &str,
+    slug: &str,
+) -> Result<Option<JobRecord>> {
+    let key = job_key(&incarnation_of(read, source_id)?, slug);
+    read_job(read, &key)
+}
+
 /// Every job, in key order.
-fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
+pub(super) fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     let mut out = Vec::new();
     let mut failure = None;
     let start = prefix().len();
@@ -286,14 +340,61 @@ fn all_jobs(read: &dyn KvRead) -> Result<Vec<Job>> {
     failure.map_or(Ok(out), Err)
 }
 
-/// `min(updated_at)` over the jobs with reason `protocol_activation`: when an upgrade's index rebuild
-/// began, or none when no such job is queued (`projectionRebuildProgress`).
-pub(crate) fn activation_started_us(read: &dyn KvRead) -> Result<Option<i64>> {
+/// A queued job joined to its source (`page_projection_jobs j JOIN sources s ON s.incarnation = j.source_incarnation`).
+pub(crate) struct QueuedJob {
+    pub source_id: String,
+    pub archived: bool,
+    pub slug: String,
+    pub reason: String,
+    pub updated_at_us: i64,
+}
+
+/// Every job whose source incarnation names a present source, in key order.
+pub(crate) fn queued_jobs(read: &dyn KvRead) -> Result<Vec<QueuedJob>> {
+    let sources = sources_by_incarnation(read)?;
     Ok(all_jobs(read)?
-        .iter()
-        .filter(|job| job.record.reason == PROTOCOL_ACTIVATION)
-        .map(|job| job.record.updated_at_us)
-        .min())
+        .into_iter()
+        .filter_map(|job| {
+            let source = sources.get(&job.incarnation)?;
+            Some(QueuedJob {
+                source_id: source.id.clone(),
+                archived: source.archived,
+                slug: job.slug,
+                reason: job.record.reason,
+                updated_at_us: job.record.updated_at_us,
+            })
+        })
+        .collect())
+}
+
+/// `min(updated_at)` over the jobs with reason `protocol_activation` whose page passes `waits`
+/// (`projectionRebuildProgress`'s `started`: a live page of the job's source): when an upgrade's index
+/// rebuild began, or none when no such job is queued. `waits` sees the job's page and its source.
+pub(crate) fn activation_started_us(
+    read: &dyn KvRead,
+    mut waits: impl FnMut(&PageRecord, &SourceRecord) -> Result<bool>,
+) -> Result<Option<i64>> {
+    let sources = sources_by_incarnation(read)?;
+    let mut started: Option<i64> = None;
+    for job in all_jobs(read)? {
+        if job.record.reason != PROTOCOL_ACTIVATION {
+            continue;
+        }
+        let Some(source) = sources.get(&job.incarnation) else {
+            continue;
+        };
+        let Some(page) =
+            read_page(read, &source.id, &job.slug)?.filter(|p| p.deleted_at_us.is_none())
+        else {
+            continue;
+        };
+        if waits(&page, source)? {
+            started = Some(started.map_or(job.record.updated_at_us, |s| {
+                s.min(job.record.updated_at_us)
+            }));
+        }
+    }
+    Ok(started)
 }
 
 /// True when the queue holds no job: one key read.
@@ -317,7 +418,7 @@ fn claimed(job: &JobRecord, now: i64) -> bool {
 }
 
 /// `PROJECTION_RETRY_READY_TEXT`.
-fn retry_ready(job: &JobRecord, now: i64) -> bool {
+pub(super) fn retry_ready(job: &JobRecord, now: i64) -> bool {
     (job.reason != "rebuild_failed" || job.updated_at_us < now - RETRY_US)
         && !claimed(job, now)
         && !(reason_kind(&job.reason) == "chunk_replacement_continuing"
@@ -642,7 +743,7 @@ pub(crate) fn release_segmented_projection_claim_in(
 }
 
 /// The job at `(source_incarnation, slug)` when it is still queued at `revision`.
-fn job_at_revision(
+pub(super) fn job_at_revision(
     read: &dyn KvRead,
     job: &ProjectionJobRef,
 ) -> Result<Option<(Vec<u8>, JobRecord)>> {
@@ -677,6 +778,165 @@ pub(crate) fn mark_projection_rebuild_failed_in(
         put_job(tx, &key, &record)?;
     }
     Ok(())
+}
+
+/// `DEFERRED_CHUNK_CLAIM`: the reason kind while a continuation holds a deferred chunk replacement.
+const DEFERRED_CHUNK_CLAIM: &str = "chunk_replacement_continuing";
+
+/// The job still queued at `job.revision`, changed by `change` (given the transaction's time) and
+/// put back. False, changing nothing, when no such job is queued or `change` declines it.
+fn update_job_at_revision(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+    change: impl FnOnce(&mut JobRecord, i64) -> Result<bool>,
+) -> Result<bool> {
+    let now = write_now()?;
+    let Some((key, mut record)) = job_at_revision(&*tx, job)? else {
+        return Ok(false);
+    };
+    if !change(&mut record, now)? {
+        return Ok(false);
+    }
+    put_job(tx, &key, &record)?;
+    Ok(true)
+}
+
+/// `queuePageProjectionJob`: queues the live page `slug` of `source_id` at its knowledge revision with
+/// `reason` at now, or moves its queued job there (`ON CONFLICT ... DO UPDATE`). A missing, deleted or
+/// sourceless page queues nothing.
+pub(crate) fn queue_page_projection_job_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slug: &str,
+    reason: &str,
+) -> Result<()> {
+    let Some(page) = read_page(&*tx, source_id, slug)?.filter(|p| p.deleted_at_us.is_none()) else {
+        return Ok(());
+    };
+    let Some(source) = read_source(&*tx, source_id)? else {
+        return Ok(());
+    };
+    let now = write_now()?;
+    let record = JobRecord {
+        revision: page.knowledge_revision.clone(),
+        reason: reason.to_owned(),
+        updated_at_us: now,
+    };
+    put_job(tx, &job_key(&source.incarnation, &page.slug), &record)
+}
+
+/// `renewDeferredReplacementClaim`: the job gets reason `claim` at now.
+pub(crate) fn renew_deferred_replacement_claim_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+    claim: &str,
+) -> Result<()> {
+    update_job_at_revision(tx, job, |record, now| {
+        record.reason = claim.to_owned();
+        record.updated_at_us = now;
+        Ok(true)
+    })?;
+    Ok(())
+}
+
+/// `DEFERRED_CHUNK_REPLACEMENT`: the reason of a revision whose chunk replacement a continuation finishes.
+const DEFERRED_CHUNK_REPLACEMENT: &str = "chunk_replacement_deferred";
+
+/// `releaseDeferredReplacementClaim`: every job of `slug`, in any source, whose reason is still
+/// `claim` goes back to `chunk_replacement_deferred`. Its time stays, as the statement sets only the reason.
+pub(crate) fn release_deferred_replacement_claim_in(
+    tx: &mut dyn KvWrite,
+    slug: &str,
+    claim: &str,
+) -> Result<()> {
+    for job in all_jobs(&*tx)? {
+        if job.slug == slug && job.record.reason == claim {
+            let mut record = job.record;
+            record.reason = DEFERRED_CHUNK_REPLACEMENT.into();
+            put_job(tx, &job_key(&job.incarnation, &job.slug), &record)?;
+        }
+    }
+    Ok(())
+}
+
+/// `rekeyProjectionJob`: the job moves to `revision` at now.
+pub(crate) fn rekey_projection_job_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+    revision: &str,
+) -> Result<()> {
+    let revision = uuid_param(revision, "revision")?;
+    update_job_at_revision(tx, job, |record, now| {
+        record.revision = revision;
+        record.updated_at_us = now;
+        Ok(true)
+    })?;
+    Ok(())
+}
+
+/// `stampDeferredProjectionJob`: the job's time moves to now; with `requeue`, its reason becomes
+/// `canonical_change`.
+pub(crate) fn stamp_deferred_projection_job_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+    requeue: bool,
+) -> Result<()> {
+    update_job_at_revision(tx, job, |record, now| {
+        if requeue {
+            record.reason = CANONICAL_CHANGE.into();
+        }
+        record.updated_at_us = now;
+        Ok(true)
+    })?;
+    Ok(())
+}
+
+/// `touchUnclaimedProjectionJob`: the job's time moves to now unless a live segmented claim holds it.
+pub(crate) fn touch_unclaimed_projection_job_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+) -> Result<()> {
+    update_job_at_revision(tx, job, |record, now| {
+        if claimed(record, now) {
+            return Ok(false);
+        }
+        record.updated_at_us = now;
+        Ok(true)
+    })?;
+    Ok(())
+}
+
+/// `deferProjectionJob`: the job's time moves to now; false when no job is queued at `revision`.
+pub(crate) fn defer_projection_job_in(
+    tx: &mut dyn KvWrite,
+    job: &ProjectionJobRef,
+) -> Result<bool> {
+    update_job_at_revision(tx, job, |record, now| {
+        record.updated_at_us = now;
+        Ok(true)
+    })
+}
+
+/// `isDeferredReplacementHeld`: the page's job is queued at `revision` with a
+/// `chunk_replacement_continuing` reason other than `claim`, renewed within 60 seconds of `now`.
+pub(crate) fn deferred_replacement_held_in(
+    read: &dyn KvRead,
+    now: i64,
+    source_id: &str,
+    slug: &str,
+    revision: &str,
+    claim: &str,
+) -> Result<bool> {
+    let revision = uuid_param(revision, "revision")?;
+    let Some(key) = page_job_key(read, source_id, slug)? else {
+        return Ok(false);
+    };
+    Ok(read_job(read, &key)?.is_some_and(|job| {
+        job.revision.eq_ignore_ascii_case(&revision)
+            && reason_kind(&job.reason) == DEFERRED_CHUNK_CLAIM
+            && job.reason != claim
+            && job.updated_at_us >= now - CLAIM_US
+    }))
 }
 
 /// A queued job by its key and revision (`deleteProjectionJob`, `markProjectionRebuildFailed`).
@@ -746,6 +1006,83 @@ impl Store {
         self.write(|tx| mark_projection_rebuild_failed_in(tx, job))
     }
 
+    /// `renewDeferredReplacementClaim(job, claim)`.
+    pub fn renew_deferred_replacement_claim(
+        &self,
+        job: &ProjectionJobRef,
+        claim: &str,
+    ) -> Result<()> {
+        self.write(|tx| renew_deferred_replacement_claim_in(tx, job, claim))
+    }
+
+    /// `releaseDeferredReplacementClaim(slug, claim)`.
+    pub fn release_deferred_replacement_claim(&self, slug: &str, claim: &str) -> Result<()> {
+        self.write(|tx| release_deferred_replacement_claim_in(tx, slug, claim))
+    }
+
+    /// `queuePageProjectionJob(sourceId, slug, reason)`.
+    pub fn queue_page_projection_job(
+        &self,
+        source_id: &str,
+        slug: &str,
+        reason: &str,
+    ) -> Result<()> {
+        crate::links::no_nul(
+            "queuePageProjectionJob",
+            &[("sourceId", source_id), ("slug", slug), ("reason", reason)],
+        )?;
+        self.write(|tx| queue_page_projection_job_in(tx, source_id, slug, reason))
+    }
+
+    /// `rekeyProjectionJob(job, revision)`.
+    pub fn rekey_projection_job(&self, job: &ProjectionJobRef, revision: &str) -> Result<()> {
+        self.write(|tx| rekey_projection_job_in(tx, job, revision))
+    }
+
+    /// `stampDeferredProjectionJob(job, requeue)`.
+    pub fn stamp_deferred_projection_job(
+        &self,
+        job: &ProjectionJobRef,
+        requeue: bool,
+    ) -> Result<()> {
+        self.write(|tx| stamp_deferred_projection_job_in(tx, job, requeue))
+    }
+
+    /// `touchUnclaimedProjectionJob(job)`.
+    pub fn touch_unclaimed_projection_job(&self, job: &ProjectionJobRef) -> Result<()> {
+        self.write(|tx| touch_unclaimed_projection_job_in(tx, job))
+    }
+
+    /// `deferProjectionJob(job)`: whether a job was queued at `job.revision`.
+    pub fn defer_projection_job(&self, job: &ProjectionJobRef) -> Result<bool> {
+        self.write(|tx| defer_projection_job_in(tx, job))
+    }
+
+    /// `isDeferredReplacementHeld(sourceId, slug, revision, claim)`.
+    pub fn is_deferred_replacement_held(
+        &self,
+        source_id: &str,
+        slug: &str,
+        revision: &str,
+        claim: &str,
+    ) -> Result<bool> {
+        let now = self.env.now_micros();
+        deferred_replacement_held_in(&*self.read()?, now, source_id, slug, revision, claim)
+    }
+
+    /// `readDrainRunStart()`: the store clock as `now()::text` (in a transaction, its start, as
+    /// Postgres's `now()`).
+    pub fn read_drain_run_start(&self) -> Result<String> {
+        Ok(crate::cli_reads::pg_text::timestamptz_text(
+            self.env.now_micros(),
+        ))
+    }
+
+    /// `isDrainClockPast(runStart)`: whether the store clock is past `runStart` (`now()::text` or ISO).
+    pub fn is_drain_clock_past(&self, run_start: &str) -> Result<bool> {
+        Ok(self.env.now_micros() > parse_timestamptz(run_start, "runStart")?)
+    }
+
     /// Whether the page projection queue holds no job.
     pub fn projection_queue_empty(&self) -> Result<bool> {
         projection_queue_empty_in(&*self.read()?)
@@ -783,6 +1120,51 @@ mod tests {
                 crate::pages::write_page(tx, &page)
             })
             .unwrap();
+    }
+
+    #[test]
+    fn a_queue_insert_queues_a_live_page_and_moves_its_job() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a");
+        let jobs = |store: &Store| all_jobs(&*store.read().unwrap()).unwrap();
+        // Drop the job the write queued, so the insert has to queue it again.
+        store
+            .write(|tx| {
+                let key = job_key(&jobs(&store)[0].incarnation, "notes/a");
+                tx.delete(&key)
+            })
+            .unwrap();
+        assert!(jobs(&store).is_empty());
+        store
+            .queue_page_projection_job("default", "notes/a", "safe_chunk_reseal")
+            .unwrap();
+        store
+            .queue_page_projection_job("default", "notes/missing", "safe_chunk_reseal")
+            .unwrap();
+        store
+            .queue_page_projection_job("no-such-source", "notes/a", "safe_chunk_reseal")
+            .unwrap();
+        let queued = jobs(&store);
+        assert_eq!(queued.len(), 1);
+        let page = read_page(&*store.read().unwrap(), "default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                queued[0].record.revision.as_str(),
+                queued[0].record.reason.as_str()
+            ),
+            (page.knowledge_revision.as_str(), "safe_chunk_reseal")
+        );
+        store
+            .queue_page_projection_job("default", "notes/a", "trust_tier_changed")
+            .unwrap();
+        assert_eq!(jobs(&store)[0].record.reason, "trust_tier_changed");
+        assert!(
+            store
+                .queue_page_projection_job("default", "notes/\0a", "x")
+                .is_err()
+        );
     }
 
     #[test]
@@ -876,13 +1258,31 @@ mod tests {
         assert_eq!((progress.done, progress.total), (1, 2));
         let rate = progress.pages_per_second.unwrap();
         assert!(rate > 0.05 && rate <= 0.1, "{rate}");
+        // #10000: an activation row outside the scope starts no clock in it.
         let elsewhere: CoverageScope =
             serde_json::from_value(json!({ "sourceId": "elsewhere" })).unwrap();
-        let none = store
-            .projection_rebuild_progress(&elsewhere)
-            .unwrap()
+        assert_eq!(store.projection_rebuild_progress(&elsewhere).unwrap(), None);
+    }
+
+    #[test]
+    fn an_activation_row_on_an_image_page_starts_no_rebuild_clock() {
+        use crate::link_queries::CoverageScope;
+        let store = crate::test_support::store();
+        put(&store, "photo");
+        store
+            .write(|tx| {
+                let mut page = read_page(&*tx, "default", "photo")?.unwrap();
+                page.page_kind = "image".into();
+                crate::pages::write_page(tx, &page)
+            })
             .unwrap();
-        assert_eq!((none.done, none.total, none.pages_per_second), (0, 0, None));
+        set_job(&store, "photo", PROTOCOL_ACTIVATION, 10_000_000);
+        let every = CoverageScope::default();
+        assert_eq!(store.projection_rebuild_progress(&every).unwrap(), None);
+        // The same row on a segmented image shell is a `text` page, so its clock runs.
+        segment(&store, "photo");
+        set_job(&store, "photo", PROTOCOL_ACTIVATION, 10_000_000);
+        assert!(store.projection_rebuild_progress(&every).unwrap().is_some());
     }
 
     #[test]
@@ -1064,5 +1464,106 @@ mod tests {
             "absent"
         );
         assert!(store.delete_projection_job(&at("not-a-uuid")).is_err());
+    }
+
+    #[test]
+    fn the_rebuild_stamps_renews_releases_rekeys_and_defers_a_job_at_its_revision() {
+        let store = crate::test_support::store();
+        put(&store, "notes/a");
+        let job = |store: &Store| {
+            store
+                .read()
+                .and_then(|r| read_job(&*r, &job_key(&incarnation_of(&*r, "default")?, "notes/a")))
+                .unwrap()
+                .unwrap()
+        };
+        let incarnation = store
+            .read()
+            .and_then(|r| incarnation_of(&*r, "default"))
+            .unwrap();
+        let at = |revision: &str| ProjectionJobRef {
+            source_incarnation: incarnation.clone(),
+            slug: "notes/a".into(),
+            revision: revision.into(),
+        };
+        let revision = job(&store).revision;
+        let other = "00000000-0000-4000-8000-000000000000";
+        let (mine, theirs) = (
+            "chunk_replacement_continuing:mine",
+            "chunk_replacement_continuing:theirs",
+        );
+        let held = |claim: &str, revision: &str| {
+            store
+                .is_deferred_replacement_held("default", "notes/a", revision, claim)
+                .unwrap()
+        };
+        assert!(!held(mine, &revision));
+        store
+            .renew_deferred_replacement_claim(&at(other), theirs)
+            .unwrap();
+        assert_eq!(job(&store).reason, CANONICAL_CHANGE);
+        store
+            .renew_deferred_replacement_claim(&at(&revision), theirs)
+            .unwrap();
+        assert_eq!(job(&store).reason, theirs);
+        assert!(held(mine, &revision));
+        assert!(!held(theirs, &revision));
+        assert!(!held(mine, other));
+        assert!(
+            !store
+                .is_deferred_replacement_held("no-such-source", "notes/a", &revision, mine)
+                .unwrap()
+        );
+        // A release matches the claim only, and keeps the job's time.
+        let before = job(&store).updated_at_us;
+        store
+            .release_deferred_replacement_claim("notes/a", mine)
+            .unwrap();
+        store
+            .release_deferred_replacement_claim("notes/b", theirs)
+            .unwrap();
+        assert_eq!(job(&store).reason, theirs);
+        store
+            .release_deferred_replacement_claim("notes/a", theirs)
+            .unwrap();
+        assert_eq!(job(&store).reason, DEFERRED_CHUNK_REPLACEMENT);
+        assert_eq!(job(&store).updated_at_us, before);
+        store
+            .renew_deferred_replacement_claim(&at(&revision), theirs)
+            .unwrap();
+        // An expired claim holds nothing.
+        set_job(&store, "notes/a", theirs, CLAIM_US + 1);
+        assert!(!held(mine, &revision));
+        store
+            .stamp_deferred_projection_job(&at(&revision), false)
+            .unwrap();
+        assert_eq!(job(&store).reason, theirs);
+        assert!(held(mine, &revision));
+        store
+            .stamp_deferred_projection_job(&at(&revision), true)
+            .unwrap();
+        assert_eq!(job(&store).reason, CANONICAL_CHANGE);
+        // A live segmented claim keeps the touch off; an unclaimed job moves to now.
+        set_job(&store, "notes/a", "segmented_projecting:x", 5_000_000);
+        let before = job(&store).updated_at_us;
+        store
+            .touch_unclaimed_projection_job(&at(&revision))
+            .unwrap();
+        assert_eq!(job(&store).updated_at_us, before);
+        set_job(&store, "notes/a", CANONICAL_CHANGE, 5_000_000);
+        let before = job(&store).updated_at_us;
+        store
+            .touch_unclaimed_projection_job(&at(&revision))
+            .unwrap();
+        assert!(job(&store).updated_at_us > before);
+        assert!(!store.defer_projection_job(&at(other)).unwrap());
+        assert!(store.defer_projection_job(&at(&revision)).unwrap());
+        let next = "00000000-0000-4000-8000-0000000000AB";
+        store.rekey_projection_job(&at(other), next).unwrap();
+        assert_eq!(job(&store).revision, revision);
+        store.rekey_projection_job(&at(&revision), next).unwrap();
+        assert_eq!(job(&store).revision, next.to_lowercase());
+        assert!(store.defer_projection_job(&at(next)).unwrap());
+        assert!(store.rekey_projection_job(&at(next), "not-a-uuid").is_err());
     }
 }

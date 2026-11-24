@@ -331,6 +331,8 @@ pub struct ExactIdentityProbes {
     pub basenames: Vec<String>,
     pub alias_keys: Vec<String>,
     pub emails: Vec<String>,
+    /// Digit strings a stored `phone` / `phones` value may reduce to.
+    pub phones: Vec<String>,
 }
 
 /// `ExactIdentityStatementOpts`.
@@ -341,6 +343,8 @@ pub struct ExactIdentityInput {
     pub source_ids: Vec<String>,
     pub types: EntityTypeFilter,
     pub remote: Option<RemoteCaller>,
+    /// Probe only the email, basename and alias arms: no title arm, no phone arm.
+    pub emails_only: bool,
     pub limit: i64,
 }
 
@@ -354,7 +358,31 @@ pub struct ExactIdentityRow {
     pub page_type: String,
     pub email: Value,
     pub emails: Value,
+    pub phone: Value,
+    pub phones: Value,
     pub aliases: Value,
+}
+
+/// The phone arm: `frontmatter ? key`, then each element of the value (a scalar counts as a list
+/// of one) as `jsonb_array_elements_text` writes it, reduced to its digits, equals a probe.
+fn holds_phone(frontmatter: &Map<String, Value>, key: &str, digits: &[String]) -> bool {
+    let reduce = |v: &Value| -> Option<String> {
+        let text = match v {
+            Value::Null => return None,
+            Value::String(s) => s.clone(),
+            other => crate::jsonb::order(other.clone()).to_string(),
+        };
+        Some(text.chars().filter(char::is_ascii_digit).collect())
+    };
+    let elements: Vec<&Value> = match frontmatter.get(key) {
+        None => return false,
+        Some(Value::Array(items)) => items.iter().collect(),
+        Some(v) => vec![v],
+    };
+    elements
+        .into_iter()
+        .filter_map(reduce)
+        .any(|d| digits.contains(&d))
 }
 
 /// `frontmatter @> {key: v}` or `frontmatter @> {key: [v]}`.
@@ -407,7 +435,7 @@ pub struct RankEntityRow {
 
 /// `retiredPageSql`: canonical false/no, a superseded_by or merged_into value, or an alias /
 /// redirect status word.
-fn retired(fm: &Map<String, Value>) -> bool {
+pub(crate) fn retired(fm: &Map<String, Value>) -> bool {
     let canonical = pg_lower(&fm_text(fm, "canonical").unwrap_or_default());
     canonical == "false"
         || canonical == "no"
@@ -634,12 +662,17 @@ impl Store {
                 .chain(&probes.basenames)
                 .chain(&probes.alias_keys)
                 .chain(&probes.emails)
+                .chain(&probes.phones)
                 .chain(&input.source_ids)
                 .map(String::as_str),
         )?;
         let read = self.read()?;
         let mut sources = Sources::new(&*read);
         let raw_key = pg_lower(&probes.title_raw);
+        // The title arm runs only with a title key or a raw title; a contact match never matches names.
+        let title_arm =
+            !input.emails_only && (!probes.title_keys.is_empty() || !probes.title_raw.is_empty());
+        let phone_arm = !input.emails_only && !probes.phones.is_empty();
         // The alias arm: `page_aliases.alias_norm = key` joined to the page at the row's slug.
         let mut aliased: BTreeSet<(String, String)> = BTreeSet::new();
         for source in &input.source_ids {
@@ -656,8 +689,10 @@ impl Store {
             }
             let title = pg_lower(&page.title);
             let basename = page.slug.rsplit('/').next().unwrap_or("");
-            let hit = title == raw_key
-                || probes.title_keys.contains(&title)
+            let hit = (title_arm && (title == raw_key || probes.title_keys.contains(&title)))
+                || (phone_arm
+                    && (holds_phone(&page.frontmatter, "phone", &probes.phones)
+                        || holds_phone(&page.frontmatter, "phones", &probes.phones)))
                 || probes.basenames.iter().any(|b| b == basename)
                 || aliased.contains(&(page.source_id.clone(), page.slug.clone()))
                 || probes.emails.iter().any(|e| {
@@ -687,6 +722,8 @@ impl Store {
                 ExactIdentityRow {
                     email: fm_value(&page.frontmatter, "email"),
                     emails: fm_value(&page.frontmatter, "emails"),
+                    phone: fm_value(&page.frontmatter, "phone"),
+                    phones: fm_value(&page.frontmatter, "phones"),
                     aliases: fm_value(&page.frontmatter, "aliases"),
                     slug: page.slug,
                     source_id: page.source_id,

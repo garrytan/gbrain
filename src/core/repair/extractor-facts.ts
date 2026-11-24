@@ -65,6 +65,7 @@ import { compareWriterVersions, recentWriterVersions, writerVersionLabel } from 
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const EXTRACTOR_FACTS_INTENT = 'managed_maintenance_restore_extractor_facts';
 export { EXTRACTOR_FACTS_SOURCE_PREFIX } from '../engine-sql/facts-repair.ts';
@@ -170,7 +171,7 @@ function detail(fact: ExtractorFactCandidate): string {
 
 /** The preview command for this scope: `--source` only when the scope is one source of several (what the operator passed). */
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
   return `gbrain repair extractor-facts${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
@@ -204,8 +205,7 @@ async function mixedVersionWarnings(engine: BrainEngine): Promise<string[]> {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean, facts: ExtractorFactCandidate[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'extractor-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous }, facts };
 }
 
@@ -217,6 +217,9 @@ function pageItem(page: ExtractorFactsPage, hash: string, index: number, last: b
 /** Pages of an approved set whose restore already finished (a committed request, or every fact active again). */
 async function finishedPages(engine: BrainEngine, hash: string, pages: ExtractorFactsPage[]): Promise<Set<string>> {
   if (!pages.length) return new Set();
+  // The resume check and the restore read and write facts through raw SQL, so a Rust brain stops its apply here by name,
+  // before its first write.
+  requireRawSql(engine, 'repair extractor-facts fact write');
   const committed = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT DISTINCT source_id, slug FROM persistence_requests
     WHERE state='committed' AND operation='submit_job' AND source_id=ANY($1::text[]) AND slug=ANY($2::text[])
       AND (intent->>'preview_hash'=$3 OR request_id=ANY($4::uuid[]))`,
@@ -238,9 +241,14 @@ export const extractorFactsRepair: RepairHandler = {
       const managed = await managedPersistenceEnabled(engine);
       const facts = await classifyExtractorFacts(engine, scope.source_ids, { managed });
       const hash = previewHash(await hashParts(engine, scope, includeAmbiguous, facts));
-      const pageIds = new Map((await engine.executeRaw<{ id: number | string; source_id: string; slug: string }>(
-        'SELECT id, source_id, slug FROM pages WHERE source_id=ANY($1::text[]) AND slug=ANY($2::text[]) AND deleted_at IS NULL',
-        [scope.source_ids, [...new Set(facts.map(f => f.slug))]])).map(row => [`${row.source_id}\u0000${row.slug}`, Number(row.id)]));
+      // The live page of each listed fact's (source, slug), one typed read per page (every engine serves it).
+      const pageIds = new Map<string, number>();
+      for (const fact of facts) {
+        const key = `${fact.source_id}\u0000${fact.slug}`;
+        if (pageIds.has(key) || !scope.source_ids.includes(fact.source_id)) continue;
+        const id = await engine.readLivePageIdBySlug(fact.slug, fact.source_id);
+        if (id !== null) pageIds.set(key, Number(id));
+      }
       const pages = new Map<string, ExtractorFactsPage>();
       for (const fact of facts) {
         if (fact.class === 'excluded' || fact.class === 'ambiguous' && !includeAmbiguous) continue;

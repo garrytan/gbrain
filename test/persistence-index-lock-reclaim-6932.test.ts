@@ -131,7 +131,7 @@ test('probe: a git SIGKILLed while it holds the index lock leaves a 0-byte lock,
       expect(git(root, 'show', 'HEAD:a.md')).toBe('second\n');
       expect(reclaims).toEqual([expect.objectContaining({ checkout: root, lock, size: 0 })]);
       expect(readIndexLockReclaims()).toEqual([expect.objectContaining({ checkout: root, lock, size: 0, pid: process.pid })]);
-      const doctor = await checkParkedEffects({ executeRaw: async (sql: string) => sql.includes('COUNT(*)') ? [{ count: 0 }] : [] } as unknown as BrainEngine);
+      const doctor = await checkParkedEffects({ countParkedEffects: async () => 0, listParkedEffects: async () => [], listGitPushHoldRows: async () => [], listStalledCatchupRows: async () => [], listParkedGroupRows: async () => [] } as unknown as BrainEngine);
       expect(doctor).toMatchObject({ status: 'ok', details: { parked_effects: 0, index_lock_reclaims: { last_7_days: 1, latest: { checkout: root, lock, size: 0 } } } });
       expect(doctor.message).toContain('reclaimed 1 abandoned Git index lock(s) in the last 7 days');
     }

@@ -44,7 +44,7 @@ import { KEEP_DISK_ABANDONED_PREFIX } from './verb-errors.ts';
 
 export { HOLD_ATTEMPTS_NEEDS_HUMAN } from './sync-fault-class.ts';
 
-type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>;
+type HoldEntry = Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action' | 'driftHistoryUnread'>;
 
 /**
  * The working-tree bytes of `path` when they are exactly what HEAD commits for it (their blob id equals
@@ -155,7 +155,7 @@ export function fileDriftHold(entry: HoldEntry, slug: string, pageId: number | n
     : `${by} since the file was last imported and ${observed.sides === 'unknown' ? 'there is no import record to tell whether the file changed too' : file}`;
   return base(entry, slug, pageId, 'file_drift',
     `${entry.path}: ${held}, so sync held the import instead of overwriting the database version; the rest of the source synced.`,
-    intent.content ?? null, intent.blobOid, { sides: observed.sides, drift_version: FILE_DRIFT_VERSION, ...(observed.sides !== 'database' ? { side: observed.sides } : {}), ...(observed.revision ? { page_revision: observed.revision } : {}),
+    intent.content ?? null, intent.blobOid, { sides: observed.sides, drift_version: FILE_DRIFT_VERSION, ...(entry.driftHistoryUnread ? { history_unread: true as const } : {}), ...(observed.sides !== 'database' ? { side: observed.sides } : {}), ...(observed.revision ? { page_revision: observed.revision } : {}),
       ...(observed.proof ? { competing_request_id: observed.proof.request_id, competing_operation: observed.proof.operation } : {}),
       ...(observed.sharedOrigin ? { shared_origin: true as const } : {}) });
 }
@@ -227,6 +227,14 @@ export function fileChangedAfterAdmission(done: Pick<WriteRequest, 'state' | 'er
       || (done.error_message ?? '').startsWith(KEEP_DISK_ABANDONED_PREFIX));
 }
 
+/** The message of a held deletion refused because HEAD moved past the commit its move check read (sync-prepare.ts). */
+export const HELD_DELETION_HEAD_MOVED = 'A commit landed after this held deletion was checked for a move.';
+
+/** A held deletion refused because a commit landed after its move check: the level moved, so a pass passes it over and checks it again. */
+export function heldDeletionHeadMoved(done: Pick<WriteRequest, 'state' | 'error_code' | 'error_message'>): boolean {
+  return done.state !== 'committed' && done.error_code === 'source_changed' && done.error_message === HELD_DELETION_HEAD_MOVED;
+}
+
 /** A `revision_conflict` receipt whose page really moved (its live revision differs from the frozen one); run-level conflicts stay blocking. */
 export async function pageMovedSinceAdmission(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, pending: { slug: string; pageId: number | null; intent: Pick<SyncIntent, 'expected_revision'> },
   done: Pick<WriteRequest, 'state' | 'error_code'>): Promise<{ revision: string | null } | null> {
@@ -241,7 +249,7 @@ export async function pageMovedSinceAdmission(engine: Pick<BrainEngine, 'execute
  * really moved (`concurrent_write` by revision), or a `pinned_git_worktree_conflict` (`worktree_dirty`). Shared by the
  * run's receipt branch and the start-of-run conversion of an older release's blocked cursor.
  */
-export async function receiptPageFaultHold(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; entry: HoldEntry;
+export async function receiptPageFaultHold(engine: Pick<BrainEngine, 'executeRaw' | 'readPageRevisionWriter' | 'readRevisionWriterRequest'>, input: { sourceId: string; incarnation: string; entry: HoldEntry;
   pending: { slug: string; pageId: number | null; intent: SyncIntent }; done: Pick<WriteRequest, 'request_id' | 'state' | 'error_code' | 'error_message' | 'error_detail'> }): Promise<HeldEntry | null> {
   const { entry, pending, done } = input;
   const repeated = await repeatedWriteFailure(engine, input.sourceId, input.incarnation, pending.slug, done);

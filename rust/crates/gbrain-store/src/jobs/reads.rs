@@ -145,6 +145,25 @@ impl Store {
             .collect())
     }
 
+    /// `listUnfinishedJobsByName`: `{ id, name, status }` of every live row (any status but completed,
+    /// failed, dead, cancelled) whose name is in `names`, by id, from one read snapshot with no limit.
+    pub fn list_unfinished_jobs_by_name(&self, names: &[String]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut found: Vec<(i64, Value)> = Vec::new();
+        for status in NON_TERMINAL {
+            for_each_row_with_status(&*read, status, &mut |r| {
+                if names.contains(&r.name) {
+                    found.push((
+                        r.id,
+                        json!({ "id": r.id, "name": r.name, "status": r.status }),
+                    ));
+                }
+            })?;
+        }
+        found.sort_by_key(|(id, _)| *id);
+        Ok(found.into_iter().map(|(_, row)| row).collect())
+    }
+
     /// `countTtlExpiredWaiting`: how many `waiting` rows of `name` are past `hours`.
     pub fn count_ttl_expired_waiting(&self, name: &str, hours: f64) -> Result<usize> {
         let read = self.read()?;
@@ -359,13 +378,21 @@ impl Store {
         Ok(n)
     }
 
-    /// `readJobSourceState(sourceId)`: `{ archived, created_at }` of the source an agent job was
-    /// accepted against, or `None` when no source has that id. The job authority check compares
-    /// `created_at` with the stamp the job froze, so a source deleted and created again denies the job.
+    /// `readJobSourceState(sourceId)`: `{ archived, created_at, local_path, config }` of the source a
+    /// remote job was accepted against, or `None` when no source has that id. The job authority
+    /// checks compare `created_at` with the stamp the job froze, so a source deleted and created
+    /// again denies the job; a generic job (sync, import, lint) also reads the registered root and
+    /// config it runs under.
     pub fn read_job_source_state(&self, source_id: &str) -> Result<Option<Value>> {
         let read = self.read()?;
-        Ok(crate::sources::read_source(&*read, source_id)?
-            .map(|s| json!({ "archived": s.archived, "created_at": iso(s.created_at_us) })))
+        Ok(crate::sources::read_source(&*read, source_id)?.map(|s| {
+            json!({
+                "archived": s.archived,
+                "created_at": iso(s.created_at_us),
+                "local_path": s.local_path,
+                "config": s.config,
+            })
+        }))
     }
 
     /// `listJobPage`: rows newest first (`created_at DESC, id DESC`) after the cursor tuple, each

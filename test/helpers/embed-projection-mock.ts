@@ -1,4 +1,6 @@
 import type { BrainEngine } from '../../src/core/engine.ts';
+import * as embedStaleWork from '../../src/core/engine-sql/embed-stale-work.ts';
+import { readPageProvenanceComplete } from '../../src/core/engine-sql/embedding-provenance.ts';
 
 /** Minimal coherent read/transaction surface for provider orchestration tests. */
 export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
@@ -16,6 +18,9 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     readChunkVectorColumn: async () => ({ exists: false, dims: null }),
     // One well-formed unmanaged mode row (#6482), read through the typed import guard method.
     readManagedModeRows: async () => [{ enabled: false }],
+    // No held or capped large pages, as the empty raw budget reads answered before the typed members existed.
+    listBudgetLimitedRows: async () => [],
+    readBudgetHoldAge: async () => undefined,
     // The cycle lock (src/core/db-lock.ts) is always free and always held by us in this single-process mock.
     acquireCycleLock: async (lockId: string) => ({ id: lockId, fence: '1' }),
     refreshCycleLock: async () => true,
@@ -61,6 +66,20 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
     if (!kind) return null;
     return { chunker_version: projection?.chunker_version ?? null, corpus_generation: projection?.corpus_generation ?? null, page_kind: kind.page_kind };
   };
+  // The embed --stale reads and writes are typed members (engine-sql/embed-stale-work.ts, embedding-provenance.ts); the mock
+  // answers each by running its statement through the mock's executeRaw, so a test that models that statement keeps its answer.
+  const raw = ((sql: string, params?: unknown[]) => engine.executeRaw(sql, params)) as embedStaleWork.EngineRawRead;
+  overrides.countArchivedEmbeddingWork ??= (opts: embedStaleWork.ArchivedEmbeddingWorkOpts) => embedStaleWork.countArchivedEmbeddingWork(raw, opts);
+  overrides.countEmbedPendingProjections ??= (scope: embedStaleWork.PendingProjectionScope) => embedStaleWork.countEmbedPendingProjections(raw, scope);
+  overrides.listEmbedPendingProjections ??= (scope: embedStaleWork.PendingProjectionScope, limit: number) => embedStaleWork.listEmbedPendingProjections(raw, scope, limit);
+  overrides.listEmbedProjectionRepairPages ??= (scope: embedStaleWork.PendingProjectionScope, after: number, limit: number) => embedStaleWork.listEmbedProjectionRepairPages(raw, scope, after, limit);
+  overrides.readPageIsSegmented ??= (pageId: number) => embedStaleWork.readPageIsSegmented(raw, pageId);
+  overrides.hasEmbeddingSignatureDrift ??= (opts: embedStaleWork.SignatureDriftOpts) => embedStaleWork.hasEmbeddingSignatureDrift(raw, opts);
+  overrides.listUnembeddedChunkIndexes ??= (slug: string, sourceId: string, column: string) => embedStaleWork.listUnembeddedChunkIndexes(raw, slug, sourceId, column);
+  overrides.lockContentDriftState ??= (key: string, initial: string) => embedStaleWork.lockContentDriftState(raw, key, initial);
+  overrides.invalidateContentDriftChunks ??= (window: embedStaleWork.ContentDriftChunkWindow) => embedStaleWork.invalidateContentDriftChunks(raw, window);
+  overrides.readPageProvenanceComplete ??= (slug: string, sourceId: string, model: string, dims: number | null, column: string) =>
+    readPageProvenanceComplete({ executeRaw: raw } as unknown as Pick<BrainEngine, 'executeRaw'>, slug, sourceId, model, dims, column);
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });

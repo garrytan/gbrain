@@ -1,5 +1,5 @@
 //! Ontology dimensions over facts (BrainEngine mergeOntologyFact, getOntology,
-//! discoverOntologyDimensions, findOntologyConflicts).
+//! discoverOntologyDimensions, findOntologyConflicts, listOntologyStreamSlugs, readOntologyRival).
 //!
 //! The ontology owns no records of its own: an observation is a `facts` row whose `dimension`,
 //! `value`, `value_hash` and `dim_status` columns are set, written and read through the facts
@@ -132,8 +132,11 @@ impl OntologyQuery {
     /// `life/diary/` provenance under `exclude_diary`, the visibility list and the confidence
     /// floor.
     fn admits(&self, read: &dyn KvRead, r: &FactRecord) -> Result<bool> {
-        // `confidence` is a REAL column and the SQL engines compare it with the floor as a REAL, so 0.7 meets a 0.7 floor.
-        if r.confidence < self.min_confidence as f32 || self.min_confidence.is_nan() {
+        // SQL binds the floor as the column's REAL type, so compare at f32: a stored 0.7 is
+        // 0.699999988 and still meets a floor of 0.7.
+        #[allow(clippy::cast_possible_truncation)]
+        let floor = self.min_confidence as f32;
+        if r.confidence < floor || floor.is_nan() {
             return Ok(false);
         }
         if self
@@ -274,6 +277,114 @@ impl Store {
                 "factId": row.id,
                 "supersededId": superseded,
             }))
+        })
+    }
+
+    /// `listOntologyStreamSlugs(sourceId, entitySlug, dimension)`: the distinct non-null
+    /// `source_markdown_slug` of every open (unexpired, unclosed) non-conversation row of the
+    /// entity's dimension, in byte order. `dimension` is already normalised.
+    pub fn list_ontology_stream_slugs(
+        &self,
+        source_id: &str,
+        entity_slug: &str,
+        dimension: &str,
+    ) -> Result<Vec<String>> {
+        const OP: &str = "listOntologyStreamSlugs";
+        no_nul(
+            OP,
+            &[
+                ("sourceId", source_id),
+                ("entitySlug", entity_slug),
+                ("dimension", dimension),
+            ],
+        )?;
+        let read = self.read()?;
+        Ok(entity_rows(&*read, source_id, entity_slug)?
+            .into_iter()
+            .filter(|r| {
+                r.dimension.as_deref() == Some(dimension)
+                    && r.expired_at_us.is_none()
+                    && r.valid_until_us.is_none()
+                    && !r.conversation_slot()
+            })
+            .filter_map(|r| r.source_markdown_slug)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect())
+    }
+
+    /// `listBeliefStreamSlugs(table, ids)`: the ledger stream slug of each listed row found, by
+    /// id, once each: a fact's `source_markdown_slug` else its `entity_slug`, a take's page slug, a
+    /// page's own slug (deleted pages included); null where a fact has neither. `table` is
+    /// `facts`, `takes` or `pages`; the caller filters, removes repeats and sorts.
+    pub fn list_belief_stream_slugs(&self, table: &str, ids: &[i64]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<u64> = ids
+            .iter()
+            .filter_map(|id| u64::try_from(*id).ok())
+            .collect();
+        let mut out = Vec::new();
+        for id in wanted {
+            let slug = match table {
+                "facts" => match crate::facts::read_fact(&*read, id)? {
+                    Some(fact) => Some(fact.source_markdown_slug.or(fact.entity_slug)),
+                    None => None,
+                },
+                "takes" => match crate::takes::read_take(&*read, id)? {
+                    Some(take) => {
+                        crate::pages::read_page_by_id(&*read, take.page_id)?.map(|p| Some(p.slug))
+                    }
+                    None => None,
+                },
+                "pages" => crate::pages::read_page_by_id(&*read, id)?.map(|p| Some(p.slug)),
+                other => {
+                    return Err(StoreError::invalid(format!(
+                        "listBeliefStreamSlugs: the stream slugs of facts, takes and pages, not \"{other}\""
+                    )));
+                }
+            };
+            if let Some(slug) = slug {
+                out.push(json!(slug));
+            }
+        }
+        Ok(out)
+    }
+
+    /// `readOntologyRival(sourceId, entitySlug, dimension, excludeId)`: `{ id, trust_tier }` of
+    /// the newest open, active, non-conversation row of the entity's dimension other than
+    /// `excludeId` (the stint mergeOntologyFact left open), or null. `dimension` is already
+    /// normalised.
+    pub fn read_ontology_rival(
+        &self,
+        source_id: &str,
+        entity_slug: &str,
+        dimension: &str,
+        exclude_id: i64,
+    ) -> Result<Value> {
+        const OP: &str = "readOntologyRival";
+        no_nul(
+            OP,
+            &[
+                ("sourceId", source_id),
+                ("entitySlug", entity_slug),
+                ("dimension", dimension),
+            ],
+        )?;
+        let read = self.read()?;
+        let rival = entity_rows(&*read, source_id, entity_slug)?
+            .into_iter()
+            .filter(|r| {
+                r.dimension.as_deref() == Some(dimension)
+                    && r.id as i64 != exclude_id
+                    && r.expired_at_us.is_none()
+                    && r.valid_until_us.is_none()
+                    && status_active(r)
+                    && !r.conversation_slot()
+            })
+            .max_by(newest);
+        Ok(match rival {
+            Some(r) => json!({ "id": r.id, "trust_tier": r.trust_tier }),
+            None => Value::Null,
         })
     }
 
@@ -597,6 +708,35 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_confidence_floor_equal_to_the_stored_value_admits_it() {
+        // 0.7 stores as the REAL 0.699999988; SQL compares the floor at REAL too, so it is kept.
+        let s = store();
+        let mut a = obs("people/c", "role", "advisor", "m/a", Some("2026-05-01"));
+        a.confidence = 0.7;
+        s.merge_ontology_fact(&a).unwrap();
+        let mut b = obs("people/c", "role", "founder", "m/b", Some("2026-01-01"));
+        b.confidence = 0.7;
+        s.merge_ontology_fact(&b).unwrap();
+        let read = OntologyQuery {
+            entity_slug: "people/c".into(),
+            min_confidence: 0.7,
+            ..OntologyQuery::default()
+        };
+        assert_eq!(s.get_ontology(&read).unwrap().len(), 1);
+        let floor = OntologyQuery {
+            min_confidence: 0.7,
+            ..OntologyQuery::default()
+        };
+        assert_eq!(s.find_ontology_conflicts(&floor).unwrap().len(), 1);
+        let nan = OntologyQuery {
+            entity_slug: "people/c".into(),
+            min_confidence: f64::NAN,
+            ..OntologyQuery::default()
+        };
+        assert!(s.get_ontology(&nan).unwrap().is_empty());
     }
 
     #[test]

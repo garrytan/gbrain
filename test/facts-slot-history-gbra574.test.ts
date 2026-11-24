@@ -10,9 +10,10 @@
  * and a value under the page ends a stint under the key; the same key in two sources stays two people; a remote or
  * member-scoped caller never sees a value it cannot read (and an unreadable row never ends a readable window), nor the
  * history of a page it cannot read; withdrawn, superseded and expired rows never show; a failed history read keeps the
- * block, marks its rows and reports the degraded stage facts_history_unavailable.
- * PGLite with no git repository (the repo-less brain), and Postgres through
- * test/e2e/facts-slot-history-gbra574-postgres.test.ts.
+ * block, marks its rows and reports the degraded stage facts_history_unavailable; an engine capability refusal of a
+ * read the block needs rejects with that typed refusal, never an empty or degraded block.
+ * PGLite with no git repository (the repo-less brain), Postgres through
+ * test/e2e/facts-slot-history-gbra574-postgres.test.ts, and the Rust arm with GBRAIN_TEST_RUST_ARM=1.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -27,13 +28,26 @@ import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { newSource, page, putPage } from './helpers/pinned-questions-fixture.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import { createRustSource, openRustBrain, removeBrainDir, rustArmRequested } from './engine-parity/rust-arm.ts';
 
 type Row = { result_type?: string; chunk_text?: string; fact_row?: { history_unavailable?: true } };
 const CONVERSATION = 'cli:extract-conversation-facts:v1';
 const ROLE_Q = 'In plain words, which job titles has Alice Example held over time?';
 const head = (from: string, until = 'unknown') => '[observed unknown; valid ' + from + ' to ' + until + ']';
-const HISTORY_READ = "COALESCE(f.dim_status, 'active') = 'active'";
+/** The slot history read (engine-sql/facts-recall.ts listSlotRows): H1 makes this member call fail. */
+const HISTORY_READ = 'listSlotRows' as const;
 const logger = { info() {}, warn() {}, error() {} };
+/** The quoted-page read (engine-sql/facts-recall.ts listFactsFromQuotedPages) every facts block makes. */
+const QUOTED_READ = 'listFactsFromQuotedPages' as const;
+
+/** `base` with `member` rejecting `error`; every other member answers from `base`. */
+const rejecting = (base: BrainEngine, member: string, error: () => Error) => new Proxy(base, { get(target, prop) {
+  if (prop === member) return () => Promise.reject(error());
+  const v = (target as unknown as Record<string, unknown>)[prop as string];
+  return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+} }) as BrainEngine;
+const refused = (member: string) => () => capabilityMissing('facts', member);
 
 describe('slotHistoryDimension', () => {
   test('a history cue plus one dimension fires, with that dimension', () => {
@@ -261,12 +275,7 @@ for (const backend of testBackends()) {
     });
 
     describe('H1 a failed history read', () => {
-      const failing = (base: BrainEngine) => new Proxy(base, { get(target, prop) {
-        if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => sql.includes(HISTORY_READ)
-          ? Promise.reject(new Error('history read failed')) : target.executeRaw(sql, params);
-        const v = (target as unknown as Record<string, unknown>)[prop as string];
-        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
-      } }) as BrainEngine;
+      const failing = (base: BrainEngine) => rejecting(base, HISTORY_READ, () => new Error('history read failed'));
       test('keeps the block and marks its rows', async () => {
         const rows = await block(ROLE_Q, [sourceId], 5500, 50, failing(engine));
         expect(rows.length).toBeGreaterThan(0);
@@ -281,15 +290,97 @@ for (const backend of testBackends()) {
           return JSON.stringify(r._meta ?? {});
         };
         expect(await call()).not.toContain('facts_history_unavailable');
-        const original = engine.executeRaw;
-        engine.executeRaw = (function (this: BrainEngine, sql: string, ...rest: unknown[]) {
-          if (sql.includes(HISTORY_READ)) return Promise.reject(new Error('history read failed'));
-          return (original as (...a: unknown[]) => unknown).call(this, sql, ...rest);
-        }) as typeof engine.executeRaw;
+        const original = engine[HISTORY_READ];
+        engine[HISTORY_READ] = () => Promise.reject(new Error('history read failed'));
         try {
           expect(await call()).toContain('facts_history_unavailable');
-        } finally { engine.executeRaw = original; }
+        } finally { engine[HISTORY_READ] = original; }
       }, 60_000);
+    });
+
+    describe('an engine capability refusal stops the block', () => {
+      test('a refused quoted-page read rejects with the typed refusal, never an empty block', async () => {
+        await expect(block(ROLE_Q, [sourceId], 5500, 50, rejecting(engine, QUOTED_READ, refused(QUOTED_READ))))
+          .rejects.toMatchObject({ code: 'engine_capability_missing' });
+      });
+      test('a refused history read rejects, never a block marked history_unavailable', async () => {
+        await expect(block(ROLE_Q, [sourceId], 5500, 50, rejecting(engine, HISTORY_READ, refused(HISTORY_READ))))
+          .rejects.toMatchObject({ code: 'engine_capability_missing' });
+      });
     });
   });
 }
+
+/**
+ * The Rust arm (GBRAIN_TEST_RUST_ARM=1, test/engine-parity/rust-arm.ts): the same block on a Rust brain, seeded through
+ * the typed members (`insertFacts`, `putPage`) because the store refuses raw SQL. Before the quote and bare-name page
+ * reads were typed members, both ran through `executeRaw`: the block returned no rows and every history read failed.
+ */
+describe.if(rustArmRequested())('rust', () => {
+  let engine: BrainEngine;
+  let dir = '';
+  const SRC = 'src-a';
+  const OTHER = 'src-b';
+  const rustFact = (fact: string, entity: string, from: string, slot: [string, string] | null) => ({
+    fact, entity_slug: entity, kind: 'fact', visibility: 'world', source: CONVERSATION, confidence: 1, valid_from: new Date(from + 'T00:00:00Z'),
+    ...(slot ? { dimension: slot[0], value: slot[1], value_hash: valueHash(slot[1]), dim_status: 'active' } : {}),
+  });
+  const block = async (query: string, sourceIds: string[], eng: BrainEngine = engine) =>
+    ((await applyFactsBlock(eng, query, [], { sourceIds, remote: false, budget: 5500, tokenBudget: 5500, rowCap: async () => 50 })) as Row[])
+      .filter(r => r.result_type === 'fact');
+  const texts = (rows: Row[]) => rows.map(r => r.chunk_text ?? '');
+  const headOf = (rows: string[], text: string) => rows.find(r => r.includes(text))?.split('\n')[0];
+
+  beforeAll(async () => {
+    ({ engine, dir } = await openRustBrain());
+    await createRustSource(engine, SRC, {});
+    await createRustSource(engine, OTHER, {});
+    await engine.putPage('people/carol-example', { type: 'person', title: 'Carol Example', compiled_truth: 'Carol Example is in the address book.' }, { sourceId: SRC });
+    await engine.insertFacts([
+      rustFact('Alice Example keeps a plain words list of job titles held over time.', 'alice-example', '2020-01-01', null),
+      rustFact('Alice Example started out as a junior intern.', 'alice-example', '2021-02-01', ['role', 'Intern']),
+      rustFact('Alice Example joined Acme Example.', 'alice-example', '2021-02-01', ['employer', 'Acme Example']),
+      rustFact('Alice Example was promoted to analyst.', 'alice-example', '2022-03-01', ['role', 'Analyst']),
+      rustFact('Alice Example became the team manager.', 'alice-example', '2024-05-01', ['role', 'Manager']),
+      rustFact('Carol Example began as a cashier.', 'people/carol-example', '2020-01-01', ['role', 'Cashier']),
+      rustFact('Carol Example moved up to store lead.', 'people/carol-example', '2022-01-01', ['role', 'Store Lead']),
+    ] as never, { source_id: SRC });
+    await engine.insertFacts([rustFact('Alice Example flies as a pilot.', 'alice-example', '2023-01-01', ['role', 'Pilot'])] as never, { source_id: OTHER });
+  }, 120_000);
+  afterAll(async () => { await engine?.disconnect(); if (dir) removeBrainDir(dir); });
+
+  test('an unbacked key: every value of the dimension, oldest first, with its window', async () => {
+    const rows = texts(await block(ROLE_Q, [SRC]));
+    const order = ['junior intern', 'promoted to analyst', 'team manager'].map(t => rows.findIndex(r => r.includes(t)));
+    expect(order.every(i => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(headOf(rows, 'junior intern')).toBe(head('2021-02-01', '2022-03-01'));
+    expect(headOf(rows, 'promoted to analyst')).toBe(head('2022-03-01', '2024-05-01'));
+    expect(headOf(rows, 'team manager')).toBe(head('2024-05-01'));
+    expect(rows.join('\n')).not.toContain('pilot');
+  });
+  // The store does not serve the `entity_ended` arm of listFactsForRelevance yet (it reads the withdrawal ledger;
+  // store-members/facts-trust.ts), so a history question about a page-backed entity stops on that typed refusal. Before
+  // facts-arm.ts rethrew refusals, this block returned no rows and no error. When the arm is served, this case takes
+  // the PGLite expectation (began as a cashier 2020-01-01 to 2022-01-01, store lead from 2022-01-01).
+  test('a page-backed entity stops on the typed refusal of the unserved entity_ended arm', async () => {
+    await expect(block('In plain words, which job titles has Carol Example held over time?', [SRC]))
+      .rejects.toMatchObject({ code: 'engine_capability_missing', detail: expect.stringContaining('member=listFactsForRelevance (the history arm') });
+  });
+  test('the same key in another source is another person', async () => {
+    const other = texts(await block(ROLE_Q, [OTHER])).join('\n');
+    expect(other).toContain('flies as a pilot');
+    expect(other).not.toContain('junior intern');
+  });
+  test('a failed history read keeps the block and marks its rows', async () => {
+    const rows = await block(ROLE_Q, [SRC], rejecting(engine, HISTORY_READ, () => new Error('history read failed')));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(r => r.fact_row?.history_unavailable)).toBe(true);
+    expect((await block(ROLE_Q, [SRC])).some(r => r.fact_row?.history_unavailable)).toBe(false);
+  });
+  test('a refused quoted-page or history read rejects with the typed refusal', async () => {
+    for (const member of [QUOTED_READ, HISTORY_READ]) {
+      await expect(block(ROLE_Q, [SRC], rejecting(engine, member, refused(member)))).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    }
+  });
+});

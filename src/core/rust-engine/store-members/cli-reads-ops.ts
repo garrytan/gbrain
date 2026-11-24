@@ -4,11 +4,12 @@
  * (trust tiers, page aliases) and what each member answers for it:
  * rust/docs/store/cli-reads-ops.md.
  */
+import { ALIAS_DERIVATION_VERSION, MENTION_EXTRACTOR_VERSION } from '../../mentions/versions.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, RankCoverageRow } from '../../engine-sql/cli-reads-ops.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../../engine-sql/exact-identity.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../../engine-sql/graph-rank.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../../search/exact-scan.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
 /**
@@ -45,7 +46,9 @@ function withRemotePolicy<T extends { remote?: { excludePrivate?: boolean } }>(m
   return { ...opts, remote: { ...opts.remote, policy: storePagePolicy(member, true, { callerReaders: true }) } };
 }
 
+/** A phone probe refuses: the store matches no stored `phone` / `phones` value and returns neither. */
 export const listExactIdentityCandidates: StoreMember<[opts: ExactIdentityStatementOpts], ExactIdentityRow[]> = (brain, opts) => {
+  if (opts.probes.phones?.length) refuseMember('listExactIdentityCandidates', 'a phone probe');
   const sent = withRemotePolicy('listExactIdentityCandidates', opts);
   return storeCall({ member: 'listExactIdentityCandidates' }, () => brain.listExactIdentityCandidates(sent));
 };
@@ -60,14 +63,15 @@ export const listExtractionPendingPages: StoreMember<[opts: { sourceIds?: string
 
 /**
  * rank_entities' remote coverage for one source. `excludePrivate` sends the caller's page policy, so a page the caller
- * cannot read never makes coverage behind; the store keeps no mention-pass state, so with `mentionTypes` every
- * readable page owes a mention pass.
+ * cannot read never makes coverage behind; with `mentionTypes` the store reads the mention pass's page state at this
+ * binary's extractor and alias versions.
  */
 export const readRankCoverage: StoreMember<[opts: RankCoverageStatementOpts, timeoutMs: number], RankCoverageRow> = (brain, opts) => {
   const taken = takeOptions('readRankCoverage', opts, ['sourceId', 'versionTs', 'mentionTypes', 'excludePrivate']);
   const excludePrivate = storePagePolicy('readRankCoverage', taken.excludePrivate, { callerReaders: true });
   return storeCall({ member: 'readRankCoverage' }, () => brain.readRankCoverage({
     sourceId: taken.sourceId, versionTs: taken.versionTs, mentionTypes: taken.mentionTypes, excludePrivate: excludePrivate ?? null,
+    mentionVersion: MENTION_EXTRACTOR_VERSION, aliasVersion: ALIAS_DERIVATION_VERSION,
   }));
 };
 

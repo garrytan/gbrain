@@ -36,8 +36,9 @@
 
 import { opError } from '../ops/contract.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { JournalChunkRow } from '../engine-sql/page-purge-journal.ts';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
-import { EFFECT_BYTES_SQL, retainedReceiptBytes } from './receipt-bytes.ts';
+import { retainedReceiptBytes } from './receipt-bytes.ts';
 import { completeWrite, lockCounters } from './journal.ts';
 import { isTerminal, principalKey, requestPrincipal, type WriteRequest } from './model.ts';
 
@@ -54,37 +55,17 @@ export function carryingNeedles(claims: readonly string[]): string[] {
   return [...new Set(forms.filter(Boolean))];
 }
 
-interface SweepRow extends IntentRedactionTarget { sequence: string; pending: boolean; hits: number[] | null; chunk_rows: string; chunk_last: string | null }
-type ChunkRow = IntentRedactionTarget & { sequence: string; pending: boolean; matched: boolean; hits: number[] };
+type ChunkRow = JournalChunkRow;
 /**
  * One chunk of the carrying predicate: the rows of `sourceId` with `after < sequence <= ceiling` (`ceiling` null: no upper
  * bound), in sequence order, at most `limit`. The chunk is materialised once and each text column lowered once per row;
  * only the rows that match a needle or are still pending come back, with the 0-based indexes of the needles each carries
  * (`hits`), plus the chunk's row count and last scanned sequence (as text: bigint) so the caller continues past a chunk
- * that matched nothing.
+ * that matched nothing (`sweepJournalChunk`, engine-sql/page-purge-journal.ts).
  */
-async function sweepChunk(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, needles: readonly string[], after: string, ceiling: string | null, limit: number,
+async function sweepChunk(engine: Pick<BrainEngine, 'sweepJournalChunk'>, sourceId: string, needles: readonly string[], after: string, ceiling: string | null, limit: number,
   ids: readonly string[] | null = null, exclude: string | null = null): Promise<{ rows: ChunkRow[]; scanned: number; last: string | null }> {
-  const rows = await engine.executeRaw<SweepRow>(`WITH chunk AS MATERIALIZED (
-      SELECT id,principal_kind,principal_id,sequence,
-        (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL) AS pending,
-        lower(COALESCE(intent::text,'')) AS i,lower(COALESCE(outcome::text,'')) AS o,lower(COALESCE(error_detail::text,'')) AS d,lower(COALESCE(error_message,'')) AS m
-      FROM persistence_requests WHERE source_id=$1 AND sequence>$2::bigint AND ($3::bigint IS NULL OR sequence<=$3::bigint)
-        AND ($6::uuid[] IS NULL OR id=ANY($6::uuid[])) AND ($7::uuid IS NULL OR id<>$7::uuid)
-      ORDER BY sequence LIMIT $5),
-    stats AS (SELECT count(*)::text AS chunk_rows,max(sequence)::text AS chunk_last FROM chunk),
-    tested AS (SELECT id,principal_kind,principal_id,sequence,pending,
-        ARRAY(SELECT (n.ord-1)::int FROM unnest($4::text[]) WITH ORDINALITY AS n(v,ord)
-          WHERE strpos(i,n.v)>0 OR strpos(o,n.v)>0 OR strpos(d,n.v)>0 OR strpos(m,n.v)>0 ORDER BY n.ord) AS hits FROM chunk)
-    SELECT t.id::text AS id,t.principal_kind,t.principal_id,t.sequence::text AS sequence,t.pending,t.hits,s.chunk_rows,s.chunk_last
-      FROM tested t CROSS JOIN stats s WHERE cardinality(t.hits)>0 OR t.pending
-    UNION ALL SELECT NULL,NULL,NULL,NULL,false,NULL::int[],s.chunk_rows,s.chunk_last FROM stats s`,
-  [sourceId, after, ceiling, [...needles], limit, ids ? [...ids] : null, exclude]);
-  // Every row carries the chunk statistics; the sentinel row guarantees at least one.
-  const stats = rows[0]!;
-  return { rows: rows.filter(row => row.id !== null).map(({ id, principal_kind, principal_id, sequence, pending, hits }) => ({ id, principal_kind, principal_id, sequence, pending,
-    matched: (hits?.length ?? 0) > 0, hits: (hits ?? []).map(Number) })),
-    scanned: Number(stats.chunk_rows), last: stats.chunk_last };
+  return engine.sweepJournalChunk({ sourceId, needles, after, ceiling, limit, ids, exclude });
 }
 
 export interface JournalSweep {
@@ -109,7 +90,7 @@ export interface JournalSweep {
  * budget ends with the budget's own `preparation_deadline` and the consumer releases the claim charged; on Postgres
  * `boundedReads` ends the chunk statement at the same bound. Needles stay in memory; no text is returned.
  */
-export async function sweepRequestsCarrying(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, claims: readonly string[],
+export async function sweepRequestsCarrying(engine: Pick<BrainEngine, 'sweepJournalChunk' | 'readJournalCeiling'>, sourceId: string, claims: readonly string[],
   opts: SweepOptions = {}): Promise<JournalSweep> {
   return (await sweepRequestsForGroups(engine, sourceId, [{ key: '', claims }], opts)).get('')!;
 }
@@ -125,7 +106,7 @@ export interface SweepOptions {
  * The match cap applies per group: a group that reaches it stops collecting (`complete: false`) and the sweep ends once
  * no group is collecting.
  */
-export async function sweepRequestsForGroups(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, groups: ReadonlyArray<{ key: string; claims: readonly string[] }>,
+export async function sweepRequestsForGroups(engine: Pick<BrainEngine, 'sweepJournalChunk' | 'readJournalCeiling'>, sourceId: string, groups: ReadonlyArray<{ key: string; claims: readonly string[] }>,
   opts: SweepOptions = {}): Promise<Map<string, JournalSweep>> {
   const chunkRows = opts.chunkRows ?? JOURNAL_SWEEP_CHUNK_ROWS, matchCap = opts.matchCap ?? JOURNAL_SWEEP_MATCH_CAP, now = opts.now ?? Date.now;
   const needles: string[] = [], owners: Array<Set<string>> = [];
@@ -134,8 +115,7 @@ export async function sweepRequestsForGroups(engine: Pick<BrainEngine, 'executeR
     if (at < 0) { at = needles.push(needle) - 1; owners.push(new Set()); }
     owners[at]!.add(group.key);
   }
-  const [top] = await engine.executeRaw<{ ceiling: string | null }>('SELECT max(sequence)::text AS ceiling FROM persistence_requests WHERE source_id=$1', [sourceId]);
-  const ceiling = top?.ceiling ?? null;
+  const ceiling = await engine.readJournalCeiling(sourceId);
   let scanned = 0;
   const sweeps = new Map(groups.map(group => [group.key, { targets: [] as IntentRedactionTarget[], pendingAtScan: [] as string[], ceiling, scanned: 0, complete: true,
     ...(opts.after !== undefined ? { watermark: opts.after } : {}) }]));
@@ -182,7 +162,7 @@ export interface JournalRecheck { targets: IntentRedactionTarget[]; tail: number
  * that were pending at scan time (settled ones with a carrying outcome now redact; still-pending ones are left to
  * `redactRequestIntents`' `skipPending`). Returns the ids to redact in addition to the sweep's.
  */
-export async function recheckRequestsCarrying(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, claims: readonly string[], sweep: Pick<JournalSweep, 'ceiling' | 'pendingAtScan'>,
+export async function recheckRequestsCarrying(tx: Pick<BrainEngine, 'sweepJournalChunk'>, sourceId: string, claims: readonly string[], sweep: Pick<JournalSweep, 'ceiling' | 'pendingAtScan'>,
   opts: { tailRows?: number; beforePending?: () => Promise<void> | void; exclude?: string } = {}): Promise<JournalRecheck> {
   const needles = carryingNeedles(claims);
   const tailRows = opts.tailRows ?? JOURNAL_SWEEP_CHUNK_ROWS;
@@ -202,13 +182,9 @@ export async function recheckRequestsCarrying(tx: Pick<BrainEngine, 'executeRaw'
  * returns the text.
  */
 export async function findRequestsCarrying(engine: BrainEngine, sourceId: string, claim: string, reason = claim, limit = 10_000): Promise<IntentRedactionTarget[]> {
-  const needle = claim.toLowerCase();
   // The claim as it appears inside a JSON string (quotes and backslashes escaped), lowercased.
-  const jsonNeedle = JSON.stringify(claim).slice(1, -1).toLowerCase();
-  const carries = (column: string) => `(${column} IS NOT NULL AND (strpos(lower(${column}::text),$2)>0 OR strpos(lower(${column}::text),$3)>0 OR strpos(lower(${column}::text),$4)>0))`;
-  return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
-    WHERE source_id=$1 AND (${carries('intent')} OR ${carries('outcome')} OR ${carries('error_detail')} OR ${carries('error_message')})
-    ORDER BY sequence LIMIT $5`, [sourceId, needle, jsonNeedle, JSON.stringify(reason).slice(1, -1).toLowerCase(), limit]);
+  return engine.listRequestsCarryingClaim({ sourceId, claimLower: claim.toLowerCase(), claimJson: JSON.stringify(claim).slice(1, -1).toLowerCase(),
+    reason: JSON.stringify(reason).slice(1, -1).toLowerCase(), limit });
 }
 
 /** Replace every JSON string that carries one of `needles` (case-insensitive) with "[purged]"; structure and other values stay. */
@@ -222,19 +198,17 @@ export function redactJson<T>(value: T, needles: readonly string[], exact?: Read
 }
 
 /** Requests in `sourceId` that target one of `slugs` and still hold an intent (page purge), in sequence order after `after`. */
-export async function findRequestsForSlugs(engine: BrainEngine, sourceId: string, slugs: readonly string[], limit = 10_000, after = '0'): Promise<Array<IntentRedactionTarget & { sequence: string }>> {
-  return engine.executeRaw<IntentRedactionTarget & { sequence: string }>(`SELECT id::text AS id,principal_kind,principal_id,sequence::text AS sequence FROM persistence_requests
-    WHERE source_id=$1 AND slug=ANY($2::text[]) AND NOT compacted AND intent IS NOT NULL AND sequence > $4::bigint ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit, after]);
+export async function findRequestsForSlugs(engine: Pick<BrainEngine, 'listRequestsForSlugs'>, sourceId: string, slugs: readonly string[], limit = 10_000, after = '0'): Promise<Array<IntentRedactionTarget & { sequence: string }>> {
+  return engine.listRequestsForSlugs(sourceId, slugs, limit, after);
 }
 
 /**
  * Wave B (spec 11): unfinished requests of `sourceId` whose intent references one of `stagingIds` by
  * `body_ref` (the request publishes that staged body, so its text lives in the staging, not the intent).
  */
-export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, stagingIds: readonly string[]): Promise<IntentRedactionTarget[]> {
+export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'listRequestsHoldingStagings'>, sourceId: string, stagingIds: readonly string[]): Promise<IntentRedactionTarget[]> {
   if (!stagingIds.length) return [];
-  return engine.executeRaw<IntentRedactionTarget>(`SELECT id::text AS id,principal_kind,principal_id FROM persistence_requests
-    WHERE source_id=$1 AND state IN ('queued','deferred','running','recovering') AND intent->'body_ref'->>'staging_id'=ANY($2::text[]) ORDER BY sequence`, [sourceId, [...stagingIds]]);
+  return engine.listRequestsHoldingStagings(sourceId, stagingIds);
 }
 
 /**
@@ -245,7 +219,8 @@ export async function findRequestsHoldingStagings(engine: Pick<BrainEngine, 'exe
 export async function cancelRequestsHoldingStagings(tx: BrainEngine, targets: readonly IntentRedactionTarget[], exclude?: string): Promise<number> {
   const ids = targets.map(t => t.id).filter(id => id !== exclude);
   if (!ids.length) return 0;
-  const rows = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+  // The typed request lock (engine-sql/persistence-journal.ts lockWriteRequestsById): the rows in id order, FOR UPDATE.
+  const rows = await tx.lockWriteRequestsById(ids);
   const blocked = rows.find(row => (!isTerminal(row) && row.state !== 'queued' && row.state !== 'deferred') || row.recovery);
   if (blocked) {
     throw opError('purge_blocked_pending_recovery', 'A pending write is publishing a staged body that holds this content, so nothing was purged.',
@@ -277,7 +252,7 @@ export async function redactRequestIntents(tx: BrainEngine, targets: readonly In
   const ids = targets.map(t => t.id).filter(id => id !== exclude);
   if (!ids.length) return 0;
   await lockCounters(tx, ['brain', ...redactionCounterKeys(targets)]);
-  const rows = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE', [ids]);
+  const rows = await tx.lockWriteRequestsById(ids);
   // A page purge leaves later queued writes for the slug in place (they fail on the missing page); a fact purge refuses.
   const blocked = opts.skipPending ? undefined : rows.find(row => !isTerminal(row) || row.recovery);
   if (blocked) {
@@ -295,16 +270,11 @@ export async function redactRequestIntents(tx: BrainEngine, targets: readonly In
     const detail = redactJson(current.error_detail, opts.needles ?? [], opts.exact);
     if (current.compacted && JSON.stringify(outcome) === JSON.stringify(current.outcome) && JSON.stringify(detail) === JSON.stringify(current.error_detail)
       && current.error_message === null) continue;
-    const [effects] = await tx.executeRaw<{ bytes: string }>(`SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0)::text AS bytes
-      FROM persistence_effects WHERE request_id=$1::uuid`, [current.id]);
+    const effects = await tx.readEffectBytes(current.id);
     const retained = Math.min(Number(current.terminal_reservation), retainedReceiptBytes({ authority: current.authority, outcome, error_detail: detail,
-      client_request_id: current.client_request_id }, { stage: 'compacted', effects: Number(effects.bytes) }));
-    await tx.executeRaw(`UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2,
-      outcome=$3::text::jsonb,error_detail=$4::text::jsonb WHERE id=$1::uuid`,
-    [current.id, retained, outcome == null ? null : JSON.stringify(outcome), detail == null ? null : JSON.stringify(detail)]);
-    for (const key of ['brain', principalKey(requestPrincipal(current))]) {
-      await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes-LEAST($2::bigint,terminal_bytes) WHERE key=$1', [key, Number(current.terminal_reservation) - retained]);
-    }
+      client_request_id: current.client_request_id }, { stage: 'compacted', effects }));
+    await tx.redactWriteRequestRow({ id: current.id, terminalReservation: retained, outcome, errorDetail: detail });
+    for (const key of ['brain', principalKey(requestPrincipal(current))]) await tx.releaseTerminalBytes(key, Number(current.terminal_reservation) - retained);
     redacted++;
   }
   return redacted;

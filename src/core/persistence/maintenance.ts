@@ -5,7 +5,6 @@ import { acquireLock, releaseLock, type LockHandle } from '../pglite-lock.ts';
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { opError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
-import type { SqlEngine } from './model.ts';
 import { managedModeFromRows } from './ownership.ts';
 import type { BrainEngine } from '../engine.ts';
 import { DEFAULT_TARGET_URL_ENV, planArgv } from './graduation-errors.ts';
@@ -17,7 +16,7 @@ export const UNSUPPORTED_MANAGED_BULK_WRITERS: readonly string[] = [];
 export const ENGINE_MIGRATION_DOCS = 'docs/ENGINES.md#engine-migration-refused';
 const GRADUATION_DOCS = 'docs/guides/move-to-postgres.md#move-the-brain';
 const DOCTOR_VERIFY = { argv: ['gbrain', 'doctor', '--no-migrate', '--json'] };
-type EngineKind = 'pglite' | 'postgres';
+type EngineKind = 'pglite' | 'postgres' | 'rust';
 /** Which side of `gbrain migrate --to` a refusal names: the brain being moved, or the datastore it would land in. */
 export interface EngineMigrationSide { side: 'source' | 'target'; from: EngineKind; to: EngineKind }
 
@@ -36,6 +35,11 @@ function engineMigrationFix(m: EngineMigrationSide, why: string): Action {
       consent: [], actor: 'user', requires_exclusive: true, docs: ENGINE_MIGRATION_DOCS, verify: DOCTOR_VERIFY,
       why: `${why} The migration target already holds another brain's write history, so gbrain will not copy into it; the source brain is untouched.`,
       user_message: 'The database you chose to migrate into already holds another gbrain brain. Do you have an empty database to use instead? Nothing has changed in your current brain.' };
+  }
+  if (m.from === 'rust') {
+    return { consent: [], actor: 'agent', requires_exclusive: false, docs: ENGINE_MIGRATION_DOCS, verify: DOCTOR_VERIFY,
+      why: `${why} Moving a Rust brain with this history to another engine would drop it, so the brain stays on the Rust engine; nothing changed.`,
+      user_message: 'Your brain stays on the Rust engine: moving it would lose its write history, withdrawn facts or page versions. Nothing changed.' };
   }
   if (m.from === 'postgres') {
     return { consent: [], actor: 'agent', requires_exclusive: false, docs: ENGINE_MIGRATION_DOCS, verify: DOCTOR_VERIFY,
@@ -88,20 +92,13 @@ async function assertNotStrictSource(engine: Pick<BrainEngine, 'getSourceStrictn
       user_message: `Source ${sourceId} is set to git-canonical, which only a managed brain can serve, so gbrain wrote nothing. Should this brain move to managed writes, or should ${sourceId} stop being git-canonical?` } });
 }
 
-/** The legacy engine copier cannot transfer permanent IDs, withdrawals, ownership or the belief ledger. */
-export async function assertLegacyEngineMigration(engine: SqlEngine, migration: EngineMigrationSide = { side: 'source', from: 'pglite', to: 'postgres' }): Promise<void> {
-  const tables = ['belief_events', 'persistence_requests', 'fact_withdrawals', 'persistence_worktrees'] as const;
-  // Older migration sources can predate these tables. Do not interpret any
-  // other database failure as an empty history.
-  const present = await engine.executeRaw<{ name: string }>(
-    'SELECT name FROM unnest($1::text[]) AS t(name) WHERE to_regclass(name) IS NOT NULL', [tables]);
-  const held: string[] = [];
-  for (const table of tables) {
-    if (!present.some(row => row.name === table)) continue;
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS(SELECT 1 FROM ${table}) AS present`);
-    if (row?.present) held.push(table);
-  }
-  if (!held.length && migration.side === 'source') await assertNoPageHistory(engine, migration);
+/**
+ * The legacy engine copier cannot transfer permanent IDs, withdrawals, ownership, the belief ledger or page versions.
+ * The history is read through `readEngineMigrationHistory`, so a Rust brain answers it from its store.
+ */
+export async function assertLegacyEngineMigration(engine: Pick<BrainEngine, 'readEngineMigrationHistory'>, migration: EngineMigrationSide = { side: 'source', from: 'pglite', to: 'postgres' }): Promise<void> {
+  const { held, pageVersions } = await engine.readEngineMigrationHistory();
+  if (!held.length && migration.side === 'source') assertNoPageHistory(pageVersions, migration);
   if (!held.length) return;
   const ledger = held.includes('belief_events') ? ' The belief ledger (belief_events) is recorded history no Markdown rebuild can recover.' : '';
   const why = `The ${migration.side === 'source' ? 'brain' : 'target datastore'} has rows in ${held.join(', ')}, and the engine copier cannot carry request IDs, withdrawals, canonical ownership or the belief ledger.${ledger}`;
@@ -116,10 +113,7 @@ export async function assertLegacyEngineMigration(engine: SqlEngine, migration: 
  * The legacy copier re-creates pages with new ids and copies no page versions, so a brain with versions would arrive
  * without its page history. It refuses instead and names how many versions it would discard; graduation carries them.
  */
-async function assertNoPageHistory(engine: SqlEngine, migration: EngineMigrationSide): Promise<void> {
-  const [row] = await engine.executeRaw<{ n: number | null }>(
-    "SELECT CASE WHEN to_regclass('page_versions') IS NULL THEN 0 ELSE (SELECT count(*)::int FROM page_versions) END AS n");
-  const versions = Number(row?.n ?? 0);
+function assertNoPageHistory(versions: number, migration: EngineMigrationSide): void {
   if (!versions) return;
   const why = `The brain has ${versions} page version${versions === 1 ? '' : 's'} (the history get_versions and page-at-time reads), and the engine copier re-creates pages without them, so the copy would discard all ${versions}.`;
   throw opError('writer_coordinator_required',

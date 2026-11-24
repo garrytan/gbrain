@@ -20,6 +20,7 @@ import {
 import { mentionCoverageNotice, readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { readEntityReferencesConfig, readRowPageStatus } from '../entity-references-config.ts';
 import { visiblePageTypes } from './stats-by.ts';
+import { readPolicyOf } from '../search/read-policy-sql.ts';
 
 export interface BacklinkPage {
   rows: ReferenceRow[];
@@ -42,23 +43,23 @@ function parseLimit(p: Record<string, unknown>, fallback: number | undefined): n
 async function scopeSources(ctx: OperationContext, policy: PageReadPolicy): Promise<string[]> {
   if (policy.sourceIds?.length) return policy.sourceIds;
   if (policy.sourceId) return [policy.sourceId];
-  return (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(r => r.id);
+  return ctx.engine.listSourceIds();
 }
 
 /** The entity page's source: the first source in scope holding a live page with this slug. */
 async function targetSource(ctx: OperationContext, slug: string, sources: string[]): Promise<string | null> {
-  const rows = await ctx.engine.executeRaw<{ source_id: string }>(
-    'SELECT source_id FROM pages WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL', [slug, sources]);
-  const found = new Set(rows.map(r => r.source_id));
+  const found = new Set(await ctx.engine.listReferrerTargetSources(slug, sources));
   return sources.find(s => found.has(s)) ?? null;
 }
 
 async function referrerScope(ctx: OperationContext, slug: string, policy: PageReadPolicy): Promise<{ scope: ReferrerScope; sources: string[] } | null> {
-  const sources = await scopeSources(ctx, policy);
+  // Only the page read policy reaches the reads, never the wider options object.
+  const read = readPolicyOf(policy) ?? {};
+  const sources = await scopeSources(ctx, read);
   const sourceId = await targetSource(ctx, slug, sources);
   if (!sourceId) return null;
   const pack = await loadSourcePack(ctx.engine, sourceId);
-  const excludePrivate = policy.excludePrivate === true;
+  const excludePrivate = read.excludePrivate === true;
   return { sources, scope: { slug, sourceId, referrerSources: sources, excludePrivate, pack, keepVisibility: excludePrivate ? ['world'] : ['private', 'world'] } };
 }
 
@@ -145,7 +146,7 @@ export async function backlinkTypeFilter(ctx: OperationContext, p: Record<string
   if (resolved) await assertKnownType(ctx, resolved.scope, type);
   const aliasSources: string[] = [];
   const aliases: string[] = [];
-  for (const { id } of await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')) {
+  for (const id of await ctx.engine.listSourceIds()) {
     const pairs = typeAliasPairs(await loadSourcePack(ctx.engine, id));
     pairs.stored.forEach((stored, i) => {
       if (pairs.canonical[i] !== type) return;

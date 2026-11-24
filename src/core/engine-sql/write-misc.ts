@@ -66,16 +66,6 @@ export async function sharedSkillPackTablePresent(exec: LegacyUnscopedRead): Pro
 }
 
 /**
- * Whether a resident notifier has recorded coverage for any source (a `sync_notifier_sources` row with `observed_at`):
- * one half of whether search carries the freshness notice (notifier/status.ts freshnessReported).
- */
-export async function notifierCoverageRecorded(exec: LegacyUnscopedRead): Promise<boolean> {
-  const [row] = await exec.executeRaw<{ covered: unknown }>('SELECT EXISTS (SELECT 1 FROM sync_notifier_sources WHERE observed_at IS NOT NULL) AS covered');
-  const covered = row?.covered;
-  return covered === true || covered === 't' || covered === 1;
-}
-
-/**
  * The completed keys of one resumable op's checkpoint (op-checkpoint.ts loadOpCheckpoint): the append-only child rows
  * (`op_checkpoint_paths`) and the legacy `completed_keys` array, deduplicated in first-seen order. A non-array legacy
  * value is skipped, so the child rows still load, and reported as `corruptParent`.
@@ -103,6 +93,33 @@ export async function readOpCheckpointKeys(exec: LegacyUnscopedRead, op: string,
   return { keys: [...keys], corruptParent };
 }
 
+/** One checkpoint parent as `readOpCheckpointRecord` returns it. */
+export interface OpCheckpointRecord {
+  /** The stored JSON, as written (a JSON array on every write path). */
+  completed_keys: unknown;
+  /** The stamp on the database clock, ISO 8601 with milliseconds, UTC. */
+  updated_at: string;
+  /** Whether the stamp is within `freshWithinDays` of the database clock; null when the caller did not ask. */
+  fresh: boolean | null;
+}
+
+/**
+ * The parent row of one checkpoint whose keys are JSON records rather than text keys: the repair runner's cursor
+ * (repair/core.ts, op `repair`) and the preview-approval sets (persistence/preview-approval.ts, op
+ * `repair-approval`). Freshness is measured on the database clock, the clock the checkpoint purge uses.
+ */
+export async function readOpCheckpointRecord(exec: LegacyUnscopedRead, op: string, fingerprint: string,
+  opts: { freshWithinDays?: number } = {}): Promise<OpCheckpointRecord | null> {
+  const days = opts.freshWithinDays === undefined ? null : String(opts.freshWithinDays);
+  const [row] = await exec.executeRaw<{ completed_keys: unknown; updated_at: string; fresh: boolean | null }>(
+    `SELECT completed_keys,
+            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
+            updated_at >= now() - ($3::text || ' days')::interval AS fresh
+       FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
+    [op, fingerprint, days]);
+  return row ? { completed_keys: row.completed_keys, updated_at: row.updated_at, fresh: row.fresh ?? null } : null;
+}
+
 /**
  * The page clock of the get_health memo (health-memo.ts): the brain id and `page_generation_clock_seq`, which every
  * page insert, update or delete advances, as `<brain id>:<clock>`.
@@ -117,8 +134,22 @@ export async function readHealthMemoClock(exec: LegacyUnscopedRead): Promise<str
 /** The live sources whose own contextual-retrieval mode is per_chunk_synopsis, by id (synopsis-sweep.ts). */
 export async function listSynopsisSourceIds(exec: LegacyUnscopedRead): Promise<string[]> {
   const rows = await exec.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
+    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id COLLATE "C"`);
   return rows.map(r => r.id);
+}
+
+/**
+ * Whether a live markdown page names the synopsis tier in its frontmatter where the frontmatter is trusted: a page of
+ * `default`, or of a source that trusts its pages' overrides, that is not archived (synopsis-sweep.ts, #9683: the probe
+ * the sweep's single statement used to carry as a NULL row).
+ */
+export async function hasSynopsisFrontmatterOverride(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ present: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pages p LEFT JOIN sources s ON s.id = p.source_id
+       WHERE p.deleted_at IS NULL AND p.page_kind = 'markdown' AND NOT COALESCE(s.archived, false)
+         AND p.frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'::jsonb
+         AND (p.source_id = 'default' OR COALESCE(s.trust_frontmatter_overrides, false))) AS present`);
+  return row?.present === true;
 }
 
 /** Every shared skillpack bound to its source's current incarnation, with its roots on host `hostId`. */
@@ -181,7 +212,7 @@ export async function hasExtractedEvents(exec: LegacyUnscopedRead, sourceId: str
 
 /** The ids of the access members that are neither disabled nor tombstoned, by id. */
 export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise<string[]> {
-  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
+  const rows = await exec.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id COLLATE "C"');
   return rows.map(row => row.id);
 }
 
@@ -192,22 +223,6 @@ export async function listActiveAccessMembers(exec: LegacyUnscopedRead): Promise
  */
 export async function hasLabelledOnlyMember(exec: LegacyUnscopedRead): Promise<boolean> {
   return (await exec.executeRaw('SELECT 1 FROM access_members WHERE labelled_only LIMIT 1')).length > 0;
-}
-
-/**
- * One `access_tokens` row as `gbrain auth list` reads it. The statement is `SELECT *` so every schema generation reads
- * (`private_pages`, `private_facts` and `member_id` arrive with their migrations; absent reads as none), so further
- * columns may be present.
- */
-export interface AccessTokenRow {
-  id: string; name: string; scopes: string[] | null; created_at: Date | string | null; last_used_at: Date | string | null;
-  revoked_at: Date | string | null; private_pages?: unknown; private_facts?: unknown; member_id?: string | null;
-  [column: string]: unknown;
-}
-
-/** Every legacy access token, revoked ones too, newest first. */
-export async function listAccessTokens(exec: LegacyUnscopedRead): Promise<AccessTokenRow[]> {
-  return exec.executeRaw<AccessTokenRow>('SELECT * FROM access_tokens ORDER BY created_at DESC');
 }
 
 /** `attachSourcePath` options: a non-null `name` replaces the name; a non-null `federated` sets `config.federated`. */

@@ -804,7 +804,7 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   `review_exclude_paths` (gstack 1.93.33.0 or newer, read from master only)
   keeps docs and generated goldens out of /ship's reviewer diffs, so a large
   wave stays under the reviewers' 2 MB ceiling: `docs/**`,
-  `test/fixtures/goldens/**`, and the three PostgreSQL search goldens of the
+  `rust/docs/**` (the Rust engine's design docs), `test/fixtures/goldens/**`, and the three PostgreSQL search goldens of the
   Rust store (`english_stem.tsv`, `ts_parse.json` and `tsearch.json` in
   `rust/crates/gbrain-store/tests/fixtures/`, which
   `regen-search-goldens.ts` there checks against PostgreSQL 18.6). Those files stay covered by the privacy, gitleaks and doc

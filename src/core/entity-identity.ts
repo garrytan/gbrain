@@ -46,6 +46,8 @@ export const ENTITY_IDENTITY_UNION_CONFIG_KEY = 'entity_identity.union';
  */
 const ENTITY_ID_RE = /^[a-z0-9][a-z0-9._/-]{0,127}$/;
 
+export const isEntityId = (value: string): boolean => ENTITY_ID_RE.test(value.trim());
+
 export function validateEntityId(entityId: string): string {
   const trimmed = entityId.trim();
   if (!ENTITY_ID_RE.test(trimmed)) {
@@ -180,11 +182,11 @@ export async function identityIdsForPages(
 
 /**
  * Count once (duplicate people PR 2): the other members of the identity group a page belongs to, when that group holds a
- * member gbrain dedupe confirm linked; empty for a page in no group or only in a hand-made one. Trusted local callers only.
+ * member gbrain dedupe confirm or the company sweep linked; empty for a page in no group or only in a hand-made one. Trusted local callers only.
  */
 export async function confirmedCoMembers(engine: BrainEngine, sourceId: string, slug: string): Promise<EntityIdentityMember[]> {
   const members = await listEntityIdentities(engine, { slug, slugSourceId: sourceId });
-  if (!members.some(m => m.slug === slug && m.source_id === sourceId) || !members.some(m => m.established_by === 'dedupe:confirm')) return [];
+  if (!members.some(m => m.slug === slug && m.source_id === sourceId) || !members.some(m => m.established_by === 'dedupe:confirm' || m.established_by === 'dedupe:auto')) return [];
   return members.filter(m => !(m.slug === slug && m.source_id === sourceId));
 }
 

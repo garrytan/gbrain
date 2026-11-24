@@ -128,6 +128,8 @@ export interface RedactOutcome extends RedactPreview {
 export type HeldReason = 'gate_change' | 'too_large' | 'not_utf8' | 'held_before';
 
 class OverBudget extends Error {}
+/** Once the branch has moved, the remaining local steps finish past the budget so the move is always journaled. */
+const AFTER_MOVE_MS = 30_000;
 class GitFailed extends Error {}
 class Race extends Error {}
 
@@ -199,17 +201,22 @@ function claims(source: string, allowlist: string[], rel: string | null): Span[]
 /** Every claim plus, between them, each known value (longest first) wherever it appears bare. */
 function spansIn(source: string, own: Span[], values: ReadonlyMap<string, string>): Span[] {
   const known = [...values].sort((a, b) => b[0].length - a[0].length);
+  const head = known.length ? Math.min(16, ...known.map(([value]) => value.length)) : 0;
+  const byHead = new Map<string, Array<[string, string]>>();
+  for (const entry of known) {
+    const list = byHead.get(entry[0].slice(0, head));
+    if (list) list.push(entry); else byHead.set(entry[0].slice(0, head), [entry]);
+  }
+  const firsts = new Set(known.map(([value]) => value.charCodeAt(0)));
   const out: Span[] = [];
   const gap = (from: number, to: number) => {
-    for (let at = from; at < to;) {
-      let best: Span | null = null;
-      for (const [value, rule] of known) {
-        const pos = source.indexOf(value, at);
-        if (pos !== -1 && pos + value.length <= to && (!best || pos < best.start)) best = { start: pos, end: pos + value.length, value, rule };
-      }
-      if (!best) return;
-      out.push(best);
-      at = best.end;
+    if (!head) return;
+    for (let at = from; at + head <= to;) {
+      const hit = firsts.has(source.charCodeAt(at))
+        ? byHead.get(source.slice(at, at + head))?.find(([value]) => at + value.length <= to && source.startsWith(value, at)) : undefined;
+      if (!hit) { at++; continue; }
+      out.push({ start: at, end: at + hit[0].length, value: hit[0], rule: hit[1] });
+      at += hit[0].length;
     }
   };
   let cur = 0;
@@ -393,6 +400,8 @@ export interface RedactOptions {
   /** The preview hash the operator approved (gbrain git redact-unpushed --apply --expect). */
   expect?: string;
   budgetMs?: number;
+  /** The caller's own wall-clock deadline (a publish's one bound across its scans, this redaction and its pushes); budgetMs then only names it. */
+  deadline?: number;
   lockWaitMs?: number;
   /** The source the fix lines name. */
   sourceId?: string | null;
@@ -407,7 +416,7 @@ export interface RedactOptions {
  */
 export function redactUnpushed(root: string, opts: RedactOptions): RedactPreview | RedactOutcome | null {
   const budget = opts.budgetMs ?? DEFAULT_REBUILD_BUDGET_MS;
-  const deadline = Date.now() + budget;
+  const deadline = opts.deadline ?? Date.now() + budget;
   const noRemote = () => run(root, ['for-each-ref', '--count', '1', 'refs/remotes'], Date.now() + 10_000, { allowFail: true }).stdout.length === 0;
   try {
     if (!opts.sealer) {
@@ -419,7 +428,10 @@ export function redactUnpushed(root: string, opts: RedactOptions): RedactPreview
       const publishLock = opts.publishLockHeld ? { release: () => undefined } : acquireNativeLockSync(gitPath(root, PUBLISH_LOCK_NAME), { timeoutMs: opts.lockWaitMs ?? lockWaitMs() });
       if (!publishLock) throw opError('push_unconfirmed', 'Another publish held this checkout\'s push lock, so the unpushed commits were not redacted yet.', 'The push retries on its own; nothing was changed.', { retryable: true });
       try {
-        const commitLock = acquireCommitLock(root, opts.lockWaitMs ?? lockWaitMs());
+        const wait = opts.lockWaitMs ?? lockWaitMs(), left = deadline - Date.now();
+        if (left <= 0) throw new OverBudget();
+        let commitLock: ReturnType<typeof acquireCommitLock>;
+        try { commitLock = acquireCommitLock(root, Math.min(wait, left)); } catch (error) { if (left < wait) throw new OverBudget(); throw error; }
         try {
           const p = plan(root, opts.base, deadline, value => sealer.allowed(value));
           if (!p) return null;
@@ -619,7 +631,7 @@ function rebuild(p: Plan, sealer: Sealer, deadline: number): RedactOutcome {
   }
   for (const [sha, m] of p.messages) for (const s of m.spans) occurrences.push({ id: ids.get(s.value)!, commit: map.get(sha)!, path: MESSAGE_PATH, line: null });
   sealer.record(occurrences);
-  const sideRefs = sideRefsHolding(p, deadline);
+  const sideRefs = sideRefsHolding(p, Math.max(deadline, Date.now() + AFTER_MOVE_MS));
   const outcome: RedactOutcome = { ...preview, redacted: true, old_head: p.head, new_head: newHead, push_target: tip, backup_ref: backupRef, held_commit: heldCommit,
     rebuilt: Object.keys(changedMap).length, values: ids.size, spooled: sealer.spooled(), side_refs: sideRefs, unsigned, map: changedMap, notices: [] };
   outcome.notices = redactionNotices(outcome);
@@ -693,7 +705,7 @@ function moveBranch(p: Plan, newHead: string, blobMap: ReadonlyMap<string, strin
     writeFileSync(tmp, next, { mode });
     renameSync(tmp, file);
   }
-  run(p.root, ['update-index', '-q', '--refresh'], deadline, { allowFail: true });
+  run(p.root, ['update-index', '-q', '--refresh'], Math.max(deadline, Date.now() + AFTER_MOVE_MS), { allowFail: true });
 }
 
 /** Local branches, tags and other worktrees that still reach a commit that held a value (D2b): named, never moved. */

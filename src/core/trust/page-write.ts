@@ -44,7 +44,7 @@ import { asciiLower } from '../edge-whitespace.ts';
 
 /** Page writes that only edit a gbrain-managed fence (or strike a row) and keep the page's tier. */
 const FENCE_EDIT_OPERATIONS = ['remember', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry', 'add_link', 'remove_link', 'trust_release'];
+  'decide_proposal', 'loops_close', 'relink_facts', 'retire_connector_facts', 'add_timeline_entry', 'add_link', 'remove_link', 'trust_release'];
 /** Page writes whose caller supplies the page content: they stamp the marker and can lower the page (CEO-12). */
 const CONTENT_OPERATIONS = ['put_page', 'capture', 'edit_page', 'append_page', 'revert_version', 'restore_page'];
 
@@ -222,15 +222,10 @@ async function ownerReader(engine: BrainEngine, frontmatter: Record<string, unkn
  * removes the guard. In the door's own transaction, after its write.
  */
 export async function raisePageLabelGuard(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
-  const [page] = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null }>('SELECT id, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  const page = await tx.readPageLabelRow(sourceId, slug);
   if (!page) return;
   const labels = page.frontmatter ?? {};
-  if (!labelledPrivate(labels) && normalizeReaders(labels) === null) {
-    await tx.executeRaw('DELETE FROM page_label_guards WHERE page_id = $1', [Number(page.id)]);
-    return;
-  }
-  await tx.executeRaw(`INSERT INTO page_label_guards (page_id, tier) VALUES ($1, $2)
-    ON CONFLICT (page_id) DO UPDATE SET tier = EXCLUDED.tier, set_at = now()`, [Number(page.id), OWNER_TIER_FLOOR]);
+  await tx.writePageLabelGuard(page.id, !labelledPrivate(labels) && normalizeReaders(labels) === null ? null : OWNER_TIER_FLOOR);
 }
 
 /**

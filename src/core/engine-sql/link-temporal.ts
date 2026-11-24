@@ -4,7 +4,8 @@
  * engines. The callers are link-relationships.ts, link-temporal-apply.ts,
  * link-relationship-notes.ts, doctor's edge_validity check and the referrer
  * record metadata of mentions/referrers.ts; the state itself is built by the
- * pure `buildRelationshipStateWrite` there. The Rust store answers the same
+ * pure `buildRelationshipStateWrite` there. The entity card's referrer groups read here too; their text is
+ * mentions/referrers-sql.ts's. The Rust store answers the same
  * members (rust/docs/store/link_temporal.md).
  *
  * Every statement here ran on master from the caller named on its function.
@@ -24,6 +25,11 @@ import {
   type AssertionRow, type ExistingRow, type RelationshipEvidence, type RelationshipKey, type RelationshipStateWrite, type TransitionRow,
 } from '../link-relationships.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import {
+  REFERRER_RECORD_PAGES_SQL, REFERRER_TARGET_SOURCES_SQL, referrerCountSql, referrerGroupsSql, referrerPageDetailsSql, referrerRecordCandidatesSql,
+  referrerRowsSql, referrerTargetCountsSql, referrerTypesSql,
+} from '../mentions/referrers-sql.ts';
+import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { SqlExecutor } from './executor.ts';
 
 type Exec = Pick<SqlExecutor, 'executeRaw'>;
@@ -155,7 +161,7 @@ export async function staleLinkRelationshipKeys(exec: Exec, limit: number): Prom
      WHERE NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE lr.from_page_id = e.from_page_id
          AND lr.to_page_id = e.to_page_id AND lr.link_type = e.link_type AND lr.scope = 'all' AND lr.refreshed_at >= e.newest)
      GROUP BY from_page_id, to_page_id, link_type
-     ORDER BY min(newest) LIMIT $2`,
+     ORDER BY min(newest), from_page_id, to_page_id, link_type COLLATE "C" LIMIT $2`,
     [temporalLinkTypes(), limit]);
   // Relationships whose evidence-owning page was deleted, restored or edited
   // after the last refresh (soft deletes change no evidence row).
@@ -355,7 +361,7 @@ export async function edgeValidityCounts(exec: Exec, opts: { sourceIds?: readonl
         AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id
           AND l.link_type = lr.link_type AND COALESCE(l.origin_page_id, l.from_page_id) = lr.from_page_id
           AND COALESCE(l.assertion_tense, 'present') = 'present')
-      ORDER BY lr.last_end DESC LIMIT ${Math.trunc(opts.staleLimit)}`);
+      ORDER BY lr.last_end DESC, lr.from_page_id, lr.to_page_id, lr.link_type COLLATE "C" LIMIT ${Math.trunc(opts.staleLimit)}`);
   const [p] = await rows<{ proposed: number; undated: number; applied: number }>(exec,
     sqlFragment`SELECT COUNT(*) FILTER (WHERE status = 'proposed')::int AS proposed, COUNT(*) FILTER (WHERE status = 'undated_unresolved')::int AS undated,
             COUNT(*) FILTER (WHERE status = 'applied')::int AS applied
@@ -398,13 +404,206 @@ export async function listRecordMetadataRows(exec: Exec, pageIds: readonly numbe
   const [status, links] = await Promise.all([
     exec.executeRaw<{ id: number; status: unknown }>(`SELECT id, frontmatter->'status' AS status FROM pages WHERE id = ANY($1::int[])`, [[...pageIds]]),
     rows<{ from_id: number; slug: string; link_type: string; since: string | null }>(exec,
-      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug, l.link_type,
+      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug COLLATE "C" AS slug, l.link_type,
               CASE WHEN l.link_type = 'amends' THEN to_char(r.first_start, 'YYYY-MM-DD') END AS since
          FROM links l JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL AND t.source_id = ANY(${[...scope.referrerSources]}::text[])${targetPriv}${targetQuarantine}
          LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id
               AND r.link_type = l.link_type AND r.scope = ${scope.excludePrivate ? 'world' : 'all'}
         WHERE l.from_page_id = ANY(${[...pageIds]}::int[]) AND l.link_type IN ('amends', 'supersedes')${linkPriv}
-        ORDER BY l.from_page_id, t.slug`).catch(() => []),
+        ORDER BY l.from_page_id, t.slug COLLATE "C"`).catch(() => []),
   ]);
   return { status, links };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The entity card's referrer groups (mentions/referrers.ts readReferrerGroups)
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface ReferrerGroupScope {
+  /** Sources a referring page may live in (the caller's read scope). */
+  referrerSources: readonly string[];
+  /** Pack type aliases and the canonical type each maps to (mentions/policy.ts typeAliasPairs), index for index. */
+  storedTypes: readonly string[];
+  canonicalTypes: readonly string[];
+  excludePrivate: boolean;
+  eligibility?: ReadEligibility;
+  includeQuarantined?: boolean;
+  /** Rows kept per canonical type. */
+  perGroup: number;
+}
+
+/** One referring page: its canonical type, its date (`COALESCE(effective_date, updated_at)`, UTC microsecond text) and its group's total. */
+export interface ReferrerGroupRow {
+  id: number;
+  slug: string;
+  source_id: string;
+  type: string | null;
+  canonical_type: string;
+  d: string | null;
+  gtotal: number;
+}
+
+/**
+ * The live pages in `referrerSources` that link to a live target page (other than the targets), grouped by canonical
+ * type: the newest `perGroup` of each by `(d DESC, source_id, slug)`, groups by canonical type, each row with its
+ * group's total. An untrusted read leaves out a hidden target, a link whose origin page is hidden and a hidden
+ * referrer; the eligibility and quarantine apply before the cap.
+ */
+export async function readReferrerGroupRows(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: ReferrerGroupScope): Promise<ReferrerGroupRow[]> {
+  const rows = await exec.executeRaw<ReferrerGroupRow>(referrerGroupsSql(scope),
+    [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes], scope.perGroup]);
+  return rows.map(r => ({ ...r, id: Number(r.id), gtotal: Number(r.gtotal) }));
+}
+
+/** One referring page's card details: its bounded body, date source, trust fields, activation flag and frontmatter. */
+export interface ReferrerPageDetailRow {
+  id: number;
+  title: string | null;
+  /** The first 4000 characters of the bounded body prefix. */
+  body: string | null;
+  /** `updated_at` when the page has no effective date, else the effective date's source. */
+  date_source: string;
+  trust_tier: string;
+  write_origin: unknown;
+  /** `activationSuppressedSql`: a flagged low-trust write the card marks unconfirmed. */
+  flagged: boolean;
+  frontmatter: Record<string, unknown> | null;
+}
+
+/** The card details of these page ids, one row per id that exists (soft-deleted pages too), in no set order. */
+export async function readReferrerPageDetails(exec: Exec, ids: readonly number[]): Promise<ReferrerPageDetailRow[]> {
+  const rows = await exec.executeRaw<ReferrerPageDetailRow>(referrerPageDetailsSql(), [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/**
+ * The date `referenced_by` reports for a live page, `COALESCE(effective_date, updated_at)`, as UTC text with
+ * microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`), or null for a missing or soft-deleted page (the newer-mentions cutoff).
+ */
+export async function readPageReferenceDate(exec: Exec, sourceId: string, slug: string): Promise<string | null> {
+  const [page] = await exec.executeRaw<{ d: string | null }>(
+      `SELECT to_char(COALESCE(effective_date, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
+         FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [sourceId, slug]);
+  return page?.d ?? null;
+}
+
+/** The batched card counts' scope: the group read's, without the cap, plus the canonical record types to total. */
+export type ReferrerTargetCountScope = Omit<ReferrerGroupScope, 'perGroup'> & { recordTypes: readonly string[] };
+
+/** One count: a target index's referrer total (`canonical_type` null) or its total for one record type. */
+export interface ReferrerTargetCountRow {
+  i: number;
+  canonical_type: string | null;
+  n: number;
+}
+
+/**
+ * Per target index (`target.indexes[k]` names the index of `(sources[k], slugs[k])`; an index may hold several pages),
+ * the live pages in `referrerSources` that link to one of its live pages, other than its own pages: the total, and
+ * the total of each canonical type in `recordTypes` that has any. An index with no referrer has no row. Rows come in
+ * no set order. The read scope applies as in `readReferrerGroupRows`.
+ */
+export async function readReferrerTargetCounts(exec: Exec,
+  target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+  scope: ReferrerTargetCountScope): Promise<ReferrerTargetCountRow[]> {
+  const rows = await exec.executeRaw<ReferrerTargetCountRow>(referrerTargetCountsSql(scope),
+    [[...target.sources], [...target.slugs], [...target.indexes], [...scope.referrerSources], [...scope.storedTypes],
+      [...scope.canonicalTypes], [...scope.recordTypes]]);
+  return rows.map(r => ({ i: Number(r.i), canonical_type: r.canonical_type ?? null, n: Number(r.n) }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The referrer page (get_backlinks group "page", mentions/referrers.ts readReferrerPage) and the card's record rows
+// (mentions/referrers.ts readTargetReferences)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The sources among `sources` that hold a live page with this slug, in no set order (ops/backlinks-paged.ts targetSource). */
+export async function listReferrerTargetSources(exec: Exec, slug: string, sources: readonly string[]): Promise<string[]> {
+  const rows = await exec.executeRaw<{ source_id: string }>(REFERRER_TARGET_SOURCES_SQL, [slug, [...sources]]);
+  return rows.map(r => r.source_id);
+}
+
+/** The referrer page's scope: the group read's, without the cap, plus the type filter (a canonical or stored type; null for all). */
+export type ReferrerRowScope = Omit<ReferrerGroupScope, 'perGroup'> & { type: string | null };
+
+/** One referring page of a referrer page: its canonical type and its date (UTC microsecond text). */
+export type ReferrerRow = Omit<ReferrerGroupRow, 'gtotal'>;
+
+/** The observed-type read's scope: the referrer page's, with no type filter. */
+export type ReferrerTypeScope = Omit<ReferrerRowScope, 'type'>;
+
+/** One distinct canonical and stored type pair among the referrers; `type` is the stored type as the driver returns it. */
+export interface ReferrerTypeRow { canonical_type: string; type: string | null }
+
+/**
+ * The distinct `(canonical_type, type)` pairs among the referring pages `countReferrerRows` counts with no type filter,
+ * in no set order: the observed types the unknown-type error names.
+ */
+export async function readReferrerTypes(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: ReferrerTypeScope): Promise<ReferrerTypeRow[]> {
+  return exec.executeRaw<ReferrerTypeRow>(referrerTypesSql(scope),
+    [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes]]);
+}
+
+/** How many referring pages `readReferrerRows` pages through (every page, no cursor). The read scope applies as in `readReferrerGroupRows`. */
+export async function countReferrerRows(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: ReferrerRowScope): Promise<number> {
+  const [row] = await exec.executeRaw<{ n: number }>(referrerCountSql(scope),
+    [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes], scope.type]);
+  return Number(row?.n ?? 0);
+}
+
+/**
+ * The referring pages of `readReferrerGroupRows`, of `scope.type` (its canonical or stored type) when set, newest first
+ * by `(d DESC, source_id, slug)`, after the cursor `[d, source_id, slug]` when one is given (a null date sorts last), at
+ * most `limit` rows.
+ */
+export async function readReferrerRows(exec: Exec, target: { sources: readonly string[]; slugs: readonly string[] },
+  scope: ReferrerRowScope & { cursor: readonly [string | null, string, string] | null; limit: number }): Promise<ReferrerRow[]> {
+  const params: unknown[] = [[...target.sources], [...target.slugs], [...scope.referrerSources], [...scope.storedTypes], [...scope.canonicalTypes], scope.type];
+  if (scope.cursor) params.push(scope.cursor[0], scope.cursor[1], scope.cursor[2]);
+  params.push(scope.limit);
+  const rows = await exec.executeRaw<ReferrerRow>(referrerRowsSql(scope, scope.cursor !== null), params);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/** The record candidates' scope: the batched counts' scope plus the rows kept per target index. */
+export type ReferrerRecordCandidateScope = ReferrerTargetCountScope & { perTarget: number };
+
+/** One record candidate: a target index's referring page of a record type, with its date (UTC microsecond text). */
+export interface ReferrerRecordCandidateRow {
+  i: number;
+  id: number;
+  slug: string;
+  source_id: string;
+  canonical_type: string;
+  d: string | null;
+}
+
+/**
+ * Per target index (as in `readReferrerTargetCounts`), its newest `perTarget` referring pages whose canonical type is
+ * one of `recordTypes`, by `(d DESC, source_id, slug)`; rows by index, then that order. The read scope applies as in
+ * `readReferrerGroupRows`.
+ */
+export async function readReferrerRecordCandidates(exec: Exec,
+  target: { sources: readonly string[]; slugs: readonly string[]; indexes: readonly number[] },
+  scope: ReferrerRecordCandidateScope): Promise<ReferrerRecordCandidateRow[]> {
+  const rows = await exec.executeRaw<ReferrerRecordCandidateRow>(referrerRecordCandidatesSql(scope),
+    [[...target.sources], [...target.slugs], [...target.indexes], [...scope.referrerSources], [...scope.storedTypes],
+      [...scope.canonicalTypes], [...scope.recordTypes], scope.perTarget]);
+  return rows.map(r => ({ ...r, i: Number(r.i), id: Number(r.id) }));
+}
+
+/** A record page's title and date source (`updated_at` when it has no effective date, else the effective date's source). */
+export interface ReferrerRecordPageRow {
+  id: number;
+  title: string | null;
+  date_source: string;
+}
+
+/** The record pages of these ids, one row per id that exists (soft-deleted pages too), in no set order. */
+export async function readReferrerRecordPages(exec: Exec, ids: readonly number[]): Promise<ReferrerRecordPageRow[]> {
+  const rows = await exec.executeRaw<ReferrerRecordPageRow>(REFERRER_RECORD_PAGES_SQL, [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
 }

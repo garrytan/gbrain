@@ -227,8 +227,7 @@ async function runAssignCorpus(engine: BrainEngine, args: string[]): Promise<voi
   }
   const dir = await sessionCorpusDir(engine);
   const { assignCorpusSessions, listCorpusSourceHolds } = await import('../core/context/corpus-source.ts');
-  const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
-  const holds = listCorpusSourceHolds(dir, sources.length === 1, { includeIngested: true });
+  const holds = listCorpusSourceHolds(dir, (await engine.readSoleSourceId()) !== null, { includeIngested: true });
   const sessions = holds.sessions.filter(s => onlySession === undefined || s === onlySession);
   const apply = args.includes('--apply');
   const assigned = apply ? assignCorpusSessions(dir, sessions, sourceId) : [];

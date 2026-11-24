@@ -106,13 +106,22 @@ pub enum RowAttributionTarget {
 
 /// A take's or timeline entry's own owner-only test for a caller who is not the owner. The
 /// closed form hides every row while the brain holds an owner-only source or a mark. The
-/// function form reads the row's own lineage, and here it has none: the store marks no take or
-/// timeline row and keeps no `derivation_inputs` (owner_only_marks.rs). The row's page is
-/// tested apart, as in SQL. A target that names no form takes `closed`.
-fn row_owner_only_hidden(read: &dyn KvRead, form: OwnerOnlyForm) -> Result<bool> {
+/// function form reads the row's own lineage behind its guard: marked, or derived (by its
+/// recorded inputs, `derivation_inputs.rs`) from an owner-only row. The row's page is tested
+/// apart, as in SQL. A target that names no form takes `closed`.
+fn row_owner_only_hidden(
+    read: &dyn KvRead,
+    form: OwnerOnlyForm,
+    table: &str,
+    id: u64,
+) -> Result<bool> {
     match form {
-        OwnerOnlyForm::Off | OwnerOnlyForm::Fn => Ok(false),
+        OwnerOnlyForm::Off => Ok(false),
         OwnerOnlyForm::Closed => Ok(OwnerOnlySources::read(read)?.guarded()),
+        OwnerOnlyForm::Fn => {
+            let sources = OwnerOnlySources::read(read)?;
+            Ok(sources.guarded() && sources.row_lineage(read, table, id, None)?)
+        }
     }
 }
 
@@ -284,18 +293,17 @@ impl Store {
                     return Ok(None);
                 };
                 if holders.as_ref().is_some_and(|h| !h.contains(&t.holder))
-                    || row_owner_only_hidden(&*read, *owner_only)?
+                    || row_owner_only_hidden(&*read, *owner_only, "takes", t.id)?
                 {
                     return Ok(None);
                 }
-                // The store keeps no take trust_tier or write_origin: the tier reads the column
-                // default `unknown` and the origin NULL.
+                // The take's stored trust_tier and write_origin, as `store_take` stamped them.
                 Ok(Some(row_json(
                     t.id,
                     &t.receipt,
                     t.created_at_us,
-                    row_tier(None),
-                    None,
+                    row_tier(t.trust.trust_tier.as_deref()),
+                    t.trust.write_origin.as_ref(),
                 )))
             }
             RowAttributionTarget::Timeline {
@@ -306,7 +314,7 @@ impl Store {
                 let Some(e) = timeline_entry(&*read, *page_id, *id)? else {
                     return Ok(None);
                 };
-                if row_owner_only_hidden(&*read, *owner_only)? {
+                if row_owner_only_hidden(&*read, *owner_only, "timeline_entries", e.id)? {
                     return Ok(None);
                 }
                 Ok(Some(row_json(
@@ -457,6 +465,49 @@ mod tests {
         );
         assert_eq!(read(false, "alt", "people/a"), None);
         assert_eq!(read(false, "default", "people/b"), None);
+    }
+
+    #[test]
+    fn a_take_reads_the_trust_tier_and_write_origin_its_write_stamped() {
+        use crate::write_trust::{WRITE_ORIGIN, WRITE_TRUST_TIER};
+        let store = store();
+        act(&store, R1, "w1");
+        let page = put(&store, "people/a", "one");
+        let names = [
+            WRITE_REQUEST,
+            WRITE_PRINCIPAL_KIND,
+            WRITE_PRINCIPAL_ID,
+            WRITE_TRUST_TIER,
+            WRITE_ORIGIN,
+        ]
+        .map(String::from);
+        let values = [
+            R1,
+            "local_cli",
+            "w1",
+            "agent_written",
+            r#"{"channel":"mcp","tool":"t"}"#,
+        ]
+        .map(String::from);
+        store.apply_write_trust(&names, &values).unwrap();
+        let take: TakeInput = serde_json::from_value(json!({
+            "page_id": page, "row_num": 1, "claim": "c", "kind": "take", "holder": "garry", "weight": 0.5, "active": true,
+        }))
+        .unwrap();
+        store.add_takes_batch(&[take]).unwrap();
+        let row = store
+            .read_row_attribution(&RowAttributionTarget::Take {
+                page_id: page,
+                row_num: 1,
+                holders: None,
+                owner_only: OwnerOnlyForm::Off,
+            })
+            .unwrap()
+            .unwrap();
+        // The stored tier and origin, not the column default `unknown` and NULL.
+        assert_eq!(row["trust_tier"], "agent_written");
+        assert_eq!(row["write_origin"]["channel"], "mcp");
+        assert_eq!(row["write_origin"]["tool"], "t");
     }
 
     #[test]

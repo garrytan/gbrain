@@ -1,4 +1,3 @@
-import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { jsonRequested } from '../core/cli-force-exit.ts';
 import { prepareProseChunks } from '../core/markdown-chunks.ts';
 import type { FenceChunkOverlay } from '../core/eligibility/fence-overlay.ts';
@@ -442,7 +441,7 @@ async function preflightDimMismatch(engine: BrainEngine, dryRun: boolean): Promi
     requestedDims: resolvedDims,
     requestedModel: resolvedModel,
     source: 'embed',
-    engineKind: sqlEngineKind(engine.kind, 'gbrain embed'),
+    engineKind: engine.kind,
     databasePath,
   });
   throw new EmbeddingDimMismatchError(recipe);
@@ -907,7 +906,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   // result surface — do not invent one here).
   const keylessConfig = loadConfig();
   if (isKeylessStaleRefusal(args, keylessConfig?.embedding_disabled)) {
-    const enable = (await import('../core/readiness.ts')).embeddingEnablement(keylessConfig!).argv ?? ['gbrain', 'init', '--force', '--embedding-model', '<provider:model>'];
+    const enable = (await import('../core/readiness.ts')).embeddingEnablement(keylessConfig!).argv ?? ['gbrain', 'embeddings', 'enable', '--embedding-model', '<provider:model>'];
     process.stderr.write('[embed] Embeddings are disabled on this brain (keyless install), so there are no vectors to compute. Keyword search covers every chunked page; '
       + 'pages an older version skipped for size become keyword-searchable with gbrain reindex --oversized (free). '
       + `Turn on semantic search (pages and facts are kept): ${(await import('../core/agent-output.ts')).shellQuote(enable)}\n`);
@@ -2115,7 +2114,7 @@ async function embedAllStale(
           if (!prepared) {
             // #5804: a page edited, deleted or unsealed mid-run is a counted failure, not a silent
             // skip. An archived source is left to reportArchived, which already counts its pages.
-            const [source] = await observed(pacer, () => engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id = $1', [keySourceId]));
+            const source = await observed(pacer, () => engine.readSourceRow(keySourceId));
             if (!source?.archived) { result.failures += stale.length; if (!blockedProjections.has(key)) unavailablePages.set(key, slug); }
             return;
           }

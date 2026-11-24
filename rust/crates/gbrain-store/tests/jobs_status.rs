@@ -490,3 +490,100 @@ fn embed_backfill_by_source_reports_only_the_requested_sources() {
     assert_eq!(out[1]["last_completed_at"], Value::Null);
     assert!(b.read_embed_backfill_by_source(&[]).unwrap().is_empty());
 }
+
+#[test]
+fn the_last_finished_time_of_a_name_is_its_newest_completed_finish_in_seconds() {
+    let b = brain("st-last-finished");
+    assert_eq!(b.read_last_finished_job_at("maint").unwrap(), Value::Null);
+    finished(&b, "other", "o:1");
+    assert_eq!(b.read_last_finished_job_at("maint").unwrap(), Value::Null);
+    finished(&b, "maint", "m:1");
+    b.clock.advance(HOUR);
+    finished(&b, "maint", "m:2");
+    let at = b.read_last_finished_job_at("maint").unwrap();
+    let at = at.as_str().unwrap();
+    assert!(
+        at.starts_with("2027-01-15T09:") && at.ends_with('Z') && at.len() == 20,
+        "{at}"
+    );
+}
+
+#[test]
+fn no_admitted_job_owns_a_budget_so_the_budget_owner_list_is_empty() {
+    let b = brain("jobs-budget-owners");
+    assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());
+    // No admit path writes the budget columns on any engine, so budget-shaped insert data leaves them null.
+    let id = add(
+        &b,
+        "work",
+        json!({"budget_remaining_cents": 500, "budget_owner_job_id": 1}),
+    );
+    assert_eq!(
+        b.get_job(id).unwrap().unwrap()["budget_remaining_cents"],
+        Value::Null
+    );
+    assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());
+}
+
+#[test]
+fn recent_source_cycle_failures_group_dead_and_failed_cycles_by_source() {
+    let b = brain("st-cycle-failures");
+    let fail = |data: Value, how: &str, result: Option<Value>, token: &str| {
+        let id = active(&b, "autopilot-cycle", "default", data, token, 30_000);
+        b.fail_job(id, token, "boom", how, None, result.as_ref())
+            .unwrap()
+            .unwrap();
+    };
+    fail(json!({"source_id": "a"}), "dead", None, "w:1");
+    b.clock.advance(HOUR);
+    fail(json!({"source_id": "a"}), "failed", None, "w:2");
+    fail(json!({"source_id": "b"}), "dead", None, "w:3");
+    // A failed phase, a job with no source id and another job name do not count.
+    fail(
+        json!({"source_id": "c"}),
+        "failed",
+        Some(json!({"job_outcome": "phase_failed"})),
+        "w:4",
+    );
+    fail(json!({}), "dead", None, "w:5");
+    fail(json!({"source_id": null}), "dead", None, "w:6");
+    let id = active(
+        &b,
+        "work",
+        "default",
+        json!({"source_id": "d"}),
+        "w:7",
+        30_000,
+    );
+    b.fail_job(id, "w:7", "boom", "dead", None, None)
+        .unwrap()
+        .unwrap();
+    let rows = |cutoff: &str, only: Option<&str>| -> Vec<(String, i64)> {
+        b.list_recent_source_cycle_failures(cutoff, only)
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["source_id"].as_str().unwrap().to_string(),
+                    r["fail_count"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    let past = "2000-01-01T00:00:00.000Z";
+    assert_eq!(
+        rows(past, None),
+        vec![("a".to_string(), 2), ("b".to_string(), 1)]
+    );
+    assert_eq!(rows(past, Some("b")), vec![("b".to_string(), 1)]);
+    assert!(rows(past, Some("c")).is_empty());
+    assert!(rows("2099-01-01T00:00:00.000Z", None).is_empty());
+    let last = b
+        .list_recent_source_cycle_failures(past, Some("a"))
+        .unwrap();
+    assert!(last[0]["last_failed_at"].as_str().unwrap().ends_with('Z'));
+    assert!(
+        b.list_recent_source_cycle_failures("not a time", None)
+            .is_err()
+    );
+}

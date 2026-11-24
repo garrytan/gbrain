@@ -5,7 +5,7 @@
  * top-level help never pay for this module's import graph. Tests import the
  * helpers below from here.
  */
-import { affectsRecall } from '../core/types.ts';
+import { emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../core/degraded-stamp.ts';
 import { installSigchldHandler } from '../core/zombie-reap.ts';
 installSigchldHandler();
 
@@ -55,7 +55,7 @@ import type { Notice } from '../core/agent-output.ts';
 import { migrationsNotice, pendingUpgradeMigrationsNotice } from './migrations-notice.ts';
 import { opError, opOwnsSource } from '../core/ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../core/page-size-policy.ts';
-import { opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
+import { opBooleanValue, opFlagValue, opParamValue, opStructuredValue } from './op-param-values.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from '../core/cli-options.ts';
 import { runCliPreflight } from '../core/cli-preflight.ts';
 import { isBooleanLiteral, isKnownOpFlag } from '../core/op-flag-tokens.ts';
@@ -154,7 +154,6 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
-  waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()
   // without ever touching `engine` — safe to dispatch with no brain
@@ -172,7 +171,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   founder: true, 'graph-query': true, orphans: true, salience: true, think: true,
   brainstorm: true, lsd: true, migrate: true, pages: true, pricing: true, 'retrieval-upgrade': true, whoknows: true, core: true, trust: true, wakeshift: true,
   secrets: true,
-  dedupe: true, identity: true,
+  dedupe: true, identity: true, 'apple-contacts': true,
 };
 
 /** Returns true when the command's own help was printed. */
@@ -637,6 +636,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined, ...(cliOpts.room !== undefined ? { room: cliOpts.room } : {}),
+      emitResponseMeta: captureRetrievalMeta,
     }, formatResult)) return;
   }
 
@@ -703,7 +703,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
     let rawResult: unknown;
     const enforcedReadOf = enforced && enforcedClass === 'read'
-      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config })
+      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config, ...(op.name === 'entity' ? { retrieval: (m: unknown) => captureRetrievalMeta('retrieval', m) } : {}) }) // entity alone reads the lookup marker back
       : null;
     if (enforced && enforcedClass === 'write') await enforced.checkEnforcedWrite(engine, command, op.name, params, ctx.sourceId);
     if (enforcedReadOf) {
@@ -759,7 +759,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     if (output) await writeStdoutFinal(output);
     if (noticeText) process.stderr.write(noticeText);
     reportInBandFailure(result, command);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -863,7 +863,7 @@ async function runThinClientRouted(
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
     reportInBandFailure(result, op.cliHints?.name ?? op.name);
-    markEntityMiss(op.name, result);
+    markEntityMiss(op.name, result, lastRetrievalMeta);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -1099,17 +1099,17 @@ export function parseOpArgs(op: OperationMeta, args: string[]): Record<string, u
       const eq = arg.indexOf('=');
       if (eq > 2) {
         const key = arg.slice(2, eq).replace(/-/g, '_');
-        // CLI-local booleans: `--json=<v>` / `--dry-run=<v>` must parse as
-        // booleans, not fall through to the junk-key path (which would
-        // consume the NEXT token as a value and corrupt positional parsing).
+        // CLI-local booleans `--json=<v>` / `--dry-run=<v>` parse here, not on the junk-key
+        // path (which would eat the NEXT token). #9918: an inline boolean takes only true or
+        // false; any other value is refused (it read as true, so `--purge=0` hard-deleted).
         if (key === 'json' || key === 'dry_run') {
-          params[key] = arg.slice(eq + 1) !== 'false';
+          params[key] = opBooleanValue(op, key, arg.slice(eq + 1));
           continue;
         }
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false' : opFlagValue(op, key, def, raw, params[key]);
+          params[key] = def.type === 'boolean' ? opBooleanValue(op, key, raw) : opFlagValue(op, key, def, raw, params[key]);
           continue;
         }
       }
@@ -1372,19 +1372,19 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
   // (src/core/ops/context.ts), which widens only an unqualified read with no
   // OAuth grant; remote transports compute the same field for no-grant tokens.
   let localFederated: string[] | undefined;
-  let sourceImplicit = true;
+  let sourceImplicit = true, sourceFromCheckout = false;
   // params.source is set when a CLI flag was parsed for the op (rare; most
   // CLI ops don't take --source). Falls through to env/dotfile/path-match.
   // An op that owns `source` (opOwnsSource) receives it as its own param.
   const explicit = op && opOwnsSource(op) ? null : (params.source as string | undefined) ?? null;
-  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError } = await import('../core/source-resolver.ts');
+  const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError, refusedSourceTarget } = await import('../core/source-resolver.ts');
   try {
     // GBRA-156: the source resolution reads config through the table the connect-time merge already read.
     const { commandStartupConfig, withRequestConfigSnapshot } = await import('../core/config-snapshot.ts');
     await withRequestConfigSnapshot(engine, async () => {
       const resolved = await resolveSourceWithTier(engine, explicit);
       sourceId = resolved.source_id;
-      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile';
+      sourceImplicit = resolved.tier !== 'flag' && resolved.tier !== 'env' && resolved.tier !== 'dotfile'; sourceFromCheckout = resolved.tier === 'local_path';
       localFederated = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
     }, commandStartupConfig(engine));
   } catch (err) {
@@ -1395,7 +1395,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // Ambient user-selected targets (GBRAIN_SOURCE / .gbrain-source /
     // sources.default) are just as authoritative as --source. Only structural
     // pre-init failures retain the legacy default fallback.
-    if (explicit || err instanceof SourceTargetError) throw err;
+    if (explicit || err instanceof SourceTargetError || await refusedSourceTarget(engine, err)) throw err;
     // Ambient resolution failed (e.g. sources table doesn't exist on a fresh
     // pre-init brain). Leave sourceId unset; engine read methods fall through
     // to the cross-source view (D16 back-compat path).
@@ -1468,7 +1468,7 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
     // brain (that would be an untrusted-caller cross-brain hole over MCP).
     brainId: activeBrainId,
     ...(localFederated ? { localFederatedSourceIds: localFederated } : {}),
-    ...(sourceImplicit ? { localSourceImplicit: true } : {}),
+    ...(sourceImplicit ? { localSourceImplicit: true, ...(sourceFromCheckout ? { localSourceFromCheckout: true } : {}) } : {}),
     // T15/FOV-1: capture the retrieval meta for formatResult's empty-result
     // render (the local-engine twin of the MCP _meta.retrieval channel).
     emitResponseMeta: captureRetrievalMeta,
@@ -1507,11 +1507,10 @@ function describeEmptyRetrieval(): string {
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
   // "retrieval healthy" verdict honest.
-  const stages = Array.isArray(m.degraded)
-    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
-    : [];
+  const { stages, byChoice } = emptyRetrievalStages(m.degraded);
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
+    : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY
     : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }
@@ -1587,7 +1586,7 @@ export function formatResult(
       const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
-      const capLine = pageCapLine(meta, '--limit');
+      const capLine = pageCapLine(meta, '--limit'), savedFacts: string = require('../mcp/saved-facts-notice.ts').cliSavedFacts(getCliOptions().room === undefined ? meta : null, params.json === true); // --room marks no saved fact, so none prints
       if (capLine) process.stderr.write(capLine + '\n');
       if (params.json === true) {
         const incompleteNotice = retrievalIncompleteLine(meta);
@@ -1602,7 +1601,7 @@ export function formatResult(
       const cliOpts = getCliOptions();
       process.stderr.write(searchTimingsLine(meta));
       const timingsLine = cliOpts.explain && meta?.timings ? require('../core/search/stage-timings.ts').formatTimingsSummary(meta.timings) + '\n' : '';
-      if (results.length === 0) return `No results.${describeEmptyRetrieval()}\n` + timingsLine;
+      if (results.length === 0) return savedFacts ? `No page results.\n${savedFacts}${timingsLine}` : `No results.${describeEmptyRetrieval()}\n` + timingsLine;
       // v0.40.4 — --explain switches to per-stage attribution formatter.
       if (cliOpts.explain) {
         // Lazy import keeps formatResult's startup hot path narrow for
@@ -1610,15 +1609,16 @@ export function formatResult(
         const { formatResultsExplain } = require('../core/search/explain-formatter.ts');
         // v0.48.2: thread the captured retrieval meta so the header lines
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
-        return formatResultsExplain(results, meta ?? undefined);
+        return formatResultsExplain(results, meta ?? undefined) + savedFacts;
       }
-      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n';
+      return retrievalIncompleteLine(meta) + results.map(require('./search-row-format.ts').formatSearchRow).join('\n') + '\n' + savedFacts;
     }
     case 'get_tags': {
       const tags = result as string[];
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
     case 'find_pages': return formatFindPages(result);
+    case 'learned': return (result as { stats?: unknown }).stats ? require('../core/learning/stats.ts').formatLearnedStats((result as { stats: unknown }).stats) : require('../core/learning/read.ts').formatLearned(result);
     case 'get_stats': {
       const s = result as any;
       if (Array.isArray(s?.groups)) return formatStatsBy(s);
@@ -2376,10 +2376,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   if (command === 'sync' && !syncOperator && args[0] !== 'trigger') {
     const cfgSync = loadConfig();
     if (await (await import('../commands/sync-persistence-delegate.ts')).maybeDelegateSyncToPersistence(cfgSync, args)) return null;
-    if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {
-      const { maybeDelegateSyncToServe } = await import('../commands/sync-delegate.ts');
-      if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return null;
-    }
+    const syncEngine = (await import('../core/persistence/resident-owner.ts')).localBrainEngine(cfgSync);
+    if (syncEngine && await (await import('../commands/sync-delegate.ts')).maybeDelegateSyncToServe(cfgSync!.database_path!, args, syncEngine)) return null;
   }
 
   if (command === 'sources' && args[0] === 'refresh' && !hasHelpFlag(args) && await (await import('../commands/sources-refresh-delegate.ts')).maybeDelegateSourcesRefresh(loadConfig(), args.slice(1))) return null;
@@ -2399,10 +2397,8 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   // IPC socket instead (commands/sweep-delegate.ts).
   if (command === 'sweep') {
     const cfgSweep = loadConfig();
-    if (cfgSweep?.engine === 'pglite' && cfgSweep.database_path && !cfgSweep.database_url) {
-      const { maybeDelegateSweepToServe } = await import('../commands/sweep-delegate.ts');
-      if (await maybeDelegateSweepToServe(cfgSweep.database_path, args)) return null;
-    }
+    const sweepEngine = (await import('../core/persistence/resident-owner.ts')).localBrainEngine(cfgSweep);
+    if (sweepEngine && await (await import('../commands/sweep-delegate.ts')).maybeDelegateSweepToServe(cfgSweep!.database_path!, args, sweepEngine)) return null;
   }
 
   // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32

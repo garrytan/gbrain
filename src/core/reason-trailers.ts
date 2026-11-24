@@ -16,6 +16,7 @@ import { canonicalChangeReason, CHANGE_REASON_MAX } from './persistence/change-r
 import { scanTextSpans } from './secret-scan.ts';
 import type { BrainEngine } from './engine.ts';
 import { engineKey } from './engine-key.ts';
+import { readSourcePurgeEpoch as readSourcePurgeEpochOver, SOURCE_PURGE_EPOCH_SQL } from './engine-sql/sync-reason-reads.ts';
 import type { Notice } from './agent-output.ts';
 import type { VersionHistory } from './page-state/versions.ts';
 
@@ -148,8 +149,7 @@ export async function scanSyncReasons(engine: BrainEngine, input: { sourceId: st
   const byPath = new Map<string, ReasonDecision>();
   const secrets: SyncReasonScan['secrets'] = [];
   let malformed = 0;
-  const tombstones = new Set((await engine.executeRaw<{ commit_sha: string; path: string }>(
-    'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1', [input.sourceId])).map(row => `${row.commit_sha}\0${row.path}`));
+  const tombstones = new Set((await engine.readReasonPurgeTombstones(input.sourceId)).map(row => `${row.commit_sha}\0${row.path}`));
   const forms = pathForms(repo.scopePrefix);
   const read = await readReasonTrailers(repo.gitRoot, range, caps.sync, commit => {
     const texts = trailerTexts(commit, forms);
@@ -248,7 +248,7 @@ export function reasonScanNotices(scan: SyncReasonScan | null | undefined, sourc
   return notices;
 }
 
-export const SOURCE_PURGE_EPOCH_SQL = 'SELECT purge_epoch FROM sources WHERE id = $1';
+export { SOURCE_PURGE_EPOCH_SQL };
 let caches = new WeakMap<object, Map<string, { at: number; scan: Promise<SyncReasonScan | null> }>>();
 const CACHE_TTL_MS = 10 * 60_000;
 
@@ -259,8 +259,8 @@ const CACHE_TTL_MS = 10 * 60_000;
  * prepared before the purge is caught when its snapshot is inserted (`createPageVersion`). The cache is per engine: the scan holds that brain's tombstones, so another brain on the same checkout never reuses it.
  */
 export async function cachedSyncReasonScan(engine: BrainEngine, input: Parameters<typeof scanSyncReasons>[1]): Promise<SyncReasonScan | null> {
-  const [source] = await engine.executeRaw<{ purge_epoch: string | number }>(SOURCE_PURGE_EPOCH_SQL, [input.sourceId]);
-  const key = [input.sourceId, String(source?.purge_epoch ?? 0), input.sourceRoot, input.from ?? '', input.to].join('\0');
+  const epoch = 'readSourcePurgeEpoch' in engine ? await engine.readSourcePurgeEpoch(input.sourceId) : await readSourcePurgeEpochOver(engine, input.sourceId);
+  const key = [input.sourceId, String(epoch ?? 0), input.sourceRoot, input.from ?? '', input.to].join('\0');
   const brain = engineKey(engine);
   const cache = caches.get(brain) ?? new Map();
   caches.set(brain, cache);

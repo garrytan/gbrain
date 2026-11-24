@@ -17,6 +17,7 @@ import { OperationError, __registerOperationErrorRenderer, provesNotAdmitted, ty
 import { StructuredAgentError } from './errors.ts';
 import { canonicalCodeFor, codeEntry, codeClass, codeRetryable, exitCodeForCode } from './error-catalogue.ts';
 import { VERB_NAMES } from './verbs.ts';
+import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
 import { classifyPgAccessError, formatDbAccessMarker } from './pg-access-classify.ts';
 import { isReadOnlyTransactionError } from './postgres-engine/read-write-transactions.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
@@ -343,7 +344,8 @@ export function noticeBlock(n: RenderedNotice): string {
 
 const HTTP_DROP_KEYS = new Set(['pid', 'lock_owner', 'path', 'data_dir', 'database_path', 'asset']);
 const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=]))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
-const PID_RE = /\b(PID|pid)\s*[:=]?\s*\d+/g;
+// No letter or digit before it, so `owner_pid=123` in a detail is redacted too (`\b` does not break after `_`).
+const PID_RE = /(?<![A-Za-z0-9])(PID|pid)\s*[:=]?\s*\d+/g;
 const KEY_NAME_RE = /\b[A-Z][A-Z0-9]*_(?:API_KEY|TOKEN|SECRET)\b/g;
 
 function redactString(s: string): string {
@@ -586,6 +588,11 @@ const ROWS: Row[] = [
         ...(e.withdrawn ? { withdrawn: e.withdrawn } : {}),
         ...(e.writableSourceIds ? { writable_source_ids: e.writableSourceIds } : {}),
         ...(e.retryable !== undefined ? { retryable: e.retryable } : {}),
+        // MEMORY_VERBS v1 lists no engine_capability_missing code: a verb whose engine refuses a member it needs answers
+        // `unavailable` (a required dependency cannot serve), with the refusal named in `detail`.
+        ...(isVerbOp(ctx) && isEngineCapabilityRefusal(e)
+          ? { error: 'unavailable', code: 'unavailable', detail: e.detail ?? `${e.code}: ${e.message}`, protocol_version: 1 as const }
+          : {}),
       };
     },
   },

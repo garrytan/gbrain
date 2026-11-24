@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The sub-tag after `q <source> \0` that marks a wanted-link record.
 const WANTED: u8 = b'W';
-const ID_COUNTER: &str = "wanted_link_id";
+pub(crate) const ID_COUNTER: &str = "wanted_link_id";
 const PRODUCERS: [&str; 2] = ["body", "frontmatter"];
 const REF_KINDS: [&str; 2] = ["slug", "name"];
 
@@ -296,6 +296,43 @@ pub(crate) fn stale_origin_page_ids(
         }
     }
     Ok(out)
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a wanted link copied from another engine with its
+/// own id, `checked_at` and `first_seen_at`, under the row key `replace_rows_in` writes. `false`
+/// when the key already holds that id; the key held by another id is the
+/// `wanted_links_reference_unique` violation. The caller checked the origin page and the source.
+pub(crate) fn seed_wanted(tx: &mut dyn KvWrite, record: &WantedRecord) -> Result<bool> {
+    if !PRODUCERS.contains(&record.producer.as_str())
+        || !REF_KINDS.contains(&record.ref_kind.as_str())
+    {
+        return Err(constraint(format!(
+            "new row for relation \"wanted_links\" violates a check constraint: producer {:?}, ref_kind {:?}",
+            record.producer, record.ref_kind
+        )));
+    }
+    let key = row_key(
+        &record.source_id,
+        record.origin_page_id,
+        &WantedLinkRowInput {
+            producer: record.producer.clone(),
+            ref_kind: record.ref_kind.clone(),
+            target_source_id: record.target_source_id.clone(),
+            target_ref: record.target_ref.clone(),
+            ..Default::default()
+        },
+    );
+    if let Some(bytes) = tx.get(&key)? {
+        let stored: WantedRecord = serde_json::from_slice(&bytes)?;
+        if stored.id == record.id {
+            return Ok(false);
+        }
+        return Err(constraint(
+            "duplicate key value violates unique constraint \"wanted_links_reference_unique\"",
+        ));
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
 }
 
 /// Replaces one origin's wanted rows for `replacement.producers` inside the caller's write: the
@@ -589,6 +626,24 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the wanted record `id` of the origin page. `false`
+/// when there is none.
+pub(crate) fn remove_wanted(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    origin_page_id: u64,
+    id: u64,
+) -> Result<bool> {
+    let Some((key, _)) = page_records(&*tx, source_id, origin_page_id)?
+        .into_iter()
+        .find(|(_, r)| r.id == id)
+    else {
+        return Ok(false);
+    };
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,10 +815,8 @@ mod tests {
         assert_eq!(raw_rows(&store, "default", kept), 1);
     }
 
-    // Red until the link_queries family's remove_source_rows deletes every key under
-    // `q <source> \0`; the core-hooks stub deletes nothing.
+    // The cascade's link_queries step deletes every key under `q <source> \0`.
     #[test]
-    #[ignore = "needs link_queries::remove_source_rows from rust-lane-graph-search; core removes this ignore when it combines lane 6"]
     fn source_delete_through_the_cascade_removes_wanted_rows_of_that_source_only() {
         let (_d, store) = open("wl-source-cascade");
         source(&store, "team");

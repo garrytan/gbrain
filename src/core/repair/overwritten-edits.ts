@@ -31,6 +31,7 @@ import { syncGit, syncGitPath } from '../persistence/sync-discovery.ts';
 import { readSyncImportProvenances, writeGitHold } from '../persistence/sync-holds.ts';
 import { fileDriftHold } from '../persistence/sync-page-fault.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#overwritten-edits';
 const COMMAND = 'gbrain repair overwritten-edits';
@@ -56,8 +57,7 @@ async function scanScope(engine: BrainEngine, scope: RepairScope, slugs: readonl
 
 /** The archived version's content rendered as `revert_version` renders it, or null when it is no longer the previewed edit. */
 async function versionMarkdown(engine: BrainEngine, edit: Pick<OverwrittenEdit, 'page_id' | 'version_id' | 'lost_digest'>, page: Parameters<typeof serializePageToMarkdown>[0]): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ body_storage: string | null; title: string | null; type: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null; tags: unknown }>(
-    'SELECT body_storage, title, type, compiled_truth, timeline, frontmatter, tags FROM page_versions WHERE id=$1 AND page_id=$2', [edit.version_id, edit.page_id]);
+  const row = await engine.readVersionContent(edit.version_id, edit.page_id);
   const content = row ? overwriteContent(row) : null;
   if (!content || overwriteDigest(content) !== edit.lost_digest) return null;
   return serializePageToMarkdown({ ...page, title: content.title, type: content.type, compiled_truth: content.compiled_truth, timeline: content.timeline, frontmatter: content.frontmatter }, content.tags);
@@ -144,12 +144,14 @@ const changed = (reason: string, detail: Record<string, unknown> = {}): RepairIt
 async function restoreEdit(ctx: OperationContext, entry: RepairItem, edit: ApprovedEdit): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
   const requestId = await repairRequestId(ctx, 'overwritten-edits', entry, edit.page_revision);
-  const replayed = (await engine.executeRaw("SELECT 1 FROM persistence_requests WHERE request_id=$1::uuid AND operation='revert_version' AND state='committed'", [requestId])).length > 0;
+  const replayed = (await engine.listWriteRequestsByRequestIds([requestId])).some(row => row.operation === 'revert_version' && row.state === 'committed');
   if (!replayed) {
     const snapshot = await engine.readPageSnapshot(edit.slug, { sourceId: edit.source_id });
     if (!snapshot || Number(snapshot.page.id) !== edit.page_id || snapshot.revision !== edit.page_revision) return changed('page_moved', { page_revision: snapshot?.revision ?? null });
     if (await versionMarkdown(engine, edit, snapshot.page) === null) return changed('version_changed');
   }
+  // The restore is a page write (revert_version, lane 7's writer): an engine without raw SQL stops here, before it.
+  requireRawSql(engine, 'repair overwritten-edits page write');
   try {
     await submitPageMutation({ ...ctx, sourceId: edit.source_id }, { operation: 'revert_version', databaseOnly: 'overwrite_restore',
       params: { slug: edit.slug, source_id: edit.source_id, version_id: edit.version_id, expected_revision: edit.page_revision, request_id: requestId } });
@@ -185,7 +187,7 @@ async function holdDivergentFile(engine: BrainEngine, edit: ApprovedEdit, reques
   const bytes = readBlobContents(gitRoot, [blob]).get(blob.oid);
   if (bytes === undefined) return { held: false, file: relativePath, why: 'file_over_read_bound' };
   if (await fileMatchesSnapshot(engine, edit.slug, bytes, snapshot, scannerSourcePath(root, target, mode))) return { held: false, file: relativePath, why: 'file_matches' };
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [edit.source_id]);
+  const source = await engine.readSourceIncarnation(edit.source_id);
   const record = (await readSyncImportProvenances(engine, edit.source_id, source!.incarnation, [edit.page_id])).get(edit.page_id);
   const sides = record?.disk_blob_oid === blob.oid ? 'database' as const : 'both' as const;
   const held = fileDriftHold({ path: relativePath, sourcePath: snapshot.page.source_path, action: 'import', working: false }, edit.slug, edit.page_id,

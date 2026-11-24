@@ -25,7 +25,7 @@ import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { chat as gatewayChat, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { canonicalLookup, type ModelPricing } from '../model-pricing.ts';
@@ -35,7 +35,7 @@ import { pricingSetCommand } from '../budget/no-pricing.ts';
 import { createHash } from 'node:crypto';
 import { slugifySegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
-import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
+import { strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
@@ -186,25 +186,10 @@ export async function runPhaseSynthesizeConcepts(
   let atoms = opts._atoms ?? [];
   if (atoms.length === 0 && opts._atoms === undefined) {
     try {
-      const rows = await engine.executeRaw<{
-        slug: string;
-        title: string;
-        compiled_truth: string;
-        revision: string;
-        frontmatter: { concepts?: string[]; imported_from?: string };
-        private: boolean;
-      }>(
-        // Codex P2: scoped to the cycle source — the provenance edges below
-        // are pinned to it, so a brain-global scan grouped same-slug atoms
-        // from OTHER sources into this source's concepts.
-        `SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
-           FROM pages
-          WHERE type = 'atom'
-            AND source_id = $1
-            AND deleted_at IS NULL
-            AND (frontmatter->>'imported_from') IS NULL`,
-        [opts.sourceId ?? 'default'],
-      );
+      // Codex P2: scoped to the cycle source — the provenance edges below
+      // are pinned to it, so a brain-global scan grouped same-slug atoms
+      // from OTHER sources into this source's concepts.
+      const rows = await engine.listDreamAtomPages(opts.sourceId ?? 'default');
       atoms = rows
         .filter((r) => Array.isArray(r.frontmatter?.concepts) && r.frontmatter.concepts.length > 0)
         .map((r) => ({
@@ -611,7 +596,7 @@ export async function runPhaseSynthesizeConcepts(
       source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
       round_completed_delta: failures.length === 0 && publicationDeferred.length === 0 && publicationHeld.length === 0 && publicationPending.length === 0 ? 1 : 0,
-      halt_delta: failures.length > 0 ? 1 : 0, halt_reason: 'item_error',
+      halt_delta: failures.length > 0 ? 1 : 0, halt_reason: providerHaltReason(abortedGlobalError) ?? 'item_error',
     });
   }
 

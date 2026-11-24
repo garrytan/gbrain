@@ -12,7 +12,8 @@
  *
  * - stamps_rewritten: a stamp key changed after the first snapshot, or the live stamp differs from the server-written
  *   `pages` column. The restored value is the trusted column when non-null, else the value just before the first
- *   remote (or ambiguous) change. A later local change of the same key makes the page `needs_review`.
+ *   remote (or ambiguous) change. A later local change of the same key makes the page `needs_review`. An existing
+ *   `ingested_at` is never removed (#10025): a history whose only earlier value is none leaves it as it is.
  * - marker_lost: a transition raised the page's lowest frontmatter cap (`frontmatterTrustCaps`), and the live page
  *   still caps above the lost cap while its stored tier is `unknown` or above it (a re-read would raise it). The repair
  *   stamps the lost cap back as the lower-only `trust_tier` marker.
@@ -23,6 +24,7 @@
  * Every planned change only lowers: the marker through `stampTrustMarker`, the tier as min(stored, marker).
  */
 import type { BrainEngine } from '../engine.ts';
+import type { DriftLiveRow, DriftVersionRow } from '../engine-sql/doctor-acc.ts';
 import { digest } from '../persistence/digest.ts';
 import { frontmatterTrustCaps, stampTrustMarker } from './channel.ts';
 import { OWNER_TIER_FLOOR, compareTrust, minTrust, storedTrustTier, type TrustTier } from './tier.ts';
@@ -33,6 +35,7 @@ export type DriftWriter = 'remote' | 'local' | 'unattributed';
 export type DriftClass = 'remote' | 'ambiguous' | 'local' | 'needs_review' | 'restamp';
 /** Pages scanned per source by the doctor check. */
 export const DRIFT_SCAN_LIMIT = 50_000;
+// The page batch of the live read (DRIFT_BATCH in engine-sql/doctor-acc.ts, pinned by test/doctor-acc-sql.test.ts).
 const BATCH = 500;
 const REMOTE_PRINCIPALS = ['oauth_client', 'legacy_token', 'local_stdio'];
 
@@ -93,7 +96,7 @@ export function analyzePageDrift(input: DriftPageInput, opts: { includeAmbiguous
     if (firstDamage < 0 && !columnForged) { changes.push(...events.filter(event => event.writer === 'local')); continue; }
     const before = firstDamage >= 0 ? events[firstDamage]!.from : undefined;
     const target = column !== null ? input.columns[key]! : before ?? null;
-    if (normStamp(key, target) === liveValue) continue;
+    if (normStamp(key, target) === liveValue || key === 'ingested_at' && normStamp(key, target) === null) continue;
     if (firstDamage >= 0) {
       changes.push(...events);
       if (events.slice(firstDamage + 1).some(event => event.writer === 'local')) needsReview = `a later local write also changed ${key}`;
@@ -147,11 +150,8 @@ export interface SourceDrift {
   items: DriftItem[];
 }
 
-interface LiveRow {
-  id: number | string; slug: string; trust_tier: string | null; frontmatter: Record<string, unknown> | string | null; revision: string;
-  source_kind: string | null; ingested_via: string | null; ingested_at: string | Date | null; req: string | null; kind: string | null; remote: string | null;
-}
-interface VersionRow { page_id: number | string; frontmatter: Record<string, unknown> | string | null; req: string | null; kind: string | null; remote: string | null }
+type LiveRow = DriftLiveRow;
+type VersionRow = DriftVersionRow;
 
 const json = (value: Record<string, unknown> | string | null): Record<string, unknown> => typeof value === 'string' ? JSON.parse(value) as Record<string, unknown> : value ?? {};
 function writerOf(req: string | null, remote: string | null, kind: string | null): DriftWriter {
@@ -161,49 +161,19 @@ function writerOf(req: string | null, remote: string | null, kind: string | null
   return REMOTE_PRINCIPALS.includes(kind) ? 'remote' : 'local';
 }
 
-async function columnsOf(engine: BrainEngine, table: string): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ column_name: string }>(
-    "SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND table_schema = ANY(current_schemas(false))", [table]);
-  return new Set(rows.map(row => row.column_name));
-}
-
 /** Whether this brain has the columns the scan reads: trust tiers, then write attribution. */
-export async function driftSchema(engine: BrainEngine): Promise<SourceDrift['schema']> {
-  const pages = await columnsOf(engine, 'pages');
-  if (!pages.has('trust_tier')) return 'pre_trust';
-  const versions = await columnsOf(engine, 'page_versions');
-  return pages.has('revision_write_request_id') && versions.has('archived_write_request_id') ? 'current' : 'pre_attribution';
+export function driftSchema(engine: BrainEngine): Promise<SourceDrift['schema']> {
+  return engine.readDriftSchema();
 }
 
 /** Reads one page's history the way the scan does; null when the page is gone. */
 export async function readPageDrift(engine: BrainEngine, sourceId: string, slug: string, opts: { includeAmbiguous?: boolean } = {}): Promise<DriftItem | null> {
   const schema = await driftSchema(engine);
   if (schema === 'pre_trust') return null;
-  const [row] = await liveRows(engine, schema, sourceId, { slug });
+  const [row] = await engine.listDriftLiveRows(schema, sourceId, { slug });
   if (!row) return null;
-  const versions = await versionRows(engine, schema, [Number(row.id)]);
+  const versions = await engine.listDriftVersionRows(schema, [Number(row.id)]);
   return itemOf(sourceId, row, versions, opts);
-}
-
-function liveRows(engine: BrainEngine, schema: SourceDrift['schema'], sourceId: string, at: { after?: number; slug?: string }): Promise<LiveRow[]> {
-  const attributed = schema === 'current';
-  return engine.executeRaw<LiveRow>(
-    `SELECT p.id, p.slug, p.trust_tier, p.frontmatter, p.knowledge_revision::text AS revision, p.source_kind, p.ingested_via, p.ingested_at,
-            ${attributed ? "p.revision_write_request_id::text AS req, p.revision_principal_kind AS kind, r.authority->>'remote' AS remote"
-              : 'NULL::text AS req, NULL::text AS kind, NULL::text AS remote'}
-       FROM pages p ${attributed ? 'LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id' : ''}
-      WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ${at.slug !== undefined ? 'p.slug = $2' : 'p.id > $2'}
-      ORDER BY p.id LIMIT ${BATCH}`, [sourceId, at.slug ?? at.after ?? 0]);
-}
-
-function versionRows(engine: BrainEngine, schema: SourceDrift['schema'], pageIds: number[]): Promise<VersionRow[]> {
-  const attributed = schema === 'current';
-  return engine.executeRaw<VersionRow>(
-    `SELECT v.page_id, v.frontmatter,
-            ${attributed ? "v.archived_write_request_id::text AS req, v.archived_principal_kind AS kind, r.authority->>'remote' AS remote"
-              : 'NULL::text AS req, NULL::text AS kind, NULL::text AS remote'}
-       FROM page_versions v ${attributed ? 'LEFT JOIN persistence_requests r ON r.id = v.archived_write_request_id' : ''}
-      WHERE v.page_id = ANY($1::int[]) ORDER BY v.page_id, v.id`, [pageIds]);
 }
 
 function itemOf(sourceId: string, row: LiveRow, versions: VersionRow[], opts: { includeAmbiguous?: boolean }): DriftItem | null {
@@ -252,10 +222,10 @@ export async function scanProvenanceDrift(engine: BrainEngine, sourceId: string,
     return result;
   }
   for (let after = 0; ;) {
-    const rows = await liveRows(engine, schema, sourceId, { after });
+    const rows = await engine.listDriftLiveRows(schema, sourceId, { after });
     if (!rows.length) return result;
     const take = rows.slice(0, Math.max(0, limit - result.scanned));
-    const versions = await versionRows(engine, schema, take.map(row => Number(row.id)));
+    const versions = await engine.listDriftVersionRows(schema, take.map(row => Number(row.id)));
     const byPage = new Map<number, VersionRow[]>();
     for (const version of versions) { const list = byPage.get(Number(version.page_id)) ?? []; list.push(version); byPage.set(Number(version.page_id), list); }
     for (const row of take) {

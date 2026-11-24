@@ -44,6 +44,22 @@ function view(reservation: Awaited<ReturnType<BrainEngine['reservePageEmbedding'
   return { ...rest, window: window !== null };
 }
 
+/**
+ * What a refused hold was refused for, one name per arm's code: no such page is PGLite's foreign-key error (23503) and
+ * the Rust store's `page_not_found`; a NUL byte in the reason is PGLite's 22021 and the Rust store's `invalid_argument`.
+ */
+async function refusal(run: Promise<void>): Promise<string> {
+  try {
+    await run;
+    return 'stored';
+  } catch (error) {
+    const code = String((error as { code?: unknown }).code);
+    if (code === '23503' || code === 'page_not_found') return 'page_not_found';
+    if (code === '22021' || code === 'invalid_argument') return 'invalid_text';
+    return `other:${code}`;
+  }
+}
+
 const ROW = { marker: null, state: 'open', reason: null, embedding_signature: 'model-a:1536', spent_usd: 0, reserved_usd: 0, cap_usd: null, unpriced_calls: 0, window: false };
 
 describe('engine parity: page embedding ledger', () => {
@@ -146,6 +162,135 @@ describe('engine parity: page embedding ledger', () => {
       row: { ...ROW, state: 'held', reason: 'markup_ratio', embedding_signature: null },
       stillHeld: { kind: 'held', reason: 'markup_ratio' },
     });
+    return answers;
+  });
+
+  parityTest('holdPageEmbedding is an upsert: it holds a page with no row, replaces a held reason, re-holds an open row and keeps the spend columns', {
+    methods: ['putPage', 'getPage', 'holdPageEmbedding', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    for (const slug of ['notes/fresh', 'notes/held', 'notes/open', 'notes/spent']) await engine.putPage(slug, NOTE);
+    const fresh = await idOf(engine, 'notes/fresh');
+    const held = await idOf(engine, 'notes/held');
+    const open = await idOf(engine, 'notes/open');
+    const spent = await idOf(engine, 'notes/spent');
+    await engine.holdPageEmbedding(fresh, 'awaiting_approval');
+    const freshRow = await ledger(engine, fresh);
+    await engine.recordPageEmbeddingHold(held, 'call_import');
+    await engine.holdPageEmbedding(held, 'archive_backfill');
+    const heldRow = await ledger(engine, held);
+    await engine.recordPageEmbeddingHold(open, 'call_import');
+    await engine.openPageEmbeddingHold(open);
+    const openedRow = await ledger(engine, open);
+    await engine.holdPageEmbedding(open, 'archive_open_day');
+    const reheldRow = await ledger(engine, open);
+    await engine.reservePageEmbedding(spent, { ...OPEN, chunks: CHUNKS });
+    const reservedRow = await ledger(engine, spent);
+    await engine.holdPageEmbedding(spent, 'awaiting_approval');
+    const spentRow = await ledger(engine, spent);
+    const answers = { freshRow, heldRow, openedRow, reheldRow, reservedRow, spentRow };
+    expect(answers as unknown).toEqual({
+      freshRow: { ...ROW, state: 'held', reason: 'awaiting_approval', embedding_signature: null },
+      heldRow: { ...ROW, state: 'held', reason: 'archive_backfill', embedding_signature: null },
+      openedRow: { ...ROW, embedding_signature: null },
+      reheldRow: { ...ROW, state: 'held', reason: 'archive_open_day', embedding_signature: null },
+      reservedRow: { ...ROW, reserved_usd: 0.875, window: true },
+      spentRow: { ...ROW, state: 'held', reason: 'awaiting_approval', reserved_usd: 0.875, window: true },
+    });
+    return answers;
+  });
+
+  parityTest('holdPageEmbedding on an unknown page refuses as page_not_found and leaves no row', {
+    methods: ['putPage', 'getPage', 'holdPageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    await engine.putPage('notes/known', NOTE);
+    const known = await idOf(engine, 'notes/known');
+    const refused = await refusal(engine.holdPageEmbedding(987654321, 'awaiting_approval'));
+    const missing = await engine.readPageEmbeddingBudget(987654321);
+    const knownRow = await ledger(engine, known);
+    const answers = { refused, missing, knownRow };
+    expect(answers as unknown).toEqual({
+      refused: 'page_not_found',
+      missing: { marker: null, state: null, reason: null, embedding_signature: null, spent_usd: null, reserved_usd: null, cap_usd: null, unpriced_calls: null, reservation_window: null },
+      knownRow: { ...ROW, state: null, embedding_signature: null, spent_usd: null, reserved_usd: null, unpriced_calls: null },
+    });
+    return answers;
+  });
+
+  parityTest('holdPageEmbedding refuses a reason with a NUL byte and keeps the row it had', {
+    methods: ['putPage', 'getPage', 'holdPageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    await engine.putPage('notes/nul', NOTE);
+    const id = await idOf(engine, 'notes/nul');
+    const refusedFirst = await refusal(engine.holdPageEmbedding(id, 'bad\0reason'));
+    const none = await ledger(engine, id);
+    await engine.holdPageEmbedding(id, 'awaiting_approval');
+    const refusedAgain = await refusal(engine.holdPageEmbedding(id, 'worse\0reason'));
+    const kept = await ledger(engine, id);
+    const answers = { refusedFirst, none, refusedAgain, kept };
+    expect(answers as unknown).toEqual({
+      refusedFirst: 'invalid_text',
+      none: { ...ROW, state: null, embedding_signature: null, spent_usd: null, reserved_usd: null, unpriced_calls: null },
+      refusedAgain: 'invalid_text',
+      kept: { ...ROW, state: 'held', reason: 'awaiting_approval', embedding_signature: null },
+    });
+    return answers;
+  });
+
+  parityTest('a settle that books Infinity, -Infinity or NaN leaves the same readable ledger row on every arm', {
+    methods: ['putPage', 'getPage', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    // PGLite and Postgres keep DOUBLE PRECISION: Infinity and NaN are booked as they are, -Infinity as 0 (Math.max).
+    const cases = [
+      ['inf', { reservedUsd: 0.875, bookedUsd: Infinity }],
+      ['neg-inf', { reservedUsd: 0.875, bookedUsd: -Infinity }],
+      ['nan', { reservedUsd: 0.875, bookedUsd: NaN }],
+      ['reserved-nan', { reservedUsd: NaN, bookedUsd: 0.5 }],
+      ['reserved-neg-inf', { reservedUsd: -Infinity, bookedUsd: 0.5 }],
+    ] as const;
+    const answers: Record<string, unknown> = {};
+    for (const [name, amounts] of cases) {
+      await engine.putPage(`notes/non-finite-${name}`, NOTE);
+      const id = await idOf(engine, `notes/non-finite-${name}`);
+      const grant = await engine.reservePageEmbedding(id, { ...OPEN, chunks: CHUNKS });
+      if (grant.kind !== 'grant' || grant.window === null) throw new Error(`${name}: no grant window`);
+      await engine.settlePageEmbeddingReservation(id, { window: grant.window, ...amounts, unpricedCalls: 0 });
+      const row = await ledger(engine, id);
+      answers[name] = { ...row, json: JSON.stringify(row), spent: String(row.spent_usd), reserved: String(row.reserved_usd) };
+    }
+    const row = (spent: number, reserved: number) => {
+      const r = { ...ROW, spent_usd: spent, reserved_usd: reserved, window: reserved !== 0 };
+      return { ...r, json: JSON.stringify(r), spent: String(spent), reserved: String(reserved) };
+    };
+    expect(answers as unknown).toEqual({
+      inf: row(Infinity, 0),
+      'neg-inf': row(0, 0),
+      nan: row(NaN, 0),
+      'reserved-nan': row(0.5, NaN),
+      'reserved-neg-inf': row(0.5, Infinity),
+    });
+    return answers;
+  });
+
+  parityTest('a second grant while a reservation is open counts the money already reserved against the cap', {
+    methods: ['putPage', 'getPage', 'reservePageEmbedding', 'readPageEmbeddingBudget'],
+  }, async (engine) => {
+    // Every other grant here runs on a fresh or settled row. With a reservation open, the room left under the cap is the
+    // cap less the spend and the open reservation (audit r2 mutant R08: a grant that ignores the open reservation
+    // overspends).
+    await engine.putPage('notes/open-window', NOTE);
+    const page = await idOf(engine, 'notes/open-window');
+    const first = view(await engine.reservePageEmbedding(page, { ...OPEN, configuredCapUsd: 1, chunks: CHUNKS }));
+    const afterFirst = await ledger(engine, page);
+    const overCap = view(await engine.reservePageEmbedding(page, { ...OPEN, configuredCapUsd: 1, chunks: [{ chunkIndex: 3, costUsd: 0.25 }] }));
+    const afterOverCap = await ledger(engine, page);
+    const fits = view(await engine.reservePageEmbedding(page, { ...OPEN, configuredCapUsd: 1, chunks: [{ chunkIndex: 4, costUsd: 0.125 }] }));
+    const afterFits = await ledger(engine, page);
+    const answers = { first, afterFirst, overCap, afterOverCap, fits, afterFits };
+    expect(answers.first).toEqual({ kind: 'grant', chunkIndexes: [2, 1, 0], reservedUsd: 0.875, deferred: 0, capUsd: 1, window: true });
+    expect(answers.overCap).toMatchObject({ kind: 'grant', chunkIndexes: [], reservedUsd: 0, deferred: 1 });
+    expect(answers.afterOverCap).toMatchObject({ reserved_usd: 0.875, spent_usd: 0 });
+    expect(answers.fits).toMatchObject({ kind: 'grant', chunkIndexes: [4], reservedUsd: 0.125, deferred: 0 });
+    expect(answers.afterFits).toMatchObject({ reserved_usd: 1, spent_usd: 0 });
     return answers;
   });
 });

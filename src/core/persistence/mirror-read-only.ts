@@ -34,10 +34,9 @@ export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, 
  * legacy disk writers (write-through, fact fences, timeline, forget, unfenced facts) skip on it as managed publication does.
  */
 export async function readOnlyCheckout(engine: SqlEngine, sourceId: string): Promise<'mirror_read_only' | 'url_clone' | null> {
-  const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
+  const row = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId);
   if (!row) return null;
-  const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
-  if (String(config.mirror_read_only) === 'true') return 'mirror_read_only';
+  if (String(row.config.mirror_read_only) === 'true') return 'mirror_read_only';
   return await urlCloneReadOnly(engine, sourceId, row) ? 'url_clone' : null;
 }
 

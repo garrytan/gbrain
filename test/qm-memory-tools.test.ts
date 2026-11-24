@@ -31,6 +31,7 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { attestRightOf, linkedMember, linkMember } from '../src/core/access/actor.ts';
+import { readAccessTokenAttest, readLinkedMember, readOauthClientAttest } from '../src/core/engine-sql/access-members.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { boundFactLines, boundRecallChars, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
@@ -132,7 +133,11 @@ describe('memory_recall text bounds (pure)', () => {
   });
 
   test('a database failure while re-resolving a stored actor is rethrown, never read as unlinked or as no attest right', async () => {
-    const failing = (code: string, message: string) => ({ executeRaw: async () => { throw Object.assign(new Error(message), { code }); } }) as never;
+    const failing = (code: string, message: string) => {
+      const engine = { executeRaw: async () => { throw Object.assign(new Error(message), { code }); } };
+      return { ...engine, readLinkedMember: (system: string, id: string) => readLinkedMember(engine, system, id),
+        readAccessTokenAttest: (id: string) => readAccessTokenAttest(engine, id), readOauthClientAttest: (id: string) => readOauthClientAttest(engine, id) } as never;
+    };
     const principal = { principal: { kind: 'oauth_client', id: 'c1' } } as never;
     for (const [code, message] of [['25P02', 'current transaction is aborted, commands ignored until end of transaction block'], ['55P03', 'canceling statement due to lock timeout']]) {
       await expect(linkedMember(failing(code, message), 'qm', ALICE_ID)).rejects.toThrow(message);

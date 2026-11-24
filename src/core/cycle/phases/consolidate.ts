@@ -41,7 +41,6 @@ import { DEFAULT_WRITE_GATE_CONFIG, type WriteGateConfig } from '../../write-gat
 import { loadImportSanityConfig } from '../../import-screen.ts';
 import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../../write-gate-store.ts';
 import type { TaintInput, WriteTrust } from '../../trust/tier.ts';
-import { readersSourcedFactSql } from '../../access/member-facts.ts';
 
 export interface ConsolidatePhaseOpts {
   dryRun?: boolean;
@@ -136,19 +135,12 @@ async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promis
     if (t !== 0) return t;
     return a.id - b.id;
   });
-  const values = new Map((await tx.executeRaw<{ id: number; claim_value: number | string | null }>(
-    'SELECT id, claim_value FROM facts WHERE id = ANY($1::bigint[])', [cluster.map(f => f.id)])).map(r => [Number(r.id), r.claim_value]));
+  const values = new Map((await tx.listConsolidationClaimValues(cluster.map(f => f.id))).map(r => [Number(r.id), r.claim_value]));
   for (const { member: older, next: newer } of consolidationCloses(chronological, f => ({ text: f.fact, value: values.get(f.id) }))) {
-    await tx.executeRaw(
-      // Only UPDATE when the new value would actually change. Avoids
-      // touching updated_at on no-op rewrites and keeps idempotency
-      // observable in the DB (zero affected rows on stable re-run).
-      `UPDATE facts
-         SET valid_until = $1
-       WHERE id = $2
-         AND (valid_until IS DISTINCT FROM $1)`,
-      [newer.valid_from, older.id],
-    );
+    // Only UPDATE when the new value would actually change. Avoids
+    // touching updated_at on no-op rewrites and keeps idempotency
+    // observable in the DB (zero affected rows on stable re-run).
+    await tx.setConsolidatedFactValidUntil(newer.valid_from, older.id);
   }
 }
 
@@ -167,7 +159,7 @@ export function parseClusterThreshold(value: string): number {
 
 /** GST-359 C2: `facts` without those on a page that names readers (a member page): they never become a take on the entity page. */
 async function withoutReadersSourced(engine: BrainEngine, facts: FactRow[]): Promise<FactRow[]> {
-  const rows = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND ${readersSourcedFactSql('facts')}`, [facts.map(f => f.id)]);
+  const rows = await engine.listReadersSourcedFactIds(facts.map(f => f.id));
   const restricted = new Set(rows.map(row => Number(row.id)));
   return facts.filter(f => !restricted.has(f.id));
 }
@@ -274,19 +266,12 @@ export async function runPhaseConsolidate(
         clusterFacts(unconsolidated.filter(f => isExternalTier(taint.get(f.id)!.tier) === external), threshold, claims));
 
       // Resolve entity_slug → page_id. If page missing in this source, skip.
-      const pageRows = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-        [b.source_id, b.entity_slug],
-      );
+      const pageRows = await engine.findConsolidationPageIds(b.source_id, b.entity_slug);
       if (pageRows.length === 0) continue;
       const pageId = pageRows[0].id;
 
       // Existing row_num max for this page → start appending after it.
-      const rowMaxRows = await engine.executeRaw<{ max: number }>(
-        `SELECT COALESCE(MAX(row_num), 0)::int AS max FROM takes WHERE page_id = $1`,
-        [pageId],
-      );
-      let nextRowNum = (rowMaxRows[0]?.max ?? 0) + 1;
+      let nextRowNum = (await engine.readConsolidationTakesMaxRowNum(pageId)) + 1;
       const recordsTies = !dryRun && !maintenance;
       if (recordsTies) await clearConsolidationTies(engine, b.source_id, b.entity_slug);
 
@@ -359,13 +344,7 @@ export async function runPhaseConsolidate(
         // resurrect a claim the user retired. `ORDER BY id` keeps the choice
         // deterministic if a page already holds more than one matching row
         // (duplicates minted by the pre-fix since_date lookup).
-        const existing = await engine.executeRaw<{ id: number; resolved_at: Date | null }>(
-          `SELECT id, resolved_at FROM takes
-           WHERE page_id = $1 AND claim = $2 AND kind = 'fact' AND holder = 'self'
-           ORDER BY id
-           LIMIT 1`,
-          [pageId, best.fact],
-        );
+        const existing = await engine.findConsolidatedTakes(pageId, best.fact);
 
         // #5575: the take, its source refresh, the consolidation marks and the
         // valid_until writeback are one maintenance transaction at the cluster's
@@ -375,7 +354,7 @@ export async function runPhaseConsolidate(
         // Write gate on a new take: reject skips the cluster; hold records it for review and leaves the facts unconsolidated.
         const takeRow = { page_id: pageId, row_num: nextRowNum, claim: best.fact, kind: 'fact', holder: 'self', weight: clamp01(avgWeight),
           since_date: sinceISO, source: sources.slice(0, 200), active: true };
-        const gate = existing.length ? null : await gateNewTake(engine, derivation, takeRow, { sourceId: b.source_id, slug: b.entity_slug },
+        const gate = existing.length ? null : await gateNewTake(engine, derivation, takeRow, { sourceId: b.source_id, slug: b.entity_slug, pageId },
           gateConfig ??= (await loadImportSanityConfig(engine)).writeGate ?? DEFAULT_WRITE_GATE_CONFIG);
         if (gate && gate.action !== 'insert') { if (gate.action === 'hold') clustersGateHeld++; else clustersGateRejected++; continue; }
         const written = await derivedMaintenanceTransaction<{ created: boolean; takeId: number | null } | null>(engine, derivation, async tx => {
@@ -392,15 +371,12 @@ export async function runPhaseConsolidate(
             // would bypass that guard. Reuse its id so the facts still consolidate
             // into it, but leave the row untouched.
             if (existing[0].resolved_at === null) {
-              await tx.executeRaw(`UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`, [sources.slice(0, 200), takeId]);
+              await tx.refreshConsolidatedTakeSource(sources.slice(0, 200), takeId);
             }
           } else {
             const inserted = await tx.addTakesBatch([takeRow]);
             if (inserted < 1) return { result: null, rows: [] };
-            const idRows = await tx.executeRaw<{ id: number }>(
-              `SELECT id FROM takes WHERE page_id = $1 AND row_num = $2`,
-              [pageId, nextRowNum],
-            );
+            const idRows = await tx.findConsolidatedTakeIds(pageId, nextRowNum);
             if (idRows.length === 0) return { result: { created: true, takeId: null }, rows: [] };
             takeId = idRows[0].id;
             created = true;
@@ -465,7 +441,7 @@ export async function runPhaseConsolidate(
  * inserts on `insert` (recording a flag receipt) and skips otherwise.
  */
 async function gateNewTake(engine: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
-  takeRow: { claim: string; source: string } & Record<string, unknown>, at: { sourceId: string; slug: string }, cfg: WriteGateConfig): Promise<GatedRowDecision> {
+  takeRow: { claim: string; source: string } & Record<string, unknown>, at: { sourceId: string; slug: string; pageId?: number }, cfg: WriteGateConfig): Promise<GatedRowDecision> {
   const gate = decideTakeWrite({ claim: takeRow.claim, source: takeRow.source }, { ...at, payload: takeRow,
     input: { tier: derivation.trust.tier, origin: derivation.trust.origin, requestId: null }, cfg });
   if (gate.action === 'hold') await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: await recordWriteGateHold(tx, gate.hold!), rows: [] }));
@@ -525,9 +501,7 @@ export interface ClaimShape {
 }
 
 async function loadClaimShapes(engine: BrainEngine, ids: number[]): Promise<Map<number, ClaimShape>> {
-  const rows = ids.length === 0 ? [] : await engine.executeRaw<{
-    id: number; claim_metric: string | null; claim_unit: string | null; claim_period: string | null;
-  }>(`SELECT id, claim_metric, claim_unit, claim_period FROM facts WHERE id = ANY($1::bigint[])`, [ids]);
+  const rows = ids.length === 0 ? [] : await engine.listConsolidationClaimShapes(ids);
   return new Map(rows.map(r => [Number(r.id), { metric: r.claim_metric, unit: r.claim_unit, period: r.claim_period }]));
 }
 

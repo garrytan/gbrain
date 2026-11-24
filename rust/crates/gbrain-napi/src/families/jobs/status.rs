@@ -39,6 +39,29 @@ impl Brain {
         self.run(env, move |s| s.read_waiting_queue_depths())
     }
 
+    /// `readLastFinishedJobAt(name)`: UTC ISO seconds or null.
+    #[napi]
+    pub fn read_last_finished_job_at<'env>(
+        &self,
+        env: &'env Env,
+        name: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_last_finished_job_at(&name))
+    }
+
+    /// `listRecentSourceCycleFailures(cutoff, sourceId)`: `{ source_id, fail_count, last_failed_at }` rows by source id.
+    #[napi]
+    pub fn list_recent_source_cycle_failures<'env>(
+        &self,
+        env: &'env Env,
+        cutoff: String,
+        source_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_recent_source_cycle_failures(&cutoff, source_id.as_deref())
+        })
+    }
+
     /// `readLastCompletedJobAt()`: an ISO string or null.
     #[napi]
     pub fn read_last_completed_job_at<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
@@ -96,6 +119,12 @@ impl Brain {
         self.run(env, move |s| {
             s.list_recent_failed_job_errors(within_seconds)
         })
+    }
+
+    /// `listBudgetOwnerJobs()`: `{ owner_id, remaining_cents }` of the newest five live budget owners.
+    #[napi]
+    pub fn list_budget_owner_jobs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_budget_owner_jobs())
     }
 
     /// `readQueuedPageChars({ name, queue, maxChars })`: a number or null.

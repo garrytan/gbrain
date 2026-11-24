@@ -1,5 +1,5 @@
 /**
- * Timeline members (BrainEngine addTimelineEntry, addTimelineEntriesBatch, getTimeline). getTimeline takes the page
+ * Timeline members (BrainEngine addTimelineEntry, addTimelineEntriesBatch, getTimeline, readNewestTimelineEntryId). getTimeline takes the page
  * privacy policy of `excludePrivate` (storePagePolicy): a hidden page reads no rows, and an entry drops when the policy
  * hides its event page. A caller's reader identity and private-readable grant ride along (callerReaders). An
  * `eligibility` policy hides the rows of a soft-deleted or quarantined page (`projectionEligibleSql`), and its `floor`
@@ -36,3 +36,9 @@ export const getTimeline: StoreMember<[slug: string, opts?: TimelineOpts], Timel
   const rows: TimelineEntry[] = await storeCall({ member: 'getTimeline', slug }, () => brain.getTimeline(slug, scope));
   return rows.map((row) => toTimelineEntry(row));
 };
+
+export const readNewestTimelineEntryId: StoreMember<[sourceId: string, slug: string, date: string, summary: string], number | null> =
+  async (brain, sourceId, slug, date, summary) => {
+    const id: number | null = await storeCall({ member: 'readNewestTimelineEntryId', slug, sourceId }, () => brain.readNewestTimelineEntryId(sourceId, slug, date, summary));
+    return id === null || id === undefined ? null : Number(id);
+  };

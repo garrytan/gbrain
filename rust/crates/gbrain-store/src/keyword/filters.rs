@@ -294,7 +294,7 @@ impl<'a> PageFilter<'a> {
 
 /// `servedTextProjectionFilter`: the page's text projection is current, or the activation
 /// sentinel.
-pub(super) fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     match page.text_projection_revision.as_deref() {
         Some(r) => r == page.knowledge_revision || r == ACTIVATION_SERVED_REVISION,
         None => false,
@@ -369,9 +369,10 @@ pub(super) fn readable_chunk_vector(chunk: &ChunkRecord) -> Option<Arc<TsVector>
     chunk_vector(chunk).ok()
 }
 
-/// `[[:space:]]` in a Postgres regular expression.
+/// `[[:space:]]` in a Postgres regular expression, as PGLite reads it (non-ASCII spaces such as
+/// U+3000 included).
 fn is_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
+    crate::cli_reads::pg_text::is_pg_space(c)
 }
 
 /// The `SearchResult` row the keyword statements select, before `rowToSearchResult`.
@@ -413,4 +414,49 @@ pub(super) fn row_count(value: f64, what: &str) -> Result<usize> {
         return Err(StoreError::invalid(format!("{what} must not be negative")));
     }
     Ok(value.min(usize::MAX as f64) as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_message_id_trim_uses_pglite_space_class() {
+        // `regexp_replace(message_id, '^[[:space:]]+|[[:space:]]+$', '', 'g')` in the SQL
+        // (src/core/search/keyword-chunk-match.ts).
+        let mismatches = crate::fingerprint_fixture::space_mismatches(is_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_message_id_of_only_pglite_spaces_reads_blank_in_a_result_row() {
+        // The call site: `result_row` blanks a message_id that trims to nothing, and then drops the subject with it.
+        let row = |message_id: &str| {
+            let page: PageRecord = serde_json::from_value(serde_json::json!({
+                "id": 1, "source_id": "default", "slug": "notes/a", "type": "note", "page_kind": "markdown",
+                "title": "A", "compiled_truth": "text", "timeline": "",
+                "frontmatter": { "message_id": message_id, "subject": "a subject" },
+                "knowledge_revision": "r", "created_at_us": 0, "updated_at_us": 0
+            }))
+            .expect("a minimal page row");
+            let chunk: ChunkRecord = serde_json::from_value(serde_json::json!({
+                "id": 1, "page_id": 1, "chunk_index": 0, "chunk_text": "text", "chunk_source": "compiled_truth",
+                "modality": "text", "length": 1
+            }))
+            .expect("a minimal chunk row");
+            result_row(&page, &chunk, 1.0, false)
+        };
+        for blank in ["\u{3000}", "\u{2003} \u{3000}", "\u{85}", " \t ", ""] {
+            let r = row(blank);
+            assert!(r["message_id"].is_null(), "{blank:?} reads blank");
+            assert!(
+                r["source_subject"].is_null(),
+                "{blank:?} drops the subject with it"
+            );
+        }
+        // A real id is returned as stored, untrimmed, with its subject; U+00A0 is not a PGLite space.
+        assert_eq!(row("m-1\u{3000}")["message_id"], "m-1\u{3000}");
+        assert_eq!(row("m-1\u{3000}")["source_subject"], "a subject");
+        assert_eq!(row("\u{A0}")["message_id"], "\u{A0}");
+    }
 }

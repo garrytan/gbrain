@@ -369,4 +369,23 @@ describe('engine parity: extraction', () => {
       return { counts, noSources, view, paged, crossSource, deleted, emptyIds, stripped, afterStrip, frontmatter, again };
     },
   );
+
+  parityTest(
+    'listQuarantinedSlugs names the live pages of one source that carry a quarantine key, whatever its value',
+    { methods: ['putPage', 'softDeletePage', 'listQuarantinedSlugs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'work');
+      await put(engine, 'notes/b', page('B', 'b body', { quarantine: { reason: 'junk_pattern' } }));
+      await put(engine, 'notes/a', page('A', 'a body', { quarantine: null }));
+      await put(engine, 'notes/plain', page('Plain', 'plain body', { content_flag: { reason: 'oversized' } }));
+      await put(engine, 'notes/gone', page('Gone', 'gone body', { quarantine: true }));
+      await engine.softDeletePage('notes/gone');
+      await put(engine, 'notes/c', page('C', 'c body', { quarantine: true }), 'work');
+      // The SQL engines return no set order, so the slugs are sorted here.
+      const read = async (id: string) => (await engine.listQuarantinedSlugs(id)).sort();
+      const observed = { default: await read('default'), work: await read('work'), missing: await read('missing') };
+      expect(observed).toEqual({ default: ['notes/a', 'notes/b'], work: ['notes/c'], missing: [] });
+      return observed;
+    },
+  );
 });

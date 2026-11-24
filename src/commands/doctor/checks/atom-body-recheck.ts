@@ -51,7 +51,7 @@ export async function unchangedBodyAtoms(engine: BrainEngine): Promise<number> {
        JOIN pages p ON p.source_id = atom.source_id AND p.slug = atom.ss AND p.deleted_at IS NULL AND p.body_storage = 'inline'
        LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
       WHERE h.sh IS NULL AND length(atom.sh) = 16
-      GROUP BY p.id, atom.sh ORDER BY p.id, atom.sh LIMIT ${BODY_RECHECK_GROUPS}`, []);
+      GROUP BY p.id, atom.sh ORDER BY p.id, atom.sh COLLATE "C" LIMIT ${BODY_RECHECK_GROUPS}`, []);
   const json = <T>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) as T;
   const narrative = (body: { compiled_truth: string; timeline: string | null }) => [stripFenceSections(body.compiled_truth), stripFenceSections(body.timeline ?? '')];
   let unchanged = 0;

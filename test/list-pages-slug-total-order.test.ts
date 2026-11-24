@@ -33,7 +33,7 @@ afterAll(async () => {
 
 describe('slug sort is a total order across sources sharing a slug', () => {
   test('PAGE_SORT_SQL.slug carries source_id + id tiebreakers', () => {
-    expect(PAGE_SORT_SQL.slug).toBe('p.slug ASC, p.source_id ASC, p.id ASC');
+    expect(PAGE_SORT_SQL.slug).toBe('p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC');
   });
 
   test('limit=1 paging over two sources yields each row exactly once, in a stable order', async () => {

@@ -1,0 +1,149 @@
+/**
+ * Command-level listings sort their text keys by byte on every engine arm.
+ *
+ * Authoring gate (docs/TESTING.md#authoring-gate):
+ *  - Contract: these commands list, page and cut by byte order of their text keys on every engine arm (PGLite always;
+ *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), as PGLite sorts: the member-disable pages
+ *    check (pagesReadByNobodyNaming: source id, slug), the reconcile-links page walk (runReconcileLinks: slug), the
+ *    visibility proposal's unmatched pages (proposeVisibility: source, slug), the integrity scan's page cut
+ *    (scanIntegrity with a limit; its sequential walk reads source id, then slug, as the batch scan does), the admin clients list (created_at, then client id), and the git-gap census's counts
+ *    by link source, hold code and parked effect (censusGitGap: link_source, code, kind).
+ *  - Regression: an en_US Postgres sorted these text keys by its locale, which skips `-` and `/` (`ab` before `a-z`),
+ *    so a command named, walked, cut or counted its items in another order than on a PGLite brain: the integrity scan
+ *    read the wrong pages under its limit (and its sequential walk, slug first by localeCompare, stopped at other pages
+ *    than its source-first batch scan), and the census listed its counts in another key order.
+ *  - Why existing coverage misses it: the tests for these commands use keys that sort the same in every locale, and
+ *    CI's Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
+ *    Postgres to see it fail.
+ *  - Seam: source and member rows come from the createSource fixture and insertAccessMember; page frontmatter, link,
+ *    hold and effect rows from harness-only SQL. `files verify` runs with an empty GBRAIN_HOME and stubbed process.exit
+ *    and console.error. The admin clients list is read over HTTP from an express app on an
+ *    ephemeral port. Every command here reads raw SQL, so the Rust arm stops on its raw_sql refusal.
+ */
+import { describe, expect, spyOn } from 'bun:test';
+import express from 'express';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { pagesReadByNobodyNaming } from '../../src/commands/access-read-by-nobody.ts';
+import { runReconcileLinks } from '../../src/commands/reconcile-links.ts';
+import { proposeVisibility } from '../../src/commands/repair-propose.ts';
+import { scanIntegrity } from '../../src/commands/integrity.ts';
+import { mountAdminClients } from '../../src/commands/serve-http-clients.ts';
+import { censusGitGap } from '../../src/commands/sources-git-gap.ts';
+import { runFiles } from '../../src/commands/files.ts';
+import { createMember, createSource, parityArms } from './harness.ts';
+import { testBackends } from '../helpers/test-backends.ts';
+import { emptyHome, withEnv } from '../helpers/with-env.ts';
+import { byteOrder, BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS } from '../helpers/byte-order.ts';
+
+const { parityTest } = parityArms(testBackends());
+
+/** Source ids (lower case, digits and `-` only): en_US sorts them `a0, ab, a-z`; bytes put `a-z` first. */
+const MIXED_SOURCES = ['ab', 'a0', 'a-z'];
+const BYTE_SOURCES = byteOrder(MIXED_SOURCES);
+/** Every (source, slug) pair, sources first, each part by byte. */
+const BYTE_PAIRS = BYTE_SOURCES.flatMap(source => BYTE_SLUGS.map(slug => [source, slug]));
+
+type Backend = Parameters<typeof createSource>[1];
+
+async function sources(engine: BrainEngine, backend: Backend) {
+  for (const id of MIXED_SOURCES) await createSource(engine, backend, id);
+}
+
+/** A page in `sourceId` with `frontmatter`, written through putPage. */
+async function page(engine: BrainEngine, sourceId: string, slug: string, frontmatter: Record<string, unknown> = {}, body = `${slug} body`) {
+  await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body, timeline: '', frontmatter }, { sourceId });
+}
+
+describe('command listings sort text keys by byte', () => {
+  parityTest('runReconcileLinks walks a source\'s markdown pages by byte slug', { methods: ['executeRaw', 'getPage'], requires: 'raw_sql' }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    for (const slug of MIXED_SLUGS) await page(engine, 'work', slug);
+    const walked: string[] = [];
+    const watched = new Proxy(engine, { get(target, key) {
+      if (key === 'getPage') return (slug: string, opts?: Parameters<BrainEngine['getPage']>[1]) => { walked.push(slug); return target.getPage(slug, opts); };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await runReconcileLinks(watched, { sourceId: 'work', dryRun: true });
+    expect(walked).toEqual([...BYTE_SLUGS]);
+  });
+
+  parityTest('proposeVisibility lists its unmatched pages by source id, then slug', { methods: ['executeRaw', 'putPage'], requires: 'raw_sql' }, async (engine, backend) => {
+    await sources(engine, backend);
+    for (const id of ['alice-example', 'bob-example']) await createMember(engine, backend, { id, email: `${id}@example.com` });
+    for (const source of MIXED_SOURCES) for (const slug of MIXED_SLUGS) await page(engine, source, slug, { participants: ['stranger@example.org'] });
+    const out = mkdtempSync(join(tmpdir(), 'collate-propose-'));
+    try {
+      const proposal = await proposeVisibility(engine, { out });
+      expect(proposal.applicable).toBe(true);
+      expect(proposal.unmatched.map(u => [u.source, u.slug])).toEqual(BYTE_PAIRS);
+    } finally { rmSync(out, { recursive: true, force: true }); }
+  });
+
+  parityTest('scanIntegrity under a limit reads the first pages by byte slug', { methods: ['putPage'] }, async (engine, backend) => {
+    for (const slug of MIXED_SLUGS) await page(engine, 'default', slug, {}, 'He tweeted about the launch last week.');
+    const scan = await scanIntegrity(engine, { limit: 2 });
+    expect(scan.pagesScanned).toBe(2);
+    expect(scan.bareHits.map(h => h.slug)).toEqual(BYTE_SLUGS.slice(0, 2));
+  });
+
+  parityTest('scanIntegrity under a limit reads pages by source id, then slug, on the batch and sequential paths', { methods: ['putPage'] }, async (engine, backend) => {
+    await sources(engine, backend);
+    // Slug order runs opposite to source order, so a slug-first walk reads `aa` first and the source-first batch `zz`.
+    const slugOf: Record<string, string> = { 'a-z': 'zz', a0: 'mm', ab: 'aa' };
+    for (const source of MIXED_SOURCES) await page(engine, source, slugOf[source]!, {}, 'He tweeted about the launch last week.');
+    const read = async (batchLoad: boolean) => (await scanIntegrity(engine, { limit: 2, batchLoad })).bareHits.map(h => h.slug);
+    const expected = BYTE_SOURCES.slice(0, 2).map(source => slugOf[source]);
+    expect(await read(false)).toEqual(expected);
+    expect(await read(true)).toEqual(expected);
+  });
+
+  parityTest('the git-gap census counts links, holds and parked effects in byte key order', { methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql' }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await page(engine, 'work', 'notes/a');
+    await page(engine, 'work', 'notes/b');
+    const [a, b] = (await engine.executeRaw<{ id: string }>("SELECT id::text FROM pages WHERE source_id = 'work' ORDER BY slug")).map(r => r.id);
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id = 'work'");
+    for (const key of MIXED_SOURCES) {
+      await engine.executeRaw('INSERT INTO links (from_page_id, to_page_id, link_type, link_source) VALUES ($1, $2, $3, $4)', [a, b, `t-${key}`, key]);
+      await engine.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES ('sync-hold',$1,$2::text::jsonb)",
+        [`work:${incarnation}:notes/${key}.md`, JSON.stringify([{ source_id: 'work', incarnation, path: `notes/${key}.md`, code: key, page_id: null, meta: {} }])]);
+    }
+    await engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+      const [request] = await tx.executeRaw<{ id: string }>(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,
+          intent_bytes,terminal_reservation) VALUES ('local_cli','test',$1::uuid,'put_page','work',$2::uuid,'notes/a','x','{}'::jsonb,0,0) RETURNING id::text`, [randomUUID(), incarnation]);
+      for (const kind of MIXED_SOURCES) {
+        await tx.executeRaw("INSERT INTO persistence_effects(request_id,kind,data,state,source_id,source_incarnation) VALUES ($1::uuid,$2,$3::text::jsonb,'failed','work',$4::uuid)",
+          [request!.id, kind, JSON.stringify({ parked: MIXED_SOURCES.map(code => ({ slug: 'notes/a', error_code: code })) }), incarnation]);
+      }
+    });
+    const census = await censusGitGap(engine, 'work', { sample: 0 });
+    expect({
+      links: Object.keys(census.rows_without_git_home.links.by_link_source),
+      holds: Object.keys(census.holds),
+      parked: census.parked_effects.map(p => [p.kind, p.code]),
+    }).toEqual({
+      links: BYTE_SOURCES,
+      holds: BYTE_SOURCES,
+      parked: BYTE_SOURCES.flatMap(kind => BYTE_SOURCES.map(code => [kind, code])),
+    });
+  });
+
+  parityTest('files verify reports its rows by byte storage path', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+    for (const path of MIXED_SLUGS) {
+      await engine.executeRaw("INSERT INTO files (filename, storage_path, content_hash) VALUES ($1, $2, 'sha256:abc')", [path, `files/${path}`]);
+    }
+    const lines: string[] = [];
+    const errors = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { lines.push(a.join(' ')); });
+    const logs = spyOn(console, 'log').mockImplementation(() => {});
+    const exit = spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    try { await withEnv({ GBRAIN_HOME: emptyHome() }, () => runFiles(engine, ['verify'])); }
+    finally { errors.mockRestore(); logs.mockRestore(); exit.mockRestore(); }
+    expect(lines.filter(l => l.startsWith('  UNVERIFIABLE: ')).map(l => l.split(' ')[3])).toEqual(BYTE_SLUGS.map(slug => `files/${slug}`));
+  });
+});

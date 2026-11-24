@@ -1,10 +1,12 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
+import { settleCapabilityRefusal } from './capability-retry.ts';
 import { withoutCallerAccess } from '../search/private-visibility.ts';
 import { withEngineScope } from '../engine-scope.ts';
 import type { GBrainConfig } from '../config.ts';
 import { foregroundPriorityOverride, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
 import { expireDeferredWrites } from './refresh-barrier.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
+import { inStoredSlugScope } from './legacy-slug-put.ts';
 import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
 import { preparationConfigView } from './config-snapshot.ts';
@@ -12,6 +14,7 @@ import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, holdClaimForPubli
 import { claimOwnerProvablyDead, claimPhaseStamp, claimStateOf, claimTripleText, enterClaimPhase, startClaimPhase, type ClaimPhaseClock, type WaitingOn } from './claim-phase.ts';
 import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, preparationKind, startPreparation, type PreparationPolicy } from './preparation-budget.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
+import { acquireWorktree, getWorktreeBinding } from './ownership.ts';
 import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
@@ -43,7 +46,7 @@ import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
 import { boundPublication, publicationLeaseMs, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
-import { servesRawSql } from '../rust-engine/errors.ts';
+import { isCapabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -65,6 +68,8 @@ const DRAIN_NOTICE_EVERY_MS = 10_000;
 const CONNECTION_LOSS_RELEASE_MS = 30_000;
 /** #6650: how often a consumer looks for claims held by an owner it can prove dead. */
 export const DEAD_OWNER_SCAN_MS = 5_000;
+/** How long a named capability stop (topology-stop.ts) parks the owner's topology recovery scan before it asks again. */
+export const TOPOLOGY_STOP_BACKOFF_MS = 600_000;
 /** #5801: the phase a connection checkout belongs to, carried through its async chain. */
 const phaseScope = new AsyncLocalStorage<{ observation: PhaseObservation; startedAt: number }>();
 
@@ -229,6 +234,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private draining: { since: number; settled: number; ran: number; noticedAt: number } | undefined;
   private settleCursor: NoopSettleCursor | undefined;
   private topologyWorker: Promise<unknown> | undefined;
+  /** Until when a named capability stop parks the topology scan (scanTopologies). */
+  private topologyStoppedUntil = 0;
   private maintenanceWorker: Promise<unknown> | undefined;
   private nextMaintenance = 0;
   private publishedSinceMaintenance = 0;
@@ -417,11 +424,6 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const excluded = [...this.activeRoots, ...this.barredRoots.keys(), ...[...this.rootRetryAfter].filter(([, at]) => at > now).map(([root]) => root)];
     for (const [id, at] of this.topologyRetryAfter) if (at <= now) this.topologyRetryAfter.delete(id);
     const retryingTopologies = [...this.topologyRetryAfter.keys()];
-    // An engine without raw SQL (the Rust engine) holds no worktree, recovery or projection window for the probe below to
-    // read. A claimable write is work; otherwise a full tick runs once the idle backoff reaches its cap, so lapsed claims
-    // and retried effects still drain on that cadence.
-    if (!servesRawSql(this.engine)) return await this.phase('idle_probe',
-      signal => hasClaimableWrite(this.engine, this.hostId, excluded, signal)) || this.idleDelayMs >= this.idleMaxMs;
     // On the direct route the probe needs no reserved pool lane: the direct pool is small and keeps its connections.
     const direct = consumerConnectionRoute(this.engine).lane === 'direct';
     // #6803: inline projection rows are probed through the resident's bounded window (projection-window.ts), which this
@@ -638,10 +640,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
     }
     if (this.stopping) return;
-    if (scan && !this.topologyWorker) this.topologyWorker = import('./topology-recovery.ts')
-      .then(({ recoverSourceTopologies }) => recoverSourceTopologies(this.engine, { hostId: this.hostId, limit: 2,
-        onAttempt: (id, recovered) => { if (recovered) this.topologyRetryAfter.delete(id); else this.topologyRetryAfter.set(id, Date.now() + 30_000); } }))
-      .catch(error => this.report(error)).finally(() => { this.topologyWorker = undefined; });
+    if (scan) this.scanTopologies();
     if (!this.effectsWorker && !this.housekeepingOnly) this.effectsWorker = this.drainEffects().catch(error => this.report(error))
       .finally(() => { this.effectsWorker = undefined; });
     // Queue upkeep also follows publication volume, like autovacuum's scale
@@ -678,10 +677,19 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         const delay = Math.max(1000, (this.opts.pollMs ?? 250) * 2);
         this.rootRetryAfter.set(root, Date.now() + delay);
         try {
-          const recovered = await this.phase('recovery', () => recoverPublication(this.engine, row.id, this.hostId));
-          if (isTerminal(recovered)) this.settled(recovered);
-          if (!recovered.recovery) this.rootRetryAfter.delete(root);
-          else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+          // #10083: the full row (intent, before-image) is read only once this process holds the root's lock.
+          const recovered = await this.phase('recovery', async () => {
+            const binding = await getWorktreeBinding(this.engine, row.source_id, this.hostId);
+            if (binding?.owner_host_id !== this.hostId) return recoverPublication(this.engine, row.id, this.hostId);
+            const lock = await acquireWorktree(binding, 0, undefined, this.engine, { yieldLanes: true });
+            if (!lock) return isTerminal(row) ? getWriteRequestById(this.engine, row.id) : null;
+            try { return await recoverPublication(this.engine, row.id, this.hostId, true); } finally { await lock.release(); }
+          });
+          if (recovered && isTerminal(recovered)) this.settled(recovered);
+          if (recovered && !recovered.recovery) this.rootRetryAfter.delete(root);
+          else if (['unexpected_file_bytes', 'unexpected_staging_bytes'].includes(String((recovered ?? row).blocked_reason))) {
+            this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+          }
         } catch (error) {
           this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
           this.report(error);
@@ -855,6 +863,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     // #5984 Phase 4.5: after a foreground write that went ahead of queued sync rows commits, this consumer's next
     // claim on its root is plain FIFO, so a stream of writes cannot starve the sync side.
     if (isTerminal(row) && this.passedSync.delete(row.id) && row.state === 'committed') this.owesSyncTurn.add(row.worktree_id ?? `db:${row.source_incarnation}`);
+    if (isTerminal(row)) settleCapabilityRefusal(row.id);
     try { this.opts.onSettled?.(row); } catch (error) { this.report(error); }
     return isTerminal(row);
   }
@@ -948,6 +957,21 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       throw error;
     }
     finally { clearTimeout(timer); this.abort.signal.removeEventListener('abort', stop); this.phaseObservation = undefined; }
+  }
+  /**
+   * Starts the topology recovery scan unless one runs. A named capability stop (topology-stop.ts: the Rust engine while a
+   * change is recovering) is reported once and parks the scan for TOPOLOGY_STOP_BACKOFF_MS, so the owner neither spins
+   * on the refusal nor logs it every tick; the change stays recorded and doctor names the stop.
+   */
+  private scanTopologies(): void {
+    if (this.topologyWorker || Date.now() < this.topologyStoppedUntil) return;
+    this.topologyWorker = import('./topology-recovery.ts')
+      .then(({ recoverSourceTopologies }) => recoverSourceTopologies(this.engine, { hostId: this.hostId, limit: 2,
+        onAttempt: (id, recovered) => { if (recovered) this.topologyRetryAfter.delete(id); else this.topologyRetryAfter.set(id, Date.now() + 30_000); } }))
+      .catch(error => {
+        if (isCapabilityMissing(error)) this.topologyStoppedUntil = Date.now() + TOPOLOGY_STOP_BACKOFF_MS;
+        this.report(error);
+      }).finally(() => { this.topologyWorker = undefined; });
   }
   private report(error: unknown, row?: WriteRequest): void {
     if (this.stopping && error === this.abort.signal.reason) return;
@@ -1058,7 +1082,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       await floorPreparationAttempts(this.statements, row.id, this.policy.maxAttempts).catch(error => this.report(error));
     });
   }
-  private async execute(row: WriteRequest, root: RootHold): Promise<boolean> {
+  private execute(row: WriteRequest, root: RootHold): Promise<boolean> {
+    return inStoredSlugScope(row, () => this.executeRow(row, root));
+  }
+  private async executeRow(row: WriteRequest, root: RootHold): Promise<boolean> {
     let preparationActive = true;
     const observation = { request_id: row.request_id, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.preparationAttempts };
     this.preparing.set(row.id, observation);

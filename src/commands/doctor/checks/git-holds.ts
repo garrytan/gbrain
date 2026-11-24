@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../../../core/engine.ts';
+import type { ContentBlockedReceipt } from '../../../core/engine-sql/doctor-brain.ts';
 import type { Check } from '../../doctor.ts';
 import { GIT_HOLD_OP, gitHoldFix, holdRepairSteps, readGitHoldListing, readGitImageHoldCounts, readSyncHoldPolicy } from '../../../core/persistence/sync-holds.ts';
 import { coverageRoute, readHeldCoverage } from '../../../core/persistence/held-reads.ts';
@@ -9,6 +10,7 @@ import { agentFix } from '../check-fix.ts';
 import { isContentRefusal } from '../../../core/import-screen.ts';
 import { SETTLE_MISMATCH_STREAK } from '../../../core/persistence/sync-pass-row.ts';
 import { noncanonicalPrivateRequest } from '../../../core/persistence/visibility-request.ts';
+import { misspelledReaderKeys, READERS_FIX_EFFECT } from '../../../core/persistence/readers-request.ts';
 
 const SAMPLE_PATHS = 5;
 
@@ -33,6 +35,8 @@ const SAMPLE_PATHS = 5;
  * #7848: `details.visibility_noncanonical` counts the files held `visibility_noncanonical` and the live stored pages
  * whose frontmatter asks for private in a spelling page privacy does not read (written before sync and import held
  * such files, on a repo-less brain too); a stored page warns even with no file held. Nothing is repaired.
+ * `details.readers_noncanonical` counts the same for a misspelled readers key (`Readable_By`, `readable-by`): such a page is readable by
+ * every member while its author believes it is restricted, and the fix names what the rename does.
  */
 export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
@@ -62,16 +66,26 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
     const noncanonical = await readNoncanonicalPrivate(engine, sourceIds);
     const storedNote = noncanonical.stored ? ` ${noncanonical.stored} stored page(s) ask for visibility: private in a spelling page privacy does not read, so they are world-readable `
       + `(first: ${noncanonical.first.map(page => `${page.source_id}:${page.slug}`).join(', ')}); rewrite each with visibility: private on its own frontmatter line (put_page, or edit its file and sync).` : '';
+    const readers = await readNoncanonicalReaders(engine, sourceIds);
+    const readersNote = readers.stored ? ` ${readers.stored} stored page(s) name their readers with a key page access does not read, so every member can read them `
+      + `(first: ${readers.first.map(page => `${page.source_id}:${page.slug}`).join(', ')}); rewrite each with the key readable_by (put_page, or edit its file and sync). ${READERS_FIX_EFFECT}` : '';
     const details = { held, source_ids: sources.map(source => source.source_id), sources: sources.map(({ argv: _argv, ...source }) => source), escalate_count: policy.escalateCount,
       ...(fences ? { fences, auto_repair: auto } : {}), ...(passes.length ? { passes } : {}),
-      ...(noncanonical.held || noncanonical.stored ? { visibility_noncanonical: { held: noncanonical.held, stored: noncanonical.stored } } : {}), docs: 'docs/guides/repair.md#held-files' };
+      ...(noncanonical.held || noncanonical.stored ? { visibility_noncanonical: { held: noncanonical.held, stored: noncanonical.stored } } : {}),
+      ...(readers.held || readers.stored ? { readers_noncanonical: { held: readers.held, stored: readers.stored } } : {}), docs: 'docs/guides/repair.md#held-files' };
     if (!held && passes.length) return { name: 'git_held_files', status: 'warn', details,
-      message: `No Git source files are held, but managed sync does not converge.${passNote}${storedNote}`,
+      message: `No Git source files are held, but managed sync does not converge.${passNote}${storedNote}${readersNote}`,
       fix: agentFix(['gbrain', 'sync', 'status', '--source', passes[0]!.source_id, '--json'],
         'Read-only: the convergence of the source, the reason its passes stop and the next step (a hold to reconcile, a blocked step, or the resume command).', 'git_held_files', { docs: 'docs/guides/repair.md#held-files' }) };
+    if (!held && !noncanonical.stored && readers.stored) {
+      const first = readers.first[0]!;
+      return { name: 'git_held_files', status: 'warn', details, message: `No Git source files are held.${readersNote}`,
+        fix: agentFix(['gbrain', 'get', '--source', first.source_id, '--', first.slug], `Read-only: shows page ${first.slug} with its revision; rewrite its frontmatter with the key readable_by (lowercase, with an underscore) and its readers listed. ${READERS_FIX_EFFECT}`,
+          'git_held_files', { docs: 'docs/guides/write-refusals.md#readers_noncanonical' }) };
+    }
     if (!held && noncanonical.stored) {
       const first = noncanonical.first[0]!;
-      return { name: 'git_held_files', status: 'warn', details, message: `No Git source files are held.${storedNote}`,
+      return { name: 'git_held_files', status: 'warn', details, message: `No Git source files are held.${storedNote}${readersNote}`,
         fix: agentFix(['gbrain', 'get', '--source', first.source_id, '--', first.slug], `Read-only: shows page ${first.slug} with its revision; rewrite its frontmatter with visibility: private on its own line, lowercase.`,
           'git_held_files', { docs: 'docs/guides/write-refusals.md#visibility_noncanonical' }) };
     }
@@ -92,7 +106,7 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
         + 'A page whose newer file is held is read-only for put_page until the file is repaired, so do not retry a refused write. '
         + `Inspect with ${sources.map(source => source.status).join('; ')}; `
         + (sources.some(source => source.fences || source.stalled) ? `then ${sources.map(source => `${source.source_id}: ${source.next}`).join('; ')}.` : `preview the fix with ${sources.map(source => source.repair).join('; ')}.`)
-        + passNote + storedNote,
+        + passNote + storedNote + readersNote,
       fix: single
         ? agentFix(single.argv, fenceOnly ? `Previews the fence repair of each held file of ${single.source_id} (read-only, no model call): ${single.next}.`
           : stalledOnly ? `Shows what the write owner of ${single.source_id} was stuck on (read-only); the held files are fine. ${single.next}.`
@@ -115,16 +129,19 @@ export async function gitHeldFilesCheck(engine: BrainEngine, sourceIds?: string[
 /** #7848: `visibility_noncanonical` holds, and live stored pages `noncanonicalPrivateRequest` reads as asking for private (first five named). */
 async function readNoncanonicalPrivate(engine: BrainEngine, sourceIds?: string[]): Promise<{ held: number; stored: number; first: Array<{ source_id: string; slug: string }> }> {
   const ids = sourceIds ?? null;
-  const [heldRow] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM op_checkpoints x
-      JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-    WHERE x.op=$1 AND x.completed_keys->0->>'code'='visibility_noncanonical' AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [GIT_HOLD_OP, ids]);
-  const candidates = await engine.executeRaw<{ source_id: string; slug: string; frontmatter: Record<string, unknown> | string | null }>(`SELECT p.source_id, p.slug, p.frontmatter
-    FROM pages p JOIN sources s ON s.id=p.source_id
-    WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
-      AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE lower(k)='visibility') AND p.frontmatter->>'visibility' IS DISTINCT FROM 'private'
-    ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C"`, [ids]);
+  const held = await engine.countVisibilityNoncanonicalHolds(GIT_HOLD_OP, ids);
+  const candidates = await engine.listVisibilityCandidatePages(ids);
   const stored = candidates.filter(row => noncanonicalPrivateRequest('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter));
-  return { held: Number(heldRow?.n ?? 0), stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
+  return { held, stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
+}
+
+/** `readers_noncanonical` holds, and live stored pages whose frontmatter has a top-level readers key in a spelling page access does not read (first five named). Read-only. */
+async function readNoncanonicalReaders(engine: BrainEngine, sourceIds?: string[]): Promise<{ held: number; stored: number; first: Array<{ source_id: string; slug: string }> }> {
+  const ids = sourceIds ?? null;
+  const held = await engine.countReadersNoncanonicalHolds(GIT_HOLD_OP, ids);
+  const candidates = await engine.listReaderCandidatePages(ids);
+  const stored = candidates.filter(row => misspelledReaderKeys('', typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter).length > 0);
+  return { held, stored: stored.length, first: stored.slice(0, SAMPLE_PATHS).map(({ source_id, slug }) => ({ source_id, slug })) };
 }
 
 /** Whether the maintenance run repairs fence holds by itself, as one sentence ('' when nothing says). */
@@ -140,20 +157,13 @@ function fenceAutoSentence(auto: FenceAutoRepair | undefined): string {
  * `fence` marks a source whose refusal is a facts or takes fence (#6188); it is held and repaired by `gbrain repair fences`, not by frontmatter repair.
  */
 export async function contentBlockedSources(engine: BrainEngine): Promise<Array<{ source_id: string; fence: boolean }>> {
-  type Receipt = { source_id: string; error_code: string | null; error_message: string | null; error_detail: unknown };
-  const rows: Receipt[] = await engine.executeRaw<Receipt>(`SELECT c.completed_keys->0->>'sourceId' AS source_id,
-      r.error_code, r.error_message, r.error_detail FROM op_checkpoints c JOIN persistence_requests r ON r.request_id::text = c.completed_keys->0->'pending'->>'requestId'
-      AND r.source_id = c.completed_keys->0->>'sourceId'
-    WHERE c.op = 'managed-sync' AND COALESCE(c.completed_keys->0->>'done','false') <> 'true' AND r.state IN ('failed','conflict','cancelled')
-    ORDER BY 1`).catch(() => []);
+  const rows: ContentBlockedReceipt[] = await engine.listContentBlockedReceipts().catch(() => []);
   // #6712 PR 4b (design v3.2 §3.7): a non-company source has no cursor; it is blocked when its newest pass ended blocked on a
   // receipt that pass admitted (the receipt's intent carries the pass id).
   const { readPassReadings } = await import('../../../core/persistence/sync-pass-readers.ts');
   for (const { source_id, row, health } of await readPassReadings(engine, { head: false }).catch(() => [])) {
     if (health.reason !== 'blocked') continue;
-    rows.push(...await engine.executeRaw<Receipt>(`SELECT source_id,
-        error_code, error_message, error_detail FROM persistence_requests WHERE source_id=$1 AND intent->>'passId'=$2 AND state IN ('failed','conflict','cancelled')`,
-      [source_id, row.value.telemetry.pass_id]).catch(() => []));
+    rows.push(...await engine.listPassAdmittedReceipts(source_id, row.value.telemetry.pass_id).catch(() => []));
   }
   const out = new Map<string, boolean>();
   for (const row of rows) {

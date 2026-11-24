@@ -63,7 +63,7 @@ pub(crate) fn pg_lower_char(c: char) -> char {
 }
 
 /// `[[:space:]]` in a Postgres regular expression.
-fn pg_space(c: char) -> bool {
+pub(crate) fn pg_space(c: char) -> bool {
     matches!(c as u32, 9..=13 | 32 | 133 | 8192..=8198 | 8200..=8202 | 8232 | 8233 | 8287 | 12288)
 }
 

@@ -5,6 +5,7 @@
  * run the same SQL through `engine.executeRaw` with positional binds (no JSONB).
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FeedbackStatusRow } from '../engine-sql/doctor-acc.ts';
 import type { EvalCandidateInput } from '../types.ts';
 
 export type FeedbackOp = 'query' | 'search' | 'think' | 'synthesize' | 'recall';
@@ -112,7 +113,7 @@ export async function getRetrievalEvent(engine: BrainEngine, id: string): Promis
     [id],
   );
   const links = await engine.executeRaw<EventLink>(
-    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id, edge_key, to_slug`,
+    `SELECT source_id, edge_key, to_slug FROM retrieval_event_links WHERE event_id = $1 ORDER BY source_id COLLATE "C", edge_key COLLATE "C", to_slug COLLATE "C"`,
     [id],
   );
   return {
@@ -305,29 +306,14 @@ export async function pruneRetrievalFeedback(engine: BrainEngine, retentionDays:
  * end of a `from|type|to` edge key) and the captured eval candidates whose results came from that source. Runs inside
  * the purge's transaction; returns rows touched per store, keyed as the purge receipt names them.
  */
-/** A captured slug is the purged page's unless another source the candidate covers still has a page by that name. */
-const purgedCandidateSlug = (slug: string) =>
-  `${slug} = ANY($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages po WHERE po.slug = ${slug} AND po.source_id = ANY(eval_candidates.source_ids) AND po.source_id <> $1)`;
-
 export async function scrubPurgedSlugs(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'deletePurgedFeedbackRows'>,
   sourceId: string,
   slugs: readonly string[],
 ): Promise<Record<string, number>> {
   if (!slugs.length) return {};
-  const edgeNames = (key: string) => `EXISTS (SELECT 1 FROM unnest($2::text[]) AS s(slug) WHERE starts_with(${key}, s.slug || '|') OR right(${key}, length(s.slug) + 1) = '|' || s.slug)`;
-  const count = async (sql: string) => (await engine.executeRaw(sql, [sourceId, [...slugs]])).length;
-  return {
-    retrieval_event_pages: await count('DELETE FROM retrieval_event_pages WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
-    retrieval_event_links: await count(`DELETE FROM retrieval_event_links WHERE source_id = $1 AND (to_slug = ANY($2::text[]) OR ${edgeNames('edge_key')}) RETURNING 1`),
-    retrieval_feedback: await count(`DELETE FROM retrieval_feedback WHERE source_id = $1
-      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
-    retrieval_weights: await count(`DELETE FROM retrieval_weights WHERE source_id = $1
-      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
-    'eval_candidates.retrieved_slugs': await count(`UPDATE eval_candidates
-      SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE NOT (${purgedCandidateSlug('u.s')}) ORDER BY n)
-      WHERE $1 = ANY(source_ids) AND EXISTS (SELECT 1 FROM unnest(retrieved_slugs) AS r(s) WHERE ${purgedCandidateSlug('r.s')}) RETURNING 1`),
-  };
+  // A captured slug is the purged page's unless another source the candidate covers still has a page by that name (engine-sql/purge-stores.ts).
+  return { ...await engine.deletePurgedFeedbackRows(sourceId, slugs) };
 }
 
 /**
@@ -376,55 +362,8 @@ export async function resetRetrievalWeights(
   return Number(rows[0]?.n ?? 0);
 }
 
-export interface FeedbackStatusRow {
-  events: number;
-  ratings_explicit: number;
-  ratings_cited: number;
-  weights_total: number;
-  weights_off_neutral: number;
-  last_rating_at: Date | null;
-  top_client_share_7d: number | null;
-  lowest: Array<{ source_id: string; slug: string; weight: number; low_ratings: number }>;
-  highest: Array<{ source_id: string; slug: string; weight: number }>;
-}
+export type { FeedbackStatusRow };
 
-export async function feedbackStatus(engine: BrainEngine): Promise<FeedbackStatusRow> {
-  const [counts] = await engine.executeRaw<Record<string, number | string | Date | null>>(
-    `SELECT
-       (SELECT count(*)::int FROM retrieval_events) AS events,
-       (SELECT count(*)::int FROM retrieval_feedback WHERE signal = 'explicit') AS ratings_explicit,
-       (SELECT count(*)::int FROM retrieval_feedback WHERE signal = 'cited') AS ratings_cited,
-       (SELECT count(*)::int FROM retrieval_weights) AS weights_total,
-       (SELECT count(*)::int FROM retrieval_weights WHERE abs(weight - ${NEUTRAL_WEIGHT}) > 0.01) AS weights_off_neutral,
-       (SELECT max(applied_at) FROM retrieval_feedback) AS last_rating_at,
-       (SELECT max(n)::float / NULLIF(sum(n), 0) FROM (
-          SELECT count(*) AS n FROM retrieval_feedback
-           WHERE signal = 'explicit' AND applied_at > now() - interval '7 days'
-           GROUP BY client_id) c) AS top_client_share_7d`,
-  );
-  const lowest = await engine.executeRaw<{ source_id: string; slug: string; weight: number | string; low_ratings: number | string }>(
-    `SELECT w.source_id, w.element_key AS slug, w.weight,
-            (SELECT count(*) FROM retrieval_feedback f
-              WHERE f.element_kind = 'page' AND f.source_id = w.source_id
-                AND f.element_key = w.element_key AND f.rating <= 2)::int AS low_ratings
-       FROM retrieval_weights w
-      WHERE w.element_kind = 'page' AND w.weight < ${NEUTRAL_WEIGHT}
-      ORDER BY w.weight ASC, w.source_id, w.element_key LIMIT 10`,
-  );
-  const highest = await engine.executeRaw<{ source_id: string; slug: string; weight: number | string }>(
-    `SELECT source_id, element_key AS slug, weight FROM retrieval_weights
-      WHERE element_kind = 'page' AND weight > ${NEUTRAL_WEIGHT}
-      ORDER BY weight DESC, source_id, element_key LIMIT 10`,
-  );
-  return {
-    events: Number(counts?.events ?? 0),
-    ratings_explicit: Number(counts?.ratings_explicit ?? 0),
-    ratings_cited: Number(counts?.ratings_cited ?? 0),
-    weights_total: Number(counts?.weights_total ?? 0),
-    weights_off_neutral: Number(counts?.weights_off_neutral ?? 0),
-    last_rating_at: counts?.last_rating_at ? new Date(counts.last_rating_at as string) : null,
-    top_client_share_7d: counts?.top_client_share_7d == null ? null : Number(counts.top_client_share_7d),
-    lowest: lowest.map(r => ({ ...r, weight: Number(r.weight), low_ratings: Number(r.low_ratings) })),
-    highest: highest.map(r => ({ ...r, weight: Number(r.weight) })),
-  };
+export function feedbackStatus(engine: BrainEngine): Promise<FeedbackStatusRow> {
+  return engine.readFeedbackStatus();
 }
