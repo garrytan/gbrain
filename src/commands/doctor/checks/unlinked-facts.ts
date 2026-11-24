@@ -195,7 +195,7 @@ export function unlinkedFactsVerdict(stats: UnlinkedFactsStats | null, opts: { t
   const conversationHint = !c ? '' : c.fix === 'manual'
     ? ` ${c.pages} conversation page(s) in source ${c.source_id} (${c.slugs.join(', ')}) were re-extracted on their current content and free relink still could not resolve their facts with no entity; link each by hand (forget it and remember it again with --entity). Re-extraction is offered again when a page's content changes.`
     : c.fix === 'relink'
-      ? ` Conversation facts are derived from their page, so plain relink never examines them; link them for free (preview first): ${fix!.preview_argv!.join(' ')}. Facts it cannot resolve fall back to a paid re-extraction.`
+      ? ` Conversation facts are derived from their page, so plain relink never examines them; link them for free: ${fix!.argv!.join(' ')}. One pass names at most ${CONVERSATION_FIX_SLUGS} pages${c.pages > c.slugs.length ? ` (only the ${c.slugs.length} named pages are in this pass; ${c.pages - c.slugs.length} more are still waiting)` : ''}. After each real pass, rerun gbrain doctor --only unlinked_facts and use its new command only if it still recommends free conversation relink. A real pass records unresolved facts even when linked is 0, which moves this warning (--dry-run records nothing); facts it cannot resolve fall back to a paid re-extraction.`
       : ` Free conversation relink could not resolve these conversation facts; re-extract instead (paid, preview first): ${fix!.preview_argv!.join(' ')}.`;
   return {
     status: warn ? 'warn' : 'ok',
@@ -213,8 +213,9 @@ function relinkFix(c: NonNullable<UnlinkedFactsStats['conversation']>, thinClien
   const argv = ['gbrain', 'facts', 'relink', '--conversation', '--source', c.source_id, '--slugs', c.slugs.join(',')];
   return {
     argv, preview_argv: [...argv, '--dry-run'], consent: [], actor: thinClient ? 'host_admin' : 'agent', requires_exclusive: false, verify: doctorVerify('unlinked_facts'),
-    why: `${c.pages} conversation page(s) in source ${c.source_id} hold extracted facts with no entity that free relink has not tried${c.pages > c.slugs.length ? ` (the ${c.slugs.length} with the most are named)` : ''}. `
-      + 'Relink links each one that names exactly one entity page in full, with no model call; the dry run lists the links and writes nothing.',
+    why: `${c.pages} conversation page(s) in source ${c.source_id} hold extracted facts with no entity that free relink has not tried${c.pages > c.slugs.length ? ` (only the ${c.slugs.length} named pages are in this pass; ${c.pages - c.slugs.length} more are still waiting)` : ''}. `
+      + `One pass names at most ${CONVERSATION_FIX_SLUGS} pages. After each real pass, rerun gbrain doctor --only unlinked_facts and use its new command only if it still recommends free conversation relink. `
+      + 'A real pass links each fact that names one entity page in full (no model call) and records unresolved facts even when linked is 0, which moves this warning; --dry-run lists links and records nothing.',
   };
 }
 

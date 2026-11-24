@@ -1,0 +1,4 @@
+**Doctor `unlinked_facts` now names the real conversation relink command instead of `--dry-run` and explains how repeating passes clears the warning.**
+
+### Fixed
+- `gbrain doctor --only unlinked_facts` previously printed the `--dry-run` preview command in its conversation-relink guidance; because a dry run records nothing, following that message left the 7-day unlinked share unchanged. The warning message and `fix.why` now name the real `gbrain facts relink --conversation --source <id> --slugs …` command (keeping `--dry-run` on `fix.preview_argv`), note the 50-page per-pass limit and when more pages are still waiting, direct users to rerun doctor after each real pass and follow its new command only while it recommends free conversation relink, and clarify that a real pass records unresolved facts even when `linked` is 0 while `--dry-run` records nothing (#10039).

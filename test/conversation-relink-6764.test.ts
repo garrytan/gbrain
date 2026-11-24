@@ -176,7 +176,15 @@ describe('#6764 doctor: free relink first, paid re-extraction only for rows it t
     expect(fix.argv).toEqual(['gbrain', 'facts', 'relink', '--conversation', '--source', 'default', '--slugs', `${MEETING},${OTHER}`]);
     expect(fix.preview_argv).toEqual([...fix.argv!, '--dry-run']);
     expect(renderAction(fix as never, cliRenderContext()).next).toBe('run');
-    expect(before.message).toContain('link them for free (preview first): gbrain facts relink --conversation');
+    expect(before.message).toContain(`link them for free: ${fix.argv!.join(' ')}.`);
+    expect(before.message).not.toContain(fix.preview_argv!.join(' '));
+    expect(before.message).toContain('After each real pass, rerun gbrain doctor --only unlinked_facts and use its new command only if it still recommends free conversation relink');
+    expect(before.message).toContain('records unresolved facts even when linked is 0');
+    expect(before.message).toContain('--dry-run records nothing');
+    expect(before.message).toContain('preview links: gbrain facts relink --dry-run');
+    expect(before.message).not.toContain('still waiting');
+    expect(fix.why).toContain('After each real pass, rerun gbrain doctor --only unlinked_facts and use its new command only if it still recommends free conversation relink');
+    expect(fix.why).toContain('records unresolved facts even when linked is 0');
     expect((await cli(engine, fix.preview_argv!.slice(2))).code).toBe(0);
     expect((await unlinkedFactsStats(engine, ['default']))!.window.conversation).toBe(3);
     expect((await cli(engine, fix.argv!.slice(2))).code).toBe(0);
@@ -185,6 +193,31 @@ describe('#6764 doctor: free relink first, paid re-extraction only for rows it t
     expect(after.fix).toMatchObject({ consent: ['paid', 'egress'], ask_user: true });
     expect(after.fix!.argv).toEqual(['gbrain', 'extract-conversation-facts', '--source-id', 'default', '--slugs', MEETING, '--force', '--max-cost-usd', '<N>']);
     expect(after.message).not.toContain('gbrain facts relink --conversation');
+    expect(after.message).toContain(`re-extract instead (paid, preview first): ${after.fix!.preview_argv!.join(' ')}.`);
+  });
+
+  test('when more conversation pages are waiting than one pass names, the message notes only the named pages are in this pass', () => {
+    const slugs = Array.from({ length: 50 }, (_, i) => `meetings/m${String(i).padStart(2, '0')}`);
+    const verdict = unlinkedFactsVerdict({
+      sources: 1,
+      window: { active: 60, unlinked: 55, fence_owned: 0, conversation: 55, capped: false },
+      conversation: { source_id: 'default', fix: 'relink', pages: 55, slugs },
+      new_7d: { facts: 60, unlinked: 55, no_subject: 0, conversation_unresolved: 0 },
+      no_subject: 0,
+      origins: [{ origin: 'conversation', unlinked: 55 }],
+      inferred_7d: { page: 0, mention: 0 },
+      relinked_7d: {},
+    });
+    const fix = verdict.fix!;
+    expect(fix.argv).toEqual(['gbrain', 'facts', 'relink', '--conversation', '--source', 'default', '--slugs', slugs.join(',')]);
+    expect(fix.preview_argv).toEqual([...fix.argv!, '--dry-run']);
+    expect(verdict.message).toContain(`link them for free: ${fix.argv!.join(' ')}.`);
+    expect(verdict.message).not.toContain(fix.preview_argv!.join(' '));
+    expect(verdict.message).toContain('only the 50 named pages are in this pass; 5 more are still waiting');
+    expect(verdict.message).toContain('After each real pass, rerun gbrain doctor --only unlinked_facts and use its new command only if it still recommends free conversation relink');
+    expect(verdict.message).toContain('records unresolved facts even when linked is 0');
+    expect(verdict.message).toContain('preview links: gbrain facts relink --dry-run');
+    expect(fix.why).toContain('only the 50 named pages are in this pass; 5 more are still waiting');
   });
 
   test('memoized unresolved rows are left out of the 25% new-fact rule and named in the paid fallback', async () => {
