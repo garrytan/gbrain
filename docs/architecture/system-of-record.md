@@ -295,7 +295,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/persistence/sync-image.ts` (2): managed sync image request preparer; a Git rename retires the old page inside the same publication.
 - `src/core/persistence/sync-prepare.ts` (4): managed sync request preparer.
 - `src/core/persistence/sync-streamed.ts` (1): the streamed sync of a file over the single-string ceiling moves a renamed page (`updateSlug`) in its request's apply, inside the coordinated publication.
-- `src/core/persistence/takes-prepare.ts` (3): takes request preparer.
+- `src/core/persistence/takes-prepare.ts` (2): takes request preparer.
 - `src/core/repair/atoms-restore.ts` (2): the unmanaged `gbrain repair atoms-restore` apply archives the retired atom's version, restores it and drops its `retired_by`/`retired_at` stamp in one `maintenanceTransaction`; managed brains publish a `managed_maintenance_restore_reextract_atom` request instead.
 - `src/core/repair/consolidate-ties.ts` (1): `gbrain repair consolidate-ties` reopens facts inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per fact on unmanaged brains.
 - `src/core/repair/duplicate-facts.ts` (2): `gbrain repair duplicate-facts` supersedes duplicate fact copies onto the kept row (the fenced copy, else the oldest) inside `coordinatedDatabaseWrite` on managed brains (the `relink_facts` operation) and in one `maintenanceTransaction` per group on unmanaged brains; a fenced copy is struck through a revision-bound `put_page` first.
