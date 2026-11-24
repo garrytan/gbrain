@@ -10,6 +10,6 @@ important: data-loss
 - With `sync.apply_held_deletions` on, sync deleted a held page without checking whether its file moved. A page whose file moved now stays held, with `meta.held_deletion.refused` set to `file_moved`; when Git cannot read whether it moved, the next sync checks again. If a commit lands between the move check and the deletion, the deletion waits for a later sync to check it at the new commit, and the rest of that sync still goes through.
 
 ### Changed
-- The move check reads the history of every ghost's last committed content in one pass per run instead of once per ghost. On a synthetic repository with 3,000 commits and 100 moved pages, the `gbrain repair ghost-pages` preview went from 31 seconds to 15.
+- The move check reads the history of every ghost's last committed content in one pass per run instead of once per ghost. On a synthetic repository with 3,000 commits and 100 moved pages, the `gbrain repair ghost-pages` preview went from 31 seconds to 16.
 
 <!-- behavior-change: ghost_pages_move_gaps_gst3648 -->
