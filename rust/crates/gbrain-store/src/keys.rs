@@ -124,6 +124,10 @@ pub const ACCESS_RULES: u8 = b'z';
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
 pub const REASON_TOMBSTONE: u8 = b'1';
+/// Family `keyed_index` (`keyed_index.rs`, store format 9): the keyed lookups, entries derived from
+/// page, chunk and link records. The byte after the tag names the lookup (`keyed_index::CHUNK_ID`
+/// and the rest; `rust/docs/store/keyed-index.md`). Every letter is taken, so it uses a digit.
+pub const KEYED_INDEX: u8 = b'3';
 // Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
 // at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
 // record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.

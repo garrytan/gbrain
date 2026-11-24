@@ -565,7 +565,13 @@ impl Store {
         let read = self.read()?;
         let mut pages = Pages::new(&*read);
         let mut rows: Vec<PageRecord> = Vec::new();
-        for page in all_pages(&*read)? {
+        // Only pages whose lower-cased title is a substring of the query can match (`keyed_index.rs`).
+        let candidates =
+            match crate::keyed_index::pages_titled_within(&*read, &input.query_lower, 3)? {
+                Some(pages) => pages,
+                None => all_pages(&*read)?,
+            };
+        for page in candidates {
             if page.title.chars().count() < 3
                 || !input
                     .query_lower
