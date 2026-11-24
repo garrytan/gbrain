@@ -7,6 +7,7 @@
 - The `enrich_thin` cycle phase uses owner-contact as its default order when gbrain finds your own page with no conflict, and keeps inbound-links otherwise. A `cycle.enrich_thin.order` you set always wins. The phase stays off by default.
 - `cycle.enrich_thin.max_daily_cost_usd` and `cycle.enrich_thin.max_daily_pages` cap the phase across every run in your day (`brain.timezone`, UTC when unset), on top of the per-run caps. Unset, there is no daily cap. A run charges each source its full cap before it starts and trues it up after, so a run that dies mid-source never under-counts.
 - Without a chat model the phase skips before any spend and still reports the order it would use.
+- On a brain with no chat key, `gbrain learned` now says how many people you are in touch with have thin pages ("2 close contacts have thin pages; a chat key would fill them"), with the commands that turn filling on and what it would cost. Only you see it, locally or with your owner token. Nothing is filled and nothing is spent.
 - Each nightly cycle now puts up to five possible duplicate people into `gbrain learned`, the person groups from `gbrain dedupe --preview` ranked by how recently you met them (preview order when gbrain can't find your own page). Each one shows the exact `gbrain dedupe confirm` and `gbrain dedupe reject` commands for its group, and drops out once you answer. Nothing is linked or merged on its own, keyless brains get the list too, and a remote token sees only groups whose pages it can read.
 
 ### For contributors

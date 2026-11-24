@@ -45,10 +45,12 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { resolveOwnerContactAnchor, type OwnerContactAnchor } from '../enrich/owner-contact.ts';
+import { DEFAULT_THIN_THRESHOLD } from '../enrich/thin.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { listSources } from '../sources-ops.ts';
 import {
   runEnrichCore,
+  COST_ESTIMATE_PER_PAGE_USD,
   DEFAULT_TYPES,
   ENRICH_ORDERS,
   type EnrichOrder,
@@ -227,6 +229,29 @@ async function resolveOrder(engine: BrainEngine, configured: EnrichOrder | null)
   if (configured) return { order: configured, reason: 'configured', owner: resolved.owner };
   if (resolved.owner) return { order: 'owner-contact', reason: 'owner_resolved', owner: resolved.owner };
   return { order: 'inbound-links', reason: resolved.reason };
+}
+
+/** Thin pages the keyless count reads at most. */
+const KEYLESS_CONTACTS_MAX = 5000;
+
+/**
+ * Keyless brains: how many thin pages of the phase's types the owner-contact ranking finds with recent contact
+ * (contact_score > 0), and what filling them would cost (the daily cap when one is set, else the per-page estimate).
+ * Null when a chat model is configured (the phase's own skip check) or the owner does not resolve. Ranks in SQL only:
+ * no model call, no spend.
+ */
+export async function keylessThinContacts(engine: BrainEngine): Promise<{ count: number; cost_usd: number; cost_basis: 'daily_cap' | 'per_page_estimate' } | null> {
+  if (isAvailable('chat')) return null;
+  const resolved = await resolveOwnerContactAnchor(engine);
+  if (!resolved.owner) return null;
+  const cfg = await loadCfg(engine);
+  const ranked = await engine.listEnrichCandidates({
+    order: 'owner-contact', types: cfg.types, thinThreshold: DEFAULT_THIN_THRESHOLD, limit: KEYLESS_CONTACTS_MAX,
+    ownerSlug: resolved.owner.slug, ownerSourceId: resolved.owner.source_id,
+  });
+  const count = ranked.filter(c => (c.contact_score ?? 0) > 0).length;
+  if (Number.isFinite(cfg.maxDailyCostUsd)) return { count, cost_usd: cfg.maxDailyCostUsd, cost_basis: 'daily_cap' };
+  return { count, cost_usd: Math.round(count * COST_ESTIMATE_PER_PAGE_USD * 100) / 100, cost_basis: 'per_page_estimate' };
 }
 
 export async function runPhaseEnrichThin(

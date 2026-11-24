@@ -12,7 +12,7 @@
  * 3. Real seams: PGLite (and Postgres when DATABASE_URL is set) with no git repository, runCycle, gbrain dedupe's CLI
  *    module, tokens minted by the token service and verified as serve --http does, dispatched through MCP dispatch.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
@@ -31,6 +31,7 @@ import { formatLearned, type LearnedItem, type LearnedView } from '../src/core/l
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
 const SOURCES = ['default', 'source-b'];
 const OWNER = 'alice-example';
@@ -102,9 +103,10 @@ for (const backend of testBackends()) {
       await setOwner(engine, OWNER);
     }, 240_000);
     afterAll(async () => { await close?.(); }, 60_000);
+    afterEach(() => { resetGateway(); });
 
     beforeEach(async () => {
-      for (const sql of ['DELETE FROM learning_items', 'DELETE FROM entity_identities', 'DELETE FROM entity_identity_reviews', 'DELETE FROM links', 'DELETE FROM pages',
+      for (const sql of ['DELETE FROM learning_items', "DELETE FROM config WHERE key LIKE 'cycle.enrich_thin.%' OR key IN ('enrich_thin.daily_spend', 'learning.keyless_thin_contacts')", 'DELETE FROM entity_identities', 'DELETE FROM entity_identity_reviews', 'DELETE FROM links', 'DELETE FROM pages',
         "DELETE FROM config WHERE key = 'learning.derive.watermark'"]) await engine.executeRaw(sql);
       __resetPrivateVisibilityCacheForTests();
     });
@@ -165,6 +167,60 @@ for (const backend of testBackends()) {
       const world = dupes(await remote('unbound'));
       expect(world.map(i => slugsOf(i)[0])).toEqual(['people/bob-example']);
       expect(world[0]!.commands!.reject.slice(0, 3)).toEqual(['gbrain', 'dedupe', 'reject']);
+    });
+
+    /** Two thin people the owner met this week, one person nobody met, and the owner's own page. */
+    const thinContacts = async (owner = true) => {
+      if (owner) await importFromContent(engine, OWNER_PAGE, '---\ntype: person\ntitle: Owner\n---\nThe owner.', { noEmbed: true });
+      for (const name of ['bob', 'carol', 'dave']) await importFromContent(engine, `people/${name}-example`, person(name), { noEmbed: true });
+      await meet('bob', [1, 3]);
+      await meet('carol', [2]);
+    };
+    const keylessLine = '2 close contacts have thin pages; a chat key would fill them.';
+
+    test('keyless: two thin close contacts put one line in the note with the enable commands and cost; nothing is spent', async () => {
+      resetGateway();
+      await thinContacts();
+      const phase = await derive();
+      expect(phase.details.thin_contacts).toMatchObject({ count: 2 });
+      const view = await local();
+      expect(view.thin_contacts).toEqual({
+        count: 2, text: keylessLine,
+        commands: [['export', 'ANTHROPIC_API_KEY=<your key>'], ['gbrain', 'config', 'set', 'cycle.enrich_thin.enabled', 'true']],
+        cost: { usd: 0.02, basis: 'per_page_estimate' },
+      });
+      expect(formatLearned(view)).toContain(keylessLine);
+      expect(formatLearned(view)).toContain('gbrain config set cycle.enrich_thin.enabled true');
+      expect(await engine.getConfig('enrich_thin.daily_spend')).toBeNull();
+      await engine.setConfig('cycle.enrich_thin.max_daily_cost_usd', '0.5');
+      await derive();
+      expect((await local()).thin_contacts?.cost).toEqual({ usd: 0.5, basis: 'daily_cap' });
+      expect(await engine.getConfig('enrich_thin.daily_spend')).toBeNull();
+    });
+
+    test('with a chat model configured the line is absent', async () => {
+      await thinContacts();
+      await derive();
+      __setChatTransportForTests(async () => { throw new Error('no chat call expected'); });
+      expect((await local()).thin_contacts).toBeNull();
+      expect((await derive()).details.thin_contacts).toBeUndefined();
+      resetGateway();
+      expect((await local()).thin_contacts).toBeNull();
+    });
+
+    test('with no owner page the line is absent', async () => {
+      resetGateway();
+      await thinContacts(false);
+      await derive();
+      expect((await local()).thin_contacts).toBeNull();
+    });
+
+    test('a remote token without owner scope never sees the line; the owner token does', async () => {
+      resetGateway();
+      await thinContacts();
+      await derive();
+      expect((await remote('unbound')).thin_contacts).toBeNull();
+      expect((await remote('owner')).thin_contacts).toMatchObject({ count: 2 });
     });
 
     test('a second cycle records the same groups once', async () => {

@@ -100,7 +100,7 @@ export const HYBRID_CHUNK_CLAMP_CHARS = 2000;
 /** Flush the resume checkpoint every N completions during a long run. */
 const CHECKPOINT_FLUSH_EVERY = 25;
 /** Rough per-page cost estimate (USD) for the dry-run preview. */
-const COST_ESTIMATE_PER_PAGE_USD = 0.01;
+export const COST_ESTIMATE_PER_PAGE_USD = 0.01;
 
 export const ENRICH_ORDERS = ['inbound-links', 'salience', 'updated', 'owner-contact'] as const;
 export type EnrichOrder = (typeof ENRICH_ORDERS)[number];

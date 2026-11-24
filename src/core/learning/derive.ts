@@ -11,6 +11,10 @@
  *   promise_found   open loops of kind commitment_owed_to_me created in the window
  *   duplicate_to_confirm  the top five person groups of the dedupe preview, by owner contact (duplicates.ts)
  *
+ * On a keyless brain whose owner resolves it also counts the thin pages the owner has recent contact with
+ * (keylessThinContacts) into KEYLESS_THIN_CONTACTS_KEY, so learned can say a chat key would fill them; otherwise the
+ * key is cleared.
+ *
  * The window starts an hour before the previous pass (learning.derive.watermark), at most seven days back. Each kind
  * inserts at most MAX_PER_KIND rows per pass; a truncated pass keeps the old watermark, so the next pass continues.
  * Idempotent on the (kind, target_table, target_id) key. Never throws: a failure is a `warn` result, so it never fails
@@ -23,9 +27,10 @@ import { hasCapability } from '../engine-capabilities.ts';
 import { AUDIT_ROW_SOURCES, CONVERSATION_FACTS_SOURCE_PREFIX } from '../facts/audit-sources.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
 import { ENRICHED_BY } from '../../commands/enrich.ts';
-import { CLAIM_CONFLICT_SWEEP_SQL, CONFLICT_BACKLOG_SQL, LEARNING_KINDS, learningTablePresent, notRecordedSql, type LearningKind } from './kinds.ts';
+import { CLAIM_CONFLICT_SWEEP_SQL, CONFLICT_BACKLOG_SQL, KEYLESS_THIN_CONTACTS_KEY, LEARNING_KINDS, learningTablePresent, notRecordedSql, type LearningKind } from './kinds.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { recordDuplicateQuestions } from './duplicates.ts';
+import { keylessThinContacts } from '../cycle/enrich-thin.ts';
 
 export const LEARNING_WATERMARK_KEY = 'learning.derive.watermark';
 export const LEARNING_WINDOW_MAX_MS = 7 * 86_400_000;
@@ -128,13 +133,24 @@ export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId:
       rethrowCapabilityRefusal(e);
       failed.push({ kinds: ['duplicate_to_confirm'], error: e instanceof Error ? e.message : String(e) });
     }
+    let thinContacts: Awaited<ReturnType<typeof keylessThinContacts>> = null;
+    try {
+      thinContacts = await keylessThinContacts(engine);
+      if (!opts.dryRun) {
+        if (thinContacts?.count) await engine.setConfig(KEYLESS_THIN_CONTACTS_KEY, JSON.stringify({ ...thinContacts, recorded_at: now.toISOString() }));
+        else await engine.unsetConfig(KEYLESS_THIN_CONTACTS_KEY);
+      }
+    } catch (e) {
+      rethrowCapabilityRefusal(e);
+      console.warn('[learning_derive] the keyless thin-contact count was not updated: ' + (e instanceof Error ? e.message : String(e)));
+    }
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     const conflictBacklog = Number(backlog?.n ?? 0);
     for (const f of failed) console.warn(`[learning_derive] ${f.kinds.join('/')} not recorded this pass: ${f.error}`);
     return {
       phase: 'learning_derive', status: failed.length ? 'warn' : 'ok', duration_ms: 0,
       summary: `${opts.dryRun ? 'dry-run: would record' : 'recorded'} ${total} learning item(s)${duplicates?.recorded ? ` and ${duplicates.recorded} possible duplicate person group(s) to confirm` : ''}${conflictBacklog ? `; ${conflictBacklog} older claim conflict(s) wait as a count` : ''}${failed.length ? `; not recorded: ${failed.flatMap(f => f.kinds).join(', ')}` : ''}`,
-      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated, ...(duplicates ? { duplicates } : {}), ...(failed.length ? { failed } : {}) },
+      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated, ...(duplicates ? { duplicates } : {}), ...(thinContacts ? { thin_contacts: thinContacts } : {}), ...(failed.length ? { failed } : {}) },
     };
   } catch (e) {
     rethrowCapabilityRefusal(e);

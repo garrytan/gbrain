@@ -13,7 +13,8 @@ import { ownerMemberId } from '../access/owner.ts';
 import { callerIsOwner, currentCallerAccess, privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
-import { CHANGE_KINDS, CONFLICT_BACKLOG_SQL, QUESTION_KINDS, type LearningKind } from './kinds.ts';
+import { CHANGE_KINDS, CONFLICT_BACKLOG_SQL, KEYLESS_THIN_CONTACTS_KEY, QUESTION_KINDS, type LearningKind } from './kinds.ts';
+import { isAvailable } from '../ai/gateway.ts';
 import type { LiveDuplicate } from './duplicates.ts';
 
 export const LEARNED_DEFAULT_LIMIT = 15;
@@ -178,6 +179,28 @@ export interface LearnedView {
   count: number;
   items: LearnedItem[];
   conflict_backlog: { count: number; command: string[] } | null;
+  /** Keyless brains, owner and local callers only: thin pages of people the owner is in touch with that a chat key would fill. */
+  thin_contacts: ThinContactsLine | null;
+}
+
+export interface ThinContactsLine { count: number; text: string; commands: string[][]; cost: { usd: number; basis: 'daily_cap' | 'per_page_estimate' } }
+
+/** The keyless line from the last learning_derive count; nothing once a chat model is configured or the count is stale. */
+async function thinContactsLine(engine: BrainEngine, now: Date): Promise<ThinContactsLine | null> {
+  if (isAvailable('chat')) return null;
+  const raw = await engine.getConfig(KEYLESS_THIN_CONTACTS_KEY);
+  if (!raw) return null;
+  let stored: { count?: unknown; cost_usd?: unknown; cost_basis?: unknown; recorded_at?: unknown };
+  try { stored = JSON.parse(raw); } catch { return null; }
+  const count = Number(stored.count);
+  const age = now.getTime() - Date.parse(String(stored.recorded_at));
+  if (!Number.isInteger(count) || count <= 0 || !(age <= LEARNED_WINDOW_DAYS * 86_400_000)) return null;
+  return {
+    count,
+    text: count === 1 ? '1 close contact has a thin page; a chat key would fill it.' : count + ' close contacts have thin pages; a chat key would fill them.',
+    commands: [['export', 'ANTHROPIC_API_KEY=<your key>'], ['gbrain', 'config', 'set', 'cycle.enrich_thin.enabled', 'true']],
+    cost: { usd: Number(stored.cost_usd), basis: stored.cost_basis === 'daily_cap' ? 'daily_cap' : 'per_page_estimate' },
+  };
 }
 
 /**
@@ -202,6 +225,7 @@ export async function readLearned(engine: BrainEngine, ctx: OperationContext,
     window: { since: since.toISOString(), default: opts.since === undefined },
     count: items.length, items,
     conflict_backlog: backlog > 0 ? { count: backlog, command: ['gbrain', 'decide', 'proposals', 'list'] } : null,
+    thin_contacts: f.full ? await thinContactsLine(engine, now) : null,
   };
 }
 
@@ -217,7 +241,7 @@ const KIND_HEADINGS: Record<string, string> = {
 /** The CLI's text form: every returned item (the ones the read stamped) grouped by kind, each number bound to its stable item id. */
 export function formatLearned(view: LearnedView): string {
   const shown = view.items;
-  if (!shown.length && !view.conflict_backlog) return `Nothing new learned since ${view.window.since.slice(0, 10)}.\n`;
+  if (!shown.length && !view.conflict_backlog && !view.thin_contacts) return `Nothing new learned since ${view.window.since.slice(0, 10)}.\n`;
   const lines = [`What I learned since ${view.window.since.slice(0, 16).replace('T', ' ')} UTC (${shown.length} item${shown.length === 1 ? '' : 's'}):`];
   for (const kind of KIND_ORDER) {
     const group = shown.filter(i => i.kind === kind);
@@ -231,6 +255,11 @@ export function formatLearned(view: LearnedView): string {
       if (item.commands?.confirm) lines.push(`     same person: ${item.commands.confirm.join(' ')}`);
       if (item.commands) lines.push(`     different people: ${item.commands.reject.join(' ')}`);
     }
+  }
+  const thin = view.thin_contacts;
+  if (thin) {
+    const cost = thin.cost.basis === 'daily_cap' ? 'at most $' + thin.cost.usd.toFixed(2) + ' a day (your daily cap)' : 'about $' + thin.cost.usd.toFixed(2) + ' (estimate)';
+    lines.push('', thin.text + ' Filling them costs ' + cost + '. To turn it on:', ...thin.commands.map(c => '  ' + c.join(' ')));
   }
   if (view.conflict_backlog) lines.push('', `${view.conflict_backlog.count} older pair(s) of disagreeing facts are waiting; review them with: ${view.conflict_backlog.command.join(' ')}`);
   return lines.join('\n') + '\n';
