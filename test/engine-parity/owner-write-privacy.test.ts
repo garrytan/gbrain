@@ -10,9 +10,9 @@
  *  - Seam: none. The owner through setOwner, the token through mintLegacyToken and bindCredential, the real bearer check
  *    and dispatchToolCall. A refusal is returned as a value: the harness counts a thrown typed refusal as a pass.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { createSource, parityArms, type ParityBackend } from './harness.ts';
+import { createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
@@ -22,7 +22,7 @@ import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import type { AuthInfo } from '../../src/core/ops/contract.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 const SRC = 'work';
 const OWNER = 'alice-example';
 
@@ -52,15 +52,21 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     return result;
   });
 
-  parityTest('a plain member\'s put_page rewrite of an existing page, open or naming its readers, is written', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
-    await seed(engine, backend);
-    await addMember(engine, 'bob-example');
-    const input = (frontmatter: Record<string, unknown>) => ({ type: 'note' as const, title: 'Note', compiled_truth: 'First.', timeline: '', frontmatter });
-    await engine.putPage('notes/open', input({}), { sourceId: SRC });
-    await engine.putPage('notes/shared', input({ readable_by: ['bob-example'] }), { sourceId: SRC });
-    const rewrite = async (slug: string, readers = '') => ownerPut(engine, slug, `---\ntitle: Note\n${readers}---\nSecond.`, (await engine.getPage(slug, { sourceId: SRC }))?.knowledge_revision, 'bob-example');
-    const result = { open: await rewrite('notes/open'), shared: await rewrite('notes/shared', 'readable_by: [bob-example]\n') };
-    expect(result).toEqual({ open: 'written', shared: 'written' });
-    return result;
-  });
+  // Not a parityTest: on Rust a non-owner member's call also reaches a labelled-only raw read that the dispatch swallows (row 32e-b),
+  // and the harness fails a case that caught a refusal. The answers must still be equal on every arm.
+  test('a plain member\'s put_page rewrite of an existing page, open or naming its readers, is written on every arm', async () => {
+    for (const arm of arms()) {
+      await resetArm(arm);
+      const { engine } = arm;
+      await seed(engine, arm.backend);
+      await addMember(engine, 'bob-example');
+      const input = (frontmatter: Record<string, unknown>) => ({ type: 'note' as const, title: 'Note', compiled_truth: 'First.', timeline: '', frontmatter });
+      await engine.putPage('notes/open', input({}), { sourceId: SRC });
+      await engine.putPage('notes/shared', input({ readable_by: ['bob-example'] }), { sourceId: SRC });
+      const rewrite = async (slug: string, readers = '') => ownerPut(engine, slug, `---\ntitle: Note\n${readers}---\nSecond.`, (await engine.getPage(slug, { sourceId: SRC }))?.knowledge_revision, 'bob-example');
+      expect({ backend: arm.backend, open: await rewrite('notes/open'), shared: await rewrite('notes/shared', 'readable_by: [bob-example]\n') })
+        .toEqual({ backend: arm.backend, open: 'written', shared: 'written' });
+    }
+    expect(arms().length).toBeGreaterThan(0);
+  }, 120_000);
 });

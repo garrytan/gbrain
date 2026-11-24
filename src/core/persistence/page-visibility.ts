@@ -24,7 +24,7 @@ export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'has
 export type FenceEngine = MemberEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
 
 /** An engine that also runs the opening probe of a page write's visibility check (authorizePageVisibility). */
-export type VisibilityEngine = FenceEngine & Pick<BrainEngine, 'readWriteVisibilityProbe'>;
+export type VisibilityEngine = FenceEngine & Pick<BrainEngine, 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages'>;
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -80,7 +80,7 @@ export async function authorizePageVisibility(engine: VisibilityEngine, authorit
   // private page stays refused as before, so a write there never republishes it or opens its version history.
   let owner: boolean | undefined;
   const ownerOnLivePage = async () => await storedOwnerWrite(engine, authority)
-    && (await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1', [authority.sourceId, slug])).length > 0;
+    && await engine.readPagePrivacyHidden(authority.sourceId, slug) !== null; // a live row
   if (!labelled && excludePrivate) {
     // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
     // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read
@@ -92,8 +92,14 @@ export async function authorizePageVisibility(engine: VisibilityEngine, authorit
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = excludePrivate || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted && !labelled) return;
-  const hiddenUnder = async (hide: boolean) => (await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
-    AND NOT (${await writerReadPolicySql(engine, authority, 'pages', hide, policy.restricted, ownerOnlyPresent)}) LIMIT 1`, [authority.sourceId, slug])).length > 0;
+  // A live page is hidden when the writer's member-access policy fails it, or, when `hide`, its privacy part does. A
+  // soft-deleted row (no live one) is judged as before by the statement, so a write never republishes it.
+  const hiddenUnder = async (hide: boolean) => {
+    const [row] = await engine.readLinkTargetPages(authority.sourceId, [slug], await writerReadPolicy(engine, authority, policy.restricted, ownerOnlyPresent));
+    if (row) return !(row.readable && (!hide || row.visible));
+    return (await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
+      AND NOT (${await writerReadPolicySql(engine, authority, 'pages', hide, policy.restricted, ownerOnlyPresent)}) LIMIT 1`, [authority.sourceId, slug])).length > 0;
+  };
   if (!await hiddenUnder(hidePrivate && owner !== true)) return;
   if (hidePrivate && owner === undefined && await ownerOnLivePage() && !await hiddenUnder(false)) return;
   throw pageNotVisibleError();
