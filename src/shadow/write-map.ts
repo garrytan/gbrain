@@ -226,7 +226,7 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'factRelinkAttemptsTableExists', 'filterPagesAtRevision', 'filterUnarchivedSourceIds', 'heldEntityPageDeleted',
   'heldGenerationRowsForInput', 'heldMoveDue', 'heldTargetPageLive', 'holdsNotifierLease', 'inboundLinkCoverage',
   'linkRelationshipKeysForOrigin', 'linkRelationshipKeysForPages', 'liveGenerationForOperation', 'lockActiveAccessTokens',
-  'lockAllSourceRows', 'lockBodyStagingState', 'lockLegacyAccessTokens', 'lockLivePagesByKey', 'lockSharedSkillBrainId',
+  'lockAllSourceRows', 'lockBodyStagingState', 'lockLegacyAccessTokens', 'lockSegmentedGenerationPage', 'lockLivePagesByKey', 'lockSharedSkillBrainId',
   'loopFactDrift', 'matchHeadStems', 'matchSavedFacts', 'maxConversationRowNum', 'maxFenceRowNum', 'maxFenceRowNumOfPage',
   'nextLivePageAfter', 'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'ownerReachesFact',
   'ownsSchemaTables', 'pageAwaitsRederive', 'pageHasFrontmatterKey', 'pageHasTimelineEntries', 'pagePrefixSamples',
@@ -349,6 +349,9 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'writeReasonPurgeTombstones', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'writeSourceSyncHeartbeat',
   'writeSourceUpstreamObservation', 'writeSyncAdmissionStamp', 'writeSyncPassRow', 'writeTrustScanCursor',
   'writerAdminStore', 'writerReleaseStore',
+  // The segmented write path's typed writes (engine-members/segmented-writes.ts): a re-chunk, a fence rewrite and a segmented embed.
+  'installSegmentedVectors', 'publishRebuiltGeneration', 'restorePageDeletedAt', 'restorePageUpdatedAt',
+  'retireStaleSegmentChunks', 'setMaterializingRevision', 'setSegmentedVersionHash', 'splitManifestGeneration',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
