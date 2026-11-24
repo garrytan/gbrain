@@ -11,9 +11,14 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { seedPage } from './helpers/keyword-paging-fixture.ts';
 import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import { assertGraduationConnectAllowed } from '../src/core/persistence/graduation-custody.ts';
+import { readGraduationConnectRow } from '../src/core/persistence/graduation-schema.ts';
+import { hybridSearch } from '../src/core/search/hybrid.ts';
 import { buildEntityCard } from '../src/core/verbs/entity-card.ts';
 import { findExperts, runWhoknows } from '../src/commands/whoknows.ts';
+import { runExtract } from '../src/commands/extract.ts';
 import type { Capability } from '../src/core/engine-capabilities.ts';
+import { setStdoutCapture } from '../src/core/cli-force-exit.ts';
 
 let engine: PGLiteEngine;
 
@@ -59,10 +64,66 @@ async function refusalOf(p: Promise<unknown>): Promise<unknown> {
   throw new Error('expected a capability refusal, got an answer');
 }
 
+describe('the graduation connect gate', () => {
+  test('an engine without raw SQL reads as no custody row and never calls executeRaw', async () => {
+    let calls = 0;
+    const rust = {
+      kind: 'rust',
+      capabilities: new Set<Capability>(),
+      executeRaw: async () => { calls++; throw capabilityMissing('raw_sql', 'executeRaw'); },
+    } as unknown as BrainEngine;
+    expect(await readGraduationConnectRow(rust)).toBeNull();
+    await expect(assertGraduationConnectAllowed(rust, {})).resolves.toBeUndefined();
+    expect(calls).toBe(0);
+  });
+
+  test('an engine with raw SQL still reads the table, so its failures still throw', async () => {
+    const denied = {
+      capabilities: new Set<Capability>(['raw_sql']),
+      executeRaw: async () => { throw Object.assign(new Error('permission denied for table persistence_graduation'), { code: '42501' }); },
+    } as unknown as BrainEngine;
+    await expect(assertGraduationConnectAllowed(denied, {})).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe('query (hybrid search lexical arms)', () => {
+  test('a refused keyword arm refuses the search', async () => {
+    const e = await refusalOf(hybridSearch(failing('searchKeyword', 'keyword_search', 'refusal'), 'keyword ranking', { limit: 5, useCache: false }));
+    expect(isCapabilityMissing(e)).toBe(true);
+  });
+
+  test('a refused title arm refuses the search', async () => {
+    const e = await refusalOf(hybridSearch(failing('searchTitles', 'keyword_search', 'refusal'), 'keyword ranking', { limit: 5, useCache: false }));
+    expect(isCapabilityMissing(e)).toBe(true);
+  });
+
+  test('any other keyword-arm failure still fails open', async () => {
+    const rows = await hybridSearch(failing('searchKeyword', 'keyword_search', 'plain'), 'keyword ranking', { limit: 5, useCache: false });
+    expect(Array.isArray(rows)).toBe(true);
+  });
+});
+
 describe('entity', () => {
+  const card = (e: BrainEngine) => buildEntityCard(e, 'default', 'Alice Example', { remote: false, includeReferences: true, variants: true });
+
+  test('a refused alias lookup refuses the card instead of printing found:false', async () => {
+    const e = await refusalOf(card(failing('resolveAliases', 'pages', 'refusal')));
+    expect(isCapabilityMissing(e)).toBe(true);
+  });
+
+  test('a refused exact-match read refuses the card', async () => {
+    const e = await refusalOf(card(failing('executeRaw', 'raw_sql', 'refusal')));
+    expect(isCapabilityMissing(e)).toBe(true);
+  });
+
   test('a refused text-mention probe refuses a miss instead of printing unread: read_failed', async () => {
     const e = await refusalOf(buildEntityCard(failing('searchKeyword', 'keyword_search', 'refusal'), 'default', 'Imogen Nobody', { remote: false, includeReferences: true }));
     expect(isCapabilityMissing(e)).toBe(true);
+  });
+
+  test('any other alias failure still degrades to the exact-match arm', async () => {
+    const res = await card(failing('resolveAliases', 'pages', 'plain'));
+    expect(res.found).toBe(true);
   });
 });
 
@@ -89,3 +150,43 @@ describe('whoknows', () => {
   });
 });
 
+describe('extract --json', () => {
+  class Exit extends Error { constructor(public code: number | undefined) { super(`exit ${code}`); } }
+
+  async function run(e: BrainEngine): Promise<{ code: number | undefined; stdout: string; stderr: string }> {
+    let stdout = '';
+    let stderr = '';
+    const exit = spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Exit(code); }) as never);
+    const out = spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => { stdout += String(chunk); return true; }) as never);
+    const err = spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => { stderr += String(chunk); return true; }) as never);
+    const cerr = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { stderr += `${a.join(' ')}\n`; });
+    setStdoutCapture((text) => { stdout += text; });
+    try {
+      await runExtract(e, ['all', '--source', 'db', '--json']);
+      return { code: undefined, stdout, stderr };
+    } catch (x) {
+      if (x instanceof Exit) return { code: x.code, stdout, stderr };
+      throw x;
+    } finally {
+      setStdoutCapture(null);
+      exit.mockRestore(); out.mockRestore(); err.mockRestore(); cerr.mockRestore();
+    }
+  }
+
+  test('a refusal prints as the JSON refusal document with its code', async () => {
+    const r = await run(failing('getConfig', 'config', 'refusal'));
+    expect(r.code).not.toBe(0);
+    expect(r.code).toBeDefined();
+    const doc = JSON.parse(r.stdout.trim()) as { code: string; reason: string };
+    expect(doc.code).toBe('engine_capability_missing');
+    expect(doc.reason).toBe('config');
+    expect(r.stderr).not.toContain('migrations_pending');
+  });
+
+  test('any other failure keeps the plain message and exit 1', async () => {
+    const r = await run(failing('getConfig', 'config', 'plain'));
+    expect(r.code).toBe(1);
+    expect(r.stdout).toBe('');
+    expect(r.stderr).toContain('getConfig failed');
+  });
+});
