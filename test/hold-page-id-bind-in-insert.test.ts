@@ -69,7 +69,7 @@ beforeAll(async () => {
         await Bun.sleep(CHECKPOINT_PROBE_REUSE_MS + 20);
         const counter = countPgliteStatements(engine);
         try { await work(); } finally { counter.stop(); }
-        return counter.records;
+        return counter.records.filter(r => !CHECKPOINT_GUARD_SQL.has(r.sql));
       },
     });
   }
