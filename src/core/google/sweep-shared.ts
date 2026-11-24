@@ -30,6 +30,7 @@ import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
 import type { PrivateSenders } from './ingest-tiers.ts';
 import { CredentialError } from '../creds/errors.ts';
+import { jsonbSafeJson, truncateUtf8 } from '../text-safe.ts';
 
 export function myAddressSet(entry: CredentialEntry): Set<string> {
   const out = new Set<string>();
@@ -74,12 +75,18 @@ export const isUsageLimit = (e: unknown): boolean => e instanceof CredentialErro
 
 const PARTIAL_CAUSE_LIMIT = 5;
 
-/** Ends the run partial and records why; repeated causes are kept once. */
+/**
+ * Ends the run partial and records why. A repeated cause is kept once; once the list is full the newest cause
+ * takes the last slot, so a run-level cause added last (an abort, a usage limit) is never crowded out by item
+ * failures. Each cause is safe to store in the JSONB job result.
+ */
 export function markPartial(summary: GoogleSyncSummary, cause: string): void {
   summary.status = 'partial';
-  const line = cause.split('\n')[0]!.slice(0, 200);
+  const line = jsonbSafeJson(truncateUtf8(cause.split('\n')[0]!, 200));
   const causes = summary.partialCauses ??= [];
-  if (causes.length < PARTIAL_CAUSE_LIMIT && !causes.includes(line)) causes.push(line);
+  if (causes.includes(line)) return;
+  if (causes.length < PARTIAL_CAUSE_LIMIT) causes.push(line);
+  else causes[PARTIAL_CAUSE_LIMIT - 1] = line;
 }
 
 export interface GoogleSyncDeps {
