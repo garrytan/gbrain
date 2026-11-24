@@ -64,30 +64,38 @@ function liveFactSql(a: string, f: CallerFilters): string {
 const WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[])) AND li.created_at >= $2::timestamptz
   AND ($3::boolean = false OR (li.state = 'pending' AND li.shown_at IS NULL))`;
 
+/**
+ * The window's pointers of the given kinds, picked first; each target is then a keyed LATERAL lookup, so a stale row
+ * estimate (a bulk insert with no ANALYZE since) cannot turn the target joins into a scan of every fact and proposal.
+ */
+const windowed = (kinds: string, table: string) => `WITH li AS MATERIALIZED (SELECT * FROM learning_items li WHERE li.kind IN (${kinds}) AND li.target_table = '${table}' AND ${WINDOW_SQL})`;
+
 type Row = Record<string, unknown> & { id: number | string; kind: LearningKind; state: string; source_id: string; subject_slug: string | null; prior_revision: string | null; created_at: string; shown_at: string | null };
 
 function queries(f: CallerFilters): Array<{ kinds: LearningKind[]; sql: string }> {
   return [
-    { kinds: ['fact_added', 'you_wrote'], sql: `SELECT ${ITEM_COLUMNS}, f.id AS fact_id, f.fact, f.source, f.entity_slug, f.source_markdown_slug
-        FROM learning_items li JOIN facts f ON f.id = li.target_id
-       WHERE li.kind IN ('fact_added', 'you_wrote') AND li.target_table = 'facts' AND ${WINDOW_SQL} AND ${liveFactSql('f', f)}
+    { kinds: ['fact_added', 'you_wrote'], sql: `${windowed("'fact_added', 'you_wrote'", 'facts')} SELECT ${ITEM_COLUMNS}, f.id AS fact_id, f.fact, f.source, f.entity_slug, f.source_markdown_slug
+        FROM li JOIN LATERAL (SELECT * FROM facts f WHERE f.id = li.target_id OFFSET 0) f ON TRUE
+       WHERE ${liveFactSql('f', f)}
        ORDER BY li.created_at DESC, li.id DESC LIMIT $4` },
-    { kinds: ['conflict_found'], sql: `SELECT ${ITEM_COLUMNS}, d.id AS proposal_id, n.id AS new_id, n.fact AS new_fact, n.source AS new_source,
+    { kinds: ['conflict_found'], sql: `${windowed("'conflict_found'", 'decide_proposals')} SELECT ${ITEM_COLUMNS}, d.id AS proposal_id, n.id AS new_id, n.fact AS new_fact, n.source AS new_source,
              o.id AS old_id, o.fact AS old_fact, o.source AS old_source, n.entity_slug, COALESCE(n.source_markdown_slug, o.source_markdown_slug) AS slug
-        FROM learning_items li JOIN decide_proposals d ON d.id = li.target_id
-        JOIN facts n ON n.id = d.new_fact_id AND n.source_id = d.source_id JOIN facts o ON o.id = d.old_fact_id AND o.source_id = d.source_id
-       WHERE li.kind = 'conflict_found' AND li.target_table = 'decide_proposals' AND d.status = 'pending' AND ${WINDOW_SQL}
+        FROM li JOIN LATERAL (SELECT * FROM decide_proposals d WHERE d.id = li.target_id OFFSET 0) d ON TRUE
+        JOIN LATERAL (SELECT * FROM facts n WHERE n.id = d.new_fact_id AND n.source_id = d.source_id OFFSET 0) n ON TRUE
+        JOIN LATERAL (SELECT * FROM facts o WHERE o.id = d.old_fact_id AND o.source_id = d.source_id OFFSET 0) o ON TRUE
+       WHERE d.status = 'pending'
          AND ${liveFactSql('n', f)} AND ${liveFactSql('o', f)}
        ORDER BY li.created_at DESC, li.id DESC LIMIT $4` },
-    { kinds: ['promise_found'], sql: `SELECT ${ITEM_COLUMNS}, l.id AS loop_id, l.summary, l.counterparty_slug, l.page_slug, l.thread_id
-        FROM learning_items li JOIN open_loops l ON l.id = li.target_id
-       WHERE li.kind = 'promise_found' AND li.target_table = 'open_loops' AND l.status = 'open' AND ${WINDOW_SQL}
+    { kinds: ['promise_found'], sql: `${windowed("'promise_found'", 'open_loops')} SELECT ${ITEM_COLUMNS}, l.id AS loop_id, l.summary, l.counterparty_slug, l.page_slug, l.thread_id
+        FROM li JOIN LATERAL (SELECT * FROM open_loops l WHERE l.id = li.target_id OFFSET 0) l ON TRUE
+       WHERE l.status = 'open'
          AND (l.page_slug IS NULL OR NOT EXISTS (SELECT 1 FROM pages lp WHERE lp.source_id = l.source_id AND lp.slug = l.page_slug
               AND (lp.deleted_at IS NOT NULL OR NOT ${f.pages.lp})))
        ORDER BY li.created_at DESC, li.id DESC LIMIT $4` },
-    { kinds: ['page_filled'], sql: `SELECT ${ITEM_COLUMNS}, v.id AS version_id, p.slug, p.title
-        FROM learning_items li JOIN page_versions v ON v.id = li.target_id JOIN pages p ON p.id = v.page_id
-       WHERE li.kind = 'page_filled' AND li.target_table = 'page_versions' AND p.deleted_at IS NULL AND ${WINDOW_SQL} AND ${f.pages.p}
+    { kinds: ['page_filled'], sql: `${windowed("'page_filled'", 'page_versions')} SELECT ${ITEM_COLUMNS}, v.id AS version_id, p.slug, p.title
+        FROM li JOIN LATERAL (SELECT v.id, v.page_id FROM page_versions v WHERE v.id = li.target_id OFFSET 0) v ON TRUE
+        JOIN pages p ON p.id = v.page_id
+       WHERE p.deleted_at IS NULL AND ${f.pages.p}
        ORDER BY li.created_at DESC, li.id DESC LIMIT $4` },
   ];
 }

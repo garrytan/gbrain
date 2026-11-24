@@ -181,7 +181,10 @@ for (const backend of testBackends()) {
         await engine.executeRaw("DELETE FROM config WHERE key = 'dream.claim_conflicts.mode'");
       }
       expect(await engine.executeRaw("SELECT count(*)::int AS n FROM learning_items WHERE kind = 'conflict_found'")).toEqual([{ n: 1 }]);
+      const started = Date.now();
       const view = await local('learned', {}) as LearnedView;
+      for (let i = 0; i < 3; i++) await local('learned', { since: '2000-01-01' });
+      expect(Date.now() - started).toBeLessThan(5_000);
       const conflicts = view.items.filter(i => i.kind === 'conflict_found');
       expect(conflicts).toHaveLength(1);
       expect(conflicts[0]).toMatchObject({ family: 'question', text: 'Newer: Acme MRR is 45000\nOlder: Acme MRR is 40000' });
