@@ -2103,13 +2103,15 @@ Each page in the preview is one of:
   stop the move and are not changed: a hold bound to the page follows its page id, and a hold under the old spelling
   reaches the moved page through the rename record, so its content stays out of delivered text, including a hold a writer
   records under the old spelling while or after the move runs. `gbrain trust review` lists them as before. The apply takes the page lock of the stored spelling as well as the
-  normal one, so an edit under way waits for the move (or the move refuses, below). A database role that row-level security
-  keeps from `fact_purges` or `take_purges` reads them as empty, so the preview and the apply refuse
-  with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) naming the table, before anything moves;
-  give the role select and insert policies on them (the select policies in `docs/ENGINES.md#purge-and-withdrawal-guards`
-  show the shape), or run it as the table owner.
+  normal one, so an edit under way waits for the move (or the move refuses, below). When row-level security applies to
+  `fact_purges` or `take_purges` for the database role, a policy can hide tombstones from it, so the preview and the apply
+  refuse with [`writer_coordinator_required`](error-codes.md#writer_coordinator_required) naming the table, before anything
+  moves, whatever policies the role has. Run the repair as the table owner (with FORCE ROW LEVEL SECURITY off) or as a role
+  with BYPASSRLS.
 - **needs_human** ([`slug_spelling_collision`](error-codes.md#slug_spelling_collision)): another page (live or
-  soft-deleted) already holds the normal slug, or two stored spellings share it. Nothing moves, because that would merge
+  soft-deleted) already holds the normal slug, or two stored spellings share it. Every stored spelling of the name is
+  looked up through the spelling index, so a page the preview's scan did not reach still counts, and the apply looks
+  again under the page locks. Nothing moves, because that would merge
   two pages. The listing names the pages to compare; keep the content you want in one, soft-delete the other with
   `gbrain delete`, and preview again.
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's

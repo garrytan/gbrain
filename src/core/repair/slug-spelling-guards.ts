@@ -11,31 +11,33 @@
  * `updateSlug` writes (`holdAppliesToPageSql`, write-gate-binding.ts), so a held write stays out of the moved page's
  * text, including one a writer records under the old spelling while or after the move runs.
  *
- * Every table the carry reads or writes must be fully readable by the running role: row-level security without a
- * policy of the role shows a table empty, which would copy nothing and let the move commit with the guard left
- * behind. `assertGuardTablesReadable` refuses first, with the policy lookup the purge guards themselves run.
+ * Every table the carry reads must be fully visible to the running role: row-level security can show it fewer rows (or
+ * none), which would copy too little and let the move commit with a guard left behind. No policy check proves a policy
+ * shows every row, so `assertGuardTablesReadable` refuses whenever row security applies to a guard table for the role.
  *
  * The caller runs the carry inside the page's maintenance transaction, under both page locks.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-import { unreadableTablesSql, type PolicyCommand } from '../derived-state-maintainers.ts';
+/** The guard tables: the carry reads every tombstone of the page in them and writes the copies. */
+const GUARD_TABLES = ['fact_purges', 'take_purges'] as const;
 
-/** What each guard table needs of the running role: the carry reads it and writes the tombstones it copies. */
-const GUARD_TABLE_NEEDS: ReadonlyArray<readonly [string, readonly PolicyCommand[]]> = [
-  ['fact_purges', ['SELECT', 'INSERT']], ['take_purges', ['SELECT', 'INSERT']],
-];
-
-/** Refuses (`writer_coordinator_required`, nothing written) when row-level security keeps the running role from any guard table. */
+/**
+ * Refuses (`writer_coordinator_required`, nothing written) when row-level security applies to any guard table for the
+ * running role. A policy's existence does not prove it shows every row (a `USING (false)` policy hides them all), and a
+ * tombstone the role cannot see is not copied, so only a role row security does not apply to (the table owner without
+ * FORCE ROW LEVEL SECURITY, or a BYPASSRLS role) may move a page.
+ */
 export async function assertGuardTablesReadable(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
-  const hidden = (await tx.executeRaw<{ unreadable: string }>(unreadableTablesSql(GUARD_TABLE_NEEDS))).map(row => row.unreadable);
+  const hidden = (await tx.executeRaw<{ unreadable: string }>(
+    'SELECT t AS unreadable FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t', [[...GUARD_TABLES]])).map(row => row.unreadable);
   if (!hidden.length) return;
   const error = new OperationError('writer_coordinator_required',
-    `Pages of source ${sourceId} were not moved: this database role cannot fully read ${hidden.join(', ')} (row-level security applies to it and no policy of the role covers the table), so the purge tombstones of a page could not be carried to its normal name; nothing was written.`,
-    `Give the role a policy on ${hidden.join(', ')} allowing select and insert on the rows of the sources it writes (docs/ENGINES.md#purge-and-withdrawal-guards), or run the repair as the table owner; then preview again.`,
+    `Pages of source ${sourceId} were not moved: row-level security applies to ${hidden.join(', ')} for this database role, so the repair cannot prove it sees every purge tombstone of a page and could leave one on the old spelling; nothing was written.`,
+    `Run the repair as the owner of ${hidden.join(', ')} (with FORCE ROW LEVEL SECURITY off) or as a role with BYPASSRLS; then preview again.`,
     'docs/guides/repair.md#slug-spelling');
-  error.fix = { consent: [], actor: 'user', why: 'A role that row-level security keeps from the purge tables reads them as empty, so a move would leave their guards on the old spelling.',
-    user_message: `Run gbrain repair slug-spelling as a database role that owns or fully reads ${hidden.join(', ')}.`, requires_exclusive: false };
+  error.fix = { consent: [], actor: 'user', why: 'Row-level security can hide purge tombstones from the running role, and a tombstone the move cannot see stays on the old spelling, so a purged claim could be saved again under the normal name.',
+    user_message: `Run gbrain repair slug-spelling as the owner of ${hidden.join(', ')} or as a database role with BYPASSRLS.`, requires_exclusive: false };
   throw error;
 }
 

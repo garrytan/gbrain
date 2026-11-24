@@ -43,6 +43,7 @@ import { OperationError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { resolveRecordedSourceFilePath } from '../markdown.ts';
 import { normalizeSlug, validateSlug, withStoredSlug } from '../utils.ts';
+import { SCAN_KEY_SQL, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -229,27 +230,32 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
     if (rows.length < BATCH || truncated) break;
     after = Number(rows[rows.length - 1]!.id);
   }
-  const normals = [...new Set(candidates.map(row => normalizeSlug(row.slug)))];
-  const holders = new Map<string, Array<{ page_id: number; slug: string }>>();
-  for (let i = 0; i < normals.length; i += BATCH) {
-    for (const row of await engine.executeRaw<{ id: number | string; slug: string }>('SELECT id, slug FROM pages WHERE source_id=$1 AND slug = ANY($2::text[])', [sourceId, normals.slice(i, i + BATCH)])) {
-      holders.set(row.slug, [...holders.get(row.slug) ?? [], { page_id: Number(row.id), slug: row.slug }]);
-    }
-  }
-  const byNormal = new Map<string, PageRow[]>();
-  for (const row of candidates) byNormal.set(normalizeSlug(row.slug), [...byNormal.get(normalizeSlug(row.slug)) ?? [], row]);
   const entries: SpellingEntry[] = [];
   for (const row of candidates) {
     if (entries.length >= SLUG_SPELLING_LIMIT) { truncated = true; break; }
     const normal = normalizeSlug(row.slug);
     const base: SpellingPage = { page_id: Number(row.id), slug: row.slug, normal, revision: String(row.revision), deleted: row.deleted === true, source_path: row.source_path,
       evidence: fileEvidence(source.local_path, { slug: row.slug, normal, source_path: row.source_path }) };
-    const others = [...holders.get(normal) ?? [], ...(byNormal.get(normal) ?? []).filter(other => other !== row).map(other => ({ page_id: Number(other.id), slug: other.slug }))];
+    const others = await samePrintedName(engine, sourceId, normal, base.page_id);
     if (others.length) { entries.push({ ...base, class: 'needs_human', code: 'slug_spelling_collision', holders: others }); continue; }
     const blocked = fileBlocks(base.evidence, !!base.source_path?.trim());
     entries.push(blocked ? { ...base, class: 'rename_file_first', code: 'rename_file_first', reason: blocked } : { ...base, class: 'move' });
   }
   return { source_id: sourceId, incarnation: source.incarnation, entries, inspected, truncated };
+}
+
+/**
+ * Every other page of the source (live or soft-deleted) whose stored slug normalizes to `normal`, the normal slug itself
+ * included. Found through the spelling index (`spellingKeys`; the unindexed ASCII key past `MAX_SPELLING_VARIANTS`), so the
+ * answer never depends on how many candidates the preview read. The preview classes a page by it, and the apply reads it
+ * again under the page locks.
+ */
+async function samePrintedName(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string, normal: string, pageId: number): Promise<Array<{ page_id: number; slug: string }>> {
+  const keys = spellingKeys(normal);
+  const rows = await db.executeRaw<{ id: number | string; slug: string }>(
+    `SELECT id, slug FROM pages WHERE ${keys ? `${SPELLING_KEY_SQL} = ANY($1::text[])` : `${SCAN_KEY_SQL} = $1`} AND source_id = $2 AND id <> $3 ORDER BY id`,
+    [keys ?? normal.replace(/[^a-z0-9]/g, ''), sourceId, pageId]);
+  return rows.filter(row => normalizeSlug(row.slug) === normal).map(row => ({ page_id: Number(row.id), slug: row.slug }));
 }
 
 /** Per source, how many pages are stored under an older spelling (the doctor check; a count, not the preview's classes). */
@@ -417,8 +423,8 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
       throw changedSincePreview(sourceId, page.slug, 'the file evidence in the checkout changed');
     }
     await assertGuardTablesReadable(tx, sourceId);
-    const [taken] = await tx.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, page.normal]);
-    if (taken) throw changedSincePreview(sourceId, page.slug, `another page now holds ${page.normal} (slug_spelling_collision)`);
+    const [taken] = await samePrintedName(tx, sourceId, page.normal, page.page_id);
+    if (taken) throw changedSincePreview(sourceId, page.slug, `another page now prints the same name, ${taken.slug} (id ${taken.page_id}) (slug_spelling_collision)`);
     let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0 };
     await lockedBeliefBatch(tx, { sourceId, slugs: [page.slug, page.normal], publicationId, op: 'slug_spelling', remote: false, report }, async () => {
       if (await tx.updateSlug(page.slug, page.normal, { sourceId }) !== 1) throw changedSincePreview(sourceId, page.slug, `page ${page.slug} could not move to ${page.normal}`);

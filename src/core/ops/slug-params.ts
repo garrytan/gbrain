@@ -24,7 +24,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizeSlug, withStoredSlug } from '../utils.ts';
 import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { storedWriteSlug } from '../persistence/legacy-slug-put.ts';
-import { SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
+import { SCAN_KEY_SQL, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
 import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
 import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
@@ -183,14 +183,6 @@ function readScope(ctx: Ctx, op: string, params: Params): { sourceId?: string; s
   const sourceIdParam = parseSourceIdParam(params.source_id, op, { allowAll: true });
   return op === 'get_page' || sourceIdParam !== undefined ? federatedSearchScope(ctx, sourceIdParam) : sourceScopeOpts(ctx);
 }
-
-/**
- * The SQL side of `normalizeSlug` as an ASCII-only key, the scan `storedSpellings` falls back to for a slug with too many
- * capital variants for the index (`spellingKeys`): every row that normalizes to a slug shares this key with it. The capitals
- * are lowered by hand, never by the engine's locale (see src/core/slug-spelling-key.ts), then the text is composed and cut
- * down to ASCII letters and digits. Unindexed.
- */
-const SCAN_KEY_SQL = `regexp_replace(${SPELLING_KEY_SQL}, '[^a-z0-9]', '', 'g')`;
 
 /**
  * Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies
