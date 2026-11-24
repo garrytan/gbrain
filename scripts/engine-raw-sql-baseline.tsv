@@ -961,7 +961,7 @@ src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
 src/core/persistence/valid-time-advisory.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	32
+src/core/persistence/worktree-refresh.ts	execute_raw	33	P-0: +1 the refusal path's bounded lookup issues the writer-binding statement (WORKTREE_BINDING_SQL) through its bounded executeRaw, as master did, so the stalled read keeps master's 3 s statement bound and abort signal; the typed getWorktreeBinding runs on the engine's own connection outside that bound
 src/core/persistence/write-applied.ts	execute_raw	1
 src/core/persistence/writer-versions.ts	execute_raw	2
 src/core/pglite-statements.ts	driver_call	1
