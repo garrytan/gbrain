@@ -976,8 +976,19 @@ syncs keep ending `partial` or failing has none, however many pages it imported.
 - **First sync running** (`warn`, code `sync_first_run_in_progress`): the source
   holds a live sync lock inside the staleness ceiling. Running is not fresh, and
   a second sync only contends for the lock, so the fix is to wait and re-run
-  `gbrain doctor --only sync_freshness --json`. A lock held past the ceiling
-  reads as wedged (`fail`) with its `--break-lock` command.
+  `gbrain doctor --only sync_freshness --json`. A sync job that is running with
+  a live job lock reads the same way between two runs of a long first sync. A
+  lock held past the ceiling reads as wedged (`fail`) with its `--break-lock`
+  command.
+- **First sync stopped at a usage limit** (`warn`, code `sync_usage_limited`):
+  the last sync ended `partial` only because the provider's usage or rate limit
+  ran out (gbrain.io's daily allowance, Google's quota), with nothing else failed
+  or held, and a run of that kind landed pages inside the fail age (later runs
+  that hit the spent limit before landing anything keep the warning). The unread
+  range stays open and the next scheduled sync resumes it, so the fix is to wait.
+  A run that fails items or holds files, a bare permission error (403), or no
+  limited run landing pages inside the fail age reads as no successful sync
+  (`fail`).
 - **No successful sync recorded** (`fail`, code `sync_no_successful_sync`): no
   sync is running. The message names the last attempt, read-only from the newest
   `sync` job and (on a managed brain) `gbrain sync status`: its time, result

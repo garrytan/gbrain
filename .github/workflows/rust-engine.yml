@@ -365,6 +365,14 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts
+      # The shadow seed leaves the swap's writer-evidence tables behind (rust seed::NOT_COPIED). Same ownership rule as
+      # above: a missing addon is an error here, and the next step fails the lane when no test ran.
+      - name: The shadow seed skips the writer-evidence tables
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store writer-seed -- bun test --timeout=60000 test/shadow-writer-seed.test.ts
       - name: Fail the withdrawn-lead lane when no test ran
         if: matrix.shard == '1'
         shell: bash

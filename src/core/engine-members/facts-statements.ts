@@ -306,7 +306,7 @@ export interface FactsStatementMembers {
   /** The trust proposals that name the page, one of its facts or one of its takes as target or related row; how many. Writes trust_proposals; run it in the purge transaction. */
   deletePurgedPageTrustProposals(sourceId: string, pageId: number, factIds: number[], takeIds: number[]): Promise<number>;
   /** The page's held writes (every hold of the slug in the source); their ids as text, in id order. Writes write_gate_holds; run it in the purge transaction. */
-  deletePurgedPageHolds(sourceId: string, slug: string): Promise<string[]>;
+  deletePurgedPageHolds(sourceId: string, slug: string, pageId?: number | null): Promise<string[]>;
   /** The gate receipts that name the page, one of its facts or takes, or one of its held writes (`holdIds`, as text); how many. Writes write_gate_receipts; run it in the purge transaction. */
   deletePurgedPageGateReceipts(pageId: number, factIds: number[], takeIds: number[], holdIds: string[]): Promise<number>;
   /** The page's facts (filed on it or extracted from it and filed on none); how many. Writes facts; run it in the purge transaction. */

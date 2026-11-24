@@ -2047,7 +2047,7 @@ const JOURNAL_REQUEST = 'b0000000-0000-4000-8000-0000000000b1';
 const JOURNAL_KEYS = ['brain', 'principal:local_cli:writer-1'];
 const EMB = new Float32Array([0.1, 0.2, 0.3]);
 const page = { type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example body.', timeline: '', frontmatter: { tags: [] } };
-const pageRet: Rule = [/^\s*INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
+const pageRet: Rule = [/^\s*(?:WITH ins AS \(\s*)?INSERT INTO pages \(source_id, slug/, [PAGE_ROW]];
 const pageId: Rule = [/SELECT id FROM pages/i, [{ id: 1 }]];
 /** The sealing chunk insert stamps the page's chunker version and needs the page row back. */
 const sealedPage: Rule = [/UPDATE pages SET chunker_version/, [{ id: 1 }]];

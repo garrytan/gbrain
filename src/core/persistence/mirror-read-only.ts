@@ -18,15 +18,16 @@
  * url-clone.ts) is read-only the same way without the flag, because gbrain
  * pulls it with `git pull --ff-only` on every sync.
  */
-import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
 import { urlCloneReadOnly } from '../url-clone.ts';
 
+export const MIRROR_READ_ONLY_SQL = `SELECT COALESCE(config->>'mirror_read_only','false')='true' AS read_only, local_path, config FROM sources WHERE id=$1`;
 /** `lock`: inside a publication, hold the source row so a concurrent mode change waits for this write. */
 export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, lock = false): Promise<boolean> {
-  const row = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId, lock ? { lock: 'share' } : undefined);
+  const [row] = await engine.executeRaw<{ read_only: boolean; local_path: string | null; config: unknown }>(
+    `${MIRROR_READ_ONLY_SQL}${lock ? ' FOR SHARE' : ''}`, [sourceId]);
   if (!row) return false;
-  return String(row.config.mirror_read_only) === 'true' || await urlCloneReadOnly(engine, sourceId, row);
+  return row.read_only === true || await urlCloneReadOnly(engine, sourceId, row);
 }
 
 /**
@@ -34,9 +35,10 @@ export async function sourceMirrorReadOnly(engine: SqlEngine, sourceId: string, 
  * legacy disk writers (write-through, fact fences, timeline, forget, unfenced facts) skip on it as managed publication does.
  */
 export async function readOnlyCheckout(engine: SqlEngine, sourceId: string): Promise<'mirror_read_only' | 'url_clone' | null> {
-  const row = await (engine as unknown as Pick<BrainEngine, 'readSourceState'>).readSourceState(sourceId);
+  const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
   if (!row) return null;
-  if (String(row.config.mirror_read_only) === 'true') return 'mirror_read_only';
+  const config = typeof row.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : (row.config ?? {}) as Record<string, unknown>;
+  if (String(config.mirror_read_only) === 'true') return 'mirror_read_only';
   return await urlCloneReadOnly(engine, sourceId, row) ? 'url_clone' : null;
 }
 

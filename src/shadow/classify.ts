@@ -4,7 +4,10 @@
  *
  *   match              equal canonical JSON
  *   order_diff         a ranked read with the same rows in another order (scores ignored)
- *   diff               anything else that differs
+ *   diff               anything else that differs (on an exactness comparison, exactness.ts turns it into stale or inconclusive)
+ *   stale              an exactness mismatch while the follower held older committed work it had not applied
+ *   inconclusive       an exactness mismatch with no such evidence; counted as unexplained until a rerun exists
+ *   collation_order    a text-ordered read whose rows are the primary's, in C byte order (exactness.ts); explained, not unexplained
  *   privacy_diverged   a Rust row outside the call's source scope (any source column it carries), or a private page the call excluded
  *   capability_missing Rust refused with engine_capability_missing; `reason` is the capability
  *   error              Rust threw anything else; `reason` is its code when it has one
@@ -17,16 +20,18 @@ import { canonicalJson } from './codec.ts';
 import type { ShadowReadKind } from './reads.ts';
 
 export type ShadowOutcome =
-  | 'match' | 'order_diff' | 'diff' | 'privacy_diverged'
+  | 'match' | 'order_diff' | 'diff' | 'stale' | 'inconclusive' | 'collation_order' | 'privacy_diverged'
   | 'capability_missing' | 'error' | 'timeout' | 'addon_unavailable';
 
 export const SHADOW_OUTCOMES: readonly ShadowOutcome[] = [
-  'match', 'order_diff', 'diff', 'privacy_diverged', 'capability_missing', 'error', 'timeout', 'addon_unavailable',
+  'match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order', 'privacy_diverged', 'capability_missing', 'error', 'timeout', 'addon_unavailable',
 ];
 
 export interface Classification {
   outcome: ShadowOutcome;
   reason?: string;
+  /** For stale, inconclusive and collation_order: the mismatch the comparison found. */
+  mismatch?: 'diff' | 'order_diff';
 }
 
 /** Score-like fields two rankers may legitimately compute differently; ignored by the order-insensitive pass. */

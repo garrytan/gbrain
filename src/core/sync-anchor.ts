@@ -14,7 +14,6 @@ import { ownsGlobalSyncAnchor, sameRepoDir } from './sync.ts';
 import { isWithinRoot } from './sync-git.ts';
 import { serr } from './console-prefix.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
-import { sourceConfigText } from './source-rows.ts';
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
@@ -30,8 +29,12 @@ export async function readSyncAnchor(
     // GBRA-133: inside a CLI sync's routing scope the source's routing row answers the repo path (sync-dispatch-read.ts).
     const routing = which === 'repo_path' ? await syncDispatchRow(engine, sourceId) : undefined;
     if (routing) return routing.local_path;
-    const source = await engine.getSource(sourceId);
-    return (which === 'repo_path' ? source?.local_path : source?.last_commit) ?? null;
+    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
+    const rows = await engine.executeRaw<Record<string, string | null>>(
+      `SELECT ${col} AS value FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    return rows[0]?.value ?? null;
   }
   return await engine.getConfig(`sync.${which}`);
 }
@@ -135,7 +138,11 @@ export async function ownsSourceSyncAnchor(
     return await ownsGlobalSyncAnchor(engine, sourceId, dir);
   }
   try {
-    const configured = (await engine.readSourceRow(sourceId))?.local_path ?? null;
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const configured = rows[0]?.local_path ?? null;
     if (configured === null) return { owns: true, configured: null };
     if (!isHostAbsolutePath(configured)) return { owns: false, configured };
     return { owns: sameRepoDir(configured, dir), configured };
@@ -208,7 +215,11 @@ export async function sourceCommitAnchorAllowed(
       else relativeGlobal = globalPath;
     }
     if (configured === null) {
-      configured = (await engine.readSourceRow(sourceId))?.local_path ?? relativeGlobal;
+      const rows = await engine.executeRaw<{ local_path: string | null }>(
+        `SELECT local_path FROM sources WHERE id = $1`,
+        [sourceId],
+      );
+      configured = rows[0]?.local_path ?? relativeGlobal;
     }
     if (configured === null) return { owns: true, configured: null };
     if (!isHostAbsolutePath(configured)) return { owns: false, configured };
@@ -238,6 +249,7 @@ export async function writeSyncAnchor(
 ): Promise<void> {
   return withCompanyBrainSource(engine, sourceId, async engine => {
   if (sourceId) {
+    const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
       // Wave-D review (#4369 follow-up): guard the commit-anchor trio
@@ -263,9 +275,20 @@ export async function writeSyncAnchor(
           return;
         }
       }
-      const newestContentAt = newestContentEpochMs === undefined ? undefined
-        : newestContentEpochMs === null ? null : new Date(newestContentEpochMs).toISOString();
-      await engine.advanceSourceCommit(sourceId, value, newestContentAt);
+      if (newestContentEpochMs !== undefined) {
+        const iso = newestContentEpochMs === null
+          ? null
+          : new Date(newestContentEpochMs).toISOString();
+        await engine.executeRaw(
+          `UPDATE sources SET last_commit = $1, last_sync_at = now(), newest_content_at = $3 WHERE id = $2`,
+          [value, sourceId, iso],
+        );
+      } else {
+        await engine.executeRaw(
+          `UPDATE sources SET last_commit = $1, last_sync_at = now() WHERE id = $2`,
+          [value, sourceId],
+        );
+      }
       // GBRA-133 PR 2a: the host that advanced a classic source is the one whose resident notifier watches it.
       await (await import('./notifier/store.ts')).recordLocalSyncer(engine, sourceId);
     } else {
@@ -283,8 +306,10 @@ export async function writeSyncAnchor(
         );
         return;
       }
-      // The plain local_path write: no name and no federated change.
-      await engine.attachSourcePath(sourceId, value);
+      await engine.executeRaw(
+        `UPDATE sources SET ${col} = $1 WHERE id = $2`,
+        [value, sourceId],
+      );
     }
     return;
   }
@@ -329,7 +354,11 @@ export async function readChunkerVersion(
   sourceId: string | undefined,
 ): Promise<string | null> {
   if (!sourceId) return null;
-  return engine.readSourceChunkerVersion(sourceId);
+  const rows = await engine.executeRaw<{ chunker_version: string | null }>(
+    `SELECT chunker_version FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  return rows[0]?.chunker_version ?? null;
 }
 
 export async function writeChunkerVersion(
@@ -339,7 +368,10 @@ export async function writeChunkerVersion(
 ): Promise<void> {
   return withCompanyBrainSource(engine, sourceId, async engine => {
   if (!sourceId) return;
-  await engine.setSourceChunkerVersion(sourceId, version);
+  await engine.executeRaw(
+    `UPDATE sources SET chunker_version = $1 WHERE id = $2`,
+    [version, sourceId],
+  );
   });
 }
 
@@ -365,13 +397,14 @@ function asSlugRootMode(raw: unknown): SlugRootMode | null {
   return raw === 'git-root' || raw === 'source-root' ? raw : null;
 }
 
+export const SLUG_ROOT_MODE_SQL = `SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1`;
 export async function readSlugRootMode(
   engine: BrainEngine,
   sourceId: string | undefined,
 ): Promise<SlugRootMode | null> {
   if (sourceId) {
-    const source = await engine.getSource(sourceId);
-    return asSlugRootMode(sourceConfigText(source?.config, 'slug_root_mode'));
+    const rows = await engine.executeRaw<{ mode: string | null }>(SLUG_ROOT_MODE_SQL, [sourceId]);
+    return asSlugRootMode(rows[0]?.mode);
   }
   return asSlugRootMode(await engine.getConfig('sync.slug_root_mode'));
 }

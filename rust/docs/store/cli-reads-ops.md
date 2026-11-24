@@ -110,8 +110,9 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   policy the store method rejects the call with `invalid_argument`. `scanExactBatch` with `excludePrivate` reads the
   same policy as `excludePrivate` and leaves hidden pages out of the batch.
   `readRankCoverage`, `readExactSnippetChunks` and `listExactRescanChunks` with `excludePrivate` read the same policy.
-- **Mention-pass state.** The store has no `page_mention_state` rows, so with `mentionTypes` every readable page owes a
-  mention pass and `mention_due` is true whenever a page is readable, as Postgres gives for a brain with no rows.
+- **Mention-pass state.** `readRankCoverage` reads the stored per-page mention state. With `mentionTypes`, `mention_due`
+  is true only when a readable page owes a mention pass under `mentionVersion` (no state, or state behind the page's
+  knowledge revision or the version), or a readable page of one of those types owes an alias refresh under `aliasVersion`.
 - **Held link extraction.** The store keeps no `links_extract_failure`, so no page is held and `readRankCoverage` counts
   every stale page.
 - **Trust tiers.** `scanExactBatch` with `minTrust` refuses.
@@ -120,7 +121,7 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   with no version is below the fence, as Postgres stores 1 for it.
 - **Body storage.** The store has no `body_storage` or `body_bytes`. A page has a body when `compiled_truth` or
   `timeline` is non-empty, which is the Postgres answer for an inline body.
-- **Page aliases.** The store has no `page_aliases` table, so the alias probe (`aliasKeys`) finds nothing, as Postgres
-  does with an empty table.
+- **Page aliases.** The alias probe (`aliasKeys`) reads the stored page-alias rows (`alias_row_slugs`) and matches a
+  page by the alias row's source and slug.
 - **Equal `created_at`.** PGLite orders `listExtractionPendingPages` by `created_at` only and leaves ties open. The store
   breaks a tie by page id, newest first.

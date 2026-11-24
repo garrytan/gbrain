@@ -1492,14 +1492,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1393 column(s) verified against live schema",
+            "message": "1395 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 192 table(s) the applied migrations create exist.",
+            "message": "All 195 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -4039,6 +4039,17 @@
           {
             "category": "brain",
             "details": {
+              "items": [],
+              "total": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every held write is tied to one page, or waits for its page to be created.",
+            "name": "write_gate_hold_ambiguous",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "by_source": {},
               "complete": true,
               "items": [],
@@ -4047,12 +4058,11 @@
               "scanned": 0,
               "stranded": {
                 "no_page": 0,
-                "page_deleted": 0,
-                "renamed": 0
+                "page_deleted": 0
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "No held write names a page that is missing (0 held write(s) read).",
+            "message": "No held write is without a live page (0 held write(s) read).",
             "name": "write_gate_holds_stranded",
             "status": "ok"
           },
@@ -7123,14 +7133,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1393 column(s) verified against live schema",
+            "message": "1395 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 192 table(s) the applied migrations create exist.",
+            "message": "All 195 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -9682,6 +9692,17 @@
           {
             "category": "brain",
             "details": {
+              "items": [],
+              "total": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Every held write is tied to one page, or waits for its page to be created.",
+            "name": "write_gate_hold_ambiguous",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "by_source": {},
               "complete": true,
               "items": [],
@@ -9690,12 +9711,11 @@
               "scanned": 0,
               "stranded": {
                 "no_page": 0,
-                "page_deleted": 0,
-                "renamed": 0
+                "page_deleted": 0
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "No held write names a page that is missing (0 held write(s) read).",
+            "message": "No held write is without a live page (0 held write(s) read).",
             "name": "write_gate_holds_stranded",
             "status": "ok"
           },

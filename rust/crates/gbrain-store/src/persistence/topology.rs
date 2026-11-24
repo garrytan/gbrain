@@ -659,3 +659,146 @@ mod tests {
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"w\"");
     }
 }
+
+/// Every stored topology change as (principal id, `terminal_bytes`), for `readCounterDrift`
+/// (cli_reads/doctor_persistence.rs).
+pub(crate) fn topology_terminal_bytes(read: &dyn KvRead) -> Result<Vec<(String, i64)>> {
+    let mut rows = Vec::new();
+    scan_prefix(
+        read,
+        &[keys::PERSISTENCE, super::TOPOLOGY],
+        false,
+        &mut |_, v| {
+            rows.push(serde_json::from_slice::<TopologyChangeRecord>(v));
+            true
+        },
+    )?;
+    rows.into_iter()
+        .map(|row| {
+            let r =
+                row.map_err(|e| StoreError::invalid(format!("a topology change record: {e}")))?;
+            Ok((r.principal_id, r.terminal_bytes))
+        })
+        .collect()
+}
+
+/// The `persistence_topology_changes` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(
+        json_rows::<TopologyChangeRecord>(read, &[keys::PERSISTENCE, super::TOPOLOGY])?
+            .into_iter()
+            .map(|r| ProbeRow {
+                cells: vec![
+                    ("recovery", ProbeCell::opt_jsonb(r.recovery.as_ref())),
+                    ("outcome", ProbeCell::opt_jsonb(r.outcome.as_ref())),
+                ],
+                source_id: Some(r.source_id),
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::worktree_rows::rows::put_worktree;
+    use super::TopologyChangeInsert;
+    use crate::test_support::store;
+    use serde_json::{Value, json};
+
+    const HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
+    const OTHER: &str = "a0000000-0000-4000-8000-0000000000a2";
+    const MINE: &str = "f0000000-0000-4000-8000-0000000000a1";
+    const THEIRS: &str = "f0000000-0000-4000-8000-0000000000a2";
+    const PRINCIPAL: &str = "c0000000-0000-4000-8000-0000000000c1";
+
+    fn change(s: &crate::Store, n: u8, recovery: Option<Value>) -> String {
+        let input: TopologyChangeInsert = serde_json::from_value(json!({
+            "principalId": PRINCIPAL, "requestId": format!("b0000000-0000-4000-8000-0000000000{n:02x}"),
+            "digest": "d", "operation": "clone", "sourceId": "default", "state": "recovering",
+            "recovery": recovery, "terminalBytes": 0, "outcome": null,
+        }))
+        .unwrap();
+        s.insert_topology_change(&input).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn ids(rows: &[Value]) -> Vec<String> {
+        rows.iter()
+            .map(|r| r["id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn lists_only_this_hosts_recoveries_in_id_order_after_the_cursor_up_to_the_limit() {
+        let s = store();
+        s.write(|tx| {
+            put_worktree(tx, MINE, Some(HOST), "active")?;
+            put_worktree(tx, THEIRS, Some(OTHER), "active")
+        })
+        .unwrap();
+        let mut mine: Vec<String> = (1..=3)
+            .map(|n| change(&s, n, Some(json!({ "worktreeId": MINE }))))
+            .collect();
+        change(&s, 4, Some(json!({ "worktreeId": THEIRS })));
+        change(&s, 5, None);
+        change(
+            &s,
+            6,
+            Some(json!({ "worktreeId": "f0000000-0000-4000-8000-0000000000ff" })),
+        );
+        change(&s, 7, Some(json!({ "stage": "/x" })));
+        mine.sort();
+        assert_eq!(
+            ids(&s.list_topology_recoveries(HOST, None, 16.0).unwrap()),
+            mine
+        );
+        assert_eq!(
+            ids(&s.list_topology_recoveries(HOST, None, 2.0).unwrap()),
+            mine[..2].to_vec()
+        );
+        assert_eq!(
+            ids(&s
+                .list_topology_recoveries(HOST, Some(&mine[0]), 16.0)
+                .unwrap()),
+            mine[1..].to_vec()
+        );
+        assert!(
+            s.list_topology_recoveries(HOST, Some(&mine[2]), 16.0)
+                .unwrap()
+                .is_empty()
+        );
+        let row = &s.list_topology_recoveries(HOST, None, 1.0).unwrap()[0];
+        assert_eq!(row["recovery"], json!({ "worktreeId": MINE }));
+        assert_eq!(row["state"], json!("recovering"));
+        assert_eq!(
+            ids(&s.list_topology_recoveries(OTHER, None, 16.0).unwrap()).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_worktree_id_or_cursor_that_is_not_a_uuid_refuses_as_the_cast_does() {
+        let s = store();
+        assert!(
+            s.list_topology_recoveries(HOST, None, 2.0)
+                .unwrap()
+                .is_empty()
+        );
+        let bad = s.list_topology_recoveries("nope", None, 2.0).unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
+        let bad = s
+            .list_topology_recoveries(HOST, Some("x"), 2.0)
+            .unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"x\"");
+        let bad = s.list_topology_recoveries(HOST, None, 1.5).unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type bigint: \"1.5\"");
+        change(&s, 1, Some(json!({ "worktreeId": "w" })));
+        let bad = s.list_topology_recoveries(HOST, None, 2.0).unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"w\"");
+    }
+}

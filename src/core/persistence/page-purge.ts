@@ -65,6 +65,7 @@ import { appendPurgeIntent } from '../belief/purge-mirror.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
@@ -264,7 +265,8 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
     const hash = await rewrittenContentHash(tx, pageId, sourceId, body.generation, overlaid, body.meta);
     if (hash) hashes.add(hash);
   }
-  await tx.upsertPagePurges({ sourceId, contentHashes: [...hashes], slug, requestId });
+  await tx.executeRaw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
+    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [sourceId, [...hashes], slug, requestId]);
 }
 
 /** Inside the coordinated delete transaction, before the page row is deleted. */
@@ -355,7 +357,7 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   if (has('decide_review_proposals')) removed.decide_review_proposals = await tx.deletePurgeReviewProposals(sourceId, refs);
   if (has('decide_proposals')) removed.decide_proposals = await tx.deletePurgeDecideProposals(sourceId, factIds);
   if (has('trust_proposals')) removed.trust_proposals = await tx.deletePurgedPageTrustProposals(sourceId, pageId, factIds, takeIds);
-  const holds = has('write_gate_holds') ? await tx.deletePurgedPageHolds(sourceId, slug) : [];
+  const holds = has('write_gate_holds') ? await tx.deletePurgedPageHolds(sourceId, slug, pageId) : [];
   if (has('write_gate_holds')) removed.write_gate_holds = holds.length;
   if (has('write_gate_receipts')) removed.write_gate_receipts = await tx.deletePurgedPageGateReceipts(pageId, factIds, takeIds, holds);
   const missingCaches: string[] = [];

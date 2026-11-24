@@ -34,7 +34,7 @@ The `dream_synthesis_completions` archive (`rust/crates/gbrain-store/src/jobs/sy
 
 | Key | Holds |
 | --- | --- |
-| `a <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `a <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
+| `f <source_id> 0x00 <idempotency_key>` | `{ completed_at }` (microseconds): one archive row, keyed by the table's primary key `(source_id, idempotency_key)`. Neither part holds `0x00`, so a scan of `f <source_id> 0x00 <prefix>` is `idempotency_key LIKE '<prefix>%'` |
 
 Integers are big-endian, signed ones with the sign bit flipped. Every call reads the store clock once, as one
 Postgres transaction reads one `now()`. A millisecond duration becomes `round(ms * 1000)` microseconds. The one

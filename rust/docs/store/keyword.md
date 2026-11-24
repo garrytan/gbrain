@@ -181,7 +181,7 @@ that must not change the store they check. It opens the record file through redb
 (`redb_kv.rs` `RedbReadOnlyKv`), which takes no write lock, runs no recovery and commits nothing on close: a plain
 open commits redb's allocator state when it closes, so it changes bytes of `records.redb` even when nothing was
 written. The builder does not run. Every write is refused with `read_only_transaction`, and so is an open that
-would have to write: no records yet, a format before 4 (the upgrade) or an index state to reset. `store_io` names
+would have to write: no records yet, a format before 5 (the upgrade) or an index state to reset. `store_io` names
 a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
 writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
 across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.

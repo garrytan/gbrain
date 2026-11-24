@@ -87,11 +87,10 @@ The source members below behave differently on the Rust engine. Each difference 
 - `advanceSourceCommit` stamps `last_sync_at` with the process clock. The SQL engines use the
   database clock (`now()`). `getSource`, `readPlainSyncSource` and `listSourceRecords` read the
   stored `last_commit`; `listSourceRecords` also reads the stored `newest_content_at`.
-- The store keeps only the `state` and `reason` of a page's `page_embedding_budget` row
-  (`holdPageEmbedding`, key tag `2`). The spend columns (signature, spent, reserved, cap) have no
-  record: the embedding plan that writes them still runs raw SQL and refuses on this engine.
-  `readPageSizeRows` reads the kept hold, so it reports the same `state` and `reason` as the SQL
-  engines and lists a held page of any size.
+- The store keeps the full `page_embedding_budget` ledger: state, reason, embedding signature, spend, reservation,
+  reservation time, unpriced-call count, cap and update time. Its key is `B b <page id BE>`
+  (`page_embedding_budget.rs`). `reservePageEmbedding` and `settlePageEmbeddingReservation` update it. `readPageSizeRows` reads its
+  `state` and `reason` and lists a page with any ledger row, of any size.
 - A page's embedding hold lives only in its `page_embedding_budget` ledger row
   (`page_embedding_budget.rs`, `holdPageEmbedding` and `recordPageEmbeddingHold`; docs/store/embeddings.md).
   There is no separate hold family: key tag `2` (the old `embedding_holds`) is free.
