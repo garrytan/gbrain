@@ -349,6 +349,10 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'writeReasonPurgeTombstones', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'writeSourceSyncHeartbeat',
   'writeSourceUpstreamObservation', 'writeSyncAdmissionStamp', 'writeSyncPassRow', 'writeTrustScanCursor',
   'writerAdminStore', 'writerReleaseStore',
+  // Lane 16 repair applies and the twin merge (engine-sql/repair-applies.ts, atom-generation.ts, twin-merge.ts).
+  'detachFenceRowFacts', 'expireApprovedFacts', 'linkStruckDuplicateFacts', 'lockApprovedFacts', 'moveFactClaimDates',
+  'moveTwinFacts', 'moveTwinPageRows', 'moveTwinRelations', 'recordAtomGenerationBump', 'recordSlugRename',
+  'restoreConsolidationTie', 'restoreExtractorFact', 'supersedeDuplicateFacts', 'tightenDatabaseFactVisibility',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
