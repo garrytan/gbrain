@@ -226,6 +226,46 @@ mod tests {
         })
     }
 
+    /// Opens a format-7 brain on a record store whose write transactions fail with `code` on the
+    /// token secret's records: the open reports that error as it is, says nothing about a re-seed,
+    /// and changes nothing (the carry-over rule of `carry_over_failure`).
+    fn open_format_7_on_failing_disk(code: &'static str) {
+        let (inner, _) = old_brain(7, true);
+        let before = dump(&inner);
+        let kv: Arc<dyn Kv> = Arc::new(crate::test_support::FaultyKv {
+            inner: inner.clone(),
+            code,
+            ops: &[
+                crate::test_support::FaultOp::Scan,
+                crate::test_support::FaultOp::Put,
+            ],
+            fail_on: |key| {
+                key.starts_with(&[keys::ACCESS_MEMBERS, LINK])
+                    || key.starts_with(&[keys::ACCESS_MEMBERS, STATE])
+            },
+        });
+        let err = Store::open_kv(kv, Arc::new(SystemEnv), OpenOptions::default())
+            .err()
+            .expect("the open must fail");
+        assert_eq!(err.code, code, "{}", err.message);
+        assert!(
+            !err.message.contains("Re-seed") && !err.message.contains("gbrain engine shadow"),
+            "an I/O or storage error must not tell the person to re-seed: {}",
+            err.message
+        );
+        assert_eq!(dump(&inner), before);
+    }
+
+    #[test]
+    fn an_io_error_while_sorting_the_token_secret_is_reported_as_store_io_not_as_a_reseed() {
+        open_format_7_on_failing_disk(crate::error::STORE_IO);
+    }
+
+    #[test]
+    fn a_corrupt_record_store_while_sorting_the_token_secret_is_reported_as_store_corrupt() {
+        open_format_7_on_failing_disk(crate::error::STORE_CORRUPT);
+    }
+
     #[test]
     fn a_new_brain_keeps_its_token_secret_off_the_member_link_prefix() {
         let kv = mem_kv();

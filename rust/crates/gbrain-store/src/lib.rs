@@ -720,12 +720,11 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     if stored.format_version <= 7 {
         let from = stored.format_version;
         access_key_split::split_token_secret_from_member_links(&mut *tx).map_err(|e| {
-            StoreError::new(
-                error::SHADOW_RESEED_REQUIRED,
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its token secret from its member links failed"),
                 format!(
-                    "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret: {}; nothing was changed. Re-seed the shadow store: {}",
-                    e.message,
-                    seed::RESEED_STEPS
+                    "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret"
                 ),
             )
         })?;
