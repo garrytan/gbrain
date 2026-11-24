@@ -2026,6 +2026,28 @@ const PINS: Pin[] = [
     'SELECT max(sequence) AS sequence FROM persistence_requests'],
   },
   {
+    from: 'src/core/persistence/sync-movement.ts:159,160,163 readSourceMovement (at b7b18e5ab3)',
+    case: { method: 'readSourceMovementRows', variant: 'default', run: e => e.readSourceMovementRows({ source_id: 'default', worktree_id: '00000000-0000-4000-8000-000000000001', source_incarnation: '00000000-0000-4000-8000-000000000002' }) },
+    texts: [`SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
+        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`,
+      `SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
+        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
+      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`,
+      `SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
+        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
+      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-movement.ts:133 liveSyncJob (at b7b18e5ab3)',
+    case: { method: 'readLiveSyncJobId', variant: 'default', run: e => e.readLiveSyncJobId('default') },
+    texts: [`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
+    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`],
+  },
+  {
     from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',
     case: { method: 'readSourceCheckoutRoot', variant: 'default', run: e => e.readSourceCheckoutRoot('default', null) },
     texts: [`SELECT s.incarnation::text AS incarnation,
@@ -2971,6 +2993,28 @@ const PINS: Pin[] = [
     FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
       WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`,
     'SELECT max(sequence) AS sequence FROM persistence_requests'],
+  },
+  {
+    from: 'src/core/persistence/sync-movement.ts:159,160,163 readSourceMovement (at b7b18e5ab3)',
+    case: { method: 'readSourceMovementRows', variant: 'default', run: e => e.readSourceMovementRows({ source_id: 'default', worktree_id: '00000000-0000-4000-8000-000000000001', source_incarnation: '00000000-0000-4000-8000-000000000002' }) },
+    texts: [`SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
+        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`,
+      `SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
+        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
+      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`,
+      `SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
+        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
+      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-movement.ts:133 liveSyncJob (at b7b18e5ab3)',
+    case: { method: 'readLiveSyncJobId', variant: 'default', run: e => e.readLiveSyncJobId('default') },
+    texts: [`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
+    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`],
   },
   {
     from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',

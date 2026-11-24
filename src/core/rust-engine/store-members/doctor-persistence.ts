@@ -10,6 +10,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
+import type { GitPushHoldRow, StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -85,12 +86,25 @@ export const listManagedRoots: Member<'listManagedRoots'> = async brain => {
 
 /** No consumer heartbeat is recorded (persistence_consumers has no writer). */
 export const readLiveConsumerSummary: Member<'readLiveConsumerSummary'> = async () => ({ live: '0', oldest_hours: null });
-/** No effect is recorded here, so none is parked. */
-export const countParkedEffects: Member<'countParkedEffects'> = async () => 0;
-export const listParkedEffects: Member<'listParkedEffects'> = async () => [];
-export const listGitPushHoldRows: Member<'listGitPushHoldRows'> = async () => [];
-export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async () => [];
-export const listParkedGroupRows: Member<'listParkedGroupRows'> = async () => [];
+/** Served from the store's effect records (persistence/writer_status_queue.rs). */
+export const countParkedEffects: Member<'countParkedEffects'> = async (brain, sourceIds) =>
+  Number(await storeCall({ member: 'countParkedEffects' }, () => brain.parkedEffectCount(sourceIds)));
+/** Served from the store's effect, request and source binding records; `request` is the stored row, as `to_jsonb(r)` is. */
+export const listParkedEffects: Member<'listParkedEffects'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listParkedEffects' }, () => brain.parkedEffectRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listParkedEffects']>>;
+/** Served from the store's effect, request, host binding and source binding records; `oldest_at` as a `Date`, as the SQL engines return it. */
+export const listGitPushHoldRows: Member<'listGitPushHoldRows'> = async (brain, codes, sourceIds) => {
+  const rows = await storeCall({ member: 'listGitPushHoldRows' }, () => brain.gitPushHoldRows([...codes], sourceIds)) as Array<Omit<GitPushHoldRow, 'oldest_at'> & { oldest_at: string }>;
+  return rows.map(row => ({ ...row, oldest_at: new Date(row.oldest_at) }));
+};
+/** Served from the store's effect records (persistence/writer_status_queue.rs); `since` as a `Date`, as the SQL engines return it. */
+export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async (brain, sourceIds, stallMs) => {
+  const rows = await storeCall({ member: 'listStalledCatchupRows' }, () => brain.stalledCatchupRows(sourceIds, stallMs)) as Array<Omit<StalledCatchupRow, 'since'> & { since: string }>;
+  return rows.map(row => ({ ...row, since: new Date(row.since) }));
+};
+/** Served from the store's effect, request, source binding and source records (persistence/writer_status_queue.rs). */
+export const listParkedGroupRows: Member<'listParkedGroupRows'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listParkedGroupRows' }, () => brain.parkedGroupRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listParkedGroupRows']>>;
 /** Stale queued and failed embedding effects of committed writes, served from the store's effect rows (persistence/embedding_candidates.rs). */
 export const readStaleEmbeddingCounts: Member<'readStaleEmbeddingCounts'> = async (brain, sourceIds) => {
   const row = await storeCall({ member: 'readStaleEmbeddingCounts' }, () => brain.readStaleEmbeddingCounts(sourceIds ? [...sourceIds] : null)) as Record<string, unknown>;
@@ -101,7 +115,9 @@ export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = (b
 /** No worktree or source binding row exists, so none is orphaned. */
 export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async () => [];
 export const listWorktreeIds: Member<'listWorktreeIds'> = async () => [];
-export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async () => [];
+/** Served from the store's source binding, worktree and source records (persistence/writer_status_queue.rs). */
+export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
+  await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.movementBindingRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
 export const listOwnerBindings: Member<'listOwnerBindings'> = async () => [];
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
 export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];

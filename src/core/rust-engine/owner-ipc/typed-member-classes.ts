@@ -270,7 +270,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readDueWantedMarkers', 'readFirstDue', 'readGitHoldCodeCountRows', 'readGitHoldListingRows',
   'readGitHoldRecords', 'readGitHoldReportInputs', 'readGitHoldRetryRequest', 'readGitHoldRow',
   'readGitImageHoldCountRows', 'readIdentityDowngradeRows', 'readLinkTargetPages', 'readLiveAccessToken',
-  'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncPassRows',
+  'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncJobId', 'readLiveSyncPassRows',
   'readManagedSyncCursorHeader', 'readManagedSyncFailureRows', 'readNamedEntitySlugs', 'readNotifierLease',
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',
   // Link preparation's slug reads (engine-sql/link-slug-reads.ts, link_slug_reads.rs): SELECTs and a store read only.
@@ -281,7 +281,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readPageSynopses', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
   'readReasonPurgeTombstones', 'readRefreshTiming', 'readRenameIdentityRows', 'readRetiredManagedSyncCursor',
   'readRevisionWriterRequest', 'readSeedTitleSlugs', 'readSegmentRegions', 'readSegmentedGateEvidence',
-  'readSourceCheckoutRoot', 'readStoredConfigValue', 'readSyncAdmissionEffects', 'readSyncConversionRows',
+  'readSourceCheckoutRoot', 'readSourceMovementRows', 'readStoredConfigValue', 'readSyncAdmissionEffects', 'readSyncConversionRows',
   'readSyncDispatchRow', 'readSyncHeadRequestRow', 'readSyncImportPageRows', 'readSyncPassRow',
   'readSyncRecoveryProbeRow', 'readSyncStatusCommittedRow', 'readSyncStatusSourceRow', 'readSynopsisTierSources',
   'readTrigramCandidates', 'readUnembeddedPageSummary', 'readUnfinishedAccessMigration', 'readWantedMarkers',

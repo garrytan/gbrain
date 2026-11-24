@@ -27,7 +27,7 @@ import type { OverdueHold, OverdueHoldKind } from '../engine-sql/persistence-own
 import type { ProjectionScanCursor } from '../page-state/projection-window.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from '../engine-sql/writer-versions.ts';
 import type { ReservedConnection } from '../engine.ts';
-import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../engine-sql/applied-watermark-reads.ts';
+import type { SourceCheckoutRoot, SourceMovementBinding, SourceMovementRows, UnembeddedPageSummary, WriteWatermarkRow } from '../engine-sql/applied-watermark-reads.ts';
 import type { WriteContextInput, WriteContextResult } from '../engine-sql/transaction-settings.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import type { CounterColumn } from '../engine-sql/writer-release.ts';
@@ -121,6 +121,10 @@ export interface PersistenceMembers {
   readIdentityDowngradeRows<D = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
+  /** One source binding's movement rows for readSourceMovement: the managed-sync watermark, the head request and the hold summary. */
+  readSourceMovementRows(binding: SourceMovementBinding): Promise<SourceMovementRows>;
+  /** The id of the active `sync` job with a live lock that drains the source, or null. */
+  readLiveSyncJobId(sourceId: string): Promise<number | null>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */
   readSourceCheckoutRoot(sourceId: string, hostId: string | null): Promise<SourceCheckoutRoot | null>;
   /** The source's pages still waiting for an embedding in `column`: count, oldest edit, budget-held count. */

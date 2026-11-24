@@ -127,6 +127,30 @@ describe('persistence binding listings sort source ids by byte', () => {
     return { all, limited };
   });
 
+  parityTest('listSourceBindingsForMovement lists the claimed sources by byte id, each with its worktree owner', {
+    methods: ['writerReleaseStore', 'listSourceBindingsForMovement'],
+  }, async (engine, backend) => inHome(async home => {
+    // Source ids the validator accepts: en_US sorts them `ab, a-y, a-z`; bytes put `ab` last.
+    const ids = ['ab', 'a-z', 'a-y'];
+    const root = join(home, 'brains', 'root');
+    for (const id of ids) mkdirSync(join(root, id), { recursive: true });
+    execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
+    await withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
+      await (await engine.writerReleaseStore()).setBrainEnabled(false);
+      for (const id of ids) {
+        await createSource(engine, backend, id, {}, join(root, id));
+        await claimWorktree(engine, id, join(root, id));
+      }
+    });
+    const host = localHostId();
+    const rows = await engine.listSourceBindingsForMovement(null);
+    const one = await engine.listSourceBindingsForMovement(['a-z']);
+    const listed = rows.map(row => ({ source: row.source_id, owned: row.owner_host_id === host, worktree: row.worktree_id === rows[0]!.worktree_id }));
+    expect(listed).toEqual(byteOrder(ids).map(source => ({ source, owned: true, worktree: true })));
+    expect(one.map(row => row.source_id)).toEqual(['a-z']);
+    return { listed, one: one.map(row => row.source_id) };
+  }));
+
   parityTest('preActivationClaims, readSyncFreshness and readSourceMovement list bound sources by byte id, and a claim lists its roots by byte path', {
     methods: ['worktreeClaimStore'],
   }, async (engine, backend) => inHome(async () => {
@@ -169,18 +193,16 @@ async function seedRequest(engine: BrainEngine, r: SeedRequest): Promise<{ id: s
 
 describe('persistence doctor groupings sort source ids and codes by byte', () => {
   parityTest('readParkedGroups lists parked Git targets by byte source id, then byte code', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'parkEffectRow', 'listParkedGroupRows'],
+  }, async (engine, backend) => {
     const codes = ['c_b', 'c-z', 'cb', 'c.b'];
     for (const id of ['ab', 'a-z']) {
-      const incarnation = await addSource(engine, id);
-      const request = await seedRequest(engine, { source: id, incarnation, operation: 'put_page' });
-      await engine.transaction(async tx => {
-        await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
-        await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,state,error_code,source_id,source_incarnation) VALUES ($1::uuid,'git',$2::text::jsonb,'failed','targets_parked',$3,$4::uuid)`,
-          [request.id, JSON.stringify({ parked: codes.map(code => ({ slug: 'notes/x', error_code: code })) }), id, incarnation]);
-      });
+      await createSource(engine, backend, id);
+      const request = await seedTypedRequest(engine, { source: id, operation: 'put_page' });
+      await seedTypedEffects(engine, { ...request, source: id }, [{ kind: 'git' }]);
     }
+    // The worker parks each Git effect's targets, one per code.
+    await settleTypedEffects(engine, () => ({ to: 'parked', data: { parked: codes.map(code => ({ slug: 'notes/x', error_code: code })) } }));
     const groups = (await readParkedGroups(engine)).map(group => `${group.source_id}:${group.code}`);
     expect(groups).toEqual(['a-z', 'ab'].flatMap(id => byteOrder(codes).map(code => `${id}:${code}`)));
     return groups;

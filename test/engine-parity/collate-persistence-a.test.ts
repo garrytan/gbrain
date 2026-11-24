@@ -277,14 +277,15 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
   }));
 
   parityTest('readStalledCatchups lists stalled sources by byte id', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'retryBusyEffectRow', 'listStalledCatchupRows'],
+  }, async (engine, backend) => {
     for (const id of MIXED_SRC) {
-      const incarnation = await addSource(engine, id);
-      const request = await seedRequest(engine, { source: id, incarnation, state: 'committed' });
-      await seedEffect(engine, { request: request.id, source: id, incarnation, state: 'queued', errorCode: 'writer_busy',
-        data: { busy_since: new Date(Date.now() - 3_600_000).toISOString(), busy_retries: 2 } });
+      await createSource(engine, backend, id);
+      const request = await seedTypedRequest(engine, { source: id, state: 'committed' });
+      await seedTypedEffects(engine, { ...request, source: id }, [{ kind: 'git' }]);
     }
+    // Each effect found its writer busy for an hour, as the worker records it.
+    await settleTypedEffects(engine, () => ({ to: 'busy', data: { busy_since: new Date(Date.now() - 3_600_000).toISOString(), busy_retries: 2 } }));
     const stalled = (await readStalledCatchups(engine, undefined, 1000)).map(row => row.source_id);
     expect(stalled).toEqual([...BYTE_SRC]);
     return stalled;

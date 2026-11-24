@@ -776,10 +776,36 @@ answered here by `persistence/writer_status.rs`:
 - `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
   their deferred request count and age.
 
+The status's queue and movement reads, three of them shared with the persistence doctor checks
+(`src/core/engine-sql/doctor-persistence.ts`), are answered by `persistence/writer_status_queue.rs`:
+
+- `listStalledCatchupRows(sourceIds, stallMs)`: per source, the queued `writer_busy` effects that
+  carry `busy_since`, how many waited longer than `stallMs`, the oldest `busy_since` and the most
+  `busy_retries`. A `busy_since` that is not a time, or a `busy_retries` that is not an integer,
+  refuses as the SQL cast does.
+- `listParkedGroupRows(sourceIds)`: the parked targets of the unsettled `targets_parked` Git effects
+  per source, target error code and former binding (`binding_changed`, `source_replaced`, or null
+  while the effect's binding holds), with the counts, the least rule, the worktrees, the first five
+  request ids and the source's current worktree.
+- `listSourceBindingsForMovement(sourceIds)`: each source binding whose source still has the bound
+  incarnation, with its worktree's owner.
+- `readSourceMovementRows(binding)` (`src/core/engine-sql/applied-watermark-reads.ts`): one
+  binding's managed-sync watermark (the newest committed completion under the incarnation, a null
+  completion first as `DESC` sorts it, and the queued or running managed-sync requests with the
+  oldest), its head unfinished request (the running one first, then by sequence) and its git hold
+  summary counters.
+- `countParkedEffects(sourceIds)` and `listParkedEffects(sourceIds)`: the unsettled effects that
+  recorded a parked target, counted, and the first 20 by id with their request row and whether the
+  binding they were parked under is gone.
+- `listGitPushHoldRows(codes, sourceIds)`: the held Git effects (queued, running or failed, no
+  recovery, not settled) whose code, or a parked effect's first parked target code, is one of
+  `codes`, per source and worktree: the worktree's first host path, whether the source is bound
+  elsewhere now, the retrying and parked counts, the codes and the oldest request.
+- `readLiveSyncJobId(sourceId)`: the active `sync` job, outside the drain lease queue, with a live
+  lock that drains the source (by `sourceId`, `source_id`, or else `repoPath`), oldest started first.
+
 Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
-milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
-(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
-first two refuse and source movement reports `not_read`.
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds.
 
 ## Writer release
 

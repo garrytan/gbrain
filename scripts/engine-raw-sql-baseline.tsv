@@ -481,7 +481,6 @@ src/core/persistence/sync-holds.ts	execute_raw	9
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-markers.ts	execute_raw	9
-src/core/persistence/sync-movement.ts	execute_raw	4
 src/core/persistence/sync-origin.ts	execute_raw	1
 src/core/persistence/sync-page-fault.ts	execute_raw	9
 src/core/persistence/sync-pass-apply.ts	execute_raw	3
