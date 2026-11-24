@@ -99,9 +99,11 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
-- After a hard delete PGLite also scrubs ratings, weights, the volunteer log, the
-  gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps none
-  of those yet, so only eval candidates, retrieval records, page aliases, slug aliases and rename history change.
+- A hard delete (`deletePages`, `purgeDeletedPages`) scrubs, in the delete's write, the eval candidates, retrieval
+  records, the take proposals (with their idempotency entries and nudges) and open loops (with their dedupe keys) filed
+  under the slug in its source, and the page aliases, slug aliases and rename history, as PGLite's
+  `deletePurgedSlugStoreRows` does. PGLite also scrubs ratings, weights, the volunteer log, the gazetteer, core-edit
+  notices and write-gate holds, which this scrub does not touch.
 
 ## The purgeDeletedPages holds
 

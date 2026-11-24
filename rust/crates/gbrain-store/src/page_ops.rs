@@ -463,11 +463,10 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 /// The rows PGLite scrubs after a hard delete that name a page outside any foreign key
 /// (`scrubPurgedSlugs` and friends), run in the delete's transaction after the pages are gone.
 /// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`) and, of
-/// `scrubPurgedSlugStores`, the page aliases, slug aliases and rename history
-/// (`aliases::scrub_purged_slug_stores`), scrubbed in PGLite's order
-/// (src/core/engine-sql/pages.ts:235-237). Retrieval logs, ratings, the volunteer log, the
-/// gazetteer, take proposals, open loops, core-edit notices and write-gate holds do not exist here
-/// yet.
+/// `scrubPurgedSlugStores`, the take proposals (with their idempotency entries and nudges), the
+/// open loops (with their dedupe keys), the page aliases, slug aliases and rename history, scrubbed
+/// in PGLite's order (src/core/engine-sql/pages.ts deletePages). Retrieval logs, ratings, the
+/// volunteer log, the gazetteer, core-edit notices and write-gate holds are not scrubbed here.
 fn scrub_purged_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -475,6 +474,11 @@ fn scrub_purged_slugs(
     secret_occurrences: &BTreeSet<u64>,
 ) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
+    // `deletePurgedSlugStoreRows` (engine-sql/purge-slug-stores.ts SLUG_STORE_DELETES), in its order: the take proposals
+    // and open loops filed under the slug, then the aliases and rename history.
+    let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+    crate::takes::proposals::remove_for_slugs(tx, source_id, &wanted)?;
+    crate::facts::loops::remove_for_slugs(tx, source_id, &wanted)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
     crate::secret_store::purge_for_deleted_pages(tx, source_id, slugs, secret_occurrences)?;
     Ok(())
