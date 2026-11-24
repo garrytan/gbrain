@@ -4,7 +4,8 @@
  * 1. Protects: `gbrain <read> --as <member>` previews exactly what that member's key reads over a real
  *    `gbrain serve --http`: another member's personal source is out of get (named and unnamed), search, query, find and
  *    --source __all__, naming it is refused with permission_denied, the member's own personal source stays, and the
- *    owner (preview and key) reads everything. `gbrain access check --token` reports the same reads_now.
+ *    owner (preview and key) reads everything. `gbrain access check --token` reports the same reads_now. A page --as
+ *    cannot read (a folder rule) gets the same not-found answer as a missing slug, so the hint names no source.
  * 2. Fails when: --as shows a personal source the member's key does not read (or hides one it does), a member key
  *    reads another member's personal source over HTTP, or access check disagrees with what the key reads.
  * 3. Existing coverage: test/access-member-personal-sources.test.ts (in-process dispatch, PGLite and Postgres),
@@ -112,6 +113,36 @@ describe('--as previews personal sources the way member keys read them (repo-les
     expect(await readsNow('pat-key')).toEqual(own('pat'));
     expect(await readsNow('owner-key')).toEqual(['default', ...PERSONAL_KEYS.map(k => PERSONAL_PAGES[k].source)].sort());
     expect(await readsNow('quin-named')).toEqual([PERSONAL_PAGES.pat.source, PERSONAL_PAGES.team.source].sort());
+  }, 120_000);
+});
+
+describe('--as answers a page it cannot read exactly like an absent one', () => {
+  const HIDDEN = 'private/pat/plan';
+  const ABSENT = 'private/pat/nothing';
+  const team = PERSONAL_PAGES.team.source;
+
+  beforeAll(async () => {
+    await must(['access', 'rule', 'add', '--id', 'folder-pat', '--prefix', 'private/pat/', '--readers', `member:pat-example,member:${OWNER_MEMBER}`, '--source', team, '--yes']);
+    await must(['put', HIDDEN, '--source-id', team], '---\ntype: note\ntitle: Plan\n---\n# Plan\n\nThe plan zebracanaryfolder is late.\n');
+  }, 120_000);
+
+  test('get under --as: text and JSON, exit code included, are the same for a folder-ruled page and a missing slug', async () => {
+    const answer = async (slug: string, extra: string[]) => {
+      const r = await cli(['get', slug, ...extra, '--as', 'quin-example']);
+      return { exit: r.exitCode, stdout: r.stdout.replaceAll(slug, '<slug>'), stderr: r.stderr.replaceAll(slug, '<slug>') };
+    };
+    for (const extra of [['--source', team], [], ['--source', team, '--json'], ['--json']]) {
+      const hidden = await answer(HIDDEN, extra);
+      expect(hidden.stdout + hidden.stderr).not.toContain('zebracanaryfolder');
+      expect(hidden.exit).not.toBe(0);
+      expect({ extra, ...hidden }).toEqual({ extra, ...await answer(ABSENT, extra) });
+    }
+  }, 240_000);
+
+  test('the plain local CLI still names the source a page lives in', async () => {
+    const r = await cli(['get', HIDDEN, '--source', 'default', '--json']);
+    expect(r.exitCode).not.toBe(0);
+    expect(JSON.parse(r.stdout).suggestion).toContain(`Page exists in source '${team}'`);
   }, 120_000);
 });
 
