@@ -16,7 +16,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import tls from 'node:tls';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { canonicalJson, decodeValue, encodeValue } from './codec.ts';
@@ -329,9 +329,9 @@ export function blockNetwork(allowDir: string, allowLocalTcp: boolean): void {
   const refuse = () => Object.assign(new Error('shadow_replay_network_blocked: the replay child opens no network connection'), { code: 'shadow_replay_network_blocked' });
   globalThis.fetch = (async () => { throw refuse(); }) as unknown as typeof fetch;
   const allowed = (args: unknown[]): boolean => {
-    const a = args[0];
+    const a = Array.isArray(args[0]) ? (args[0] as unknown[])[0] : args[0]; // Bun's net.connect passes [options, callback]
     const opts = (a && typeof a === 'object' ? a : typeof a === 'string' && !/^\d+$/.test(a) ? { path: a } : { port: a, host: args[1] }) as { path?: string; host?: string };
-    if (opts.path) return resolve(opts.path).startsWith(resolve(allowDir));
+    if (opts.path) { const p = resolve(opts.path); const d = resolve(allowDir); return p === d || p.startsWith(d + sep); } // inside the run folder, never a same-prefix sibling
     return allowLocalTcp && ['localhost', '127.0.0.1', '::1', undefined].includes(opts.host);
   };
   const origConnect = net.Socket.prototype.connect;
@@ -392,6 +392,9 @@ function rowSlugs(row: Record<string, unknown>, fallbackSource: string | null): 
   return out;
 }
 
+/** Engine members whose page source is the plain second argument: `(slug, sourceId, ...)`. */
+const POSITIONAL_SOURCE_MEMBERS = new Set(['refreshPageBody', 'replaceDerivedAliases', 'setPageAliases', 'updatePageContextualRetrievalState']);
+
 /**
  * Collects the (source, slug) pairs a replayed write named, for the read-back sweep, as JSON keys: a slug argument, a
  * row with slug fields, or every row of a batch. Returns how many page-changing writes named no page it could find
@@ -404,7 +407,8 @@ function writtenSlugs(units: Unit[], into: Set<string>): number {
     const m = u.rec.member!;
     if (m in SHADOW_READ_MEMBERS || /^(get|list|search|find|count|read|resolve)/.test(m)) continue;
     const args = (decodeValue(u.rec.args) as unknown[]) ?? [];
-    const source = sourceOf(args) ?? null;
+    if (POSITIONAL_SOURCE_MEMBERS.has(m) && typeof args[1] !== 'string') { unresolved++; continue; } // source unknown: not swept
+    const source = (POSITIONAL_SOURCE_MEMBERS.has(m) ? args[1] as string : sourceOf(args)) ?? null;
     const first = args[0];
     const pairs: Array<[string | null, string]> = [];
     if (typeof first === 'string' && /^[^\s]{1,300}$/.test(first)) pairs.push([source, first]);

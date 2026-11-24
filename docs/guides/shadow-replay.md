@@ -77,7 +77,8 @@ difference only shows that PGLite and Rust disagree.
 - A call that succeeded on the live brain but fails the same way on every copy is labeled `replay_diverged`, never a
   match. The usual cause is a conditional write whose expected revision was created after the snapshot: the replay
   passes the recorded revision as is, so such calls prove nothing either way.
-- Read-back sweeps read each written page in the source the write named. Batch writes are read back for every page their rows
+- Read-back sweeps read each written page in the source the write named, whether the source is an option or a plain
+  argument. Batch writes are read back for every page their rows
   name, and chunk writes are read back with their chunks and embeddings,
   sealed or not. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
   write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.

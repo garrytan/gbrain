@@ -50,6 +50,12 @@ function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFron
       return { slug, id: `${opts.idPrefix ?? '0000'}${String(++n).padStart(4, '0')}-0000-4000-8000-000000000000`.slice(0, 36) };
     },
     async getPage(slug: string, o?: { sourceId?: string }) { return o?.sourceId ? scoped.get(`${o.sourceId}:${slug}`) ?? null : pages.get(slug) ?? null; },
+    async refreshPageBody(slug: string, sourceId: string, body: string) {
+      if (opts.dropSource !== sourceId) scoped.set(`${sourceId}:${slug}`, { slug, title: body });
+    },
+    async replaceDerivedAliases(slug: string, sourceId: string) {
+      if (opts.dropSource !== sourceId) scoped.set(`${sourceId}:${slug}`, { slug, title: 'aliases' });
+    },
     async getEmbeddingsByChunkIds(_ids: unknown, column?: unknown) { return { column_given: column !== undefined, column_null: column === null }; },
     async getTags() { return []; },
     async getLinks() { return []; },
@@ -635,6 +641,29 @@ describe('review fixes (ship final review, red team)', () => {
   });
 });
 
+describe('review fixes (ship final review of the queued head)', () => {
+  test('every engine member whose second parameter is the source is read back in that source', () => {
+    const text = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'engine.ts'), 'utf8');
+    const positional = [...text.matchAll(/^\s+(\w+)\(\s*slug: string,\s*sourceId: string[,)]/gm)].map(m => m[1]!).filter(n => !/^(get|list|search|find|count|read|resolve)/.test(n)).sort();
+    expect(positional).toEqual(['refreshPageBody', 'replaceDerivedAliases', 'setPageAliases', 'updatePageContextualRetrievalState']);
+  });
+
+  for (const member of ['refreshPageBody', 'replaceDerivedAliases'] as const) {
+    test(`the read-back sweep reads a ${member} write in the source its second argument names`, async () => {
+      const { run } = await replayOnFakes({ dropSource: 'other' }, e => (e as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[member]!('notes/same', 'other', 'body', '', 'h'));
+      const { report } = await run();
+      expect(report.diffs.some(d => d.member === 'sweep:getPage')).toBe(true);
+    });
+  }
+
+  test('a positional-source write whose source cannot be told marks the report incomplete', async () => {
+    const { run } = await replayOnFakes({}, e => (e as unknown as { refreshPageBody(...a: unknown[]): Promise<unknown> }).refreshPageBody('notes/x', null, 'body'));
+    const { report } = await run();
+    expect(report.counts.writes_not_swept).toBe(1);
+    expect(report.coverage).toBe('incomplete');
+  });
+});
+
 describe('isolation', () => {
   test('the child environment carries no provider key or brain path, only the allowlist and a throwaway home', () => {
     const env = childEnv({ PATH: '/bin', OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', VOYAGE_API_KEY: 'k3', GBRAIN_HOME: '/live', DATABASE_URL: 'postgres://db.example/x', GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgres://localhost/changed-tonight' }, '/run/home', { name: 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL', url: 'postgres://localhost/seeded' });
@@ -654,13 +683,16 @@ describe('isolation', () => {
       try { await fetch('http://example.com/'); out.push('fetch:open'); } catch (e) { out.push('fetch:' + e.code); }
       try { const s = new net.Socket(); s.on('error', () => {}); s.connect(80, '203.0.113.1'); out.push('tcp:open'); s.destroy(); } catch (e) { out.push('tcp:' + e.code); }
       try { const s = net.connect({ path: '/var/run/other.sock' }); s.on('error', () => {}); out.push('unix:open'); s.destroy(); } catch (e) { out.push('unix:' + e.code); }
+      // A sibling folder whose name starts with the run folder's name is outside it too.
+      try { const s = new net.Socket(); s.on('error', () => {}); s.connect({ path: ${JSON.stringify(dir)} + '-other/x.sock' }); out.push('sibling:open'); s.destroy(); } catch (e) { out.push('sibling:' + e.code); }
+      try { await Bun.connect({ unix: ${JSON.stringify(dir)} + '-other/x.sock', socket: { data() {} } }); out.push('bunsibling:open'); } catch (e) { out.push('bunsibling:' + e.code); }
       const tls = await import('node:tls');
       try { const s = tls.connect({ host: '203.0.113.1', port: 443 }); s.on('error', () => {}); out.push('tls:open'); s.destroy(); } catch (e) { out.push('tls:' + e.code); }
       console.log(out.join(','));`;
     const file = join(dir, 'probe.ts');
     writeFileSync(file, script);
     const proc = Bun.spawnSync([process.execPath, file], { env: { PATH: process.env.PATH ?? '' } });
-    expect(proc.stdout.toString().trim()).toBe('fetch:shadow_replay_network_blocked,tcp:shadow_replay_network_blocked,unix:shadow_replay_network_blocked,tls:shadow_replay_network_blocked');
+    expect(proc.stdout.toString().trim()).toBe('fetch:shadow_replay_network_blocked,tcp:shadow_replay_network_blocked,unix:shadow_replay_network_blocked,sibling:shadow_replay_network_blocked,bunsibling:shadow_replay_network_blocked,tls:shadow_replay_network_blocked');
   });
 
   test('the child lets the local scratch database upgrade its own connection to TLS', async () => {
