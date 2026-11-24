@@ -42,22 +42,22 @@ export function firstSyncRunning(sourceId: string, display: string, snap: { hold
 /**
  * GST-3452: `freshSinceMs` is sync_freshness's fail age (without it no run reads as usage-limited). A sync job that is running now reads as a first sync in progress
  * (between two runs of a long first sync no sync lock is held), and a last run inside that age that stopped only at a
- * provider usage or rate limit is `sync_usage_limited` (warn): the unread range stays open and the next sync resumes it.
- * Older records, failed items and held files keep `sync_no_successful_sync` (fail).
+ * provider usage or rate limit after landing pages is `sync_usage_limited` (warn): the unread range stays open and the next
+ * sync resumes it. Older records, failed items, held files and a run that landed nothing keep `sync_no_successful_sync` (fail).
  */
 export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, display: string, managed: boolean, freshSinceMs?: number): Promise<{ issue: string; entry: SyncOutcomeEntry }> {
   const stale = managed ? (await staleOwnedContent(engine, [sourceId]).catch(error => { if (isOwnedContentSchemaMissing(error)) return []; throw error; }))[0] : undefined;
   if (stale) return contentReceiptStale(sourceId, display);
   const attempt = await readLastSyncAttempt(engine, sourceId, managed);
   const base = { source_id: sourceId, last_attempt_at: attempt.last_attempt_at, result: attempt.result, held: attempt.held, job_id: attempt.job_id };
-  if (attempt.live_job) return {
+  if (attempt.live_job && attempt.state !== 'holds_pending') return {
     issue: `Source ${display}: first sync running (job #${attempt.job_id}), no successful sync yet; wait for it to finish`,
     entry: { ...base, code: 'sync_first_run_in_progress', reason: 'first_sync_running',
       fix: waitFix(`Sync job #${attempt.job_id} of ${sourceId} is running; it stamps last_sync_at only when it succeeds, so wait and re-run this check rather than starting a second sync.`) },
   };
   if (attempt.usage_limited && attempt.state === 'last_attempt_unsuccessful' && attempt.last_attempt_at && freshSinceMs !== undefined && Date.parse(attempt.last_attempt_at) >= freshSinceMs) return {
     issue: `Source ${display}: first sync stopped at a usage limit (last attempt ${attempt.last_attempt_at}), no successful sync yet; the next sync resumes where it stopped`,
-    entry: { ...base, code: 'sync_usage_limited', reason: 'usage_limit',
+    entry: { ...base, held: 0, code: 'sync_usage_limited', reason: 'usage_limit',
       fix: waitFix(`The last sync of ${sourceId} stopped at the provider's usage limit with nothing else failed; the unread range stays open and the next scheduled sync resumes it. Starting one now would hit the same limit.`) },
   };
   const retry: Action = { argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])], consent: [], actor: 'agent', requires_exclusive: false,

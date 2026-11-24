@@ -9932,10 +9932,11 @@ syncs keep ending `partial` or failing has none, however many pages it imported.
   command.
 - **First sync stopped at a usage limit** (`warn`, code `sync_usage_limited`):
   the last sync, inside the fail age, ended `partial` only because the provider's
-  usage or rate limit ran out (gbrain.io's daily allowance, Google's quota), with
-  nothing else failed. The unread range stays open and the next scheduled sync
-  resumes it, so the fix is to wait. A run that fails items, held files, or a
-  last such run older than the fail age reads as no successful sync (`fail`).
+  usage or rate limit ran out (gbrain.io's daily allowance, Google's quota), after
+  landing pages and with nothing else failed or held. The unread range stays open and the next scheduled sync
+  resumes it, so the fix is to wait. A run that lands nothing, fails items or
+  holds files, or a last such run older than the fail age, reads as no successful
+  sync (`fail`).
 - **No successful sync recorded** (`fail`, code `sync_no_successful_sync`): no
   sync is running. The message names the last attempt, read-only from the newest
   `sync` job and (on a managed brain) `gbrain sync status`: its time, result

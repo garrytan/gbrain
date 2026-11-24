@@ -1226,7 +1226,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       embedded: summary.embedded,
       pagesAffected: summary.pagesAffected,
       ...(summary.failedFiles > 0 ? { failedFiles: summary.failedFiles } : {}),
-      ...(stoppedOnUsageLimit ? { stopped_on: 'usage_limit' as const } : {}),
+      ...(stoppedOnUsageLimit && changed && !holds.summary().held ? { stopped_on: 'usage_limit' as const } : {}),
       ...(loopsEnqueue ? { loops_enqueue: loopsEnqueue } : {}),
       ...connectorHoldsResult(sourceId, holds.summary()),
     };
