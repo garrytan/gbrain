@@ -41,6 +41,8 @@ export interface RunSpec {
   cut: { before: number; after: number | null };
   seed_losses_present: boolean;
   segments: string;
+  /** Ids (UUIDs) the seed copied into every arm: stored values, compared literally, never normalized. */
+  seeded_ids?: string;
 }
 
 export type Outcome = { ok: true; value: unknown } | { ok: false; code: string };
@@ -393,6 +395,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
   const plan = buildUnits(records, spec.cut);
   const known = new Set<string>();
   for (const r of records) collectKnown(r.args, known);
+  if (spec.seeded_ids && existsSync(spec.seeded_ids)) for (const id of JSON.parse(readFileSync(spec.seeded_ids, 'utf8')) as string[]) known.add(id);
   // Only times the replay itself produced are volatile: `to` moves to now before each comparison.
   const window = { from: now(), to: now() };
   const arms = ARM_ORDER.filter(a => a !== 'postgres' || !!spec.arms.postgres);
@@ -456,10 +459,10 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
 /** The environment the child gets: nothing but these names, with a throwaway home. Never a provider key. */
 export const CHILD_ENV_ALLOW = ['PATH', 'TZ', 'LANG', 'LC_ALL', 'TMPDIR', 'GBRAIN_RUST_ENGINE_ADDON'] as const;
 
-export function childEnv(parentEnv: Record<string, string | undefined>, runHome: string, postgresEnv: string | null): Record<string, string> {
+export function childEnv(parentEnv: Record<string, string | undefined>, runHome: string, postgres: { name: string; url: string } | null): Record<string, string> {
   const env: Record<string, string> = { HOME: runHome, GBRAIN_HOME: runHome, GBRAIN_SHADOW_CHILD: '1', GBRAIN_SHADOW_CAPTURE: 'off' };
   for (const name of CHILD_ENV_ALLOW) { const v = parentEnv[name]; if (v) env[name] = v; }
-  if (postgresEnv && parentEnv[postgresEnv]) env[postgresEnv] = parentEnv[postgresEnv]!;
+  if (postgres) env[postgres.name] = postgres.url;
   return env;
 }
 
@@ -471,7 +474,7 @@ export function hmacKey(cap: string): string {
 }
 
 /** Copies a sealed epoch's segments and base copies into a new run directory; returns the run's paths. */
-export function prepareRun(runDir: string, segmentsFrom: string, base: string): { pglite: string; rust: string; segments: string; home: string } {
+export function prepareRun(runDir: string, segmentsFrom: string, base: string): { pglite: string; rust: string; segments: string; home: string; seededIds?: string } {
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   const work = join(runDir, 'work');
   const segments = join(runDir, 'segments');
@@ -480,7 +483,9 @@ export function prepareRun(runDir: string, segmentsFrom: string, base: string): 
   for (const f of readdirSync(segmentsFrom).filter(f => f.endsWith('.jsonl'))) cpSync(join(segmentsFrom, f), join(segments, f));
   cpSync(join(base, 'pglite'), join(work, 'pglite'), { recursive: true });
   cpSync(join(base, 'rust'), join(work, 'rust'), { recursive: true });
-  return { pglite: join(work, 'pglite'), rust: join(work, 'rust'), segments, home };
+  const ids = join(base, 'seeded-ids.json');
+  if (existsSync(ids)) cpSync(ids, join(work, 'seeded-ids.json'));
+  return { pglite: join(work, 'pglite'), rust: join(work, 'rust'), segments, home, ...(existsSync(ids) ? { seededIds: join(work, 'seeded-ids.json') } : {}) };
 }
 
 export function removeRun(path: string): void { rmSync(path, { recursive: true, force: true }); }

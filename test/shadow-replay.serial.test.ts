@@ -24,6 +24,7 @@ import { constructEngine } from '../src/core/engine-construct.ts';
 import type { EngineConfig } from '../src/core/types.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { captureDir } from '../src/shadow/capture-state.ts';
+import { epochDir, readEpoch } from '../src/shadow/capture.ts';
 import { runNightlyReplay } from '../src/shadow/replay-run.ts';
 import { hmacKey } from '../src/shadow/replay.ts';
 import { shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
@@ -126,6 +127,8 @@ describe('shadow replay end to end', () => {
         });
         const second = await runNightlyReplay(watched);
         expect(second.status).toBe('replayed');
+        // The replayed epoch is retired; the next recording epoch stays in place.
+        expect(existsSync(epochDir(cap, readEpoch(cap)!.id))).toBe(true);
         expect(after).toEqual(before);
         const report = readFileSync(second.report!.replace(/report\.md$/, 'report.json'), 'utf8');
         const summary = readFileSync(second.summary!, 'utf8');
@@ -216,5 +219,14 @@ describe('shadow replay end to end', () => {
       await c.executeRaw('DROP DATABASE IF EXISTS replay_primary_probe').catch(() => undefined);
       await c.disconnect();
     }
+  });
+
+  test.skipIf(!PG)('the replay child refuses a Postgres arm that is not this brain\'s seeded copy', async () => {
+    const { openReplayArm } = await import('../src/commands/engine-shadow-replay.ts');
+    await emptyScratch(PG!);
+    await withEnv({ GBRAIN_SHADOW_REPLAY_POSTGRES_URL: PG }, async () => {
+      const spec = { brain_key: 'pglite-abc', arms: { pglite: '', rust: '', postgres: { url_env: 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL' } } } as never;
+      await expect(openReplayArm('postgres', spec)).rejects.toThrow(/shadow_replay_postgres_not_owned/);
+    });
   });
 });

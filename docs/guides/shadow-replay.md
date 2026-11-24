@@ -38,6 +38,11 @@ record. `gbrain engine shadow capture status` lists how many processes are recor
 Each later `gbrain engine shadow replay` replays the recording since the last run, deletes that recording and its
 copies, and seeds fresh copies for the next one. Run it once a night. It needs the Rust engine addon installed.
 
+The seed opens the brain itself. A PGLite brain can be open in only one process, so on a PGLite brain stop resident
+gbrain processes (`gbrain serve`, an MCP server) for the few minutes of the nightly run and start them again after. If
+the brain cannot be opened, the run stops with `shadow_replay_seed_failed` before it retires anything, and the
+recording waits for the next run. A Postgres brain needs no window.
+
 Optional third arm: set `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` to an empty Postgres database on this machine
 (`localhost` or a Unix socket). Any other host is refused before a row is sent. The seed records the URL in
 `capture/scratch-postgres.json` (owner-only), after it has checked the database is empty or its own, so that a
@@ -49,6 +54,10 @@ difference only shows that PGLite and Rust disagree.
 ## What the replay does and does not do
 
 - The arms are compared with each other, never with the live brain. They start from the same snapshot.
+- Ids (UUIDs) the seed copied are compared as stored values; only ids and times the replay itself produced are
+  matched one to one between arms.
+- The Postgres arm is always the copy the seed made and verified, never a database the variable names later; the
+  replay refuses a database whose owner marker does not name this brain. Two replays of one brain cannot run at once.
 - Calls that finished before the snapshot are skipped (`pre_cut`); calls that overlap it are skipped (`boundary`).
 - Committed transactions replay as one group; rolled-back ones are skipped.
 - Raw SQL, reserved connections and calls with a function argument are not replayable and count as `gaps`.
@@ -91,7 +100,8 @@ Nothing here needs the brain's owner. Run these on the brain's host only.
    report a Rust addon problem.
 2. First time only: `gbrain engine shadow capture on --yes`, then `gbrain engine shadow replay --json`, then restart
    the host's resident gbrain processes.
-3. Schedule `gbrain engine shadow replay --json` once a night through the brain's gbrain wrapper (the one that sets
+3. Schedule once a night, through the brain's gbrain wrapper: on a PGLite brain, stop the resident gbrain
+   processes, run `gbrain engine shadow replay --json`, start them again; on a Postgres brain, run the command alone. Use the wrapper (the one that sets
    `GBRAIN_HOME`; see [cron-schedule.md](cron-schedule.md#calling-gbrain-unattended)). Keep stderr in the local log.
 4. After each run, read the JSON on stdout. `status` is `replayed`, `seeded_only`, `purged` or `off`; on an error it
    is `error` with a `code` from the table below.
@@ -105,7 +115,7 @@ Nothing here needs the brain's owner. Run these on the brain's host only.
 |---|---|---|---|
 | `shadow_replay_busy` | another replay is running | wait | safe |
 | `shadow_replay_purged` | the purge log changed or cannot be read; the recording was deleted | nothing (an unreadable log: make it readable) | safe |
-| `shadow_replay_seed_failed` | seeding the copies failed; partial copies were deleted | read stderr, fix, rerun | after fix |
+| `shadow_replay_seed_failed` | the brain could not be opened for the seed (nothing retired), or seeding failed (partial copies deleted) | on PGLite stop resident processes; else read stderr, fix, rerun | after fix |
 | `shadow_replay_addon_unavailable` | no Rust addon for this release | install it | after fix |
 | `shadow_replay_postgres_not_local` | the scratch URL could leave the machine | point it at a local database or unset it | after fix |
 | `shadow_replay_postgres_not_owned` | the scratch database is not empty or is the brain | use an empty database | after fix |

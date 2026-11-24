@@ -122,24 +122,37 @@ function removeTree(path: string): void {
   }
 }
 
-/**
- * Deletes every recording and copy the capture directory holds: all epoch directories and base copies (not only
- * `id`'s, so ones a crashed nightly run left behind go too) and every replay run's copied segments, work copies,
- * throwaway home and minimizer brains. Reports (content-free) stay. Returns what it deleted.
- */
-export function deleteEpochData(cap: string, id: string): string[] {
-  const gone = [epochDir(cap, id), basesDir(cap, id)];
-  if (existsSync(cap)) for (const f of readdirSync(cap)) if (f.startsWith('epoch-')) gone.push(join(cap, f));
-  const bases = join(cap, 'bases');
-  if (existsSync(bases)) for (const f of readdirSync(bases)) gone.push(join(bases, f));
+/** Every replay run's content-bearing paths: copied segments, work copies, throwaway home, minimizer brains, run file. */
+function runCopies(cap: string): string[] {
+  const out: string[] = [];
   const runs = join(cap, '..', 'replay');
-  if (existsSync(runs)) {
-    for (const run of readdirSync(runs)) for (const sub of ['work', 'segments', 'home', 'fresh', 'run.json']) gone.push(join(runs, run, sub));
-  }
-  const removed = [...new Set(gone)].filter(existsSync);
+  if (existsSync(runs)) for (const run of readdirSync(runs)) for (const sub of ['work', 'segments', 'home', 'fresh', 'run.json']) out.push(join(runs, run, sub));
+  return out;
+}
+
+function removeAll(paths: string[]): string[] {
+  const removed = [...new Set(paths)].filter(existsSync);
   for (const path of removed) removeTree(path);
   return removed;
 }
+
+/** Retires one epoch after its replay: its recording and base copies and every run's copies. Other epochs stay. */
+export function deleteEpochData(cap: string, id: string): string[] {
+  return removeAll([epochDir(cap, id), basesDir(cap, id), ...runCopies(cap)]);
+}
+
+/**
+ * The purge cleanup: deletes every recording and copy the capture directory holds, all epochs and base copies (ones a
+ * crashed nightly run left behind too) and every run's copies. Reports (content-free) stay. Safe to repeat.
+ */
+export function deleteAllCaptureData(cap: string): string[] {
+  const gone: string[] = [];
+  if (existsSync(cap)) for (const f of readdirSync(cap)) if (f.startsWith('epoch-')) gone.push(join(cap, f));
+  const bases = join(cap, 'bases');
+  if (existsSync(bases)) for (const f of readdirSync(bases)) gone.push(join(bases, f));
+  return removeAll([...gone, ...runCopies(cap)]);
+}
+
 
 /**
  * Invalidates the current epoch when the purge log changed since it began (or `force`): the pointer flips first, so
@@ -150,7 +163,7 @@ export function invalidateIfPurged(cap: string, opts: { home?: string; force?: s
   if (!pointer || pointer.state === 'invalidated') return false;
   if (!opts.force && !purgeLogChanged(pointer.purge_log, opts.home)) return false;
   setEpochState(cap, pointer, 'invalidated', opts.force ?? 'purge');
-  deleteEpochData(cap, pointer.id);
+  deleteAllCaptureData(cap);
   scheduleScratchDrop(cap);
   return true;
 }
@@ -177,6 +190,11 @@ let scratchOpener: ScratchOpener = openScratch;
 /** Test seam: the opener the drop uses. Null restores the real one. */
 export function __setScratchOpenerForTests(o: ScratchOpener | null): void { scratchOpener = o ?? openScratch; }
 const scratchDrops = new Map<string, Promise<boolean>>();
+
+/** The recorded scratch copy (URL, owning brain, whether the seed verified it), or null. */
+export function readScratchRecord(cap: string): { url: string; brain: string; verified?: boolean } | null {
+  try { return JSON.parse(readFileSync(scratchRecordPath(cap), 'utf8')); } catch { return null; } // silent-read-ok: no record means no scratch copy to bind or drop
+}
 
 /** Drops the scratch Postgres copy's schema now when one is recorded or a drop is pending. True when nothing is left. */
 export async function dropScratchPostgres(cap: string): Promise<boolean> {

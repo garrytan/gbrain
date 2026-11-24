@@ -17,11 +17,12 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import {
-  __setScratchOpenerForTests, attachCapture, dropScratchPostgres, scratchEngineConfig, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, scratchCleared,
+  __setScratchOpenerForTests, attachCapture, deleteEpochData, dropScratchPostgres, scratchEngineConfig, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, scratchCleared,
   scratchPendingPath, scratchRecordPath, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { checkLocalPostgresUrl } from '../src/shadow/replay-copy.ts';
+import { acquireReplayLock, runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
 import { decodeValue } from '../src/shadow/codec.ts';
 import {
   buildUnits, childEnv, classify, firstDiff, NormState, redactPath, runReplayChild, type ArmName, type RunSpec,
@@ -325,11 +326,71 @@ describe('review fixes (ship pass 1)', () => {
   });
 });
 
+describe('review fixes (ship pass 1, red team)', () => {
+  test('retiring a replayed epoch keeps the next recording epoch', () => {
+    const { cap } = recordingCapture();
+    const next = readEpoch(cap)!.id;
+    mkdirSync(join(cap, 'epoch-older'), { recursive: true });
+    mkdirSync(join(cap, 'bases', 'older'), { recursive: true });
+    deleteEpochData(cap, 'older');
+    expect(existsSync(epochDir(cap, next))).toBe(true);
+    expect(existsSync(join(cap, 'epoch-older'))).toBe(false);
+  });
+
+  test('the replay lock is exclusive: a second run is refused until the first unlocks', () => {
+    const dir = tmp();
+    const unlock = acquireReplayLock(dir, 60_000);
+    expect(() => acquireReplayLock(dir, 60_000)).toThrow(/shadow_replay_busy/);
+    unlock();
+    acquireReplayLock(dir, 60_000)();
+  });
+
+  test('a purge during a seed deletes the copies the seed went on writing, even when the epoch was already invalidated', async () => {
+    const { cap, home } = recordingCapture();
+    const next = readEpoch(cap)!;
+    appendPurgeIntent({ request: 'r8', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+    invalidateIfPurged(cap, { home });
+    mkdirSync(join(basesDir(cap, next.id), 'pglite'), { recursive: true }); // the seed kept writing after the first cleanup
+    expect(await settleSeededEpoch(cap, next, home)).toBe(false);
+    expect(existsSync(basesDir(cap, next.id))).toBe(false);
+  });
+
+  test('a stored id the seed copied is compared literally, not treated as replay noise', async () => {
+    const stored = '11111111-2222-4333-8444-555555555555';
+    const wrong = '99999999-2222-4333-8444-555555555555';
+    const { cap, home } = recordingCapture();
+    await recordSession(cap, home);
+    const runDir = join(tmp(), 'run');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'ids.json'), JSON.stringify([stored]));
+    const spec: RunSpec = { version: 1, epoch: readEpoch(cap)!.id, brain_key: 'pglite-abc', hmac_key: 'ab'.repeat(32), arms: { pglite: 'x', rust: 'y' },
+      cut: { before: 0, after: 0 }, seed_losses_present: false, segments: epochDir(cap, readEpoch(cap)!.id), seeded_ids: join(runDir, 'ids.json') };
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify(spec));
+    const report = await runReplayChild(runDir, { blockNetwork: () => {}, openArm: async (arm: ArmName) => ({ ...fakeEngine(), async getStats() { return { revision: arm === 'rust' ? wrong : stored }; } }) as unknown as BrainEngine }, () => Date.now());
+    expect(report.diffs.some(d => d.member === 'sweep:getStats')).toBe(true);
+  });
+
+  test('when the brain cannot be opened for the seed, the nightly run retires nothing', async () => {
+    const { cap, home, shadowDir } = recordingCapture();
+    const id = readEpoch(cap)!.id;
+    mkdirSync(basesDir(cap, id), { recursive: true });
+    writeFileSync(join(basesDir(cap, id), 'manifest.json'), '{}');
+    writeFileSync(join(epochDir(cap, id), 'p.jsonl'), '');
+    const deps = { shadowDir, brainKey: 'pglite-abc', primaryEngine: 'pglite', env: {}, home,
+      openPrimary: async () => { throw Object.assign(new Error('busy'), { code: 'pglite_busy' }); } } as unknown as Parameters<typeof runNightlyReplay>[0];
+    await expect(runNightlyReplay(deps)).rejects.toThrow(/shadow_replay_seed_failed.*pglite_busy/);
+    expect(readEpoch(cap)).toMatchObject({ id, state: 'recording' });
+    expect(existsSync(join(epochDir(cap, id), 'p.jsonl'))).toBe(true);
+  });
+});
+
 describe('isolation', () => {
   test('the child environment carries no provider key or brain path, only the allowlist and a throwaway home', () => {
-    const env = childEnv({ PATH: '/bin', OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', VOYAGE_API_KEY: 'k3', GBRAIN_HOME: '/live', DATABASE_URL: 'postgres://db.example/x', GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgres://localhost/s' }, '/run/home', 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL');
+    const env = childEnv({ PATH: '/bin', OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', VOYAGE_API_KEY: 'k3', GBRAIN_HOME: '/live', DATABASE_URL: 'postgres://db.example/x', GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgres://localhost/changed-tonight' }, '/run/home', { name: 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL', url: 'postgres://localhost/seeded' });
     expect(Object.keys(env).sort()).toEqual(['GBRAIN_HOME', 'GBRAIN_SHADOW_CAPTURE', 'GBRAIN_SHADOW_CHILD', 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL', 'HOME', 'PATH']);
     expect(env.GBRAIN_HOME).toBe('/run/home');
+    // The Postgres arm is the copy the seed recorded, never what the variable names at replay time.
+    expect(env.GBRAIN_SHADOW_REPLAY_POSTGRES_URL).toBe('postgres://localhost/seeded');
   });
 
   test('the child blocks fetch, TCP to any host and Unix sockets outside its run directory', async () => {

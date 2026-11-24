@@ -146,7 +146,7 @@ function sqlConfig(kind: 'pglite' | 'postgres', where: string): EngineConfig {
 }
 
 /** Opens one work copy in the replay child (no shadow, no capture: GBRAIN_SHADOW_CHILD=1). */
-async function openReplayArm(arm: 'pglite' | 'postgres' | 'rust', spec: import('../shadow/replay.ts').RunSpec): Promise<BrainEngine> {
+export async function openReplayArm(arm: 'pglite' | 'postgres' | 'rust', spec: import('../shadow/replay.ts').RunSpec): Promise<BrainEngine> {
   const { createEngine } = await import('../core/engine-factory.ts');
   if (arm === 'rust') {
     const { loadRustEngineAddon } = await import('../core/rust-engine/addon-loader.ts');
@@ -160,5 +160,10 @@ async function openReplayArm(arm: 'pglite' | 'postgres' | 'rust', spec: import('
   const cfg = sqlConfig(arm, arm === 'postgres' ? process.env[spec.arms.postgres!.url_env] ?? '' : spec.arms.pglite);
   const e = await createEngine(cfg);
   await e.connect(cfg);
+  if (arm === 'postgres') {
+    // Replay writes only into the copy this brain's seed made: its owner marker must name this brain.
+    const { scratchOwner } = await import('../shadow/replay-copy.ts');
+    if (await scratchOwner(e) !== spec.brain_key) { await e.disconnect(); throw new ReplayError('shadow_replay_postgres_not_owned', 'the replay Postgres arm is not this brain\'s seeded copy'); }
+  }
   return e;
 }

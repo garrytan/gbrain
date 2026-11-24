@@ -18,6 +18,7 @@ import type { SeedTarget } from './seed.ts';
 import { ReplayError } from './replay-errors.ts';
 
 const PROJECTION_PREFIX = 'projection_job_';
+const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ArmImport { rows: number; imported: number; skipped: number; dropped: number; unmapped_columns: string[]; losses: Record<string, number> }
 
@@ -102,6 +103,8 @@ export class FanOutSeedTarget implements SeedTarget {
   readonly arms: Record<string, ArmImport> = {};
   /** Wall-clock bounds of the snapshot: before the plan read, and when the first batch (already inside it) returned. */
   cut: { before: number; after: number | null } = { before: 0, after: null };
+  /** Every UUID value the seed copied: a replay compares these literally (stored ids are not replay noise). */
+  readonly seededIds = new Set<string>();
 
   constructor(private readonly rust: SeedTarget, private readonly sql: Record<string, SqlSeedTarget>) {}
 
@@ -112,6 +115,7 @@ export class FanOutSeedTarget implements SeedTarget {
 
   async importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult> {
     const result = await this.rust.importRelation(seedId, relation, rows);
+    for (const row of rows) for (const v of Object.values(row)) if (typeof v === 'string' && UUID_VALUE.test(v)) this.seededIds.add(v.toLowerCase());
     this.add('rust', rows.length, result);
     for (const [name, target] of Object.entries(this.sql)) this.add(name, rows.length, await target.importRelation(seedId, relation, rows));
     this.cut.after ??= Date.now();
@@ -177,6 +181,13 @@ export async function resetScratchPostgres(engine: BrainEngine, brainKey: string
   } catch (e) {
     throw new ReplayError('shadow_replay_postgres_privilege', `the scratch role cannot reset its database (${(e as { code?: string }).code ?? 'error'})`);
   }
+}
+
+/** The brain a scratch database's owner marker names, or null when it has none. */
+export async function scratchOwner(engine: BrainEngine): Promise<string | null> {
+  const [marker] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
+  if (!marker?.present) return null;
+  return (await engine.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain ?? null;
 }
 
 export async function markScratchPostgres(engine: BrainEngine, brainKey: string): Promise<void> {

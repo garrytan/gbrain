@@ -7,14 +7,15 @@
  *   5. seed the new epoch's copies from one snapshot of the brain (Rust store, PGLite, optional local Postgres).
  * The first night only seeds. Nothing here writes to the brain.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { configDir } from '../core/config.ts';
 import {
-  basesDir, deleteEpochData, epochDir, invalidateIfPurged, purgeLogChanged, readEpoch, scheduleScratchDrop, scratchCleared, scratchRecordPath,
-  setEpochState, startEpoch, type EpochPointer,
+  basesDir, deleteAllCaptureData, deleteEpochData, epochDir, invalidateIfPurged, purgeLogChanged, readEpoch, scheduleScratchDrop, scratchCleared, scratchRecordPath,
+  readScratchRecord, setEpochState, startEpoch, type EpochPointer,
 } from './capture.ts';
 import { captureDir, captureIsOn, writePrivateJson } from './capture-state.ts';
 import { FanOutSeedTarget, markScratchPostgres, REPLAY_POSTGRES_ENV, resetScratchPostgres, SqlSeedTarget, checkLocalPostgresUrl, type ArmImport } from './replay-copy.ts';
@@ -60,15 +61,38 @@ export interface NightlyResult {
   summary?: string;
 }
 
-function lock(dir: string, budgetMs: number): () => void {
+/**
+ * The replay lock: created exclusively (O_EXCL), so two runs starting together cannot both enter. A lock older than
+ * the budget plus 30 minutes is stale and is replaced once. Unlock removes the lock only while it still holds this
+ * run's token.
+ */
+export function acquireReplayLock(dir: string, budgetMs: number): () => void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, 'lock');
-  if (existsSync(path)) {
-    const since = Number(readFileSync(path, 'utf8').split(' ')[1] ?? 0);
-    if (Date.now() - since < budgetMs + 30 * 60_000) throw new ReplayError('shadow_replay_busy', `lock ${path}`);
+  const token = `${process.pid} ${Date.now()} ${randomBytes(6).toString('hex')}\n`;
+  const unlock = () => { if (lockHolder(path) === token) rmSync(path, { force: true }); };
+  if (createLock(path, token)) return unlock;
+  const since = Number(lockHolder(path)?.split(' ')[1] ?? 0);
+  if (Date.now() - since < budgetMs + 30 * 60_000) throw new ReplayError('shadow_replay_busy', `lock ${path}`);
+  rmSync(path, { force: true });
+  if (createLock(path, token)) return unlock;
+  throw new ReplayError('shadow_replay_busy', `lock ${path}`);
+}
+
+/** Creates the lock file exclusively; false when it already exists. */
+function createLock(path: string, token: string): boolean {
+  let fd: number;
+  try { fd = openSync(path, 'wx', 0o600); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw e;
   }
-  writeFileSync(path, `${process.pid} ${Date.now()}\n`, { mode: 0o600 });
-  return () => rmSync(path, { force: true });
+  try { writeSync(fd, token); } finally { closeSync(fd); }
+  return true;
+}
+
+/** The lock file's content, or null when there is none. */
+function lockHolder(path: string): string | null {
+  return existsSync(path) ? readFileSync(path, 'utf8') : null;
 }
 
 async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): Promise<BaseManifest> {
@@ -78,6 +102,11 @@ async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): P
   mkdirSync(base, { recursive: true, mode: 0o700 });
   const pgUrl = deps.env[REPLAY_POSTGRES_ENV];
   if (pgUrl) checkLocalPostgresUrl(pgUrl, deps.primaryUrl);
+  // A scratch copy recorded at another URL is dropped before a new one is made, so no copy is ever forgotten.
+  const previous = readScratchRecord(cap);
+  if (previous && previous.url !== pgUrl && !await scheduleScratchDrop(cap)) {
+    throw new ReplayError('shadow_replay_purged', 'the previous scratch Postgres copy could not be dropped yet');
+  }
   const store = await deps.openStore(load.addon, join(base, 'rust'));
   const sql: Record<string, SqlSeedTarget> = {};
   const opened: BrainEngine[] = [];
@@ -102,6 +131,9 @@ async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): P
     const fan = new FanOutSeedTarget(store, sql);
     const seed = await runSeed(primary, fan, { primaryEngine: deps.primaryEngine, now: deps.now });
     for (const t of Object.values(sql)) await t.finish(primary);
+    const current = readEpoch(cap);
+    if (current?.id !== epoch.id || current.state !== 'recording') throw new ReplayError('shadow_replay_purged', 'the epoch was invalidated while it was seeded');
+    writePrivateJson(join(base, 'seeded-ids.json'), [...fan.seededIds].sort());
     const manifest: BaseManifest = { version: 1, epoch: epoch.id, cut: fan.cut, seed, arms: fan.arms, postgres: !!pgUrl };
     writePrivateJson(join(base, 'manifest.json'), manifest);
     return manifest;
@@ -122,14 +154,22 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
   const manifest = JSON.parse(readFileSync(join(basesDir(cap, sealed.id), 'manifest.json'), 'utf8')) as BaseManifest;
   const runDir = join(deps.shadowDir, 'replay', `run-${(deps.now?.() ?? new Date()).toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${sealed.id.slice(-8)}`);
   const paths = prepareRun(runDir, epochDir(cap, sealed.id), basesDir(cap, sealed.id));
+  let scratchUrl: string | null = null;
+  if (manifest.postgres) {
+    // The Postgres arm is the copy the seed verified, never whatever the variable names tonight.
+    const rec = readScratchRecord(cap);
+    if (!rec?.verified) throw new ReplayError('shadow_replay_purged', 'the seeded scratch Postgres copy is gone');
+    checkLocalPostgresUrl(rec.url, deps.primaryUrl);
+    scratchUrl = rec.url;
+  }
   const spec: RunSpec = {
-    version: 1, epoch: sealed.id, brain_key: deps.brainKey, hmac_key: hmacKey(cap),
+    version: 1, epoch: sealed.id, brain_key: deps.brainKey, hmac_key: hmacKey(cap), seeded_ids: paths.seededIds,
     arms: { pglite: paths.pglite, rust: paths.rust, ...(manifest.postgres ? { postgres: { url_env: REPLAY_POSTGRES_ENV } } : {}) },
     ...(deps.rustDir ? { rust_dir: deps.rustDir } : {}),
     cut: manifest.cut, seed_losses_present: seedLosses(manifest), segments: paths.segments,
   };
   writePrivateJson(join(runDir, 'run.json'), spec);
-  const child = deps.spawnChild(runDir, childEnv(deps.env, paths.home, manifest.postgres ? REPLAY_POSTGRES_ENV : null));
+  const child = deps.spawnChild(runDir, childEnv(deps.env, paths.home, scratchUrl ? { name: REPLAY_POSTGRES_ENV, url: scratchUrl } : null));
   let stopped: 'purged' | 'budget' | null = null;
   const started = Date.now();
   const watch = setInterval(() => {
@@ -149,11 +189,25 @@ async function replayEpoch(deps: NightlyDeps, cap: string, sealed: EpochPointer,
   return { report: JSON.parse(readFileSync(reportPath, 'utf8')) as ReplayReport, dir: join(runDir, 'out') };
 }
 
+/**
+ * The barrier after a seed: when the purge log moved or the epoch is no longer the recording one (a purge in another
+ * process invalidated it while the seed ran), everything is deleted again, the copies the seed went on writing
+ * included, and the scratch copy dropped. Returns true only for an epoch still valid.
+ */
+export async function settleSeededEpoch(cap: string, next: EpochPointer, home: string): Promise<boolean> {
+  const now = readEpoch(cap);
+  if (now?.id === next.id && now.state === 'recording' && !purgeLogChanged(next.purge_log, home)) return true;
+  invalidateIfPurged(cap, { home, force: 'purge' });
+  deleteAllCaptureData(cap);
+  await scheduleScratchDrop(cap);
+  return false;
+}
+
 export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?: number } = {}): Promise<NightlyResult> {
   const budgetMs = (opts.budgetMinutes ?? 120) * 60_000;
   const cap = captureDir(deps.shadowDir);
   const home = deps.home ?? configDir();
-  const unlock = lock(join(deps.shadowDir, 'replay'), budgetMs);
+  const unlock = acquireReplayLock(join(deps.shadowDir, 'replay'), budgetMs);
   const result: NightlyResult = { schema_version: 1, status: 'off' };
   try {
     const purged = invalidateIfPurged(cap, { home });
@@ -165,6 +219,12 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
     }
     const sealed = pointer && pointer.state !== 'invalidated' && existsSync(join(basesDir(cap, pointer.id), 'manifest.json')) ? pointer : null;
     const on = captureIsOn(cap, deps.env);
+    // The next seed must be able to open the brain (a PGLite brain held by a running serve cannot be): check before
+    // retiring anything, so a busy brain leaves tonight's recording in place for a later run.
+    if (on) {
+      try { const probe = await deps.openPrimary(); await probe.disconnect(); }
+      catch (e) { throw new ReplayError('shadow_replay_seed_failed', `the brain cannot be opened for the seed (${(e as { code?: unknown }).code ?? (e as Error).name}); nothing was retired`); }
+    }
     if (sealed) setEpochState(cap, sealed, 'sealed');
     const next = on ? startEpoch(cap, home, deps.now?.()) : null;
     if (next) result.started_epoch = next.id;
@@ -185,14 +245,12 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
         await seedEpoch(deps, cap, next);
       } catch (e) {
         invalidateIfPurged(cap, { home, force: 'seed_failed' });
+        if (!await settleSeededEpoch(cap, next, home)) { result.status = 'purged'; return result; }
         if (e instanceof ReplayError) throw e;
         throw new ReplayError('shadow_replay_seed_failed', `error code ${(e as { code?: unknown }).code ?? (e as Error).name}`);
       }
-      if (purgeLogChanged(next.purge_log, home)) {
-        invalidateIfPurged(cap, { home, force: 'purge' });
-        await scratchCleared(cap);
-        result.status = 'purged';
-      } else if (result.status === 'off') result.status = 'seeded_only';
+      if (!await settleSeededEpoch(cap, next, home)) result.status = 'purged';
+      else if (result.status === 'off') result.status = 'seeded_only';
     }
     return result;
   } finally {
