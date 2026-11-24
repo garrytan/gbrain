@@ -504,7 +504,6 @@ import type { LinkContextAsk, LinkContextMatch, LinkContextOriginPage } from './
 import type { UnsealedPageScope } from './engine-sql/chunk-reads.ts';
 import type { SlugAliasRow } from './engine-sql/alias-fanout-reads.ts';
 import type { SegmentedEmbedPage, SegmentedEmbedRef } from './page-body/types.ts';
-import type { AccessTokenListRow } from './engine-sql/access-credentials.ts';
 import type { PublicationJournalStore } from './engine-sql/publication-journal.ts';
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type * as SegmentedPurgeWritesSql from './engine-sql/segmented-purge-writes.ts';
@@ -1375,7 +1374,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   /** Whether any access member, live or not, carries the labelled-only grant; a failed read throws (engine-sql/write-misc.ts). */
   hasLabelledOnlyMember(): Promise<boolean>;
   /** Every legacy access token (`auth list`), revoked ones too, newest first. */
-  listAccessTokens(): Promise<AccessTokenListRow[]>;
+  listAccessTokens(): Promise<AccessTokenRow[]>;
   /** One resumable op's completed checkpoint keys, deduplicated; `corruptParent` when a legacy array was not an array (op-checkpoint.ts). */
   readOpCheckpointKeys(op: string, fingerprint: string): Promise<{ keys: string[]; corruptParent: boolean }>;
   /** The checkpoint parent deleted, its paths with it; a missing row is a no-op (op-checkpoint.ts clearOpCheckpoint). */

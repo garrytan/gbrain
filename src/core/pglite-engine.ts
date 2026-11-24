@@ -1731,7 +1731,8 @@ export class PGLiteEngine implements BrainEngine {
   hasExtractedEvents(sourceId: string, pageId: number) { return writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId); }
   listActiveAccessMembers() { return writeMiscImpl.listActiveAccessMembers(this.writeMiscReads); }
   hasLabelledOnlyMember() { return writeMiscImpl.hasLabelledOnlyMember(this.writeMiscReads); }
-  listAccessTokens() { return accessCredentials.listAccessTokens(this); }
+  // Every column of every token, as `gbrain auth list` selected it (master's SELECT * rows).
+  listAccessTokens() { return writeMiscImpl.listAccessTokens(this.writeMiscReads); }
   readOpCheckpointKeys(op: string, fingerprint: string) { return writeMiscImpl.readOpCheckpointKeys(this.writeMiscReads, op, fingerprint); }
   deleteOpCheckpoint(op: string, fingerprint: string) { return opCheckpointImpl.deleteOpCheckpoint(this, op, fingerprint); }
   readHealthMemoClock() { return writeMiscImpl.readHealthMemoClock(this.writeMiscReads); }

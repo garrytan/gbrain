@@ -48,6 +48,7 @@ describe('copyPageToTarget — raw_data read opts', () => {
       putPage: async () => fakePage(),
       executeRaw: async () => [],
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
+      queuePageProjectionJob: async () => {}, // the copy queues the page's projection through the typed member
       putRawData: async (slug: string, rawSource: string, data: unknown, opts: unknown) => {
         putRawDataCalls.push({ slug, rawSource, data, opts });
       },

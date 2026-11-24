@@ -41,6 +41,11 @@ function counting(target: PGLiteEngine) {
       statements.push(sql);
       return (obj.executeRaw as (...args: unknown[]) => Promise<unknown>)(sql, ...rest);
     };
+    // The typed keyed config read (config-values.ts) is a statement too.
+    if (key === 'getConfigValues') return (keys: readonly string[]) => {
+      statements.push(`getConfigValues ${JSON.stringify(keys)}`);
+      return obj.getConfigValues(keys);
+    };
     const value = Reflect.get(obj, key);
     return typeof value === 'function' ? value.bind(obj) : value;
   } });
