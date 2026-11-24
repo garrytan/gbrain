@@ -515,6 +515,7 @@ src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	call:seri
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses
 src/core/persistence/memory-mutations.ts	planRememberTarget	field	STREAM	
 src/core/persistence/memory-mutations.ts	planRememberTarget	call:serializePageToMarkdown	SEGW	
+src/core/persistence/moved-pages.ts	bodyLines	field	INLINE	holdsEveryLine returns false for a page whose body is unread (segmented, bodyUnread) before bodyLines reads it, so a segmented page never pairs as a contained move
 src/core/engine-sql/repair-page-scans.ts	listOriginClaimants	sql	STREAM	#6948 twin verdict: md5 of an inline body; a segmented page (compiled_truth NULL) reads NULL and holds content_differs, so missing evidence never matches
 src/core/persistence/overwritten-edits.ts	CONTENT_COLUMNS	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
 src/core/persistence/overwritten-edits.ts	overwriteContent	field	STREAM	returns null for a segmented row (body_storage segmented or NULL compiled_truth); the scan reports that overwrite unknown (reason segmented)

@@ -306,7 +306,8 @@ export async function incrementalPriorView(engine: BrainEngine, page: { id: numb
 /**
  * segmentedCanonicalTimeline from the page's timeline rows: the entries no stored row records are found from the
  * digests, and only the runs that last yield one of them are read for its entry (plus runs changed since their row was
- * written). Null (the caller takes the full pass) when the page is not segmented or its body moves during the read.
+ * written). Null (the caller takes the full pass) when the page is not segmented, its body moves during the read, or a
+ * stored row names an entry its run's text no longer yields (a row an older parser derived).
  */
 async function incrementalCanonicalTimeline(engine: BrainEngine, page: { id: number; slug: string; source_id: string }, slug: string): Promise<Map<string, ExtractedTimelineEntry> | null> {
   const recorded = new TimelineKeySet();
@@ -332,8 +333,8 @@ async function incrementalCanonicalTimeline(engine: BrainEngine, page: { id: num
     for (const [key, entry] of found.parsed) if (parsed.get(timelineDigest(key)) === run.index) into.p.set(timelineDigest(key), [key, detachedValue(entry)]);
   });
   const kept = new Map<string, ExtractedTimelineEntry>();
-  for (const [digest, at] of extracted) { const [key, entry] = entries.get(at)!.x.get(digest)!; kept.set(key, entry); }
-  for (const [digest, at] of parsed) { const [key, entry] = entries.get(at)!.p.get(digest)!; kept.set(key, entry); }
+  for (const [digest, at] of extracted) { const found = entries.get(at)?.x.get(digest); if (!found) return null; kept.set(found[0], found[1]); }
+  for (const [digest, at] of parsed) { const found = entries.get(at)?.p.get(digest); if (!found) return null; kept.set(found[0], found[1]); }
   return kept;
 }
 
