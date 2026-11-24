@@ -3894,6 +3894,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   readCallerPageAccess(pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]>;
   /** The opening read of a remote page write's visibility check: labelled-only members, what a reader identity could open on the page the empty-identity policy hides, owner-only sources. */
   readWriteVisibilityProbe(sourceId: string, slug: string): Promise<WriteVisibilityProbe | undefined>;
+  /** Whether the live page fails the privacy part of the remote read policy (honor_aliases read first); null when it has no live page. */
+  readPagePrivacyHidden(sourceId: string, slug: string): Promise<boolean | null>;
   /** A stored writer's slug fence now (an OAuth client's bound prefixes, or its delegated ones for a delegated write; a local writer's grant ceiling), or null. */
   readWriterSlugFence(principal: { kind: string; id: string }, opts?: { delegated?: boolean }): Promise<unknown>;
   // The remote links effect and its batch re-arm (engine-sql/remote-links.ts).

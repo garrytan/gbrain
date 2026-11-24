@@ -257,7 +257,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readManagedSyncCursorHeader', 'readManagedSyncFailureRows', 'readNamedEntitySlugs', 'readNotifierLease',
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',
   'readOwnedLinks', 'readOwnerHostBinding', 'readPageRevisionWriter', 'readPageSizeRows',
-  'readPageSynopses', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'readPageSynopses', 'readPagePrivacyHidden', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
   'readReasonPurgeTombstones', 'readRefreshTiming', 'readRenameIdentityRows', 'readRetiredManagedSyncCursor',
   'readRevisionWriterRequest', 'readSeedTitleSlugs', 'readSegmentRegions', 'readSegmentedGateEvidence',
   'readSourceCheckoutRoot', 'readStoredConfigValue', 'readSyncAdmissionEffects', 'readSyncConversionRows',

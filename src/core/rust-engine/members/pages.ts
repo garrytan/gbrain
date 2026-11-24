@@ -44,6 +44,7 @@ export const PAGES_MEMBERS = {
   readPageHiddenFromCaller: 'pages',
   readCallerPageAccess: 'pages',
   readWriteVisibilityProbe: 'pages',
+  readPagePrivacyHidden: 'pages',
   readStoredBodyBytes: 'pages',
   readAdmittedPageRefs: 'pages',
   readPageSynopses: 'pages',

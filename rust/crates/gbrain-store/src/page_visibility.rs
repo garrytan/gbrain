@@ -2,7 +2,7 @@
 //! the page it names and which of a list of pages the caller reads (the TypeScript
 //! `engine-sql/page-visibility.ts`).
 //!
-//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe. The TypeScript member turns the
+//! Members: readPageHiddenFromCaller, readCallerPageAccess, readWriteVisibilityProbe, readPagePrivacyHidden. The TypeScript member turns the
 //! caller's rendered page policy into a [`PrivacyPolicy`] (or refuses), so both reads judge a page
 //! with `page_hidden` (facts/privacy.rs): `entity_privacy` false is the member-access part alone.
 //! A soft-deleted page still has its row, so `readPageHiddenFromCaller` judges it too, and
@@ -26,7 +26,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use crate::facts::{PrivacyPolicy, page_hidden, stamped_rules};
+use crate::facts::{PrivacyPolicy, page_hidden, privacy_allows, stamped_rules};
 use crate::owner_only::{any_owner_only, source_owner_only};
 use crate::owner_only_marks::any_marked;
 use crate::pages::read_page;
@@ -99,6 +99,20 @@ impl Store {
             Some(page) => page_hidden(&*read, &page, policy),
             None => Ok(false),
         }
+    }
+
+    /// `readPagePrivacyHidden(sourceId, slug, honorAliases)`: whether the live page fails the privacy part alone
+    /// (`privacy_allows`); `None` when it has no live row.
+    pub fn read_page_privacy_hidden(
+        &self,
+        source_id: &str,
+        slug: &str,
+        honor_aliases: bool,
+    ) -> Result<Option<bool>> {
+        let read = self.read()?;
+        let live = read_page(&*read, source_id, slug)?.filter(|p| p.deleted_at_us.is_none());
+        live.map(|page| privacy_allows(&*read, &page, honor_aliases).map(|ok| !ok))
+            .transpose()
     }
 
     /// `readCallerPageAccess(pages, { policy })`: one row per distinct pair that names a page

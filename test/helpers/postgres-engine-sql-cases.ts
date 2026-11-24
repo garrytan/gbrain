@@ -924,6 +924,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readPageHiddenFromCaller': OOS.pageVisibility,
   'readCallerPageAccess': OOS.pageVisibility,
   'readWriteVisibilityProbe': OOS.pageVisibility,
+  'readPagePrivacyHidden': OOS.pageVisibility,
   'readWriterSlugFence': OOS.pageVisibility,
   'setEffectTransactionLimits': OOS.remoteLinks,
   'readOwnedLinks': OOS.remoteLinks,

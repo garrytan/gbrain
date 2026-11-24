@@ -13,6 +13,7 @@ local writer registration it already keeps; it adds no keys.
 | --- | --- | --- |
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
 | `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is `false` (no store member is created labelled-only). `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`) or a folder rule of its source is stamped on it. `owner_only_source` and `owner_only_any`: the source, or any source, has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true` | `readWriteVisibilityProbe` |
+| `brain.readPagePrivacyHidden(sourceId, slug, honorAliases)` | `true` when the live page fails the privacy part alone (`privacyPartSql`: its own fields, derived origin and declared lineage, judged by `privacy_allows`), `false` when it passes, `null` when it has no live row (missing or soft-deleted). `honorAliases` is whether the privacy aliases count, as the rendered fragment says | `readPagePrivacyHidden` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
 
 `policy` is the store `PrivacyPolicy` of `facts/privacy.rs` (`page_hidden`). With `entityPrivacy` false it is the
@@ -20,7 +21,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 ## TypeScript members
 
-`src/core/rust-engine/store-members/page-visibility.ts` answers the three BrainEngine members on a Rust brain.
+`src/core/rust-engine/store-members/page-visibility.ts` answers the BrainEngine members on a Rust brain.
 
 - `readPageHiddenFromCaller` and `readCallerPageAccess` take `{ policy: 'read' | 'access' }`. The `read` part
   renders `privatePagesFilterForCaller('p')` and maps it through `storePageTextPolicy`, as the other page reads do.
@@ -29,6 +30,9 @@ member-access part alone (the page's readers, and the origin of a derived page):
   private-readable grant. The capability is `pages`.
 - `readWriteVisibilityProbe(sourceId, slug)` renders `readPolicyFragment('p', [], true)` (the empty identity with
   privacy, which equals the no-caller rendering) and maps it through `storePageTextPolicy`.
+- `readPagePrivacyHidden(sourceId, slug)` passes `honorAliases` as `pagePolicyFlags(privacyPartSql('p')).honorAliases`, so it
+  equals what the SQL renders. The owner's own page write (`ownerRewriteOf`) reads it to keep a private page private. The
+  capability is `pages`.
 - A caller on a brain whose config holds no member-access restriction renders the short member-access form, anonymous
   or with a reader identity. The page members judge it under the restricted rendering instead (`judgeWidenedCaller`),
   and so does the probe for any unrestricted caller, since its identity is always empty. The restricted rendering only

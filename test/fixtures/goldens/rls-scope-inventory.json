@@ -10239,6 +10239,7 @@
         "readPageIndexingState": "none",
         "readPageNameText": "none",
         "readPageOrigin": "none",
+        "readPagePrivacyHidden": "none",
         "readPageReferenceDate": "none",
         "readPageRevisionAttribution": "none",
         "readPageRevisionForShare": "none",
