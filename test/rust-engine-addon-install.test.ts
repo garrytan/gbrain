@@ -30,7 +30,8 @@ import {
 import { loadRustAddon, loadRustEngineAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { RUST_ADDON_MANIFEST_ASSET, RUST_ENGINE_ABI, rustAddonAssetName } from '../src/core/rust-engine/addon-manifest.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
-import { configuredBrainUsesRust, installAddonWithInstalledBinary, runEngineInstall } from '../src/commands/engine-install.ts';
+import { runEngineInstall } from '../src/commands/engine-install.ts';
+import { configuredBrainUsesRust, installAddonWithInstalledBinary } from '../src/commands/rust-addon-upgrade.ts';
 import type { EngineConfig } from '../src/core/types.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 

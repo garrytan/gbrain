@@ -384,7 +384,7 @@ export async function runEngineStatus(args: string[]): Promise<number> {
     }
     const graduation = graduationBlock(cfg?.engine === 'pglite' ? dataDir : null);
     if (graduation) report.graduation = graduation;
-    const { configuredBrainUsesRust } = await import('./engine-install.ts');
+    const { configuredBrainUsesRust } = await import('./rust-addon-upgrade.ts');
     if (configuredBrainUsesRust(cfg as import('../core/types.ts').EngineConfig | null)) {
       report.rust_addon = (await import('../core/rust-engine/addon-install.ts')).rustAddonStatus(process.env);
     }

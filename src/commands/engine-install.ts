@@ -5,10 +5,6 @@
  */
 import type { RustAddonInstallDeps, RustAddonInstallResult } from '../core/rust-engine/addon-install.ts';
 import { OperationError } from '../core/ops/contract.ts';
-import { loadConfig } from '../core/config.ts';
-import type { EngineConfig } from '../core/types.ts';
-import { shadowStateFor } from '../shadow/state.ts';
-import { execFileSync } from '../core/spawn.ts';
 
 const USAGE = [
   'Usage: gbrain engine install rust [--from <file>] [--json]',
@@ -69,35 +65,4 @@ export async function runEngineInstall(args: string[], io: EngineInstallIo = { o
     }
     return 1;
   }
-}
-
-/** True when the configured brain runs on the Rust engine or has Rust engine shadow mode on. Reads files only. */
-export function configuredBrainUsesRust(config: EngineConfig | null = loadConfig() as EngineConfig | null): boolean {
-  return !!config && (config.engine === 'rust' || !!shadowStateFor(config));
-}
-
-/**
- * What `gbrain upgrade --swap-only` (autopilot's upgrade, whose relaunch runs no post-upgrade) does after the swap: for a
- * brain that uses Rust, run the NEW binary's `gbrain engine install rust`, so the addon matches the version it installed.
- * Best effort: a failure prints the install command and never fails the upgrade. Any other brain runs nothing.
- */
-export function installAddonWithInstalledBinary(
-  env: NodeJS.ProcessEnv,
-  run: (cmd: string, args: string[], opts: { env: NodeJS.ProcessEnv; stdio: 'ignore'; timeout: number }) => unknown = execFileSync,
-  usesRust: () => boolean = () => configuredBrainUsesRust(),
-): boolean {
-  try {
-    if (!usesRust()) return false;
-    run('gbrain', ['engine', 'install', 'rust', '--json'], { env, stdio: 'ignore', timeout: 300_000 });
-    return true;
-  } catch (err) {
-    console.error(`Rust engine addon not installed after the upgrade: ${err instanceof Error ? err.message : String(err)}. Run gbrain engine install rust.`);
-    return false;
-  }
-}
-
-/** What `gbrain post-upgrade` runs: the best-effort addon refresh, for a brain that uses Rust only. */
-export async function refreshRustAddonForConfiguredBrain(): Promise<string | null> {
-  const { refreshRustAddonAfterUpgrade } = await import('../core/rust-engine/addon-install.ts');
-  return refreshRustAddonAfterUpgrade(() => configuredBrainUsesRust());
 }

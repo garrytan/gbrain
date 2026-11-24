@@ -289,8 +289,6 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   // next launch so the autopilot silent channel can swap + relaunch without
   // freezing its tick. connectEngine's pending-migration probe + runPostUpgrade run on boot.
   if (swapOnly) {
-    // The relaunch runs no post-upgrade, so a Rust or shadow brain gets the new release's addon from the new binary here.
-    if (!unchanged) (await import('./engine-install.ts')).installAddonWithInstalledBinary(upgradeEnv);
     return;
   }
   // Run post-upgrade feature discovery (reads migration files from the NEW binary).
@@ -915,7 +913,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   (await import('../core/setup/brain-first-upgrade-notice.ts')).printBrainFirstUpgradeNotice(); // GBRA-188: the command that writes a missing brain-first block
   await (await import('../core/setup/hook-launcher-refresh.ts')).refreshHookLaunchers(); // #8424: hooks that start gbrain in the session's directory move onto the launcher
   (await import('../core/post-upgrade-notice.ts')).writePostUpgradeCliNotice(); // F7: safety notice ([AGENT] block for agents)
-  const addonWarning = await (await import('./engine-install.ts')).refreshRustAddonForConfiguredBrain(); // Rust brain or shadow on only; best effort
+  const addonWarning = await (await import('./rust-addon-upgrade.ts')).refreshRustAddonForConfiguredBrain(); // Rust brain or shadow on only; best effort
   if (addonWarning) report.warnings.push(addonWarning);
   // Mechanical: run every outstanding migration. Idempotent; exits 0 quickly
   // when nothing is pending. Stays inside the same process so a long Phase F

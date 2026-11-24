@@ -5875,7 +5875,7 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   `--from <file>` installs a copy of the release addon you already have (the manifest is still read online). Every
   refusal leaves the installed addon as it was: `unsupported_target` (no network call), `not_published` (that release
   has no addon), `fetch_failed` (network, or the attestation could not be read) and `verification_failed` (a checksum or
-  attestation mismatch; the file is deleted and there is no bypass). `gbrain post-upgrade` runs the same install for a
+  attestation mismatch; the file is deleted and there is no bypass). `gbrain post-upgrade`, and autopilot after an automatic upgrade, run the same install for a
   brain on the Rust engine or with shadow mode on, and an upgrade never fails because of it.
   `gbrain engine status --json` shows the result in `rust_addon` (target, `preview_target`, `override`, `installed`,
   `path`, `sha256`, `pinned_sha256`, `engine_build`), read from disk, for those brains only.
@@ -6090,7 +6090,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
-- **No network in the background.** Only `gbrain engine install rust` and `gbrain post-upgrade` download the addon. `start --yes`, the child
+- **No network in the background.** Only `gbrain engine install rust`, `gbrain post-upgrade` and autopilot's automatic upgrade download the addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses, names `gbrain engine install rust`
   and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
