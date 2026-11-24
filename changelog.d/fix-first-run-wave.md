@@ -17,3 +17,5 @@
 - gbrain setup exits 1, with the failure on stderr, when a requested --notes, --docs or --transcripts import fails or its folder cannot be read; the wiring that finished stays.
 <!-- behavior-change: setup_failed_import_exits_nonzero_gbra789 -->
 - AGENTS.md, the README and the company-brain tutorial agree on install time: a few minutes, with the measured machine time (about 10 seconds each for the install and setup) stated apart from the time you spend.
+- A prebuilt brain copied into a container refuses its first write with physical_root_directory_changed and the relocated-root self-transfer that fixes it, instead of a generic refusal with no exit.
+<!-- behavior-change: container_copy_names_self_transfer_gbra789 -->
