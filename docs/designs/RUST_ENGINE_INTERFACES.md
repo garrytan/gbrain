@@ -170,7 +170,7 @@ Reserved tags:
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
-| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows), the `derivation_inputs` edges and their input index (`h 0x0A`, `h 0x0B`) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | session_state | `y` | `SESSION_STATE` | no |
@@ -194,6 +194,11 @@ in its module header:
 | `0x09` | `TELEMETRY_BUDGET_LEDGER` | `budget_ledger` |
 | `0x0A` | `TELEMETRY_BUDGET_RESERVATION` | `budget_reservations` |
 | `0x0B` | `TELEMETRY_CHAT_USAGE` | `chat_usage_log` |
+| `0x0C` | `TELEMETRY_VOLUNTEER_EVENT` | `context_volunteer_events` (reserved; no writer on this branch yet) |
+| `0x0D` | `TELEMETRY_VOLUNTEER_SEQUENCE` | the `context_volunteer_events` id counter (reserved) |
+| `0x0E` | `TELEMETRY_CHRONICLE_ROW` | `chronicle_page_state` (a page or source delete removes its rows, `chronicle_state.rs`) |
+| `0x0F` | `TELEMETRY_CHRONICLE_RESERVATION` | `chronicle_judge_reservations` (read by `countRecentChronicleReservations`) |
+| `0x10` | `TELEMETRY_CHRONICLE_SEQUENCE` | the `chronicle_judge_reservations` id counter |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.

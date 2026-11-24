@@ -4,7 +4,7 @@
 //! them (engine-sql/shared-skill-members.ts).
 //!
 //! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`; shared_skill_members.rs holds
-//! 0x04-0x06). Text parts end with 0x00; ids hold no NUL (Postgres text holds none):
+//! 0x05-0x06 and 0x0d). Text parts end with 0x00; ids hold no NUL (Postgres text holds none):
 //! - `x 0x07 <source> 0 <incarnation>` -> `PolicyRecord` (JSON).
 //! - `x 0x08 <audit id>` -> `PolicyAuditRecord` (JSON), append only.
 //! - `x 0x09 <source> 0 <incarnation> 0 <pack> 0 <name>` -> `HeadRecord` (JSON).

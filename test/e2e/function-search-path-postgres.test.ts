@@ -17,6 +17,7 @@ import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { LATEST_VERSION, runMigrations } from '../../src/core/migrate.ts';
 import { derivationNeedles } from '../../src/core/page-body/segment-derive.ts';
+import { listDerivationClaimForms } from '../../src/core/engine-sql/purge-receipt.ts';
 import { v277 } from '../../src/core/schema-migrations/v277-function-search-path-pg-temp.ts';
 import { PINNED_FUNCTION_NAMES } from '../../src/core/function-search-path.ts';
 
@@ -153,7 +154,8 @@ describeE2E('a temp table or view named like a ledger hides nothing from the gua
     await conn.unsafe(`INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash) VALUES ('default', 'private', '*', gbrain_fact_fingerprint($1))`, [WITHDRAWN_CLAIM]);
     await conn.unsafe(`INSERT INTO page_purges (source_id, content_hash, slug) VALUES ('default', $1, 'notes/purged-example')`, [PURGED_HASH]);
     await conn.unsafe(`INSERT INTO take_purges (source_id, subject, claim_hash) VALUES ('default', '*', gbrain_fact_fingerprint($1))`, [PURGED_TAKE]);
-    const { needles, patterns } = await derivationNeedles({ executeRaw: (sql: string, params?: unknown[]) => conn.unsafe(sql, params as never[]) } as never, [PURGED_CLAIM]);
+    const raw = { executeRaw: (sql: string, params?: unknown[]) => conn.unsafe(sql, params as never[]) } as never;
+    const { needles, patterns } = await derivationNeedles({ listDerivationClaimForms: (claims: readonly string[]) => listDerivationClaimForms(raw, claims) } as never, [PURGED_CLAIM]);
     await conn.unsafe(`INSERT INTO page_segment_derivation_purges (request_id, source_id, needles, patterns, page_ids) VALUES ($1::uuid, 'default', $2::text[], $3::text[], $4::int[])`,
       [randomUUID(), needles, patterns, [ids.derived]]);
   }, 300_000);

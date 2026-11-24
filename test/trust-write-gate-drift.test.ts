@@ -22,7 +22,6 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/url-clone-fences.ts': 'restores a gbrain-owned clone file to its HEAD bytes (what a sync imports) and keeps the fence rows the database already holds; it adds no content',
   'src/core/repair/rename-identity.ts': 'owner repair behind preview-bound destructive consent: moves the old page to the new slug (updateSlug), copies fence-row attributes the two pages already store and retires the provisional page; the new file imports through importFile, which passes the owner gate input (import-file.ts)',
   'src/commands/sync/rename-collision.ts': 'moves a page between slugs (updateSlug, tombstone re-key, source_path repair) and writes no content; the renamed body still imports through importFile, which passes the owner gate input (import-file.ts)',
-  'src/core/calibration/undo-wave.ts': 'restores prior take lifecycle fields; no new text',
   'src/core/company-brain/profile.ts': 'company profile publication of an owner-approved company source (operator_curated, never gated)',
   'src/core/cycle/grade-takes.ts': 'writes resolution fields on existing takes; no new claim text',
   'src/core/cycle/phantom-redirect.ts': 'slug redirect (placement only)',

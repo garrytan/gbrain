@@ -9,6 +9,7 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+mod access_key_split;
 pub mod access_member_links;
 pub mod access_members;
 pub mod access_migrations;
@@ -21,13 +22,17 @@ pub mod cli_reads;
 pub mod config;
 pub mod env;
 pub mod error;
+#[cfg(test)]
+mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
 pub mod format;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
+pub mod keyspaces;
 pub mod kv;
+pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
 mod owner_only;
@@ -54,9 +59,13 @@ pub mod timeline;
 pub mod alias_fanout_reads;
 pub mod aliases;
 pub mod chat_usage;
+pub mod chronicle_ledger;
+pub mod chronicle_state;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+#[cfg(test)]
+mod derivation_walks;
 pub mod dream;
 pub mod dream_config;
 pub mod drift_conflicts;
@@ -67,8 +76,10 @@ pub mod embeddings;
 pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
+pub mod federation_exposure;
 pub mod field_usage;
 pub mod generations;
 pub mod identity_auto;
@@ -76,8 +87,10 @@ pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
+pub mod label_door;
 pub mod large_page;
 pub mod link_queries;
+pub mod meeting_pages;
 pub mod memory_mutation_reads;
 pub mod mention_state;
 pub mod moved_page_reads;
@@ -366,6 +379,8 @@ impl Store {
                 }
             }
         };
+        // Sweep records kept before their source index existed get it.
+        page_body::purge_record::backfill_source_index(&*kv)?;
         let index = keyword::open_index(&*kv)?;
         let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
@@ -647,7 +662,9 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
 /// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
-/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`). The format record is re-read inside the transaction:
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
+/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -695,6 +712,20 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
                 format!("store format {from} was not upgraded: sorting its take purges from its loop mutes failed"),
                 format!(
                     "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes"
+                ),
+            )
+        })?;
+    }
+    // Format 8: the shared-skill token secret leaves the member links' `x 0x04` prefix for `x 0x0d`,
+    // or the brain is refused naming the record that is neither.
+    if stored.format_version <= 7 {
+        let from = stored.format_version;
+        access_key_split::split_token_secret_from_member_links(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its token secret from its member links failed"),
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret"
                 ),
             )
         })?;

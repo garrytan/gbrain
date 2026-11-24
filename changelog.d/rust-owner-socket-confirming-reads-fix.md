@@ -1,0 +1,1 @@
+- When a call to a Rust brain's owner loses its answer, the advice for the git hold summary, origin park and owed-purge writes now names a read that shows whether that write landed, and the page-purge deletes, conflict-skipped inserts and restamps say that running them again repeats nothing. Before, several named a read that could not see the write.

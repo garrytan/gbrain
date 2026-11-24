@@ -392,7 +392,8 @@ mod tests {
         //   the bound arm of `Store::write`); a rollback writes its counters forward on that same
         //   handle, so it opens no second one;
         // - this module's open-time scan, the keyword index
-        //   repair (`keyword/index_build.rs`, postings only);
+        //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
+        //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
         //   whole files under `#[cfg(test)]`;
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
@@ -408,6 +409,7 @@ mod tests {
             ("kv.rs", 5),
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
+            ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 4),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),

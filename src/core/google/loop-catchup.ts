@@ -39,6 +39,7 @@ import { NO_EXCLUSION, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { muteRecheckThreads } from '../loops/loops-store.ts';
 import { loopsSpendGate } from './loops-spend.ts';
 import type { GmailThreadData, GoogleSourceState, LoopGraceHold } from './types.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const GRACE_HOLDS_CAP = 2_000;
 export const GRACE_BACKFILL_DAYS = 14;
@@ -266,7 +267,9 @@ export async function pendingLoopsExtractDepth(engine: BrainEngine, sourceId: st
       `SELECT count(*)::text AS n FROM minion_jobs
         WHERE name = $1 AND status IN ('waiting', 'delayed', 'active') AND data->>'sourceId' = $2`, [LOOPS_EXTRACT_JOB, sourceId]);
     return parseInt(rows[0]?.n ?? '0', 10) || 0;
-  } catch {
+  } catch (e) {
+    // A brain before the queue table counts nothing; an engine that cannot read the queue says so instead of 0.
+    rethrowCapabilityRefusal(e);
     return 0;
   }
 }
