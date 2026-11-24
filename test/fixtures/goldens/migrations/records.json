@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 329,
+    "count": 330,
     "gaps": [
       17,
       18,
@@ -54,6 +54,8 @@
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "POSTGRES_15_GATE": "09c990d8c0bd6e4ebeb3b897477748609035b0e695b5b2c6a9bf7539f7352193",
+      "SPELLING_KEY_INDEX": "b628f88d0108db25686d3d4f2c9ac694d4e65c015b771831162e60889e876ab1",
+      "SPELLING_KEY_INDEX_SQL": "33d4476063b14d9b8df54b55b659242f622ab796cc7f262549f1dff4907f5ae5",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
       "TOKEN_TTL_MIN_SECONDS": "441d8ce6bd21f753de90abd3013eaa9992a469ea60c590f1005533618199aa25",
@@ -65,6 +67,7 @@
       "buildHashIndex": "c34dfce66c3ac9d323ba298220dcad7c507a9481c663053f4833dbe158dfabe5",
       "buildIndexOnline": "aea86be06da261a76f6fad15def8f417cb5318c7991d2ded3cd86aeed82fb2cc",
       "buildOriginIndexIfClean": "cc6d16f50a4b5e303b87338700b9cded9784fc9cc9391c795bdd755e32385e6c",
+      "buildSpellingIndex": "afb63bd0cd77b7265949394c0efdf65e6174ca0baca8004030518a9a4ae1a41d",
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
       "chunkSearchVectorTriggerFnSql": "9ac61adf64b64fdef7c0b786d093bc7aeb51c561fd680823d2fc4fc720b2bc33",
       "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
@@ -108,7 +111,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 334,
+    "latest": 335,
     "records": [
       {
         "handler": {
@@ -5447,6 +5450,37 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 334
+      },
+      {
+        "handler": {
+          "form": "identifier",
+          "helpers": [
+            "PLANNER_REPAIR_TABLES",
+            "SPELLING_KEY_INDEX",
+            "SPELLING_KEY_INDEX_SQL",
+            "analyzeAfterIndexBuild",
+            "analyzeDeferred",
+            "analyzeYieldingToVacuum",
+            "buildIndexOnline",
+            "buildSpellingIndex",
+            "dropInvalidConcurrentIndex",
+            "lockTableForAnalyze",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "d6b1cdfce72d12e59df6e4aedeb541b8ec914615b4e1a0defe7c9f2bec8d4711"
+        },
+        "idempotent": true,
+        "name": "pages_spelling_key_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 335
       }
     ],
     "versions": [
@@ -5778,7 +5812,8 @@
       331,
       332,
       333,
-      334
+      334,
+      335
     ]
   },
   "normalizer": "migrations-record-v1"
