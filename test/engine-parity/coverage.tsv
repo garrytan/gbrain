@@ -527,7 +527,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	161	yes	yes	yes	serves
-insertFacts	facts	yes	220	no	yes	yes	serves
+insertFacts	facts	yes	222	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
 expireFact	facts	yes	84	no	yes	yes	serves
 listFactsByEntity	facts	yes	52	yes	yes	yes	serves
@@ -1198,7 +1198,7 @@ listPageStates	facts_cycle_sites	yes	1	no	yes	yes	serves
 countSegmentedVersionsOfPage	facts_cycle_sites	yes	1	no	yes	yes	serves
 insertReasonPurgeTombstones	facts_purge	yes	3	no	yes	yes	serves
 countFactFingerprintLeftovers	facts_purge	yes	3	no	yes	yes	serves
-loadPurgeTarget	facts_purge	yes	34	no	yes	yes	serves
+loadPurgeTarget	facts_purge	yes	36	no	yes	yes	serves
 planFactPurgeIds	facts_purge	yes	2	no	yes	yes	serves
 listFactsReconcileBacklog	facts_purge	yes	8	no	yes	yes	serves
 settleFactsReconcile	facts_purge	yes	5	no	yes	yes	serves
@@ -1215,7 +1215,7 @@ listHeldFenceFactRows	facts_purge	yes	1	no	yes	yes	serves
 listWithdrawalSlugs	facts_purge	yes	5	no	yes	yes	serves
 expireFactsByWithdrawal	facts_purge	yes	6	no	yes	yes	serves
 insertFactPurge	facts_purge	yes	20	no	yes	yes	serves
-insertTakePurge	facts_purge	yes	13	no	yes	yes	serves
+insertTakePurge	facts_purge	yes	14	no	yes	yes	serves
 upsertPagePurges	facts_purge	yes	2	no	yes	yes	serves
 expireFactsOfGonePages	facts_purge	yes	1	no	yes	yes	serves
 readPurgeSourceLocalPath	facts_purge	yes	2	no	yes	yes	serves
@@ -1463,7 +1463,7 @@ listEntityHintPages	facts_conversation	yes	1	no	yes	yes	refuses:facts
 lockPageById	facts_conversation	yes	1	no	yes	yes	refuses:facts
 listClearedRelinkedFacts	facts_conversation	yes	1	no	yes	yes	refuses:facts
 countEmbeddedFactsAmong	facts_conversation	yes	1	no	yes	yes	refuses:facts
-readBeliefTombstones	belief_ledger	yes	6	no	yes	yes	serves
+readBeliefTombstones	belief_ledger	yes	8	no	yes	yes	serves
 readLatestBeliefCoverage	belief_ledger	yes	2	no	yes	yes	serves
 hasBeliefBaseline	belief_ledger	yes	1	no	yes	yes	serves
 listBeliefBaselinePending	belief_ledger	yes	3	no	yes	yes	serves
@@ -1559,8 +1559,8 @@ hasFactWithdrawalForSubject	trust	yes	1	no	yes	yes	serves
 listFactWithdrawalKeys	trust	yes	4	no	yes	yes	serves
 readFactCacheWatermark	trust	yes	4	no	yes	yes	serves
 readTrustGeneration	trust	yes	2	no	yes	yes	serves
-readSourcePurgeFlags	trust	yes	8	no	yes	yes	serves
-listPurgedTakeRows	trust	yes	2	no	yes	yes	serves
+readSourcePurgeFlags	trust	yes	10	no	yes	yes	serves
+listPurgedTakeRows	trust	yes	4	no	yes	yes	serves
 lockFactForWithdrawal	trust	yes	1	no	yes	yes	serves
 queueWithdrawalReview	trust	yes	1	no	yes	yes	serves
 listSegmentedPagesBySlug	trust	yes	1	no	yes	yes	serves
@@ -1583,9 +1583,9 @@ upsertOpenLoop	open_loops	yes	22	no	yes	yes	serves
 closeOpenLoop	open_loops	yes	9	no	yes	yes	serves
 listOpenLoops	open_loops	yes	10	no	yes	yes	serves
 readEntityOpenLoops	open_loops	yes	2	no	yes	yes	serves
-addLoopSuppression	loop_mutes	yes	5	no	yes	yes	serves
+addLoopSuppression	loop_mutes	yes	7	no	yes	yes	serves
 removeLoopSuppression	loop_mutes	yes	4	no	yes	yes	serves
-listLoopSuppressions	loop_mutes	yes	3	no	yes	yes	serves
+listLoopSuppressions	loop_mutes	yes	4	no	yes	yes	serves
 listMuteRecheckThreads	loop_mutes	yes	2	no	yes	yes	serves
 closeMutedLoops	loop_mutes	yes	4	no	yes	yes	serves
 requeueMutedLoops	loop_mutes	yes	3	no	yes	yes	serves
@@ -2015,7 +2015,7 @@ listWorktreeIds	doctor_persistence	yes	1	no	yes	yes	serves
 listManagedRoots	doctor_persistence	yes	1	no	yes	yes	serves
 listUnboundSourcePages	doctor_persistence	yes	1	no	yes	yes	serves
 listRecentWriterVersions	doctor_persistence	yes	2	no	yes	yes	serves
-listRecentPurgeRequests	doctor_persistence	yes	2	no	yes	yes	serves
+listRecentPurgeRequests	doctor_persistence	yes	4	no	yes	yes	serves
 listStuckWorktreeRefreshes	doctor_persistence	yes	1	no	yes	yes	serves
 listSourceBindingsForMovement	doctor_persistence	yes	1	no	yes	yes	serves
 listRunningClaimOwners	doctor_persistence	yes	2	no	yes	yes	serves
