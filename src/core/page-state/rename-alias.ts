@@ -1,3 +1,4 @@
+import { carryHoldsToPage } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { dropRekeyDuplicates, type RekeyEngine } from '../facts/ontology-rekey.ts';

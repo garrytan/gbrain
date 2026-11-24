@@ -11,6 +11,7 @@
  * later record of "a person deleted this concept" must stay outside it. Everything lives in the database, so a
  * repo-less brain gets it unchanged.
  */
+import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine, PageSnapshot } from '../engine.ts';
 import type { MaintenanceAuthority } from './prepared-maintenance.ts';

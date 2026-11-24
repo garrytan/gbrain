@@ -15,10 +15,8 @@ import type { RegistryCode } from '../error-registry.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { authorizeStoredRequest, authorizeWrite, LOCAL_WRITER_SQL } from './authority.ts';
-import { MIRROR_READ_ONLY_SQL } from './mirror-read-only.ts';
+import { authorizeStoredRequest, authorizeWrite, sharedWriterRow } from './authority.ts';
 import { registerEngineView } from './switches.ts';
-import { SLUG_ROOT_MODE_SQL } from '../sync-anchor.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
@@ -86,14 +84,20 @@ const SOURCE_SQL = 'SELECT incarnation,archived,local_path,config FROM sources W
  * nine times each; far from the database that was most of an item's cost. Admission and publication re-check them under
  * their locks.
  */
-const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, WORKTREE_BINDING_SQL, LOCAL_WRITER_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL]
+const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, WORKTREE_BINDING_SQL]
   .map(sql => sql.replace(/\s+/g, ' ').trim()));
 const FORGET_CALL_READS = Symbol('forgetCallReads');
 /** `engine` for one connector call: each read in CALL_STABLE_READS is sent once for the call; every other statement goes through. */
 function callReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<Record<string, unknown>[]>>();
+  const typedReads = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = typedReads.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); typedReads.set(id, value); value.catch(() => typedReads.delete(id)); }
+    return value;
+  };
   return registerEngineView(new Proxy(engine, { get(target, key) {
-    if (key === FORGET_CALL_READS) return () => reads.clear();
+    if (key === FORGET_CALL_READS) return () => { reads.clear(); typedReads.clear(); };
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = sql.replace(/\s+/g, ' ').trim();
       const stable = CALL_STABLE_READS.has(text) && !opts?.signal;
@@ -107,6 +111,8 @@ function callReads(engine: BrainEngine): BrainEngine {
       }
       return rows.then(found => structuredClone(found));
     };
+    // The typed form of the local writer read master memoized as a statement (authority.ts `sharedWriterRow`): once per call, a missing row read again.
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, typedReads, once);
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);
