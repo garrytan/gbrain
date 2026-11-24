@@ -8,12 +8,50 @@ on:
       convergence:
         type: string
         default: run
+    secrets:
+      # Trunk Dynamic CI (docs/ci-event-parity.md#trunk-dynamic-ci). Optional: with no
+      # token the filter fails open and every lane runs.
+      TRUNK_API_TOKEN:
+        required: false
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Trunk Dynamic CI filter (docs/ci-event-parity.md#trunk-dynamic-ci): it asks Trunk
+  # whether this pull-request push needs crash-robot and convergence and writes one output per job;
+  # each runs unless its output is exactly 'false'. It fails open: a missing token (a
+  # fork's pull request gets no secrets), a Trunk outage or a job with no verdict runs
+  # the job. In Learning mode it records verdicts and skips nothing.
+  # Event parity (docs/ci-event-parity.md#trunk-dynamic-ci): pull_request only; github.event_name is the
+  # caller's here, so on a push, the nightly run or a dispatch (full-ci, or this workflow
+  # by hand) it is skipped, its outputs are empty, and every lane runs as before.
+  # Unlike test.yml's filter, a failed job here (a lost runner, the job timeout, the action
+  # failing to download) would fail the whole call and turn cheap-tier red, so the job
+  # carries continue-on-error too; crash-robot and convergence still run past it.
+  # scripts/check-dynamic-ci.ts guards the wiring.
+  dynamic-ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      crash-robot: ${{ steps.dynamic-ci.outputs.crash-robot }}
+      convergence: ${{ steps.dynamic-ci.outputs.convergence }}
+    steps:
+      - id: dynamic-ci
+        uses: trunk-io/dynamic-ci@09739668b8d766d05e3dbf6f3eb0159da6597aaf  # v1 (v0.1.12)
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          token: ${{ secrets.TRUNK_API_TOKEN }}
+          job-keys: crash-robot,convergence
+          enable-annotation: 'true'
+
   # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only; a
   # pull request (cheap tier) runs only the crash robot and convergence here. The
   # full-ci dispatch on its head, every push and the nightly run this lane.
@@ -365,8 +403,11 @@ jobs:
   # Pull requests run a 150 s budget (Postgres skips the seams and the pooler
   # disconnect fault that can wait out a dead owner's claim lease, listed in the
   # manifest); pushes, schedules and manual runs crash every seam.
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   crash-robot:
     name: Crash robot / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.crash-robot != 'false' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     strategy:
@@ -544,9 +585,11 @@ jobs:
   # when scripts/ci-convergence-scope.sh selects its diff (test.yml `changes`);
   # every merge-queue run, every push to master and the nightly Test schedule
   # run it.
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   convergence:
     name: Managed-sync convergence / Bun ${{ matrix.bun }}
-    if: ${{ inputs.convergence != 'skip' }}
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.convergence != 'false' && (inputs.convergence != 'skip') }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 45
     strategy:
