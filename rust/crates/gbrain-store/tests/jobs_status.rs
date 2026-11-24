@@ -492,6 +492,23 @@ fn embed_backfill_by_source_reports_only_the_requested_sources() {
 }
 
 #[test]
+fn the_last_finished_time_of_a_name_is_its_newest_completed_finish_in_seconds() {
+    let b = brain("st-last-finished");
+    assert_eq!(b.read_last_finished_job_at("maint").unwrap(), Value::Null);
+    finished(&b, "other", "o:1");
+    assert_eq!(b.read_last_finished_job_at("maint").unwrap(), Value::Null);
+    finished(&b, "maint", "m:1");
+    b.clock.advance(HOUR);
+    finished(&b, "maint", "m:2");
+    let at = b.read_last_finished_job_at("maint").unwrap();
+    let at = at.as_str().unwrap();
+    assert!(
+        at.starts_with("2027-01-15T09:") && at.ends_with('Z') && at.len() == 20,
+        "{at}"
+    );
+}
+
+#[test]
 fn no_admitted_job_owns_a_budget_so_the_budget_owner_list_is_empty() {
     let b = brain("jobs-budget-owners");
     assert_eq!(b.list_budget_owner_jobs().unwrap(), Vec::<Value>::new());

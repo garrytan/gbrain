@@ -204,6 +204,21 @@ describe('engine parity: minion status reads', () => {
       return rows.map(r => ({ queue: r.queue, depth: r.depth }));
     });
 
+  parityTest('readLastFinishedJobAt reads the latest finished_at of a completed job of one name, in UTC ISO seconds',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastFinishedJobAt'] }, async (engine) => {
+      const name = 'autopilot-global-maintenance';
+      const empty = await engine.readLastFinishedJobAt(name);
+      await finished(engine, name, 'failed');
+      await finished(engine, 'other-job', 'completed');
+      const noneCompleted = await engine.readLastFinishedJobAt(name);
+      await finished(engine, name, 'completed');
+      const last = await finished(engine, name, 'completed');
+      const at = await engine.readLastFinishedJobAt(name);
+      const finishedAt = (await engine.getJob(last))?.finished_at;
+      const seconds = finishedAt == null ? null : new Date(finishedAt as string | Date).toISOString().slice(0, 19) + 'Z';
+      return { empty, noneCompleted, shape: typeof at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(at), latest: at === seconds };
+    });
+
   parityTest('readLastCompletedJobAt reads the freshest updated_at of a completed job, and nothing else moves it',
     { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastCompletedJobAt'] }, async (engine) => {
       const empty = await engine.readLastCompletedJobAt();

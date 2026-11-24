@@ -57,6 +57,7 @@ pub mod timeline;
 // so building a family never edits this list.
 pub mod alias_fanout_reads;
 pub mod aliases;
+pub mod budget_ledger;
 pub mod chat_usage;
 pub mod chronicle_ledger;
 pub mod chronicle_state;

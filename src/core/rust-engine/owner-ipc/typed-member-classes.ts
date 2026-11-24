@@ -16,6 +16,8 @@
 
 /** Typed members that only read (lookups, counts, listings, probes, and the planning reads of a purge or a relink). */
 export const OWNER_IPC_TYPED_READS: readonly string[] = [
+  // repair-rust batch 9: the segmented-mirror, fence bookkeeping and last-job reads
+  'listGlobalPurgeWithdrawals', 'listSourceCheckpointRecords', 'readOldestSyncHoldAt', 'readLastFinishedJobAt', 'readRemirrorEffects',
   // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
   // readMentionPageRevisions and readMentionGenerations take row locks (FOR SHARE) only, so they stay reads.
   'readSegmentedPageSealed',
@@ -392,6 +394,15 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  // repair-rust batch 9: the re-mirror effect insert, the attempt store's compare-and-swap and the daily budget ledger writes
+  insertRemirrorEffects: 'readRemirrorEffects for that request',
+  insertOpCheckpointIfAbsent: 'readOpCheckpointRecord for that operation',
+  replaceOpCheckpointAtVersion: 'readOpCheckpointRecord for that operation',
+  reclaimBudgetReservations: 'readBudgetLedgerDay for that ledger day',
+  reserveBudgetReservation: 'readBudgetLedgerDay for that ledger day',
+  dispatchBudgetReservation: 'readBudgetLedgerDay for that ledger day',
+  settleBudgetReservation: 'readBudgetLedgerDay for that ledger day',
+  releaseBudgetReservation: 'readBudgetLedgerDay for that ledger day',
   // The mention pass's writes (engine-sql/mention-pass.ts). The two advisory locks take nothing on the rust store.
   storeSegmentDerivationsIfLive: 'readSegmentDerivations for that page (the rows are there only when the page was live at that generation)',
   writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',

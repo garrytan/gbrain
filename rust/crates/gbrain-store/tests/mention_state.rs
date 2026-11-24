@@ -97,6 +97,54 @@ fn status_rows_bump_generations_keep_fingerprints_and_refuse_bad_states() {
 }
 
 #[test]
+fn a_tail_reset_marks_the_pages_after_an_id_and_the_listed_pages_due() {
+    let dir = TempDir::new("mention-tail-reset");
+    let store = open(&dir);
+    let (a, rev_a) = put(&store, "notes/a", "note", "Alpha");
+    let (b, rev_b) = put(&store, "notes/b", "note", "Beta");
+    let (c, rev_c) = put(&store, "notes/c", "note", "Gamma");
+    let pages = vec![
+        PageRevisionInput {
+            id: a,
+            revision: rev_a,
+        },
+        PageRevisionInput {
+            id: b,
+            revision: rev_b,
+        },
+        PageRevisionInput {
+            id: c,
+            revision: rev_c,
+        },
+    ];
+    store
+        .upsert_page_mention_state("default", &pages, 7, "4")
+        .unwrap();
+    assert_eq!(due(&store), 0);
+    // Pages after b: only c. The source rows before it stay current.
+    store
+        .reset_mention_revisions(Some(&["default".to_string()]), Some(&[]), Some(b))
+        .unwrap();
+    assert_eq!(due(&store), 1);
+    // The listed pages join the tail.
+    store
+        .upsert_page_mention_state("default", &pages, 7, "4")
+        .unwrap();
+    store
+        .reset_mention_revisions(Some(&["default".to_string()]), Some(&[a]), Some(b))
+        .unwrap();
+    assert_eq!(due(&store), 2);
+    // Another source's pages are not in the tail.
+    store
+        .upsert_page_mention_state("default", &pages, 7, "4")
+        .unwrap();
+    store
+        .reset_mention_revisions(Some(&["other".to_string()]), Some(&[]), Some(0))
+        .unwrap();
+    assert_eq!(due(&store), 0);
+}
+
+#[test]
 fn page_state_makes_a_page_current_until_its_content_or_a_reset_moves_it() {
     let dir = TempDir::new("mention-page-state");
     let store = open(&dir);
@@ -117,7 +165,9 @@ fn page_state_makes_a_page_current_until_its_content_or_a_reset_moves_it() {
         .upsert_page_mention_state("default", &pages, 7, "4")
         .unwrap();
     assert_eq!(due(&store), 0);
-    store.reset_mention_revisions(None, Some(&[b]), None).unwrap();
+    store
+        .reset_mention_revisions(None, Some(&[b]), None)
+        .unwrap();
     assert_eq!(due(&store), 1);
     put(&store, "notes/a", "note", "Alpha changed");
     assert_eq!(due(&store), 2);

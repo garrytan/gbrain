@@ -87,6 +87,7 @@ export const JOBS_MEMBERS = {
   countJobsByStatus: 'minion_queue',
   readWaitingQueueDepths: 'minion_queue',
   readLastCompletedJobAt: 'minion_queue',
+  readLastFinishedJobAt: 'minion_queue',
   countTtlCancelledByName: 'minion_queue',
   readWaitingScopeState: 'minion_queue',
   countRecentCompletedJobs: 'minion_queue',

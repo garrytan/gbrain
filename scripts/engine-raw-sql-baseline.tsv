@@ -194,7 +194,6 @@ src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1
 src/core/bootstrap/verify.ts	execute_raw	6
 src/core/brainstorm/domain-bank.ts	execute_raw	1
-src/core/budget/daily-ledger.ts	execute_raw	5
 src/core/by-mention.ts	execute_raw	2
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
@@ -278,10 +277,7 @@ src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
 src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
 src/core/feedback/store.ts	execute_raw	15
-src/core/fence-repair/attempts.ts	execute_raw	3
 src/core/fence-repair/census-store.ts	execute_raw	2
-src/core/fence-repair/hold-fix.ts	execute_raw	2
-src/core/fence-repair/uncommitted.ts	execute_raw	3
 src/core/forecast-journal.ts	execute_raw	3
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
@@ -586,7 +582,6 @@ src/core/repair/duplicate-facts.ts	execute_raw	3
 src/core/repair/extractor-facts.ts	execute_raw	5
 src/core/repair/fact-claim-dates.ts	execute_raw	1
 src/core/repair/failed-writes.ts	execute_raw	13
-src/core/repair/fences.ts	execute_raw	2
 src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
 src/core/repair/file-drift.ts	execute_raw	3
 src/core/repair/missing-tables.ts	execute_raw	2
@@ -600,12 +595,9 @@ src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/purged-page-facts.ts	execute_raw	2
 src/core/repair/readers.ts	execute_raw	3
 src/core/repair/rename-identity.ts	execute_raw	6
-src/core/repair/rotation.ts	execute_raw	2
 src/core/repair/secret-spans.ts	execute_raw	24	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
-src/core/repair/segmented-mirror.ts	execute_raw	2
 src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
-src/core/repair/slug-conflicts.ts	execute_raw	2
 src/core/repair/unwithdrawn-facts.ts	execute_raw	3
 src/core/repair/url-clone-fences.ts	execute_raw	2
 src/core/repair/visibility.ts	execute_raw	7

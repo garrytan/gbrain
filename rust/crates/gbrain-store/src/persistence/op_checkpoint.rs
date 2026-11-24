@@ -352,6 +352,56 @@ pub(crate) fn write_op_checkpoint_record_in(
     )
 }
 
+/// `insertOpCheckpointIfAbsent(op, fingerprint, completedKeys)`: `INSERT ... ON CONFLICT (op,
+/// fingerprint) DO NOTHING RETURNING 1`. True when this call stored the parent; an existing parent
+/// is kept as it is.
+pub(crate) fn insert_op_checkpoint_if_absent_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    completed: &Value,
+) -> Result<bool> {
+    if get_json::<HousekeepingRow>(&*tx, &parent_key(op, fingerprint)?)?.is_some() {
+        return Ok(false);
+    }
+    write_op_checkpoint_record_in(tx, env, op, fingerprint, Some(completed))?;
+    Ok(true)
+}
+
+/// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: `UPDATE ... WHERE op=$1
+/// AND fingerprint=$2 AND (completed_keys->0->>'v')::int = $4 RETURNING 1`. True when the parent's
+/// first record held `v` = `expected` and this call replaced the records. A `v` that is not an
+/// integer refuses, as the `::int` cast does; a missing `v` matches nothing.
+pub(crate) fn replace_op_checkpoint_at_version_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    completed: &Value,
+    expected: i64,
+) -> Result<bool> {
+    let Some(row) = get_json::<HousekeepingRow>(&*tx, &parent_key(op, fingerprint)?)? else {
+        return Ok(false);
+    };
+    let version = match row.completed_keys.get(0).and_then(|first| first.get("v")) {
+        None | Some(Value::Null) => return Ok(false),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+    };
+    let Ok(version) = version.trim().parse::<i32>() else {
+        return Err(StoreError::invalid(format!(
+            "invalid input syntax for type integer: \"{version}\""
+        )));
+    };
+    if i64::from(version) != expected {
+        return Ok(false);
+    }
+    write_op_checkpoint_record_in(tx, env, op, fingerprint, Some(completed))?;
+    Ok(true)
+}
+
 const DAY_US: f64 = 86_400_000_000.0;
 
 /// The ops the purge never deletes (`op NOT IN (...)` and each `op<>'...'` of the statement).
@@ -607,6 +657,38 @@ impl Store {
         completed: Option<&Value>,
     ) -> Result<()> {
         self.write(|tx| write_op_checkpoint_record_in(tx, &*self.env, op, fingerprint, completed))
+    }
+
+    /// `insertOpCheckpointIfAbsent(op, fingerprint, completedKeys)`.
+    pub fn insert_op_checkpoint_if_absent(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        completed: &Value,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            insert_op_checkpoint_if_absent_in(tx, &*self.env, op, fingerprint, completed)
+        })
+    }
+
+    /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`.
+    pub fn replace_op_checkpoint_at_version(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        completed: &Value,
+        expected: i64,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            replace_op_checkpoint_at_version_in(
+                tx,
+                &*self.env,
+                op,
+                fingerprint,
+                completed,
+                expected,
+            )
+        })
     }
 
     /// `readOpCheckpointKeys(op, fingerprint)`.

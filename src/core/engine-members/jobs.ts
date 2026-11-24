@@ -204,6 +204,8 @@ export interface JobsMembers {
   readWaitingQueueDepths(): Promise<QueueDepth[]>;
   /** The freshest `updated_at` among completed jobs, or null. */
   readLastCompletedJobAt(): Promise<Date | null>;
+  /** The latest `finished_at` of the completed jobs named `name`, as UTC ISO seconds, or null (engine-sql/fence-repair-records.ts). */
+  readLastFinishedJobAt(name: string): Promise<string | null>;
   /** Cancelled jobs whose `error_text` matches the LIKE pattern and that finished in the last `withinSeconds`, counted by name. */
   countTtlCancelledByName(reasonLike: string, withinSeconds: number): Promise<TtlCancelledCount[]>;
   /** The waiting jobs sharing a returned job's source scope, plus its id and age in minutes while it is active with a live lease. */

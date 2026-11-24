@@ -23,7 +23,7 @@ The census state is `op_checkpoints` rows in the store's housekeeping key space 
 
 - `readFenceTrendRecords` returns `[]`: the trend rows (`fence-trend`) are written by `recordSyncRunTrend`, `recordWriteTrend` and
   `recordPublicationFenceTrend`, which stay on `executeRaw` (the managed-sync and write paths, which a Rust brain does not run).
-- `readBudgetLedgerDay` returns null: `budget_ledger` has no Rust writer, so the fence repair has spent nothing.
+- `readBudgetLedgerDay` reads the store's daily ledger (`budget_ledger.rs`, `rust/docs/store/repair-fences.md`): the day's reserved, committed and cap amounts as numeric text, or null when the day has no row.
 
 ## Differences from PGLite and Postgres
 

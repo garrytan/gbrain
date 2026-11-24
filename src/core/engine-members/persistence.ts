@@ -249,6 +249,30 @@ export interface PersistenceMembers {
   insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
+  /** `gbrain repair segmented-mirror`: queues a re-mirror's `withdrawal-mirror` and `git` effects for request row `requestId` (engine-sql/segmented-mirror-effects.ts); run it in the re-mirror's write transaction. */
+  insertRemirrorEffects(requestId: string, sourceId: string, data: Record<string, unknown>): Promise<void>;
+  /** `gbrain repair segmented-mirror`: the effects of request row `requestId` the apply waits on, in kind order. */
+  readRemirrorEffects(requestId: string): Promise<import('../engine-sql/segmented-mirror-effects.ts').RemirrorEffectState[]>;
+  /** The withdrawal overlay's `*` purges: the source's subject-`*` purges of claim fingerprints `hashes` as withdrawals, world rows only when `worldOnly` (page-state/snapshot.ts overlayCanonicalBodiesTyped). */
+  listGlobalPurgeWithdrawals(sourceId: string, hashes: readonly string[], worldOnly: boolean): Promise<import('../page-state/types.ts').PageWithdrawal[]>;
+  /** The first record of each `op` checkpoint naming one of `sourceIds` as `source_id` (all when null), in fingerprint byte order (engine-sql/fence-repair-records.ts). */
+  listSourceCheckpointRecords<R>(op: string, sourceIds: readonly string[] | null): Promise<import('../engine-sql/fence-repair-records.ts').SourceCheckpointRecord<R>[]>;
+  /** Stores the checkpoint parent when none exists; true when this call stored it (the fence repair attempt store's claim). */
+  insertOpCheckpointIfAbsent(op: string, fingerprint: string, completedKeys: readonly unknown[]): Promise<boolean>;
+  /** Replaces the parent's records only while its first record's `v` is `expected`; true when this call replaced them. */
+  replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
+  /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
+  readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
+  /** The daily budget ledger (budget/daily-ledger.ts): releases expired held reservations and settles expired dispatched ones at their estimate (engine-sql/budget-ledger-writes.ts). */
+  reclaimBudgetReservations(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, nowIso: string): Promise<{ released: number; uncertain: number }>;
+  /** Holds a reservation when the day stays within its cap; true when held. */
+  reserveBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, spec: import('../engine-sql/budget-ledger-writes.ts').BudgetReservationSpec): Promise<boolean>;
+  /** Marks a held, unexpired reservation dispatched; true when it was. */
+  dispatchBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, nowIso: string): Promise<boolean>;
+  /** Settles a reservation at `actual` and moves the day's totals; the row the protocol reads, or null. */
+  settleBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, actual: string): Promise<import('../engine-sql/budget-ledger-writes.ts').BudgetSettleRow | null>;
+  /** Releases a held reservation and frees its estimate; true when released. */
+  releaseBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string): Promise<boolean>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
   /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE (`'update'`: FOR UPDATE) until the transaction ends. */
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;

@@ -420,6 +420,7 @@ export const FACTS_MEMBERS = {
   insertFactWithdrawal: 'facts',
   isFactWithdrawn: 'facts',
   isFactPurged: 'facts',
+  listGlobalPurgeWithdrawals: 'facts',
   listFactWithdrawalDates: 'facts',
   moveFactWithdrawalSubject: 'facts',
   hasFactWithdrawalForSubject: 'facts',

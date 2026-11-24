@@ -213,7 +213,13 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
     'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
     'readWriteRequestsByRequestId', 'readSourceSyncShape', 'readNotifierFirstDue', 'readSourceLastCommit', 'readDrainHolderProgress', 'readLiveJobIds', 'readDrainLeaseBeacon', 'writeDrainLeaseHolder', 'refreshDrainLeaseHolder', 'releaseDrainLeaseHolder',
-    'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows', 'readHeadBlockerRows', 'readRecoveringHeadRow', 'readIncompleteSyncReceipt', 'readOpenPassWork', 'readIncompleteSyncReceiptRows'],
+    'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows', 'readHeadBlockerRows', 'readRecoveringHeadRow', 'readIncompleteSyncReceipt', 'readOpenPassWork', 'readIncompleteSyncReceiptRows',
+    // the batch 9 segmented-mirror effect members (engine-sql/segmented-mirror-effects.ts)
+    'insertRemirrorEffects', 'readRemirrorEffects',
+    // the batch 9 fence repair bookkeeping (engine-sql/fence-repair-records.ts)
+    'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'readOldestSyncHoldAt',
+    // the batch 9 daily budget ledger writes (engine-sql/budget-ledger-writes.ts)
+    'reclaimBudgetReservations', 'reserveBudgetReservation', 'dispatchBudgetReservation', 'settleBudgetReservation', 'releaseBudgetReservation'],
   label_door: ['readPrivacyOrigin', 'listOriginDependents', 'listCheckoutFiles', 'readPageLabelRow', 'writePageLabelGuard'],
   page_purge: ['listPurgeClaimFacts', 'listPurgeClaimTakes', 'listPurgeSegmentClaims', 'listQueuedPagePurges', 'listPageLinkStreams', 'insertPageFactPurges', 'listPageVersionBodiesForPurge', 'readPurgePageBody', 'listPageMirrorFacts', 'listPageMirrorTakeHashes', 'countPageCascadeRows', 'listPageVersionSourcePaths', 'listPagePurgeTombstones', 'listPagePurgeRows', 'deletePagePurgeTombstones', 'deleteFactPurgesByRequests', 'deleteTakePurgesByRequests', 'deletePurgedPageTrustProposals', 'deletePurgedPageHolds', 'deletePurgedPageGateReceipts', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'listPageTimelineReceipts', 'listPageSegmentShas', 'countPageManifestRows', 'deletePageStagings', 'deletePageSegmentTexts', 'sweepPageTextsForClaims', 'listRequestsForSlugs', 'readJournalCeiling', 'sweepJournalChunk', 'readEffectBytes', 'redactWriteRequestRow', 'releaseTerminalBytes', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'clearQueryCache', 'relationExists', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'continueDerivationSweep', 'listDerivationClaimForms', 'listPurgeOrigins', 'upsertDerivedOriginPark', 'recordOwedPurgeRows', 'deleteOriginHoldRows'],
   mention_pass: ['readSegmentedPageSealed', 'storeSegmentDerivationsIfLive', 'listMentionSourceIds', 'writeMentionIndexStatus', 'lockMentionSources', 'listMentionLinkOrigins', 'deleteSourceMentionLinks', 'clearMentionSourceIndex', 'listStaleDerivedAliasSlugs', 'deleteDerivedAliasesForSlugs', 'listAliasDuePages', 'listDerivedAliasRows', 'readMentionPageRevisions', 'insertDerivedAliasRows', 'upsertPageAliasState', 'listMentionCandidatePages', 'listGazetteerEntryKeys', 'listMentionLinkersOfTargets', 'lockMentionEntries', 'applyGazetteerEntryChanges', 'resetMentionRevisions', 'readMentionGenerations', 'listMentionDuePages', 'listPageOutLinks', 'deleteLinksById', 'upsertPageMentionState', 'readMentionStatusStates', 'readMentionPolicyFingerprints', 'resetSourceMentionIndexRevisions', 'listLivePageSourceIds', 'listGazetteerPages', 'listGazetteerAliases', 'readPageStampTimes', 'readPageRevisionForShare', 'readExplainPage', 'readExplainScanPage', 'countMentionLinksTo', 'readPageNameText', 'listFrontmatterAliasNorms', 'listRejectedDeclarationPages'],
@@ -254,7 +260,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readLiveAccessTokenScope',
     'setAccessTokenReadSharedRevision', 'setOauthClientReadSharedRevision', 'readSharedSourceRows'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
-  minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'readLastFinishedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
     'readEmbedBackfillBySource',
     'listBudgetOwners'],
@@ -383,7 +389,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listEvalCaptureFailures'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates',
     'findAnomalies', 'countZeroWeightWithTakes'],
-  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listPurgedTakeRows',
+  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listGlobalPurgeWithdrawals', 'listPurgedTakeRows',
     'listFactWithdrawalDates', 'moveFactWithdrawalSubject', 'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys',
     'readFactCacheWatermark', 'readTrustGeneration', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt',
     'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor', 'deleteStaleWriteGateReceipts',

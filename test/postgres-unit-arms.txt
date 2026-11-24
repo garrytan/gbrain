@@ -175,6 +175,7 @@ test/engine-parity/belief-purge-probes.test.ts
 test/engine-parity/bench-save-repro.test.ts
 test/engine-parity/bound-write.test.ts
 test/engine-parity/brief-reads.test.ts
+test/engine-parity/budget-ledger-writes.test.ts
 test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/caller-typed-reads.test.ts
 test/engine-parity/checkpoint-validation.test.ts
@@ -422,6 +423,8 @@ test/engine-parity/repair-facts-previews-2.test.ts
 test/engine-parity/repair-facts-previews-3.test.ts
 test/engine-parity/repair-facts-previews-4.test.ts
 test/engine-parity/repair-facts-previews.test.ts
+test/engine-parity/repair-fence-kinds.test.ts
+test/engine-parity/repair-fence-records.test.ts
 test/engine-parity/repair-fence-scans.test.ts
 test/engine-parity/repair-frontmatter-holds.test.ts
 test/engine-parity/repair-generation-kinds.test.ts
@@ -452,6 +455,7 @@ test/engine-parity/segment-regions.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/segmented-fence-staging.test.ts
 test/engine-parity/segmented-ledger-reads.test.ts
+test/engine-parity/segmented-mirror-effects.test.ts
 test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts

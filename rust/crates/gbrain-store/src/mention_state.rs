@@ -930,7 +930,8 @@ impl Store {
         self.write(|tx| {
             for (id, mut state) in all_page_states(&*tx)? {
                 let hit = source_ids.is_some_and(|s| {
-                    s.contains(&state.source_id) && after_page_id.is_none_or(|after| after < 0 || id > after as u64)
+                    s.contains(&state.source_id)
+                        && after_page_id.is_none_or(|after| after < 0 || id > after as u64)
                 }) || ids.as_ref().is_some_and(|i| i.contains(&id));
                 if hit {
                     state.mention_revision = None;
