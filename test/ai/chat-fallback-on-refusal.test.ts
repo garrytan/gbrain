@@ -228,7 +228,8 @@ describe('first-hop notice', () => {
     await ask();
     const [notice] = takeChatFallbackHopNotices();
     expect(notice!.why).toContain('refused it');
-    expect(notice!.why).toContain('chat_fallback_on_refusal false');
+    expect(notice!.why).toContain('chat_fallback_on_refusal is set to true');
+    expect(notice!.why).toContain('gbrain doctor --only chat_fallback_chain');
   });
 
   test('no hop, no notice', async () => {

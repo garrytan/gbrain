@@ -73,7 +73,7 @@ export function chatFallbackHopNotice(failed: string, next: string, cause: strin
     why: `chat_fallback_chain sent a request to another model: ${failed} ${refusal ? `refused it (${cause})` : `failed (${cause})`}, so the request went to ${next}. ` +
       'Every later hop in this process logs to stderr only. ' +
       (refusal
-        ? 'Fallback on refusals sends content one provider refused to the next one; `gbrain config set chat_fallback_on_refusal false` keeps outage fallback and stops that.'
+        ? 'Fallback on refusals sends content one provider refused to the next one because chat_fallback_on_refusal is set to true; removing that value, or setting it to false, where it is set keeps outage fallback and stops that (`gbrain doctor --only chat_fallback_chain` names where).'
         : 'Outage fallback is the configured behavior; `gbrain doctor --only chat_fallback_chain` shows the chain, the providers it reaches and how to remove it.'),
     fix: {
       argv: ['gbrain', 'doctor', '--only', 'chat_fallback_chain', '--json'], consent: [], actor: 'agent', requires_exclusive: false,

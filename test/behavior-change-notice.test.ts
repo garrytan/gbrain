@@ -185,6 +185,7 @@ for (const backend of testBackends()) {
         expect(chained.why).toContain('openai:gpt-5.6-luna');
         expect(chained.why).toContain('so openai receive');
         expect(chained.why).toContain('on refusals as well as errors');
+        expect(chained.why).toContain('gbrain doctor --only chat_fallback_chain names where');
         expect(chained.fix?.argv).toEqual(['unset', 'GBRAIN_CHAT_FALLBACK_CHAIN']);
         expect(chained.fix?.actor).toBe('user');
       });
