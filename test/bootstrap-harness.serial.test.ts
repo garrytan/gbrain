@@ -24,7 +24,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { setCliExitVerdict } from '../src/core/cli-force-exit.ts';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -60,6 +60,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { SourceTargetError } from '../src/core/source-resolver.ts';
 import { renderBrainFirstSnippet } from '../src/core/setup/brain-first.ts';
 import { hookLauncherPath } from '../src/core/setup/hook-launcher.ts';
+import { permsEnforced } from './helpers/fs-perms.ts';
 
 const TOKEN_A = `gbrain_${'a'.repeat(64)}`;
 const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
@@ -1574,6 +1575,48 @@ describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () =>
     expect(await applyHarness(flags(), deps)).toBe(0);
     expect(readFileSync(memoryPath(f), 'utf8')).toBe(claudeOnce);
     expect(readFileSync(agentsPath(f), 'utf8')).toBe(agentsOnce);
+  });
+
+  test.skipIf(!permsEnforced())('#10096 current read-only linked instructions converge, stale content still fails, and deploy recovery clears the receipt', async () => {
+    const f = makeFake();
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    expect(await applyHarness(flags(), deps)).toBe(0);
+    const deployed = join(f.home, 'dotfiles');
+    mkdirSync(deployed);
+    const paths = [memoryPath(f), agentsPath(f)];
+    const originals = paths.map((path) => readFileSync(path, 'utf8'));
+    const targets = paths.map((path, i) => {
+      const target = join(deployed, `instructions-${i}.md`);
+      writeFileSync(target, originals[i]);
+      unlinkSync(path);
+      symlinkSync(target, path);
+      return target;
+    });
+    const inodes = targets.map((path) => statSync(path).ino);
+    chmodSync(deployed, 0o500);
+    try {
+      expect(await applyHarness(flags(), deps)).toBe(0);
+      expect(instrTargets(f.home).map((t) => t.state)).toEqual(['confirmed', 'confirmed']);
+      for (const [i, path] of paths.entries()) {
+        expect(lstatSync(path).isSymbolicLink()).toBe(true);
+        expect(statSync(targets[i]).ino).toBe(inodes[i]);
+        expect(readFileSync(path, 'utf8')).toBe(originals[i]);
+      }
+      // The deploy changes only the managed body; brain-first remains current.
+      writeFileSync(targets[0], originals[0].replace('mode: salient', 'mode: all'));
+      expect(await applyHarness(flags(), deps)).toBe(1);
+      expect(instrTargets(f.home).find((t) => t.host === 'claude-code')?.state).toBe('failed');
+      expect(instrTargets(f.home).find((t) => t.host === 'codex')?.state).toBe('confirmed');
+      expect(readFileSync(targets[0], 'utf8')).toContain('mode: all');
+      // An external deploy fixes the bytes, without making the folder writable.
+      writeFileSync(targets[0], originals[0]);
+      expect(await applyHarness(flags(), deps)).toBe(0);
+      expect(instrTargets(f.home).map((t) => t.state)).toEqual(['confirmed', 'confirmed']);
+      expect(instrTargets(f.home).every((t) => !t.error)).toBe(true);
+      expect(await statusHarness(parseHarnessArgs(['--status', '--json']), deps)).toBe(0);
+    } finally {
+      chmodSync(deployed, 0o700);
+    }
   });
 
   test('[OV-A4] AGENTS.override.md present → codex target FAILS with the actionable error; claude target still succeeds', async () => {

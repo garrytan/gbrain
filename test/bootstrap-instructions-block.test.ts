@@ -7,11 +7,15 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   AMBIENT_WRITEBACK_BLOCK_BEGIN,
   AMBIENT_WRITEBACK_BLOCK_END,
   ambientBlockPresent,
+  installAmbientWritebackBlockAt,
   removeAmbientWritebackBlock,
   renderAmbientInstructionBlock,
   spliceAmbientWritebackBlock,
@@ -19,6 +23,37 @@ import {
 
 const BODY = 'managed header line\nrule one\nrule two';
 const URL = 'http://127.0.0.1:3131/mcp';
+
+describe('installAmbientWritebackBlockAt', () => {
+  test('current linked content keeps target identity; stale, absent and damaged content retain their contracts', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-current-instructions-'));
+    try {
+      const target = join(dir, 'managed.md');
+      const link = join(dir, 'CLAUDE.md');
+      const original = spliceAmbientWritebackBlock('# owner rules\n', BODY) + '# tail\n';
+      writeFileSync(target, original);
+      symlinkSync(target, link);
+      const before = statSync(target);
+      installAmbientWritebackBlockAt(link, BODY);
+      expect(statSync(target).ino).toBe(before.ino);
+      expect(statSync(target).mtimeMs).toBe(before.mtimeMs);
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readFileSync(link, 'utf8')).toBe(original);
+      installAmbientWritebackBlockAt(link, 'new policy');
+      expect(readFileSync(target, 'utf8')).toBe(spliceAmbientWritebackBlock(original, 'new policy'));
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      const missing = join(dir, 'new.md');
+      installAmbientWritebackBlockAt(missing, BODY);
+      expect(readFileSync(missing, 'utf8')).toBe(spliceAmbientWritebackBlock('', BODY));
+      const damaged = `${AMBIENT_WRITEBACK_BLOCK_BEGIN}\norphan\n`;
+      writeFileSync(target, damaged);
+      expect(() => installAmbientWritebackBlockAt(link, BODY)).toThrow(/damaged/);
+      expect(readFileSync(target, 'utf8')).toBe(damaged);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('spliceAmbientWritebackBlock', () => {
   test('no markers, empty content → fresh block only, newline-terminated, markers at column 0', () => {
