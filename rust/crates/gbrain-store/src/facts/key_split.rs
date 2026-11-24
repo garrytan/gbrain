@@ -10,12 +10,15 @@
 //! - a take purge: key `F 0x10 source \0 subject \0 claim_hash \0` (three NULs after the prefix,
 //!   the last one trailing) and a JSON object of exactly `purged_at_us` and, optionally,
 //!   `request_id`;
-//! - a loop mute: key `F 0x10 source \0 kind \0 value` (two NULs, none trailing), `kind` `sender`
-//!   or `thread`, and a JSON object of exactly `id` and `created_at_us`.
+//! - a loop mute: key `F 0x10 source \0 kind \0 value` (exactly two NULs; the value may be empty,
+//!   so the key can end in the second NUL), `kind` `sender` or `thread`, and a JSON object of
+//!   exactly `id` and `created_at_us`.
 //!
 //! A record that is neither, or whose key and value disagree, is refused: the caller turns the
 //! error into `shadow_reseed_required` naming the key, and the transaction is dropped, so nothing
-//! changes. A mute whose new key is already taken is refused the same way.
+//! changes. A mute whose new key is already taken is refused the same way. A file system or
+//! storage engine failure (`store_io`, `store_corrupt`) in any step is not a refusal: the caller
+//! reports it with its own code (`carry_over_failure` in lib.rs), and nothing changes either.
 
 use super::loops::mutes::SUPPRESSION;
 use super::take_purges::TAKE_PURGE;
@@ -58,7 +61,9 @@ fn classify(key: &[u8], value: &[u8]) -> Result<Kind> {
     let nuls = rest.iter().filter(|b| **b == 0).count();
     let key_kind = match (nuls, rest.last()) {
         (3, Some(0)) => Kind::TakePurge,
-        (2, Some(last)) if *last != 0 => Kind::LoopMute,
+        // A mute with an empty value ends in its second NUL (`F 0x10 source \0 kind \0`), which the
+        // old writer accepts; a take purge key has three.
+        (2, Some(_)) => Kind::LoopMute,
         _ => return Err(refuse("neither a take purge key nor a loop mute key")),
     };
     let json: Value = serde_json::from_slice(value).map_err(|_| refuse("not JSON"))?;
