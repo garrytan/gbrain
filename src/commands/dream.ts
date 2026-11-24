@@ -36,7 +36,7 @@ import { jsonGuardActive, jsonRequested, setCliExitVerdict, writeJsonDocument } 
 import { BUDGET_STOP_EXIT_CODE } from '../core/exit-codes.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { usageError, writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
-import { readAtomPageSelection } from '../core/cycle/atom-page-selection.ts';
+import { readAtomPageSelection } from './atom-page-selection.ts';
 import { printHelpText } from '../cli/help/render.ts';
 import { cliRenderContext, renderAction, shellQuote, type Action } from '../core/agent-output.ts';
 import { codeEntry } from '../core/error-catalogue.ts';

@@ -48,7 +48,7 @@ import type { GBrainConfig } from '../config.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { importFromContent } from '../import-file.ts';
 import { ownerGateInput, ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
-import { storedTrustTier, type WriteOrigin } from '../trust/tier.ts';
+import { withPageTierKept } from '../trust/fence-append.ts';
 import { addVerifiedCreationDate } from '../repair/creation-date.ts';
 import { materializedSnapshot } from './segmented-apply.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
@@ -384,16 +384,12 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   if (publication.status === 'refused') throw changedSincePreview(row.source_id, p.path, `the repaired content now refuses to import (${publication.refusal.code})`, kind);
   if (publication.status === 'overlay') throw changedSincePreview(row.source_id, p.path, 'importing it would now store a canonical overlay instead of the file as written', kind);
   if (publication.digest !== p.resultDigest) throw changedSincePreview(row.source_id, p.path, 'the page it would publish differs from the previewed result', kind);
-  let beforeTrust: { trust_tier: string; write_origin: WriteOrigin | null } | undefined;
   if (creationOnly) {
     const prior = await materializedSnapshot(engine, snapshot);
     const { created: _creation, ...frontmatter } = publication.fields.frontmatter;
     if (!prior || digest(canonicalRepairFields(prior.page, prior.tags)) !== digest({ ...publication.fields, frontmatter })) {
       throw changedSincePreview(row.source_id, p.path, 'the canonical file carries edits other than the recorded date', kind);
     }
-    [beforeTrust] = await engine.executeRaw<{ trust_tier: string; write_origin: WriteOrigin | null }>(
-      'SELECT trust_tier,write_origin FROM pages WHERE id=$1 AND knowledge_revision::text=$2', [prior.page.id, prior.revision]);
-    if (!beforeTrust) throw changedSincePreview(row.source_id, p.path, 'the reviewed page changed', kind);
   }
   const ready = publication.ready;
   const project = await prepareCanonicalProjections(engine, ready.parsedPage, row.slug, row.source_id, base, 'file');
@@ -403,8 +399,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   // afterCommit follows the import that published (a page stored in segments chunks what its publication left unsealed).
   let published = ready;
   return { observedRevision: snapshot?.revision ?? null, noop: ready.noop && !fileChanges && !moved, contentUnchanged: ready.noop && !fileChanges && !moved,
-    trust: beforeTrust ? { tier: storedTrustTier(beforeTrust.trust_tier), origin: beforeTrust.write_origin }
-      : await ownerImportTrust(engine, row, ready.parsedPage.frontmatter, p.sourcePath),
+    trust: await ownerImportTrust(engine, row, ready.parsedPage.frontmatter, p.sourcePath),
     deferEmbedding: p.noEmbed || creationOnly, ...(moved ? { additionalPageKeys: [{ sourceId: row.source_id, slug: moved.slug }] } : {}),
     ...(ready.afterCommit || moved ? { afterCommit: async (target: BrainEngine) => { await published.afterCommit?.(target); } } : {}),
     ...(fileChanges || adopted ? { file: { root, path: target, content: bytes, expectedBeforeHash: p.beforeHash,
@@ -438,7 +433,8 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
       }
       published = applied;
       const [last] = adopted && snapshot ? await tx.executeRaw<{ id: number | string | null }>('SELECT max(id) AS id FROM page_versions WHERE page_id=$1', [snapshot.page.id]) : [];
-      const installed = await applied.apply(tx);
+      const installed = await (creationOnly
+        ? withPageTierKept(tx, { sourceId: row.source_id, slug: row.slug }, () => applied.apply(tx)) : applied.apply(tx));
       if (adopted && snapshot) await tx.executeRaw('UPDATE page_versions SET change_reason=$2 WHERE page_id=$1 AND id>$3', [snapshot.page.id, ADOPTED_CHANGE_REASON, Number(last?.id ?? 0)]);
       await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
       // A body stored in segments was sealed by its import's apply when complete (sealSegmentedPage); the inline text seal reads the whole timeline.
