@@ -88,6 +88,8 @@ export interface Scan { result: DuplicateResult; read: IdentityDecisionsRead; ki
 
 /** Confirmed on its own, after reading its hint line: contact-only groups, and person groups that share an id (gate_rev 7). */
 const confirmAlone = (s: Scan, g: DuplicateGroup) => contactOnly(g) || (s.kindOf.get(g.id) === 'person' && sharesId(g));
+/** A group holding two pages of one source: those are collapsed (their in_source group), never linked by a confirm. */
+const sharesSource = (g: DuplicateGroup) => new Set(g.members.map(m => m.source_id)).size < g.members.length;
 const otherNamePages = (g: DuplicateGroup) => g.evidence.reduce((n, e) => n + (e.other_pages_other_name ?? 0), 0);
 
 async function readDecisions(engine: BrainEngine): Promise<IdentityDecisionsRead> {
@@ -212,7 +214,7 @@ function hintLine(g: DuplicateGroup): string {
 }
 
 async function confirmList(engine: BrainEngine, s: Scan, json: boolean): Promise<void> {
-  const entries = s.result.groups.filter(g => g.kind === 'cross_source' && CONFIRMABLE.has(g.class));
+  const entries = s.result.groups.filter(g => g.kind === 'cross_source' && CONFIRMABLE.has(g.class) && !sharesSource(g));
   const inIdentity = await identitiesOf(engine, entries);
   const bulk = new Set((await bulkGroups(engine, s, entries, inIdentity)).map(g => g.id));
   const rank = (g: DuplicateGroup) => (bulk.has(g.id) ? 0 : !contactOnly(g) ? (g.class === 'weak' ? 2 : 1) : otherNamePages(g) > 0 ? 4 : 3);
@@ -303,6 +305,7 @@ async function runConfirm(engine: BrainEngine, args: string[]): Promise<void> {
       if (g.class === 'conflict') throw notConfirmable(g, 'conflict', 'is a conflict: an account or registry id disagrees, so it is never confirmed');
       if (g.kind === 'thin') throw notConfirmable(g, 'thin', 'is a thin page beside a fuller page; it is collapsed, not confirmed');
       if (g.kind !== 'cross_source') throw notConfirmable(g, 'in_source', 'has its pages in one source; same-source duplicates are collapsed, not linked');
+      if (sharesSource(g)) throw notConfirmable(g, 'same_source_members', 'holds two pages of one source; collapse them if they are one page, or record them as different with gbrain dedupe reject <their in_source group id> if they are not, then confirm the group the next preview shows');
       if (!CONFIRMABLE.has(g.class)) throw notConfirmable(g, 'conflict', 'is not a confirmable class');
       if (contactOnly(g) && f.ids.length > 1) throw notConfirmable(g, 'contact_key_only_batch', 'shares only contact or handle keys, so it is confirmed on its own, after reading its hint line');
       if (confirmAlone(s, g) && f.ids.length > 1) throw notConfirmable(g, 'person_id_batch', 'is a person group that shares an account or registry id, so it is confirmed on its own, after reading its hint line');

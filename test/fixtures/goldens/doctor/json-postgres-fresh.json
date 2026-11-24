@@ -3473,6 +3473,26 @@
         {
           "category": "brain",
           "details": {
+            "by_source": {},
+            "complete": true,
+            "items": [],
+            "items_truncated": false,
+            "row_budget": 5000,
+            "scanned": 0,
+            "stranded": {
+              "no_page": 0,
+              "page_deleted": 0,
+              "renamed": 0
+            }
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No held write names a page that is missing (0 held write(s) read).",
+          "name": "write_gate_holds_stranded",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "bad_config": [],
             "chars_limit": 4000,
             "chars_used": 0,
