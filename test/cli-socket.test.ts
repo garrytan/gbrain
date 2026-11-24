@@ -113,6 +113,9 @@ const NOT_READ_BEHAVIOR = new Set([
   'GBRAIN_RUST_ENGINE_ADDON',
   // Set by the shadow supervisor for its own child process so the child never shadows; no caller exports it and no read reads it.
   'GBRAIN_SHADOW_CHILD',
+  // Shadow replay: the kill switch only stops recording (an answer never changes), and the scratch URL is read only by
+  // the nightly replay command, never by a read.
+  'GBRAIN_SHADOW_CAPTURE', 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL',
   'GBRAIN_SCHEMA_AUDIT_VERBOSE', 'GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS', 'GBRAIN_SCHEMA_PACK_MAX_BYTES', 'GBRAIN_SCHEMA_PACK_WARN_BYTES',
   'GBRAIN_INITSCHEMA_LOCK_TIMEOUT_SECONDS', 'GBRAIN_INIT_SKIP_EMBED_CHECK', 'GBRAIN_IN_AGENT_SETUP', 'GBRAIN_INTERACTIVE', 'GBRAIN_NON_INTERACTIVE',
   'GBRAIN_BOOTSTRAP_ABORT_AFTER', 'GBRAIN_SEAT', 'GBRAIN_CORE', 'GBRAIN_PRESSURE', 'GBRAIN_PAYLOAD', 'GBRAIN_DESCRIPTION', 'GBRAIN_HARNESS_MARKER_VALUE',

@@ -68,6 +68,37 @@ async function scratchTables(url: string): Promise<number> {
 }
 
 describe('shadow replay end to end', () => {
+  test('capture is off by default, and turning it on makes engines record (real PGLite, no Rust addon needed)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-replay-off-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_SHADOW_CHILD: undefined, GBRAIN_SHADOW_CAPTURE: undefined }, async () => {
+        const config = { engine: 'pglite', database_path: join(home, 'brain.pglite') } as EngineConfig;
+        const { saveConfig } = await import('../src/core/config.ts');
+        saveConfig(config as never);
+        const bare = await createEngine(config);
+        await bare.connect(config);
+        await bare.initSchema();
+        expect(viewedEngine(bare)).toBe(bare);
+        await bare.disconnect();
+        const key = shadowBrainKey(config)!;
+        expect(existsSync(captureDir(shadowDirFor(key)))).toBe(false);
+        expect(await runEngineShadow(['capture', 'on', '--yes'], { out: () => {}, err: () => {}, config: () => config })).toBe(0);
+        const recording = await createEngine(config);
+        await recording.connect(config);
+        expect(viewedEngine(recording)).not.toBe(recording);
+        await recording.disconnect();
+        await withEnv({ GBRAIN_SHADOW_CAPTURE: 'off' }, async () => {
+          const killed = await createEngine(config);
+          await killed.connect(config);
+          expect(viewedEngine(killed)).toBe(killed);
+          await killed.disconnect();
+        });
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test.skipIf(!HAVE_ADDON)('off by default; first night seeds; second night replays on PGLite and Rust without touching the brain', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-replay-e2e-'));
     if (PG) await emptyScratch(PG);
