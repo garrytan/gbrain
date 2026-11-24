@@ -29,6 +29,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { writeThroughConfigured } from './switches.ts';
 import { recordPlainDirectoryAgreement } from './plain-directory-drift.ts';
+import { forwardWholeOperation } from '../rust-engine/owner-ipc/whole-op.ts';
 
 /** One file of a managed import batch: its path and the source-relative path its slug is derived from. */
 export interface ManagedImportFile { filePath: string; sourcePath: string }
@@ -110,6 +111,8 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
   if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
     throw trustedCliRequired('Managed filesystem import requires the trusted local CLI.');
   }
+  const viaOwner = forwardWholeOperation<PromiseSettledResult<ImportResult>[]>(engine, 'importManagedFiles', [files, opts]);
+  if (viaOwner) return viaOwner;
   opts.signal?.throwIfAborted();
   const settled: PromiseSettledResult<ImportResult>[] = new Array(files.length);
   const fail = (i: number, reason: unknown) => { settled[i] = { status: 'rejected', reason }; };

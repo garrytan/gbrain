@@ -96,6 +96,8 @@ interface PendingCall {
   controller: AbortController;
   done: boolean;
   queued: boolean;
+  /** The connection's call table: the key of the lane the call waits in. */
+  lane: object;
   /** Size of the call's frame, held against the in-flight byte budget until `released`. */
   bytes: number;
   released: boolean;
@@ -205,6 +207,65 @@ function answerCall(call: PendingCall, settled: Promise<unknown>): Promise<void>
   );
 }
 
+/** Calls waiting for a permit: one FIFO lane per connection, keyed by its call table, in turn order. */
+type Lanes = Map<object, PendingCall[]>;
+
+/** Takes a call out of its lane; an empty lane goes with it. */
+function laneDequeue(lanes: Lanes, call: PendingCall): void {
+  const calls = lanes.get(call.lane);
+  if (!calls) return;
+  const at = calls.indexOf(call);
+  if (at !== -1) calls.splice(at, 1);
+  if (!calls.length) lanes.delete(call.lane);
+}
+
+/** How many calls wait; `live` leaves out the ones that already ended. */
+function queuedCount(lanes: Lanes, live = false): number {
+  let n = 0;
+  for (const calls of lanes.values()) n += live ? calls.filter(call => !call.done).length : calls.length;
+  return n;
+}
+
+/**
+ * The next call to run, taking turns: the first lane (in turn order) whose `ready` finds a call able to run gives it up,
+ * and moves to the end of the order.
+ */
+function takeInTurn(lanes: Lanes, ready: (calls: PendingCall[]) => PendingCall | undefined): PendingCall | undefined {
+  for (const [lane, calls] of [...lanes]) {
+    const next = ready(calls);
+    if (!next) continue;
+    laneDequeue(lanes, next);
+    const rest = lanes.get(lane);
+    if (rest) { lanes.delete(lane); lanes.set(lane, rest); }
+    return next;
+  }
+  return undefined;
+}
+
+/**
+ * The first call of one lane that may run now. A call that ended, or ends here (the owner is closing, its deadline
+ * passed), leaves the queue on the way; a call an orphan holds back is passed over.
+ */
+function runnableCall(
+  calls: PendingCall[], closing: boolean, started: ReadonlySet<PendingCall>, leaveQueue: (call: PendingCall) => void,
+): PendingCall | undefined {
+  for (let at = 0; at < calls.length;) {
+    const call = calls[at]!;
+    if (call.done) { leaveQueue(call); continue; }
+    if (closing) { call.done = true; leaveQueue(call); call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
+    const earlier = orphanAhead(started, call);
+    // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
+    if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) {
+      if (earlier) holdExpired(call, earlier); else expire(call, true);
+      leaveQueue(call);
+      continue;
+    }
+    if (earlier) { at++; continue; }
+    return call;
+  }
+  return undefined;
+}
+
 export async function serveOwnerEngine(
   engine: BrainEngine,
   legacySocketPath: string,
@@ -222,8 +283,10 @@ export async function serveOwnerEngine(
   const uid = process.platform === 'win32' ? undefined : (opts.uid ?? (() => process.getuid?.()))();
   const peerCred = uid === undefined ? undefined : (opts.peerCred ?? peerCredSupport());
   const wholeOperations = opts.wholeOperations ?? {};
-  // Calls waiting for a permit. A call leaves it when it starts or as soon as it ends without running (leaveQueue).
-  const queue: PendingCall[] = [];
+  // Calls waiting for a permit, one FIFO lane per connection in turn order: the next permit goes to the first lane that
+  // has a call able to run, which then moves to the end. A call leaves its lane when it starts or as soon as it ends
+  // without running (leaveQueue).
+  const lanes: Lanes = new Map();
   const sockets = new Set<Socket>();
   // Connections refused before their hello, kept only until they close.
   const refused = new Set<Socket>();
@@ -245,27 +308,17 @@ export async function serveOwnerEngine(
   const leaveQueue = (call: PendingCall) => {
     if (!call.queued) return;
     call.queued = false;
-    const at = queue.indexOf(call);
-    if (at !== -1) queue.splice(at, 1);
+    laneDequeue(lanes, call);
     releaseBytes(call);
   };
 
-  // Calls start in arrival order, except that a call an orphan holds back is passed over until the orphan settles.
+  // Calls start in turn order, one connection after another, except that a call an orphan holds back is passed over until
+  // the orphan settles.
   const pump = () => {
-    for (let at = 0; active < permits && at < queue.length;) {
-      const call = queue[at]!;
-      if (call.done) { leaveQueue(call); continue; }
-      if (closing) { call.done = true; leaveQueue(call); call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); continue; }
-      const earlier = orphanAhead(started, call);
-      // A timer fires on a later turn, so a call whose deadline passed while it waited is checked here, before it runs.
-      if (call.deadlineAt !== undefined && Date.now() >= call.deadlineAt) {
-        if (earlier) holdExpired(call, earlier); else expire(call, true);
-        leaveQueue(call);
-        continue;
-      }
-      if (earlier) { at++; continue; }
-      queue.splice(at, 1);
-      start(call);
+    while (active < permits) {
+      const next = takeInTurn(lanes, calls => runnableCall(calls, closing, started, leaveQueue));
+      if (!next) return;
+      start(next);
     }
   };
 
@@ -392,10 +445,10 @@ export async function serveOwnerEngine(
       send({ t: 'result', id, ok: false, error: encodeError(ownerBusy(reason, member, limit)) }, member);
     if (inflightBytes + bytes > maxInflightBytes) { busy('inflight_bytes', maxInflightBytes); return; }
     // A call held behind an orphan waits with permits free, so a non-empty queue counts against the cap too.
-    if ((active >= permits || queue.length > 0) && queue.length >= maxQueued) { busy('queue_full', maxQueued); return; }
+    if ((active >= permits || lanes.size > 0) && queuedCount(lanes) >= maxQueued) { busy('queue_full', maxQueued); return; }
     const controller = new AbortController();
     const call: PendingCall = {
-      id, member, controller, done: false, queued: false, bytes, released: true, run: () => Promise.resolve(),
+      id, member, controller, done: false, queued: false, lane: calls, bytes, released: true, run: () => Promise.resolve(),
       write: frame.t === 'fn' || !ownerMemberOnlyReads(member), settled: false,
       reply: out => { if (calls.get(id) === call) calls.delete(id); call.done = true; send(out, member); },
     };
@@ -453,7 +506,8 @@ export async function serveOwnerEngine(
     call.queued = true;
     call.released = false;
     inflightBytes += bytes;
-    queue.push(call);
+    const lane = lanes.get(calls);
+    if (lane) lane.push(call); else lanes.set(calls, [call]);
     pump();
   };
 
@@ -478,16 +532,18 @@ export async function serveOwnerEngine(
 
   return {
     socketPath,
-    stats: () => ({ active, queued: queue.filter(call => !call.done).length, connections: sockets.size, inflightBytes }),
+    stats: () => ({ active, queued: queuedCount(lanes, true), connections: sockets.size, inflightBytes }),
     // Stops new work, aborts every queued and running call, and resolves only when the server is closed AND every
     // engine call that started has settled, so the caller cannot release the owner lock while old work still runs.
     // A second close() gets the same promise, so no caller can release the lock before the drain ends.
     close: () => (closed ??= (async () => {
       closing = true;
       const serverClosed = new Promise<void>(resolve => server.close(() => resolve()));
-      for (const call of [...queue]) {
-        leaveQueue(call);
-        if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+      for (const calls of [...lanes.values()]) {
+        for (const call of [...calls]) {
+          leaveQueue(call);
+          if (!call.done) { call.done = true; call.controller.abort(new DOMException('The brain owner is closing.', 'AbortError')); }
+        }
       }
       for (const socket of [...sockets, ...refused]) socket.destroy();
       while (running.size) await Promise.allSettled([...running]);

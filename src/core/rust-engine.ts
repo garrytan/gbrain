@@ -81,6 +81,26 @@ export interface OpenRustEngineOptions {
   /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
   ownerWaitMs?: number;
 }
+/** How long `disconnect` waits for an open transaction to finish before it rolls it back (milliseconds). */
+const TRANSACTION_SHUTDOWN_WAIT_MS = 5_000;
+/** Threads of the transaction executor: one, so the calls of the transaction that holds the writer never wait for the pool. */
+const TRANSACTION_POOL_THREADS = 1;
+/** Members that run on their own admission (the transaction members) rather than the writer gate. */
+const SELF_ADMITTED = new Set(['transaction', 'transactionDirect', 'lockPageKeys']);
+/**
+ * Members that only read: they run on a snapshot and never wait for an open transaction. The member table has no
+ * read/write column, so the names decide; a member this does not match counts as a write and waits, which is always
+ * safe (the transaction runs on its own executor, so a waiting write can never block it).
+ */
+const READ_MEMBER = /^(get|list|read|find|count|search|resolve|traverse|has|query|explain|lookup|describe|scan|is)[A-Z]/;
+const READ_MEMBERS = new Set([
+  'batchLoadEmotionalInputs', 'loadContradictionsTrend', 'sumStaleChunkChars', 'relationalChainHop', 'relationalFanout',
+  'keywordBoundedRead',
+]);
+const WRITE_MEMBERS = new Set(['resolveTake']);
+function isReadMember(member: string): boolean {
+  return !WRITE_MEMBERS.has(member) && (READ_MEMBERS.has(member) || READ_MEMBER.test(member));
+}
 
 /** Builds the Rust engine around an addon the loader has already verified. Nothing is opened or written yet. */
 export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {

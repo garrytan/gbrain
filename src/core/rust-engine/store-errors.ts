@@ -13,6 +13,8 @@ import { opError } from '../ops/contract.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { PageRevisionConflictError } from '../page-state/types.ts';
+import { PageSnapshotAmbiguousError } from '../page-state/types.ts';
+import { READ_ONLY_SQLSTATE } from '../postgres-engine/read-write-transactions.ts';
 
 export interface StoreErrorContext {
   member: string;
@@ -57,9 +59,30 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return pageNotFound(error, ctx);
     case 'origin_claimed':
       return originClaimed(error);
+    case 'read_only_transaction':
+      return Object.assign(new Error(`cannot execute ${ctx.member} in a read-only transaction`), { code: READ_ONLY_SQLSTATE });
+    case 'page_ambiguous':
+      return new PageSnapshotAmbiguousError();
+    case 'constraint_violation':
+      return factsUniqueViolation(error);
     default:
       return error;
   }
+}
+
+/** The unique indexes of the facts table the store enforces, by the name Postgres reports. */
+const FACTS_UNIQUE_INDEXES: ReadonlySet<string> = new Set(['idx_facts_ontology_stint_dedup', 'idx_facts_fence_key']);
+
+/** SQLSTATE `unique_violation`. */
+export const UNIQUE_VIOLATION_SQLSTATE = '23505';
+
+function factsUniqueViolation(error: unknown): unknown {
+  const message = error instanceof Error ? error.message : '';
+  const named = /^duplicate key value violates unique constraint "(.+)"$/s.exec(message);
+  if (!named || !FACTS_UNIQUE_INDEXES.has(named[1]!)) return error;
+  return Object.assign(new Error(message), {
+    severity: 'ERROR', code: UNIQUE_VIOLATION_SQLSTATE, schema_name: 'public', table_name: 'facts', constraint_name: named[1],
+  });
 }
 
 function pageNotFound(error: unknown, ctx: StoreErrorContext): unknown {

@@ -422,13 +422,12 @@ export function rustOwnerServesPersistence(capabilities: Iterable<string> | unde
 /**
  * The capability a member needs on a Rust owner that does not report it, or null when the call may be sent. Such a
  * member is refused here with the error the Rust engine gives in process (rust-engine.ts), so the client never asks
- * an owner for what it said it cannot do (executeRaw with no `raw_sql`). A member the Rust store serves
- * (store-members/index.ts) is always sent, because the owner runs it even when the rest of its capability class still
- * refuses. An owner of another kind (tests host PGLite) is asked as before.
+ * an owner for what it said it cannot do (executeRaw with no `raw_sql`). An owner of another kind (tests host PGLite)
+ * is asked as before. A member the Rust store serves (store-members/) runs on the owner even when the rest of its
+ * capability does not, exactly as it runs in the owner's own process.
  */
 function missingOnRustOwner(hello: { kind: string; capabilities: readonly string[] }, member: string): Capability | null {
-  if (hello.kind !== 'rust') return null;
-  if (member in STORE_MEMBERS) return null;
+  if (hello.kind !== 'rust' || member in STORE_MEMBERS) return null;
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
   if (cls === undefined || cls === 'implemented') return null;
   return hello.capabilities.includes(cls) ? null : cls as Capability;
@@ -464,7 +463,8 @@ export interface InstallOwnerClientOptions {
 /**
  * Makes `engine` a client of the owner on `connection`: each forwarded member becomes an own property that sends the
  * call, each refused member rejects with `engine_capability_missing`, and the engine's capability set mirrors the
- * owner's. Returns the function that undoes it (on disconnect or when the owner goes away).
+ * owner's. Returns the function that undoes it (on disconnect or when the owner goes away), which also restores the
+ * engine's own capability set.
  */
 export function installOwnerClient(engine: object, connection: OwnerConnection, opts: InstallOwnerClientOptions = {}): () => void {
   const record = engine as EngineRecord;
@@ -503,13 +503,14 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
     installed.push(member);
   }
   const capabilities = record.capabilities as Set<string> | undefined;
+  const own = capabilities instanceof Set ? [...capabilities] : [];
   if (capabilities instanceof Set) { capabilities.clear(); for (const c of connection.hello.capabilities) capabilities.add(c); }
   const key = engineKey(engine);
   connections.set(key, connection);
   if (rejoin) rejoins.set(connection, rejoin);
   return () => {
     for (const member of installed) delete record[member];
-    if (capabilities instanceof Set) capabilities.clear();
+    if (capabilities instanceof Set) { capabilities.clear(); for (const c of own) capabilities.add(c); }
     if (connections.get(key) === connection) connections.delete(key);
     connection.close();
   };

@@ -59,6 +59,9 @@ import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
+import { sharedWriterRow } from './authority.ts';
+import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
+import { sharedWorktreeBinding } from './ownership.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -83,11 +86,16 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
  * under lock by the admission transaction or by publication.
  */
 type AdmissionSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null; guest_writers: string[] | null; guest_trust_ceiling: string | null; guest_sources_hidden: boolean };
+/**
+ * Pre-admission reads every page of one batch makes with the same arguments:
+ * the source row, the writer registration, the shared
+ * skillpack roots, the persistence identity and config values, and a managed
+ * import's source-root and company-profile checks. All of them are rechecked
+ * under lock by the admission transaction or by publication. The source row and
+ * the worktree binding are typed members, answered in `batchSharedReads` below.
+ */
 const BATCH_SHARED_READS = new Set([
-  ADMISSION_SOURCE_SQL,
-  'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
-  'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
   "SELECT config,incarnation FROM sources WHERE id=$1",
@@ -118,9 +126,23 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
-    if (key === 'readLocalWriterRow' && extra?.has(WRITER_ROW_SQL)) return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
-      : once(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id)).then(row => row && { ...row });
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    // The typed form of the shared `SELECT value FROM config WHERE key=$1` read (engine-sql/config.ts), once per key.
+    if (key === 'readStoredConfigValue') return (name: string) => once(JSON.stringify([key, name]), () => target.readStoredConfigValue(name));
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
+    // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
+    if (key === 'readSourceIncarnation' || key === 'hasCompanyBrainReceipt') // the typed company-profile reads
+      return (sourceId: string) => once<unknown>(JSON.stringify([key, sourceId]), () => target[key](sourceId));
+    // Page admission's source row and a write's unlocked source state (engine-sql/write-misc.ts); a locked read runs every time.
+    if (key === 'readAdmissionSource') return (sourceId: string) => once(JSON.stringify([key, sourceId]), () => target.readAdmissionSource(sourceId));
+    if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
+      opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    // The screen's shared skillpack reads (knowledge-guard.ts), once per batch.
+    if (key === 'sharedSkillPackTablePresent' && extra) return () => once(key, () => target.sharedSkillPackTablePresent());
+    if (key === 'listSharedSkillPackRoots' && extra) return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
+    if (key === 'getConfigValues') return (keys: readonly string[]) =>
+      once(`config-values:${JSON.stringify(keys)}`, () => target.getConfigValues(keys)).then(rows => rows.map(row => ({ ...row })));
     // The unsourced-put fork guard lists the sources once per batch, not once per page; a caller gets its own copy of each row.
     if (key === 'listAllSources') return (opts?: { includeArchived?: boolean; localPathOnly?: boolean }) =>
       once(JSON.stringify(['sources', opts ?? null]), () => target.listAllSources(opts)).then(rows => rows.map(row => ({ ...row })));

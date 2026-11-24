@@ -66,6 +66,21 @@ export async function persistenceEnabledForHealth(engine: BrainEngine): Promise<
 export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = hostIdFor(engine)): Promise<WorktreeBinding | null> {
   return (engine as unknown as Pick<BrainEngine, 'getWorktreeBinding'>).getWorktreeBinding(sourceId, hostId);
 }
+/**
+ * A shared-read memo's typed binding read (group-publish.ts `preparationReads`, page-mutations.ts `batchSharedReads`):
+ * one read per source and host, keyed by the member and its arguments. An absent binding is never kept: a later write
+ * of the same preparation may claim the worktree, and `claimWorktree` reads the binding it made through the same engine.
+ */
+export function sharedWorktreeBinding(reads: Map<string, Promise<unknown>>, once: <T>(id: string, read: () => Promise<T>) => Promise<T>,
+  read: BrainEngine['getWorktreeBinding']): BrainEngine['getWorktreeBinding'] {
+  return (sourceId, hostId) => {
+    const memo = JSON.stringify(['getWorktreeBinding', sourceId, hostId]);
+    return once(memo, () => read(sourceId, hostId)).then(binding => {
+      if (!binding) reads.delete(memo);
+      return binding;
+    });
+  };
+}
 /** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
 export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = hostIdFor(engine), expectedAdminState?: string,
   options: { automatic?: boolean } = {}): Promise<WorktreeBinding> {

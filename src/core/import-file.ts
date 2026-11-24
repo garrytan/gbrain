@@ -74,6 +74,7 @@ import type { PageBodyPolicy } from './page-body/limits.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
 import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
+import { forwardWholeOperation } from './rust-engine/owner-ipc/whole-op.ts';
 
 /**
  * The parsed page metadata returned by importFromContent. Callers (specifically
@@ -319,9 +320,8 @@ export async function importFromContent(
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
-  // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
-  // upsertChunks used to query by the caller's raw slug, so a mixed-case slug
-  // created the page row then failed the chunk upsert with "Page not found",
+  // Normalize BEFORE any tx write: putPage lowercases via validateSlug but upsertChunks used to query by the
+  // caller's raw slug, so a mixed-case slug created the page row then failed the chunk upsert with "Page not found",
   // rolling back the whole import (#430).
   const rawSlug = slug;
   slug = validateSlug(slug);
@@ -334,13 +334,14 @@ export async function importFromContent(
   // silently fabricated a duplicate at (default, slug) — causing later
   // bare-slug subqueries (getTags, deleteChunks, etc.) to crash with 21000.
   const sourceId = opts.sourceId;
-  // Reject oversized payloads before any parsing, chunking, or embedding happens.
+  // Reject oversized or refused payloads (executable frontmatter) before any engine access, chunking or embedding; a client of a Rust brain's owner screens here too.
   // Uses Buffer.byteLength to count UTF-8 bytes the same way disk size would,
   // so the network path behaves identically to the file path.
   const screen = screenImportContent({ content, path: slug + '.md', ...(opts.activePack ? { activePack: opts.activePack } : {}), ...(opts.fenceScreen === undefined ? { fences: opts.fences ?? 'lenient' } : {}), ...(opts.holdNoncanonicalPrivate ? { holdNoncanonicalPrivate: true } : {}) });
   if (screen.status === 'refused') {
     return { slug, status: screen.refusal.code === 'file_too_large' ? 'skipped' : 'error', chunks: 0, error: screen.refusal.message, refusal: screen.refusal, skip_reason: screen.refusal.code };
   }
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importFromContent', [slug, content, opts]); if (viaOwner) return viaOwner;
   const parsed = (screen as { parsed: ParsedMarkdown }).parsed;
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct content import', { sourceId: sourceId ?? 'default' });
   const importScreened = async (): Promise<ImportResult> => {
@@ -1005,6 +1006,7 @@ export async function importFromFile(
     bodyPolicy?: PageBodyPolicy;
   } = {},
 ): Promise<ImportResult> {
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importFromFile', [filePath, relativePath, opts]); if (viaOwner) return viaOwner;
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importFromFile(engine, filePath, relativePath, opts));
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -1840,6 +1842,7 @@ export async function importImageFile(
   relativePath: string,
   opts: ImportImageOptions = {},
 ): Promise<ImportResult> {
+  const viaOwner = forwardWholeOperation<ImportResult>(engine, 'importImageFile', [filePath, relativePath, opts]); if (viaOwner) return viaOwner;
   if (needsEngineScope(engine)) return withEngineScope(engine, () => importImageFile(engine, filePath, relativePath, opts));
   if (!opts.prepare) await assertUnmanagedCanonicalWriter(engine, 'direct file import', { sourceId: opts.sourceId ?? 'default' });
   if (!opts.noEmbed && await embeddingSendBlocked(engine)) opts = { ...opts, noEmbed: true };

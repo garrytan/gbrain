@@ -812,7 +812,7 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	54
+src/core/persistence/journal.ts	execute_raw	48
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/large-page-guard.ts	execute_raw	1
 src/core/persistence/legacy-locks.ts	execute_raw	1
@@ -847,7 +847,7 @@ src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	6
 src/core/persistence/page-prepare.ts	execute_raw	11
-src/core/persistence/page-purge.ts	execute_raw	30
+src/core/persistence/page-purge.ts	execute_raw	28
 src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
@@ -859,7 +859,7 @@ src/core/persistence/preadmit-cache.ts	execute_raw	4
 src/core/persistence/preparation-budget.ts	execute_raw	1
 src/core/persistence/prepared-maintenance.ts	execute_raw	13
 src/core/persistence/preview-approval.ts	execute_raw	3
-src/core/persistence/protocol.ts	execute_raw	2
+src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/provider.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
@@ -890,7 +890,6 @@ src/core/persistence/semantic-pages.ts	execute_raw	2
 src/core/persistence/skill-activation.ts	execute_raw	12
 src/core/persistence/soak-counters.ts	execute_raw	4
 src/core/persistence/source-lifecycle.ts	execute_raw	33
-src/core/persistence/staging.ts	execute_raw	4
 src/core/persistence/sync-administration.ts	execute_raw	1
 src/core/persistence/sync-admission.ts	execute_raw	4
 src/core/persistence/sync-admitted.ts	execute_raw	1
@@ -1112,7 +1111,7 @@ src/core/shared-skills/adopted-packs.ts	execute_raw	1
 src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
 src/core/shared-skills/content-freshness.ts	execute_raw	1
-src/core/shared-skills/knowledge-guard.ts	execute_raw	6
+src/core/shared-skills/knowledge-guard.ts	execute_raw	3
 src/core/shared-skills/membership-authority.ts	execute_raw	4
 src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7

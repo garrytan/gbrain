@@ -22,8 +22,49 @@ import { resolve } from 'node:path';
 import { OperationError } from '../../ops/contract.ts';
 import { callerIsRemote, ownerConnectionFor, ownerRejoinFor, untilCallEnds, type OwnerConnection } from './client.ts';
 import { ownerGone, ownerIpcRefusal } from './routes.ts';
+import type { Notice } from '../../agent-output.ts';
+import { type OperationContext } from '../../ops/contract.ts';
+import { capabilityMissing } from '../errors.ts';
+import { rustOwnerServesPersistence } from './client.ts';
 
 export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
+
+/** The owner's entry for a registry operation sent whole (owner-ops.ts runs it). */
+export const OWNER_RUN_OPERATION = 'runOperation';
+
+/** Registry operations a client sends whole to an owner that reports persistence_journal. */
+export const OWNER_FORWARDED_OPERATIONS: ReadonlySet<string> = new Set(['put_page']);
+
+/**
+ * The context fields a forwarded operation carries to the owner: plain data of a trusted local caller. Engine, config,
+ * logger and notice sinks are the owner's own; notices and log lines come back with the result.
+ */
+export interface ForwardedOperationContext {
+  sourceId?: string;
+  admissionOrigin?: OperationContext['admissionOrigin'];
+  writeWaitMs?: number;
+  localSourceImplicit?: boolean;
+  localFederatedSourceIds?: string[];
+  agentLabel?: string;
+  deferEmbeds?: boolean;
+}
+
+/** What the owner sends back for a forwarded operation. */
+export interface ForwardedOperationResult {
+  result: unknown;
+  notices: Notice[];
+  logs: Array<['info' | 'warn' | 'error', string]>;
+}
+
+/** Refuses a caller other than the trusted local CLI; its authority would not reach the owner. */
+function refuseUntrustedCaller(name: string): void {
+  if (callerIsRemote()) throw ownerIpcRefusal(name, 'a remote caller\'s whole operation is not sent to the brain owner');
+}
+
+/** The owner writes through its persistence journal; without it, a whole operation is refused before it is sent. */
+function requireOwnerJournal(connection: OwnerConnection, name: string): void {
+  if (!rustOwnerServesPersistence(connection.hello.capabilities)) throw capabilityMissing('persistence_journal', name);
+}
 
 /** True when `engine` reaches its brain through another process (a client of the Rust brain's owner). */
 export function isOwnerClient(engine: object): boolean {
@@ -46,15 +87,15 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
 export function forwardWholeOperation<T>(engine: object, name: WholeOperationName, args: unknown[]): Promise<T> | undefined {
   const connection = ownerConnectionFor(engine);
   if (!connection) return undefined;
-  if (callerIsRemote()) {
-    return Promise.reject(ownerIpcRefusal(name, 'a remote caller\'s whole operation is not sent to the brain owner'));
-  }
+  const rejoin = connection.closed ? ownerRejoinFor(connection) : undefined;
+  // A connection that is still open is checked now; the one the election finds is checked when it is known.
+  try { refuseUntrustedCaller(name); if (!rejoin) requireOwnerJournal(connection, name); }
+  catch (error) { return Promise.reject(error); }
   const sent = args.slice();
   for (const at of PATH_ARGS[name]) if (typeof sent[at] === 'string') sent[at] = resolve(sent[at] as string);
   if (name === 'importManagedFiles' && Array.isArray(sent[0])) {
     sent[0] = (sent[0] as Array<{ filePath: string }>).map(file => ({ ...file, filePath: resolve(file.filePath) }));
   }
-  const rejoin = connection.closed ? ownerRejoinFor(connection) : undefined;
   if (!rejoin) return connection.request('fn', name, sent) as Promise<T>;
   // The owner has gone: run the election again. A new owner elsewhere takes the operation; when this process became
   // the owner it cannot run it from here, so it is not sent and the caller's retry runs it in process. An election
@@ -65,7 +106,7 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
   });
   return elected.then(() => {
     const next: OwnerConnection | undefined = ownerConnectionFor(engine);
-    if (next && !next.closed) return next.request('fn', name, sent) as Promise<T>;
+    if (next && !next.closed) { requireOwnerJournal(next, name); return next.request('fn', name, sent) as Promise<T>; }
     throw ownerGone(name, connection.hello.pid, false);
   });
 }

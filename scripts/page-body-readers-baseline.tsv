@@ -733,11 +733,13 @@ src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_UPDATED_SQL	sql	INLI
 src/core/engine-sql/link-reads.ts	LINK_CONTEXT_ORIGIN_SQL	sql	INLINE	moved from fence-overlay.ts worldLinkContexts: segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/engine-sql/persistence-effect-scans.ts	listEmbeddingCandidates	sql	META	moved from persistence/embedding-settlement.ts listEmbeddingCandidates
 src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
+src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	sql	INLINE	moved from core-memory.ts listCorePages: a segmented row's body column is NULL and its segmented flag sends it to the segment reader
 src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	field	INLINE	moved from core-memory.ts listCorePages: passes an inline row's compiled_truth through and flags segmented rows, which core-memory.ts listCorePages materialises
 src/core/engine-sql/trust-tier-reads.ts	scanFrom	sql	STREAM	moved from eligibility/scan.ts SELECT: the scan assesses inline text; a segmented page's body columns are NULL
 src/core/engine-sql/trust-tier-reads.ts	PV_BODY_KEY	sql	META	moved from valid-time-read.ts bodyKey: md5 over an inline version's body columns, content_hash for a segmented one; no text leaves the database
 src/core/engine-sql/trust-tier-reads.ts	P_BODY_KEY	sql	META	moved from valid-time-read.ts bodyKey: md5 over an inline page's body columns, content_hash for a segmented one; no text leaves the database
 src/core/engine-sql/trust-tier-reads.ts	pickValidTimeEdition	sql	META	moved from valid-time-read.ts pick: octet_length of an inline version's body columns (segmented versions are counted by body_storage); no text leaves the database
+src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	sql	INLINE	moved from valid-time-read.ts loadEdition: a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView
 src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	field	INLINE	moved from valid-time-read.ts loadEdition: passes an inline version's body columns through; a segmented version's are NULL and its generation goes to the segment reader in editionView
 src/core/facts/claim-match-sql.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/engine-sql/belief-state.ts	readBeliefStateRows	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
@@ -767,5 +769,3 @@ src/core/engine-sql/facts-purge.ts	listPagesForPurgeRewrite	sql	SEGW	moved from 
 src/core/engine-sql/facts-purge.ts	updatePageBodyForPurge	sql	SEGW	moved from facts/purge.ts rewritePageBodies unchanged: the caller writes inline pages only
 src/core/engine-sql/facts-purge.ts	setPurgeVersionBody	sql	SEGW	moved from facts/purge.ts rewriteVersionBodies unchanged: the caller writes inline versions only
 src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_BY_ID_SQL	sql	INLINE	moved from fence-repair/census.ts unchanged: strpos over compiled_truth and timeline of inline pages only; a segmented page's NULL body holds no fence text here, so it is not counted fenced
-src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	sql	INLINE	moved from core-memory.ts listCorePages: a segmented row's body column is NULL and its segmented flag sends it to the segment reader
-src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	sql	INLINE	moved from valid-time-read.ts loadEdition: a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView

@@ -86,6 +86,9 @@ import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
 import type { SourceStateOptions } from '../engine-sql/write-misc.ts';
+import { SOURCE_PURGE_EPOCH_SQL } from '../engine-sql/sync-reason-reads.ts';
+import { sharedWriterRow } from './authority.ts';
+import { sharedWorktreeBinding } from './ownership.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -194,7 +197,7 @@ const STABLE_IN_PREPARATION = new Set([
 ]);
 /**
  * #5984: the engine a claimed group's members are prepared with. The reads
- * above, source rows (`getSource`) and config values (`getConfig`, `getAllConfig`) are answered once for
+ * above, source rows (`getSource`), worktree bindings (`getWorktreeBinding`) and config values (`getConfig`, `getAllConfig`) are answered once for
  * the whole preparation, as if every member were prepared at the same moment;
  * publication re-checks what it relies on under its locks. It lives only for
  * one group's preparation; a failed read is not kept. `also` adds plain reads a
@@ -216,11 +219,29 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
       stable.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
+    // The typed purge-epoch read (reason-trailers.ts) shares the SOURCE_PURGE_EPOCH_SQL answer when that read is stable here,
+    // so a screen reads the epoch once whichever way it is asked first.
+    if (key === 'readSourcePurgeEpoch' && stable.has(flat(SOURCE_PURGE_EPOCH_SQL))) return (sourceId: string) =>
+      once<{ purge_epoch: string | number }[]>(JSON.stringify([flat(SOURCE_PURGE_EPOCH_SQL), [sourceId]]),
+        () => target.readSourcePurgeEpoch(sourceId).then(epoch => epoch === null ? [] : [{ purge_epoch: epoch }]))
+        .then(rows => rows[0]?.purge_epoch ?? null);
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     // The source row (contextual retrieval policy) is one read per source for the group, taking no member's deadline or signal.
     if (key === 'getSource') return (sourceId: string) => once(`source:${sourceId}`, () => withoutReadDeadline(() => target.getSource(sourceId)));
+    // The source's unlocked state and the shared skill packs (engine-sql/write-misc.ts), once for the group.
+    if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
+      opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    // The source's purge epoch (cachedSyncReasonScan) is the typed form of SOURCE_PURGE_EPOCH_SQL: a caller that names
+    // that statement stable (sync-convergence.ts's screen) has it answered once per source too.
+    if (key === 'readSourcePurgeEpoch' && stable.has(flat(SOURCE_PURGE_EPOCH_SQL))) return (sourceId: string) =>
+      once(JSON.stringify([key, sourceId]), () => target.readSourcePurgeEpoch(sourceId));
+    if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
+    if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
+    // The worktree binding, once per source and host for the group, taking no member's deadline or signal (an absence is read again).
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => withoutReadDeadline(() => target.getWorktreeBinding(sourceId, hostId)));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
     if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);

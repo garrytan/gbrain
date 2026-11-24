@@ -66,6 +66,7 @@ export const STORE_MEMBERS = {
   ...cliReadsSearchPages,
   // Queue health reads (rust/crates/gbrain-store/src/jobs/health.rs).
   ...jobsHealth,
+  // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;
