@@ -79,6 +79,7 @@ import { VERSION } from '../../version.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { HELD_DELETION_HEAD_MOVED } from './sync-page-fault.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -756,7 +757,7 @@ function assertHeldDeletionHeadUnmoved(root: string, row: WriteRequest, p: SyncI
   if (p.kind !== 'managed_sync_delete' || !p.heldDeletion) return;
   let head: string | null = null;
   try { head = syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { /* unreadable: refused below */ }
-  if (head !== p.target) throw syncPublicationRefusal('source_changed', 'A commit landed after this held deletion was checked for a move.', row, p,
+  if (head !== p.target) throw syncPublicationRefusal('source_changed', HELD_DELETION_HEAD_MOVED, row, p,
     `HEAD of ${row.source_id} is no longer ${p.target.slice(0, 12)}, the commit the deletion of ${row.slug} was checked against for a move, so it published nothing; the page stays live and the next pass checks it again.`);
 }
 

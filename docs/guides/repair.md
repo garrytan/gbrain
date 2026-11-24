@@ -4047,8 +4047,8 @@ as the page's receipt. Any other held page stays held, and its hold records why
 `file_moved`, `not_deleted_by_commit` or `page_changed`) at the page's revision, so it is not
 screened again until the page changes; when Git could not read whether the file moved, nothing is recorded and the
 next pass checks it again (`move_unread`). The move check reads the commit the sync pass targets; if a commit lands
-before the deletion publishes, the deletion is refused `source_changed`, the page stays live, that pass ends
-`blocked_by_failures` and the next sync checks the page again at the new commit. A file deleted, committed again with
+before the deletion publishes, the deletion is refused `source_changed` and passed over (the page stays live and held, and the
+rest of the pass still publishes), and a later sync that reads the source checks the page again at the new commit. A file deleted, committed again with
 other bytes and deleted again is judged against its last committed bytes.
 Turning the switch on makes the next sync read the whole source once; a sync
 screens at most 200 held deletions, and the rest wait for a later sync that
