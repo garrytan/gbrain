@@ -190,6 +190,48 @@ impl Brain {
         })
     }
 
+    /// `recordConnectorSyncAttempt(sourceId, at, seed)`: resolves false for an unknown source; stamps
+    /// the source's first connector sync attempt once.
+    #[napi]
+    pub fn record_connector_sync_attempt<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        at: String,
+        seed: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_connector_sync_attempt(&source_id, &at, &seed)
+        })
+    }
+
+    /// `writeConnectorDbCursor(key, record)`: writes an unmanaged connector's cursor row.
+    #[napi]
+    pub fn write_connector_db_cursor<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        record: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.write_connector_db_cursor(&key, &record))
+    }
+
+    /// `recordSyncConversion(sourceId, incarnation, conversion, keep)`: the conversion first in the
+    /// source incarnation's log, keeping the newest `keep`.
+    #[napi]
+    pub fn record_sync_conversion<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        conversion: Value,
+        keep: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_sync_conversion(&source_id, &incarnation, &conversion, keep as usize)
+        })
+    }
+
     /// `readRepairBusyRows(sourceId, incarnation)`.
     #[napi]
     pub fn read_repair_busy_rows<'env>(

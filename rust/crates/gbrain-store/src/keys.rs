@@ -100,6 +100,11 @@ pub const TELEMETRY_RETRIEVAL_WEIGHT: u8 = 0x08; // retrieval_weights
 pub const TELEMETRY_BUDGET_LEDGER: u8 = 0x09; // budget_ledger
 pub const TELEMETRY_BUDGET_RESERVATION: u8 = 0x0A; // budget_reservations
 pub const TELEMETRY_CHAT_USAGE: u8 = 0x0B; // chat_usage_log
+pub const TELEMETRY_VOLUNTEER_EVENT: u8 = 0x0C; // context_volunteer_events
+pub const TELEMETRY_VOLUNTEER_SEQUENCE: u8 = 0x0D; // the context_volunteer_events id sequence
+pub const TELEMETRY_CHRONICLE_ROW: u8 = 0x0E; // chronicle_page_state
+pub const TELEMETRY_CHRONICLE_RESERVATION: u8 = 0x0F; // chronicle_judge_reservations
+pub const TELEMETRY_CHRONICLE_SEQUENCE: u8 = 0x10; // the chronicle_judge_reservations id sequence
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `entity_identities` (`entity_identities.rs`).
@@ -109,7 +114,8 @@ pub const SESSION_STATE: u8 = b'y';
 /// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
 pub const DERIVED_GENERATION: u8 = b'h';
 /// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03, member links 0x04
-/// (access_member_links.rs).
+/// (access_member_links.rs), shared-skill members 0x05, batches 0x06, the token secret 0x0d
+/// (shared_skill_members.rs); rust/docs/store/access-members.md lists every sub-tag.
 pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.

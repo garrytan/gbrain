@@ -29,6 +29,7 @@ import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
+import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
@@ -540,7 +541,7 @@ for (const [member, cls] of Object.entries(RUST_ENGINE_MEMBERS)) {
     writable: true,
     enumerable: false,
     value: function refuse(this: RustEngine): Promise<never> {
-      return Promise.reject(capabilityMissing(capability, member));
+      return Promise.reject(capabilityMissing(capability, member, 'none', RECEIPT_STOP_OWNERS[member]));
     },
   });
 }

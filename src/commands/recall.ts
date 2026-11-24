@@ -684,12 +684,7 @@ async function splitMayMatch(engine: BrainEngine, sourceId: string, names: strin
   const tokens = [...new Set(names.map(n => slugify(n)).filter(Boolean))];
   if (!tokens.length) return false;
   try {
-    const rows = await engine.executeRaw(
-      `SELECT 1 FROM facts WHERE source_id = $1 AND entity_slug ~ ANY($2::text[])
-       UNION ALL SELECT 1 FROM page_aliases WHERE source_id = $1 AND alias_norm = ANY($3::text[])
-       LIMIT 1`,
-      [sourceId, tokens.map(t => `(^|/)${t}(-|$)`), [...new Set(names.map(n => normalizeAlias(n)).filter(Boolean))]]);
-    return rows.length > 0;
+    return await engine.factsOrAliasesMayMatch(sourceId, tokens, [...new Set(names.map(n => normalizeAlias(n)).filter(Boolean))]);
   } catch {
     return true;
   }

@@ -14,8 +14,8 @@
  * `worldOnly` visibility, a private-facts grant, refuses).
  * `listLexicalContestCandidates`, the keyless conflict slot's read of a remember, is served from
  * rust/crates/gbrain-store/src/facts/contest.rs. `listFactsFromQuotedPages` and `listOwnerTierFacts`, the quote reads of
- * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs; the store keeps no derivation
- * inputs, so only the holding page and a backstop's named page mark a fact quoted.
+ * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs: the holding page, a backstop's
+ * named page or a recorded input page (`derivation_inputs`) marks a fact quoted.
  *
  * `listRestatedPrivateCopies` is served by facts-trust-reads.ts; `readFactForOwnerAction`, `listStandingPreferences` and
  * `countDerivedFactTaint` by facts-trust-owner.ts. The `entity_ended` arm reads the withdrawal ledger through

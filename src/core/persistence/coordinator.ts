@@ -2,6 +2,7 @@ import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readF
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { chargeCapabilityRefusal, settleCapabilityRefusal } from './capability-retry.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -49,7 +50,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, capabilityRefusalDetail, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, capabilityRefusalDetail, type CapabilityRefusalDetail, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -387,11 +388,22 @@ export async function releaseChargedInterruption(engine: BrainEngine, row: Write
 export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   // An engine that cannot yet record a publication step refused before anything published: the write goes back to
-  // queued under its own name, so no claim stays running and a later engine that has the step publishes it. A refusal
-  // in preparation is not a publication step: it ends failed below, typed, in one attempt.
+  // queued under its own name, so no claim stays running and an engine that has the step can publish it. The same
+  // engine refuses again on every claim, so after PUBLICATION_CAPABILITY_ATTEMPTS the write ends failed with the typed
+  // refusal, and the writes queued behind it in its source go on. A refusal in preparation is not a publication step:
+  // it ends failed below, typed, in one attempt.
   if (stage === 'publication' && isEngineCapabilityRefusal(error)) {
-    await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
-    return (await getWriteRequestById(engine, row.id))!;
+    const charge = chargeCapabilityRefusal(row.id);
+    if (charge.release) {
+      await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
+      return (await getWriteRequestById(engine, row.id))!;
+    }
+    const refused = withAttempt(requestError(error), stage, engine);
+    const done = await completeThroughTypedMembers(engine, row, { ...refused,
+      message: `${refused.message} It was refused at publication on ${charge.attempts} claims, the limit (${charge.limit}); it is not claimed again.`,
+      ...(refused.detail ? { detail: { ...(refused.detail as CapabilityRefusalDetail), attempts: charge.attempts, limit: charge.limit } } : {}) });
+    if (isTerminal(done)) settleCapabilityRefusal(row.id);
+    return done;
   }
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;

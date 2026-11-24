@@ -27,6 +27,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import {
   listPendingProposals,
   acceptProposal,
@@ -220,6 +221,23 @@ describe('acceptProposal', () => {
     const id = await insertProposal({ slug: 'people/strand-example', claim: 'stranded claim', status: 'accepted' });
     await expect(acceptProposal({ engine, brainDir: repo, config: testConfig }, id)).rejects.toBeDefined();
     expect((await proposalRow(id)).status).toBe('pending');
+  });
+
+  test('refusal-swallow site 22: a compensation the engine refuses surfaces instead of leaving the claim looking settled', async () => {
+    // The stranded-claim shape above, on an engine that refuses the compensating UPDATE (as the Rust engine refuses
+    // every raw statement). The claim cannot be released, so the caller must see the refusal, not the promote error.
+    const id = await insertProposal({ slug: 'people/strand-example', claim: 'stranded claim, refused compensation', status: 'accepted' });
+    const originalExecuteRaw = engine.executeRaw;
+    engine.executeRaw = (async function (this: unknown, query: string, params?: unknown[]) {
+      if (query.includes("SET status = 'pending', acted_at = NULL")) throw capabilityMissing('raw_sql', 'executeRaw');
+      return originalExecuteRaw.apply(this, [query, params]);
+    }) as typeof engine.executeRaw;
+    try {
+      await expect(acceptProposal({ engine, brainDir: repo, config: testConfig }, id)).rejects.toMatchObject({ code: 'engine_capability_missing' });
+    } finally {
+      engine.executeRaw = originalExecuteRaw;
+    }
+    expect((await proposalRow(id)).status).toBe('accepted');
   });
 
   test('a claim taken moments ago by another accept is not resumed while that accept may still be submitting', async () => {

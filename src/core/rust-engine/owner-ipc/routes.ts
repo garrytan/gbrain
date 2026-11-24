@@ -6,10 +6,11 @@
  * - `forward`: the call crosses the owner socket as data and runs on the owner engine. Every member that takes only
  *   data is forwarded, executeRaw included (one statement, never a transaction).
  * - `refuse`: the member takes a callback that must run against the engine (a transaction body, a reserved
- *   connection, a schema lock). Transactions do not cross the socket, so the member rejects at once with
- *   `engine_capability_missing` and nothing runs. owner-ipc/whole-op.ts can send a whole operation that needs a
- *   transaction to run inside the owner, but no entry point calls it yet: a journaled write from a client (put_page,
- *   remember) stops at write admission, which opens a transaction, on this refusal with reason `transactions`.
+ *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore).
+ *   Transactions do not cross the socket, so the member rejects at once with `engine_capability_missing` and nothing runs.
+ *   owner-ipc/whole-op.ts can send a whole operation that needs a transaction to run inside the owner, but no entry point
+ *   calls it yet: a journaled write from a client (put_page, remember) stops at write admission, which opens a transaction,
+ *   on this refusal with reason `transactions`.
  *
  * Before any of these, a client whose owner is a Rust engine (hello `kind: 'rust'`) checks the member's capability
  * class against the capabilities in the hello. A member the owner lacks (executeRaw without raw_sql, getPage without
@@ -30,7 +31,8 @@ import {
 export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
 const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect']);
-const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead']);
+const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead',
+  'worktreeClaimStore', 'writerAdminStore']);
 
 export const OWNER_IPC_ROUTES: Readonly<Record<RustEngineMember, OwnerIpcRoute>> = Object.fromEntries(
   Object.keys(RUST_ENGINE_MEMBERS).map(member => [member, LOCAL.has(member) ? 'local' : REFUSE.has(member) ? 'refuse' : 'forward']),

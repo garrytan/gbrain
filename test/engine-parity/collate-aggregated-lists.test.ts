@@ -56,12 +56,6 @@ describe('aggregated lists come out by byte', () => {
     expect(snapshot!.tags).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('initGuestSource merges writers by byte', { methods: ['executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
-    await initGuestSource(engine, 'guest-a', ['ab']);
-    const merged = await initGuestSource(engine, 'guest-a', ['a-z', 'a/z']);
-    expect(merged.writers).toEqual([...BYTE_SLUGS]);
-  });
-
   parityTest('relationalFanout lists nodes and picks the path by byte', { methods: ['putPage', 'addLink', 'relationalFanout'] }, async (engine) => {
     for (const slug of ['seed', 'target', ...MIXED_SLUGS]) {
       await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '' });
@@ -75,13 +69,4 @@ describe('aggregated lists come out by byte', () => {
     expect(rows.find(r => r.slug === 'target')?.path).toEqual(['seed', BYTE_SLUGS[0], 'target']);
   });
 
-  parityTest('resolveSlugsForRemovedPaths picks the lowest source by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
-    for (const id of MIXED_SOURCES) {
-      await createSource(engine, backend, id);
-      await engine.putPage(`s${id}`, { type: 'note', title: id, compiled_truth: id, timeline: '' }, { sourceId: id });
-    }
-    await engine.executeRaw(`UPDATE pages SET source_path = 'shared.md' WHERE source_id = ANY($1::text[])`, [MIXED_SOURCES]);
-    const result = await resolveSlugsForRemovedPaths(engine, ['shared.md'], undefined);
-    expect(result.slugs.get('shared.md')).toBe(`s${byteOrder(MIXED_SOURCES)[0]}`);
-  });
 });

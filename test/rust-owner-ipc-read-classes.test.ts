@@ -57,6 +57,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'selectClaimableWrite',
   // Added when the batch 10 lanes merged (credential, source and shared-skill reads that lock the row they read):
   'lockActiveAccessTokens', 'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'readAccessTokenMemberGrant', 'readAccessTokenReceiptGrant', 'readCredentialBindingForUpdate', 'readLocalWriterMemberGrant', 'readOAuthClientMemberGrant', 'readOAuthClientReceiptGrant', 'readOauthClientForUpdate', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate', 'readScopeSourceConfigs', 'readSharedSkillDeliveryBatch', 'readSharedSkillMember', 'readSharedSkillPolicyRow', 'readSourceArchivedForShare',
+  // Ours (the page purge port):
+  'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate',
 ];
 
 /**

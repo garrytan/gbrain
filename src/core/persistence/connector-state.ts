@@ -14,11 +14,11 @@
  * when that run later fails.
  */
 import type { BrainEngine } from '../engine.ts';
-import { digest } from './digest.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { assertNever } from '../types.ts';
 
-export const CONNECTOR_STATE_OP = 'managed-connector-state';
+import { CONNECTOR_STATE_OP, connectorStateKey, recordConnectorSyncAttempt as recordAttemptRow } from '../engine-sql/connector-attempts.ts';
+export { CONNECTOR_STATE_OP, connectorStateKey };
 
 export type ConnectorAccount =
   | { kind: 'google'; email: string }
@@ -114,10 +114,6 @@ export interface ConnectorAccountMismatch {
 export const emptyConnectorState = (): ConnectorState => ({ version: 1, account: null, pinned_at: null, continuity_unverified: false,
   pending: [], upgrade_recovery: 'none', resumed_from: null, last_run: null, first_attempt_at: null, account_mismatch: null, purged_items: [], last_failure: null });
 
-export function connectorStateKey(sourceId: string, incarnation: string): string {
-  return digest({ sourceId, incarnation });
-}
-
 export async function readManagedConnectorState(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string): Promise<ConnectorState> {
   const [row] = await engine.executeRaw<{ completed_keys: ConnectorState[] }>(
     'SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [CONNECTOR_STATE_OP, connectorStateKey(sourceId, incarnation)]);
@@ -147,14 +143,8 @@ export async function writeManagedConnectorState(engine: Pick<BrainEngine, 'exec
  * existing stamp and every other state field are kept, so it never races the
  * lease holder's state write). Returns false when the source does not exist.
  */
-export async function recordConnectorSyncAttempt(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, at = new Date().toISOString()): Promise<boolean> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
-  if (!source) return false;
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_set(op_checkpoints.completed_keys, ARRAY['0','first_attempt_at'], to_jsonb($4::text), true), updated_at=now()
-    WHERE op_checkpoints.completed_keys->0->>'first_attempt_at' IS NULL`,
-  [CONNECTOR_STATE_OP, connectorStateKey(sourceId, source.incarnation), JSON.stringify([{ ...emptyConnectorState(), first_attempt_at: at }]), at]);
-  return true;
+export async function recordConnectorSyncAttempt(engine: Pick<BrainEngine, 'recordConnectorSyncAttempt'>, sourceId: string, at = new Date().toISOString()): Promise<boolean> {
+  return engine.recordConnectorSyncAttempt(sourceId, at, [{ ...emptyConnectorState(), first_attempt_at: at }]);
 }
 
 /**
@@ -173,7 +163,8 @@ export async function seedConnectorDispatchAttempts(engine: Pick<BrainEngine, 'e
     const config = parseSourceConfig(row.config);
     if (config.kind !== 'google' && config.kind !== 'github') continue;
     if (config.syncEnabled === false) continue;
-    await recordConnectorSyncAttempt(engine, row.id, at);
+    // The schema migration runs this on a SQL engine's executor: the statements directly, as the member sends them.
+    await recordAttemptRow(engine, row.id, at, [{ ...emptyConnectorState(), first_attempt_at: at }]);
     seeded++;
   }
   return seeded;

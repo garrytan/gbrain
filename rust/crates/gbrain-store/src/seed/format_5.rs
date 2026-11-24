@@ -97,8 +97,14 @@ fn generations(tx: &mut dyn KvWrite) -> Result<()> {
             state: old.state,
             created_at_us: old.created_at_us,
         };
-        let refuse =
-            |e: StoreError| StoreError::invalid(format!("derived generation {id}: {}", e.message));
+        // A disk or storage failure is not about this record: it keeps its own code.
+        let refuse = |e: StoreError| {
+            if e.is_storage_failure() {
+                e
+            } else {
+                StoreError::invalid(format!("derived generation {id}: {}", e.message))
+            }
+        };
         if !seed_generation(tx, id, &seed).map_err(refuse)? {
             return Err(StoreError::invalid(format!(
                 "derived generation {id} is stored in both the old and the new ledger"

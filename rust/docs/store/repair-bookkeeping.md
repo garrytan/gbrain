@@ -302,10 +302,13 @@ applies it as one store write (`persistence/git_holds.rs`).
 | Member | Store answer |
 | --- | --- |
 | `requestGitHoldRetry(sourceId, incarnation, paths, requestedAt)` | the retry request's `paths` as the union of its paths and `paths`, once each in byte order, stamped `requestedAt` |
+| `recordSyncConversion(sourceId, incarnation, conversion)` | the source incarnation's conversion log (`sync-conversions`) with `conversion` first and the newest `SYNC_CONVERSION_KEEP` kept; the first write stores `{ source_id, incarnation, conversions }`, a later one keeps the record's other keys (SQL in `src/core/engine-sql/sync-hold-store.ts`, store write in `persistence/sync_conversions.rs`) |
 
 Retry paths keep byte order on every engine (an update used the database collation), and
-`requested_at` is the caller's ISO time. Pinned by `test/engine-parity/git-holds.test.ts` and the
-store test `git_holds`.
+`requested_at` is the caller's ISO time. The conversion write applies the statement's jsonb `||`
+to the stored record and writes it in jsonb key order, so the record reads back byte for byte as
+on PGLite and Postgres; `converted_at` is the caller's ISO time. Pinned by
+`test/engine-parity/git-holds.test.ts` and the store tests `git_holds` and `sync_conversions`.
 
 ## Repair busy set
 

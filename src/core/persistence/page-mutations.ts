@@ -33,6 +33,7 @@ import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequ
 import { submissionAuthority, authorizeStoredRequest, sharedWriterRow } from './authority.ts';
 import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
+import { requirePurgePathServed } from './purge-path-members.ts';
 import type { AdmissionSourceRow, SourceStateOptions } from '../engine-sql/write-misc.ts';
 import { claimWorktree, getWorktreeBinding, sharedWorktreeBinding } from './ownership.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
@@ -465,6 +466,8 @@ export async function preparePageAdmission(ctx: OperationContext,
     return { prior };
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
+  // A purge an engine cannot serve end to end refuses by name before anything is journaled (persistence/purge-path-members.ts).
+  if (input.operation === 'delete_page' && p.purge === true) await requirePurgePathServed(ctx.engine, 'delete_page');
   if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, p.slug.toLowerCase(), principal);
   if (!source || source.archived) {
     throw new OperationError('source_changed', 'The write source is not active.',

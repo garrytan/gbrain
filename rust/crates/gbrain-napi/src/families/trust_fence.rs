@@ -14,7 +14,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::{FenceOverlayInput, FenceTarget, HeldFenceCellsInput};
+use gbrain_store::facts::{FenceOverlayInput, FenceRowKey, FenceTarget, HeldFenceCellsInput};
 use gbrain_store::takes::HeldTakeSpec;
 use gbrain_store::timeline::HeldTimelineSpec;
 use gbrain_store::trust::held_rows::{GuardedTakeRowsQuery, HeldRowsQuery};
@@ -94,6 +94,20 @@ impl Brain {
         self.run(env, move |s| {
             let input: FenceOverlayInput = required(input, "readFenceOverlayRows input")?;
             s.read_fence_overlay_rows(&input)
+        })
+    }
+
+    /// `listFenceRowTrust(keys)`: `[{ source_id, slug, row_num, trust_tier, flagged, contested }]`, the newest
+    /// live fact at each fence row key, in (source id, slug, row number) order.
+    #[napi]
+    pub fn list_fence_row_trust<'env>(
+        &self,
+        env: &'env Env,
+        keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let keys: Vec<FenceRowKey> = required(keys, "listFenceRowTrust keys")?;
+            s.list_fence_row_trust(&keys)
         })
     }
 

@@ -274,3 +274,6 @@ export const deleteTakeRows: StoreMember<[pageId: number, rowNums: number[]], vo
 
 // The count and list reads of takes, salience and code edges (engine-sql/takes-reads.ts).
 export * from './takes-reads.ts';
+
+// The take proposal queue of propose_takes and `gbrain takes propose` (engine-sql/take-proposals.ts).
+export * from './take-proposals.ts';

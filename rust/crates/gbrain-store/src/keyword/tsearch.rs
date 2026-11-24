@@ -818,6 +818,22 @@ fn c_isspace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 
+/// `t_isspace` at a character boundary, as PGLite (PostgreSQL 17, UTF-8, ctype `C.UTF-8`) reads it:
+/// a one-byte character by C `isspace`, a longer one by `iswspace`, which is the `[[:space:]]`
+/// class. So U+0085, U+2000-U+200A (not U+2007), U+2028, U+2029, U+205F and U+3000 separate
+/// websearch words, as they do on PGLite. (PostgreSQL 18 reads only ASCII here; PGLite is the
+/// engine a Rust brain must answer like.)
+fn space_at(s: &[u8], at: usize) -> bool {
+    let len = mblen(s, at);
+    if len == 1 {
+        return c_isspace(s[at]);
+    }
+    std::str::from_utf8(&s[at..(at + len).min(s.len())])
+        .ok()
+        .and_then(|t| t.chars().next())
+        .is_some_and(crate::cli_reads::pg_text::is_pg_space)
+}
+
 /// `ISOPERATOR`.
 fn is_operator(b: u8) -> bool {
     matches!(b, b'!' | b'&' | b'|' | b'(' | b')' | b'<')
@@ -871,7 +887,7 @@ fn parse_or_operator(s: &[u8], at: usize) -> bool {
         if p >= s.len() {
             return false;
         }
-        if !c_isspace(s[p]) {
+        if !space_at(s, p) {
             break;
         }
     }
@@ -885,7 +901,7 @@ fn web_word(s: &[u8], at: usize) -> usize {
     let mut p = at + mblen(s, at);
     while p < s.len() {
         let b = s[p];
-        if c_isspace(b) || is_operator(b) || b == b'"' || b == b':' {
+        if space_at(s, p) || is_operator(b) || b == b'"' || b == b':' {
             break;
         }
         p += mblen(s, p);
@@ -932,7 +948,7 @@ fn web_token<'a>(
                     *at += 1;
                     *state = WebState::WaitOperand;
                     continue;
-                } else if !c_isspace(c) {
+                } else if !space_at(s, *at) {
                     let start = *at;
                     let end = web_word(s, start);
                     *at = end;
@@ -952,7 +968,7 @@ fn web_token<'a>(
                 } else if is_operator(c) {
                     *at += 1;
                     continue;
-                } else if !c_isspace(c) {
+                } else if !space_at(s, *at) {
                     *state = WebState::WaitOperand;
                     return WebToken::Opr(Op::And);
                 }
@@ -1548,6 +1564,56 @@ mod tests {
                     "fts_input({text:?}) rust {got:?} pg {:?}",
                     s(v, "fts_input")
                 ));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} mismatches:\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
+    }
+
+    #[test]
+    fn websearch_splits_on_pglite_non_ascii_spaces() {
+        // PGLite 0.4.3 (PostgreSQL 17.5, the repository's PGLite) answers, captured from
+        // `websearch_to_tsquery('english', q)::text`. The goldens above come from PostgreSQL 18.6,
+        // which reads only ASCII whitespace here; they hold none of these characters.
+        let separators = [
+            0x85, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2008, 0x2009, 0x200a,
+            0x2028, 0x2029, 0x205f, 0x3000,
+        ];
+        let shapes = [
+            ("cat{w}dog", "'cat' & 'dog'"),
+            ("cats{w}or{w}dogs", "'cat' | 'dog'"),
+            ("cats{w}-dogs", "'cat' & !'dog'"),
+            ("-{w}cats", "!'cat'"),
+            ("{w}-dogs", "!'dog'"),
+            ("cats{w}or", "'cat'"),
+            (
+                "running{w}\"quick{w}fox\"{w}or{w}jumps",
+                "'run' & 'quick' <-> 'fox' | 'jump'",
+            ),
+        ];
+        let mut bad = Vec::new();
+        for cp in separators {
+            let w = char::from_u32(cp).expect("scalar").to_string();
+            for (shape, want) in shapes {
+                let q = shape.replace("{w}", &w);
+                let got = websearch_to_tsquery(&q).expect("web").to_text();
+                if got != want {
+                    bad.push(format!("U+{cp:04X} {shape}: rust {got} pglite {want}"));
+                }
+            }
+        }
+        // Not in PGLite's class: the word stays whole and the parser splits it into a phrase.
+        for cp in [0x1680, 0x2007, 0xa0, 0x202f] {
+            let w = char::from_u32(cp).expect("scalar").to_string();
+            let got = websearch_to_tsquery(&format!("cats{w}-dogs"))
+                .expect("web")
+                .to_text();
+            if got != "'cat' <-> 'dog'" {
+                bad.push(format!("U+{cp:04X} cats-dogs: rust {got}"));
             }
         }
         assert!(

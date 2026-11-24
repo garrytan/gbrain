@@ -13,12 +13,20 @@
  *    held push or fence, head request, recovery record, cursor, failure or identity downgrade. A managed-sync cursor
  *    reads with its failure and manifest path, the failed cursor first; an old incarnation's cursor counts as retired.
  *    The source row also carries the source's Apple Contacts identity-review and held-deletion checkpoints, raw.
+ *    An identity-downgrade record reads while it is open (no disposition, its old page still soft-deleted at the
+ *    recorded `old_deleted_at`, in the record's source), oldest `recorded_at` first, with the live slugs of its source
+ *    at its new path (null when none); a malformed `old_deleted_at` refuses as the timestamptz cast does.
+ *    `listIdentityDowngrades` offers the restore on a bound source, a connector source and a source with no checkout;
+ *    on an unbound source with a checkout only a single-process brain (PGLite or Rust) not activated database-only offers it.
  *  - Regression: an engine that refuses these as raw SQL (the Rust engine did, which failed `gbrain sync status`
- *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly.
+ *    outright and turned its oldest-blocker and recovery probes `unknown`), or answers a pinned admission wrongly. The
+ *    Rust engine also refused readIdentityDowngradeRows once one record existed, rather than join its pages, and
+ *    listIdentityDowngrades's restore probe read `sources` through raw SQL, which the Rust engine refuses.
  *  - Why existing coverage misses it: the sync-status tests run on PGLite and Postgres only, and the pins test checks
  *    statement text, not answers.
  *  - Seam: none. Real engines; the seeded-cursor case writes its rows with writeCheckpointAt (harness SQL on the SQL arms, a
- *    store write on Rust), and the other checkpoint case writes through writeOpCheckpointRecord.
+ *    store write on Rust), and the other checkpoint case writes through writeOpCheckpointRecord. The identity-downgrade
+ *    records go through the harness fixture `recordIdentityDowngrade`.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -28,11 +36,15 @@ import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
 import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../src/core/apple-contacts/review-status.ts';
-import { createSource, parityArms, writeCheckpointAt } from './harness.ts';
+import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
+import { DATABASE_ONLY_SOURCES_KEY } from '../../src/core/persistence/unbound-source.ts';
+import { createSource, parityArms, recordIdentityDowngrade, writeCheckpointAt } from './harness.ts';
 import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
+
+const HOST = '00000000-0000-4000-8000-00000000000a';
 
 const incarnationOf = async (engine: BrainEngine, id: string) => String((await engine.readSourceState(id))!.incarnation);
 
@@ -244,4 +256,89 @@ describe('engine parity: sync status reads', () => {
     });
     return result;
   });
+
+  parityTest('identity-downgrade records read while open, oldest first, with the live slugs of their source at the new path; a malformed old_deleted_at refuses',
+    { methods: ['putPage', 'softDeletePage', 'readPageOrigin', 'readIdentityDowngradeRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other', {}, '/srv/brain/other');
+      const page = (slug: string, sourceId: string, sourcePath: string) =>
+        engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, timeline: '', source_path: sourcePath }, { sourceId });
+      const gone = async (slug: string, sourceId: string) => { await page(slug, sourceId, `${slug}.md`); await engine.softDeletePage(slug, { sourceId }); };
+      for (const slug of ['notes/a', 'notes/b', 'notes/c', 'notes/d', 'notes/f']) await gone(slug, 'default');
+      await gone('notes/h', 'other');
+      await page('notes/a2', 'default', 'notes/a2.md');
+      await page('notes/h2', 'other', 'notes/h2.md');
+      await page('notes/h2-default', 'default', 'notes/h2.md');
+      const at = (day: number) => `2026-01-0${day}T00:00:00.000Z`;
+      const ids = {
+        a: await recordIdentityDowngrade(engine, backend, 'default', 'notes/a', { from: 'notes/a.md', to: 'notes/a2.md', recorded_at: at(2) }),
+        b: await recordIdentityDowngrade(engine, backend, 'default', 'notes/b', { from: 'notes/b.md', to: 'notes/never.md', recorded_at: at(1) }),
+        h: await recordIdentityDowngrade(engine, backend, 'other', 'notes/h', { from: 'notes/h.md', to: 'notes/h2.md', recorded_at: at(3) }),
+      };
+      // Closed, stale (deleted at another time), not soft-deleted, or naming another source: none of these reads.
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/c', { from: 'notes/c.md', to: 'notes/a2.md', recorded_at: at(4), disposition: { kind: 'closed', at: at(5) } });
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/d', { from: 'notes/d.md', to: 'notes/a2.md', recorded_at: at(4), old_deleted_at: '2000-01-01 00:00:00+00' });
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/a2', { from: 'notes/x.md', to: 'notes/a2.md', recorded_at: at(4), old_deleted_at: '2000-01-01 00:00:00+00' });
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/f', { from: 'notes/f.md', to: 'notes/a2.md', recorded_at: at(4), source_id: 'other' });
+      const view = (rows: Array<{ record: unknown; new_slugs: string[] | null }>) => rows.map(row => {
+        const record = (typeof row.record === 'string' ? JSON.parse(row.record) : row.record) as Record<string, unknown>;
+        return { old_slug: record.old_slug, source_id: record.source_id, to: record.to, recorded_at: record.recorded_at, new_slugs: row.new_slugs,
+          id: Object.entries(ids).find(([, id]) => id === Number(record.old_page_id))?.[0] ?? null };
+      });
+      const reads = {
+        all: view(await engine.readIdentityDowngradeRows(null)),
+        def: view(await engine.readIdentityDowngradeRows(['default'])),
+        other: view(await engine.readIdentityDowngradeRows(['other', 'missing'])),
+        none: view(await engine.readIdentityDowngradeRows([])),
+      };
+      await gone('notes/m', 'default');
+      await recordIdentityDowngrade(engine, backend, 'default', 'notes/m', { from: 'notes/m.md', to: 'notes/a2.md', recorded_at: at(6), old_deleted_at: 'garbage' });
+      const malformed = await engine.readIdentityDowngradeRows(null).then(() => 'answered',
+        (e: Error) => /invalid input syntax for type timestamp with time zone: "garbage"/.test(e.message) ? 'timestamptz refusal' : e.message);
+      const result = { ...reads, malformed };
+      const A = { old_slug: 'notes/a', source_id: 'default', to: 'notes/a2.md', recorded_at: at(2), new_slugs: ['notes/a2'], id: 'a' };
+      const B = { old_slug: 'notes/b', source_id: 'default', to: 'notes/never.md', recorded_at: at(1), new_slugs: null, id: 'b' };
+      const H = { old_slug: 'notes/h', source_id: 'other', to: 'notes/h2.md', recorded_at: at(3), new_slugs: ['notes/h2'], id: 'h' };
+      expect(result).toEqual({ all: [B, A, H], def: [B, A], other: [H], none: [], malformed: 'timestamptz refusal' });
+      return result;
+    });
+
+  parityTest('listIdentityDowngrades offers the restore on a bound, a connector and a checkout-less source; an unbound checkout only on a single-process engine not activated database-only',
+    { methods: ['putPage', 'softDeletePage', 'readPageOrigin', 'readIdentityDowngradeRows', 'getSource', 'getWorktreeBinding', 'setConfig', 'worktreeClaimStore'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'bound', {}, '/var/tmp/restore-bound');
+      await createSource(engine, backend, 'loose', {}, '/var/tmp/restore-loose');
+      await createSource(engine, backend, 'conn', { kind: 'google' }, '/var/tmp/restore-conn');
+      await createSource(engine, backend, 'bare', {});
+      await claimWorktreeBinding(engine, async store => {
+        const source = await store.lockSource('bound');
+        const id = randomUUID();
+        await store.insertWorktree({ id, ownerHostId: HOST, ownerEpoch: 1, topologyGeneration: 1, state: 'active', manifest: {} });
+        await store.insertSourceBinding({ sourceId: 'bound', incarnation: source!.incarnation, worktreeId: id, relativePath: '', topologyGeneration: 1 });
+        await store.insertHostBinding({ worktreeId: id, hostId: HOST, localPath: '/var/tmp/restore-bound', coordinationPath: '/var/tmp/restore-coord', gitDurability: 'enabled' });
+      });
+      const sources = ['bound', 'loose', 'conn', 'bare'];
+      for (const [i, sourceId] of sources.entries()) {
+        await engine.putPage('notes/old', { type: 'note', title: 'old', compiled_truth: 'Old body.', timeline: '', source_path: 'notes/old.md' }, { sourceId });
+        await engine.softDeletePage('notes/old', { sourceId });
+        await recordIdentityDowngrade(engine, backend, sourceId, 'notes/old', { from: 'notes/old.md', to: 'notes/new.md', recorded_at: `2026-01-0${i + 1}T00:00:00.000Z` });
+      }
+      const offered = async () => Object.fromEntries((await listIdentityDowngrades(engine)).map(r => [r.source_id, r.restore_available]));
+      const all = await offered();
+      const scoped = (await listIdentityDowngrades(engine, ['loose'])).map(r => [r.source_id, r.restore_available]);
+      await engine.setConfig(DATABASE_ONLY_SOURCES_KEY, JSON.stringify(['loose']));
+      const activated = await offered();
+      // The unbound checkout follows decideUnboundWrite: a single-process engine (PGLite and Rust) claims it unless it is
+      // activated database-only; Postgres refuses it. Each arm answers whether it gave its engine's rule.
+      const pglite = backend !== 'postgres';
+      const result: Record<string, unknown> = {
+        all: { ...all, loose: all.loose === pglite }, scoped: scoped.map(([id, v]) => [id, v === pglite]),
+        activated: { ...activated, loose: activated.loose === false },
+      };
+      expect(result).toEqual({
+        all: { bound: true, loose: true, conn: true, bare: true }, scoped: [['loose', true]],
+        activated: { bound: true, loose: true, conn: true, bare: true },
+      });
+      return result;
+    });
 });

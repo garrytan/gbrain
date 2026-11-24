@@ -61,6 +61,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 import { ALL_GOOGLE_SERVICES, type GoogleApiProblem, type GoogleService } from '../core/google/types.ts';
 import { sourceCalendarReadability, type CalendarProbe, type CalendarReadability } from './google-calendar-status.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 export const GOOGLE_SERVICES = ALL_GOOGLE_SERVICES;
 export type { GoogleService };
@@ -688,10 +689,8 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
       const engine = await createEngine(engineConfig);
       await engine.connect(engineConfig);
       try {
-        const rows = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: unknown }>(
-          `SELECT id, incarnation::text AS incarnation, local_path, config FROM sources WHERE archived IS NOT TRUE`,
-          [],
-        );
+        // The unarchived google sources, in id order (the doctor calendar check reads the same rows).
+        const rows = await engine.readDoctorSources('google_connectors') as Array<{ id: string; incarnation: string; local_path: string | null; config: unknown }>;
         const calendarProbe: CalendarProbe | null = probe ? async (account, calendarId) => {
           const entry = await vault.get(credentialId(GOOGLE_PROVIDER, account));
           if (!entry) throw new CredentialError('not_connected', ` for ${account}`);
@@ -714,8 +713,9 @@ export async function runGoogleStatus(args: string[]): Promise<void> {
         await engine.disconnect();
       }
     }
-  } catch {
-    /* no engine — vault-only status */
+  } catch (e) {
+    // No config or no engine: vault-only status. An engine that cannot read its sources refuses instead.
+    rethrowCapabilityRefusal(e);
   }
 
   // #7073: every service a linked source syncs (else every granted one) is

@@ -3,7 +3,8 @@
  * typed reads source-resolver.ts makes instead of raw SQL. Store side: rust/crates/gbrain-store/src/cli_reads/sources.rs.
  * listStaleSyncSourceIds (the advisor's stale-sync read), listSourceIds (every source id), readSoleSourceId, readFirstSourceId, lockAllSourceRows
  * (takes no lock) and readSourceRow/lockSourceRow (one source's check columns)
- * read the store's source records here. countSourcePages counts one source's pages, insertSource creates a source and
+ * read the store's source records here; lockSourceForUpdate (the publication transaction's exclusive source lock) is a no-op.
+ * countSourcePages counts one source's pages, insertSource creates a source and
  * advanceSourceCommit records the commit a git sync reached; listSourcePathPages, readRenameIdentityRows and
  * readLiveIdentityHolders are a git sync's page reads, readPageSizeRows its size-state read and listQuarantinedSlugs the
  * pages its link and timeline extraction skips; deleteSourceRecord and readSourceDeleteImpact are `sources remove` and
@@ -90,6 +91,13 @@ export const readSourceRow: StoreMember<[sourceId: string], SourceCheckRow | nul
 /** The store serializes its writes and the Rust engine runs no SQL transaction, so there is no row lock to take. */
 export const lockSourceRow: StoreMember<[sourceId: string], SourceCheckRow | null> = (brain, sourceId) =>
   sourceCheckRow(brain, 'lockSourceRow', sourceId);
+
+/**
+ * The publication transaction's exclusive source lock (`lockSourceForUpdate`, engine-sql/sources.ts). It takes no row lock and
+ * calls no store function: the store admits one write transaction at a time, as `lockSourceRow` notes, so the publication
+ * transaction already holds the source against every other writer.
+ */
+export const lockSourceForUpdate: StoreMember<[sourceId: string], void> = async () => {};
 
 export const countSourcePages: StoreMember<[sourceId: string, opts?: { includeDeleted?: boolean }], number> = async (brain, sourceId, opts) =>
   Number(await storeCall({ member: 'countSourcePages', sourceId }, () => brain.countSourcePages(sourceId, opts?.includeDeleted === true)));
