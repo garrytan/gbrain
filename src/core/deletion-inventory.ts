@@ -352,6 +352,7 @@ const RUST_ROWS: readonly RustRow[] = [
   ['x', null, 'access_members', 'access_members access_groups access_group_members access_member_links'],
   ['y', null, 'session_state', 'session_context_state'],
   ['z', null, 'access_rules', 'access_policy_state access_rules access_pending_coverage access_policy_revisions pages access_policy_migrations'],
+  ['~', null, 'family_escape', '', undefined, ['no_memory_text', 'the family escape: it only starts a two-byte family tag, and no record is written under ~ alone']],
 ];
 
 export const RUST_STORE_INVENTORY: readonly RustStoreEntry[] = RUST_ROWS.map(([tag, kind, name, tables, index, none]) => ({

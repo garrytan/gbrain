@@ -213,6 +213,11 @@ pub const KEYSPACES: &[Keyspace] = &[
         "session context state",
     ),
     ks(keys::ACCESS_RULES, "access_rules", "folder access rules"),
+    ks(
+        keys::FAMILY_ESCAPE,
+        "family_escape",
+        "the escape byte of every two-byte family tag",
+    ),
 ];
 
 /// The catalog the addon returns: the store format it describes and every keyspace.
