@@ -178,11 +178,27 @@ describe('GST-3452 follow-ups: the usage-limit chain', () => {
     expect((await checkSyncFreshness(engine)).status).toBe('fail');
   });
 
-  test('a pending connector result drops the usage-limit marker', () => {
+  test('a run that hit the limit with writes pending passes like a skipped run: an older landing run still counts', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 3 });
+    await addSyncJob('mail', 'completed', { status: 'partial', reason: 'writer_pending', stopped_on: 'usage_limit', added: 1 }, { finishedHoursAgo: 2 });
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 0 }, { finishedHoursAgo: 1 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited' });
+  });
+
+  test('a pending connector result keeps the usage-limit marker beside its pending reason', () => {
     const pending = pendingConnectorResult({ status: 'partial', fromCommit: null, toCommit: '', added: 1, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0,
       embedded: 0, pagesAffected: [], stopped_on: 'usage_limit' }, { stoppedAtDeadline: false } as unknown as ManagedConnectorSync);
-    expect(pending.reason).toBe('writer_pending');
-    expect(pending.stopped_on).toBeUndefined();
+    expect(pending).toMatchObject({ status: 'partial', reason: 'writer_pending', stopped_on: 'usage_limit' });
+  });
+
+  test('an orphaned active job (its lock expired) after a landing limited run stays fail', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 2 });
+    await addSyncJob('mail', 'active', null, { lockMinutes: -10 });
+    expect((await checkSyncFreshness(engine)).status).toBe('fail');
   });
 });
 
@@ -193,6 +209,7 @@ describe('GST-3452 follow-ups: a running job', () => {
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
     expect(result.message).toContain(`sync job #${jobId} has run for`);
-    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', job_id: jobId });
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', reason: 'last_attempt_unsuccessful', job_id: jobId });
+    expect(next(entries(result.details)[0]!.fix)).not.toBe('wait');
   });
 });

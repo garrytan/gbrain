@@ -58,7 +58,7 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
     const ranFor = runningMs >= 3600_000 ? `${Math.floor(runningMs / 3600_000)}h` : `${Math.max(1, Math.floor(runningMs / 60_000))}m`;
     return {
       issue: `Source ${display}: no successful sync recorded; sync job #${attempt.job_id} has run for ${ranFor} without finishing; inspect it with \`gbrain jobs get ${attempt.job_id}\``,
-      entry: { ...base, code: 'sync_no_successful_sync', reason: attempt.state,
+      entry: { ...base, code: 'sync_no_successful_sync', reason: 'last_attempt_unsuccessful',
         fix: { argv: ['gbrain', 'jobs', 'get', String(attempt.job_id), '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify: VERIFY, docs: DOCS,
           why: `Read-only: sync job #${attempt.job_id} of ${sourceId} keeps its job lock but has run past the staleness ceiling; read its progress before cancelling it.` } },
     };

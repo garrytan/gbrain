@@ -30,19 +30,21 @@ export interface SyncAttempt {
   live_job_started_at?: string;
   /**
    * GST-3452: the newest run inside the fail age that stopped only at a provider usage or rate limit (`stopped_on: usage_limit`,
-   * no writes pending) and landed pages, when every later run that finished also only hit the limit (queued, running and
-   * skipped jobs pass); ISO.
+   * no writes pending) and landed pages, when every later run that finished also only hit the limit (queued, running,
+   * skipped and limited runs with writes pending pass); ISO.
    */
   usage_limited_since?: string;
 }
 
-const SUBSTANTIVE = `status NOT IN ('waiting', 'delayed', 'active', 'waiting-children', 'paused') AND NOT (status = 'completed' AND result->>'skipped' IS NOT DISTINCT FROM 'true')`;
+const SUBSTANTIVE = `NOT COALESCE(status IN ('waiting', 'delayed', 'waiting-children', 'paused') OR (status = 'active' AND lock_until > now())
+  OR (status = 'completed' AND (result->>'skipped' = 'true' OR (result->>'stopped_on' = 'usage_limit' AND result->>'reason' IN ('writer_pending', 'timeout')))), false)`;
 const LIMITED = `COALESCE(status = 'completed' AND result->>'status' = 'partial' AND result->>'stopped_on' = 'usage_limit' AND result->>'reason' IS NULL, false)`;
 const LANDED = `COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) > 0`;
 
 /**
  * GST-3452: the newest sync job of a source, plus, when `$2` (the fail age's start) is given, the newest limited run since then
- * that landed pages and the newest run since then that ended any other way. Queued, running and skipped jobs are neither.
+ * that landed pages and the newest run since then that ended any other way. Queued, running (live job lock) and skipped jobs,
+ * and limited runs whose writes were still pending, are neither; an active job whose lock expired ended the other way.
  */
 const JOB_SQL = `WITH jobs AS (SELECT id, status, result, created_at, started_at, lock_until, COALESCE(finished_at, started_at, created_at) AS at
     FROM minion_jobs WHERE name='sync'
