@@ -327,6 +327,18 @@ export class CaptureWriter {
 
   private drop(reason: string): void { this.dropped++; this.dropReason = reason; }
 
+  /**
+   * Discards the buffer when nothing may be written. Off, a purge or no epoch need no record (nothing is being
+   * replayed); a budget stop (low disk, epoch over budget) keeps the count, so the next write that lands is a gap and
+   * the replay says its coverage is incomplete.
+   */
+  private discard(stop: string): void {
+    const lost = this.buffer.length;
+    this.buffer = [];
+    this.bytes = 0;
+    if (stop === 'budget') { this.dropped += lost; this.dropReason = 'budget'; } else this.dropped = 0;
+  }
+
   /** The segment path to append to now, or null (and the reason) when nothing may be written. */
   private target(): { path: string; epoch: EpochPointer } | { stop: string } {
     if (!captureIsOn(this.cap, this.env)) return { stop: 'off' };
@@ -377,7 +389,7 @@ export class CaptureWriter {
     const run = async () => {
       if (!this.buffer.length && !this.dropped) return;
       const t = this.target();
-      if ('stop' in t) { this.buffer = []; this.bytes = 0; this.dropped = 0; return; }
+      if ('stop' in t) { this.discard(t.stop); return; }
       const data = this.take(t.epoch);
       try { await appendFile(t.path, data, { mode: 0o600 }); } catch { this.drop('append_error'); }
     };
@@ -389,7 +401,7 @@ export class CaptureWriter {
   flushSync(): void {
     if (!this.buffer.length && !this.dropped) return;
     const t = this.target();
-    if ('stop' in t) { this.buffer = []; return; }
+    if ('stop' in t) { this.discard(t.stop); return; }
     try { appendFileSync(t.path, this.take(t.epoch), { mode: 0o600 }); } catch { /* exit: nothing left to do */ }
   }
 }

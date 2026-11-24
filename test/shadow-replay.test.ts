@@ -590,6 +590,22 @@ describe('review fixes (ship pass 2)', () => {
   });
 });
 
+describe('review fixes (ship final review)', () => {
+  test('calls lost to a disk or budget stop are recorded as a gap once writing resumes', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    const w = writer as unknown as { lowDisk: boolean; freeCheckedAt: number };
+    const e = wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer);
+    w.lowDisk = true; w.freeCheckedAt = Date.now();
+    await e.getPage('a');
+    await writer.flush();
+    w.lowDisk = false;
+    await e.getPage('b');
+    await writer.flush();
+    expect(segmentRecords(cap).some(r => r.kind === 'gap' && r.reason === 'budget' && r.count === 1)).toBe(true);
+  });
+});
+
 describe('isolation', () => {
   test('the child environment carries no provider key or brain path, only the allowlist and a throwaway home', () => {
     const env = childEnv({ PATH: '/bin', OPENAI_API_KEY: 'k1', ANTHROPIC_API_KEY: 'k2', VOYAGE_API_KEY: 'k3', GBRAIN_HOME: '/live', DATABASE_URL: 'postgres://db.example/x', GBRAIN_SHADOW_REPLAY_POSTGRES_URL: 'postgres://localhost/changed-tonight' }, '/run/home', { name: 'GBRAIN_SHADOW_REPLAY_POSTGRES_URL', url: 'postgres://localhost/seeded' });

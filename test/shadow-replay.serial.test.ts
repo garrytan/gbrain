@@ -304,15 +304,45 @@ describe('shadow replay end to end', () => {
       await e.executeRaw('CREATE TABLE other_app.documents (id int, embedding public.vector(3))');
       await e.executeRaw("INSERT INTO other_app.documents VALUES (1, '[1,2,3]')");
       await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
-      // Even with this brain's owner marker, a purge leaves the drop pending rather than cascade into other_app.
+      // Even with this brain's owner marker, neither the nightly reset nor a purge cascades into other_app.
       await e.executeRaw('CREATE TABLE gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
       await e.executeRaw("INSERT INTO gbrain_shadow_replay_owner VALUES ('pglite-abc')");
+      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
       const cap = capDir(dir);
       writePrivateJson(scratchRecordPath(cap), { url: PG, brain: 'pglite-abc', verified: true });
       expect(await dropScratchPostgres(cap)).toBe(false);
       const [row] = await e.executeRaw<{ n: number }>('SELECT count(embedding)::int AS n FROM other_app.documents');
       expect(row?.n).toBe(1);
       void scratchPendingPath;
+    } finally {
+      await e.executeRaw('DROP SCHEMA IF EXISTS other_app CASCADE').catch(() => undefined);
+      await e.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+      await emptyScratch(PG!);
+    }
+  });
+
+  test.skipIf(!PG)('a domain in another schema that depends on public is refused, and a purge never cascades into it', async () => {
+    const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
+    const { dropScratchPostgres, scratchRecordPath } = await import('../src/shadow/capture.ts');
+    const { writePrivateJson, captureDir: capDir } = await import('../src/shadow/capture-state.ts');
+    await emptyScratch(PG!);
+    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
+    const e = await constructEngine(cfg);
+    await e.connect(cfg);
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-replay-domain-'));
+    try {
+      await e.executeRaw('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public');
+      await e.executeRaw('CREATE SCHEMA IF NOT EXISTS other_app');
+      await e.executeRaw('CREATE DOMAIN other_app.embedding AS public.vector(3)');
+      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
+      await e.executeRaw('CREATE TABLE gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
+      await e.executeRaw("INSERT INTO gbrain_shadow_replay_owner VALUES ('pglite-abc')");
+      const cap = capDir(dir);
+      writePrivateJson(scratchRecordPath(cap), { url: PG, brain: 'pglite-abc', verified: true });
+      expect(await dropScratchPostgres(cap)).toBe(false);
+      const [row] = await e.executeRaw<{ present: boolean }>("SELECT to_regtype('other_app.embedding') IS NOT NULL AS present");
+      expect(row?.present).toBe(true);
     } finally {
       await e.executeRaw('DROP SCHEMA IF EXISTS other_app CASCADE').catch(() => undefined);
       await e.disconnect();

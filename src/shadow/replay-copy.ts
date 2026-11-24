@@ -175,12 +175,13 @@ export function checkLocalPostgresUrl(raw: string, primaryUrl?: string | null): 
  * replay marker for this brain, then drops and recreates the public schema.
  */
 export async function resetScratchPostgres(engine: BrainEngine, brainKey: string): Promise<void> {
+  // Owned or not, nothing outside public may depend on it: DROP SCHEMA public CASCADE would reach it.
+  if (await objectsOutsidePublic(engine) > 0) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database holds objects in another schema, which dropping public could reach');
   const [marker] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
   if (marker?.present) {
     const [own] = await engine.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1');
     if (own?.brain !== brainKey) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database belongs to another brain\'s replay');
   } else {
-    if (await objectsOutsidePublic(engine) > 0) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database holds objects in another schema, which dropping public could reach');
     // Every relation (tables, views, materialized views, sequences), function and standalone type in public counts,
     // except what an installed extension (vector) owns.
     const [count] = await engine.executeRaw<{ n: number }>(`SELECT (
@@ -202,7 +203,7 @@ export async function resetScratchPostgres(engine: BrainEngine, brainKey: string
 }
 
 /**
- * User objects (relations, functions, types) in any schema but public and the system ones: DROP SCHEMA public CASCADE
+ * User objects (relations, functions, types and domains) in any schema but public and the system ones: DROP SCHEMA public CASCADE
  * could reach them (a column of type public.vector, say), so a scratch database must have none.
  */
 export async function objectsOutsidePublic(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number> {
@@ -211,6 +212,8 @@ export async function objectsOutsidePublic(engine: Pick<BrainEngine, 'executeRaw
         SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
     + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE ${USER_SCHEMA} AND NOT EXISTS (
         SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))
+    + (SELECT count(*) FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE ${USER_SCHEMA} AND t.typrelid = 0 AND t.typelem = 0
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'))
     )::int AS n`);
   return row?.n ?? 0;
 }
