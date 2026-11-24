@@ -67,7 +67,7 @@
       "buildHashIndex": "c34dfce66c3ac9d323ba298220dcad7c507a9481c663053f4833dbe158dfabe5",
       "buildIndexOnline": "aea86be06da261a76f6fad15def8f417cb5318c7991d2ded3cd86aeed82fb2cc",
       "buildOriginIndexIfClean": "cc6d16f50a4b5e303b87338700b9cded9784fc9cc9391c795bdd755e32385e6c",
-      "buildSpellingIndex": "afb63bd0cd77b7265949394c0efdf65e6174ca0baca8004030518a9a4ae1a41d",
+      "buildSpellingIndex": "5dc1389b1e2a6992bd0474c93830d6aad6a4155a534b20e211570a4c8185e9f7",
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
       "chunkSearchVectorTriggerFnSql": "9ac61adf64b64fdef7c0b786d093bc7aeb51c561fd680823d2fc4fc720b2bc33",
       "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
@@ -102,6 +102,7 @@
       "runMigrationStatement": "84ba969e61fe8e898dd50cf96e1643d237e521e04cd92b5ef43c5d6be75940c1",
       "schemaLockBlockedError": "fcb368711708ca5535507b34fb296d8cdeda8b9977138d2c1cdb1f117e3abd26",
       "seedConnectorDispatchAttempts": "2395a3995a6bf78776d37e72ce79b0dd15f6c6fa7f81c40612a744cb74ab01a5",
+      "serverEncoding": "c62a0c43b24be561fbdfd43466bf42132b86c5ea3c5fb1eb37fb73f3eb3a8cfc",
       "slugifyPath": "401dbca23580865d8b168dd8d84db4a6c708c6610d7cb61abafc7d0ee9809063",
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "swapIdentityIndex": "84ac62b697a16d244b2e0eecc962fb0558a24c2a26123bc7e77f1c7bec7c1066",
@@ -5467,6 +5468,7 @@
             "lockTableForAnalyze",
             "migrationNotice",
             "quietMigrationNotices",
+            "serverEncoding",
             "tableRows"
           ],
           "sha256": "d6b1cdfce72d12e59df6e4aedeb541b8ec914615b4e1a0defe7c9f2bec8d4711"
