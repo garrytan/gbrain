@@ -1074,7 +1074,6 @@ src/core/minions/sync-queue-wake.ts#startSyncQueueWake	capability_refusal_swallo
 src/core/minions/terminal-hook.ts#terminalHookNotifier>onJobSettled	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/minions/worker-registry.ts#registerWorker<anon@1>	catch_empty	1
 src/core/minions/worker.ts#MinionWorker.checkMemoryLimit	catch_empty	1
-src/core/minions/worker.ts#MinionWorker.handleQuietHoursDefer	capability_refusal_swallowed	1
 src/core/minions/worker.ts#MinionWorker.start>runHealthCheck	capability_refusal_swallowed	1
 src/core/minions/worker.ts#MinionWorker.start>runHealthCheck	catch_empty	1
 src/core/minions/worker.ts#getAccurateRss	catch_empty	1

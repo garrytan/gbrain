@@ -41,6 +41,7 @@ import {
   type TickResult,
 } from './lock-renewal-tick.ts';
 import { clampLockDurationMs } from './handler-timeouts.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import {
   runDbProbe,
   assertWorkerDbReadiness,
@@ -1035,6 +1036,8 @@ export class MinionWorker extends EventEmitter {
         console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
       }
     } catch (e) {
+      // A Rust brain refuses the skip's raw statements: that must stop the worker loudly, not leave the claim active.
+      rethrowCapabilityRefusal(e);
       console.error(`handleQuietHoursDefer error for job ${job.id}:`, e instanceof Error ? e.message : String(e));
     }
   }
