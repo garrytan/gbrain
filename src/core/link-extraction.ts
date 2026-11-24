@@ -27,6 +27,7 @@ import { exactSlugCandidates } from './exact-slug-candidates.ts';
 export { EXACT_SLUG_SHAPE_RE, exactSlugCandidates } from './exact-slug-candidates.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
 import { foldNonDecomposingLatin } from './latin-fold.ts';
+import { normalizeSlug } from './utils.ts';
 import { isIdentityEntity, sameEntityName } from './entities/resolve.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
@@ -631,7 +632,7 @@ export function pageRelativeMarkdownSlugs(pageSlug: string, href: string): strin
   if (!ref || ref.sameDir || ref.upLevels) return [];
   const dirs = pageSlug.split('/').slice(0, -1);
   const slugs: string[] = [];
-  for (let keep = dirs.length; keep > 0; keep--) slugs.push(`${dirs.slice(0, keep).join('/')}/${ref.slug}`.toLowerCase());
+  for (let keep = dirs.length; keep > 0; keep--) slugs.push(normalizeSlug(`${dirs.slice(0, keep).join('/')}/${ref.slug}`));
   return slugs;
 }
 
@@ -655,7 +656,7 @@ function markdownHrefAt(content: string, index: number): string | null {
 export function resolveMarkdownLinkSlug(pageSlug: string, href: string): string | null {
   const ref = extractEntityRefs(`[link](${href})`)[0];
   if (!ref) return null;
-  const target = ref.sameDir ? resolveSameDirSlug(pageSlug, ref) : resolveRelativeSlug(pageSlug, ref).toLowerCase();
+  const target = ref.sameDir ? resolveSameDirSlug(pageSlug, ref) : normalizeSlug(resolveRelativeSlug(pageSlug, ref));
   return target || null;
 }
 
@@ -1018,10 +1019,10 @@ export async function extractBodyLinks(slug: string, content: string, pageType: 
     // Relative markdown links resolve against THIS page's directory (fixes
     // cross-dir edges for nested / subtree-scoped content); absolute refs pass
     // through unchanged. #4995: lowercased (pass-1 markdown + 2a/2b wikilink
-    // refs) — validateSlug stores every slug lowercase on both engines, so a
-    // mixed-case candidate could never resolve. NOT slugifyPath: it strips
+    // refs) — validateSlug stores every slug in normalizeSlug form (lowercase, NFC), so a mixed-case or
+    // decomposed (macOS) candidate could never resolve. NOT slugifyPath: it strips
     // characters validateSlug permits and would mangle a legit put_page slug.
-    let targetSlug = resolveRelativeSlug(slug, ref).toLowerCase();
+    let targetSlug = normalizeSlug(resolveRelativeSlug(slug, ref));
     // #6983: a `.md` dir link resolves against this page's directory first,
     // like the FS walker; the root-relative slug stays the fallback.
     const href = refPass === 0 && resolver.resolveBasenameMatches ? markdownHrefAt(content, idx) : null;

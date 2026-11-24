@@ -737,6 +737,43 @@ fn move_page_aliases(tx: &mut dyn KvWrite, source: &str, old: &str, new: &str) -
     Ok(())
 }
 
+/// The twin merge's `UPDATE page_aliases SET slug = survivor WHERE slug = twin AND NOT EXISTS (a survivor row with the
+/// same alias and origin)`: a twin row the survivor does not repeat moves to the survivor and keeps its value; a row it
+/// repeats stays on the twin (unlike [`move_page_aliases`], which lets the moving row replace the repeated one).
+pub(crate) fn move_twin_page_aliases(
+    tx: &mut dyn KvWrite,
+    source: &str,
+    twin: &str,
+    survivor: &str,
+) -> Result<()> {
+    if twin == survivor || has_nul(&[source, twin, survivor]) {
+        return Ok(());
+    }
+    for (alias, origin) in page_alias_rows(&*tx, source, twin)? {
+        if tx
+            .get(&key(
+                PAGE_ALIAS_BY_SLUG,
+                &[source, survivor, &alias, &origin],
+            ))?
+            .is_some()
+        {
+            continue;
+        }
+        let value = tx
+            .get(&key(PAGE_ALIAS_BY_SLUG, &[source, twin, &alias, &origin]))?
+            .unwrap_or_default();
+        delete_page_alias(tx, source, &alias, twin, &origin)?;
+        put_page_alias(tx, source, &alias, survivor, &origin)?;
+        if !value.is_empty() {
+            tx.put(
+                &key(PAGE_ALIAS_BY_SLUG, &[source, survivor, &alias, &origin]),
+                &value,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn read_cr(read: &dyn KvRead, page_id: u64) -> Result<Option<CrState>> {
     get_json(read, &cr_key(page_id))
 }
@@ -1333,6 +1370,23 @@ impl Store {
         })
     }
 
+    /// `recordRenameAlias(sourceId, oldSlug, newSlug)`: records `old -> new` in the rename history and the slug aliases
+    /// ([`record_rename_alias`]) without moving a page, for the callers that moved or merged one themselves (the twin
+    /// merge, the phantom redirect, the sync rename fallback). The same slug records nothing. A NUL byte in a slug is
+    /// `invalid_argument`, as in `updateSlug`'s keys.
+    pub fn record_rename_alias(
+        &self,
+        source_id: &str,
+        old_slug: &str,
+        new_slug: &str,
+    ) -> Result<()> {
+        refuse_nul("recordRenameAlias", &[source_id, old_slug, new_slug])?;
+        if old_slug == new_slug {
+            return Ok(());
+        }
+        self.write(|tx| record_rename_alias(tx, source_id, old_slug, new_slug))
+    }
+
     /// `updateSlug(oldSlug, newSlug, { sourceId })`: moves the page at `(sourceId ?? 'default',
     /// oldSlug)`, soft-deleted or not, to `newSlug`, and returns the number of pages moved (0 when
     /// there is none). The page is versioned as it stood first, then moved by
@@ -1822,6 +1876,50 @@ mod tests {
             .unwrap();
         assert_eq!(removed, 3);
         assert_eq!(rows(), [pair("e", "b")]);
+    }
+
+    #[test]
+    fn record_rename_alias_records_the_history_and_aliases_without_moving_a_page() {
+        let store = crate::test_support::store();
+        let pair = |o: &str, n: &str| (o.to_string(), n.to_string());
+        let rows = || {
+            let read = store.read().unwrap();
+            rename_rows(&*read, "default").unwrap()
+        };
+        let alias = |name: &str| {
+            let read = store.read().unwrap();
+            read_slug_alias(&*read, "default", name)
+                .unwrap()
+                .map(|a| (a.canonical_slug, a.notes))
+        };
+        // The same slug records nothing; a NUL byte is refused before anything is written.
+        store.record_rename_alias("default", "a", "a").unwrap();
+        assert!(rows().is_empty());
+        assert_eq!(
+            store
+                .record_rename_alias("default", "a\0", "b")
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
+        store.record_rename_alias("default", "a", "b").unwrap();
+        assert_eq!(rows(), [pair("a", "b")]);
+        assert_eq!(alias("a"), Some(("b".into(), Some("rename".into()))));
+        // `b -> c`: the alias of `a` and the history ending at `b` follow, and `b -> c` is new.
+        store.record_rename_alias("default", "b", "c").unwrap();
+        assert_eq!(rows(), [pair("a", "c"), pair("b", "c")]);
+        assert_eq!(alias("a"), Some(("c".into(), Some("rename".into()))));
+        assert_eq!(alias("b"), Some(("c".into(), Some("rename".into()))));
+        // `c -> a`: the alias spelled like the new slug is dropped (the history takes it as `a -> c`, which then follows
+        // the rows that ended at `c` to `a`, like `b -> c`).
+        store.record_rename_alias("default", "c", "a").unwrap();
+        assert_eq!(alias("a"), None);
+        assert_eq!(alias("c"), Some(("a".into(), Some("rename".into()))));
+        assert_eq!(alias("b"), Some(("a".into(), Some("rename".into()))));
+        assert_eq!(rows(), [pair("a", "a"), pair("b", "a"), pair("c", "a")]);
+        // A second identical record changes nothing (`ON CONFLICT`).
+        store.record_rename_alias("default", "c", "a").unwrap();
+        assert_eq!(rows(), [pair("a", "a"), pair("b", "a"), pair("c", "a")]);
     }
 
     #[test]

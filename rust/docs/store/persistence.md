@@ -48,7 +48,8 @@ A queue key holds the incarnation as its 36-byte lower-case UUID text, so key or
 
 Each method is one store write transaction (or one read). The row locks Postgres takes for these
 statements (`FOR SHARE`, `FOR UPDATE`, `SKIP LOCKED`), the advisory locks and the page write guards are
-no-ops: the store runs one write transaction at a time, so no read overlaps a write.
+no-ops: reads use a consistent snapshot, or the bound transaction's own view, and may overlap writes. Writers
+serialize by default; `concurrent_writes` enables optimistic concurrent writers.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -165,6 +166,7 @@ lifecycle retry finds its earlier receipt. Rows are never deleted on this engine
 | `brain.insertTopologyChange(row)` | the stored `TopologyChange`. `constraint_violation` for a state the table refuses, a negative byte count, a malformed UUID, or a request id the principal already used | `insertTopologyChange` |
 | `brain.readTopologyChange(principalId, requestId)` | the `TopologyChange` or `null` | `readTopologyChange` |
 | `brain.findTopologyChanges(principalId, requestIds)` | `[{ request_id }]` for each listed request id the principal used | `findTopologyChanges` |
+| `brain.readTopologyChangeDigest(requestId, sourceId)` | the `digest` of the change with this request id for this source, whichever principal recorded it, or `null`. A request id that is not a uuid refuses | `readTopologyChangeDigest` (source-default-search.ts, the `sources add` replay) |
 | `brain.listTopologyRecoveries(hostId, after, limit)` | the changes with a recovery whose `recovery.worktreeId` names a worktree host `hostId` owns, after id `after` when given (null: from the start), in id order, at most `limit`. A host id, cursor or `worktreeId` that is not a uuid refuses with the uuid syntax message; a `worktreeId` that names no worktree, or one another host owns, is left out | `listTopologyRecoveries` (topology-recovery.ts `recoverSourceTopologies`) |
 
 The counter charges that go with a lifecycle receipt, and the settle, supersede and release updates,
@@ -379,7 +381,8 @@ freshness, as on Postgres.
 
 The drain lease still refuses with `engine_capability_missing`; the notifier logs the refusal once
 and keeps running. A source delete removes its notifier row and its wanted markers. A freshness
-marker that names a head stays due on this engine until a drain clears it by generation.
+marker that names a head stops being due once that head equals the source's `last_commit`, and
+`pruneSatisfiedWantedMarkers` can then delete it without a drain clearing it by generation.
 
 | `brain.readSourceSyncShape(sourceId)` | `{ local_path, root, bound }` for a source that exists and is not archived, else `null`. This engine keeps no managed worktree binding, so `root` is `null` and `bound` is `false` | `readSourceSyncShape` |
 | `brain.readNotifierFirstDue(ids)` | one row per existing listed source (archived included), in id order: `{ source_id, observed_head, first_due_at }`. `observed_head` is the notifier row's at the source's incarnation; `first_due_at` is the earlier of that row's `first_due_at` when its state is not idle and the oldest freshness marker whose `wanted_head` is null or differs from the source's `last_commit` | `readNotifierFirstDue` |
@@ -452,6 +455,21 @@ for type bigint`), a fractional limit with the same bigint syntax message and a 
 | `brain.listEffectRecoveries(hostId, after, limit)` | `[]`: the effect recovery writer has not landed here, so no effect carries a recovery | `listEffectRecoveries` |
 | `brain.selectClaimableEffect(hostId, deadOwners)` | the effect row the worker claims next, or `null` (see "Effect worker") | `selectClaimableEffect` |
 
+
+## Effect retry reads
+
+The reads `gbrain sources writer retry-effects` makes before it authorizes one more attempt
+(`engine-sql/effect-retry.ts`; store side `persistence/effect_retry_reads.rs`). Each returns the rows
+`SELECT *` returns (`RequestRecord::to_row`, `EffectRecord::to_row`). A request or row id that is not a
+UUID refuses, as the SQL's `::uuid` casts do; an effect id that is not a bigint refuses likewise. The
+retry's requeue still runs raw SQL, so on this engine only the preview (`--dry-run`) completes.
+
+| JS | Resolves | Mirrors |
+| --- | --- | --- |
+| `brain.readSourceRequestById(sourceId, id)` | the request row `id` of the source, or `null` | `readSourceRequestById` |
+| `brain.listSourceRequestsByRequestId(sourceId, requestId)` | at most two request rows of the source admitted under the client request id, by sequence (two mean the id is ambiguous) | `listSourceRequestsByRequestId` |
+| `brain.listRetryTrackedEffects(requestRowId, parkedOnly, failedCodes)` | the request's effects a retry tracks, by kind bytewise: a Git or withdrawal-mirror effect with `parked` or `retried` data; unless `parkedOnly`, a failed effect (an embedding effect only when it failed `source_changed`) and an embedding effect with `parked` data; a failed Git effect with a code in `failedCodes` | `listRetryTrackedEffects` |
+| `brain.lockEffectRow(id)` | effect row `id`, or `null`; the store write is already exclusive, so `FOR UPDATE` takes nothing | `lockEffectRow` |
 
 ## Publication effects
 
@@ -656,7 +674,7 @@ no `last_commit`, so only an empty `deferred_import_from` stands.
 | `brain.lockOverdueHold(hold, id, importFrom, maxWaitMs)` | for `refresh`, `true` while the refresh row `id` exists and is not released (a null id is `false`); for `import`, `true` while request `id` is `deferred` behind `importFrom`, its import hold stands and it is overdue (a null id or `importFrom` is `false`) | `lockOverdueHold` |
 | `brain.listOwnerRecoveryHeads(hostId, excluded)` | the oldest `recovering` write of each owned worktree not in `excluded`, oldest update first, at most 16 | `listOwnerRecoveryHeads` |
 | `brain.listResumableRefreshes(hostId)` | `[]`: refresh resumption has not landed here. The sync budget only marks rows stale, so it is not sent | `listResumableRefreshes` |
-| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` reads null because the store keeps none | `listSourceLastCommits` |
+| `brain.getSource(id)`, once per named source | `listSourceLastCommits` answers each named source that exists, in id order; its `last_commit` is the stored sync anchor written by `advanceSourceCommit`, or null before the first advance | `listSourceLastCommits` |
 
 
 ## Projection queue
@@ -665,10 +683,10 @@ Every page write updates the queue in the same store transaction, as PGLite's
 `gbrain_queue_page_projection` trigger does: a new knowledge revision that is not sealed queues or
 re-queues the page's job; a seal, a soft delete or a delete removes it; a rename or a move removes the
 job of the old key. `updated_at` is the transaction's clock: the first read of the clock in a store
-write transaction is kept for the rest of it, as Postgres `now()` is. The trigger is the only writer of
-jobs on this engine. The other `reason` values (`segmented_projecting`, `rebuild_failed`,
-`chunk_replacement_continuing`) are written only by raw SQL, which this engine refuses, so every job
-here has reason `canonical_change`; the reads still apply every reason filter. A store written before
+write transaction is kept for the rest of it, as Postgres `now()` is. Page writes are not the only
+writers of jobs: the typed projection members claim jobs (`segmented_projecting`), mark rebuild failures
+(`rebuild_failed`), renew deferred-replacement claims (`chunk_replacement_continuing`) and explicitly queue jobs,
+so reasons other than `canonical_change` are stored too. The reads apply every reason filter. A store written before
 the queue existed has no job for a page it left unsealed, and nothing backfills one: no released Rust
 brain predates the queue, so no such store exists outside development.
 
@@ -760,10 +778,36 @@ answered here by `persistence/writer_status.rs`:
 - `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
   their deferred request count and age.
 
+The status's queue and movement reads, three of them shared with the persistence doctor checks
+(`src/core/engine-sql/doctor-persistence.ts`), are answered by `persistence/writer_status_queue.rs`:
+
+- `listStalledCatchupRows(sourceIds, stallMs)`: per source, the queued `writer_busy` effects that
+  carry `busy_since`, how many waited longer than `stallMs`, the oldest `busy_since` and the most
+  `busy_retries`. A `busy_since` that is not a time, or a `busy_retries` that is not an integer,
+  refuses as the SQL cast does.
+- `listParkedGroupRows(sourceIds)`: the parked targets of the unsettled `targets_parked` Git effects
+  per source, target error code and former binding (`binding_changed`, `source_replaced`, or null
+  while the effect's binding holds), with the counts, the least rule, the worktrees, the first five
+  request ids and the source's current worktree.
+- `listSourceBindingsForMovement(sourceIds)`: each source binding whose source still has the bound
+  incarnation, with its worktree's owner.
+- `readSourceMovementRows(binding)` (`src/core/engine-sql/applied-watermark-reads.ts`): one
+  binding's managed-sync watermark (the newest committed completion under the incarnation, a null
+  completion first as `DESC` sorts it, and the queued or running managed-sync requests with the
+  oldest), its head unfinished request (the running one first, then by sequence) and its git hold
+  summary counters.
+- `countParkedEffects(sourceIds)` and `listParkedEffects(sourceIds)`: the unsettled effects that
+  recorded a parked target, counted, and the first 20 by id with their request row and whether the
+  binding they were parked under is gone.
+- `listGitPushHoldRows(codes, sourceIds)`: the held Git effects (queued, running or failed, no
+  recovery, not settled) whose code, or a parked effect's first parked target code, is one of
+  `codes`, per source and worktree: the worktree's first host path, whether the source is bound
+  elsewhere now, the retrying and parked counts, the codes and the oldest request.
+- `readLiveSyncJobId(sourceId)`: the active `sync` job, outside the drain lease queue, with a live
+  lock that drains the source (by `sourceId`, `source_id`, or else `repoPath`), oldest started first.
+
 Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
-milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
-(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
-first two refuse and source movement reports `not_read`.
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds.
 
 ## Writer release
 

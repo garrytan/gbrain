@@ -7,7 +7,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { moveSlugBindings, recordRenameAlias } from '../src/core/page-state/rename-alias.ts';
+import { moveSlugBindings } from '../src/core/page-state/rename-alias.ts';
+import { recordRenameAliasRows } from '../src/core/engine-sql/rename-alias-rows.ts';
 import { resolveSlugWithAliasDetailed } from '../src/core/engine-sql/pages.ts';
 
 const unrelatedColumn = (relation: string) =>
@@ -26,10 +27,10 @@ function tx(error: Error): Pick<BrainEngine, 'transaction' | 'executeRaw' | 'mov
 }
 
 describe('rename write paths rethrow an unrelated schema error (1.1)', () => {
-  test('recordRenameAlias: a missing column on slug_aliases throws; a missing slug_aliases table is skipped', async () => {
-    await expect(recordRenameAlias(tx(unrelatedColumn('slug_aliases')), 'default', 'old', 'new')).rejects.toThrow('zz_unrelated');
-    await expect(recordRenameAlias(tx(missingTable('zz_other')), 'default', 'old', 'new')).rejects.toThrow('zz_other');
-    await expect(recordRenameAlias(tx(missingTable('slug_aliases')), 'default', 'old', 'new')).resolves.toBeUndefined();
+  test('recordRenameAlias (engine-sql/rename-alias-rows.ts): a missing column on slug_aliases throws; a missing slug_aliases table is skipped', async () => {
+    await expect(recordRenameAliasRows(tx(unrelatedColumn('slug_aliases')), 'default', 'old', 'new')).rejects.toThrow('zz_unrelated');
+    await expect(recordRenameAliasRows(tx(missingTable('zz_other')), 'default', 'old', 'new')).rejects.toThrow('zz_other');
+    await expect(recordRenameAliasRows(tx(missingTable('slug_aliases')), 'default', 'old', 'new')).resolves.toBeUndefined();
   });
 
   test('moveSlugBindings: a missing column on facts throws; missing facts / page_aliases tables are skipped', async () => {

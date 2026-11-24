@@ -7,6 +7,7 @@
  * so the fragments pass through small wrapper builders (registered in scripts/check-engine-sql-dynamic.ts) and the
  * values are passed alongside, numbered as the shared fragments number them.
  */
+import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 import { AUDIT_ROW_SOURCES, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE } from '../facts/audit-sources.ts';
 import { ENTITY_LINKABLE_SQL } from '../facts/attribution.ts';
 import { conversationPaidSql, conversationTriedSql } from '../facts/conversation-memo.ts';
@@ -93,14 +94,15 @@ export interface UnpreviewedTrustFactRow { id: number; source_id: string; slug: 
 
 /** trust_release_unpreviewed_fields: current user_confirmed facts a trust release raised without previewing their fence fields, by id, at most `limit`. */
 export async function listUnpreviewedTrustFacts(raw: EngineRawRead, limit: number): Promise<UnpreviewedTrustFactRow[]> {
-  return raw<UnpreviewedTrustFactRow>(
-    `SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.row_num, h.id AS hold_id, COUNT(*) OVER () AS total
+  const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.row_num, h.id AS hold_id, COUNT(*) OVER () AS total
          FROM facts f JOIN LATERAL (SELECT id FROM write_gate_holds WHERE kind = 'fact' AND status = 'released' AND source_id = f.source_id
-          AND slug = f.source_markdown_slug AND payload->>'row_num' = f.row_num::text
+          AND ${trustedSql(holdAppliesToPageSql('write_gate_holds', '(SELECT pg.id FROM pages pg WHERE pg.source_id = f.source_id AND pg.slug = f.source_markdown_slug)', 'f.source_markdown_slug'))}
+          AND payload->>'row_num' = f.row_num::text
           AND request_id::text IS NOT DISTINCT FROM f.write_origin->>'request_id' ORDER BY id DESC LIMIT 1) h ON true
         WHERE f.trust_tier = 'user_confirmed' AND f.expired_at IS NULL AND f.write_origin->>'channel' = 'trust_release'
           AND f.write_origin->>'fields_previewed' IS NULL
-        ORDER BY f.id LIMIT $1`, [limit]);
+        ORDER BY f.id LIMIT ${limit}`);
+  return raw<UnpreviewedTrustFactRow>(text, params);
 }
 
 export interface UnlinkedOriginRow {

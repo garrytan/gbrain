@@ -189,17 +189,18 @@ test('a stale up-to-date run does not stamp a source re-added under a new incarn
     let rotated = false;
     engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
       return transaction.call(this, async tx => {
-        const executeRaw = tx.executeRaw;
-        tx.executeRaw = async function <R = Record<string, unknown>>(this: BrainEngine, sql: string, params?: unknown[], opts?: { signal?: AbortSignal }): Promise<R[]> {
-          if (!rotated && /^UPDATE sources SET last_sync_at\b/.test(sql)) {
+        // The stamp is the typed markSourceSynced (sync-pass-run.ts stampManagedSourceFresh); rotate just before it.
+        const markSourceSynced = tx.markSourceSynced;
+        tx.markSourceSynced = async function (this: BrainEngine, sourceId: string, opts?: { incarnation?: string }): Promise<boolean> {
+          if (!rotated) {
             rotated = true;
             // The source was removed and re-added after this run's discovery: same id, new incarnation.
             // The writer guard refuses an in-place incarnation change, so the fixture bypasses triggers for this one statement.
-            await executeRaw.call(this, 'SET LOCAL session_replication_role = replica');
-            await executeRaw.call(this, 'UPDATE sources SET incarnation=$2::uuid WHERE id=$1', [f.id, reAdded]);
-            await executeRaw.call(this, 'SET LOCAL session_replication_role = origin');
+            await tx.executeRaw('SET LOCAL session_replication_role = replica');
+            await tx.executeRaw('UPDATE sources SET incarnation=$2::uuid WHERE id=$1', [f.id, reAdded]);
+            await tx.executeRaw('SET LOCAL session_replication_role = origin');
           }
-          return executeRaw.call(this, sql, params, opts) as Promise<R[]>;
+          return markSourceSynced.call(this, sourceId, opts);
         };
         return run(tx);
       }) as Promise<T>;

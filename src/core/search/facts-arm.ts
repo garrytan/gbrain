@@ -405,8 +405,8 @@ async function applyFactReserve(engine: BrainEngine, query: string, results: Sea
  * go in after the top FACT_SOURCE_PAGE_RANK rows, so evidence delivery can
  * hand over the whole session. Each page is read through `getChunkWindows`
  * under the caller's read scope, so an unreadable page is absent. The row
- * count never grows (the lowest rows give way). No match or any error: the
- * results unchanged.
+ * count never grows (the lowest rows give way). No match or any other error:
+ * the results unchanged; an engine that refuses a read refuses the caller.
  */
 export async function applyFactSourcePages(engine: BrainEngine, query: string, results: SearchResult[], opts: FactsArmOpts): Promise<SearchResult[]> {
   try {
@@ -414,10 +414,7 @@ export async function applyFactSourcePages(engine: BrainEngine, query: string, r
       { depth: { keyword: 50, cosine: 50, entity: MAX_RESERVE_ROWS }, cosineForAll: true });
     const ranked = scoreFactCandidates(query, candidates, queryTerms(query), stems).filter(s => admitted(s, 'reserve')).map(s => Number(s.candidate.id));
     if (!ranked.length) return results;
-    const sources = await engine.executeRaw<{ id: number; page_id: number; slug: string; title: string | null; type: string | null }>(
-      `SELECT f.id, p.id AS page_id, p.slug, p.title, p.type FROM facts f
-       JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
-       WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`, [ranked]);
+    const sources = await engine.listFactSourcePages(ranked);
     const rank = new Map(ranked.map((id, i) => [id, i]));
     const present = new Set(results.map(r => r.page_id));
     const wanted: typeof sources = [];
@@ -448,7 +445,9 @@ export async function applyFactSourcePages(engine: BrainEngine, query: string, r
     if (!added.length) return results;
     const rowCap = Math.max(results.length, (await opts.rowCap?.().catch(() => 0)) ?? 0);
     return [...results.slice(0, at), ...added, ...results.slice(at)].slice(0, rowCap);
-  } catch {
+  } catch (err) {
+    // An engine that refuses a read here refuses the caller: the unchanged results would hide the refusal.
+    rethrowCapabilityMissing(err);
     return results;
   }
 }

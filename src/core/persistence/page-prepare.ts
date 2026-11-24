@@ -13,7 +13,7 @@ import { requirePurgePathServed } from './purge-path-members.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
-import { classifyImportHold, comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
+import { classifyImportHold, comparableFrontmatter, frontmatterHoldMessageWithoutKeys, needsEmptyTimelineSentinel, parseMarkdown, resolveParsedSubtype, splitBody, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
 import { alignWithStored } from './align-stored.ts';
 import { assertLargePageReplacement } from './large-page-guard.ts';
 import { applyInference } from '../frontmatter-inference.ts';
@@ -169,7 +169,7 @@ function canonicalDifference(a: ReturnType<typeof canonical>, b: ReturnType<type
   const fields = (['title', 'type', 'tags', 'compiled_truth', 'timeline'] as const).filter(field => digest(a[field]) !== digest(b[field]));
   return [...keys, ...fields.map(field => field === 'compiled_truth' ? 'body' : field)];
 }
-interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
+interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string | null; }
 /**
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
@@ -194,12 +194,16 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   const via = row.authority.remote ? 'mcp:put_page' : 'put_page';
   // Historical frontmatter was caller-controlled. Only trusted provenance
   // columns may supply a prior channel or timestamp for the first-write record.
+  // #10025: a stored ingested_at the column lacks stays in the frontmatter, and the column stays empty (uncertified).
+  const storedAt = first?.ingested_at ? undefined : first?.frontmatter?.ingested_at;
+  const keepStoredAt = typeof storedAt === 'string' && !Number.isNaN(new Date(storedAt).getTime());
   const stamp: CanonicalProvenance = {
     source_kind: string(first?.source_kind) ?? string(row.intent?.source_kind) ?? via,
     ingested_via: string(first?.ingested_via) ?? string(row.intent?.ingested_via) ?? via,
-    ingested_at: new Date(first?.ingested_at ?? row.created_at).toISOString(),
+    ingested_at: keepStoredAt ? null : new Date(first?.ingested_at ?? row.created_at).toISOString(),
   };
-  Object.assign(parsed.frontmatter, stamp);
+  const { ingested_at, ...channel } = stamp;
+  Object.assign(parsed.frontmatter, ingested_at ? stamp : channel);
   return stamp;
 }
 function serverOwnsProvenance(row: WriteRequest): boolean {
@@ -268,7 +272,8 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
 export async function fileSnapshotDifference(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
   sourcePath: string | (() => Promise<string>), activePack?: ParseOpts['activePack']): Promise<string[]> {
   snapshot = (await materializedSnapshot(engine, snapshot))!;
-  const expected = canonical({ ...snapshot.page, frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}) }, snapshot.tags);
+  const stored = { ...snapshot.page, frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}) };
+  const expected = storedReadings(stored).map(page => canonical(page, snapshot.tags));
   const difference = async (content: string, inferred: boolean) => {
     const parsed = parseMarkdown(content, slug, { activePack });
     const type = importedFileType(parsed, snapshot.page, inferred);
@@ -276,7 +281,7 @@ export async function fileSnapshotDifference(engine: BrainEngine, slug: string, 
     // is applied by the import preparation and cannot be undone by this check.
     const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
       parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals, { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges }) }, parsed.tags);
-    return canonicalDifference(actual, expected);
+    return expected.map(page => canonicalDifference(actual, page)).reduce((closer, keys) => keys.length < closer.length ? keys : closer);
   };
   const raw = await difference(bytes, false);
   if (!raw.length) return raw;
@@ -284,6 +289,17 @@ export async function fileSnapshotDifference(engine: BrainEngine, slug: string, 
   if (!reading.inferred) return raw;
   const inferred = await difference(reading.content, true);
   return inferred.length < raw.length ? inferred : raw;
+}
+/**
+ * The stored page, then, when its body splits today, the stored page as today's parser reads its body. An import before
+ * v0.46.25.0 (#2225) kept a body's bare dated `## Timeline` section in compiled_truth with an empty timeline, and a file
+ * rendered from such a row before #7738 has no sentinel to keep it there, so today's parse of that unchanged file moves the
+ * section to the timeline. The text is the same, split at another line: a file that matches either reading holds the page.
+ */
+function storedReadings<T extends Pick<Page, 'compiled_truth' | 'timeline'>>(page: T): T[] {
+  if ((page.timeline ?? '').trim() || !needsEmptyTimelineSentinel(page.compiled_truth)) return [page];
+  const split = splitBody(page.compiled_truth);
+  return [page, { ...page, compiled_truth: split.compiled_truth.trim(), timeline: split.timeline.trim() }];
 }
 /**
  * #8109: the file a write publishes over a canonical file that differs from the database only in frontmatter, or null
@@ -301,7 +317,7 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
   const bodies = await overlayCanonicalBodies(engine.executeRaw.bind(engine), file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
     { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges });
   const bare = (page: Parameters<typeof canonical>[0], tags: string[]) => digest(canonical({ ...page, frontmatter: {} }, tags));
-  if (bare({ ...file, type, ...bodies }, file.tags) !== bare(snapshot.page, snapshot.tags)) return null;
+  if (!storedReadings(snapshot.page).some(page => bare({ ...file, type, ...bodies }, file.tags) === bare(page, snapshot.tags))) return null;
   const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
   const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
   const drifted = [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].filter(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null));

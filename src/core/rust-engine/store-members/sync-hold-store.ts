@@ -11,7 +11,9 @@
  * Fingerprints list in byte order, where the SQL orders by the database collation; the two agree on the ASCII paths
  * the parity tests hold.
  */
-import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, type HeldCoverageRow } from '../../engine-sql/persistence-journal.ts';
+import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, type HeldCoverageRow, type HeldHitQuery, type HeldHitRow } from '../../engine-sql/persistence-journal.ts';
+import { COVERAGE_COUNT_CAP } from '../../search/retrieval-coverage.ts';
+import { coveragePatternWord } from './coverage-pattern.ts';
 import { GIT_HOLD_RETRY_OP, type GitHoldRecordsQuery, type GitHoldReportInputs, type GitHoldSummaryRow } from '../../engine-sql/sync-hold-reads.ts';
 import {
   GIT_HOLD_SUMMARY_COUNTERS, MANAGED_SYNC_PASS_OP, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint,
@@ -186,6 +188,18 @@ export const readHeldPageRows: StoreMember<[pageIds: string[]], Array<{ record: 
     : [];
   const revisionOf = new Map(revisions.map(row => [String(row.id), row.knowledge_revision === null ? null : String(row.knowledge_revision)]));
   return held.map(h => ({ record: h.record as never, revision: revisionOf.get(String(Number(h.pageId))) ?? null }));
+};
+
+/**
+ * The holds naming the hits' pages with their page revisions, by fingerprint, then the capped count of held files that
+ * could affect the read (persistence/diagnostic_checkpoints.rs). Each relevance pattern is sent as its query word.
+ */
+export const readHeldHitRows: StoreMember<[query: HeldHitQuery], Array<HeldHitRow<never>>> = async (brain, query) => {
+  const member = 'readHeldHitRows';
+  const terms = query.patterns.map(pattern => coveragePatternWord(member, pattern));
+  return await storeCall({ member }, () => brain.readHeldHitRows({
+    holdOp: GIT_HOLD_OP, pageIds: [...query.pageIds], sourceIds: [...query.sourceIds], types: [...query.types], terms, cap: COVERAGE_COUNT_CAP,
+  })) as Array<HeldHitRow<never>>;
 };
 
 /** The summary rows of unarchived sources' current incarnations with at least one held file, by source id. */

@@ -248,3 +248,20 @@ fn moved_page_reads_match_names_and_frontmatter_ids() {
         vec![json!("notes/b")]
     );
 }
+
+#[test]
+fn the_fold_moves_every_version_of_the_old_page_to_the_survivor() {
+    let (_dir, store) = brain("move-page-versions");
+    let old = page(&store, "notes/old", "note", None, json!({}));
+    let survivor = page(&store, "notes/new", "note", None, json!({}));
+    store.create_version("notes/old", Some("default")).unwrap();
+    store.create_version("notes/old", Some("default")).unwrap();
+    store.create_version("notes/new", Some("default")).unwrap();
+    let (old, survivor) = (old as i64, survivor as i64);
+    let moved = store.move_page_versions(old, survivor).unwrap();
+    assert_eq!(moved.len(), 2);
+    assert!(moved.windows(2).all(|w| w[0] < w[1]));
+    assert!(store.move_page_versions(old, survivor).unwrap().is_empty());
+    store.create_version("notes/old", Some("default")).unwrap();
+    assert!(store.move_page_versions(old, 987_654).is_err());
+}

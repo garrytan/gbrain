@@ -37,6 +37,7 @@ import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts'
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { fileSha, writeCanonicalPage } from '../helpers/large-page-file.ts';
+import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-restore-statement-bound-'));
 const env = { GBRAIN_HOME: home, OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, ANTHROPIC_API_KEY: undefined };
@@ -56,7 +57,7 @@ function statementBound(engine: BrainEngine) {
   const probes = { inPublication: 0, cancelled: 0 };
   const inTx = (tx: BrainEngine): BrainEngine => {
     let publication = false;
-    return new Proxy(tx, { get(target, prop) {
+    return new Proxy(tx, { get(target, prop, receiver) {
       if (prop === 'executeRaw') return (sql: string, params?: unknown[], opts?: unknown) => {
         if (sql.includes(DECLARE_PUBLICATION)) publication = true;
         if (publication && SEAL_PROBES.some(probe => sql.includes(probe)) && probes.inPublication++ === 0) {
@@ -66,6 +67,8 @@ function statementBound(engine: BrainEngine) {
         return target.executeRaw(sql, params, opts as never);
       };
       if (prop === 'transaction') return (fn: (inner: BrainEngine) => Promise<unknown>, opts?: unknown) => target.transaction(inner => fn(inTx(inner)), opts as never);
+      const through = segmentedWriteThrough(prop, receiver);
+      if (through) return through;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     } });

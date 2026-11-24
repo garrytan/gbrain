@@ -94,12 +94,9 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // (rewriteLiveSegmentedFences, then a version of the old revision); an inline page is versioned first, then rewritten.
   { site: 'rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
     stop: 'rewriting a segmented page\'s live fences reads the page and restores its deleted_at through raw SQL (segment-rewrite.ts:174, :194); typed and served on Rust by segmented-staging-2' },
-  { site: 'occurrencesWithoutChunks (page-body/ingest.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'the segmented body\'s chunked-occurrence read is raw SQL; typed (listChunkedOccurrences) on segmented-staging-2' },
-  { site: 'reuseSegmentChunkVectors (import-chunk-reuse.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'the reuse of the retired segments\' chunk vectors is raw SQL; typed on segmented-staging-2' },
-  { site: 'hasStaleChunks (page-body/projection.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'the stale segment chunk probe is raw SQL; typed (hasStaleSegmentChunks) on segmented-staging-2' },
+  // The segmented body's chunk reads the rewrite makes are typed members the Rust store serves (repair-rust b6b, segmented-writes.ts).
+  ...served(segmentedRewrite, 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks'),
+  ...served(ours, 'normalizeFenceLines'),
   // redactPageVersions: the change reasons first, then the inline versions, then the segmented ones.
   tx('redactVersionChangeReasons', 'the redaction of change reasons that quote the claim is not served'),
   tx('setPurgeVersionBody', 'the rewrite of a saved version body is not served'),
@@ -109,7 +106,7 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // purgeSegmentStorage: the writes that would publish a staged body are cancelled, the stagings aborted, the texts deleted.
   tx('abortPurgedStagings', 'aborting the uncommitted stagings that hold the claim is not served'),
   tx('deletePurgedStagingParts', 'the delete of those stagings\' upload parts is not served'),
-  tx('deletePageViewDigests', 'the delete of the rewritten pages\' cached view digests is not served'),
+  ...served(factPurgeTx, 'deletePageViewDigests'),
   tx('deleteUnreferencedPurgedTexts', 'the delete of the segment texts that held the claim is not served'),
   // The purge effects of the git mirror.
   tx('listPurgedPageRevisions', 'the read of the rewritten pages\' revisions is not served'),

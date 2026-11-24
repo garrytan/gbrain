@@ -49,6 +49,11 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub mod derivation_sweep;
+mod page_spend;
+mod segmented_embedding;
+mod segmented_writes;
+pub use segmented_embedding::RetiredChunkVector;
+pub use segmented_writes::SegmentedProjectionPage;
 pub(crate) mod health;
 pub mod purge_probe;
 pub mod purge_record;
@@ -1768,7 +1773,7 @@ impl Store {
             }
             // Not stale, so the generation is at or above the page's, which is at least 0.
             let at = u64::try_from(generation).unwrap_or(0);
-            crate::chunks::append_segment_chunks(tx, page.id, at, chunks)
+            crate::chunks::append_segment_chunks(tx, page.id, at, chunks, self.env.now_micros())
         })
     }
 
@@ -2710,6 +2715,33 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn a_staging_locks_its_state_and_an_unknown_one_reads_none() {
+        let store = crate::test_support::store();
+        let staging = "11111111-1111-4111-8111-111111111111";
+        assert_eq!(store.lock_body_staging_state(staging).unwrap(), None);
+        store
+            .open_body_staging(&staging_input(
+                staging,
+                "default",
+                None,
+                "44444444-4444-4444-8444-444444444444",
+            ))
+            .unwrap();
+        assert_eq!(
+            store.lock_body_staging_state(staging).unwrap().as_deref(),
+            Some("open")
+        );
+        store
+            .set_body_staging_state(staging, "aborted", &StagingStateOptions::default())
+            .unwrap();
+        assert_eq!(
+            store.lock_body_staging_state(staging).unwrap().as_deref(),
+            Some("aborted")
+        );
+        assert!(store.lock_body_staging_state("not-a-uuid").is_err());
+    }
+
     fn count(store: &Store, prefix: &[u8]) -> usize {
         let read = store.read().unwrap();
         let mut n = 0;
@@ -2920,7 +2952,7 @@ mod segment_chunk_tests {
         serde_json::from_value(input).unwrap()
     }
 
-    fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
+    pub(super) fn chunk(occurrence: i64, ordinal: i64, body: &str) -> SegmentChunkInput {
         serde_json::from_value(json!({
             "chunk_text": body, "chunk_source": "compiled_truth", "model": "m",
             "occurrence_id": occurrence, "local_ordinal": ordinal,
@@ -2938,7 +2970,7 @@ mod segment_chunk_tests {
     }
 
     /// A shell published at generation 1 from occurrences 1 ("one\n" at 0) and 2 ("two\n" at 4).
-    fn published(store: &Store) -> i64 {
+    pub(super) fn published(store: &Store) -> i64 {
         published_with(store, json!({}))
     }
 
@@ -3173,7 +3205,7 @@ mod segment_chunk_tests {
 
     /// Generation 2 staged: occurrence 3 replaces occurrence 2 at byte 4, with a chunk for
     /// occurrence 3 and one for occurrence 9, which has no row in generation 2.
-    fn second_generation(store: &Store, id: i64) {
+    pub(super) fn second_generation(store: &Store, id: i64) {
         store
             .open_body_staging(&staging(
                 STAGING_2,
@@ -3297,6 +3329,51 @@ mod segment_chunk_tests {
             vec![2]
         );
         assert_eq!(visible(&store, id), vec!["one a", "one b", "two"]);
+    }
+
+    #[test]
+    fn a_replace_deletes_the_staged_chunks_it_did_not_keep_for_its_generation_only() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(
+                id,
+                1,
+                &[chunk(1, 0, "a"), chunk(1, 1, "b"), chunk(2, 0, "c")],
+            )
+            .unwrap();
+        store
+            .stage_segment_chunks(id, 2, &[chunk(3, 0, "d"), chunk(3, 1, "e")])
+            .unwrap();
+        let rows = |store: &Store| -> Vec<(u32, String)> {
+            let mut rows: Vec<_> = crate::chunks::read_chunks(&*store.read().unwrap(), id as u64)
+                .unwrap()
+                .into_iter()
+                .map(|c| (c.chunk_index, c.chunk_text))
+                .collect();
+            rows.sort();
+            rows
+        };
+        let all = |texts: &[&str]| -> Vec<(u32, String)> {
+            texts
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (i as u32, (*t).to_string()))
+                .collect()
+        };
+        assert_eq!(rows(&store), all(&["a", "b", "c", "d", "e"]));
+        // Generation 2 keeps index 3 only; generation 1 is not its to delete.
+        store.delete_unstaged_segment_chunks(id, 2, &[3]).unwrap();
+        let after = rows(&store);
+        assert_eq!(after.len(), 4);
+        assert!(after.iter().any(|(i, t)| *i == 3 && t == "d"));
+        assert!(!after.iter().any(|(_, t)| t == "e"));
+        // Nothing kept deletes the generation's chunks; a generation that has none changes nothing.
+        store.delete_unstaged_segment_chunks(id, 2, &[]).unwrap();
+        assert_eq!(rows(&store).len(), 3);
+        store.delete_unstaged_segment_chunks(id, 9, &[]).unwrap();
+        assert_eq!(rows(&store).len(), 3);
+        store.delete_unstaged_segment_chunks(-1, 2, &[]).unwrap();
     }
 
     fn lead(store: &Store, id: i64) -> Option<String> {
@@ -3924,8 +4001,14 @@ mod segment_chunk_tests {
             // A late batch at the live generation (the flip went to another write first).
             store
                 .write(|tx| {
-                    crate::chunks::append_segment_chunks(tx, id as u64, 1, &[chunk(7, 0, "late")])
-                        .map(|_| ())
+                    crate::chunks::append_segment_chunks(
+                        tx,
+                        id as u64,
+                        1,
+                        &[chunk(7, 0, "late")],
+                        0,
+                    )
+                    .map(|_| ())
                 })
                 .unwrap();
             if abort {

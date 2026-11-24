@@ -61,18 +61,7 @@ interface TakeRow {
 
 async function readPredictions(engine: BrainEngine, q: JournalQuery): Promise<TakeRow[]> {
   const sources = q.sourceIds?.length ? q.sourceIds : q.sourceId ? [q.sourceId] : null;
-  return engine.executeRaw<TakeRow>(
-    `SELECT t.id, p.source_id, p.slug AS page_slug, t.row_num, t.claim, t.kind, t.holder, t.weight, t.since_date,
-            t.resolved_quality, t.resolved_at, t.resolved_by, t.resolved_source
-       FROM takes t JOIN pages p ON p.id = t.page_id
-      WHERE p.deleted_at IS NULL AND t.active AND t.kind <> 'fact'
-        AND ($1::text[] IS NULL OR p.source_id = ANY($1::text[]))
-        AND ($2::text IS NULL OR t.holder = $2)
-        AND ($3::text IS NULL OR left(p.slug, length($3)) = $3)
-        AND ($4::text IS NULL OR t.since_date >= $4)
-        AND ($5::text IS NULL OR t.since_date <= $5)
-      ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", t.row_num`,
-    [sources, q.holder ?? null, q.about ?? null, q.since ?? null, q.until ?? null]);
+  return engine.readForecastPredictions({ sourceIds: sources, holder: q.holder ?? null, about: q.about ?? null, since: q.since ?? null, until: q.until ?? null });
 }
 
 interface LedgerRow { source_id: string; slug: string; event_type: string; subject_key: string | null; at: string | Date }
@@ -93,15 +82,7 @@ async function recordedPredictionTimes(engine: BrainEngine, rows: TakeRow[]): Pr
   const out = new Map<string, PredictionTime>();
   if (!rows.length) return out;
   const sources = [...new Set(rows.map(r => r.source_id))];
-  const events = await engine.executeRaw<LedgerRow>(
-    `SELECT l.source_id, l.slug, e.event_type, e.subject_key, e.recorded_at AS at
-       FROM belief_page_lifetimes l
-       JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
-       JOIN belief_events e ON e.source_id = l.source_id AND e.source_incarnation = l.source_incarnation AND e.page_lifetime = l.page_lifetime
-      WHERE l.ended_at IS NULL AND l.source_id = ANY($1::text[]) AND l.slug = ANY($2::text[]) AND e.origin <> 'backfill'
-        AND (e.subject_kind = 'take' OR (e.event_type = 'page.published' AND e.value->>'revision_before' IS NULL))
-      ORDER BY e.id`,
-    [sources, [...new Set(rows.map(r => r.page_slug))]]);
+  const events: LedgerRow[] = await engine.readPredictionLedgerEvents(sources, [...new Set(rows.map(r => r.page_slug))]);
   const created = new Map<string, string>();
   const firstTakeEvent = new Map<string, { type: string; at: string }>();
   for (const e of events) {
@@ -141,10 +122,7 @@ export async function readForecastJournal(engine: BrainEngine, q: JournalQuery =
   const rows = await readPredictions(engine, q);
   const horizons = await readTakeHorizons(engine, rows.map(r => Number(r.id)));
   const recorded = await recordedPredictionTimes(engine, rows);
-  const grades = new Map((await engine.executeRaw<{ take_id: number | string; verdict: string; confidence: number | string; applied: boolean; judge_model_id: string; prompt_version: string; graded_at: string | Date }>(
-    `SELECT DISTINCT ON (take_id) take_id, verdict, confidence, applied, judge_model_id, prompt_version, graded_at
-       FROM take_grade_cache WHERE take_id = ANY($1::bigint[]) ORDER BY take_id, graded_at DESC`,
-    [rows.map(r => Number(r.id))])).map(g => [Number(g.take_id), {
+  const grades = new Map((await engine.readLatestTakeGrades(rows.map(r => Number(r.id)))).map(g => [Number(g.take_id), {
       verdict: g.verdict, confidence: Number(g.confidence), applied: g.applied, judge_model_id: g.judge_model_id,
       judge_measured: gradeJudgeMeasured(g.judge_model_id, g.prompt_version), graded_at: iso(g.graded_at)!,
     }]));

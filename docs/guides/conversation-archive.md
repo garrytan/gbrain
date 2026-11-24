@@ -172,7 +172,10 @@ saying the pages are now kept to the owner or why they still wait (the codes bel
 When the brain turns shared some other way, the next archive run (`gbrain transcripts archive run`) or maintenance pass
 does it, also before it writes anything. A command run while an archive run that started on the personal
 brain is still writing the source keeps the pages archived so far to the owner at once; the pages that run still writes
-wait for the run after it (`archive_rescope_pending`). Either way, every folder that holds an archive page at that moment (one per
+wait for the run after it (`archive_rescope_pending`). An archive run reads the brain's audience again once it holds
+the source's lock, so a command that made the brain shared while the run was starting never leaves that run writing
+pages with no readers; when the new audience moves the run to the `<source>-owner` source, it writes nothing and
+ends `archive_audience_changed`, and the next run archives there. Either way, every folder that holds an archive page at that moment (one per
 harness and day, such as `conversations/codex/2026-10-01/`, plus `conversations/days/`) gets an access rule readable
 only by the owner. Other pages in the archive source, outside `conversations/`, keep the rules they had. This re-scope **replaces any existing rule on those folders, including one the owner made wider on
 purpose**; re-add the wider readers afterwards (`gbrain access rule add`, which waits for `gbrain access apply`) if

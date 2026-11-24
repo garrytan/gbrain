@@ -12,6 +12,8 @@ export const STORE_ABSENT_PROBE_TABLES: ReadonlySet<string> = new Set([
   // The store keeps no raw upload parts and no retrieval event, feedback or weight record.
   'page_body_staging_parts', 'retrieval_event_links', 'retrieval_event_pages', 'retrieval_feedback',
   'retrieval_weights',
+  // The store keeps no learning ledger (master's v334 learning_items; the nightly learning pass is TypeScript-only).
+  'learning_items',
 ]);
 
 /**

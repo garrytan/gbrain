@@ -98,6 +98,7 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   chronicle_day: { date: TODAY },
   chronicle_on_this_day: {},
   chronicle_since: { date: '2026-01-01' },
+  learned: { since: '2000-01-01' },
   chronicle_last_seen: { entity: GUEST },
   ontology_get: { entity: GUEST },
   ontology_propose: skip(WRITE),

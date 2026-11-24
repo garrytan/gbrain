@@ -10,11 +10,13 @@
  * pin), matching the pre-extraction behavior of both callers.
  */
 
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor } from '../core/errors.ts';
 import { resolveScopedSourceOrThrow, SourceResolutionError } from '../core/sources-ops.ts';
 import { formatSoleNonDefaultNudge, isResolverUserError } from '../core/source-resolver.ts';
 import { codeChunksExist } from '../core/code-graph-readiness.ts';
+import { inertText } from '../core/agent-output.ts';
 
 // A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
 // `resolveSourceWithTier`'s `assertSourceExists` as a resolver user error;
@@ -66,6 +68,20 @@ export function parseFlag(args: string[], name: string): string | undefined {
   if (i >= 0 && i + 1 < args.length) return args[i + 1];
   const inline = args.find((a) => a.startsWith(`${name}=`));
   return inline ? inline.slice(name.length + 1) : undefined;
+}
+
+/**
+ * The row cap of a code-* command: `fallback` when the limit flag is absent, else its value as a positive whole
+ * number. Anything else (`abc`, `5abc`, `0`, `-5`, `1.5`, or the flag with no value) exits 2 with `invalid_params`,
+ * where a bare parseInt used to hand NaN or a negative number to the SQL LIMIT and fail as an `unknown` error.
+ */
+export function parseCodeLimit(args: string[], command: string, fallback: number, jsonMode: boolean): number {
+  const raw = parseFlag(args, '--limit');
+  if (raw === undefined && !args.includes('--limit')) return fallback;
+  const n = Number(raw);
+  if (raw !== undefined && /^\+?\d+$/.test(raw.trim()) && Number.isSafeInteger(n) && n > 0) return n;
+  const message = `${command}: --limit must be a whole number of 1 or more (default ${fallback}); got '${inertText(raw ?? '', 40)}'`;
+  exitUsage(jsonMode, errorFor({ class: 'UsageError', code: 'invalid_params', message }).envelope, message);
 }
 
 /**
@@ -215,16 +231,13 @@ export async function shouldWidenForNoCode(
   }
 }
 
-/** Existence check for an explicit --source, mirroring the resolver's own gate. */
-async function sourceExists(engine: BrainEngine, sourceId: string): Promise<boolean> {
+/** Existence check for an explicit --source, mirroring the resolver's own gate. Exported for the engine-parity case. */
+export async function sourceExists(engine: BrainEngine, sourceId: string): Promise<boolean> {
   try {
-    const rows = await engine.executeRaw<{ e: boolean }>(
-      `SELECT EXISTS(SELECT 1 FROM sources WHERE id = $1 AND NOT archived) AS e`,
-      [sourceId],
-    );
-    return rows[0]?.e === true;
-  } catch {
-    // A probe failure must not block a lookup the user could otherwise run.
+    return (await engine.listAllSources()).some((s) => s.id === sourceId);
+  } catch (err) {
+    // A probe failure must not block a lookup the user could otherwise run; a refused read is not a probe failure.
+    rethrowCapabilityRefusal(err);
     return true;
   }
 }

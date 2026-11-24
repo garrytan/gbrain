@@ -136,4 +136,20 @@ describe('engine parity: doctor checks from the main join', () => {
       expect(state).toEqual({ missing: [], closed: false, rowSecurity: false, held: true, unflagged: false, deniedLogins: [], closedLogins: [] });
       return { fresh, held, state };
     });
+
+  // Rust ignores `ensure` (the store has no triggers to create), so its answer must still be the whole state the SQL
+  // engines return after their ensure pass, not a reply that looks like a write that did not happen.
+  parityTest('ownerOnlyMarkTriggers with ensure returns the full state, before and after an owner-only source',
+    { methods: ['ownerOnlyMarkTriggers'] },
+    async (engine, backend) => {
+      const ensured = async () => { const { role: _role, ...state } = await engine.ownerOnlyMarkTriggers({ ensure: true }); return state; };
+      const fresh = await ensured();
+      await createSource(engine, backend, 'diary', { owner_only: true });
+      await engine.putPage('notes/diary-example', note('Diary'), { sourceId: 'diary' });
+      const held = await ensured();
+      const base = { missing: [], closed: false, rowSecurity: false, unflagged: false, deniedLogins: [], closedLogins: [] };
+      expect(fresh).toEqual({ ...base, held: false });
+      expect(held).toEqual({ ...base, held: true });
+      return { fresh, held };
+    });
 });

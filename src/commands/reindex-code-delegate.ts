@@ -3,7 +3,7 @@ import { loadMounts } from '../core/brain-registry.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { maybeDelegateLocalAdministration, persistenceConfigForBrain } from '../core/persistence/local-client.ts';
-import { inspectLockHolder } from '../core/pglite-lock.ts';
+import { persistenceResidentOwner } from '../core/persistence/resident-owner.ts';
 import { opError } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
@@ -42,7 +42,7 @@ export function parseReindexCodeDelegateArgs(args: string[]): ReindexCodeOpts {
 export async function maybeDelegateReindexCode(hostConfig: GBrainConfig | null, args: string[]): Promise<boolean> {
   const brainId = resolveBrainId(getCliOptions().brain, process.cwd());
   const config = persistenceConfigForBrain(hostConfig, brainId, brainId === 'host' ? [] : loadMounts());
-  if (config?.engine !== 'pglite' || !config.database_path || config.database_url || !inspectLockHolder(config.database_path).held) return false;
+  if (!config || !(await persistenceResidentOwner(config))) return false;
   try {
     const options = parseReindexCodeDelegateArgs(args);
     if (!options.noEmbed && !options.dryRun) {

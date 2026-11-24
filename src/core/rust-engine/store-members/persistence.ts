@@ -17,6 +17,7 @@
  * What each member answers and why: rust/docs/store/journal.md ("TypeScript journal members") and
  * rust/docs/store/persistence.md.
  */
+import type { RemirrorEffectState } from '../../engine-sql/segmented-mirror-effects.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldCoverageRow, TerminalIntentCompaction } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
@@ -287,6 +288,18 @@ export const insertWithdrawalEffects: StoreMember<[spec: WithdrawalEffectsSpec],
     data: withdrawalEffectsData(spec) }));
 };
 
+/**
+ * Queues a segmented-mirror re-mirror's `withdrawal-mirror` and `git` effects (engine-sql/segmented-mirror-effects.ts), the
+ * withdrawal insert with two kinds; inside `transaction` it is one more statement of the re-mirror's store write.
+ */
+export const insertRemirrorEffects: StoreMember<[requestId: string, sourceId: string, data: Record<string, unknown>], void> = async (brain, requestId, sourceId, data) => {
+  await storeCall({ member: 'insertRemirrorEffects', sourceId }, () => brain.insertRemirrorEffects({ requestId, sourceId, data }));
+};
+
+/** The effects of a re-mirror's request row in kind order, as its apply waits on them. */
+export const readRemirrorEffects: StoreMember<[requestId: string], RemirrorEffectState[]> = (brain, requestId) =>
+  storeCall({ member: 'readRemirrorEffects' }, () => brain.readRemirrorEffects(requestId)) as Promise<RemirrorEffectState[]>;
+
 /** Extends a claim's lease; true while request `id` is running under `token`. */
 export const renewWriteClaim: StoreMember<[renewal: ClaimRenewal, opts?: { signal?: AbortSignal }], boolean> = (brain, renewal) =>
   storeCall({ member: 'renewWriteClaim' }, () => brain.renewWriteClaim(renewal));
@@ -349,6 +362,9 @@ export const listTopologyRecoveries: StoreMember<[hostId: string, after: string 
   ((await storeCall({ member: 'listTopologyRecoveries' }, () => brain.listTopologyRecoveries(hostId, after, limit))) as unknown[]).map(row => topologyRow(row)!);
 
 /** The lifecycle receipt of (principal, request id), or null; its two timestamps as Dates, as PGLite returns them. */
+export const readTopologyChangeDigest: StoreMember<[requestId: string, sourceId: string], string | null> = async (brain, requestId, sourceId) =>
+  (await storeCall({ member: 'readTopologyChangeDigest' }, () => brain.readTopologyChangeDigest(requestId, sourceId))) as string | null;
+
 export const readTopologyChange: StoreMember<[principalId: string, requestId: string], TopologyChange | null> = async (brain, principalId, requestId) =>
   topologyRow(await storeCall({ member: 'readTopologyChange' }, () => brain.readTopologyChange(principalId, requestId)));
 
