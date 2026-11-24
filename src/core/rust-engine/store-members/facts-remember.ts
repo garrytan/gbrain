@@ -8,8 +8,8 @@
  * An id that is not a whole number refuses rather than guess at PGLite's `bigint` error, and so does a time that is not
  * an ISO instant: the callers pass ids from rows and `toISOString()` text, so the refusal is a guard, never a path they
  * take. `readReplacementTarget` under `excludePrivate` serves the remote provenance floor (`storeFloorPolicy`), and
- * `readMemberPageWithdrawal` the page policy of a member that is not the owner (`storeMemberReadPolicy`); any other
- * caller refuses.
+ * `readMemberPageWithdrawal` the page policy of the page's member (`storeMemberReadPolicy`): a member's read policy, or
+ * the brain owner's owner read with its lineage origin test; a reader that meets a folder rule refuses.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { ReplacementTargetRow, SupersessionReplacementRow } from '../../engine-sql/facts-trust.ts';
@@ -108,5 +108,5 @@ export const readReplacementTarget: Member<'readReplacementTarget'> = async (bra
 export const readMemberPageWithdrawal: Member<'readMemberPageWithdrawal'> = async (brain, q) => {
   const policy = storeMemberReadPolicy('readMemberPageWithdrawal', q);
   return storeCall({ member: 'readMemberPageWithdrawal', sourceId: q.sourceId }, () =>
-    brain.readMemberPageWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, page: q.page, policy }));
+    brain.readMemberPageWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, page: q.page, policy, owner: q.owner }));
 };

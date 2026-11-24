@@ -154,6 +154,10 @@ pub struct MemberWithdrawalArgs {
     pub entity_slug: Option<String>,
     pub page: String,
     pub policy: PrivacyPolicy,
+    /// The page's member is the enabled brain owner (`MEMBER_READABLE_OWNER`): a withdrawn row of
+    /// any visibility counts, and `policy` is the owner read (`lineage_own_page` set).
+    #[serde(default)]
+    pub owner: bool,
 }
 
 /// The facts of `ids` as a set: `id = ANY(ids)` answers a repeated id once, and an id below 1 names no row.
@@ -465,8 +469,8 @@ impl Store {
     /// `readMemberPageWithdrawal` (GST-2346): the withdrawal a save onto member page `page` meets, or `None`. A ledger row
     /// of the source and visibility under the claim's current or v1 fingerprint counts when its subject is the page, or
     /// when it is `*` or the claim's entity and withdrew a row the page's member reads: an expired row of the same
-    /// visibility and fingerprint that the withdrawal reaches, on the page itself or (world rows only) on pages the
-    /// policy lets the member read. The most specific subject comes first, then the newest.
+    /// visibility and fingerprint that the withdrawal reaches, on the page itself or (world rows only, any row for the
+    /// brain owner) on pages the policy lets the member read. The most specific subject comes first, then the newest.
     pub fn read_member_page_withdrawal(
         &self,
         args: &MemberWithdrawalArgs,
@@ -496,7 +500,7 @@ impl Store {
             if f.source_markdown_slug.as_deref() == Some(args.page.as_str()) {
                 return Ok(true);
             }
-            if f.visibility != "world" {
+            if f.visibility != "world" && !args.owner {
                 return Ok(false);
             }
             for slug in [f.source_markdown_slug.as_deref(), f.entity_slug.as_deref()]

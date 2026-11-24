@@ -128,7 +128,7 @@ getPage	pages	yes	205	yes	yes	yes	serves
 readPageSnapshot	pages	yes	61	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1091	yes	yes	yes	serves
+putPage	pages	yes	1092	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -527,9 +527,9 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	161	yes	yes	yes	serves
-insertFacts	facts	yes	222	no	yes	yes	serves
+insertFacts	facts	yes	223	no	yes	yes	serves
 deleteFactsForPage	facts	yes	3	no	yes	yes	serves
-expireFact	facts	yes	84	no	yes	yes	serves
+expireFact	facts	yes	85	no	yes	yes	serves
 listFactsByEntity	facts	yes	52	yes	yes	yes	serves
 listFactsSince	facts	yes	34	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
@@ -1404,7 +1404,7 @@ expireDerivedFacts	facts_trust	yes	1	no	yes	yes	refuses:facts
 deactivateDerivedTakes	facts_trust	yes	1	no	yes	yes	refuses:facts
 softDeleteDerivedPages	facts_trust	yes	1	no	yes	yes	refuses:facts
 markNeedsRederive	facts_trust	yes	1	no	yes	yes	refuses:facts
-readMemberPageWithdrawal	facts_trust	yes	2	no	yes	yes	serves
+readMemberPageWithdrawal	facts_trust	yes	3	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
 readReplacementTarget	facts_trust	yes	4	no	yes	yes	serves
 readPairFactRow	facts_trust	yes	7	no	yes	yes	serves
@@ -1546,7 +1546,7 @@ listEnrichCandidates	salience_enrich	yes	5	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	5	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	51	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	52	no	yes	yes	serves
 isFactWithdrawn	trust	yes	3	no	yes	yes	serves
 isFactPurged	trust	yes	5	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	2	no	yes	yes	serves

@@ -50,9 +50,10 @@ import {
   remoteProvenanceFloorSql,
   remoteReadFloorSql,
   readPolicyFragment,
+  ownerReadPolicyFragment,
 } from '../../search/private-visibility.ts';
 import type { ReflexPrivacy } from '../../engine-sql/reflex-reads.ts';
-import { MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
+import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX } from '../../access/principals.ts';
 import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../../access/owner-only.ts';
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
@@ -86,6 +87,11 @@ export interface StorePrivacyPolicy {
    * renders no live conjunct), so a prefix the store holds pending that the record does not name hides nothing.
    */
   callerRecord?: boolean;
+  /**
+   * GST-2490's owner read (`ownerReadPolicyFragment`): the owner's own member page. A derived page's origins are then
+   * judged by `gbrain_access_origin_hidden_for` for `identity` (`lineage_own_page` in privacy.rs).
+   */
+  lineageOwnPage?: string;
 }
 
 /** `OwnerOnlyForm` (access/owner-only.ts), plus 'off' for a text with no owner-only test (`OwnerOnlyForm` in owner_only.rs). */
@@ -208,8 +214,8 @@ export function storeFloorPolicy(member: string): StorePrivacyPolicy {
  * identity the fragment drops as invalid (`validIdentity`) refuses, as the store would apply it as written.
  */
 export function storeMemberReadPolicy(member: string, q: { owner: boolean; identity: readonly string[]; satisfied: readonly string[] }): StorePrivacyPolicy {
-  if (q.owner) refuseMember(member, 'the owner read of a member page (lineage access is not modelled)');
   if (q.satisfied.length > 0) refuseMember(member, 'a member page whose reader meets a folder rule');
+  if (q.owner) return storeOwnerReadPolicy(member, q.identity);
   const text = normalizeConceptInputs(readPolicyFragment('p', q.identity, true, q.satisfied));
   const open = currentCallerAccess().restricted === false;
   const reference = renderForStoreCaller(open ? { restricted: false } : {}, () => readPolicyFragment('p', q.identity, true, []));
@@ -218,6 +224,24 @@ export function storeMemberReadPolicy(member: string, q: { owner: boolean; ident
     return { ...pagePolicyFlags(reference), identity: [...q.identity], ...(open ? { open: true } : {}) };
   }
   refuseMember(member, 'a member page read whose policy is not the one the store models');
+}
+
+/**
+ * The store policy for the owner read of a member page, `ownerReadPolicyFragment('p', identity, [])`: GST-2490's owner
+ * read rule (the opt-in off, no audience members), whose origin test is the lineage one for the owner's own member page.
+ * The text is compared with the same fragment for a fresh caller record, so a caller whose record changes it (folder
+ * coverage, a setting the store does not read) refuses, as does an identity with no valid member, for which the
+ * fragment is FALSE.
+ */
+function storeOwnerReadPolicy(member: string, identity: readonly string[]): StorePrivacyPolicy {
+  const id = identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
+  if (!id || !ACCESS_ID_RE.test(id)) refuseMember(member, 'the owner read of a member page for an identity with no valid member');
+  const text = normalizeConceptInputs(ownerReadPolicyFragment('p', identity, []));
+  const reference = renderForStoreCaller({}, () => ownerReadPolicyFragment('p', identity, []));
+  if (text !== normalizeConceptInputs(reference) || !identity.every(p => text.includes(`'${p}'`))) {
+    refuseMember(member, 'an owner read of a member page whose policy is not the one the store models');
+  }
+  return { ...pagePolicyFlags(reference), identity: [...identity], lineageOwnPage: `${MEMBER_PAGE_PREFIX}${id}` };
 }
 
 /** The process-setting flags of a rendered fact policy, and its owner-only form. */

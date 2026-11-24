@@ -119,6 +119,13 @@ pub struct PrivacyPolicy {
     /// the no-caller rendering reads them.
     #[serde(default)]
     pub caller_record: bool,
+    /// GST-2490's owner read (`ownerReadPolicyFragment`, `lineageAccessSql` with the opt-in off
+    /// and no audience): the owner's own member page. Set, a derived page's origins are judged by
+    /// `gbrain_access_origin_hidden_for` for `identity` and `satisfied_rule_ids` (an origin passes
+    /// when its readers name the reader and its derived-covering rules are satisfied), not by
+    /// v305's every-caller restricted test.
+    #[serde(default)]
+    pub lineage_own_page: Option<String>,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -137,6 +144,8 @@ struct FolderAccess<'a> {
     coverage: &'a [FolderCoverage],
     /// [`PrivacyPolicy::caller_record`]: `coverage` replaces the live pending prefixes.
     record: bool,
+    /// [`PrivacyPolicy::lineage_own_page`]: the origin test is the lineage one.
+    lineage: bool,
 }
 
 impl FolderAccess<'_> {
@@ -384,6 +393,7 @@ fn member_access_allows(
         satisfied,
         coverage: &policy.folder_coverage,
         record: policy.caller_record,
+        lineage: policy.lineage_own_page.is_some(),
     };
     Ok(
         readers_allowed(read, page, identity, folders, policy.open, derived)?
@@ -682,7 +692,53 @@ fn readers_allowed(
         page.page_type.as_str(),
         "atom" | "question" | "concept" | "event"
     ) && !page.frontmatter.contains_key("derived_from");
-    Ok(plain || !origin_restricted(read, page)?)
+    if plain {
+        return Ok(true);
+    }
+    if folders.lineage {
+        return Ok(!origin_hidden_for(read, page, identity, folders.satisfied)?);
+    }
+    Ok(!origin_restricted(read, page)?)
+}
+
+/// `gbrain_access_origin_closed_for(...)` for an owner read (v305, `p_open` false, no audience
+/// pages): the origin is under a pending prefix, or its readers do not name the reader, or a
+/// rule stamped on it that covers derived pages is not satisfied.
+fn origin_closed_for(
+    read: &dyn KvRead,
+    origin: &PageRecord,
+    identity: &[String],
+    satisfied: &[String],
+) -> Result<bool> {
+    if pending_covers(read, &origin.source_id, &origin.slug)? {
+        return Ok(true);
+    }
+    let readers_ok = !names_readers(origin)
+        || access_readers(&origin.frontmatter)
+            .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)));
+    let folders = FolderAccess {
+        satisfied,
+        ..FolderAccess::default()
+    };
+    let rules_ok = folders.satisfies_all(
+        stamped_rules(read, origin)?
+            .iter()
+            .filter(|r| r.covers_derived),
+    );
+    Ok(!(readers_ok && rules_ok))
+}
+
+/// `gbrain_access_origin_hidden_for(id, source_id, type, frontmatter, identity, satisfied, false,
+/// own_page, [])`: [`origin_restricted`]'s walk with each origin judged by [`origin_closed_for`].
+fn origin_hidden_for(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    identity: &[String],
+    satisfied: &[String],
+) -> Result<bool> {
+    origin_walk(read, page, |p| {
+        origin_closed_for(read, p, identity, satisfied)
+    })
 }
 
 /// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
@@ -693,22 +749,29 @@ fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
 
 /// `gbrain_access_origin_restricted(id, source_id, type, frontmatter)`.
 fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    origin_walk(read, page, |p| origin_closed(read, p))
+}
+
+/// The origin walk v305's `gbrain_access_origin_restricted` and `gbrain_access_origin_hidden_for`
+/// share: an atom's source page, a synthesized concept's or question's inputs and their source
+/// pages, a life-chronicle event's depth page, then every declared `derived_from` page, each
+/// through its aliases and renames; true when `closed` holds for one of them.
+fn origin_walk(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    closed: impl Fn(&PageRecord) -> Result<bool>,
+) -> Result<bool> {
     let fm = &page.frontmatter;
     let source = page.source_id.as_str();
     let restricted = if page.page_type == "atom" {
-        origin_where(read, source, text(fm, "source_slug").as_deref(), |p| {
-            origin_closed(read, p)
-        })?
+        origin_where(read, source, text(fm, "source_slug").as_deref(), &closed)?
     } else if page.page_type == "question"
         || (page.page_type == "concept" && text(fm, "synthesized_by").is_some())
     {
         let mut any = false;
         for input in concept_inputs(read, page)? {
             let origin = text(&input.frontmatter, "source_slug");
-            if origin_closed(read, &input)?
-                || origin_where(read, &input.source_id, origin.as_deref(), |p| {
-                    origin_closed(read, p)
-                })?
+            if closed(&input)? || origin_where(read, &input.source_id, origin.as_deref(), &closed)?
             {
                 any = true;
                 break;
@@ -716,9 +779,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         }
         any
     } else if page.page_type == "event" && life_chronicle(page) {
-        origin_where(read, source, chronicle_depth(page).as_deref(), |p| {
-            origin_closed(read, p)
-        })?
+        origin_where(read, source, chronicle_depth(page).as_deref(), &closed)?
     } else {
         false
     };
@@ -726,7 +787,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         return Ok(true);
     }
     for slug in declared_slugs(fm).unwrap_or_default() {
-        if origin_where(read, source, Some(&slug), |p| origin_closed(read, p))? {
+        if origin_where(read, source, Some(&slug), &closed)? {
             return Ok(true);
         }
     }
@@ -902,6 +963,60 @@ mod tests {
         }
     }
 
+    fn put_with(store: &Store, slug: &str, frontmatter: Value) -> PageRecord {
+        let input = PageInput {
+            page_type: "note".into(),
+            title: slug.into(),
+            compiled_truth: "body".into(),
+            frontmatter: frontmatter.as_object().cloned(),
+            ..PageInput::default()
+        };
+        store
+            .put_page(slug, &input, &PutPageOptions::default())
+            .unwrap();
+        let read = store.read().unwrap();
+        read_page(&*read, "default", slug).unwrap().unwrap()
+    }
+
+    /// GST-2490's owner read: a derived page passes when the reader reads every origin, where
+    /// the every-caller test hides any page derived from one that names readers.
+    #[test]
+    fn the_owner_read_judges_a_derived_page_by_whether_the_reader_reads_its_origins() {
+        let store = store();
+        put_with(
+            &store,
+            "notes/alice-origin",
+            json!({ "readable_by": ["alice-example"] }),
+        );
+        put_with(
+            &store,
+            "notes/bob-origin",
+            json!({ "readable_by": ["bob-example"] }),
+        );
+        let from_alice = put_with(
+            &store,
+            "notes/from-alice",
+            json!({ "derived_from": ["notes/alice-origin"] }),
+        );
+        let from_bob = put_with(
+            &store,
+            "notes/from-bob",
+            json!({ "derived_from": "notes/bob-origin.md" }),
+        );
+        let read = store.read().unwrap();
+        let identity = ["member:alice-example".to_string()];
+        let allowed = |page: &PageRecord, lineage: bool| {
+            let folders = FolderAccess {
+                lineage,
+                ..FolderAccess::default()
+            };
+            readers_allowed(&*read, page, &identity, folders, false, false).unwrap()
+        };
+        assert!(allowed(&from_alice, true));
+        assert!(!allowed(&from_bob, true));
+        assert!(!allowed(&from_alice, false) && !allowed(&from_bob, false));
+    }
+
     #[test]
     fn folder_rules_and_pending_prefixes_hide_pages_from_every_served_caller() {
         let store = store();
@@ -956,6 +1071,7 @@ mod tests {
                     satisfied: &[],
                     coverage,
                     record: true,
+                    lineage: false,
                 },
                 false,
                 false,
@@ -1004,6 +1120,7 @@ mod tests {
             satisfied: &satisfied,
             coverage: &[],
             record: false,
+            lineage: false,
         };
         assert!(allowed(&private, named, false, false));
         assert!(
@@ -1020,12 +1137,14 @@ mod tests {
             satisfied: &satisfied,
             coverage: &coverage,
             record: false,
+            lineage: false,
         };
         assert!(!allowed(&private, covered, false, false));
         let invalid = FolderAccess {
             satisfied: &satisfied,
             coverage: &bad,
             record: false,
+            lineage: false,
         };
         assert!(!allowed(&private, invalid, false, false));
         let policy = PrivacyPolicy {
