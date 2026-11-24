@@ -64,6 +64,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate',
   // Added by the persistence byte-order lane: the parked-effect retry's read of the effect row it then requeues.
   'lockEffectRow',
+  // attest-rights-rust: the client attest read, whose `lock` form reads the row FOR UPDATE for the grant-write path.
+  'readOauthClientAttest',
 ];
 
 /**

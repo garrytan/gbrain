@@ -5456,6 +5456,17 @@
         ],
         "flagOnScopes": []
       },
+      "readAccessTokenAttest#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readAccessTokenMemberGrant#default": {
         "flagOffLanes": [
           "tx"
@@ -6599,6 +6610,28 @@
         "flagOnScopes": []
       },
       "readOAuthClientReceiptGrant#lock": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "readOauthClientAttest#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readOauthClientAttest#lock": {
         "flagOffLanes": [
           "tx"
         ],
@@ -10255,6 +10288,7 @@
         "readAccessPolicyRevisions": "none",
         "readAccessStateUnreadable": "none",
         "readAccessStoreConfig": "none",
+        "readAccessTokenAttest": "none",
         "readAccessTokenMemberGrant": "none",
         "readAccessTokenReceiptGrant": "none",
         "readAccessTokenWriteGrant": "none",
@@ -10531,6 +10565,7 @@
         "readOAuthClientWriteGrant": "none",
         "readOauthAccessTokenRows": "none",
         "readOauthClient": "none",
+        "readOauthClientAttest": "none",
         "readOauthClientColumns": "none",
         "readOauthClientForUpdate": "none",
         "readOauthCodeChallenge": "none",

@@ -1529,6 +1529,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'removeAccessGroupMembers': OOS.accessMembers, 'deleteAccessGroup': OOS.accessMembers, 'readCredentialBindingForUpdate': OOS.accessMembers,
   'writeCredentialBinding': OOS.accessMembers, 'writeCredentialReadsUnscoped': OOS.accessMembers,
   'readMayActFor': OOS.callerRawSql,
+  'readAccessTokenAttest': OOS.accessMembers, 'readOauthClientAttest': OOS.accessMembers,
   'readAudiencePrincipals': OOS.callerRawSql,
   'readJobPrincipal': OOS.callerRawSql,
   // the folder-rule policy members access/policy.ts runs (engine-sql/access-policy.ts)
@@ -2684,6 +2685,11 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('readCredentialBindingForUpdate', [
     ['token', (e) => e.transaction((tx: any) => tx.readCredentialBindingForUpdate({ kind: 'token', id: 'token-1' }, { readsUnscoped: false }))],
     ['client+readsUnscoped', (e) => e.transaction((tx: any) => tx.readCredentialBindingForUpdate({ kind: 'client', id: 'client-1' }, { readsUnscoped: true }))],
+  ]),
+  ...variants('readAccessTokenAttest', [['default', (e) => e.readAccessTokenAttest('token-1')]]),
+  ...variants('readOauthClientAttest', [
+    ['default', (e) => e.readOauthClientAttest('client-1')],
+    ['lock', (e) => e.transaction((tx: any) => tx.readOauthClientAttest('client-1', { lock: true }))],
   ]),
   ...variants('insertLocalWriterRow', [
     ['default', (e) => e.insertLocalWriterRow({ id: 'writer-1', lane: 'maintenance', credentialHash: 'hash', grant: { sourceIds: ['default'], operations: null, scopes: [], slugPrefixes: null } })],

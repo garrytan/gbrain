@@ -80,6 +80,20 @@ impl Brain {
         self.run(env, move |s| s.list_credential_member_bindings(&names))
     }
 
+    /// `readAccessTokenAttest(id)` and `readOauthClientAttest(clientId)`: the attest row of the token or client
+    /// (revoked or deleted too), or null.
+    #[napi]
+    pub fn read_credential_attest<'env>(
+        &self,
+        env: &'env Env,
+        target_kind: String,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_credential_attest(kind(target_kind)?, &id)
+        })
+    }
+
     /// `readAccessCredentials(by)`: `[{ kind, id, name }]`.
     #[napi]
     pub fn read_access_credentials<'env>(

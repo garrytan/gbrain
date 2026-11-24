@@ -211,6 +211,30 @@ impl Store {
         Ok(Value::Array(out))
     }
 
+    /// `readAccessTokenAttest(id)` and `readOauthClientAttest(clientId)`: `{ attest_actor, attest_ops, attest_sources,
+    /// attest_read, member_id }` of the token whose id text is exactly `id` with its `revoked_at`, or of the client with
+    /// this client id with `client_id`, `deleted_at`, `grant_types` and `confidential` (a secret hash is stored); a
+    /// revoked token and a deleted client are read too. None when no row has the id.
+    pub fn read_credential_attest(&self, kind: CredentialKind, id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(match kind {
+            CredentialKind::Token => load_token(&*read, id)?.map(|t| {
+                json!({
+                    "revoked_at": t.revoked_at.map(iso), "attest_actor": t.attest_actor, "attest_ops": t.attest_ops,
+                    "attest_sources": t.attest_sources, "attest_read": t.attest_read, "member_id": t.member_id,
+                })
+            }),
+            CredentialKind::Client => load_client(&*read, id)?.map(|c| {
+                json!({
+                    "client_id": c.client_id, "deleted_at": c.deleted_at.map(iso), "attest_actor": c.attest_actor,
+                    "attest_ops": c.attest_ops, "attest_sources": c.attest_sources, "attest_read": c.attest_read,
+                    "member_id": c.member_id, "grant_types": c.grant_types,
+                    "confidential": c.client_secret_hash.is_some(),
+                })
+            }),
+        })
+    }
+
     /// `readAccessCredentials(by)`: `[{ kind, id, name }]`. By token name: the tokens not revoked with exactly that
     /// name, oldest first (a tie by id). By member: the tokens not revoked bound to exactly that member, by name in
     /// byte order (a tie by id), then the clients not deleted bound to it, by client id in byte order.

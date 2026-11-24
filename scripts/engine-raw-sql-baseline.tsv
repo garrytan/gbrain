@@ -133,7 +133,6 @@ src/commands/sync/rename-collision.ts	execute_raw	2
 src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
 src/commands/trust.ts	execute_raw	1
-src/core/access/actor.ts	execute_raw	2
 src/core/access/attest-sources.ts	sql_template	7
 src/core/access/handover.ts	execute_raw	14	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
 src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
