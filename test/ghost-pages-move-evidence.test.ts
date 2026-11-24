@@ -147,4 +147,77 @@ for (const backend of testBackends()) {
     expect(entry.detail).toContain('notes/archive/alpha');
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend)));
+  test(`${backend}: ghost-pages lists moved_to a ghost whose file was copied under another name, edited there, and deleted later`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, { 'archive/renamed.md': ALPHA }, 'copy under another name');
+    await performManagedSync(engine, SYNC);
+    commit(root, { 'archive/renamed.md': `${ALPHA}\nA line added later.\n` }, 'edit the copy');
+    await performManagedSync(engine, SYNC);
+    commit(root, {}, 'remove the old copy', ['notes/alpha.md']);
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(preview.residuals).toMatchObject({ ghosts: 0, moved_to: 1 });
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'moved_to', detail: expect.stringContaining('archive/renamed') });
+  }, opts(backend)));
+
+  test(`${backend}: an approval saved before the file's copy landed is refused by the soft-delete itself`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, {}, 'remove', ['notes/alpha.md']);
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(1);
+    commit(root, { 'archive/alpha.md': ALPHA }, 'the same content lands elsewhere');
+    await raw(engine, "INSERT INTO pages (source_id, slug, type, title, compiled_truth, source_path) VALUES ('default', 'archive/alpha', 'concept', 'Alpha', 'The alpha body.', 'archive/alpha.md')");
+    const applied = await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true });
+    expect(applied).toMatchObject({ applied: 0, outcomes: { refused: 1 } });
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend)));
+
+  test(`${backend}: a same-name file Git added between the old file's add and its deletion folds when it holds every line (named_contained)`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, () => {
+      commit(root, { 'notes/other/alpha.md': `${ALPHA}\nMore written in the new place.\n` }, 'new copy with more');
+      commit(root, {}, 'remove the old copy', ['notes/alpha.md']);
+    });
+    const preview = await runner(engine, 'moved-pages');
+    expect(preview.affected).toBe(1);
+    expect((preview.details as { pairs: unknown[] }).pairs[0]).toMatchObject({ survivor: { slug: 'notes/other/alpha' }, evidence: 'named_contained' });
+    expect((await runner(engine, 'moved-pages', { expect: preview.preview_hash, yes: true })).outcomes).toEqual({ folded: 1 });
+  }, opts(backend)));
+
+  test(`${backend}: a same-name file created after the old file was deleted never folds, even holding every line`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, () => {
+      commit(root, {}, 'remove the old copy', ['notes/alpha.md']);
+      commit(root, { 'notes/other/alpha.md': `${ALPHA}\nMore written in the new place.\n` }, 'an unrelated note with that name');
+    });
+    const preview = await runner(engine, 'moved-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')!.class).toStartWith('held:');
+  }, opts(backend)));
+
+  test(`${backend}: a renamed file whose lines were reordered stays held: every line in order is the bar`, () => managedBrain(async ({ engine, root }) => {
+    const [first, second] = ['The alpha body, kept word for word through the move.', 'A second paragraph of the alpha note.'];
+    await movedAway(engine, renameEdited(root, ALPHA.replace(first, 'PLACEHOLDER').replace(second, first).replace('PLACEHOLDER', second)));
+    const preview = await runner(engine, 'moved-pages');
+    expect(preview.affected).toBe(0);
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend)));
+
+  test(`${backend}: a strict move whose old page was edited in the database folds when the moved page holds that edit`, () => managedBrain(async ({ engine, root }) => {
+    const EDIT = 'A paragraph written in the database after the import.';
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    await raw(engine, "UPDATE pages SET compiled_truth=compiled_truth || $1, knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/alpha'", [`\n\n${EDIT}`]);
+    mkdirSync(join(root, 'notes/archive'), { recursive: true });
+    git(root, 'mv', 'notes/alpha.md', 'notes/archive/alpha.md'); git(root, 'commit', '-qm', 'move');
+    commit(root, { 'notes/archive/alpha.md': `${ALPHA}\n${EDIT}\n` }, 'carry the edit');
+    await performManagedSync(engine, SYNC);
+    const ghosts = await runner(engine, 'ghost-pages');
+    expect(listed(ghosts, 'notes/alpha')).toMatchObject({ class: 'database_ahead_of_file', detail: expect.stringContaining('Move evidence: matched') });
+    const preview = await runner(engine, 'moved-pages');
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'moved_to' });
+    expect((preview.details as { pairs: unknown[] }).pairs[0]).toMatchObject({ survivor: { slug: 'notes/archive/alpha' }, evidence: 'same_commit' });
+    expect((await runner(engine, 'moved-pages', { expect: preview.preview_hash, yes: true })).outcomes).toEqual({ folded: 1 });
+    expect(await live(engine, 'notes/alpha')).toBe(false);
+  }, opts(backend)));
 }

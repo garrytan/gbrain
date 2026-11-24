@@ -19,8 +19,9 @@
  * fold would put the old page's database-only evidence under the moved page's access. A history too shallow to read the move, or one Git cannot answer, keeps the page held and says so.
  *
  * A move that changed the file is also proven when it loses nothing: the deleting commit renamed the old path (Git's rename
- * detection) or a single live page has the same file name, and that page holds every line of the old page's body and
- * timeline, its type and every frontmatter key but slug and title (`contained`). A page edited in the database after a
+ * detection) or a single live page has the same file name and was first added between the old path's add and its deletion,
+ * and that page holds every line of the old page's body and of its timeline, in order, its type, its tags and every
+ * frontmatter key but slug and title (`contained`). A page edited in the database after a
  * proven move folds the same way when the moved page holds that edit. Two old pages with the same content still never pair
  * with an older or later copy: a blob alone proves only the strict move above.
  */
@@ -90,12 +91,14 @@ function inHead(root: string, paths: string[]): Set<string> {
 }
 
 /** What makes a file in HEAD look like where a ghost's file went (GST-3623 class a). */
-export type MoveMatch = 'git_rename' | 'same_blob' | 'same_file_name';
+export type MoveMatch = 'git_rename' | 'same_blob' | 'first_blob' | 'same_file_name';
 export interface MoveCandidate { match: MoveMatch; page_id: number; slug: string; revision: string; path: string }
+/** Per ghost page id, the candidates found; `unread` names the ghosts whose history or HEAD listing Git could not read. */
+export interface MoveCandidates { found: Map<number, MoveCandidate[]>; unread: Set<number> }
 
 /** Per deleted path, the path its deleting commit renamed it to and its last committed blob (one diff-tree per commit). */
 function commitChanges(root: string, commit: string): { renames: Map<string, string>; blobs: Map<string, string> } | null {
-  const out = git(root, ['diff-tree', '-r', '-M', '--no-commit-id', '--relative', '-z', `${commit}^`, commit]);
+  const out = git(root, ['diff-tree', '-r', '-M', '-l0', '--no-commit-id', '--relative', '-z', `${commit}^`, commit]);
   if (out === null) return null;
   const fields = out.split('\0');
   const renames = new Map<string, string>(), blobs = new Map<string, string>();
@@ -113,18 +116,38 @@ function commitChanges(root: string, commit: string): { renames: Map<string, str
   return { renames, blobs };
 }
 
+/** Per blob, the paths whose first commit added that blob (one history walk), or null when Git could not read it. */
+function firstBlobPaths(root: string): Map<string, string[]> | null {
+  const out = git(root, ['log', '--no-renames', '--diff-filter=A', '--raw', '--no-abbrev', '--relative', '--format=', '-z', 'HEAD']);
+  if (out === null) return null;
+  const paths = new Map<string, string[]>();
+  const fields = out.split('\0');
+  for (let i = 0; i < fields.length - 1; i++) {
+    const meta = fields[i]!.replace(/^\n+/, '');
+    if (!meta.startsWith(':')) continue;
+    const blob = meta.split(' ')[3]!, path = fields[++i]!;
+    paths.set(blob, [...(paths.get(blob) ?? []), path]);
+  }
+  return paths;
+}
+
 /**
  * For each ghost whose file a commit deleted, the live pages whose file in HEAD looks like where it went: the path the
- * deleting commit renamed it to, a path holding its last committed blob, or a path with the same file name. Evidence, not
- * proof: `readMovedPage` decides whether a fold loses nothing. Read once per call: one diff-tree per deleting commit and one
- * HEAD listing.
+ * deleting commit renamed it to, a path holding its last committed blob or whose first commit added it, or a path with the
+ * same file name. Evidence, not proof: `readMovedPage` decides whether a fold loses nothing. Read once per call: one
+ * diff-tree per deleting commit, one history walk and one HEAD listing. A ghost whose reads failed is `unread`, never
+ * "no candidate".
  */
-export async function readMoveCandidates(engine: BrainEngine, input: { sourceId: string; root: string; ghosts: ReadonlyArray<{ page_id: number; path: string; deletion: DeletionProvenance }> }): Promise<Map<number, MoveCandidate[]>> {
-  const result = new Map<number, MoveCandidate[]>();
+export async function readMoveCandidates(engine: BrainEngine, input: { sourceId: string; root: string; ghosts: ReadonlyArray<{ page_id: number; path: string; deletion: DeletionProvenance }> }): Promise<MoveCandidates> {
+  const result: MoveCandidates = { found: new Map(), unread: new Set() };
   const deleted = input.ghosts.filter((ghost): ghost is typeof ghost & { deletion: { kind: 'deleted_by_commit'; commit: string } } => ghost.deletion.kind === 'deleted_by_commit');
   if (!deleted.length) return result;
   const listing = git(input.root, ['ls-tree', '-r', '-z', 'HEAD']);
-  if (listing === null) return result;
+  const firsts = listing === null ? null : firstBlobPaths(input.root);
+  if (listing === null || firsts === null) {
+    for (const ghost of deleted) result.unread.add(ghost.page_id);
+    return result;
+  }
   const byBlob = new Map<string, string[]>(), head = new Set<string>();
   for (const entry of listing.split('\0')) {
     const tab = entry.indexOf('\t');
@@ -136,7 +159,8 @@ export async function readMoveCandidates(engine: BrainEngine, input: { sourceId:
   const changes = new Map<string, ReturnType<typeof commitChanges>>();
   for (const commit of new Set(deleted.map(ghost => ghost.deletion.commit))) changes.set(commit, commitChanges(input.root, commit));
   const renamedTo = deleted.flatMap(ghost => { const to = changes.get(ghost.deletion.commit)?.renames.get(ghost.path); return to ? [to] : []; });
-  const blobPaths = deleted.flatMap(ghost => byBlob.get(changes.get(ghost.deletion.commit)?.blobs.get(ghost.path) ?? '') ?? []);
+  const blobOf = (ghost: typeof deleted[number]) => changes.get(ghost.deletion.commit)?.blobs.get(ghost.path) ?? '';
+  const blobPaths = deleted.flatMap(ghost => [...(byBlob.get(blobOf(ghost)) ?? []), ...(firsts.get(blobOf(ghost)) ?? [])]);
   const pages = await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
     WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL AND (regexp_replace(source_path, '^.*/', '')=ANY($2::text[]) OR source_path=ANY($3::text[]))`,
     [input.sourceId, [...new Set(deleted.map(ghost => basename(ghost.path)))], [...new Set([...renamedTo, ...blobPaths])]]);
@@ -144,28 +168,45 @@ export async function readMoveCandidates(engine: BrainEngine, input: { sourceId:
   for (const page of pages) byPath.set(page.source_path, { id: Number(page.id), slug: page.slug, revision: String(page.revision) });
   for (const ghost of deleted) {
     const change = changes.get(ghost.deletion.commit);
+    if (!change) { result.unread.add(ghost.page_id); continue; }
     const found: MoveCandidate[] = [];
     const add = (match: MoveMatch, path: string | undefined) => {
       const page = path && path !== ghost.path && head.has(path) ? byPath.get(path) : undefined;
       if (page && page.id !== ghost.page_id && !found.some(candidate => candidate.path === path)) found.push({ match, page_id: page.id, slug: page.slug, revision: page.revision, path: path! });
     };
-    add('git_rename', change?.renames.get(ghost.path));
-    for (const path of byBlob.get(change?.blobs.get(ghost.path) ?? '') ?? []) add('same_blob', path);
+    add('git_rename', change.renames.get(ghost.path));
+    for (const path of byBlob.get(blobOf(ghost)) ?? []) add('same_blob', path);
+    for (const path of firsts.get(blobOf(ghost)) ?? []) add('first_blob', path);
     for (const [path] of byPath) if (basename(path) === basename(ghost.path)) add('same_file_name', path);
-    if (found.length) result.set(ghost.page_id, found);
+    if (found.length) result.found.set(ghost.page_id, found);
   }
   return result;
 }
 
-const bodyLines = (page: { compiled_truth: string; timeline?: string | null }) =>
-  new Set(`${page.compiled_truth}\n${page.timeline ?? ''}`.split('\n').map(line => line.trimEnd()).filter(Boolean));
+const nonBlank = (text: string | null | undefined) => (text ?? '').split('\n').map(line => line.trimEnd()).filter(Boolean);
+const bodyLines = (page: { compiled_truth: string; timeline?: string | null }) => ({ truth: nonBlank(page.compiled_truth), dated: nonBlank(page.timeline) });
+/** Whether `held` holds every line of `lines` in the same order (repeated lines included). */
+function inOrder(lines: string[], held: string[]): boolean {
+  let at = 0;
+  for (const line of lines) {
+    while (at < held.length && held[at] !== line) at++;
+    if (at++ >= held.length) return false;
+  }
+  return true;
+}
 
-/** Whether `target` holds every line of `old`'s body and timeline, its type and every frontmatter key but slug and title. */
+/**
+ * Whether `target` holds every line of `old`'s body and of its timeline, each in order in the same region, its type, its
+ * tags and every frontmatter key but slug and title. A segmented page (body unread) never matches.
+ */
 async function holdsEveryLine(engine: BrainEngine, sourceId: string, oldSlug: string, targetSlug: string): Promise<boolean> {
   const [old, target] = await Promise.all([engine.readPageSnapshot(oldSlug, { sourceId }), engine.readPageSnapshot(targetSlug, { sourceId })]);
   if (!old || !target || bodyUnread(old.page) || bodyUnread(target.page) || old.page.type !== target.page.type) return false;
   const lines = bodyLines(old.page), held = bodyLines(target.page);
-  if (!lines.size || [...lines].some(line => !held.has(line))) return false;
+  if (!lines.truth.length && !lines.dated.length) return false;
+  if (!inOrder(lines.truth, held.truth) || !inOrder(lines.dated, held.dated)) return false;
+  const [oldTags, targetTags] = await Promise.all([engine.getTags(oldSlug, { sourceId }), engine.getTags(targetSlug, { sourceId })]);
+  if (oldTags.some(tag => !targetTags.includes(tag))) return false;
   const theirs = (target.page.frontmatter ?? {}) as Record<string, unknown>;
   return Object.entries((old.page.frontmatter ?? {}) as Record<string, unknown>).every(([key, value]) => key === 'slug' || key === 'title' || JSON.stringify(value) === JSON.stringify(theirs[key]));
 }
@@ -183,19 +224,31 @@ async function pairRefusal(engine: BrainEngine, old: MovedPageRef, row: { id: nu
   return null;
 }
 
+/** Whether `path` was first added after `added` (the old path's add) and no later than `commit` (its deletion). */
+function addedBetween(root: string, path: string, added: string, commit: string): boolean {
+  const at = git(root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', '-1', 'HEAD', '--', ...literalPathspecs([path])])?.trim();
+  if (!at) return false;
+  return git(root, ['merge-base', added, at])?.trim() === added && git(root, ['merge-base', at, commit])?.trim() === at;
+}
+
 /**
  * The contained move of a ghost the strict proof did not pair: the deleting commit renamed its path, or one live page has
- * its file name, and that page holds every line of it. Null keeps the strict verdict.
+ * its file name and Git first added that file between the old path's add and its deletion, and that page holds every
+ * line of it. `candidates` are the caller's `readMoveCandidates` result for this ghost when it has one (null: unread).
+ * Null keeps the strict verdict.
  */
-async function containedMove(engine: BrainEngine, input: { sourceId: string; root: string; old: MovedPageRef; deletion: DeletionProvenance & { kind: 'deleted_by_commit' }; blob: string },
+async function containedMove(engine: BrainEngine, input: { sourceId: string; root: string; old: MovedPageRef; deletion: DeletionProvenance & { kind: 'deleted_by_commit' }; blob: string; added: string; candidates?: MoveCandidate[] | null },
   held: (reason: MovedHeldReason, detail: string, candidates?: string[]) => MovedPageVerdict): Promise<MovedPageVerdict | null> {
   const { sourceId, old, deletion } = input;
-  const candidates = ((await readMoveCandidates(engine, { sourceId, root: input.root, ghosts: [{ page_id: old.page_id, path: old.path, deletion }] })).get(old.page_id) ?? [])
-    .filter(candidate => candidate.match !== 'same_blob');
+  const read = input.candidates !== undefined ? input.candidates
+    : await readMoveCandidates(engine, { sourceId, root: input.root, ghosts: [{ page_id: old.page_id, path: old.path, deletion }] }).then(all => all.unread.has(old.page_id) ? null : all.found.get(old.page_id) ?? []);
+  if (!read) return null;
+  const candidates = read.filter(candidate => candidate.match === 'git_rename' || candidate.match === 'same_file_name');
   const renamed = candidates.filter(candidate => candidate.match === 'git_rename');
   const pick = renamed.length ? renamed : candidates;
   if (pick.length !== 1) return null;
   const target = pick[0]!;
+  if (target.match === 'same_file_name' && !addedBetween(input.root, target.path, input.added, deletion.commit)) return null;
   const row = { id: target.page_id, slug: target.slug, source_path: target.path };
   if (!await holdsEveryLine(engine, sourceId, old.slug, row.slug)) return null;
   const refused = await pairRefusal(engine, old, row, held);
@@ -212,7 +265,7 @@ async function containedMove(engine: BrainEngine, input: { sourceId: string; roo
  * The verdict for one ghost page (`old`: its id, slug, revision and recorded path, relative to the source's canonical
  * root). `provenance` is the path's deletion provenance when the caller already read it (one history walk per window).
  */
-export async function readMovedPage(engine: BrainEngine, input: { sourceId: string; root: string; old: MovedPageRef; provenance?: DeletionProvenance }): Promise<MovedPageVerdict> {
+export async function readMovedPage(engine: BrainEngine, input: { sourceId: string; root: string; old: MovedPageRef; provenance?: DeletionProvenance; candidates?: MoveCandidate[] | null }): Promise<MovedPageVerdict> {
   const { sourceId, root, old } = input;
   const held = (reason: MovedHeldReason, detail: string, candidates?: string[]): MovedPageVerdict => ({ verdict: 'held', reason, detail, ...(candidates ? { candidates } : {}) });
   const deletion = input.provenance ?? (await readDeletionProvenance(root, [old.path])).get(old.path) ?? { kind: 'unknown' as const };
@@ -230,7 +283,7 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   const first = firstCommitPaths(root, blob);
   const added = git(root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', '-1', `${commit}^`, '--', ...literalPathspecs([old.path])])?.trim();
   if (same === null || first === null || !added) return held('history_unknown', `Git could not read which paths took ${old.path}'s content (blob ${short(blob)})`);
-  const contained = async (verdict: MovedPageVerdict) => await containedMove(engine, { sourceId, root, old, deletion: committed, blob }, held) ?? verdict;
+  const contained = async (verdict: MovedPageVerdict) => await containedMove(engine, { sourceId, root, old, deletion: committed, blob, added, candidates: input.candidates }, held) ?? verdict;
   const evidence = new Map<string, { evidence: MovedEvidence; commit: string }>();
   for (const [path, at] of first.first) {
     if (path === old.path || at === added) continue;

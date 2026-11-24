@@ -1993,7 +1993,7 @@ Exactly one live page may descend from that content. The file name only explains
 moved page holds every line, as above, and a matching frontmatter `id` alone never pairs two pages. Every other page whose file
 is gone is listed with why it is kept: `several_candidates`, `shared_survivor` (two or more old pages deleted with the
 same content each still back a live page and claim one moved page: the user picks which one moved, and the others are
-retired with `gbrain repair ghost-pages`; the preview then folds the one left), `segmented_versions` (the old page or one
+removed by hand with `gbrain delete <slug>`, since `gbrain repair ghost-pages` keeps a page with move evidence; the preview then folds the one left), `segmented_versions` (the old page or one
 of its saved versions is stored in segments, over 1 MiB; segmented versions name their own page's body, so this repair
 does not move them and the page stays as it is), `access_differs` (the old and the moved page differ in who may read
 them: `readable_by`, a folder rule or the privacy label; a fold would put the old page's database-only evidence under the

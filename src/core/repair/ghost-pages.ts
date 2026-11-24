@@ -180,15 +180,15 @@ export const ghostPagesRepair: RepairHandler = {
         if (backing === 'file_backed') ghosts.push(ghost); else kept.push({ ghost, code: backing });
       }
       const moves = await readGhostMoves(engine, sourceId, scan.root!, [...ghosts, ...kept.filter(entry => entry.code === DATABASE_AHEAD_CODE).map(entry => entry.ghost)], provenance);
-      const moved: Array<{ ghost: GhostPage; move: GhostMove }> = [];
+      const moved: Array<{ ghost: GhostPage; move: GhostMove; code: GhostMoveCode }> = [];
       for (const ghost of [...ghosts]) {
-        const move = moves.get(ghost.page_id);
-        if (!move || (move.verdict.verdict !== 'moved' && !move.candidates.some(candidate => candidate.match !== 'same_file_name'))) continue;
+        const move = moves.get(ghost.page_id), code = move && moveCode(move);
+        if (!move || !code) continue;
         ghosts.splice(ghosts.indexOf(ghost), 1);
-        moved.push({ ghost, move });
+        moved.push({ ghost, move, code });
       }
-      const movedTo = moved.filter(entry => entry.move.verdict.verdict === 'moved').length, unproven = moved.length - movedTo;
-      const aheadMatched = kept.filter(entry => entry.code === DATABASE_AHEAD_CODE && moves.get(entry.ghost.page_id)?.verdict.verdict === 'moved').length;
+      const movedTo = moved.filter(entry => entry.code === MOVED_TO_CODE).length, unproven = moved.length - movedTo;
+      const aheadMatched = kept.filter(entry => entry.code === DATABASE_AHEAD_CODE && moveCode(moves.get(entry.ghost.page_id)) === MOVED_TO_CODE).length;
       const aheadCount = kept.filter(entry => entry.code === DATABASE_AHEAD_CODE).length;
       const keptCount = (code: GhostKeptCode) => kept.filter(entry => entry.code === code).length;
       const keptResiduals = Object.fromEntries(GHOST_KEPT_CODES.flatMap(code => keptCount(code) ? [[GHOST_KEPT_RESIDUAL[code], keptCount(code)]] : []));
@@ -201,7 +201,7 @@ export const ghostPagesRepair: RepairHandler = {
         ...(skillPaths ? [`${skillPaths} ghost page(s) on files of the shared skillpack are listed apart (${SKILL_PACK_MEMBER_CODE}) and not applied: ${SKILL_PATH_NOTE}`] : []),
         ...(scan.unresolvable_count ? [`${scan.unresolvable_count} page(s) record a file path that names no file inside the source; they are listed apart (${UNRESOLVABLE_PATH_CODE}) and not applied: ${UNRESOLVABLE_NOTE}`] : []),
         ...(movedTo ? [`${movedTo} ghost page(s) moved to another page that holds every line of them; they are listed apart (${MOVED_TO_CODE}) and not applied: fold each into its moved page with the gbrain repair moved-pages command its line names, which previews first.`] : []),
-        ...(unproven ? [`${unproven} ghost page(s) have a file in HEAD that Git renamed them to or that holds their last committed content, but the fold is not proven to lose nothing; they are listed apart (${MOVE_UNPROVEN_CODE}) and not applied.`] : []),
+        ...(unproven ? [`${unproven} ghost page(s) have a file in HEAD that Git renamed them to, that holds or started from their last committed content, or whose move Git could not read, but no fold is proven to lose nothing; they are listed apart (${MOVE_UNPROVEN_CODE}) and not applied.`] : []),
         ...GHOST_KEPT_CODES.flatMap(code => keptCount(code) ? [`${keptCount(code)} ghost page(s) ${GHOST_KEPT_WARNING[code]}; they are listed apart (${code}) and not applied.`] : []),
         ...(aheadCount ? [`Move evidence for ${DATABASE_AHEAD_CODE}: ${aheadMatched} matched (a moved page holds every line, including the database edit), ${aheadCount - aheadMatched} unmatched.`] : []),
         ...(scan.reason === 'mirror_read_only' ? [`Source ${sourceId} is a read-only mirror: its pages publish no file, so none is a ghost.`] : []),
@@ -214,7 +214,7 @@ export const ghostPagesRepair: RepairHandler = {
           ...(scan.unresolvable_count ? { unresolvable: scan.unresolvable_count } : {}) },
         listing: [...ghosts.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: 'canonical_file_missing',
           detail: `file ${ghost.path} is missing; revision ${ghost.revision}` })),
-        ...moved.map(({ ghost, move }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: move.verdict.verdict === 'moved' ? MOVED_TO_CODE : MOVE_UNPROVEN_CODE, detail: ghostMoveDetail(ghost, move) })),
+        ...moved.map(({ ghost, move, code }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: code, detail: ghostMoveDetail(ghost, move) })),
         ...kept.map(({ ghost, code }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: code,
           detail: code === DATABASE_AHEAD_CODE ? `${ghostKeptDetail(code, ghost, scan.root)}. ${moveEvidence(ghost, moves.get(ghost.page_id))}` : ghostKeptDetail(code, ghost, scan.root) })),
         ...scan.skill_paths.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: SKILL_PACK_MEMBER_CODE,
@@ -287,34 +287,68 @@ const recreateFile = (ghost: GhostPage) => `gbrain repair file-drift --source ${
 export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with ${recreateFile(ghost)}, or keep the page as it is`;
 
 /** Why a ghost is kept, and the route that resolves it; every reader of a kept ghost prints this. */
-interface GhostMove { candidates: MoveCandidate[]; verdict: MovedPageVerdict }
+/** A ghost's move read: Git could not read where it went (`unread`), or its candidates and the moved-pages verdict; `shared` when another ghost of the same read moved to the same page. */
+type GhostMove = { unread: true } | { unread?: false; candidates: MoveCandidate[]; verdict: MovedPageVerdict; shared?: boolean };
+type GhostMoveCode = typeof MOVED_TO_CODE | typeof MOVE_UNPROVEN_CODE;
 
 export const movedPagesCommand = (ghost: GhostPage) => `gbrain repair moved-pages --source ${ghost.source_id} --slug ${ghost.slug}`;
 
-/** The move read for each ghost with a candidate file in HEAD: the candidates and the moved-pages verdict, one history walk per call. */
+/**
+ * Why a ghost is kept from soft-delete for its move, or null: `moved_to` when a proven move pairs it with a live page that
+ * holds every line of it (and no other ghost of the read claims that page), `move_unproven` when Git could not read where it
+ * went, or a file Git renamed it to, or that holds or started from its last committed content, exists without a proven fold.
+ * A same-name file alone does not keep it.
+ */
+function moveCode(move: GhostMove | undefined): GhostMoveCode | null {
+  if (!move) return null;
+  if (move.unread || move.shared) return MOVE_UNPROVEN_CODE;
+  if (move.verdict.verdict === 'moved') return MOVED_TO_CODE;
+  return move.candidates.some(candidate => candidate.match !== 'same_file_name') ? MOVE_UNPROVEN_CODE : null;
+}
+
+/** The move read for each committed-deletion ghost with a candidate or an unreadable history: one candidate read per call, then the moved-pages verdict per ghost. */
 async function readGhostMoves(engine: BrainEngine, sourceId: string, root: string, ghosts: GhostPage[], provenance: Map<string, DeletionProvenance>): Promise<Map<number, GhostMove>> {
-  const candidates = await readMoveCandidates(engine, { sourceId, root, ghosts: ghosts.map(ghost => ({ page_id: ghost.page_id, path: ghost.path, deletion: provenance.get(ghost.path) ?? { kind: 'unknown' } })) });
+  const read = await readMoveCandidates(engine, { sourceId, root, ghosts: ghosts.map(ghost => ({ page_id: ghost.page_id, path: ghost.path, deletion: provenance.get(ghost.path) ?? { kind: 'unknown' } })) });
   const moves = new Map<number, GhostMove>();
   for (const ghost of ghosts) {
-    const found = candidates.get(ghost.page_id);
-    if (!found) continue;
-    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path) });
-    moves.set(ghost.page_id, { candidates: found, verdict });
+    if (read.unread.has(ghost.page_id)) { moves.set(ghost.page_id, { unread: true }); continue; }
+    const candidates = read.found.get(ghost.page_id);
+    if (!candidates) continue;
+    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path), candidates });
+    moves.set(ghost.page_id, { candidates, verdict });
+  }
+  const survivors = [...moves.values()].flatMap(move => !move.unread && move.verdict.verdict === 'moved' ? [move.verdict.survivor.page_id] : []);
+  for (const move of moves.values()) {
+    if (!move.unread && move.verdict.verdict === 'moved' && survivors.filter(id => id === (move.verdict as { survivor: { page_id: number } }).survivor.page_id).length > 1) move.shared = true;
   }
   return moves;
 }
 
-const candidateList = (move: GhostMove) => move.candidates.map(candidate => `${candidate.slug} (${candidate.path}, ${candidate.match})`).join(', ');
+/** Whether the ghost's move keeps it from soft-delete now: the apply's own check, so an approval saved before a move (or before this check) cannot remove it. */
+async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<RepairItemOutcome | null> {
+  const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
+  if (!binding?.local_path) return null;
+  const root = join(binding.local_path, binding.relative_path);
+  const move = (await readGhostMoves(engine, ghost.source_id, root, [ghost], await readDeletionProvenance(root, [ghost.path]))).get(ghost.page_id);
+  const code = moveCode(move);
+  return code ? { applied: false, outcome: 'refused', reason: code, detail: { message: ghostMoveDetail(ghost, move!) } } : null;
+}
+
+const candidateList = (move: { candidates: MoveCandidate[] }) => move.candidates.map(candidate => `${candidate.slug} (${candidate.path}, ${candidate.match})`).join(', ');
 
 function ghostMoveDetail(ghost: GhostPage, move: GhostMove): string {
+  if (move.unread) return `file ${ghost.path} is gone, and Git could not read whether it moved (the HEAD listing or the history read failed); not soft-deleted. Preview again, or decide with the user`;
+  if (move.verdict.verdict === 'moved' && move.shared) return `file ${ghost.path} is gone and page ${ghost.slug} ${move.verdict.detail}, but another ghost moved to ${move.verdict.survivor.slug} too (shared_survivor), so which one moved is a person's decision; not soft-deleted`;
   if (move.verdict.verdict === 'moved') return `file ${ghost.path} is gone and page ${ghost.slug} ${move.verdict.detail}; not soft-deleted. Fold it into ${move.verdict.survivor.slug}, preview first: ${movedPagesCommand(ghost)}`;
   return `file ${ghost.path} is gone, and ${candidateList(move)} looks like where it went, but the fold is held (${move.verdict.reason}: ${move.verdict.detail}); not soft-deleted. Decide with the user`;
 }
 
 /** Move evidence for a database_ahead_of_file ghost: matched when a moved page holds every line of it, edit included. */
 function moveEvidence(ghost: GhostPage, move: GhostMove | undefined): string {
-  if (move?.verdict.verdict === 'moved') return `Move evidence: matched; page ${ghost.slug} ${move.verdict.detail}. Fold it, preview first: ${movedPagesCommand(ghost)}`;
-  return move ? `Move evidence: unmatched; ${candidateList(move)} looks like where it went, but ${move.verdict.verdict === 'held' ? move.verdict.detail : 'no fold is proven'}` : 'Move evidence: unmatched; no file in HEAD looks like where it went';
+  if (!move) return 'Move evidence: unmatched; no file in HEAD looks like where it went';
+  if (move.unread) return 'Move evidence: unmatched; Git could not read whether it moved';
+  if (moveCode(move) === MOVED_TO_CODE && move.verdict.verdict === 'moved') return `Move evidence: matched; page ${ghost.slug} ${move.verdict.detail}. Fold it, preview first: ${movedPagesCommand(ghost)}`;
+  return `Move evidence: unmatched; ${candidateList(move)} looks like where it went, but ${move.verdict.verdict === 'held' ? move.verdict.detail : `another ghost moved to ${move.verdict.survivor.slug} too`}`;
 }
 
 export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: string): string {
@@ -379,7 +413,7 @@ async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: Ghost
   if (now.ghost.revision !== ghost.revision || now.ghost.page_id !== ghost.page_id || now.ghost.path !== ghost.path) return changed('the page or its recorded canonical path changed since the preview');
   const backing = await ghostBacking(engine, ghost, owner);
   if (backing !== 'file_backed') return { applied: false, outcome: 'refused', reason: backing, detail: { message: ghostKeptDetail(backing, ghost) } };
-  return null;
+  return await ghostMoveVeto(engine, ghost, owner);
 }
 
 /** Soft-deletes one approved ghost; a managed brain submits it under `requestId()` (also `gbrain repair file-drift --prefer file` on a page whose file is gone, #6712 wave). */
