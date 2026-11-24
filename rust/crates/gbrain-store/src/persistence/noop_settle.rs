@@ -2,18 +2,22 @@
 //! rust/docs/store/persistence.md, "No-op embedding settle"): the four statements that settle, in
 //! bulk, queued page embedding effects whose chunks already carry current vectors.
 //!
-//! Every worktree on this engine is null (no worktree binding exists here), so the candidate
-//! read's worktree terms admit only an effect without one, and its recovery terms on a worktree
-//! find no row. The store runs one write at a time, so the window's `FOR UPDATE SKIP LOCKED` and
+//! The candidate read admits an effect with no worktree, or one on a worktree this host owns
+//! (`worktree_rows.rs`) whose refresh fence is clear and that no effect or write recovers
+//! (`write_claim_terms.rs`, `effect_claimable_on_worktree`). The store runs one write at a time, so the window's `FOR UPDATE SKIP LOCKED` and
 //! the candidates' `FOR SHARE OF p` have nothing to skip or wait for.
 
+use super::all_requests;
 use super::effect_worker::{effect_id, pg_uuid, without};
 use super::effects::{all_effects, effect_by_id, max_effect_id, write_effect};
+use super::worktree_admission::{RefreshRecord, all_refreshes};
+use super::write_claim_terms::effect_claimable_on_worktree;
 use crate::Store;
 use crate::chunks::read_chunks;
 use crate::embeddings::{read_signature, text_hash};
 use crate::env::Env;
 use crate::error::{Result, StoreError};
+use crate::journal::RequestRecord;
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::read_page_by_id;
 use serde::Deserialize;
@@ -39,7 +43,7 @@ pub struct NoopSettleCandidateSpec {
 
 /// `(e.data->>'page_id')::int`: null when absent or JSON null; a number or string the integer
 /// cast accepts; anything else refuses as the cast does.
-fn page_id_of(data: &Value) -> Result<Option<i64>> {
+pub(super) fn page_id_of(data: &Value) -> Result<Option<i64>> {
     let text = match data.get("page_id") {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(s)) => s.clone(),
@@ -116,7 +120,7 @@ pub(crate) fn read_noop_embedding_candidates_in(
     env: &dyn Env,
     spec: &NoopSettleCandidateSpec,
 ) -> Result<Vec<Value>> {
-    pg_uuid(&spec.host_id)?;
+    let host = pg_uuid(&spec.host_id)?;
     let window = spec
         .window
         .iter()
@@ -125,6 +129,7 @@ pub(crate) fn read_noop_embedding_candidates_in(
     let pages: HashSet<i64> = spec.page_ids.iter().copied().collect();
     let now = env.now_micros();
     let effects = all_effects(read)?;
+    let mut terms: Option<(Vec<RequestRecord>, Vec<RefreshRecord>)> = None;
     let mut out = Vec::new();
     for e in effects.iter().filter(|e| window.contains(&e.id)) {
         let Some(page_id) = page_id_of(&e.data)? else {
@@ -133,9 +138,17 @@ pub(crate) fn read_noop_embedding_candidates_in(
         if !pages.contains(&page_id)
             || e.next_attempt_at_us > now
             || NOT_PLAIN.iter().any(|k| e.data.get(*k).is_some())
-            || e.worktree_id.is_some()
         {
             continue;
+        }
+        if let Some(w) = e.worktree_id.as_deref().map(str::to_lowercase) {
+            let (requests, refreshes) = match &terms {
+                Some(t) => t,
+                None => terms.insert((all_requests(read)?, all_refreshes(read)?)),
+            };
+            if !effect_claimable_on_worktree(read, &w, &host, &effects, requests, refreshes)? {
+                continue;
+            }
         }
         if effects.iter().any(|m| {
             m.request_id == e.request_id && m.kind == "withdrawal-mirror" && m.state != "committed"

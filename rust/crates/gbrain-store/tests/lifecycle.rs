@@ -385,7 +385,7 @@ fn a_format_1_brain_is_upgraded_on_open_and_keeps_its_counts() {
 fn an_older_build_refuses_a_brain_in_the_new_format() {
     // What an older build does with this build's brains: `check_version` refuses any version it
     // does not list. This build lists 1 to 4; the oldest one is 1.
-    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5]);
+    assert_eq!(gbrain_store::FORMAT_VERSIONS, &[1, 2, 3, 4, 5, 6, 7]);
     assert_eq!(gbrain_store::FORMAT_VERSIONS.first(), Some(&1));
     assert_eq!(gbrain_store::FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
 }
@@ -780,9 +780,9 @@ fn a_format_4_brain_upgrades_to_format_5_and_keeps_its_takes_and_its_keyword_ind
     stamp_format(&brain, 4);
 
     let store = open_without_builder(&dir);
-    assert_eq!(store.info().format_version, 5);
-    assert_eq!(FORMAT_VERSION, 5, "take trust tiers are store format 5");
-    // 4 to 5 rewrites nothing: the keyword index stays complete, with no rebuild to wait for.
+    assert_eq!(store.info().format_version, FORMAT_VERSION);
+    const { assert!(FORMAT_VERSION >= 5, "take trust tiers are store format 5") };
+    // 4 to 5 (and 5 to 6, on a brain with no v0.60.766.0 shadow records) rewrites nothing: the keyword index stays complete, with no rebuild to wait for.
     let state = store.keyword_index_state().unwrap().unwrap();
     assert!(state.complete, "{state:?}");
     assert_eq!(keyword_answers(&store), answers);
@@ -800,5 +800,5 @@ fn a_format_4_brain_upgrades_to_format_5_and_keeps_its_takes_and_its_keyword_ind
     store.close();
     let file: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(brain.join("FORMAT")).unwrap()).unwrap();
-    assert_eq!(file["format_version"], 5);
+    assert_eq!(file["format_version"], FORMAT_VERSION);
 }

@@ -1,5 +1,5 @@
 //! Raw data and files: `putRawData`, `getRawData`, `upsertFile`, `getFile` and
-//! `listFilesForPage`, matched to the PGLite engine.
+//! `listFilesForPage` and `listFiles`, matched to the PGLite engine.
 
 mod common;
 
@@ -374,6 +374,63 @@ fn files_list_by_page_oldest_first_and_move_with_page_id() {
     let row = store.get_file("default", "a/a.png").unwrap().unwrap();
     assert_eq!(row["page_id"], Value::Null);
     assert!(store.list_files_for_page(&json!(bob)).unwrap().is_empty());
+}
+
+#[test]
+fn list_files_orders_by_slug_then_filename_and_filters_one_slug() {
+    let dir = TempDir::new("file-list-all");
+    let store = open(&dir);
+    add_source(&store, "other");
+    for (source, slug, name) in [
+        ("default", Some("people/bob"), "b.png"),
+        ("other", Some("people/alice"), "z.png"),
+        ("default", None, "loose.png"),
+        ("default", Some("people/alice"), "a.png"),
+    ] {
+        let mut file = json!({
+            "source_id": source, "filename": name, "storage_path": format!("{source}/{name}"),
+            "content_hash": "h", "metadata": "{}",
+        });
+        if let Some(slug) = slug {
+            file["page_slug"] = json!(slug);
+        }
+        store.upsert_file(&spec(file)).unwrap();
+    }
+    let paths = |slug: Option<&str>, limit: i64| -> Vec<String> {
+        store
+            .list_files(slug, &json!(limit))
+            .unwrap()
+            .iter()
+            .map(|f| f["storage_path"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // Every source, files with no slug last.
+    assert_eq!(
+        paths(None, 100),
+        vec![
+            "default/a.png",
+            "other/z.png",
+            "default/b.png",
+            "default/loose.png"
+        ]
+    );
+    assert_eq!(paths(None, 2), vec!["default/a.png", "other/z.png"]);
+    assert_eq!(
+        paths(Some("people/alice"), 100),
+        vec!["default/a.png", "other/z.png"]
+    );
+    assert!(paths(Some("people/nobody"), 100).is_empty());
+    assert!(paths(None, 0).is_empty());
+    for bad in [json!(-1), json!(1.5)] {
+        assert_eq!(
+            store.list_files(None, &bad).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
+    assert_eq!(
+        store.list_files(Some("a\0b"), &json!(1)).unwrap_err().code,
+        INVALID_ARGUMENT
+    );
 }
 
 #[test]
