@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { connectTemplateBrain } from './helpers/brain-template.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import { runDedupe } from '../src/commands/dedupe.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { classifyPairs, samplePairs, type ClassifiedPair } from '../src/core/entities/evidence/classes.ts';
@@ -256,14 +257,19 @@ describe('gbrain dedupe classes --exa', () => {
     } finally { fetchSpy.mockRestore(); }
   });
 
-  test('live: an HTTP error or a failed request stops the run cleanly; a dearer reported cost tightens the total cap', async () => {
+  test('live: an HTTP error, a failed request or a held lock stops the run cleanly; a failed request counts as spent; reported cost tightens the cap and never lowers the total', async () => {
     await person('people/yara-example', 'Yara Example', { company: 'Acme Example' });
     await person('people/yara-example', 'Yara Example', { company: 'Beta Example' }, 'people-b');
     const live = (f: typeof fetch, s: ExaSettings = settings()) => classifyPairs(engine, { exa: { mode: 'live', settings: s, apiKey: 'test-key', fetch: f } });
     const failed = await live((async () => new Response('busy', { status: 503 })) as unknown as typeof fetch);
     expect(failed.report.exa).toMatchObject({ sent: 0, unsent: 2, stopped: 'http_503' });
     const thrown = await live((async () => { throw new Error('socket hang up'); }) as unknown as typeof fetch);
-    expect(thrown.report.exa).toMatchObject({ sent: 0, unsent: 2, stopped: 'network' });
+    expect(thrown.report.exa).toMatchObject({ sent: 1, unsent: 1, stopped: 'network', cost_usd: 0.004 });
+    const held = await tryAcquireDbLock(engine, 'dedupe-exa', 5);
+    try {
+      const busy = await live((async () => { throw new Error('no request while another run holds the lock'); }) as unknown as typeof fetch);
+      expect(busy.report.exa).toMatchObject({ sent: 0, unsent: 2, stopped: 'busy' });
+    } finally { await held!.release(); }
     expect((await engine.listConfigKeys(EXA_CACHE_PREFIX)).length).toBe(4);
     const before = Number(await engine.getConfig(EXA_SPENT_KEY));
     const dear = (async (_url: string, init: RequestInit) => new Response(JSON.stringify({
@@ -271,6 +277,24 @@ describe('gbrain dedupe classes --exa', () => {
     const capped = await live(dear, settings({ spentUsd: before, totalCapUsd: before + 0.015 }));
     expect(capped.report.exa).toMatchObject({ sent: 1, unsent: 1, stopped: 'total_cap' });
     expect(Number(await engine.getConfig(EXA_SPENT_KEY))).toBeCloseTo(before + 0.01, 6);
+    const negative = (async (_url: string, init: RequestInit) => new Response(JSON.stringify({
+      results: [{ title: (JSON.parse(String(init.body)) as { query: string }).query, url: 'https://linkedin.com/in/yara-2' }], costDollars: { total: -5 } }), { status: 200 })) as unknown as typeof fetch;
+    const after = Number(await engine.getConfig(EXA_SPENT_KEY));
+    expect((await live(negative)).report.exa).toMatchObject({ sent: 1, cost_usd: 0.004 });
+    expect(Number(await engine.getConfig(EXA_SPENT_KEY))).toBeCloseTo(after + 0.004, 6);
+
+    await person('people/zoe-example', 'Zoe Example', { company: 'Acme Example' });
+    await person('people/zoe-example', 'Zoe Example', { company: 'Beta Example' }, 'people-b');
+    const sentQueries: string[] = [];
+    const flips = (async (_url: string, init: RequestInit) => {
+      const { query } = JSON.parse(String(init.body)) as { query: string };
+      sentQueries.push(query);
+      await person('people/zoe-example', 'Zoe Example', { company: 'Beta Example', confidentiality: 'secret' }, 'people-b');
+      return new Response(JSON.stringify({ results: [{ title: query, url: 'https://linkedin.com/in/zoe' }], costDollars: { total: 0.004 } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const changed = await live(flips);
+    expect(sentQueries).toEqual(['Zoe Example Acme Example']);
+    expect(changed.report.exa).toMatchObject({ sent: 1, withdrawn: 1, unsent: 0 });
   });
 });
 

@@ -4,13 +4,15 @@
  *
  * What leaves the machine: one query per page, exactly "<name> <company or job title>", sent to Exa's Lite search in its
  * people category (top result only, no page contents). Never an email address, a phone number, page text or anything
- * about the owner. A page that is private or restricted (visibility other than world, readable_by), labelled family,
- * about a minor, named with digits or an address, named with one word, or with no company or title gets no query.
+ * about the owner. A page not every reader may read (people.ts markRestricted), labelled family, about a minor, named
+ * with digits or an address, named with one word, or with no company or title gets no query.
  *
  * Every answer is cached in the brain's config under `dedupe.exa_cache.<query hash>`, so a query is never paid for
- * twice. A run stops cleanly at the per-run cap (`dedupe.exa_run_cap`, 2,000 queries) or when the next query would
- * pass the total cap (`dedupe.exa_total_cap_usd`, $25; the total spent is `dedupe.exa_spent_usd`). A dry run reads
- * the cache, counts the queries a live run would send and their cost, and makes no call.
+ * twice. A run stops cleanly at the per-run cap (`dedupe.exa_run_cap`, 2,000 queries) or when the next query, at the
+ * dearest price seen this run, would pass the total cap (`dedupe.exa_total_cap_usd`, $25; the total spent is
+ * `dedupe.exa_spent_usd`), so the first query of a run can pass it by at most its own price. A request that fails after
+ * it was sent counts as spent. One live run at a time: a second one finds the lock held and sends nothing. A dry run
+ * reads the cache, counts the queries a live run would send and their cost, and makes no call.
  *
  * A top result counts only when its title carries every word of the name and a word of the clue; its URL is the
  * profile. For a pair: X1 both pages, searched with different queries, resolve to the same profile; X2 they resolve
@@ -19,6 +21,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
 import type { PersonPage } from './people.ts';
+import { tryAcquireDbLock } from '../../db-lock.ts';
 
 export const EXA_SEARCH_URL = 'https://api.exa.ai/search';
 /** Exa's Lite search: $4 per 1,000 requests with up to 10 results (exa.ai/pricing, read 2026-11-23). */
@@ -32,6 +35,8 @@ export const EXA_CACHE_PREFIX = 'dedupe.exa_cache.';
 export const DEFAULT_EXA_RUN_CAP = 2000;
 export const DEFAULT_EXA_TOTAL_CAP_USD = 25;
 const TIMEOUT_MS = 20_000;
+const LIVE_LOCK_ID = 'dedupe-exa';
+const LIVE_LOCK_TTL_MINUTES = 30;
 const MAX_CLUE_CHARS = 80;
 
 export type ExaBlock = 'private' | 'family' | 'minor' | 'no_name' | 'no_clue';
@@ -47,6 +52,8 @@ export interface ExaReport {
   sent: number;
   /** Queries left unsent because a cap stopped the run. */
   unsent: number;
+  /** Live: queries dropped at send time because a page changed since the scan (made private, renamed, relabelled). */
+  withdrawn?: number;
   /** Paid in this run (live), or what a live run would pay (dry run), in USD. */
   cost_usd: number;
   /** What every uncached query would cost with no caps, in USD. */
@@ -54,7 +61,7 @@ export interface ExaReport {
   spent_total_usd: number;
   run_cap: number;
   total_cap_usd: number;
-  stopped?: 'run_cap' | 'total_cap' | string;
+  stopped?: 'run_cap' | 'total_cap' | 'busy' | 'network' | string;
   /** Pages kept away from the search, by reason. */
   blocked: Partial<Record<ExaBlock, number>>;
 }
@@ -105,8 +112,8 @@ interface Cached { url: string | null }
  * Resolve each query to a profile URL (null when the top result does not count), from the cache, then, in a live run,
  * from Exa within both caps. Returns the answers it has, cached ones included.
  */
-export async function resolveExa(engine: Pick<BrainEngine, 'getConfig' | 'setConfig'>, queries: ExaQuery[], blocked: ExaReport['blocked'],
-  opts: { mode: ExaMode; settings: ExaSettings; apiKey?: string; fetch?: typeof fetch }): Promise<{ hits: Map<string, string | null>; report: ExaReport }> {
+export async function resolveExa(engine: BrainEngine, queries: ExaQuery[], blocked: ExaReport['blocked'],
+  opts: { mode: ExaMode; settings: ExaSettings; apiKey?: string; fetch?: typeof fetch; recheck?: (query: string) => Promise<boolean> }): Promise<{ hits: Map<string, string | null>; report: ExaReport }> {
   const unique = [...new Map(queries.map(q => [q.query, q])).values()].sort((x, y) => (x.query < y.query ? -1 : x.query > y.query ? 1 : 0));
   const hits = new Map<string, string | null>();
   const todo: ExaQuery[] = [];
@@ -120,40 +127,52 @@ export async function resolveExa(engine: Pick<BrainEngine, 'getConfig' | 'setCon
     uncapped_cost_usd: round(todo.length * EXA_COST_PER_QUERY_USD), spent_total_usd: round(settings.spentUsd), run_cap: settings.runCap,
     total_cap_usd: settings.totalCapUsd, blocked };
   const live = opts.mode === 'live';
+  const lock = live && todo.length ? await tryAcquireDbLock(engine, LIVE_LOCK_ID, LIVE_LOCK_TTL_MINUTES) : null;
+  if (live && todo.length && !lock) report.stopped = 'busy';
   let spent = settings.spentUsd;
   let perQuery = EXA_COST_PER_QUERY_USD;
-  for (const q of todo) {
-    if (report.sent >= settings.runCap) { report.stopped = 'run_cap'; break; }
-    if (live) spent = num(await engine.getConfig(EXA_SPENT_KEY), 0);
-    if (spent + perQuery > settings.totalCapUsd + 1e-9) { report.stopped = 'total_cap'; break; }
-    if (!live) { report.sent++; spent += EXA_COST_PER_QUERY_USD; report.cost_usd += EXA_COST_PER_QUERY_USD; continue; }
-    let res: Response;
-    let body: { results?: Array<{ title?: unknown; url?: unknown }>; costDollars?: { total?: unknown } };
-    try {
-      res = await (opts.fetch ?? fetch)(EXA_SEARCH_URL, {
-        method: 'POST',
-        headers: { 'x-api-key': opts.apiKey ?? '', 'content-type': 'application/json' },
-        body: JSON.stringify({ query: q.query, type: EXA_SEARCH_TYPE, category: 'people', numResults: 1 }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-      if (!res.ok) { report.stopped = `http_${res.status}`; break; }
-      body = await res.json() as typeof body;
-    } catch {
-      report.stopped = 'network';
-      break;
-    }
-    const cost = typeof body.costDollars?.total === 'number' ? body.costDollars.total : EXA_COST_PER_QUERY_USD;
-    perQuery = Math.max(perQuery, cost);
+  const charge = async (cost: number) => {
     spent = num(await engine.getConfig(EXA_SPENT_KEY), 0) + cost;
     report.cost_usd += cost;
     report.sent++;
     await engine.setConfig(EXA_SPENT_KEY, String(round(spent)));
-    const top = body.results?.[0];
-    const url = top && typeof top.url === 'string' && typeof top.title === 'string' && resultMatches(q, top.title) ? profileUrl(top.url) : null;
-    await engine.setConfig(exaCacheKey(q.query), JSON.stringify({ url } satisfies Cached));
-    hits.set(q.query, url);
+  };
+  try {
+    for (const q of report.stopped ? [] : todo) {
+      if (report.sent >= settings.runCap) { report.stopped = 'run_cap'; break; }
+      if (live) spent = num(await engine.getConfig(EXA_SPENT_KEY), 0);
+      if (spent + perQuery > settings.totalCapUsd + 1e-9) { report.stopped = 'total_cap'; break; }
+      if (!live) { report.sent++; spent += EXA_COST_PER_QUERY_USD; report.cost_usd += EXA_COST_PER_QUERY_USD; continue; }
+      await lock!.refresh();
+      if (opts.recheck && !(await opts.recheck(q.query))) { report.withdrawn = (report.withdrawn ?? 0) + 1; continue; }
+      let body: { results?: Array<{ title?: unknown; url?: unknown }>; costDollars?: { total?: unknown } };
+      try {
+        const res = await (opts.fetch ?? fetch)(EXA_SEARCH_URL, {
+          method: 'POST',
+          headers: { 'x-api-key': opts.apiKey ?? '', 'content-type': 'application/json' },
+          body: JSON.stringify({ query: q.query, type: EXA_SEARCH_TYPE, category: 'people', numResults: 1 }),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        if (!res.ok) { report.stopped = `http_${res.status}`; break; }
+        body = await res.json() as typeof body;
+      } catch {
+        await charge(perQuery);
+        report.stopped = 'network';
+        break;
+      }
+      const reported = body.costDollars?.total;
+      const cost = typeof reported === 'number' && Number.isFinite(reported) && reported >= 0 ? reported : EXA_COST_PER_QUERY_USD;
+      perQuery = Math.max(perQuery, cost);
+      await charge(cost);
+      const top = body.results?.[0];
+      const url = top && typeof top.url === 'string' && typeof top.title === 'string' && resultMatches(q, top.title) ? profileUrl(top.url) : null;
+      await engine.setConfig(exaCacheKey(q.query), JSON.stringify({ url } satisfies Cached));
+      hits.set(q.query, url);
+    }
+  } finally {
+    await lock?.release();
   }
-  report.unsent = todo.length - report.sent;
+  report.unsent = todo.length - report.sent - (report.withdrawn ?? 0);
   report.cost_usd = round(report.cost_usd);
   report.spent_total_usd = round(opts.mode === 'live' ? spent : settings.spentUsd);
   return { hits, report };

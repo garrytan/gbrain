@@ -9,7 +9,7 @@
  * base is C2 or C5, with no contradiction and no private, family or minor page, get one query per page (exa.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
-import { scanPeople, pageKey, type BaseClass, type CandidatePair, type PersonPage } from './people.ts';
+import { markRestricted, scanPeople, stillSendsQuery, pageKey, type BaseClass, type CandidatePair, type PersonPage } from './people.ts';
 import { emailSignals, readEmailIndex } from './email.ts';
 import { messagingSignals, readMessagingIndex } from './messaging.ts';
 import { exaQueryFor, resolveExa, type ExaMode, type ExaQuery, type ExaReport, type ExaSettings } from './exa.ts';
@@ -84,10 +84,12 @@ export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions =
 
   let exa: ClassesReport['exa'] = { mode: 'off' };
   if (opts.exa) {
+    await markRestricted(engine, scan.people.values());
     const queries: ExaQuery[] = [];
     const blocked: ExaReport['blocked'] = {};
     const blockedPages = new Set<string>();
     const asked = new Map<string, [ExaQuery, ExaQuery]>();
+    const pagesOf = new Map<string, PersonPage[]>();
     for (const { pair, signals } of local.values()) {
       if (pair.base !== 'C2' && pair.base !== 'C5') continue;
       if (combine(evidenceOf(pair, signals)).verdict !== 'wait' || signals.has('Mx')) continue;
@@ -100,9 +102,13 @@ export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions =
       if ('blocked' in qa || 'blocked' in qb) continue;
       if (qa.query === qb.query) { signals.add('X0'); continue; }
       queries.push(qa, qb);
+      for (const [q, p] of [[qa, pair.a], [qb, pair.b]] as const) pagesOf.set(q.query, [...pagesOf.get(q.query) ?? [], p]);
       asked.set(pair.id, [qa, qb]);
     }
-    const resolved = await resolveExa(engine, queries, blocked, opts.exa);
+    const resolved = await resolveExa(engine, queries, blocked, { ...opts.exa, recheck: async (query) => {
+      for (const p of pagesOf.get(query) ?? []) if (!(await stillSendsQuery(engine, p, query))) return false;
+      return true;
+    } });
     exa = resolved.report;
     for (const [id, [qa, qb]] of asked) {
       const [ua, ub] = [resolved.hits.get(qa.query), resolved.hits.get(qb.query)];

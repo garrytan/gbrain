@@ -596,7 +596,7 @@ function classesText(r: ClassesReport): string {
     const blocked = Object.entries(x.blocked).map(([k, v]) => `${v} ${k}`).join(', ');
     lines.push(x.mode === 'dry_run'
       ? `  web search dry run: ${x.queries} distinct quer(ies), ${x.cached} cached; a run would send ${x.sent} for $${x.cost_usd.toFixed(2)}${x.unsent ? ` and stop at the ${x.stopped === 'run_cap' ? `per-run cap (${x.run_cap})` : `total cap ($${x.total_cap_usd})`} with ${x.unsent} left` : ''}; all of them would cost $${x.uncapped_cost_usd.toFixed(2)}; spent so far $${x.spent_total_usd.toFixed(2)}`
-      : `  web search: sent ${x.sent} quer(ies) for $${x.cost_usd.toFixed(2)}, ${x.cached} cached${x.stopped ? `, stopped (${x.stopped}) with ${x.unsent} left` : ''}; spent so far $${x.spent_total_usd.toFixed(2)} of $${x.total_cap_usd}`);
+      : `  web search: sent ${x.sent} quer(ies) for $${x.cost_usd.toFixed(2)}, ${x.cached} cached${x.withdrawn ? `, ${x.withdrawn} dropped because a page changed since the scan` : ''}${x.stopped ? `, stopped (${x.stopped}) with ${x.unsent} left` : ''}; spent so far $${x.spent_total_usd.toFixed(2)} of $${x.total_cap_usd}`);
     if (blocked) lines.push(`  kept away from web search: ${blocked} page(s)`);
   }
   return lines.join('\n');

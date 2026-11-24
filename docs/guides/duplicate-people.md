@@ -63,8 +63,11 @@ gbrain dedupe classes --exa             # searches, within the caps
 ```
 
 Each search costs $0.004 (Exa's Lite search). Every answer is kept in the brain, so the same search is never paid for
-twice. A run stops at `dedupe.exa_run_cap` searches (default 2,000) or before passing `dedupe.exa_total_cap_usd` in
-total (default $25); `dedupe.exa_spent_usd` holds what has been spent.
+twice. A run stops at `dedupe.exa_run_cap` searches (default 2,000) or when the next search could pass
+`dedupe.exa_total_cap_usd` in total (default $25), priced at the dearest search seen so far in the run, so one search
+can go over by at most its own price; `dedupe.exa_spent_usd` holds what has been spent, and a search that failed after
+it was sent counts as spent. Only one live run goes at a time: a second one sends nothing and reports `busy`. Each page
+is read again just before its search goes out, so a page made private or renamed during a run is dropped, not sent.
 
 ## Sampling a class
 

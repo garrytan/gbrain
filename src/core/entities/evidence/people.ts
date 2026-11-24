@@ -24,6 +24,7 @@ import { namesAgree } from '../name-variants.ts';
 import { decidedSets } from '../identity-decisions.ts';
 import { withEngineScope } from '../../engine-scope.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
+import { exaQueryFor } from './exa.ts';
 import { identityEmailKey } from '../../ops/whois.ts';
 import { canonicalPhone, parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../../phone-key.ts';
 
@@ -125,28 +126,44 @@ function toPerson(row: { source_id: string; slug: string; page_id: number; title
     sensitive: sensitivityOf(k), restricted: visibility !== 'world' || strings(k.readable_by).length > 0, entity_id: row.identity?.entity_id ?? null };
 }
 
-/**
- * Every live person page, keyed by pageKey. A page is restricted when its frontmatter names readers or a non-world
- * visibility, when the shared private-page rule says not every reader may read it (privacy labels, folder rules, private
- * lineage), or when its source is owner-only.
- */
+/** Every live person page, keyed by pageKey; `restricted` holds only the frontmatter rule until markRestricted runs. */
 export async function readPeople(engine: BrainEngine, countryCode: string): Promise<Map<string, PersonPage>> {
   const types = await personPageTypes(engine);
   const out = new Map<string, PersonPage>();
   for (let after: { source_id: string; slug: string } | undefined; ;) {
     const rows = await engine.listEntityKeyRows({ types, keys: PERSON_KEYS, limit: PAGE, ...(after ? { after } : {}) });
     for (const row of rows) out.set(pageKey(row), toPerson(row, countryCode));
-    if (rows.length < PAGE) break;
+    if (rows.length < PAGE) return out;
     after = { source_id: rows.at(-1)!.source_id, slug: rows.at(-1)!.slug };
   }
+}
+
+/** Reads the page again at send time: true while it would still send exactly this query. */
+export async function stillSendsQuery(engine: BrainEngine, p: PersonPage, query: string): Promise<boolean> {
+  const page = await engine.getPage(p.slug, { sourceId: p.source_id } as never);
+  if (!page) return false;
+  const keys = Object.fromEntries(PERSON_KEYS.map(k => [k, (page.frontmatter as Record<string, unknown> | undefined)?.[k]]));
+  const fresh = toPerson({ source_id: p.source_id, slug: p.slug, page_id: p.page_id, title: page.title, keys, identity: null }, '');
+  await markRestricted(engine, [fresh]);
+  const q = exaQueryFor(fresh);
+  return 'query' in q && q.query === query;
+}
+
+/**
+ * Marks restricted every page not every reader may read: the frontmatter rule, the shared private-page rule (privacy
+ * labels, folder rules, private lineage) and owner-only sources. Only the web search needs it, so only it pays for it.
+ */
+export async function markRestricted(engine: BrainEngine, pages: Iterable<PersonPage>): Promise<void> {
   const ownerOnly = new Set((await engine.listAllSources({ includeArchived: true })).filter(s => isOwnerOnlySourceConfig(s.config)).map(s => s.id));
-  const open = [...out.values()].filter(p => !p.restricted);
-  for (const p of open) if (ownerOnly.has(p.source_id)) p.restricted = true;
-  for (let i = 0; i < open.length; i += PAGE) {
-    const batch = open.slice(i, i + PAGE).map(p => ({ source_id: p.source_id, slug: p.slug }));
-    for (const r of await withEngineScope(engine, () => engine.listRestrictedIdentityMembers(batch))) out.get(pageKey(r))!.restricted = true;
+  const open = new Map<string, PersonPage>();
+  for (const p of pages) {
+    if (ownerOnly.has(p.source_id)) p.restricted = true;
+    if (!p.restricted) open.set(pageKey(p), p);
   }
-  return out;
+  const refs = [...open.values()].map(p => ({ source_id: p.source_id, slug: p.slug }));
+  for (let i = 0; i < refs.length; i += PAGE) {
+    for (const r of await withEngineScope(engine, () => engine.listRestrictedIdentityMembers(refs.slice(i, i + PAGE)))) open.get(pageKey(r))!.restricted = true;
+  }
 }
 
 export function pairId(a: { source_id: string; slug: string }, b: { source_id: string; slug: string }): string {
