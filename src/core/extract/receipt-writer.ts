@@ -223,8 +223,7 @@ export async function writeReceipt(
 
   const page = await maintenanceTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId: input.source_id, slug }]);
-    const [prior] = await tx.executeRaw<{ type: string | null; source_path: string | null; source_uri: string | null; withheld_source_path: string | null }>(
-      'SELECT type, source_path, source_uri, withheld_source_path FROM pages WHERE source_id=$1 AND slug=$2', [input.source_id, slug]);
+    const prior = await tx.readExtractReceiptSlot(input.source_id, slug);
     if (!isNeverFiledDerivedPage(slug, prior ?? {}) || (prior && prior.type !== 'extract_receipt')) {
       throw new Error(`Extract receipt ${slug} (source ${input.source_id}) was not written: that slug holds a content page or a page with a file in Git, and a receipt is database-only bookkeeping.`);
     }
@@ -239,10 +238,8 @@ export async function writeReceipt(
       { sourceId: input.source_id },
     );
     await resealSafeChunks(tx, slug, input.source_id);
-    const [sealed] = await tx.executeRaw<{ sealed: boolean }>(
-      `SELECT chunker_version >= ${SAFE_FENCE_CHUNKER_VERSION} AND text_projection_revision = knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2`,
-      [input.source_id, slug]);
-    if (sealed?.sealed !== true) throw new Error(`Extract receipt ${slug} (source ${input.source_id}) was not written: its chunks could not be sealed in the writing transaction.`);
+    const sealed = await tx.readExtractReceiptSeal(input.source_id, slug, SAFE_FENCE_CHUNKER_VERSION);
+    if (sealed !== true) throw new Error(`Extract receipt ${slug} (source ${input.source_id}) was not written: its chunks could not be sealed in the writing transaction.`);
     // #4009: receipts are audit artifacts — deliberately never run through
     // the contextual-retrieval ladder. Born with a NULL
     // contextual_retrieval_mode they tripped doctor's

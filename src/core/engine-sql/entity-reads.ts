@@ -141,6 +141,17 @@ export async function readIdentitySiblingCandidates(exec: LegacyUnscopedRead, so
 }
 
 /**
+ * The live pages of one source at `slugs`, in no set order, with frontmatter `identity` as text (mentions/siblings.ts
+ * `siblingCanonical`: whether two or three pages one name resolved to form one identity-sibling group).
+ */
+export async function readSiblingGroupRows(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[], opts: { excludePrivate?: boolean } = {}): Promise<SiblingCandidateRow[]> {
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
+        WHERE source_id = ${sourceId} AND deleted_at IS NULL AND slug = ANY(${[...slugs]}::text[])${priv}`);
+  return exec.executeRaw<SiblingCandidateRow>(text, params);
+}
+
+/**
  * The first of `slugs` at which a live page sits in the source and is (`retired: true`) or is not (`retired: false`) a
  * retired page (entities/resolve.ts `retiredPageSql`), or is either when `retired` is omitted; null otherwise.
  */

@@ -26,12 +26,18 @@ export function listLivePageSourceIds(raw: MentionRaw): Promise<Array<{ id: stri
 
 /** Live pages of `types`, with the four handle frontmatter keys `handleKeys` names and whether a connector made it. */
 export function listGazetteerPages(raw: MentionRaw, types: readonly string[], handleKeys: readonly [string, string, string, string]): Promise<GazetteerPageRow[]> {
+  // The retirement test is `retiredPageSql('pages')` spelled out (the engine-sql-dynamic guard wants whole literals; the pin
+  // test, test/engine-sql-caller-raw-sql-pins.test.ts, holds it to that builder).
   return raw.executeRaw<GazetteerPageRow>(
     `SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
             frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
      FROM pages
      WHERE type = ANY($1::text[])
-       AND deleted_at IS NULL`,
+       AND deleted_at IS NULL
+       AND NOT (lower(COALESCE(pages.frontmatter->>'canonical', '')) IN ('false', 'no')
+    OR btrim(COALESCE(pages.frontmatter->>'superseded_by', '')) <> ''
+    OR btrim(COALESCE(pages.frontmatter->>'merged_into', '')) <> ''
+    OR lower(COALESCE(pages.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)')`,
     [types, ...handleKeys],
   );
 }
@@ -43,7 +49,11 @@ export function listGazetteerAliases(raw: MentionRaw, types: readonly string[]):
        FROM page_aliases pa
        JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
        WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL`,
+         AND p.deleted_at IS NULL
+         AND NOT (lower(COALESCE(p.frontmatter->>'canonical', '')) IN ('false', 'no')
+    OR btrim(COALESCE(p.frontmatter->>'superseded_by', '')) <> ''
+    OR btrim(COALESCE(p.frontmatter->>'merged_into', '')) <> ''
+    OR lower(COALESCE(p.frontmatter->>'status', '')) ~ '(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)')`,
       [types],
     );
 }

@@ -11,6 +11,7 @@
  * admission, sanitizing and the revision check run as for content sent
  * inline. Never import from '../operations.ts' here (cycle).
  */
+import { normalizeSlug } from '../utils.ts';
 import { randomUUID } from 'node:crypto';
 import type { Operation, OperationContext } from './contract.ts';
 import { OperationError, opError } from './contract.ts';
@@ -153,7 +154,7 @@ const begin_page_upload: Operation = {
     const sourceId = pageMutationSource(ctx, p, 'begin_page_upload');
     const mode = p.mode as UploadMode;
     if (!MODES.includes(mode)) throw invalidParam('mode must be create, replace or append.', 'Pass mode create for a new page, replace with expected_revision for an existing one, or append.');
-    const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
+    const slug = typeof p.slug === 'string' ? normalizeSlug(p.slug) : '';
     validatePageSlug(slug);
     enforceClientSlugFence(ctx, slug, 'begin_page_upload');
     enforceSubagentSlugFence(ctx, slug, 'begin_page_upload');
@@ -184,7 +185,7 @@ const begin_page_upload: Operation = {
     };
     const prior = await readUploadByRequest(ctx.engine, principal, clientRequestId);
     if (prior) return resumed(prior);
-    const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation::text AS incarnation, archived FROM sources WHERE id=$1', [sourceId]);
+    const source = await ctx.engine.readSourceIncarnationArchived(sourceId);
     if (!source || source.archived) {
       throw opError('source_changed', 'The write source is not active.', `Source ${sourceId} is archived or not registered, so nothing was staged. Write to an active source (sources_list shows them).`);
     }

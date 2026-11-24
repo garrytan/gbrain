@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-const NEXT_CHUNK_ID: &str = "next_chunk_id";
+pub(crate) const NEXT_CHUNK_ID: &str = "next_chunk_id";
 const STATS: &str = "chunk_stats";
 const STATS_CHUNKS: &str = "chunk_stats/chunks";
 const STATS_LENGTH: &str = "chunk_stats/total_length";
@@ -325,6 +325,28 @@ pub(crate) fn clear_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     crate::cascade::remove_chunk_rows(tx, page_id, &removed)
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the chunk of `page_id` at `chunk_index` with its
+/// postings and vector. `cascade` also calls the chunk-delete hook, which removes the code edges
+/// that end on the chunk; a chunk that is replaced by a row of the same index keeps them. `false`
+/// when there is no such chunk.
+pub(crate) fn remove_chunk(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    chunk_index: u32,
+    cascade: bool,
+) -> Result<bool> {
+    let Some(chunk) = get_json::<ChunkRecord>(&*tx, &keys::chunk(page_id, chunk_index))? else {
+        return Ok(false);
+    };
+    let mut stats = StatsDelta::default();
+    remove_chunk_record(tx, &chunk, &mut stats)?;
+    add_stats(tx, &stats)?;
+    if cascade {
+        crate::cascade::remove_chunk_rows(tx, page_id, &[chunk.id])?;
+    }
+    Ok(true)
+}
+
 /// Removes every chunk of a page and its postings and updates the stats; returns what it removed.
 /// It does not call the chunk-delete hook: `replace_chunks` keeps some of these ids.
 fn drop_chunks(tx: &mut dyn KvWrite, page_id: u64) -> Result<Vec<ChunkRecord>> {
@@ -392,6 +414,33 @@ fn write_chunk(
     }
     stats.chunks += 1;
     stats.total_length += i64::from(record.length);
+    Ok(())
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a chunk copied from another engine with its own
+/// id, as [`write_chunk`] does (its postings when the page's segment view shows it, its share of
+/// the stats), then its vector when it has one (`model`, `embedded_at_us`, values). `length` is
+/// computed here. The caller checked the page and that the index is free.
+pub(crate) fn seed_chunk(
+    tx: &mut dyn KvWrite,
+    mut record: ChunkRecord,
+    vector: Option<(&str, i64, &[f32])>,
+) -> Result<()> {
+    record.length = term_frequencies(&record.chunk_text).1;
+    let view_generation = segment_view_generation(&*tx, record.page_id)?;
+    let mut stats = StatsDelta::default();
+    write_chunk(tx, &record, view_generation, &mut stats)?;
+    add_stats(tx, &stats)?;
+    if let Some((model, embedded_at_us, values)) = vector {
+        crate::embeddings::put_chunk_vector(
+            tx,
+            record.page_id,
+            record.chunk_index,
+            model,
+            embedded_at_us,
+            values,
+        )?;
+    }
     Ok(())
 }
 
@@ -847,10 +896,11 @@ fn next_chunk_id(tx: &mut dyn KvWrite) -> Result<u64> {
 // - A segment chunk is a normal chunk record (`K page_id chunk_index`) whose `segment` field is
 //   set. An inline chunk (`segment` absent) is what `upsert_chunks` and `put_page` write; records
 //   written before the field existed decode as inline chunks, so the format version is unchanged.
-// - `append_segment_chunks(tx, page_id, generation, chunks)` writes the chunks at the indexes
+// - `append_segment_chunks(tx, page_id, generation, chunks, now_us)` writes the chunks at the indexes
 //   after the page's highest existing `chunk_index` (staged, live and retired rows all count, as
 //   PGLite's `COALESCE(MAX(chunk_index), -1) + 1`), in input order, and returns those indexes. It validates `chunk_source` as
-//   `upsert_chunks` does, strips NUL from the text and keeps no vector.
+//   `upsert_chunks` does and strips NUL from the text. A chunk that carries a vector (one reused from a
+//   retired row) keeps it, with its model and recorded input, embedded at `now_us`.
 // - Visibility follows PGLite's `chunkVisibleFilter`: an inline chunk is visible, a segment chunk
 //   is visible when its `body_generation` is at or below the page's body generation. This file
 //   keeps its own copy of that generation, the page's segment view (`publish_segment_chunks`),
@@ -1010,10 +1060,19 @@ pub(crate) fn append_segment_chunks(
     page_id: u64,
     generation: u64,
     chunks: &[SegmentChunkInput],
+    now_us: i64,
 ) -> Result<Vec<u32>> {
     if chunks.is_empty() {
         return Ok(Vec::new());
     }
+    let dims = if chunks
+        .iter()
+        .any(|c| c.chunk.rest.get("embedding").is_some_and(|v| !v.is_null()))
+    {
+        embedding_dimensions(&*tx)?
+    } else {
+        0
+    };
     let first = read_chunks(&*tx, page_id)?
         .iter()
         .map(|c| c.chunk_index + 1)
@@ -1029,6 +1088,37 @@ pub(crate) fn append_segment_chunks(
             .ok_or_else(|| StoreError::invalid("chunk_index would pass the largest index"))?;
         let chunk = &input.chunk;
         let text = chunk.chunk_text.replace('\0', "");
+        let meta = kept_meta(chunk);
+        // A reused vector (`reuseSegmentChunkVectors`) is stored as PGLite's insert stores it: the
+        // vector, its model label and recorded input, embedded now.
+        let vector = input_vector(chunk, dims)?;
+        let model = meta
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if vector.is_some() && model.is_empty() {
+            return Err(StoreError::invalid(
+                "Embedding model provenance is unknown. Supply an explicit chunk model or run gbrain migrate embeddings --status before an explicit migration.",
+            ));
+        }
+        let embed = match &vector {
+            Some(vector) => EmbedState {
+                dims: u32::try_from(vector.len())
+                    .map_err(|_| StoreError::invalid("vector too long"))?,
+                embedded_at_us: Some(now_us),
+                text_hash: Some(crate::embeddings::text_hash(&text)),
+                input_hash: chunk
+                    .rest
+                    .get("embedding_input_hash")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                pending_since_us: None,
+            },
+            // A segment chunk written without a vector carries no pending stamp, which
+            // `readEmbeddingStateCounts` reports as `unstamped_pending`.
+            None => EmbedState::default(),
+        };
         let record = ChunkRecord {
             id: next_chunk_id(tx)?,
             page_id,
@@ -1037,7 +1127,7 @@ pub(crate) fn append_segment_chunks(
             chunk_text: text,
             chunk_source: checked_source(chunk)?,
             modality: chunk.modality.clone().unwrap_or_else(|| "text".into()),
-            meta: kept_meta(chunk),
+            meta,
             segment: Some(SegmentPlace {
                 occurrence_id: input.occurrence_id,
                 local_ordinal: input.local_ordinal,
@@ -1045,12 +1135,12 @@ pub(crate) fn append_segment_chunks(
                 raw_byte_end: input.raw_byte_end,
                 body_generation: generation,
             }),
-            // A segment chunk is written without a vector; it carries no pending stamp (the
-            // page-body writer has no clock here), which `readEmbeddingStateCounts` reports as
-            // `unstamped_pending`.
-            embed: EmbedState::default(),
+            embed,
         };
         write_chunk(tx, &record, view_generation, &mut stats)?;
+        if let Some(vector) = vector {
+            crate::embeddings::put_chunk_vector(tx, page_id, index, &model, now_us, &vector)?;
+        }
         indexes.push(index);
     }
     add_stats(tx, &stats)?;
@@ -1203,6 +1293,9 @@ pub struct GetChunksOptions {
     /// `requireSafeChunks`: only a page past the chunker-version fence (`safeChunksFilter(p)`)
     /// has chunks to read.
     pub require_safe_chunks: bool,
+    /// `excludePrivate`: only a page the page policy keeps (`facts/privacy.rs` `page_hidden`) has
+    /// chunks to read.
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`. A sealed read takes
@@ -1397,6 +1490,14 @@ impl Store {
             };
             if options.seal {
                 refuse_seal(&*tx, &page, slug, source)?;
+            } else if segmented(&page) {
+                // A plain write would replace the chunks of the page's live segments: refused before any write.
+                return Err(StoreError::new(
+                    INVALID_STATE,
+                    format!(
+                        "upsertChunks refuses segmented page {slug} (source={source}): its chunks are written through its segments"
+                    ),
+                ));
             }
             if let Some(expected) = &options.expected_revision {
                 if !crate::env::is_uuid(expected) {
@@ -1481,12 +1582,18 @@ impl Store {
         let mut seen = HashSet::new();
         sources.retain(|id| seen.insert(id.clone()));
         let mut rows: Vec<(DocumentKey, String, Value)> = Vec::new();
+        let mut owner_only = crate::facts::OwnerOnlyCache::default();
         for source in sources {
             // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
             // chunk read has neither a case fold nor a `deleted_at` filter.
             let Some(page) = read_page(&*read, &source, slug)? else {
                 continue;
             };
+            if let Some(policy) = &options.exclude_private
+                && owner_only.page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             if !options.include_unsealed
                 && page.text_projection_revision.as_deref()
                     != Some(page.knowledge_revision.as_str())
@@ -1602,7 +1709,7 @@ mod segment_tests {
         chunks: &[SegmentChunkInput],
     ) -> Vec<u32> {
         store
-            .write(|tx| append_segment_chunks(tx, page_id, generation, chunks))
+            .write(|tx| append_segment_chunks(tx, page_id, generation, chunks, 0))
             .unwrap()
     }
 
@@ -1644,7 +1751,7 @@ mod segment_tests {
         let mut bad = seg(9, 0, "w");
         bad.chunk.chunk_source = Some("nope".into());
         let err = store
-            .write(|tx| append_segment_chunks(tx, id, 1, &[bad.clone()]))
+            .write(|tx| append_segment_chunks(tx, id, 1, &[bad.clone()], 0))
             .unwrap_err();
         assert_eq!(err.code, INVALID_ARGUMENT);
         assert_eq!(store.count_chunks().unwrap(), 4);
@@ -2222,6 +2329,42 @@ mod seal_guard_tests {
                 after.text_projection_revision,
                 page.text_projection_revision
             );
+        }
+    }
+
+    /// A plain (unsealed) `upsertChunks` on a segmented page would replace the chunks of its live segments, so it is
+    /// refused before any chunk or page field is written, for a write with chunks and for the empty write that only
+    /// removes them.
+    #[test]
+    fn plain_upsert_refuses_a_segmented_page_before_it_touches_a_chunk() {
+        let store = crate::test_support::store();
+        let page = segmented(&store);
+        let before = stored_texts(&store, page.id);
+        assert!(!before.is_empty());
+        for chunks in [
+            Vec::new(),
+            vec![ChunkInput {
+                chunk_text: "inline".into(),
+                ..ChunkInput::default()
+            }],
+        ] {
+            let err = store
+                .upsert_chunks("big", &chunks, &UpsertChunksOptions::default())
+                .unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_STATE);
+            assert_eq!(
+                err.message,
+                "upsertChunks refuses segmented page big (source=default): its chunks are written through its segments"
+            );
+            assert_eq!(stored_texts(&store, page.id), before);
+            let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                after.text_projection_revision,
+                page.text_projection_revision
+            );
+            assert_eq!(after.chunker_version, page.chunker_version);
         }
     }
 

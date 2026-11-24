@@ -20,7 +20,8 @@ use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::{get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -181,30 +182,60 @@ pub(crate) fn request_effects(read: &dyn KvRead, request_id: &str) -> Result<Vec
     Ok(out)
 }
 
-/// Every stored effect, in id order (the claim-order index).
-pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
-    let mut entries = Vec::new();
-    scan_prefix(
+/// Index entries read per scan by `for_each_effect`.
+const EFFECT_PAGE: usize = 8;
+
+/// Calls `f` with each stored effect in id order (the claim-order index) until it returns false. The index is read
+/// `EFFECT_PAGE` entries at a time and a record when its turn comes, so a stop leaves the later pages and records unread.
+pub(crate) fn for_each_effect(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(EffectRecord) -> Result<bool>,
+) -> Result<()> {
+    for_each_prefix_paged(
         read,
         &[keys::PERSISTENCE, EFFECT_ORDER],
-        false,
+        EFFECT_PAGE,
         &mut |_, value| {
-            entries.push(serde_json::from_slice::<OrderEntry>(value));
-            true
+            let entry = serde_json::from_slice::<OrderEntry>(value).map_err(|e| {
+                StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
+            })?;
+            match get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))? {
+                Some(record) => f(record),
+                None => Ok(true),
+            }
         },
-    )?;
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
-        })?;
-        if let Some(record) =
-            get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))?
-        {
-            out.push(record);
-        }
-    }
+    )
+}
+
+/// Every stored effect, in id order (the claim-order index).
+pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
+    let mut out = Vec::new();
+    for_each_effect(read, &mut |record| {
+        out.push(record);
+        Ok(true)
+    })?;
     Ok(out)
+}
+
+/// The keys and values a store holds for `effects` (test seeding of a read-only fake).
+#[cfg(test)]
+pub(crate) fn effect_entries_for_test(effects: &[EffectRecord]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in effects {
+        out.push((
+            effect_key(&e.request_id, &e.kind),
+            serde_json::to_vec(e).unwrap(),
+        ));
+        out.push((
+            order_key(e.id),
+            serde_json::to_vec(&OrderEntry {
+                request_id: e.request_id.clone(),
+                kind: e.kind.clone(),
+            })
+            .unwrap(),
+        ));
+    }
+    out
 }
 
 /// Effect `id`, or none.
@@ -389,6 +420,30 @@ pub(crate) fn insert_withdrawal_effects_in(
     env: &dyn Env,
     spec: &WithdrawalEffectsSpec,
 ) -> Result<Vec<String>> {
+    insert_source_effects_in(tx, env, spec, &WITHDRAWAL_EFFECT_KINDS)
+}
+
+/// The kinds a segmented-mirror re-mirror queues, in insert order (`REMIRROR_EFFECTS_SQL`).
+const REMIRROR_EFFECT_KINDS: [&str; 2] = ["withdrawal-mirror", "git"];
+
+/// `insertRemirrorEffects(requestId, sourceId, data)`: the withdrawal insert with the
+/// `withdrawal-mirror` and `git` kinds only (engine-sql/segmented-mirror-effects.ts).
+pub(crate) fn insert_remirror_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &WithdrawalEffectsSpec,
+) -> Result<Vec<String>> {
+    insert_source_effects_in(tx, env, spec, &REMIRROR_EFFECT_KINDS)
+}
+
+/// One row per kind of `kinds` for the request, as `INSERT ... SELECT ... FROM sources s LEFT JOIN
+/// persistence_source_bindings b ... CROSS JOIN (VALUES ...) WHERE s.id=$2 ON CONFLICT DO NOTHING`.
+fn insert_source_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &WithdrawalEffectsSpec,
+    kinds: &[&str],
+) -> Result<Vec<String>> {
     uuid_cast(&spec.request_id)?;
     // The id as Postgres stores a uuid (canonical lowercase), so the mirror gate and the order index find it.
     let request_id = spec.request_id.to_ascii_lowercase();
@@ -401,7 +456,7 @@ pub(crate) fn insert_withdrawal_effects_in(
         return Ok(Vec::new());
     };
     let mut missing = Vec::new();
-    for kind in WITHDRAWAL_EFFECT_KINDS {
+    for &kind in kinds {
         if get_json::<EffectRecord>(&*tx, &effect_key(&request_id, kind))?.is_none() {
             missing.push(kind);
         }
@@ -491,6 +546,34 @@ impl crate::Store {
         self.write(|tx| insert_withdrawal_effects_in(tx, &*self.env, spec))
     }
 
+    /// `insertRemirrorEffects(requestId, sourceId, data)`: the kinds inserted, in insert order. Inside
+    /// `transaction` this write is the re-mirror's own store write.
+    pub fn insert_remirror_effects(&self, spec: &WithdrawalEffectsSpec) -> Result<Vec<String>> {
+        self.write(|tx| insert_remirror_effects_in(tx, &*self.env, spec))
+    }
+
+    /// `readRemirrorEffects(requestId)`: `{ kind, state, error_code, recovering, parked, skipped }` for
+    /// each effect of the request in kind order (`data ? 'parked'`, `COALESCE(data->'skipped','[]')`).
+    /// A request id that is not a uuid refuses, as `$1::uuid` does.
+    pub fn read_remirror_effects(&self, request_id: &str) -> Result<Vec<Value>> {
+        uuid_cast(request_id)?;
+        let mut effects = request_effects(&*self.read()?, &request_id.to_ascii_lowercase())?;
+        effects.sort_by(|a, b| a.kind.as_bytes().cmp(b.kind.as_bytes()));
+        Ok(effects
+            .iter()
+            .map(|e| {
+                json!({
+                    "kind": e.kind,
+                    "state": e.state,
+                    "error_code": e.error_code,
+                    "recovering": e.recovery.is_some(),
+                    "parked": e.data.get("parked").is_some(),
+                    "skipped": e.data.get("skipped").cloned().map(crate::jsonb::order).unwrap_or_else(|| json!([])),
+                })
+            })
+            .collect())
+    }
+
     /// The effects of one request as `SELECT * FROM persistence_effects WHERE request_id=$1 ORDER BY id`.
     pub fn read_request_effects(&self, request_id: &str) -> Result<Vec<Value>> {
         let mut effects = request_effects(&*self.read()?, request_id)?;
@@ -522,6 +605,26 @@ impl crate::Store {
             })
             .collect())
     }
+}
+
+/// The `persistence_effects` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), in id order. The
+/// index is read a page at a time, so a stop leaves the later pages and records unread.
+pub(crate) fn probe_effects(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    for_each_effect(read, &mut |e| {
+        f(ProbeRow {
+            source_id: e.source_id.clone(),
+            cells: vec![
+                ("kind", ProbeCell::text(&e.kind)),
+                ("data", ProbeCell::jsonb(&e.data)),
+                ("state", ProbeCell::text(&e.state)),
+                ("source_id", ProbeCell::opt_text(e.source_id.as_deref())),
+                ("error_code", ProbeCell::opt_text(e.error_code.as_deref())),
+                ("outcome", ProbeCell::opt_jsonb(e.outcome.as_ref())),
+                ("recovery", ProbeCell::opt_jsonb(e.recovery.as_ref())),
+                ("claim_owner", ProbeCell::opt_jsonb(e.claim_owner.as_ref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

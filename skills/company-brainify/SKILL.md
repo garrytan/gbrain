@@ -28,7 +28,6 @@ writes_to:
   - daily/
   - projects/
   - analysis/
-upstream: company-brainify@fc834ee
 # Brain-first in its native form: Phase-1 discovery runs through gbrain
 # retrieval (query/search/takes search/recall), and every edit is grounded
 # in a full read of the actual page. writes_to lists the scan scope the
@@ -384,9 +383,11 @@ brain classifies personal and the fire-once nudge would ask the wrong question.
 ### Phase 6: Ongoing hygiene — periodic re-audit
 
 Sensitive data re-accumulates (meeting transcripts, enrichment, candid
-writes); one clean pass is a snapshot, not a state. Schedule a monthly re-audit
+writes); one clean pass is a snapshot, not a state. Offer a monthly re-audit
 (weekly for high-ingest brains) that re-runs Phases 1, 2 and 4 report-only
-(scan and flag, no edits) for human review. Wire it per
+(scan and flag, no edits) for human review, as its own yes/no: say how often
+it runs, which phases it runs, and any model spend they incur, and schedule
+it only if the user says yes. Wire it per
 [conventions/cron-via-minions.md](../conventions/cron-via-minions.md) (`gbrain jobs submit`;
 `skills/cron-scheduler/SKILL.md`, `skills/minion-orchestrator/SKILL.md`). A
 human or a gated follow-up run does the removal.

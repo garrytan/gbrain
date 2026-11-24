@@ -69,15 +69,14 @@ export function formatTrustRef(ref: TrustRef): string {
  * `p:` ref's source; a bare slug takes `--source`, else the one source that
  * holds the slug. Refuses an ambiguous slug instead of picking a source.
  */
-export async function resolvePageRef(engine: Pick<BrainEngine, 'executeRaw'>, ref: Extract<TrustRef, { kind: 'page' }>, explicitSource?: string | null): Promise<{ sourceId: string; slug: string }> {
+export async function resolvePageRef(engine: Pick<BrainEngine, 'listLiveSlugSourceIds'>, ref: Extract<TrustRef, { kind: 'page' }>, explicitSource?: string | null): Promise<{ sourceId: string; slug: string }> {
   if (ref.sourceId && explicitSource && ref.sourceId !== explicitSource) {
     throw opError('invalid_params', `${pageRef(ref.sourceId, ref.slug)} names source ${ref.sourceId}, but --source is ${explicitSource}.`,
       'Drop --source, or pass the page ref with the source you mean.');
   }
   const sourceId = ref.sourceId ?? explicitSource ?? null;
   if (sourceId) return { sourceId, slug: ref.slug };
-  const rows = await engine.executeRaw<{ source_id: string }>(
-    'SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id COLLATE "C"', [ref.slug]);
+  const rows = (await engine.listLiveSlugSourceIds(ref.slug)).map(source_id => ({ source_id }));
   if (rows.length > 1) {
     throw opError('invalid_params', `Slug "${ref.slug}" exists in ${rows.length} sources: ${rows.map(r => r.source_id).join(', ')}.`,
       `Pick one with --source ${rows[0]!.source_id} (or another listed source), or write the page as ${pageRef(rows[0]!.source_id, ref.slug)}.`);

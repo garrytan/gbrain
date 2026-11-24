@@ -92,6 +92,26 @@ impl Brain {
         })
     }
 
+    /// `readSiblingGroupRows(sourceId, slugs, policy)`: the live pages at `slugs` with their
+    /// identity; a `null` policy reads every page.
+    #[napi]
+    pub fn read_sibling_group_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(v, "readSiblingGroupRows policy")
+                })
+                .transpose()?;
+            s.read_sibling_group_rows(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
     /// `findExactSlug(sourceId, slugs, retired)`: the first matching slug or `null`; a `null`
     /// `retired` matches live pages either way.
     #[napi]

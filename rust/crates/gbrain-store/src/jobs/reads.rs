@@ -145,6 +145,25 @@ impl Store {
             .collect())
     }
 
+    /// `listUnfinishedJobsByName`: `{ id, name, status }` of every live row (any status but completed,
+    /// failed, dead, cancelled) whose name is in `names`, by id, from one read snapshot with no limit.
+    pub fn list_unfinished_jobs_by_name(&self, names: &[String]) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut found: Vec<(i64, Value)> = Vec::new();
+        for status in NON_TERMINAL {
+            for_each_row_with_status(&*read, status, &mut |r| {
+                if names.contains(&r.name) {
+                    found.push((
+                        r.id,
+                        json!({ "id": r.id, "name": r.name, "status": r.status }),
+                    ));
+                }
+            })?;
+        }
+        found.sort_by_key(|(id, _)| *id);
+        Ok(found.into_iter().map(|(_, row)| row).collect())
+    }
+
     /// `countTtlExpiredWaiting`: how many `waiting` rows of `name` are past `hours`.
     pub fn count_ttl_expired_waiting(&self, name: &str, hours: f64) -> Result<usize> {
         let read = self.read()?;

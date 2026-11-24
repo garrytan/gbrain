@@ -86,7 +86,8 @@ gbrain sources add gmail-work --kind google --account you@example.com \
 ```
 
 (`--access env --token-env <VAR>` reads an externally-refreshed token from
-the environment instead.) Then `gbrain sync --source gmail-work` and
+the environment instead; `--access gbrainio` reads Gmail through a gbrain.io
+terminal, see google-connect.md "Reading mail through gbrain.io".) Then `gbrain sync --source gmail-work` and
 `gbrain waiting` work identically.
 
 Verify health afterwards: `gbrain google status --json` (per-account

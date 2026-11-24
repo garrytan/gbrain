@@ -14,11 +14,15 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { DegradedStageEntry } from '../types.ts';
+import { isTimeoutError, pushDegraded } from '../search/hybrid/degraded.ts';
+import { warnOncePerProcess } from '../utils.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import { followRetirement, isIdentityEntity } from '../entities/resolve.ts';
 import { ENTITY_CARD_COLUMNS_SQL, type RetirementPrivacy } from '../engine-sql/entity-reads.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
 import { NAME_MATCH_RANK, NAME_TITLE_TOKENS, WEAK_NAME_MATCHES, hasLeadingTitle, matchNameVariant, parsePersonName, probeWords, stripLeadingTitles, type NameMatchKind } from '../entities/name-variants.ts';
 
@@ -81,6 +85,21 @@ export function isTitleStub(name: string): boolean {
 }
 
 /**
+ * A lookup read failed: the arm contributes nothing, and `degraded` says so (a miss is then not proof the entity is
+ * absent). The Rust engine's typed capability refusal is not a database failure and ends the call; the raw error text is
+ * printed nowhere: stderr names the failure class only, and the wire carries the same class.
+ */
+export function lookupReadFailed(err: unknown, degraded: DegradedStageEntry[] | undefined): void {
+  rethrowCapabilityRefusal(err);
+  rethrowCapabilityMissing(err); // the Rust engine's typed refusal of a member it does not serve
+  if (!degraded) return; // a caller that only shapes suggestions (possible duplicates, the doctor pair scan) reports nothing
+  // The warning names the failure class only: a database error's message or code can carry a connection string or password.
+  const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
+  warnOncePerProcess('entity-lookup-failed', `[gbrain] entity lookup read failed (reported as degraded): ${reason}`);
+  pushDegraded(degraded, 'entity_lookup_failed', reason);
+}
+
+/**
  * Variant candidates for `name` in one source. `selectColumns` is the
  * caller's row projection over `pages`; `privatePredicate` its read
  * predicate (` AND ...` or empty) on `pages`, `retirementPrivacy` the page
@@ -90,7 +109,7 @@ export async function resolveNameVariant<R extends VariantRow>(
   engine: BrainEngine,
   sourceId: string,
   name: string,
-  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: RetirementPrivacy; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean; exclude?: readonly string[] },
+  opts: { selectColumns: string; privatePredicate: string; retirementPrivacy: RetirementPrivacy; entityTypes: ReadonlySet<string>; omitQuarantined?: boolean; exclude?: readonly string[]; degraded?: DegradedStageEntry[] },
 ): Promise<VariantResult<R>> {
   const words = probeWords(name);
   if (!words.length || parsePersonName(name).core.length > MAX_NAME_WORDS || name.includes('/')) return { matches: [] };
@@ -107,7 +126,8 @@ export async function resolveNameVariant<R extends VariantRow>(
       ? await engine.listVisibleNameVariantCandidates(sourceId, q, { excludePrivate: true }) as Array<R & { probe_hits: number }>
       : await engine.listNameVariantCardCandidates(sourceId, q, { excludePrivate: mode === 'card-caller' }) as unknown as Array<R & { probe_hits: number }>;
   } catch (err) {
-    rethrowCapabilityRefusal(err);
+    // The candidate read failed: no variant can be offered, and a miss is then not proof the entity is absent.
+    lookupReadFailed(err, opts.degraded);
     return { matches: [] };
   }
   const capped = rows.length > VARIANT_CANDIDATE_CAP;
@@ -118,12 +138,13 @@ export async function resolveNameVariant<R extends VariantRow>(
     if (opts.omitQuarantined && isQuarantined(row.frontmatter)) continue;
     const kind = bestKind(name, row);
     if (!kind) continue;
-    const live = await followRetirement(engine, sourceId, row.slug, opts.retirementPrivacy).catch(() => null);
+    // A failed follow-up read drops a real candidate, so it is a failed lookup too (the capability refusal still ends the call).
+    const live = await followRetirement(engine, sourceId, row.slug, opts.retirementPrivacy).catch(err => { lookupReadFailed(err, opts.degraded); return null; });
     if (!live || exclude.has(live.slug)) continue;
     let target: R | undefined = live.slug === row.slug ? row : rows.find(r => r.slug === live.slug);
     if (!target) {
       const [fetched] = await readVariantTarget<R>(engine, sourceId, live.slug, mode).catch((err: unknown) => {
-        rethrowCapabilityRefusal(err);
+        lookupReadFailed(err, opts.degraded);
         return [] as R[];
       });
       if (!fetched || (opts.omitQuarantined && isQuarantined(fetched.frontmatter))) continue;

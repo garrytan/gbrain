@@ -45,6 +45,7 @@ import {
   isSeparatorRow,
   stripStrikethrough,
   parseStringCell,
+  parsePlainNumberCell,
   escapeFenceCell,
   assertFenceRewritable,
 } from './fence-shared.ts';
@@ -170,14 +171,6 @@ export interface FactsFenceParseResult {
   warnings: string[];
 }
 
-const PLAIN_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-
-function parseConfidenceCell(raw: string): number | undefined {
-  const trimmed = raw.trim();
-  if (!PLAIN_NUMBER_RE.test(trimmed)) return undefined;
-  const n = Number(trimmed);
-  return Number.isFinite(n) ? n : undefined;
-}
 
 /**
  * Strict numeric cell for typed-claim values: a plain or scientific number,
@@ -402,7 +395,7 @@ function parseFactsTable(inner: string, opts?: FactsFenceParseOpts): FactsFenceP
       continue;
     }
 
-    const confidence = parseConfidenceCell(confidenceRaw);
+    const confidence = parsePlainNumberCell(confidenceRaw);
     if (confidence === undefined) {
       warnings.push(`FACTS_TABLE_MALFORMED: non-numeric confidence "${confidenceRaw}" in row ${rowNumStr}`);
       continue;

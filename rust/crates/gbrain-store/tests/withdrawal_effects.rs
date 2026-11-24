@@ -112,6 +112,54 @@ fn an_unknown_source_queues_nothing_and_a_missing_request_refuses() {
     assert!(store.read_request_effects(REQ).unwrap().is_empty());
 }
 
+#[test]
+fn a_remirror_queues_its_mirror_and_git_effects_and_reads_them_in_kind_order() {
+    let dir = TempDir::new("remirror-effects");
+    let store = open(&dir);
+    let id = admit(&store, REQ);
+    let parked = json!({ "version": 2, "parked": true, "skipped": [{ "slug": "people/a", "reason": "preview_changed" }] });
+    assert_eq!(
+        store
+            .insert_remirror_effects(&spec(&id, "default", parked))
+            .unwrap(),
+        ["withdrawal-mirror", "git"]
+    );
+    assert!(
+        store
+            .insert_remirror_effects(&spec(&id, "default", data()))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .insert_remirror_effects(&spec(&id, "no-such-source", data()))
+            .unwrap()
+            .is_empty()
+    );
+    let states = store.read_remirror_effects(&id).unwrap();
+    let kinds: Vec<&str> = states.iter().map(|r| r["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["git", "withdrawal-mirror"]);
+    for row in &states {
+        assert_eq!(row["state"], "queued");
+        assert_eq!(row["recovering"], false);
+        assert_eq!(row["parked"], true);
+        assert_eq!(
+            row["skipped"],
+            json!([{ "slug": "people/a", "reason": "preview_changed" }])
+        );
+    }
+    assert!(
+        store
+            .read_remirror_effects("b0000000-0000-4000-8000-0000000000c9")
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store.read_remirror_effects("not-a-uuid").unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+}
+
 /// Postgres stores a uuid in canonical lowercase whatever case the caller sends, so a withdrawal
 /// queued under an uppercase request id is found by the mirror gate under either spelling, and its
 /// rows read back with the lowercase id.

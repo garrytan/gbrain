@@ -619,3 +619,82 @@ fn require_safe_chunks_reads_a_page_chunked_below_the_safe_fence_as_no_chunks() 
     // Without the option the short page still reads its chunks.
     assert_eq!(chunks_of(&b, "notes/a").len(), 1);
 }
+
+#[test]
+fn provenance_is_complete_only_when_every_visible_chunk_holds_a_current_vector() {
+    let b = brain("emb-provenance");
+    let (_, rev) = page(&b, "notes/a", json!({}));
+    let provenance = |slug: &str, source: &str, model: &str, dims: Option<u32>| {
+        b.read_page_provenance_complete(slug, source, model, dims)
+            .unwrap()
+    };
+    // No chunk yet: not complete. A missing page and a missing source are not complete either.
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(1536)));
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "one", "model": "openai:m1", "embedding": basis(0, 1536)},
+            {"chunk_index": 1, "chunk_text": "two", "model": "m1", "embedding": basis(1, 1536)},
+        ]),
+    );
+    // The label may be the target's bare tail; the width must be the target's.
+    assert!(provenance("notes/a", "default", "openai:m1", Some(1536)));
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(768)));
+    assert!(!provenance("notes/a", "default", "openai:m1", None));
+    assert!(!provenance("notes/a", "default", "openai:m2", Some(1536)));
+    assert!(!provenance("notes/a", "nowhere", "openai:m1", Some(1536)));
+    assert!(!provenance(
+        "notes/none",
+        "default",
+        "openai:m1",
+        Some(1536)
+    ));
+    // One chunk without a vector, and one unsealed projection, each make it incomplete.
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "one", "model": "openai:m1", "embedding": basis(0, 1536)},
+            {"chunk_index": 1, "chunk_text": "two", "model": "openai:m1"},
+        ]),
+    );
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(1536)));
+    let sealed_without = json!([{"chunk_index": 0, "chunk_text": "one", "model": "openai:m1", "embedding": basis(0, 1536)}]);
+    seal(&b, "notes/a", &rev, sealed_without);
+    assert!(provenance("notes/a", "default", "openai:m1", Some(1536)));
+    // A page write moves the knowledge revision, so the projection is unsealed until it is sealed again.
+    page(&b, "notes/a", json!({"edited": true}));
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(1536)));
+}
+
+#[test]
+fn vectorless_chunk_indexes_name_the_live_rows_with_no_vector() {
+    let b = brain("emb-vectorless");
+    let (id, rev) = page(&b, "notes/a", json!({}));
+    assert!(
+        b.list_vectorless_chunk_indexes(id as i64)
+            .unwrap()
+            .is_empty()
+    );
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "zero", "model": "m1"},
+            {"chunk_index": 1, "chunk_text": "one", "model": "m1", "embedding": basis(1, 1536)},
+            {"chunk_index": 2, "chunk_text": "two", "model": "m1"},
+        ]),
+    );
+    assert_eq!(
+        b.list_vectorless_chunk_indexes(id as i64).unwrap(),
+        vec![0, 2]
+    );
+    // An id that names no page, or no id at all, answers none.
+    assert!(b.list_vectorless_chunk_indexes(9_999).unwrap().is_empty());
+    assert!(b.list_vectorless_chunk_indexes(0).unwrap().is_empty());
+    assert!(b.list_vectorless_chunk_indexes(-3).unwrap().is_empty());
+}

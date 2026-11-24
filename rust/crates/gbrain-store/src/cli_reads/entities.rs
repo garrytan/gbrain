@@ -443,6 +443,42 @@ impl Store {
         Ok(rows)
     }
 
+    /// `readSiblingGroupRows(sourceId, slugs, { excludePrivate })`: the live pages of the source at
+    /// `slugs`, each once, in list order (the SQL sets none), with frontmatter `identity` as `->>`
+    /// reads it; `exclude_private` leaves out the pages the page policy hides.
+    pub fn read_sibling_group_rows(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+        exclude_private: Option<&PrivacyPolicy>,
+    ) -> Result<Vec<SiblingCandidateRow>> {
+        let read = self.read()?;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut rows = Vec::new();
+        for slug in slugs {
+            if !seen.insert(slug.as_str()) {
+                continue;
+            }
+            let Some(p) = crate::pages::read_page(&*read, source_id, slug)?
+                .filter(|p| p.deleted_at_us.is_none())
+            else {
+                continue;
+            };
+            if let Some(policy) = exclude_private
+                && page_hidden(&*read, &p, policy)?
+            {
+                continue;
+            }
+            rows.push(SiblingCandidateRow {
+                identity: p.frontmatter.get("identity").and_then(arrow_text),
+                slug: p.slug,
+                title: p.title,
+                page_type: p.page_type,
+            });
+        }
+        Ok(rows)
+    }
+
     /// `findExactSlug(sourceId, slugs, { retired })`: the first of `slugs` at which a live page
     /// sits and is (`Some(true)`), is not (`Some(false)`) or is either (`None`) a retired page
     /// (`retiredPageSql`); `None` otherwise.

@@ -2,8 +2,10 @@
 //! `shared_skill_delivery_batches` tables of the PGLite engine, as join_brain, sync_brain_skills
 //! and leave_brain use them (engine-sql/shared-skill-members.ts).
 //!
-//! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`; access_members.rs holds 0x01-0x03):
-//! - `x 0x04` -> `StateRecord` (JSON): the catalog token secret.
+//! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`; access_members.rs holds 0x01-0x03,
+//! access_member_links.rs 0x04):
+//! - `x 0x0d` -> `StateRecord` (JSON): the catalog token secret. Store formats 7 and older kept it
+//!   at `x 0x04`, beside the member links; `access_key_split.rs` moves it when such a brain opens.
 //! - `x 0x05 <installation id>` -> `MemberRecord` (JSON).
 //! - `x 0x06 <installation id> 0x00 <token>` -> `BatchRecord` (JSON). A member's batches are the
 //!   prefix `x 0x06 <installation id> 0x00`; ids are lowercase UUID text, so they hold no NUL.
@@ -31,7 +33,10 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const STATE: u8 = 0x04;
+/// The token secret's sub-tag. Store formats 7 and older kept it at `x 0x04`, the member links'
+/// sub-tag (`access_member_links.rs`); format 8 moved it (`access_key_split.rs`). `0x0d` is the
+/// first byte no other kind under `x` uses (rust/docs/store/access-members.md lists them).
+pub(crate) const STATE: u8 = 0x0d;
 const MEMBER: u8 = 0x05;
 const BATCH: u8 = 0x06;
 
@@ -39,7 +44,7 @@ const HOUR_US: i64 = 3_600_000_000;
 const DAY_US: i64 = 24 * HOUR_US;
 const MINUTE_US: i64 = 60_000_000;
 
-fn state_key() -> Vec<u8> {
+pub(crate) fn state_key() -> Vec<u8> {
     vec![keys::ACCESS_MEMBERS, STATE]
 }
 
