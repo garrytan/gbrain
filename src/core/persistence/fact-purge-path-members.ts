@@ -126,7 +126,7 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
     'continueDerivationSweep',
     'listRequestsHoldingStagings', 'readManifest', 'readSegmentedPageHead', 'readSegmentTexts', 'readSourceIncarnation', 'openBodyStaging',
     'stageSegmentTexts', 'allocateBodyOccurrenceIds', 'stageManifestRows', 'stageSegmentChunks', 'setBodyStagingState', 'readPageOrigin',
-    'flipBodyGeneration', 'sealSegmentedPage', 'readSegmentedVersionBodyBytes',
+    'flipBodyGeneration', 'sealSegmentedPage', 'readSegmentedVersionBodyBytes', 'readPagesRowEstimate',
     'applyTransactionSettings', 'bumpSourcePurgeEpoch', 'clearQueryCache', 'clearUnkeptChunkVectors', 'completeWriteRow',
     'countFactFingerprintLeftovers', 'countLegacyDerivedPages', 'countPurgeProbe', 'countPurgeReviewRows',
     'countPurgeVersionsCarryingClaim', 'declarePersistence', 'deleteChunksExcept', 'deleteProjectionJob',
