@@ -58,6 +58,9 @@ export const MANAGED_REMEDY_UNAVAILABLE = 'managed_remedy_unavailable';
 export const SLUG_SPELLING_LIMIT = 1000;
 /** Candidate rows the scan reads per source before it stops and says so. */
 export const SLUG_SPELLING_SCAN_LIMIT = 100_000;
+let scanLimit = SLUG_SPELLING_SCAN_LIMIT;
+/** Test hook: lowers the candidate rows one preview reads (no argument restores the default). */
+export function __setSlugSpellingScanLimitForTests(limit?: number): void { scanLimit = limit ?? SLUG_SPELLING_SCAN_LIMIT; }
 const BATCH = 5_000;
 
 const REASON_HISTORY = 'History or a log: it keeps the spelling it was written under, and a page rename (updateSlug) does not move it either.';
@@ -219,7 +222,7 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
     const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages
       WHERE source_id=$1 AND id > $2 AND (slug <> lower(slug) OR slug ~ '[^ -~]') ORDER BY id LIMIT ${BATCH}`, [sourceId, after]);
     for (const row of rows) {
-      if (inspected >= SLUG_SPELLING_SCAN_LIMIT) { truncated = true; break; }
+      if (inspected >= scanLimit) { truncated = true; break; }
       inspected++;
       if (normalizeSlug(row.slug) !== row.slug) candidates.push(row);
     }

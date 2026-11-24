@@ -415,6 +415,28 @@ describe('guards that follow the page to its normal slug', () => {
     expect([...(await overlayAt('notes/hold-late'))!.omit].sort()).toEqual([2, 3]);
   }), 60_000);
 
+  test('a page with another stored spelling of its name past the scan cap is not movable: the preview stops for a person to decide', () => withEnv(env, async () => {
+    const { __setSlugSpellingScanLimitForTests } = await import('../src/core/repair/slug-spelling.ts');
+    const s = await newSource();
+    const first = await storeAs(s.id, 'Notes/Cap-Dup', 'First spelling', 'one');
+    // Pages already in normal form that the scan still reads (non-ASCII slugs), so the cap runs out before the second spelling.
+    for (const n of [1, 2, 3]) await engine.putPage(`notes/nöte-${n}`, { type: 'note', title: `Filler ${n}`, compiled_truth: 'x', timeline: '' }, { sourceId: s.id });
+    const second = await storeAs(s.id, 'NOTES/CAP-DUP', 'Second spelling', 'two');
+    __setSlugSpellingScanLimitForTests(3);
+    try {
+      const preview = await repairJson(previewArgs(s.id));
+      expect(classes(preview)).toEqual({ [`${s.id}:Notes/Cap-Dup`]: 'needs_human' });
+      const entry = items(preview).find(item => item.slug === 'Notes/Cap-Dup') as { code?: string; message?: string } | undefined;
+      expect(entry?.code).toBe('slug_spelling_collision');
+      expect(entry?.message).toContain(`NOTES/CAP-DUP (id ${second.id})`);
+      if (preview.preview_hash) await repairJson(applyArgs(s.id, preview.preview_hash));
+      expect(await row(s.id, 'Notes/Cap-Dup')).toMatchObject({ id: first.id });
+      expect(await row(s.id, 'notes/cap-dup')).toBeUndefined();
+    } finally {
+      __setSlugSpellingScanLimitForTests();
+    }
+  }), 60_000);
+
   test('a write by the stored spelling and the repair take the same two page locks: the legacy key is locked too, and a change after the preview refuses', () => withEnv(env, async () => {
     const s = await newSource();
     await storeAs(s.id, 'Notes/Lock-Move');

@@ -186,8 +186,60 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       }
     }
 
+    /** A page under an older spelling with a purged take, previewed as the owner; returns the apply argv. */
+    async function purgedPage(sourceId: string, stored: string) {
+      _resetCliExitVerdictForTests();
+      await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
+      await engine.putPage(`notes/seed-${sourceId}`, { type: 'note', title: 'Rls page', compiled_truth: 'before', timeline: '' }, { sourceId });
+      await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', [stored, `notes/seed-${sourceId}`, sourceId]);
+      await engine.executeRaw("INSERT INTO take_purges(source_id, subject, claim_hash) VALUES ($1,$2,gbrain_fact_fingerprint('A purged take'))", [sourceId, stored]);
+      const preview = await repairJson(['slug-spelling', '--source', sourceId]);
+      return ['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes'];
+    }
+    /** Whether the purged take can be saved again on the page now at `slug` (as the owner). */
+    async function takeComesBack(sourceId: string, slug: string): Promise<boolean> {
+      const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+      if (!page) return false;
+      return engine.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'A purged take', kind: 'take', holder: 'brain', weight: 0.5 }]).then(() => true, () => false);
+    }
+    const slugsIn = async (sourceId: string) => (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug);
+
+    test('a permissive policy that shows the role no tombstone (USING false) refuses the move, so the purged take cannot come back under the normal name', () => withEnv(env, async () => {
+      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      const apply = await purgedPage(sourceId, 'Notes/Rls-Hide');
+      await openAllBut('take_purges');
+      await engine.executeRaw(`CREATE POLICY ${ROLE}_open ON take_purges FOR ALL TO ${ROLE} USING (false) WITH CHECK (true)`);
+      try {
+        const error = await repairJson(apply, scoped).then(() => undefined, e => e as OperationError);
+        const text = `${error?.message} ${error?.suggestion}`;
+        expect({ code: error?.code, names: text.includes('take_purges') && text.includes('BYPASSRLS'), slugs: await slugsIn(sourceId), comesBack: await takeComesBack(sourceId, 'notes/rls-hide') })
+          .toEqual({ code: 'writer_coordinator_required', names: true, slugs: ['Notes/Rls-Hide'], comesBack: false });
+      } finally {
+        await openAllBut(null);
+      }
+    }), 120_000);
+
+    test('FORCE ROW LEVEL SECURITY on the owner refuses the move too, even with policies that show every row', () => withEnv(env, async () => {
+      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      const apply = await purgedPage(sourceId, 'Notes/Rls-Force');
+      await openAllBut(null);
+      const [{ tableowner }] = await engine.executeRaw<{ tableowner: string }>("SELECT tableowner FROM pg_tables WHERE schemaname='public' AND tablename='fact_purges'");
+      await engine.executeRaw(`ALTER TABLE fact_purges OWNER TO ${ROLE}`);
+      await engine.executeRaw('ALTER TABLE fact_purges FORCE ROW LEVEL SECURITY');
+      try {
+        const error = await repairJson(apply, scoped).then(() => undefined, e => e as OperationError);
+        expect({ code: error?.code, names: `${error?.message} ${error?.suggestion}`.includes('fact_purges'), slugs: await slugsIn(sourceId) })
+          .toEqual({ code: 'writer_coordinator_required', names: true, slugs: ['Notes/Rls-Force'] });
+      } finally {
+        await engine.executeRaw('ALTER TABLE fact_purges NO FORCE ROW LEVEL SECURITY');
+        await engine.executeRaw(`ALTER TABLE fact_purges OWNER TO "${tableowner}"`);
+        // Handing ownership back drops the role's own grants on the table; give them back for the next cases.
+        await engine.executeRaw(`GRANT ALL ON fact_purges TO ${ROLE}`);
+      }
+    }), 120_000);
+
     for (const hidden of ['take_purges', 'fact_purges']) {
-      test(`${hidden} hidden from the role: the move is refused before anything moves, and moves once the role can read it`, () => withEnv(env, async () => {
+      test(`${hidden} hidden from the role: the move is refused before anything moves, also once the role has policies, and the owner moves it`, () => withEnv(env, async () => {
         _resetCliExitVerdictForTests();
         const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
         await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
@@ -200,8 +252,10 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
         const error = await repairJson(apply, scoped).then(() => undefined, e => e as OperationError);
         expect({ code: error?.code, text: `${error?.message} ${error?.suggestion}`.includes(hidden) }).toEqual({ code: 'writer_coordinator_required', text: true });
         expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug)).toEqual(['Notes/Rls-Move']);
+        // Policies of the role on every table still do not prove it sees every tombstone: refused again; the owner moves it.
         await openAllBut(null);
-        await repairJson(apply, scoped);
+        expect((await repairJson(apply, scoped).then(() => undefined, e => e as OperationError))?.code).toBe('writer_coordinator_required');
+        await repairJson(apply);
         expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug)).toEqual(['notes/rls-move']);
         expect((await engine.executeRaw('SELECT 1 FROM take_purges WHERE source_id=$1 AND subject=$2', [sourceId, 'notes/rls-move'])).length).toBe(1);
       }), 120_000);
