@@ -1,4 +1,0 @@
-**Trunk Dynamic CI now decides the persistence crash robot, the convergence check and the TLA+ specs one by one on pull requests (contributed by @max-trunk).**
-
-### Changed
-- `persistence-validation.yml` asks Trunk Dynamic CI about `crash-robot` and `convergence` separately, so a crash-robot flake no longer decides whether convergence runs, and `tla-spec.yml` gets the same pull-request-only filter for `tla`. Trunk stays in Learning mode, which skips nothing; pushes, the nightly runs and the full-ci dispatch still run every lane, and a missing token (a fork's pull request) runs every job. The keyless harness check stays ungated, because nothing reruns it after a pull request. `trunk-io/dynamic-ci` moves to v1 (v0.1.12), and `scripts/check-dynamic-ci.ts` now requires every caller of a reusable workflow with a filter to pass `TRUNK_API_TOKEN`.
