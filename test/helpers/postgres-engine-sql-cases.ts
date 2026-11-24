@@ -2845,7 +2845,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listMentionLinkersOfTargets', [['default', (e) => e.listMentionLinkersOfTargets('default', ['people/alice-example'])]]),
   ...variants('lockMentionEntries', [['default', (e) => e.lockMentionEntries('default')]]),
   ...variants('applyGazetteerEntryChanges', [['both', (e) => e.applyGazetteerEntryChanges('default', [{ source_id: 'default', name_norm: 'bob', target_slug: 'people/bob-example', case_sensitive: false }], [{ source_id: 'default', name_norm: 'alice', target_slug: 'people/alice-example', case_sensitive: false }])]]),
-  ...variants('resetMentionRevisions', [['sources', (e) => e.resetMentionRevisions({ sourceIds: ['default'] })], ['pages', (e) => e.resetMentionRevisions({ pageIds: [1] })]]),
+  ...variants('resetMentionRevisions', [['sources', (e) => e.resetMentionRevisions({ sourceIds: ['default'] })], ['pages', (e) => e.resetMentionRevisions({ pageIds: [1] })], ['tail', (e) => e.resetMentionRevisions({ pageIds: [1], sourceIds: ['default'], afterPageId: 1 })]]),
   ...variants('readMentionGenerations', [['plain', (e) => e.readMentionGenerations(['default'], false)], ['for_share', (e) => e.readMentionGenerations(['default'], true)]]),
   ...variants('listMentionDuePages', [['default', (e) => e.listMentionDuePages('default', 7, 0, 200)]]),
   ...variants('listPageOutLinks', [['default', (e) => e.listPageOutLinks([1])]]),

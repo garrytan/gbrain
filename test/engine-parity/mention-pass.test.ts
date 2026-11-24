@@ -151,6 +151,12 @@ describe('engine parity: the mention pass', () => {
       const dueAfterUpsert = sorted((await engine.listMentionDuePages('default', MENTION_EXTRACTOR_VERSION, 0, 200)).map(p => p.slug));
       await engine.resetMentionRevisions({ pageIds: [idOf('notes/retro')] });
       const dueAfterReset = sorted((await engine.listMentionDuePages('default', MENTION_EXTRACTOR_VERSION, 0, 200)).map(p => p.slug));
+      // The tail form (the mention pass's deadline-stopped scan): every page of the source after an id is due too.
+      await engine.upsertPageMentionState('default', revisions, MENTION_EXTRACTOR_VERSION, '3');
+      const [low, high] = [idOf('notes/standup'), idOf('notes/retro')].sort((a, b) => Number(a) - Number(b));
+      await engine.resetMentionRevisions({ pageIds: [], sourceIds: ['default'], afterPageId: Number(low) });
+      const dueAfterTail = sorted((await engine.listMentionDuePages('default', MENTION_EXTRACTOR_VERSION, 0, 200)).map(p => p.slug));
+      expect(dueAfterTail).toEqual([names.get(Number(high))!]);
       await engine.resetSourceMentionIndexRevisions('default');
       const aliasDue = (await engine.listAliasDuePages('default', ['note'], 0, ALIAS_DERIVATION_VERSION, 200)).map(p => p.slug);
       await engine.applyGazetteerEntryChanges('default', [], [
@@ -172,7 +178,7 @@ describe('engine parity: the mention pass', () => {
       await engine.clearMentionSourceIndex('default');
       const cleared = { entries: await engine.listGazetteerEntryKeys('default'), aliases: await engine.listDerivedAliasRows('default', ['people/alice-example']),
         due: await engine.countPagesDueForMentions({ sourceId: 'default', mentionVersion: MENTION_EXTRACTOR_VERSION }) };
-      const result = { stamps, rev: typeof rev?.revision, candidates, aliasRows, stale, dueAfterUpsert, dueAfterReset, aliasDue, entries, linkers, origins,
+      const result = { stamps, rev: typeof rev?.revision, candidates, aliasRows, stale, dueAfterUpsert, dueAfterReset, dueAfterTail, aliasDue, entries, linkers, origins,
         afterDelete, removed, afterSourceDelete, cleared };
       expect(stamps).toEqual([{ slug: 'notes/standup', iso: true }]);
       expect(stale).toEqual(['people/gone-example']);

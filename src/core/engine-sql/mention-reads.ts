@@ -6,6 +6,7 @@
  * rust/docs/store/mention-state.md).
  */
 import type { MentionRaw } from './mention-pass.ts';
+import { retiredPageSql } from '../entities/resolve.ts';
 
 export interface GazetteerPageRow {
   slug: string; source_id: string | null; title: string | null; type: string | null; connector_stub: boolean;
@@ -31,7 +32,8 @@ export function listGazetteerPages(raw: MentionRaw, types: readonly string[], ha
             frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
      FROM pages
      WHERE type = ANY($1::text[])
-       AND deleted_at IS NULL`,
+       AND deleted_at IS NULL
+       AND NOT ${retiredPageSql('pages')}`,
     [types, ...handleKeys],
   );
 }
@@ -43,7 +45,8 @@ export function listGazetteerAliases(raw: MentionRaw, types: readonly string[]):
        FROM page_aliases pa
        JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
        WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL`,
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}`,
       [types],
     );
 }

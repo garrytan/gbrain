@@ -219,6 +219,7 @@ The maintainer's principle (D20) is no PGLite-style locking. gbrain's TypeScript
 - `constructEngine` (`src/core/engine-construct.ts`) gains a `rust` case and its unsupported-engine message names all three engines. `BrainEngine.kind` (`src/core/engine.ts:832`) gains `'rust'`, and so does every other `'postgres' | 'pglite'` engine union (the config type in `src/core/config.ts`, `targetEngine` in `src/commands/migrate-engine.ts`, the config shape in `src/core/context/resolve-ipc.ts`). The graduation inventory's `engines` record becomes `{ pglite, postgres, rust }` with no default for `rust`, so a row that does not say how Rust stores it fails to compile.
 - 268 direct `kind === / !==` comparisons exist in `src` today. A new guard, `check:engine-kind-branches`, baselines them and fails on new two-way branches. Before a subsystem is allowed on the Rust engine, its branches become capability questions or an exhaustive `byEngineKind({ pglite, postgres, rust })`, so a Rust brain never falls silently into a Postgres branch.
 - Users reach the engine only through `gbrain migrate --to rust` (and back with `--to pglite`), after the preview opens (decision D8). `openEngine` accepts kind `rust` for harnesses. `gbrain init` keeps its PGLite default.
+- As built (CLI PR): the config value and the `constructEngine` case are in, so a hand-edited `engine: "rust"` with an absolute `database_path` opens the Rust engine from the CLI (no command writes the value yet). `gbrain init` with no engine flag keeps an existing `rust` or `pglite` config (`src/commands/init-existing-engine.ts`); it reports a Rust brain and never opens its store. `gbrain engine status` names `rust` and, with `--probe`, reports a typed addon or capability refusal, `data_dir_missing` for a missing path or an empty directory and `store_incomplete` for an empty `records.redb` or one with no `FORMAT` file, creating nothing. When the source lookup is refused on a Rust brain and a source was selected or registered, the command stops with the typed refusal rather than reading every source (`refusedSourceTarget`). The owner makes the store directory 0700 when it opens the brain.
 
 ### Capability gating
 
@@ -256,6 +257,10 @@ The maintainer's principle (D20) is no PGLite-style locking. gbrain's TypeScript
 | `engine_store_format_unsupported` `unreadable` | keep the directory as it is; restore from a verified backup (`gbrain backup restore`) | user, `ask_user` | nothing was written |
 | `engine_store_format_unsupported` `upgrade_failed` | none to run; the store stays at its old format and `detail` names the backup written before the upgrade | user, `report` | the old format remains readable by the previous release |
 
+- Two refusals come after a write began, and the contract names them (as built, CLI PR):
+  - A page mutation (`submitPageMutation`) refused after admission leaves the page untouched but records the request's receipt as `failed` or `conflict` (`write_error` names the cause). Calling again with the same idempotency key returns that receipt; this is the write-receipt contract, not a partial write.
+  - A body flip (`flipBodyGeneration`) that refuses writes nothing itself, but the staging rows written before it by `stageSegmentTexts`, `stageManifestRows` and `createSegmentedPageShell` stay. They stay, as on PGLite and Postgres: the staged manifest rows are not live until a flip publishes them, the staging ends when the caller aborts it or it expires, and texts no row names go at the next sweep or retention purge.
+  - `upsertChunks` on a segmented page refuses (`invalid_state`) before it writes, so a plain chunk write never replaces a page's segment chunks.
 - Caught panics: `gbrain-napi` installs its own panic hook, because the default hook prints the payload to stderr. The hook writes a sanitized trace (no row content, no argument values) to `<gbrain home>/engines/rust/diagnostics/<id>.txt` with mode 0600 and the call returns `internal_error` naming the operation, with `detail.diagnostic_id` and `detail.outcome`. A panic inside a write transaction aborts it; the wrapper then closes and reopens the store, which runs open-time recovery, before the next call. Over HTTP MCP only the diagnostic id is returned.
 - A cancellation that arrives after commit reports the write as committed through its receipt, never as cancelled.
 - Faults that end the process (segfaults, aborts) cannot be caught. The next open records that the previous owner ended without closing the store, and doctor `rust_engine_available` reports it with the `engine_build` and the recovery result.
@@ -267,6 +272,7 @@ The maintainer's principle (D20) is no PGLite-style locking. gbrain's TypeScript
 
 - The source-scope ladder (`sourceScopeOpts`, `src/core/ops/context.ts:646`), trust checks and redaction stay in TypeScript and are unchanged. The engine receives scope and visibility arguments exactly as the other engines do.
 - Inside the engine, source scope, private pages, `readable_by`, hard excludes and soft-deletes apply inside each candidate set (vector, keyword, title, CJK, facts, relational), before ranking and before any text leaves the engine (`research/03`, "Must preserve exactly"). Malformed `readable_by` fails closed as `!nobody`; `restrictions_present` is maintained in the same write transaction (`research/09` I6 and I7).
+- As built (CLI PR): the Rust store does not yet apply the private-page, owner and folder rules, so `dispatchToolCall` (`src/mcp/dispatch.ts`) refuses every call from a remote caller (stdio and HTTP MCP, any caller whose `remote` is not `false`) on an engine without the `access_control` capability, before any work, with `engine_capability_missing`. The local CLI (`remote: false`) is not affected. The refusal lifts when the engine serves `access_control`.
 - Proof: the operations source-isolation matrix, `test/helpers/two-engine.ts` isolation cases, `test/memory-verbs-conformance.test.ts`, and gbrain-evals Cat 22 (0 leaks) all run on the Rust arm. Any difference in what a caller can read is a release blocker, not a tolerance.
 
 ### Exactness hazards
@@ -806,7 +812,7 @@ Each yes is quoted in the body of the PR that needs it.
 
 ## Open before `rust` can be selected
 
-Review findings on the Rust store that block selecting `rust` as an engine, but not landing a Rust-only PR, since nothing selects the Rust engine yet. Each row names the code, the class the reviewer gave it, and whether it is confirmed and where it is fixed. A row leaves this list only with a test that fails before its fix.
+Review findings on the Rust store that block selecting `rust` as an engine, but not landing a Rust-only PR, since only a hand-edited `engine: "rust"` config value selects the Rust engine so far. Each row names the code, the class the reviewer gave it, and whether it is confirmed and where it is fixed. A row leaves this list only with a test that fails before its fix.
 
 | # | Code | Class | State |
 |---|---|---|---|

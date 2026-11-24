@@ -117,7 +117,7 @@ fn page_state_makes_a_page_current_until_its_content_or_a_reset_moves_it() {
         .upsert_page_mention_state("default", &pages, 7, "4")
         .unwrap();
     assert_eq!(due(&store), 0);
-    store.reset_mention_revisions(None, Some(&[b])).unwrap();
+    store.reset_mention_revisions(None, Some(&[b]), None).unwrap();
     assert_eq!(due(&store), 1);
     put(&store, "notes/a", "note", "Alpha changed");
     assert_eq!(due(&store), 2);

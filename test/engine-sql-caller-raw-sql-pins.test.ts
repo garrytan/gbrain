@@ -248,6 +248,14 @@ const PINS: Pin[] = [
     texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL WHERE page_id = ANY($1::int[])']; },
   },
   {
+    from: 'src/core/mentions/pass.ts (GST-3609, #10161)',
+    case: { method: 'resetMentionRevisions', variant: 'tail', run: e => e.resetMentionRevisions({ pageIds: [1], sourceIds: ['default'], afterPageId: 1 }) },
+    texts: () => {
+      return [`UPDATE page_mention_state SET mention_revision = NULL
+          WHERE page_id = ANY($1::int[]) OR ($3::int IS NOT NULL AND source_id = ANY($2::text[]) AND page_id > $3::int)`];
+    },
+  },
+  {
     from: 'src/core/mentions/pass.ts:510 (at 0af1a6ecf0)',
     case: { method: 'readMentionGenerations', variant: 'plain', run: e => e.readMentionGenerations(['default'], false) },
     texts: () => { const lock = false; return [`SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])${lock ? ' FOR SHARE' : ''}`]; },
