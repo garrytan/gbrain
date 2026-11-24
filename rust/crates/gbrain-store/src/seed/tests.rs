@@ -17,6 +17,7 @@ use serde_json::json;
 const SEED: &str = "seed-1";
 const REV: &str = "11111111-1111-4111-8111-111111111111";
 const INCARNATION: &str = "22222222-2222-4222-8222-222222222222";
+const OTHER_REV: &str = "33333333-3333-4333-8333-333333333333";
 
 fn row(pairs: &[(&str, &str)]) -> SeedRow {
     pairs
@@ -147,6 +148,33 @@ fn a_failed_batch_stores_nothing() {
 }
 
 #[test]
+fn a_batch_that_fails_after_good_rows_stores_none_of_them() {
+    // Value: protects=a failed batch leaves no accepted prefix; fails_when=rows commit one by one before a later row fails;
+    // why_new=a_failed_batch_stores_nothing fails on its first row, before any data was written; seam=none;
+    // no_claim=power-loss durability.
+    let s = seeded_pages();
+    let good = row(&[("page_id", "7"), ("tag", "founder")]);
+    let bad = row(&[("page_id", "99"), ("tag", "x")]);
+    let err = s
+        .import_relation(SEED, "tags", vec![good, bad])
+        .unwrap_err();
+    assert_eq!(err.code, PAGE_NOT_FOUND);
+    assert!(err.message.starts_with("tags row 1:"), "{}", err.message);
+    assert!(
+        s.get_tags("people/alice-example", &ReadScope::default())
+            .unwrap()
+            .is_empty()
+    );
+    // The same seed may send the batch again: the refused batch recorded nothing.
+    let r = import(
+        &s,
+        "tags",
+        vec![row(&[("page_id", "7"), ("tag", "founder")])],
+    );
+    assert_eq!((r.imported, r.skipped), (1, 0));
+}
+
+#[test]
 fn sources_are_copied_verbatim_and_retries_skip() {
     let s = store();
     let wiki = row(&[
@@ -255,6 +283,30 @@ fn pages_keep_ids_times_revisions_and_family_columns() {
             .unwrap(),
         10
     );
+}
+
+#[test]
+fn an_imported_page_signature_decides_which_embedded_chunks_are_stale() {
+    // Value: protects=the page's embedding signature survives the import; fails_when=the signature is dropped or changed (every embedded chunk
+    // would then read stale or fresh by the wrong rule); why_new=the signature check in pages_keep_ids_times_revisions_and_family_columns runs on a
+    // page with no chunk, so it passes without the signature; seam=none; no_claim=embedding provider compatibility.
+    let s = seeded_pages();
+    let text = "Alice builds widgets at acme.";
+    let mut embedded = chunk_row("41", "0", text);
+    embedded.insert("embedding".into(), Some("[0.5,-0.25,1]".into()));
+    embedded.insert("embedded_at".into(), Some("2026-01-03 00:00:00+00".into()));
+    embedded.insert("embedded_text_hash".into(), Some(md5_hex(text)));
+    assert_eq!(import(&s, "content_chunks", vec![embedded]).imported, 1);
+    let stale = |signature: &str| {
+        s.count_stale_chunks(&StaleChunkOptions {
+            signature: Some(signature.into()),
+            include_null_signature: true,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    assert_eq!(stale("openai:text-embedding-3-large:1536"), 0);
+    assert_eq!(stale("another:model:1"), 1);
 }
 
 #[test]
@@ -385,7 +437,8 @@ fn chunks_keep_ids_vectors_and_hashes() {
     assert_eq!(chunk.meta["parent_symbol_path"], json!(["a", "b c"]));
     assert!(chunk.length > 0);
     drop(read);
-    assert_eq!(counter(&s, crate::chunks::NEXT_CHUNK_ID), 43);
+    // The dropped segment chunk (43) and retired chunk (44) still moved the counter: a code edge may name them.
+    assert_eq!(counter(&s, crate::chunks::NEXT_CHUNK_ID), 45);
 
     let vectors = s.get_embeddings_by_chunk_ids(&[41, 42]).unwrap();
     assert_eq!(vectors.len(), 2);
@@ -554,9 +607,10 @@ fn facts_keep_ids_tiers_and_embeddings() {
     ]);
     let r = import(&s, "facts", vec![fact.clone()]);
     assert_eq!(r.imported, 1);
-    assert_eq!(r.unmapped_columns, vec!["write_request_id"]);
+    assert!(r.unmapped_columns.is_empty());
     let read = s.read().unwrap();
     let got = read_fact(&*read, 501).unwrap().unwrap();
+    assert_eq!(got.receipt.write_request_id.as_deref(), Some("req-1"));
     assert_eq!(got.fact, "Alice founded acme");
     assert_eq!(got.visibility, "world");
     assert_eq!(got.valid_from_us, us("2026-01-01T00:00:00Z"));
@@ -628,6 +682,142 @@ fn takes_keep_ids_rows_and_current_vectors() {
     assert_eq!(err.code, CONSTRAINT_VIOLATION);
 }
 
+/// The columns the store keeps since master added them: the sources' chunker version, a link's
+/// assertion tense, the tier, origin and write receipt of timeline entries and takes, a page's
+/// revision receipt and the columns of a derived page alias.
+#[test]
+fn the_columns_master_stores_are_kept_not_reported() {
+    let s = store();
+    let r = import(
+        &s,
+        "sources",
+        vec![row(&[
+            ("id", "wiki"),
+            ("name", "Wiki"),
+            ("config", "{}"),
+            ("archived", "f"),
+            ("incarnation", INCARNATION),
+            ("created_at", "2025-12-31 23:59:59+00"),
+            ("chunker_version", "3"),
+        ])],
+    );
+    assert!(r.unmapped_columns.is_empty());
+    let read = s.read().unwrap();
+    let source = crate::sources::read_source(&*read, "wiki")
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.chunker_version.as_deref(), Some("3"));
+    drop(read);
+
+    let mut page = page_row("7", "people/alice-example");
+    page.insert("revision_write_request_id".into(), Some(REV.into()));
+    page.insert("revision_principal_kind".into(), Some("token".into()));
+    page.insert("revision_principal_id".into(), Some("tok-1".into()));
+    let r = import(
+        &s,
+        "pages",
+        vec![page, page_row("9", "companies/acme-example")],
+    );
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let read = s.read().unwrap();
+    let stored = crate::pages::read_page_by_id(&*read, 7).unwrap().unwrap();
+    assert_eq!(stored.revision_receipt.request_id.as_deref(), Some(REV));
+    assert_eq!(
+        stored.revision_receipt.principal_kind.as_deref(),
+        Some("token")
+    );
+    assert_eq!(
+        stored.revision_receipt.principal_id.as_deref(),
+        Some("tok-1")
+    );
+    drop(read);
+
+    let mut link = link_row("21", "7", "9", "works_at");
+    link.insert("assertion_tense".into(), Some("past".into()));
+    let r = import(&s, "links", vec![link]);
+    assert!(r.unmapped_columns.is_empty());
+    let read = s.read().unwrap();
+    let stored: LinkRecord = get_json(&*read, &keys::link(7, 21)).unwrap().unwrap();
+    assert_eq!(stored.assertion_tense.as_deref(), Some("past"));
+    drop(read);
+
+    let receipt = [
+        ("write_request_id", REV),
+        ("write_principal_kind", "token"),
+        ("write_principal_id", "tok-1"),
+        ("last_write_request_id", OTHER_REV),
+        ("last_write_principal_kind", "owner"),
+        ("last_write_principal_id", "garry"),
+        ("last_written_at", "2026-06-01 00:00:00+00"),
+    ];
+    let mut entry = row(&[
+        ("id", "12"),
+        ("page_id", "7"),
+        ("date", "2026-05-06"),
+        ("source", "meeting"),
+        ("summary", "Raised a seed round"),
+        ("detail", ""),
+        ("created_at", "2026-05-06 10:00:00+00"),
+        ("trust_tier", "user_confirmed"),
+        ("write_origin", r#"{"kind": "cli"}"#),
+    ]);
+    entry.extend(row(&receipt));
+    let r = import(&s, "timeline_entries", vec![entry]);
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let read = s.read().unwrap();
+    let stored = crate::timeline::read_entry(&*read, 7, "2026-05-06", 12)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.trust.trust_tier.as_deref(), Some("user_confirmed"));
+    assert_eq!(stored.trust.write_origin, Some(json!({"kind": "cli"})));
+    assert_eq!(stored.receipt.write_request_id.as_deref(), Some(REV));
+    assert_eq!(
+        stored.receipt.last_write_principal_id.as_deref(),
+        Some("garry")
+    );
+    assert_eq!(
+        stored.receipt.last_written_at_us,
+        Some(us("2026-06-01T00:00:00Z"))
+    );
+    drop(read);
+
+    let mut take = take_row("31", "1", "Alice ships");
+    take.insert("trust_tier".into(), Some("user_confirmed".into()));
+    take.extend(row(&receipt));
+    let r = import(&s, "takes", vec![take]);
+    assert!(r.unmapped_columns.is_empty(), "{:?}", r.unmapped_columns);
+    let read = s.read().unwrap();
+    let stored = crate::takes::read_take(&*read, 31).unwrap().unwrap();
+    assert_eq!(stored.trust.trust_tier.as_deref(), Some("user_confirmed"));
+    assert_eq!(
+        stored.receipt.write_principal_kind.as_deref(),
+        Some("token")
+    );
+    drop(read);
+
+    let derived = row(&[
+        ("source_id", "default"),
+        ("alias_norm", "alice"),
+        ("slug", "people/alice-example"),
+        ("origin", "declared"),
+        ("case_sensitive", "t"),
+        ("alias_text", "Alice"),
+    ]);
+    let r = import(&s, "page_aliases", vec![derived]);
+    assert_eq!((r.imported, r.losses.len()), (1, 0));
+    assert!(r.unmapped_columns.is_empty());
+    let mut plain = row(&[
+        ("source_id", "default"),
+        ("alias_norm", "ally"),
+        ("slug", "people/alice-example"),
+        ("origin", "frontmatter"),
+        ("case_sensitive", "t"),
+    ]);
+    plain.insert("alias_text".into(), None);
+    let r = import(&s, "page_aliases", vec![plain]);
+    assert_eq!(r.losses.get("frontmatter_alias_columns"), Some(&1));
+}
+
 #[test]
 fn counters_never_go_down() {
     let s = seeded_pages();
@@ -682,7 +872,7 @@ fn behind_page_row(id: &str, slug: &str) -> SeedRow {
 
 fn job(s: &Store, slug: &str) -> crate::persistence::JobRecord {
     let read = s.read().unwrap();
-    crate::persistence::read_job(&*read, "default", slug)
+    crate::persistence::read_page_job(&*read, "default", slug)
         .unwrap()
         .expect("a projection job")
 }
@@ -768,6 +958,9 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
             "code_traversal_cache",
             "conversation_parser_llm_cache",
             "dream_verdicts",
+            "engine_writer_coverage_gaps",
+            "engine_writer_observations",
+            "engine_writer_sessions",
             "eval_candidates",
             "eval_capture_failures",
             "eval_contradictions_cache",

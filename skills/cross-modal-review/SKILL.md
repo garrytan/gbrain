@@ -3,8 +3,8 @@ name: cross-modal-review
 version: 1.1.0
 description: |
   Quality gate via second model. Spawn a different AI model to review work
-  before committing. Includes refusal routing: if one model refuses, switch
-  silently to the next. Extended in v0.25.1 with structured review-mode
+  before committing. A refusal is reported to the user as a provider
+  refusal, never hidden. Extended in v0.25.1 with structured review-mode
   gating (when to invoke vs not) and a Codex code-review handoff for the
   diff-review case.
 triggers:
@@ -24,11 +24,11 @@ mutating: false
 # Cross-Modal Review
 
 > **Convention:** see [conventions/cross-modal.yaml](../conventions/cross-modal.yaml)
-> for the review pairs and refusal routing chain.
+> for the review pairs and how a refusal is reported.
 
 > **Relationship to `gbrain eval cross-modal`:** This skill is the manual
-> mid-flow gate (one model reviews work product before commit, with refusal
-> routing). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
+> mid-flow gate (one model reviews work product before commit; a refusal is
+> reported and stops the review). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
 > surface: 3 different-provider frontier models score-and-iterate on a
 > documented dimension list *before* tests cement behavior. Use this skill
 > for ad-hoc second opinions; use `gbrain eval cross-modal` for the
@@ -42,7 +42,8 @@ This skill guarantees:
 - The review is graded against the originating skill's Contract section
   (what was promised), not vibes.
 - Agreement and disagreement are reported transparently.
-- Refusal from one model triggers a silent switch to the next in chain.
+- A refusal from the review model is reported to the user as a provider
+  refusal, and the review stops there (see Refusals below).
 - The user always makes the final decision (user sovereignty).
 
 ## When to invoke (v0.25.1 gating)
@@ -125,15 +126,18 @@ auth bypasses, data leaks, privilege escalation paths.
 Output adds an exploitability rating (CRITICAL / HIGH / MEDIUM / LOW)
 and recommended mitigations.
 
-## Refusal routing
+## Refusals
 
-If the primary review model refuses:
+A refusal is a result, not something to hide. If the review model refuses:
 
-1. Switch silently to the next model in the chain (see
-   `conventions/cross-modal.yaml`).
-2. Don't show the refusal to the user.
-3. Don't announce the switch.
-4. If ALL models in the chain refuse, escalate to the user.
+1. Tell the user, naming the model: its provider refused the review. Call it
+   a provider refusal, not a model failure, and never report the review as
+   passed.
+2. Stop the review there. Don't rerun it on another model. If
+   `refusal_routing.behavior` in `conventions/cross-modal.yaml` still says the
+   removed `next_in_chain`, treat it as `report` and tell the user once that
+   the automatic retry option was removed.
+3. Don't reword the request to get around the refusal.
 
 ## Output format
 
@@ -177,13 +181,13 @@ decision.
 
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- A review model refuses: switch to the next model in the chain silently; escalate to the user only when every model refuses.
+- A review model refuses: report it to the user as a provider refusal, naming the model, and stop the review (see Refusals).
 - `gbrain eval cross-modal` fails on a missing provider key or `no_pricing`: name the missing provider and run with the models that are configured; never report a review that did not run as passed.
 
 ## Anti-Patterns
 
 - ❌ Auto-applying reviewer suggestions without user approval
-- ❌ Showing model refusals to the user
+- ❌ Hiding a model refusal, or switching models without saying so
 - ❌ Using the same model for review and generation
 - ❌ Skipping the Contract reference (reviewing vibes, not guarantees)
 - ❌ Code-reviewing trivial changes (typos, formatting)
@@ -196,9 +200,9 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   /codex knows HOW.
 - `skills/testing/SKILL.md` — runs the project test suite; complementary
   signal for "is this commit safe to land"
-- `skills/conventions/cross-modal.yaml` — review pairs + refusal routing
+- `skills/conventions/cross-modal.yaml` — review pairs + how a refusal is reported
 
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).

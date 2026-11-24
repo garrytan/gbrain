@@ -183,7 +183,7 @@ export async function fuseArms(
     if (resolvedMode.collapse) req.collapsePrefetch = prefetchPageFacts(engine, fused.map(r => r.page_id));
     await runPostFusionStages(engine, fused, {
       ...postFusionOpts, skipMetadataBoosts: !metadataBoostGate.boosts_applied,
-    });
+    }, degraded);
     // v0.32.x search-lite: intent exact-match boost (entity/event intents).
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
     await applyIdentityBoosts(req, fused, generatedRead);
@@ -331,6 +331,10 @@ export async function rerankAndPin(
   // read-only view of `deduped` with the same reads. The reranker's input is unchanged.
   const identityPending = readIdentityLookups(req, exactLookupOpts);
   const gatePending = prepareRerankGate(req, { deduped, rerankerOpts, egressDenied, lookups: identityPending, multimodal });
+  // Both promises are awaited only after the reranker call. A capability refusal that lands while it runs would
+  // otherwise be an unhandled rejection (the process exits); the no-op catches keep it for the awaits below.
+  identityPending.catch(() => undefined); // silent-read-ok: marks the rejection handled only; the same promise is awaited below and rethrows there
+  gatePending.catch(() => undefined); // silent-read-ok: marks the rejection handled only; the same promise is awaited below and rethrows there
   const reranked = rerankerOpts.enabled && !egressDenied
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
@@ -420,9 +424,9 @@ export async function sizeReturnPool(
     adaptiveDecision = r.decision;
   }
 
-  // v0.42.3.0 — autocut (score-discontinuity result-sizing). The floor:
-  // default-ON in reranked modes (resolvedMode.autocut, resolved per-call >
-  // config > bundle like every other knob). Cuts the ranked set at the largest
+  // v0.42.3.0 — autocut (score-discontinuity result-sizing). OFF in every mode bundle (rule
+  // R2: it dropped relevant hits on multi-part questions); `autocut: true` or `search.autocut
+  // true` turns it on (resolvedMode.autocut, resolved per-call > config > bundle). Cuts the ranked set at the largest
   // cross-encoder rerank-score cliff, BEFORE the limit slice, first page only.
   // Runs AFTER adaptive-return so an agent-forced intent cap composes (both are
   // trim-only with never-empty failsafes). The reranker scored the full

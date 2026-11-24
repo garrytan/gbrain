@@ -43,7 +43,7 @@ export function readCaptureState(cap: string): CaptureState | null {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as CaptureState;
     return parsed?.version === CAPTURE_STATE_VERSION ? parsed : null;
-  } catch {
+  } catch { // silent-read-ok: an unreadable state file reads as capture off, so nothing is recorded (the private side)
     return null;
   }
 }

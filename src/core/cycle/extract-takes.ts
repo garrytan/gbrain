@@ -196,7 +196,7 @@ async function upsertProjectedTakes(engine: BrainEngine, rows: TakeBatchInput[],
     const trust = derivedWriteTrust({ channel: 'derive:takes_fence', inputs, projection: true });
     const write = async (tx: BrainEngine) => {
       const decisions = group.map(r => decideTakeWrite({ claim: r.claim, source: r.source }, { sourceId: pages.get(r.page_id)?.source_id ?? 'default',
-        slug: pages.get(r.page_id)?.slug ?? null, payload: { ...r }, input: derivedGateInput(trust), cfg }));
+        slug: pages.get(r.page_id)?.slug ?? null, pageId: r.page_id, payload: { ...r }, input: derivedGateInput(trust), cfg }));
       for (const [i, d] of decisions.entries()) if (d.action !== 'insert') await applyGateDecision(tx, d, { table: 'takes', sourceId: pages.get(group[i].page_id)?.source_id ?? 'default' }, async () => null, tally);
       // W1 #6783 §12 (a): a row that would replace or deactivate a more trusted (or contested) take is not written.
       const held = await guardTakeRows(tx, group.filter((_, i) => decisions[i].action === 'insert').map(r => ({ page_id: r.page_id, row_num: r.row_num, claim: r.claim,

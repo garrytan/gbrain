@@ -608,3 +608,29 @@ impl Store {
         ))
     }
 }
+
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(receipts_since(read, 0)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![("run_meta", ProbeCell::opt_text(r.run_meta.as_deref()))],
+            source_id: r.source_id,
+        })
+        .collect())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the receipt `id` with its time-index entry.
+/// `false` when there is none.
+pub(crate) fn remove_receipt(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(bytes) = tx.get(&receipt_key(id))? else {
+        return Ok(false);
+    };
+    let record: ReceiptRecord = serde_json::from_slice(&bytes)?;
+    tx.delete(&time_key(record.created_at_us, id))?;
+    tx.delete(&receipt_key(id))?;
+    Ok(true)
+}

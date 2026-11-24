@@ -3,6 +3,8 @@
 
 use crate::env::parse_iso;
 use crate::error::{Result, StoreError};
+use crate::trust::RowTrust;
+use crate::write_receipt::{ActorColumns, WriteReceipt};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -116,6 +118,36 @@ impl<'a> Row<'a> {
     /// A `vector` or `halfvec`: `[0.1,0.2]`.
     pub fn vector(&self, col: &str) -> Result<Option<Vec<f32>>> {
         self.parse(col, vector)
+    }
+
+    /// The seven write receipt columns of `facts`, `takes` and `timeline_entries`.
+    pub fn write_receipt(&self) -> Result<WriteReceipt> {
+        Ok(WriteReceipt {
+            write_request_id: self.text("write_request_id"),
+            write_principal_kind: self.text("write_principal_kind"),
+            write_principal_id: self.text("write_principal_id"),
+            last_write_request_id: self.text("last_write_request_id"),
+            last_write_principal_kind: self.text("last_write_principal_kind"),
+            last_write_principal_id: self.text("last_write_principal_id"),
+            last_written_at_us: self.ts("last_written_at")?,
+        })
+    }
+
+    /// An actor stored as three columns (`pages.revision_*`, half of a version receipt).
+    pub fn actor(&self, request: &str, kind: &str, id: &str) -> ActorColumns {
+        ActorColumns {
+            request_id: self.text(request),
+            principal_kind: self.text(kind),
+            principal_id: self.text(id),
+        }
+    }
+
+    /// The `trust_tier` and `write_origin` columns of `takes` and `timeline_entries`.
+    pub fn row_trust(&self) -> Result<RowTrust> {
+        Ok(RowTrust {
+            trust_tier: self.text("trust_tier").filter(|tier| tier != "unknown"),
+            write_origin: self.json("write_origin")?,
+        })
     }
 
     /// A one-dimensional `text[]`: `{a,"b c"}`.

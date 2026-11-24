@@ -79,7 +79,7 @@ export function readEpoch(cap: string): EpochPointer | null {
   try {
     const p = JSON.parse(readFileSync(epochPointerPath(cap), 'utf8')) as EpochPointer;
     return p?.version === 1 && typeof p.id === 'string' ? p : null;
-  } catch {
+  } catch { // silent-read-ok: no readable epoch means no recording: every recorder stops appending and replay has nothing to replay
     return null;
   }
 }
@@ -176,7 +176,7 @@ export async function dropScratchPostgres(cap: string): Promise<boolean> {
   const recordPath = scratchRecordPath(cap);
   if (!existsSync(recordPath)) { rmSync(scratchPendingPath(cap), { force: true }); return true; }
   let rec: { url: string; brain: string };
-  try { rec = JSON.parse(readFileSync(recordPath, 'utf8')); } catch { return false; }
+  try { rec = JSON.parse(readFileSync(recordPath, 'utf8')); } catch { return false; } // silent-read-ok: not silent; false keeps the drop pending and every replay, status and seed refuses
   let e: ScratchSql | null = null;
   try {
     e = await scratchOpener(rec.url);
@@ -190,7 +190,8 @@ export async function dropScratchPostgres(cap: string): Promise<boolean> {
     rmSync(recordPath, { force: true });
     rmSync(scratchPendingPath(cap), { force: true });
     return true;
-  } catch {
+    // capability-refusal-ok: the scratch copy is always a local Postgres database, never a Rust engine
+  } catch { // silent-read-ok: not silent; false keeps the drop pending and every replay, status and seed refuses
     return false;
   } finally {
     await e?.disconnect().catch(() => undefined);

@@ -145,6 +145,8 @@ export interface PassStamp {
   retryTaken: string[]; releasedHolds: string[];
   /** GBRA-133: deleted-side holds whose file is gone; the stamp releases those whose page is no longer live. */
   deletionCandidates?: DeletionCandidate[];
+  /** LC-1: the level's removal-pending paths (sync-removal-pending.ts), recorded on the converged stamp. */
+  removalPending?: Array<{ path: string; stat: string }> | null;
   selectionFp: string; parserFp: string; pack: string | null;
   /** The pass ran a full round (resets `passes_since_full`). */
   full: boolean;
@@ -581,7 +583,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
     { prior: pass.value.obligations.converged?.writeback });
   const value: ManagedSyncPassValue = structuredClone(pass.value);
   const at = new Date().toISOString(), prior = value.obligations.converged;
-  value.obligations.converged = { target: p.target, at, ...watermark, ...(stamp.rescreen ? { open_at_stamp: null } : {}),
+  value.obligations.converged = { target: p.target, at, ...watermark, ...(stamp.rescreen ? { open_at_stamp: null } : {}), ...(stamp.removalPending !== undefined ? { removal_pending: stamp.removalPending } : {}),
     parser_fp: stamp.parserFp, pack: stamp.pack, selection_fp: stamp.selectionFp, last_full_at: stamp.full || !prior ? at : prior.last_full_at,
     passes_since_full: stamp.full || !prior ? 0 : prior.passes_since_full + 1 };
   if (stamp.closesEpisode) delete value.obligations.episode;

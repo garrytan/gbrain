@@ -34,6 +34,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
+import { runAppleContactsEnrichment, type EnrichDeps } from './enrich.ts';
 import { withConnectorSync, pendingConnectorResult, type ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { connectorIdentity } from '../persistence/connector-identity.ts';
 import { abortsManagedRun, ConnectorHoldSession, connectorHoldsResult } from '../connectors/connector-hold-session.ts';
@@ -41,6 +42,8 @@ import { connectorDbCursorKey, readConnectorDbCursor, writeConnectorDbCursor } f
 import { connectorRender } from '../connectors/connector-text.ts';
 import { afterConnectorPublish, connectorDryRunResult, deleteConnectorPage, publishConnectorPage, runScoped, type ConnectorPublishCtx, type PublishSummary } from '../connectors/api-source.ts';
 import { slugifyPath } from '../sync.ts';
+import { decidedSets } from '../entities/identity-decisions.ts';
+import type { IdentityMemberRef } from '../engine-sql/identity-decisions.ts';
 import { applyContactPage } from '../contact-page-apply.ts';
 import { listEntityIdentities } from '../entity-identity.ts';
 import { parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../phone-key.ts';
@@ -70,6 +73,8 @@ export interface AppleContactsSyncDeps {
   helper?: AppleContactsHelper;
   now?: () => number;
   log?: (line: string) => void;
+  /** Test seam: the write route enrichment sends its batch to. */
+  enrichSend?: EnrichDeps['send'];
 }
 
 interface Summary extends PublishSummary { status: 'synced' | 'partial'; failedFiles: number }
@@ -101,8 +106,20 @@ export async function runAppleContactsSync(engine: BrainEngine, sourceId: string
     throw new OperationError('invalid_params', '--reset-checkpoint does not apply to an Apple Contacts source.',
       `Run gbrain sync --source ${sourceId} --full instead: it reads every contact from GBrain Helper again, under the delete floor.`);
   }
-  return withConnectorSync(engine, sourceId, APPLE_CONTACTS_KIND, cfg, opts,
+  const result = await withConnectorSync(engine, sourceId, APPLE_CONTACTS_KIND, cfg, opts,
     async (managed, options) => options.dryRun ? connectorDryRunResult('Apple Contacts', sourceId) : runInner(engine, sourceId, cfg, options, managed, deps), pendingConnectorResult);
+  // Enrichment reads what the pull just wrote, so it runs only after a clean one; its failure never fails the pull.
+  if (opts.dryRun || (result.status !== 'synced' && result.status !== 'up_to_date')) return result;
+  const log = deps.log ?? ((line: string) => process.stderr.write(`${line}\n`));
+  try {
+    const countryCode = parsePhoneCountryCode(await engine.getConfig(PHONE_COUNTRY_CODE_CONFIG_KEY).catch(() => null));
+    const record = await runAppleContactsEnrichment(engine, sourceId, cfg, countryCode, { send: deps.enrichSend, now: deps.now });
+    if (record?.note) log('[apple-contacts] ' + sourceId + ': enrichment: ' + record.note + ': gbrain apple-contacts enrich status --source ' + sourceId);
+  } catch (error) {
+    if (runScoped(error)) throw error;
+    log('[apple-contacts] ' + sourceId + ': enrichment did not run: ' + (error instanceof Error ? error.message : String(error)));
+  }
+  return result;
 }
 
 async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContactsSourceConfig, opts: SyncOpts,
@@ -125,6 +142,7 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
   const holds = await ConnectorHoldSession.open(engine, sourceId, managed, emptyState(), state.item_holds, { full: opts.full });
   const ctx: ConnectorPublishCtx = { engine, sourceId, managed, summary, label: 'Apple Contacts', tag: APPLE_CONTACTS_KIND, record: cfg.record, dir: cfg.dir, gated: true };
   const reviews = new Map((await readIdentityReviews(engine, sourceId)).map(r => [r.contact_id, r]));
+  let apart: IdentityMemberRef[][] | undefined;
   const holders = await readPersonFactHolders(engine, sourceId);
   /** Contacts whose person-page facts this run decides: contact id → the person page it may write (null: none). */
   const factTargets = new Map<string, { person: { source_id: string; slug: string }; fields: PersonFields } | null>();
@@ -184,7 +202,8 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
 
   /** Link (or unlink) one contact page and decide its person-page facts from what the page now holds. */
   const decideIdentity = async (id: string, slug: string, emails: string[], phones: string[], fields: PersonFields) => {
-    const link = await linkContactPage(engine, sourceId, slug, emails, phones, countryCode);
+    apart ??= decidedSets(await engine.listIdentityDecisions()).apart;
+    const link = await linkContactPage(engine, sourceId, slug, emails, phones, countryCode, { apart });
     if (link.outcome === 'many') reviews.set(id, { contact_id: id, slug, candidates: link.candidates! });
     else reviews.delete(id);
     let target: { source_id: string; slug: string } | null = null;

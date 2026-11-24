@@ -217,7 +217,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ),
     ];
     assert_eq!(resolve(&store, &names, json!({})), everything);
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": policy })),
         vec![
@@ -226,8 +226,7 @@ fn resolve_aliases_under_exclude_private_hides_the_aliases_of_private_pages() {
         ]
     );
     // Without the alias-key test (`honorAliases` false) only `visibility` hides a page.
-    let visibility_only =
-        json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let visibility_only = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
     assert_eq!(
         resolve(&store, &names, json!({ "excludePrivate": visibility_only })),
         vec![
@@ -560,7 +559,7 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         canonical_refs(&store, &refs, json!({ "live": true })),
         strings(&["default/c/open", "default/c/private", "other/c/away"])
     );
-    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "lineage"});
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
     assert_eq!(
         canonical_refs(
             &store,
@@ -579,4 +578,310 @@ fn alias_canonical_refs_reads_live_and_private_pages_by_policy() {
         strings(&["default/c/open", "default/c/private"])
     );
     assert!(canonical_refs(&store, &[], json!({ "live": true })).is_empty());
+}
+
+/// [`put_in`] in a transaction that declares `tier` as the writer's trust tier.
+fn put_at(store: &Store, tier: &str, slug: &str, title: &str) {
+    let tx = store.begin_transaction(false).unwrap();
+    let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+    tx.apply_write_trust(
+        &names,
+        &[tier.to_string(), r#"{"channel":"test"}"#.to_string()],
+    )
+    .unwrap();
+    put_in(&tx, slug, title, json!({}), None);
+    tx.commit_transaction().unwrap();
+}
+
+/// A `flag` write-gate receipt on the page, in `families`.
+fn flag(store: &Store, slug: &str, families: &[&str]) {
+    let families: Vec<String> = families.iter().map(|f| f.to_string()).collect();
+    let fields = gbrain_store::trust::write_gate::ReceiptFields {
+        content_hash: "h1".into(),
+        tier: "agent_written".into(),
+        detector_version: 1,
+        verdict: "flag".into(),
+        reason_families: families.clone(),
+        reasons: families,
+        detector_error: false,
+        request_id: None,
+    };
+    assert!(
+        store
+            .upsert_page_write_gate_receipt("default", slug, fields)
+            .unwrap()
+            .is_some()
+    );
+}
+
+fn declare(store: &Store, slug: &str, alias: &str) {
+    let row: DerivedAliasRow =
+        serde_json::from_value(json!({ "alias_norm": alias, "origin": "declared" })).unwrap();
+    store
+        .replace_derived_aliases(slug, "default", &[row])
+        .unwrap();
+}
+
+#[test]
+fn resolve_aliases_applies_the_trust_floor_and_the_flag_filter_to_aliases_and_title_shadows() {
+    let dir = TempDir::new("aliases-trust");
+    let store = open(&dir);
+    put_at(&store, "operator_curated", "c/curated", "Curated");
+    put_at(&store, "agent_written", "c/agent", "Agent");
+    put_at(&store, "agent_written", "c/flagged", "Flagged");
+    flag(&store, "c/flagged", &["override"]);
+    put_at(&store, "external_untrusted", "c/outside", "Outside");
+    put_at(&store, "operator_curated", "c/fallback", "Fallback");
+    put_at(&store, "operator_curated", "c/target", "Target");
+    put_at(&store, "external_untrusted", "n/shadow", "Low Shadow");
+    for (slug, alias) in [
+        ("c/curated", "curated"),
+        ("c/agent", "agent"),
+        ("c/flagged", "flagged"),
+        ("c/outside", "shared"),
+    ] {
+        set(&store, slug, "default", &[alias]).unwrap();
+    }
+    declare(&store, "c/fallback", "shared");
+    declare(&store, "c/target", "low shadow");
+    let names = ["agent", "curated", "flagged", "low shadow", "shared"];
+    assert_eq!(
+        resolve(&store, &names, json!({})),
+        vec![
+            pair("agent", &["default/c/agent"]),
+            pair("curated", &["default/c/curated"]),
+            pair("flagged", &["default/c/flagged"]),
+            pair("shared", &["default/c/outside"]),
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &names, json!({ "minTrust": "agent_written" })),
+        vec![
+            pair("agent", &["default/c/agent"]),
+            pair("curated", &["default/c/curated"]),
+            pair("flagged", &["default/c/flagged"]),
+            pair("low shadow", &["default/c/target"]),
+            pair("shared", &["default/c/fallback"]),
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &names, json!({ "minTrust": "operator_curated" })),
+        vec![
+            pair("curated", &["default/c/curated"]),
+            pair("low shadow", &["default/c/target"]),
+            pair("shared", &["default/c/fallback"]),
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &names, json!({ "suppressFlagged": true })),
+        vec![
+            pair("agent", &["default/c/agent"]),
+            pair("curated", &["default/c/curated"]),
+            pair("shared", &["default/c/outside"]),
+        ]
+    );
+    let scope: AliasScope = serde_json::from_value(json!({ "minTrust": "trusted" })).unwrap();
+    let err = store
+        .resolve_aliases(&strings(&["agent"]), &scope)
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
+    let dir = TempDir::new("aliases-private");
+    let store = open(&dir);
+    put(&store, "c/open");
+    put_in(
+        &store,
+        "c/private",
+        "p",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    put_in(
+        &store,
+        "c/readers",
+        "r",
+        json!({ "readable_by": ["alice-example"] }),
+        None,
+    );
+    put_in(
+        &store,
+        "c/restricted",
+        "x",
+        json!({ "access": "Restricted" }),
+        None,
+    );
+    put(&store, "c/target");
+    put_in(
+        &store,
+        "n/crm",
+        "Acme Example",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    set(&store, "c/open", "default", &["open"]).unwrap();
+    set(&store, "c/private", "default", &["private"]).unwrap();
+    set(&store, "c/readers", "default", &["readers"]).unwrap();
+    set(&store, "c/restricted", "default", &["restricted"]).unwrap();
+    declare(&store, "c/target", "acme example");
+    let names = ["acme example", "open", "private", "readers", "restricted"];
+    assert_eq!(
+        resolve(&store, &names, json!({})),
+        vec![
+            pair("open", &["default/c/open"]),
+            pair("private", &["default/c/private"]),
+            pair("readers", &["default/c/readers"]),
+            pair("restricted", &["default/c/restricted"]),
+        ]
+    );
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn" });
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": policy })),
+        vec![
+            pair("acme example", &["default/c/target"]),
+            pair("open", &["default/c/open"]),
+        ]
+    );
+    let no_aliases = json!({ "honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn" });
+    assert_eq!(
+        resolve(&store, &names, json!({ "excludePrivate": no_aliases })),
+        vec![
+            pair("acme example", &["default/c/target"]),
+            pair("open", &["default/c/open"]),
+            pair("restricted", &["default/c/restricted"]),
+        ]
+    );
+}
+
+/// `listAliasTargets` as `(source/slug, page, page_aliases, slug_redirects)`.
+fn targets(store: &Store, sources: Option<&[&str]>) -> Vec<(String, &'static str, u64, u64)> {
+    let ids = sources.map(strings);
+    store
+        .list_alias_targets(ids.as_deref())
+        .unwrap()
+        .into_iter()
+        .map(|t| {
+            (
+                format!("{}/{}", t.source_id, t.slug),
+                t.page,
+                t.page_aliases,
+                t.slug_redirects,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn alias_targets_name_missing_and_soft_deleted_pages_and_the_delete_takes_only_missing_ones() {
+    let dir = TempDir::new("aliases-orphans");
+    let store = open(&dir);
+    source(&store, "work");
+    // notes/b: renamed away to notes/c, so notes/b is a rename redirect (alias) pointing at notes/c.
+    put(&store, "notes/b");
+    store.update_slug("notes/b", "notes/c", None).unwrap();
+    set(&store, "notes/c", "default", &["see", "cee"]).unwrap();
+    put(&store, "notes/live");
+    set(&store, "notes/live", "default", &["alive"]).unwrap();
+    put(&store, "notes/soft");
+    set(&store, "notes/soft", "default", &["soft"]).unwrap();
+    store.soft_delete_page("notes/soft", None).unwrap();
+    put_in(&store, "notes/w", "w", json!({}), Some("work"));
+    set(&store, "notes/w", "work", &["dub"]).unwrap();
+    store.delete_page("notes/c", None).unwrap();
+    store.delete_page("notes/w", Some("work")).unwrap();
+    assert!(store.list_alias_targets(Some(&[])).unwrap().is_empty());
+    assert_eq!(
+        targets(&store, None),
+        vec![
+            ("default/notes/c".into(), "missing", 2, 1),
+            ("default/notes/soft".into(), "soft_deleted", 1, 0),
+            ("work/notes/w".into(), "missing", 1, 0),
+        ]
+    );
+    assert_eq!(
+        targets(&store, Some(&["work"])),
+        vec![("work/notes/w".into(), "missing", 1, 0)]
+    );
+    // A soft-deleted page keeps its rows; a live page keeps its rows; a missing one loses both tables'.
+    assert_eq!(
+        store
+            .delete_orphaned_aliases("default", "notes/soft")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .delete_orphaned_aliases("default", "notes/live")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store.delete_orphaned_aliases("default", "notes/c").unwrap(),
+        3
+    );
+    assert_eq!(
+        store.delete_orphaned_aliases("default", "notes/c").unwrap(),
+        0
+    );
+    assert_eq!(
+        targets(&store, None),
+        vec![
+            ("default/notes/soft".into(), "soft_deleted", 1, 0),
+            ("work/notes/w".into(), "missing", 1, 0)
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &["alive"], json!({})),
+        vec![pair("alive", &["default/notes/live"])]
+    );
+    let err = store
+        .delete_orphaned_aliases("default", "a\0b")
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn list_slug_aliases_reads_one_source_in_alias_order_and_survives_a_reopen() {
+    let dir = TempDir::new("aliases-list");
+    {
+        let store = open(&dir);
+        source(&store, "other");
+        put(&store, "notes/m");
+        put(&store, "notes/a");
+        put_in(&store, "notes/a", "notes/a", json!({}), Some("other"));
+        store.update_slug("notes/m", "notes/n", None).unwrap();
+        store.update_slug("notes/a", "notes/b", None).unwrap();
+        store.update_slug("notes/b", "notes/c", None).unwrap();
+        store
+            .update_slug("notes/a", "notes/z", Some("other"))
+            .unwrap();
+    }
+    let store = open(&dir);
+    let rows = |source: &str| -> Vec<(String, String)> {
+        store
+            .list_slug_aliases(source)
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r["alias_slug"].as_str().unwrap().to_string(),
+                    r["canonical_slug"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let pair = |a: &str, c: &str| (a.to_string(), c.to_string());
+    assert_eq!(
+        rows("default"),
+        vec![
+            pair("notes/a", "notes/c"),
+            pair("notes/b", "notes/c"),
+            pair("notes/m", "notes/n"),
+        ]
+    );
+    assert_eq!(rows("other"), vec![pair("notes/a", "notes/z")]);
+    assert!(rows("missing").is_empty());
+    assert!(rows("bad\0id").is_empty());
 }

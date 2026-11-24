@@ -10,6 +10,7 @@
  * `put_pages` with only `request_id` reads the batch status without resending
  * any content.
  */
+import { normalizeSlug } from '../utils.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -23,6 +24,7 @@ import { declareDurablePersistence } from './protocol.ts';
 import { digest } from './digest.ts';
 import { queueLinksReconcile } from './effect-journal.ts';
 import { pageBatchChildRequestId, pageBatchChildRequestIds } from './page-batch-id.ts';
+import { isUnsourcedLocalPut } from './unsourced-put-fork.ts';
 
 export { pageBatchChildRequestId };
 import { isTerminal, type WriteRequest } from './model.ts';
@@ -89,7 +91,7 @@ interface Repeats { repeatOf: (number | undefined)[]; refusals: Map<number, Oper
  */
 function findRepeats(pages: BatchPage[]): Repeats {
   const bySlug = new Map<string, number[]>();
-  pages.forEach((page, index) => bySlug.set(page.slug.toLowerCase(), [...(bySlug.get(page.slug.toLowerCase()) ?? []), index]));
+  pages.forEach((page, index) => bySlug.set(normalizeSlug(page.slug), [...(bySlug.get(normalizeSlug(page.slug)) ?? []), index]));
   const repeatOf: (number | undefined)[] = new Array(pages.length);
   const refusals = new Map<number, OperationError>();
   const same = (a: BatchPage, b: BatchPage) => a.slug === b.slug && a.content === b.content && a.expected_revision === b.expected_revision && a.allow_empty === b.allow_empty && a.allow_shrink === b.allow_shrink && a.reason === b.reason;
@@ -207,11 +209,11 @@ export async function admitBatch(ctx: OperationContext, batchId: string, admissi
   }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error })));
 }
 
-async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {
+async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats, unsourced: boolean) {
   // #6007 (workstream A): one writer verification and one shared-read snapshot per batch (page-mutations.ts withBatchAdmission).
-  return withBatchAdmission(caller, (own, shared) => preparePages(own, shared, batchId, sourceId, pages, repeats));
+  return withBatchAdmission(caller, (own, shared) => preparePages(own, shared, batchId, sourceId, pages, repeats, unsourced));
 }
-async function preparePages(own: OperationContext, shared: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {
+async function preparePages(own: OperationContext, shared: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats, unsourced: boolean) {
   const prepared: (Awaited<ReturnType<typeof preparePageAdmission>> | OperationError | undefined)[] = new Array(pages.length);
   const todo = pages.flatMap((_, index) => repeats.repeatOf[index] === undefined && !repeats.refusals.has(index) ? [index] : []);
   const prepareOne = async (index: number) => {
@@ -225,7 +227,8 @@ async function preparePages(own: OperationContext, shared: OperationContext, bat
     if (page.drop_timeline !== undefined) params.drop_timeline = page.drop_timeline;
     if (page.reason !== undefined) params.reason = page.reason;
     try {
-      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params,
+      // pages-02: a local batch that named no source refuses, page by page, a page that lives only in another source.
+      prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params, ...(unsourced ? { unsourcedForkGuard: true as const } : {}),
         batch: { id: batchId, index, size: pages.length, requestId: pageBatchChildRequestId(batchId, index), ...(copies.length ? { repeats: copies } : {}) } });
     } catch (error) {
       if (!(error instanceof OperationError)) throw error;
@@ -276,7 +279,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
       `To check the original batch, call put_pages with only request_id ${batchId}. To write a different set of pages, use a new request_id.`);
   }
   const repeats = findRepeats(pages);
-  const prepared = await prepareAll(ctx, batchId, sourceId, pages, repeats);
+  const prepared = await prepareAll(ctx, batchId, sourceId, pages, repeats, isUnsourcedLocalPut(ctx, params));
   // A grant that may not write here refuses every page alike: answer the call with that one error.
   const attempted = prepared.filter(entry => entry !== undefined);
   const first = attempted[0];
@@ -336,7 +339,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
  */
 export async function submitPageMutations(ctx: OperationContext, inputs: Array<{ operation: 'put_page' | 'add_timeline_entry'; params: Record<string, unknown> }>):
   Promise<Array<{ response: Record<string, unknown> } | { error: unknown }>> {
-  const slugs = inputs.map(input => String(input.params.slug).toLowerCase());
+  const slugs = inputs.map(input => normalizeSlug(String(input.params.slug)));
   if (new Set(slugs).size !== slugs.length) throw new TypeError('A page mutation batch writes each page once.');
   const batchId = randomUUID();
   const prepared = await withBatchAdmission(ctx, async (own, shared) => {

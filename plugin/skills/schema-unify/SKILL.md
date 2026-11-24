@@ -46,7 +46,7 @@ This skill is ABOUT the brain's shape — it can't depend on the brain it's resh
 
 ## Mental model (one paragraph)
 
-A production gbrain brain accreted **94 distinct `pages.type` values** over years of ingestion: tweet / tweet-thread / tweet-bundle / tweet-single / media/x-tweet/bundle / tweet-stub all coexisting; 5.5K concept-redirect pages; atom-partner-link pages that should be links; civic / framework / insight / memo / anecdote one-offs. The cure: collapse to **15 canonical types** (person, company, media, tweet, social-digest, analysis, atom, concept, source, deal, email, slack, writing, project, note) with subtypes/format/origin pushed to frontmatter, alias-rows for redirects, real link-rows for edge-shaped pages, and a catch-all that bins long-tail unknowns to `note` with `frontmatter.legacy_type = <original>` for rollback.
+A long-lived gbrain brain can accrete **dozens of distinct `pages.type` values** over years of ingestion: tweet / tweet-thread / tweet-bundle / tweet-single / media/x-tweet/bundle / tweet-stub all coexisting; thousands of concept-redirect pages; atom-partner-link pages that should be links; civic / framework / insight / memo / anecdote one-offs. The cure: collapse to **15 canonical types** (person, company, media, tweet, social-digest, analysis, atom, concept, source, deal, email, slack, writing, project, note) with subtypes/format/origin pushed to frontmatter, alias-rows for redirects, real link-rows for edge-shaped pages, and a catch-all that bins long-tail unknowns to `note` with `frontmatter.legacy_type = <original>` for rollback.
 
 ## Workflow
 
@@ -272,12 +272,12 @@ Final celebration summary to stderr:
 ═══════════════════════════════════════════════════════════
   gbrain-base-v2 migration complete
 ═══════════════════════════════════════════════════════════
-  Before: 94 distinct page types
+  Before: <N> distinct page types
   After:  15 canonical types
-  Retyped:      25,632 pages
-  Aliased:       5,521 redirects → slug_aliases table
-  Linkified:        65 ghost pages → real link rows
-  Soft-deleted:  5,586 pages (restorable for 72h)
+  Retyped:      <N> pages
+  Aliased:      <N> redirects → slug_aliases table
+  Linkified:    <N> ghost pages → real link rows
+  Soft-deleted: <N> pages (restorable for 72h)
 ═══════════════════════════════════════════════════════════
 ```
 

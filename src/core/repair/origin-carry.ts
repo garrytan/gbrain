@@ -14,8 +14,10 @@
  * origin, and when the origin lookup itself fails it soft-deletes and keeps any park (purge_held derived_origin_unchecked). Every expiry (carryPrivateBeforePurge, from purgeDeletedPagesCoordinated) labels the dependents of each expired
  * private origin and parks the ones it could not (persistence/derived-origin-hold.ts), so no purge removes them.
  */
+import { normalizeSlug } from '../utils.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { assertPurgeAge } from '../engine-errors.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
@@ -143,7 +145,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const { finishPagePurge } = await import('../persistence/page-purge.ts');
   p.request_id ??= randomUUID();
   const batch = `derived-origin-carry:${String(p.request_id)}`;
-  const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
+  const slug = typeof p.slug === 'string' ? normalizeSlug(p.slug) : null;
   if (p.purge !== true) {
     const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(() => null) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
@@ -194,6 +196,7 @@ async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Pro
  * applies: the caller clears those after its purge, so an origin parked when the purge was previewed stays this run.
  */
 export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<{ parks: DerivedOriginPark[]; unparked: Origin[] }> {
+  assertPurgeAge(olderThanHours);
   await pruneDerivedOriginParks(engine);
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;
@@ -219,6 +222,7 @@ export interface CarryForecast { release: Origin[]; hold: Origin[] }
  * origin not parked but blocked is held. A failed read holds every origin, as a failed carry parks every origin.
  */
 export async function forecastCarry(engine: BrainEngine, olderThanHours: number): Promise<CarryForecast> {
+  assertPurgeAge(olderThanHours);
   const parks = new Set((await readDerivedOriginParks(engine)).map(park => park.page_id));
   return withoutCallerAccess(async () => {
     let origins: Origin[] = [];

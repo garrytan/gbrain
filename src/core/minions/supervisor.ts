@@ -259,7 +259,8 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * issue #1801 — queue + name-scoped wedge signals. Exported (with the SQL) so
+ * issue #1801 — queue + name-scoped wedge signals (the `readWedgeSignals` member,
+ * engine-sql/jobs-health.ts; its statement and rules live there). Exported so
  * the FILTER semantics are testable against a real engine (PGLite) without
  * spinning a supervisor process:
  *   - `activeHealthy` counts only LIVE-lock active rows, so an expired-lock
@@ -284,43 +285,7 @@ export async function queryWedgeSignals(
   handlerNames: string[],
   opts?: { signal?: AbortSignal },
 ): Promise<WedgeSignals> {
-  const rows = await engine.executeRaw<{
-    stalled: string;
-    active_healthy: string;
-    waiting: string;
-    waiting_claimable: string;
-    last_completed: string | null;
-    last_completed_claimable: string | null;
-  }>(
-    `SELECT
-       count(*) FILTER (WHERE status = 'active' AND lock_until < now())::text AS stalled,
-       count(*) FILTER (WHERE status = 'active' AND lock_until > now())::text AS active_healthy,
-       count(*) FILTER (WHERE status = 'waiting')::text AS waiting,
-       count(*) FILTER (WHERE (status = 'waiting'
-                          OR (status = 'delayed' AND delay_until <= now()))
-                         AND name = ANY($2::text[]))::text AS waiting_claimable,
-       max(updated_at) FILTER (WHERE status = 'completed')::text AS last_completed,
-       max(updated_at) FILTER (WHERE status = 'completed'
-                               AND name = ANY($2::text[]))::text AS last_completed_claimable
-     FROM minion_jobs
-     WHERE queue = $1`,
-    [queue, handlerNames],
-    opts,
-  );
-  const row = rows[0] ?? {
-    stalled: '0', active_healthy: '0', waiting: '0',
-    waiting_claimable: '0', last_completed: null, last_completed_claimable: null,
-  };
-  return {
-    stalled: parseInt(row.stalled ?? '0', 10),
-    activeHealthy: parseInt(row.active_healthy ?? '0', 10),
-    waiting: parseInt(row.waiting ?? '0', 10),
-    waitingClaimable: parseInt(row.waiting_claimable ?? '0', 10),
-    lastCompleted: row.last_completed ? new Date(row.last_completed) : null,
-    lastCompletedClaimable: row.last_completed_claimable
-      ? new Date(row.last_completed_claimable)
-      : null,
-  };
+  return engine.readWedgeSignals(queue, handlerNames, opts);
 }
 
 /**
@@ -410,15 +375,7 @@ async function probeQueueStateInner(
   // (queue, status, updated_at) wedge index whose (queue, status) prefix
   // covers this WHERE; until it lands, minion_jobs is small enough that a
   // scan fits comfortably inside the probe's wall-clock budget.
-  const ageRows = await engine.executeRaw<{ age: number | string | null }>(
-    `SELECT EXTRACT(EPOCH FROM (now() - min(created_at)))::int AS age
-       FROM minion_jobs
-      WHERE queue = $1 AND status = 'waiting'`,
-    [queue],
-    opts,
-  );
-  const rawAge = ageRows[0]?.age ?? null;
-  const oldestAge = rawAge === null ? null : Number(rawAge);
+  const oldestAge = await engine.readOldestWaitingAge(queue, opts);
 
   let supervisorLive = false;
   try {

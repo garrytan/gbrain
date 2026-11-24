@@ -68,7 +68,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'getUnverifiedExtractionPageIds', 'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages'],
   tags: ['addTag', 'removeTag', 'getTags', 'pruneFrontmatterTags', 'addPageTagsById'],
   timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
-    'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails'],
+    'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails',
+    'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'deleteTimelineRows', 'listStoredTimelineRowsOrdered', 'listTimelineOrphanPages', 'readMaxTimelineEntryId', 'sampleEffectiveDateSources', 'sampleEffectiveDates', 'storedTimelineRowsByPageIds'],
   ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
   raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles'],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
@@ -105,6 +106,45 @@ export const FAMILIES: Record<string, readonly string[]> = {
   large_page: ['readStoredBodyBytes', 'readPageBodySizes'],
   // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
   field_usage: ['readFieldUsageSamples'],
+  // the decide proposal tables (engine-sql/decide-proposals.ts)
+  decide_proposals: [
+    'applyDecideReviewQueue', 'applyDecideSweepDeferred', 'getDecideProposal', 'getDecideReviewProposal',
+    'insertDecideProposal', 'insertDecideReviewProposal', 'listDecideProposalIds', 'listDecideProposals',
+    'listDecideProposedPairs', 'listDecideReviewProposalIds', 'listDecideReviewProposals', 'listDueDecideReviewQueue',
+    'listDueDecideSweepDeferred', 'readProposalReviewRates', 'transitionDecideProposal', 'transitionDecideReviewProposal'],
+  // the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
+  decide_store: [
+    'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage', 'deleteDecideState', 'ensureDecideState',
+    'getDecideCalibration', 'insertDecideCalibration', 'insertDecideReceipts', 'insertDecideSpend',
+    'listDecideCalibrations', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideReplayReceipts',
+    'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
+    'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState'],
+  // alias_fanout_reads: the alias reads of search's alias fan-out and the entity card (engine-sql/alias-fanout-reads.ts)
+  alias_fanout_reads: ['resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows'],
+  // cli_reads_export: the reads gbrain export ran through executeRaw (engine-sql/export-reads.ts)
+  cli_reads_export: ['listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines',
+    'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'listAccessPolicySourceIds', 'readBodyManifestOutline',
+    'listForcedCutSeqs', 'readSegmentedVersionBodyBytes'],
+  // jobs_health: the queue health reads of doctor, the advisor and the submit probe (engine-sql/jobs-health.ts)
+  jobs_health: ['readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
+    'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName'],
+  // trust_tier_reads: the stamped-tier reads of core memory, the trust scan, belief history and page history (engine-sql/trust-tier-reads.ts)
+  trust_tier_reads: ['listVersionTrustTiers', 'listVersionReasonWriters', 'listPageTypesByIds'],
+  // withdrawal_discovery: the reads of a fact withdrawal's discovery pass (engine-sql/withdrawal-discovery.ts)
+  withdrawal_discovery: ['readWithdrawalDiscovery'],
+  // belief_reads / search_vector: single reads (engine-sql/belief.ts, search-vector.ts)
+  belief_reads: ['listCoveredSources'],
+  search_vector: ['countSearchVectorRows'],
+  // open_loops: the loop upsert, list and close statements (engine-sql/open-loops.ts)
+  open_loops: [
+    'closeOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop'],
+  // write_misc: the small write-side reads (engine-sql/write-misc.ts)
+  write_misc: [
+    'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
+    'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
+    'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',
+    'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
+    'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent'],
   owner_only: ['ownerOnlyMarkTriggers'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],

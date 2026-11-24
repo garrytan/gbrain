@@ -19,15 +19,28 @@
 mod core;
 mod decide;
 mod decode;
+mod follow;
+mod format_5;
 mod history;
 mod not_copied;
 mod privacy;
 mod spend;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v0_60_766_tests;
 mod wake;
 
 pub use decode::SeedRow;
+pub(crate) use format_5::carry_over as carry_over_format_5;
+
+/// What a person runs to replace a shadow store this build will not open (`src/shadow/seed.ts`
+/// `RESEED_STEPS`).
+pub const RESEED_STEPS: &str = "gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start --plan, then gbrain engine shadow start --yes --expect <plan_hash> to turn shadow mode on again";
+pub use follow::{
+    AllocatorCheck, DigestInput, EntryInfo, FactFingerprints, FollowResult, IntervalDigest,
+    KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints,
+};
 pub use not_copied::{GapRows, LossKind, NOT_COPIED, NotCopied};
 
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, INVALID_STATE, Result, StoreError};
@@ -61,6 +74,9 @@ pub struct RelationPlan {
     pub relation: &'static str,
     /// The primary key columns: the caller reads the table in this order, in keyset batches.
     pub key: &'static [&'static str],
+    /// Whether the follow calls can delete and replace rows of the relation (`false`: they refuse
+    /// with `unsupported`).
+    pub removable: bool,
 }
 
 /// The seed plan: the relations it copies, the tables it carries inside them, and the tables it
@@ -109,6 +125,7 @@ pub fn plan() -> SeedPlan {
             .map(|(relation, spec)| RelationPlan {
                 relation,
                 key: spec.key,
+                removable: follow::removable(relation),
             })
             .collect(),
         carried: CARRIED.to_vec(),
@@ -212,6 +229,17 @@ impl Store {
         relation: &str,
         rows: Vec<SeedRow>,
     ) -> Result<ImportResult> {
+        self.import_rows(seed_id, relation, rows, None)
+    }
+
+    /// [`Store::import_relation`], storing a digest entry per row when `digests` align with `rows`.
+    fn import_rows(
+        &self,
+        seed_id: &str,
+        relation: &str,
+        rows: Vec<SeedRow>,
+        digests: Option<&[follow::RowDigest]>,
+    ) -> Result<ImportResult> {
         let spec = relation_spec(relation)?;
         if seed_id.is_empty() || seed_id.contains('\0') {
             return Err(StoreError::new(
@@ -230,6 +258,9 @@ impl Store {
                 let outcome = (spec.import)(tx, &row, &mut losses).map_err(|e| {
                     StoreError::new(e.code, format!("{relation} row {n}: {}", e.message))
                 })?;
+                if let Some(digests) = digests {
+                    follow::store_import_entry(tx, relation, &row, &digests[n])?;
+                }
                 match outcome {
                     Outcome::Imported => result.imported += 1,
                     Outcome::Skipped => result.skipped += 1,
@@ -267,12 +298,34 @@ fn claim(tx: &mut dyn KvWrite, seed_id: &str) -> Result<SeedManifest> {
     }
     let fresh = [
         keys::meta("format"),
-        keys::text(keys::CONFIG, &["version"]),
+        // Written by the open that made the store, once its scan found no restricted page.
+        keys::meta(crate::access_flag::SCAN_DONE),
+        // The keyword index state: a new store starts with the index on.
+        keys::keyword_index_state(),
+        crate::shared_skill_members::state_key(),
         source_key(crate::sources::DEFAULT_SOURCE),
     ];
+    // The config rows a new store's open writes: the schema version, the trust and write-gate marks (migrations v226 and
+    // v227 on an empty brain) and the chunk strategy and embedding identity the caller names. The seed's config
+    // relation merges over them.
+    let opened_config: Vec<Vec<u8>> = [
+        "version",
+        "trust.backfill_completed_at",
+        crate::WRITE_GATE_SCAN_BASELINE_KEY,
+        "chunk_strategy",
+        "embedding_model",
+        "embedding_dimensions",
+    ]
+    .iter()
+    .map(|name| keys::text(keys::CONFIG, &[name]))
+    .collect();
     let mut foreign = None;
     scan_prefix(&*tx, &[], false, &mut |key, _| {
-        if fresh.iter().any(|k| k.as_slice() == key) {
+        if fresh
+            .iter()
+            .chain(&opened_config)
+            .any(|k| k.as_slice() == key)
+        {
             return true;
         }
         foreign = Some(String::from_utf8_lossy(key).into_owned());
@@ -327,7 +380,7 @@ fn relation_spec(relation: &str) -> Result<&'static Relation> {
 }
 
 /// Raises the id counter `name` past `id`.
-fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result<()> {
+pub(crate) fn raise_counter(tx: &mut dyn KvWrite, name: &str, id: u64) -> Result<()> {
     let key = keys::meta(name);
     let current = match tx.get(&key)? {
         Some(bytes) => keys::be8(&bytes)

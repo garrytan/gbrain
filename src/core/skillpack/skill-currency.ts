@@ -20,6 +20,7 @@
  */
 
 import { loadBundleManifest, bundledSkillSlugs } from './bundle.ts';
+import { movedSkillNotice } from './moved.ts';
 import { runReference } from './reference.ts';
 
 export interface SkillCurrency {
@@ -28,11 +29,14 @@ export interface SkillCurrency {
   differs: number;
   missing: number;
   identical: number;
+  /** Set once the skill's destination is announced (skills/moved-skills.json): the skill moved, and this is the notice. */
+  moved?: string;
 }
 
 export interface CurrencyReport {
   skills: SkillCurrency[];
-  counts: { new: number; drifted: number; current: number; total: number };
+  /** `moved` counts the skills that carry a moved notice; it is absent while none did (always, until a destination is set). */
+  counts: { new: number; drifted: number; current: number; total: number; moved?: number };
 }
 
 /**
@@ -89,7 +93,8 @@ export function computeSkillCurrency(opts: {
       differs: own.filter(f => f.status === 'differs').length,
       missing: own.filter(f => f.status === 'missing').length,
     };
-    return { slug, status: classify(counts), ...counts };
+    const moved = movedSkillNotice(slug);
+    return { slug, status: classify(counts), ...counts, ...(moved ? { moved } : {}) };
   });
 
   skills.sort((a, b) => {
@@ -103,6 +108,7 @@ export function computeSkillCurrency(opts: {
     current: skills.filter(s => s.status === 'current').length,
     total: skills.length,
   };
+  const moved = skills.filter(s => s.moved).length;
 
-  return { skills, counts };
+  return { skills, counts: moved ? { ...counts, moved } : counts };
 }

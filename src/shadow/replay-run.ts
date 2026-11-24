@@ -108,7 +108,7 @@ async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): P
   } finally {
     await primary?.disconnect().catch(() => undefined);
     for (const e of opened) await e.disconnect().catch(() => undefined);
-    await store.close().catch(() => undefined);
+    await store.close().catch(() => undefined); // silent-read-ok: closing the seed's Rust store after the seed finished or failed; the seed's own outcome is what counts
   }
 }
 

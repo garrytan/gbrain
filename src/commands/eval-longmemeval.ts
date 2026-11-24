@@ -616,6 +616,7 @@ function resolvePins(opts: ParsedArgs, runOpts: RunOpts, trajectoryEnabled: bool
     top_k: opts.topK,
     trajectory: trajectoryEnabled,
     ...(searchPins ? { search_pins: searchPins } : {}),
+    ...(opts.engine === 'rust' ? { engine: 'rust' as const } : {}),
     ...(opts.evalPoolDepth ? { eval_pool_depth: opts.evalPoolDepth } : {}), ...(decide ? { decide: decide.runConfig } : {}),
     ...retrievalArms.armPins(opts.arms), ...viaOperation.viaOperationPins(opts.viaOp),
   };

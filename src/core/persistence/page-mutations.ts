@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import { indexRestoredNotice } from './git-door.ts';
@@ -48,6 +49,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { ADMISSION_SOURCE_SQL, cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { EXISTING_PAGE_OPERATIONS, refuseLegacySpelling, storedWriteSlug } from './legacy-slug-put.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
@@ -119,6 +121,9 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'readLocalWriterRow' && extra?.has(WRITER_ROW_SQL)) return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : once(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id)).then(row => row && { ...row });
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    // The unsourced-put fork guard lists the sources once per batch, not once per page; a caller gets its own copy of each row.
+    if (key === 'listAllSources') return (opts?: { includeArchived?: boolean; localPathOnly?: boolean }) =>
+      once(JSON.stringify(['sources', opts ?? null]), () => target.listAllSources(opts)).then(rows => rows.map(row => ({ ...row })));
     if (key === 'getAllConfig' && extra) return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
@@ -241,7 +246,7 @@ export interface PageBatchMember { id: string; index: number; size: number; requ
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
     /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
-    stagedBody?: true }): Promise<Record<string, unknown>> {
+    stagedBody?: true; unsourcedForkGuard?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -307,8 +312,8 @@ function unquotedFrontmatter(sent: string, content: string, slug: string): strin
   const fenced = new Set(Object.keys(data).filter(k => JSON.stringify(data[k]) !== JSON.stringify(frontmatter[k])));
   if (!fenced.size) return content;
   const lines = content.slice(0, offset).split('\n');
-  const open = lines.findIndex(l => l.trim() === '---');
-  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const open = lines.findIndex(l => l.trim().length > 0);
+  const close = lines.length - (lines[lines.length - 1] === '' ? 2 : 1);
   const out = lines.slice(0, open + 1);
   for (let i = open + 1; i < close;) {
     let end = i + 1;
@@ -369,7 +374,9 @@ async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: s
 export async function preparePageAdmission(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; timelineSection?: TimelineSection;
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
-    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true }
+    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true;
+    /** pages-02: put_page's handler (and put_pages, and commit_page_upload for a new page, when the caller named no source) asks for the unsourced-put fork refusal, applied to a fresh request after the write authority. */
+    unsourcedForkGuard?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -447,8 +454,10 @@ export async function preparePageAdmission(ctx: OperationContext,
     assertReplayIntent(prior, intentDigest({ operation: input.operation, sourceId, slug: prior.slug, callerIntent }));
     return { prior };
   }
+  // E: a write on an existing page addresses the exact stored row (legacy-slug-put.ts storedWriteSlug), so a page stored under another spelling changes in place, never a composed twin.
+  const storedKey = EXISTING_PAGE_OPERATIONS.includes(input.operation) && typeof p.slug === 'string' ? await storedWriteSlug(ctx.engine, sourceId, p.slug, normalizeSlug(p.slug)) : null;
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
-  if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, p.slug.toLowerCase(), principal);
+  if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, storedKey ?? normalizeSlug(p.slug), principal);
   if (!source || source.archived) {
     throw new OperationError('source_changed', 'The write source is not active.',
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
@@ -461,9 +470,9 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (nulRemoved) ctx.logger?.warn(`[nul_removed] ${input.operation} ${JSON.stringify(String(p.slug))}: removed ${nulRemoved} U+0000 character(s) from the page text; the page is stored without them.`);
   // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
   if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
-    p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);
+    p.content = await unquotedPutContent(ctx.engine, sourceId, normalizeSlug(p.slug), p.content);
   }
-  let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
+  let slug = storedKey ?? (typeof p.slug === 'string' ? normalizeSlug(p.slug) : '');
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(input.operation)
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
   delete intent.request_id;
@@ -521,6 +530,11 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => ctx.engine.getConfig('sync.write_through'),
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
+  // A put by a page's exact decomposed spelling is refused, never written to a composed twin (legacy-slug-put.ts).
+  if (input.operation === 'put_page' && input.managedFileImport !== true) await refuseLegacySpelling(ctx, sourceId, p.slug, slug);
+  // A batch child or an upload commit carries a source_id whether or not the caller named one (put_page's own source_id is the caller's); a batch asks for the guard only when its caller named none.
+  if (input.unsourcedForkGuard === true) await (await import('./unsourced-put-fork.ts')).assertUnsourcedPutKeepsSource(ctx, sourceId, input.batch || input.stagedBody ? { ...p, source_id: undefined } : p,
+    { targetHasRow: !!snapshot, ...(input.stagedBody ? { uploadCommit: true as const } : {}) });
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });

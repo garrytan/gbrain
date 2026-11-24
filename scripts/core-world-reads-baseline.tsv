@@ -6,6 +6,8 @@ src/core/access/policy-git.ts	fs_import	1	W7: filesystem boundary moves to the l
 src/core/access/policy-git.ts	process_env	4	W6: settings plane out of the core
 src/core/access/policy-git.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/access/policy-transfer.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/access/read-log.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-2476 gap 1: the page ids one dispatched read returns)
+src/core/access/read-log.ts	module_collection	2	W6: per-engine state, or mark as a constant table (GST-2476 gap 1: per-engine read log buffers, like search/telemetry.ts)
 src/core/access/scope-read.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-1158 E1 read mode per attested call)
 src/core/advisor/collect-setup-smells.ts	process_env	1	W6: settings plane out of the core
 src/core/advisor/collect-uninstalled-brain-pack.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -69,6 +71,7 @@ src/core/ai/reranker-readiness-engine.ts	load_config	1	W3: AI settings arrive on
 src/core/ai/reranker-readiness-engine.ts	process_env	1	W3: AI settings arrive on the engine
 src/core/apple-contacts/apple-contacts-source.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: a Git-recorded source checks its checkout for a hand-authored page, as people-calendar-sweep.ts does)
 src/core/apple/contacts-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3256: lstat and read of the 0600 token file the source names)
+src/core/apple/contacts-write-client.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3278: lstat and read of the 0600 owner key and write token files, the same check as contacts-client.ts)
 src/core/archive-crawler-config.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/atomic-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/attendance-repair.ts	process_env	1	W6: settings plane out of the core
@@ -477,6 +480,7 @@ src/core/github-source.ts	process_env	2	W6: settings plane out of the core
 src/core/google/access.ts	process_env	1	W6: settings plane out of the core
 src/core/google/access.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/google/file-modes.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/google/gbrainio-gmail.ts	spawn_import	1	W7: process-wide effects move to src/cli (runs the gbrainio command line the source names, as access.ts runs --token-command)
 src/core/google/google-source.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/google/google-source.ts	load_config	1	W6: settings plane out of the core
 src/core/google/loop-detect.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -618,6 +622,8 @@ src/core/ops/facts.ts	module_collection	1	W6: per-engine state, or mark as a con
 src/core/ops/files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ops/schema-packs.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/ops/skillopt.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/ops/slug-params.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (carries the spellings a read was offered to the handler, per call)
+src/core/utils.ts	als_store	1	the one stored spelling a write on an existing page may keep (withStoredSlug): a scope per call, not a global; goes when persistence requests carry the key explicitly
 src/core/output/post-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/oversized-backfill.ts	load_config	2	W6: settings plane out of the core
 src/core/pace-mode.ts	process_env	1	W6: settings plane out of the core
@@ -709,12 +715,14 @@ src/core/persistence/import-prepare.ts	fs_import	2	W5: repo-less persistence for
 src/core/persistence/import-reads.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/index-lock-reclaim.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/ipc.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/ipc.ts	process_env	1	W6: settings plane out of the core (G8: the serve advertises its read-affecting env so a CLI with other settings keeps its own read)
 src/core/persistence/journal.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/journal.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/large-file.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/limits.ts	module_collection	1	W6: per-engine state (the forecast rates recordForecastRates keeps per engine for a minute, GST-2107)
 src/core/persistence/links-preparation.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/local-client.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/local-client.ts	process_env	1	W6: settings plane out of the core (G8: the CLI compares its read-affecting env with the serve's before delegating a read)
 src/core/persistence/local-edit-adoption.ts	fs_import	1	W5: repo-less persistence for hosts (reads the drifted canonical file it adopts)
 src/core/persistence/maintenance.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/native-file-target.ts	fs_import	1	W5: repo-less persistence for hosts
@@ -925,9 +933,11 @@ src/core/retry.ts	process_env	1	W6: settings plane out of the core
 src/core/routing-eval.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-build.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-version.ts	process_global	2	W7: process-wide effects move to src/cli
+src/core/rust-engine.ts	als_store	1	Rust engine owner election: a private probe store proves the MessagePort listener runs in the empty async context before the election and owner server take that context, so no caller authority, remote mark or signal leaks into the owner (W2: engine scope replaces ad hoc async context)
 src/core/rust-engine/addon-loader.ts	fs_import	1	Rust engine addon: reads the cached manifest and checks the cached addon file under GBRAIN_HOME/engines/rust (writes nothing); stays until the Rust engine's own storage settles (plan PR 8)
 src/core/rust-engine/addon-loader.ts	process_env	1	Rust engine addon: the default deps read GBRAIN_RUST_ENGINE_ADDON once; every other path takes env from the deps; stays until the Rust engine's own storage settles (plan PR 8)
-src/core/rust-engine/owner-ipc/client.ts	module_collection	2	Rust owner IPC: WeakMaps keyed by engine object (its owner connection) and by grouper function (its countPagesBy table); entries die with the engine or the call; stays until engine state moves per engine (W6)
+src/core/rust-engine/owner-ipc/client.ts	fs_import	1	Rust owner IPC: lstat of the owner socket file and its directory before connecting (socket owner and mode check); the socket is a filesystem object, so this stays with the local app (W7)
+src/core/rust-engine/owner-ipc/client.ts	module_collection	3	Rust owner IPC: WeakMaps keyed by engine object (its owner connection), by connection (its engine's election rerun after the owner exits) and by grouper function (its countPagesBy table); entries die with the engine, connection or call; stays until engine state moves per engine (W6)
 src/core/rust-engine/owner-ipc/election.ts	fs_import	1	Rust owner IPC: creates the parent directory of the owner lock (beside the store directory); filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/protocol.ts	fs_import	1	Rust owner IPC: resolves symlinks in the store path (realpath) so every alias of one brain names one owner lock and socket, as pglite-lock.ts does; filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/server.ts	fs_import	1	Rust owner IPC: removes only a stale socket file and sets 0600 on the owner socket, like persistence/ipc.ts; filesystem boundary moves to the local app (W7)
@@ -1124,7 +1134,11 @@ src/core/skills/resolver/index-format.ts	fs_import	1	GBRA-377 skill resolver: a 
 src/core/skills/resolver/lock.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/skills/resolver/lane-worker.ts	process_env	1	GBRA-399 skill resolver lane worker: process.env as the default of an injectable env parameter, handed to the worker the hook starts first; no brain or engine; stays
 src/core/skills/resolver/paths.ts	process_env	1	GBRA-377 skill resolver: GBRAIN_HOME as the default of an injectable env parameter (same convention as configDir); runs with no brain or engine; stays
+src/core/skills/resolver/pinned-block.ts	fs_import	1	GBRA-377 skill resolver: resolves the Claude Code skills folder through symlinks so it compares with the catalog's resolved SKILL.md paths; it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/skills/resolver/resolve.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
+src/core/skills/resolver/resolve.ts	process_env	1	GSKI G1 model picker: process.env as the default of the injectable opts.env (callers and tests pass their own), read only for provider keys when the caller passed router; no brain or engine; stays
+src/core/skills/resolver/router-http.ts	fs_import	1	GSKI G1 model picker: reads a provider key from GBRAIN_HOME/config.json when the environment has none (the same file-plane keys the gateway reads); no brain or engine; stays
+src/core/skills/resolver/router.ts	fs_import	1	GSKI G1 model picker: the per-UTC-day spend ledger skill-index/router-spend.json, read and written under its lease so the daily cap holds across processes; no brain or engine; stays
 src/core/skills/resolver/session.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/skills/resolver/sources.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays
 src/core/source-health.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -1237,13 +1251,13 @@ src/core/zombie-reap.ts	process_global	1	W7: process-wide effects move to src/cl
 src/core/setup/skill-resolver-config.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
 src/core/setup/skill-resolver-hook.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
 src/core/setup/skill-resolver-setup.ts	fs_import	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
-src/core/setup/skill-resolver-setup.ts	process_env	1	GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
+src/core/setup/skill-resolver-setup.ts	process_env	2	GSKI G1 adds the model picker offer: setup checks the process environment for a provider key to print the router_offer line. GBRA-377 PR B skill-resolver lane: setup writes and reads harness settings files, GBRAIN_HOME/config.json and the skill index directly (no brain or engine is opened); stays
 src/core/skills/resolver/hook-lane.ts	fs_import	2	GBRA-399 adds node:fs unlinkSync: the deadline exit removes the commit temp file synchronously before process.exit, so no leftover lock survives the hook. GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
 src/core/skills/resolver/hook-lane.ts	process_env	2	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
 src/core/skills/resolver/hook-lane.ts	spawn_import	1	GBRA-377 PR B skill-resolver hook lane: runs in the hook process with no brain or engine, reading config.json, harness settings and the skill index; env carries GBRAIN_HOME and its test seams; it spawns the detached catalog build; stays
 src/core/skills/resolver/hook-lane.ts	process_global	1	GBRA-377 PR B skill-resolver hook lane: at its 50 ms deadline the hook process exits at once without waiting on the abandoned worker (the lane is the whole process); stays
 src/core/setup/openclaw-skill-plugin.ts	fs_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup writes the plugin files, its state and the library under GBRAIN_HOME and reads openclaw.json directly (no brain or engine is opened); stays
-src/core/setup/openclaw-skill-plugin.ts	process_env	2	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
+src/core/setup/openclaw-skill-plugin.ts	process_env	1	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
 src/core/setup/skill-pins.ts	fs_import	1	GBRA-435 skill pins: reads a catalog's receipt under GBRAIN_HOME/skill-index to check pin names (no brain or engine is opened); stays
 src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: reads SOUL.md under HERMES_HOME to place or remove the pinned-skills block (no brain or engine is opened); stays
 src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
@@ -1259,3 +1273,4 @@ src/core/owned-folder/destination.ts	fs_import	1	W7: filesystem boundary moves t
 src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: realpath of a sync root, import target or uploaded file, so a symlink cannot reach .gbrain-owned/
 src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
 src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
+src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket

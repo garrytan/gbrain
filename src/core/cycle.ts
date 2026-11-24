@@ -46,6 +46,7 @@
 import { withAdmissionOrigin } from './persistence/admission-origin.ts';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, realpathSync } from 'fs';
 import { isAbsolute, join } from 'path';
+import { randomUUID } from 'node:crypto';
 import { gbrainPath, loadConfig } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
@@ -55,7 +56,7 @@ import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
-import { assertValidSourceId } from './source-id.ts';
+import { assertValidSourceId } from './source-id.ts'; import { isSyncDisabledConfig } from './sync-policy.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
@@ -94,6 +95,8 @@ export type CyclePhase =
   // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
   | 'facts_drain'
   | 'embed' | 'orphans' | 'purge'
+  // Nightly learning: records what this cycle learned in the learning_items ledger (src/core/learning/derive.ts).
+  | 'learning_derive'
   // GBRA-438: bookkeeping GC split out of purge (retention-bound rows and files, never a page).
   | 'bookkeeping_gc'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
@@ -225,6 +228,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // is settled; thin wrapper around runSuggest() library. Cheap (heuristic
   // by default; LLM only when chat provider configured).
   'schema-suggest',
+  'learning_derive', // nightly learning: after every producer, before purge, so each target still exists
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
   // the 72h recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
@@ -383,6 +387,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // entry covers the cycle-level coordination.
   'skillopt',
   'embed',
+  'learning_derive', // writes learning_items pointer rows
   'purge',
   'bookkeeping_gc',
 ]);
@@ -1309,6 +1314,9 @@ async function runPhaseSync(
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
     const sourceId = await resolveSourceForDir(engine, brainDir);
+    // GST-3337: config.syncEnabled=false keeps every unattended sync (dream, the autopilot cycle) off the source; only an explicit gbrain sync --source runs it.
+    if (sourceId && isSyncDisabledConfig((await engine.getSource(sourceId))?.config)) return { phase: 'sync', status: 'skipped', duration_ms: 0, details: { reason: 'sync_disabled', source_id: sourceId },
+      summary: `automatic sync is off for source ${sourceId} (config.syncEnabled=false); only an explicit gbrain sync --source ${sourceId} syncs it` };
     // #7630: with no matching source, a relative default local_path would leave this sync on the global anchors; refuse like sync does.
     if (!sourceId) await (await import('./sync-applicability.ts')).assertSyncAnchorAbsolute(engine, { sourceId: 'default' });
     // #5255: managed sync refuses `git pull`; a cycle syncs local HEAD and reports it (explicit sync keeps refusing).
@@ -3048,6 +3056,19 @@ async function runCycleUnscoped(
           });
         }
         progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // Nightly learning: one run id per cycle, handed to the ledger pass (src/core/learning/derive.ts); it never fails the cycle.
+    if (phases.includes('learning_derive')) {
+      checkAborted(cycleSignal);
+      if (!engine) {
+        phaseResults.push({ phase: 'learning_derive', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
+      } else {
+        progress.start('cycle.learning_derive');
+        const { result, duration_ms } = await timePhase(async () => (await import('./learning/derive.ts')).runPhaseLearningDerive(engine, { runId: randomUUID(), dryRun }), 'learning_derive');
+        result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
     }

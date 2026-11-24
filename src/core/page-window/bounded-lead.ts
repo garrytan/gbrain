@@ -77,9 +77,12 @@ export async function overlaidBoundedRows<T extends { slug: string; source_id: s
     for (let rest = pending; rest.length > 0;) {
       const batch = await engine.readPageSnapshotsBatch(rest);
       for (const [key, snapshot] of batch.snapshots) {
-        if (!isSegmentedPage(snapshot.page)) overlaid.set(key, boundedRawPrefix(snapshot.page.compiled_truth));
-        else overlaid.set(key, boundedRawPrefix((await overlayCanonicalBodies(query, leads.get(key)!, '', snapshot.withdrawals,
-          { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges })).compiled_truth));
+        if (!isSegmentedPage(snapshot.page)) { overlaid.set(key, boundedRawPrefix(snapshot.page.compiled_truth)); continue; }
+        // A failed overlay blanks only this page's lead (fail closed), never the other leads read with it.
+        try {
+          overlaid.set(key, boundedRawPrefix((await overlayCanonicalBodies(query, leads.get(key)!, '', snapshot.withdrawals,
+            { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges })).compiled_truth));
+        } catch { /* left out of `overlaid`, so this lead is blank */ }
       }
       rest = rest.slice(Math.max(1, batch.covered));
     }

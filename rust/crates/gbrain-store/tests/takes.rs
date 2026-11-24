@@ -1,6 +1,6 @@
 //! Takes: `addTakesBatch`, `listTakes`, `listActiveTakesForPages`, `searchTakes`, `updateTake`,
-//! `supersedeTake`, `resolveTake`, `getScorecard`, `getCalibrationCurve` and `addSynthesisEvidence`,
-//! matched to the PGLite engine.
+//! `supersedeTake`, `resolveTake`, `getScorecard`, `getCalibrationCurve`, `addSynthesisEvidence`,
+//! `matchTakeRows` and `deleteTakeRows`, matched to the PGLite engine.
 
 mod common;
 
@@ -11,8 +11,9 @@ use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::sources::SourceInput;
 use gbrain_store::takes::{
-    ActiveTakesInput, CalibrationOptions, EvidenceInput, ListTakesOptions, ResolveTakeInput,
-    ScorecardOptions, SearchTakesOptions, SupersedeTakeInput, TakeInput, UpdateTakeInput,
+    ActiveTakesInput, CalibrationOptions, EvidenceInput, FenceRowInput, ListTakesOptions,
+    ResolveTakeInput, ScorecardOptions, SearchTakesOptions, SupersedeTakeInput, TakeInput,
+    UpdateTakeInput,
 };
 use gbrain_store::{OpenOptions, Store};
 use serde::de::DeserializeOwned;
@@ -451,4 +452,139 @@ fn evidence_inserts_once_and_checks_both_keys() {
     store.delete_page("a", Some("default")).unwrap();
     assert!(list(&store, json!({"active": false})).is_empty());
     assert!(list(&store, json!({})).is_empty());
+}
+
+fn fence(rows: Value) -> Vec<FenceRowInput> {
+    de(rows)
+}
+
+#[test]
+fn match_take_rows_lists_the_stored_takes_a_fence_row_differs_from() {
+    let dir = TempDir::new("takes-match");
+    let store = open(&dir);
+    let a = page(&store, "default", "a", json!({}));
+    let b = page(&store, "default", "b", json!({}));
+    store
+        .add_takes_batch(&[
+            take(a, 1, "Same claim", json!({"kind": "take"})),
+            take(a, 2, "Original", json!({"kind": "take"})),
+            take(a, 3, "Holder moves", json!({"kind": "take"})),
+            take(a, 4, "Kind moves", json!({"kind": "bet"})),
+            take(a, 6, "Null field", json!({"kind": "take"})),
+            take(b, 2, "Other page", json!({"kind": "take"})),
+        ])
+        .unwrap();
+    let row = |n: i64, claim: &str, kind: &str, holder: Value| json!({"row_num": n, "claim": claim, "kind": kind, "holder": holder});
+    let rows = fence(json!([
+        row(4, "Kind moves", "take", json!("garry")),
+        row(2, "Edited", "take", json!("garry")),
+        row(5, "No stored row", "take", json!("garry")),
+        row(3, "Holder moves", "take", json!("someone")),
+        row(1, "Same claim", "take", json!("garry")),
+        row(6, "Null field", "take", Value::Null),
+    ]));
+    assert_eq!(
+        store.match_take_rows(a as i64, &rows, &json!(50)).unwrap(),
+        [2, 3, 4, 6]
+    );
+    assert_eq!(
+        store.match_take_rows(a as i64, &rows, &json!(2)).unwrap(),
+        [2, 3]
+    );
+    assert_eq!(
+        store.match_take_rows(a as i64, &rows, &json!(0)).unwrap(),
+        Vec::<i32>::new()
+    );
+    assert_eq!(
+        store
+            .match_take_rows(a as i64, &rows, &Value::Null)
+            .unwrap(),
+        [2, 3, 4, 6]
+    );
+    assert_eq!(
+        store.match_take_rows(b as i64, &rows, &json!(50)).unwrap(),
+        [2]
+    );
+    assert!(
+        store
+            .match_take_rows(a as i64, &[], &json!(50))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .match_take_rows(-1, &rows, &json!(50))
+            .unwrap()
+            .is_empty()
+    );
+    // Two fence rows of one number that both differ list the take twice, as the join does.
+    let twice = fence(json!([
+        row(2, "One", "take", json!("garry")),
+        row(2, "Two", "take", json!("garry"))
+    ]));
+    assert_eq!(
+        store.match_take_rows(a as i64, &twice, &json!(50)).unwrap(),
+        [2, 2]
+    );
+    assert_eq!(
+        code(
+            store
+                .match_take_rows(a as i64, &rows, &json!(-1))
+                .unwrap_err()
+        ),
+        INVALID_ARGUMENT
+    );
+}
+
+#[test]
+fn delete_take_rows_deletes_by_row_number_with_the_evidence_citing_the_take() {
+    let dir = TempDir::new("takes-delete");
+    let store = open(&dir);
+    let a = page(&store, "default", "a", json!({}));
+    let b = page(&store, "default", "b", json!({}));
+    let s = page(&store, "default", "synth", json!({}));
+    store
+        .add_takes_batch(&[
+            take(a, 1, "Keep", json!({})),
+            take(a, 2, "Drop two", json!({})),
+            take(a, 3, "Drop three", json!({"active": false})),
+            take(b, 2, "Other page", json!({})),
+        ])
+        .unwrap();
+    let ev = |row: i64| -> EvidenceInput {
+        de(
+            json!({"synthesis_page_id": s, "take_page_id": a, "take_row_num": row, "citation_index": 1}),
+        )
+    };
+    assert_eq!(store.add_synthesis_evidence(&[ev(1), ev(2)]).unwrap(), 2);
+    let rows = |page_id: u64| -> Vec<i64> {
+        let mut out: Vec<i64> = list(&store, json!({"page_id": page_id, "active": false}))
+            .into_iter()
+            .chain(list(&store, json!({"page_id": page_id})))
+            .map(|r| r["row_num"].as_i64().unwrap())
+            .collect();
+        out.sort_unstable();
+        out
+    };
+    store.delete_take_rows(a as i64, &[]).unwrap();
+    assert_eq!(rows(a), [1, 2, 3]);
+    store
+        .delete_take_rows(
+            a as i64,
+            &[json!(2), json!(3), json!(99), json!(2), Value::Null],
+        )
+        .unwrap();
+    assert_eq!(rows(a), [1]);
+    assert_eq!(rows(b), [2]);
+    store.delete_take_rows(-1, &[json!(1)]).unwrap();
+    assert_eq!(rows(a), [1]);
+    assert_eq!(
+        code(store.delete_take_rows(a as i64, &[json!("x")]).unwrap_err()),
+        INVALID_ARGUMENT
+    );
+    // The deleted take's evidence went with it; the kept take's stays.
+    store
+        .add_takes_batch(&[take(a, 2, "Back", json!({}))])
+        .unwrap();
+    assert_eq!(store.add_synthesis_evidence(&[ev(1), ev(2)]).unwrap(), 1);
 }

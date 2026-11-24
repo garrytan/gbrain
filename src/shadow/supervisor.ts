@@ -16,6 +16,7 @@ import type { ChildProcess } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn as defaultSpawn } from '../core/spawn.ts';
+import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
@@ -38,6 +39,8 @@ export interface ShadowSupervisorOptions {
   recordFault?: (fault: ShadowFault) => void;
   /** Seam for tests; default re-reads state.json. */
   stillEnabled?: () => boolean;
+  /** The child's store displaced rows while applying a relation: it is dirty and wants a reconcile pass. */
+  onDirty?: (relation: string) => void;
 }
 
 export class ShadowSupervisor implements MirrorTransport {
@@ -50,7 +53,9 @@ export class ShadowSupervisor implements MirrorTransport {
   private lastStateCheck = 0;
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private controlBuffer = '';
-  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled'>;
+  private nextRequestId = 0;
+  private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private readonly o: Required<Omit<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>> & Pick<ShadowSupervisorOptions, 'spawn' | 'recordFault' | 'stillEnabled' | 'onDirty'>;
 
   constructor(opts: ShadowSupervisorOptions) {
     this.o = {
@@ -88,20 +93,53 @@ export class ShadowSupervisor implements MirrorTransport {
     return true;
   }
 
+  /**
+   * Calls a follow method in the child (`{t:'rpc'}` out, `{t:'resp'}` back). Rejects with the child's error code, or
+   * `child_unavailable` (not accepted, child exit) or `timeout`.
+   */
+  request<T = unknown>(method: string, args: Record<string, unknown> = {}, timeoutMs = 60_000): Promise<T> {
+    const id = ++this.nextRequestId;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('timeout')); }, timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer });
+      if (!this.send(JSON.stringify({ t: 'rpc', id, method, args }) + '\n')) this.settleRequest(id, null, new Error('child_unavailable'));
+    });
+  }
+
+  private settleRequest(id: number, value: unknown, error?: Error): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    this.pending.delete(id);
+    clearTimeout(entry.timer);
+    if (error) entry.reject(error); else entry.resolve(value);
+  }
+
+  private rejectRequests(reason: string): void {
+    for (const id of [...this.pending.keys()]) this.settleRequest(id, null, new Error(reason));
+  }
+
   /** Ends the child's stdin (it flushes and exits) without waiting. */
   stop(): void {
     this.disabledReason ??= 'stopped';
+    this.rejectRequests('child_unavailable');
     this.clearWatchdog();
     const child = this.child;
     this.child = null;
     if (child) {
       child.removeAllListeners('exit');
       try { child.stdin?.end(); } catch { /* already gone */ }
+      // A child stuck in native work never sees the end of its input: kill it after the hang window, not never.
+      const reaper = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, this.o.hangMs);
+      (reaper as { unref?: () => void }).unref?.();
+      child.once('exit', () => clearTimeout(reaper));
     }
   }
 
   private fault(kind: ShadowFault['kind'], detail: string): void {
-    const fault = { ts: new Date(this.o.now()).toISOString(), kind, detail };
+    // The epoch current when the fault happened (evidence-epoch.ts), so the status counts child exits per epoch.
+    const epoch_id = readEpoch(this.o.dir)?.epoch_id;
+    const fault: ShadowFault = { ts: new Date(this.o.now()).toISOString(), kind, detail, ...(epoch_id ? { epoch_id } : {}) };
     try { (this.o.recordFault ?? ((f: ShadowFault) => appendFault(this.o.dir, f)))(fault); } catch { /* disk */ }
   }
 
@@ -149,18 +187,24 @@ export class ShadowSupervisor implements MirrorTransport {
     while ((nl = this.controlBuffer.indexOf('\n')) >= 0) {
       const line = this.controlBuffer.slice(0, nl);
       this.controlBuffer = this.controlBuffer.slice(nl + 1);
-      let msg: { t?: string; reason?: string };
+      let msg: { t?: string; reason?: string; relation?: string; id?: number; ok?: boolean; value?: unknown; error?: { code?: string; message?: string } };
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
+      else if (msg.t === 'resp' && typeof msg.id === 'number') {
+        const err = msg.ok ? undefined : new Error(msg.error?.message ?? 'rpc failed') as Error & { code?: string }; if (err) err.code = msg.error?.code ?? 'rpc_failed'; this.settleRequest(msg.id, msg.value, err);
+      }
+      else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }
       else if (msg.t === 'pause') this.disable('privacy_diverged', msg.reason ?? 'child requested a pause');
     }
-    if (this.controlBuffer.length > 64 * 1024) this.controlBuffer = '';
+    // A `resp` line can carry thousands of digest entries; only a runaway partial line is dropped.
+    if (this.controlBuffer.length > 16 * 1024 * 1024) this.controlBuffer = '';
   }
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
     this.child = null;
     this.clearWatchdog();
+    this.rejectRequests('child_unavailable');
     if (this.disabledReason) return;
     const now = this.o.now();
     this.fault('child_exit', `code=${code ?? 'none'} signal=${signal ?? 'none'}`);

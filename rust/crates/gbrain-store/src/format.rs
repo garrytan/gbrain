@@ -9,9 +9,36 @@ use std::io::Write;
 use std::path::Path;
 
 /// The store format this build reads and writes.
-pub const FORMAT_VERSION: u32 = 1;
+///
+/// - 1: the chunk stats and the unfinished-request counters are one JSON record each.
+/// - 2: each counter is its own record, so concurrent writers add to it without conflict
+///   (`chunks::STATS_CHUNKS`, `journal::OUTSTANDING`). A format-1 brain is upgraded in one
+///   write transaction when it opens (`Store::open_kv`); a build that reads only format 1
+///   refuses a format-2 brain instead of missing its counts.
+/// - 3: a page projection job is a compact binary record, not JSON
+///   (`persistence::projection_queue::encode_job`), and the record file keeps its commit
+///   sequence beside the id counters (`redb_kv::SEQ_KEY`). A format-2 brain is upgraded when it
+///   opens; a build that reads only formats 1 and 2 refuses a format-3 brain instead of failing
+///   on its jobs.
+/// - 4: the store keeps keyword postings (`keyword/index.rs`) and every write keeps them in step.
+///   The upgrade clears them and marks the index incomplete in the same transaction; a background
+///   build fills them (`keyword/index_build.rs`). A build without the index refuses a format-4
+///   brain, as its writes would leave the postings stale.
+/// - 5: a take record carries its `trust_tier` and `write_origin` (`trust/row_trust.rs`), stamped
+///   by every takes writer (`takes::store_take`). Nothing is rewritten: a take stored before reads
+///   `unknown`, the column default. A build without the field refuses a format-5 brain, as a take it
+///   rewrote would lose its tier.
+/// - 6: the records are this build's shapes. The v0.60.766.0 Rust addon's shadow seed also wrote
+///   format 5 but kept page purge tombstones, derived generations and oauth clients in other
+///   shapes; the upgrade carries them over (`seed/format_5.rs`) or refuses the brain with
+///   `shadow_reseed_required`. A build that writes the old shapes refuses a format-6 brain.
+/// - 7: the loop mutes (`loop_suppressions`) are at `F 0x11`, no longer at `F 0x10` beside the take
+///   purge tombstones, whose reads scanned them (`facts/key_split.rs`). The upgrade moves each mute
+///   in the one transaction, or refuses a record under `F 0x10` it cannot classify with
+///   `shadow_reseed_required`. A build that keeps both kinds at `F 0x10` refuses a format-7 brain.
+pub const FORMAT_VERSION: u32 = 7;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";
@@ -29,24 +56,32 @@ pub struct FormatRecord {
 
 /// Checks a version number read from `FORMAT` or from the format record in the store.
 pub fn check_version(version: u32) -> Result<()> {
-    if FORMAT_VERSIONS.contains(&version) {
+    check_version_in(version, FORMAT_VERSIONS)
+}
+
+/// `check_version` for a build that opens only the formats in `known` (ascending). The store
+/// passes `FORMAT_VERSIONS`; tests pass an older list to show what an older build does.
+pub(crate) fn check_version_in(version: u32, known: &[u32]) -> Result<()> {
+    if known.contains(&version) {
         return Ok(());
     }
-    let why = if version > FORMAT_VERSION {
-        "newer"
-    } else {
-        "older"
-    };
+    let newest = known.last().copied().unwrap_or(0);
+    let why = if version > newest { "newer" } else { "older" };
     Err(StoreError::new(
         FORMAT_UNKNOWN,
         format!(
-            "this brain has store format {version}, {why} than the formats this build opens ({FORMAT_VERSIONS:?}); nothing was changed"
+            "this brain has store format {version}, {why} than the formats this build opens ({known:?}); nothing was changed"
         ),
     ))
 }
 
 /// Reads `FORMAT`; `None` when the file does not exist.
 pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
+    read_in(dir, FORMAT_VERSIONS)
+}
+
+/// `read` for a build that opens only the formats in `known` (see `check_version_in`).
+pub(crate) fn read_in(dir: &Path, known: &[u32]) -> Result<Option<FormatRecord>> {
     let path = dir.join(FORMAT_FILE);
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
@@ -62,7 +97,7 @@ pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
         .and_then(|v| v.as_u64())
         .and_then(|v| u32::try_from(v).ok())
         .ok_or_else(|| StoreError::new(FORMAT_UNKNOWN, "FORMAT has no format_version"))?;
-    check_version(version)?;
+    check_version_in(version, known)?;
     serde_json::from_value(value)
         .map(Some)
         .map_err(|e| StoreError::new(FORMAT_UNKNOWN, format!("FORMAT is malformed: {e}")))

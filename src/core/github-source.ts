@@ -1231,6 +1231,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           const filePath = itemPagePath(cfg.dir, repo, item.number);
           keepPaths.add(relative(cfg.dir, filePath).replace(/\\/g, '/'));
           summary.itemsSeen++;
+          if (opts.signal?.aborted) { summary.status = 'partial'; continue; }
           if (!holds.shouldAttempt(`${repo}#${item.number}`, item.updated_at)) {
             progress.tick(1, `${repo}#${item.number} held`);
             continue;
@@ -1328,7 +1329,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         // Repo card, refreshed once per repo.
         const cardPath = repoCardPath(cfg.dir, repo);
         keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
-        if (opts.full || !(await storedPage(deps, cardPath, '')).exists) {
+        if (!opts.signal?.aborted && (opts.full || !(await storedPage(deps, cardPath, '')).exists)) {
           try {
             const meta = await client.fetchJSON<RawRepo>(`/repos/${repo}`, { signal: opts.signal });
             repoMeta.set(repo, meta);
@@ -1343,7 +1344,7 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
         } else {
           keepPaths.add(relative(cfg.dir, cardPath).replace(/\\/g, '/'));
         }
-        succeededRepos.add(`gh/${repo}`);
+        if (!opts.signal?.aborted) succeededRepos.add(`gh/${repo}`);
       } catch (err) {
         if (managed) rethrowConnectorWriteError(err);
         deps.client.log?.(`[github] repo ${repo} failed: ${err instanceof Error ? err.message : String(err)}`);

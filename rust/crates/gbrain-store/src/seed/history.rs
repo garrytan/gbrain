@@ -10,19 +10,18 @@ use super::{
 use crate::code_edges::{EdgeRecord, Table, seed_edge};
 use crate::dream::jsonb;
 use crate::error::{Result, StoreError};
-use crate::facts::generations::{GenerationRecord, ItemRecord, seed_generation, seed_item};
 use crate::facts::loops::{COUNTER as NEXT_OPEN_LOOP_ID, LoopRecord, seed_open_loop};
 use crate::facts::reconcile::{ReconcileRecord, put_reconcile, read_reconcile};
 use crate::facts::relink::{AttemptRecord, seed_attempt};
+use crate::generations::{SeedGeneration, seed_generation, seed_item};
 use crate::keys;
 use crate::kv::KvWrite;
 use crate::pages::{NEXT_VERSION_ID, PageText, VersionRecord, seed_version};
-use crate::raw_files::{
-    FileRecord, NEXT_FILE_ID, RawRecord, jsonb_order, seed_file, seed_raw_data,
-};
+use crate::raw_files::{FileRecord, NEXT_FILE_ID, RawRecord, seed_file, seed_raw_data};
 use crate::takes::{fk_failed, seed_evidence};
 use crate::trust::proposals::{ProposalRecord, seed_proposal};
 use crate::wanted_links::{ID_COUNTER as NEXT_WANTED_LINK_ID, WantedRecord, seed_wanted};
+use crate::write_receipt::VersionReceipt;
 use serde_json::{Value, json};
 
 /// In import order.
@@ -72,12 +71,12 @@ static PAGE_VERSIONS: Relation = Relation {
         ("body_storage", Kept),
         ("body_generation", Kept),
         ("body_bytes", Kept),
-        ("write_request_id", Unmapped(None)),
-        ("write_principal_kind", Unmapped(None)),
-        ("write_principal_id", Unmapped(None)),
-        ("archived_write_request_id", Unmapped(None)),
-        ("archived_principal_kind", Unmapped(None)),
-        ("archived_principal_id", Unmapped(None)),
+        ("write_request_id", Kept),
+        ("write_principal_kind", Kept),
+        ("write_principal_id", Kept),
+        ("archived_write_request_id", Kept),
+        ("archived_principal_kind", Kept),
+        ("archived_principal_id", Kept),
     ],
     import: import_version,
 };
@@ -131,6 +130,18 @@ fn import_version(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Resul
         write_origin: row.json("write_origin")?,
         change_reason: row.text("change_reason"),
         successor_pruned: row.bool("successor_pruned")?.unwrap_or(false),
+        receipt: VersionReceipt {
+            written: row.actor(
+                "write_request_id",
+                "write_principal_kind",
+                "write_principal_id",
+            ),
+            archived: row.actor(
+                "archived_write_request_id",
+                "archived_principal_kind",
+                "archived_principal_id",
+            ),
+        },
     };
     if !seed_version(tx, &record)? {
         return Ok(Outcome::Skipped);
@@ -176,7 +187,7 @@ fn import_file(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         mime_type: row.text("mime_type"),
         size_bytes: row.i64("size_bytes")?,
         content_hash: row.req("content_hash")?,
-        metadata: jsonb_order(row.json("metadata")?.unwrap_or_else(|| json!({}))),
+        metadata: crate::jsonb::order(row.json("metadata")?.unwrap_or_else(|| json!({}))),
         created_at_us: row.req_ts("created_at")?,
     };
     if !seed_file(tx, &record)? {
@@ -205,9 +216,10 @@ fn import_raw_data(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Ou
     let page_id = row.req_id("page_id")?;
     require_page(&*tx, page_id)?;
     let record = RawRecord {
+        id: None,
         page_id,
         source: row.req("source")?,
-        data: jsonb_order(need(row.json("data")?, "raw_data.data")?),
+        data: crate::jsonb::order(need(row.json("data")?, "raw_data.data")?),
         fetched_at_us: row.req_ts("fetched_at")?,
     };
     Ok(if seed_raw_data(tx, &record)? {
@@ -353,7 +365,7 @@ fn import_open_loop(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<O
         counterparty_source_id: row.text("counterparty_source_id"),
         counterparty_email: row.text("counterparty_email"),
         summary: row.req("summary")?,
-        evidence: jsonb_order(row.json("evidence")?.unwrap_or_else(|| json!([]))),
+        evidence: crate::jsonb::order(row.json("evidence")?.unwrap_or_else(|| json!([]))),
         thread_id: row.text("thread_id"),
         page_slug: row.text("page_slug"),
         due_at_us: row.ts("due_at")?,
@@ -622,22 +634,30 @@ static DERIVED_GENERATIONS: Relation = Relation {
 };
 
 fn import_generation(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let (id, record) = generation_record(&*tx, row)?;
+    Ok(if seed_generation(tx, id, &record)? {
+        Outcome::Imported
+    } else {
+        Outcome::Skipped
+    })
+}
+
+/// The generation a row describes, with no items: the items ride in their own relation.
+pub(super) fn generation_record(
+    read: &dyn crate::kv::KvRead,
+    row: &Row,
+) -> Result<(u64, SeedGeneration)> {
     let source_id = row.req("source_id")?;
-    require_source(&*tx, &source_id)?;
-    let record = GenerationRecord {
+    require_source(read, &source_id)?;
+    let record = SeedGeneration {
         source_id,
         kind: row.req("kind")?,
         owner_key: row.req("owner_key")?,
         generation: row.i32("generation")?.unwrap_or(0),
         state: row.req("state")?,
         created_at_us: row.req_ts("created_at")?,
-        items: Vec::new(),
     };
-    Ok(if seed_generation(tx, row.req_id("id")?, &record)? {
-        Outcome::Imported
-    } else {
-        Outcome::Skipped
-    })
+    Ok((row.req_id("id")?, record))
 }
 
 /// The store keeps items inline in their generation, so an item row appends to it.
@@ -656,16 +676,19 @@ static DERIVED_GENERATION_ITEMS: Relation = Relation {
 };
 
 fn import_generation_item(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
-    let item = ItemRecord {
-        item_key: row.req("item_key")?,
-        action: row.req("action")?,
-        preimage: row.json("preimage")?,
-    };
-    Ok(if seed_item(tx, row.req_id("generation_id")?, item)? {
-        Outcome::Imported
-    } else {
-        Outcome::Skipped
-    })
+    Ok(
+        if seed_item(
+            tx,
+            row.req_id("generation_id")?,
+            &row.req("item_key")?,
+            &row.req("action")?,
+            row.json("preimage")?,
+        )? {
+            Outcome::Imported
+        } else {
+            Outcome::Skipped
+        },
+    )
 }
 
 #[cfg(test)]

@@ -23,9 +23,9 @@ export type BenchmarkAddonLoader = () => Promise<RustEngineAddonLoad>;
 
 /** `--engine rust` with no usable addon: the loader's refusal code, reason and message. Nothing was created. */
 export class RustEngineAddonUnavailableError extends Error {
-  readonly code: RustEngineAddonRefusalCode;
+  readonly code: RustEngineAddonRefusalCode | 'rust_benchmark_unsupported';
   readonly reason: string;
-  constructor(failure: { code: RustEngineAddonRefusalCode; reason: string; message: string }) {
+  constructor(failure: { code: RustEngineAddonRefusalCode | 'rust_benchmark_unsupported'; reason: string; message: string }) {
     super(`${failure.code} (${failure.reason}): ${failure.message}`);
     this.name = 'RustEngineAddonUnavailableError';
     this.code = failure.code;
@@ -70,10 +70,10 @@ const PRESERVE_TABLES: ReadonlySet<string> = new Set([
 
 /**
  * A fresh, isolated benchmark brain: an in-memory PGLite by default. `rust` loads the Rust engine addon with the
- * addon loader (src/core/rust-engine/addon-loader.ts; a first use fetches and verifies it) and builds the engine on a throwaway store directory removed at
+ * addon loader (src/core/rust-engine/addon-loader.ts; it never reaches the network) and builds the engine on a throwaway store directory removed at
  * disconnect, so the user's brain is never opened. A missing or mismatched addon throws
- * RustEngineAddonUnavailableError with its code and reason before anything is created. Until the Rust engine
- * implements the schema capability, `initSchema()` refuses with `engine_capability_missing`, so a run stops there.
+ * RustEngineAddonUnavailableError with its code and reason before anything is created. Until the Rust store runs raw
+ * SQL (the table reset between fixtures), the brain is refused as `rust_benchmark_unsupported` before any work.
  */
 export function createBenchmarkBrain(): Promise<PGLiteEngine>;
 export function createBenchmarkBrain(kind: BenchmarkEngineKind, deps?: { loadAddon?: BenchmarkAddonLoader }): Promise<BrainEngine>;
@@ -113,12 +113,19 @@ async function createRustBenchmarkBrain(loadAddon: BenchmarkAddonLoader): Promis
   if (!load.ok) throw new RustEngineAddonUnavailableError(load);
   const store = mkdtempSync(join(tmpdir(), 'gbrain-bench-rust-'));
   const engine = openRustEngine({ addon: load.addon, databasePath: store });
-  engine.registerBeforeDisconnect(async () => rmSync(store, { recursive: true, force: true }));
+  // The store directory and the owner lock the engine keeps beside it.
+  const cleanup = (): void => { rmSync(store, { recursive: true, force: true }); rmSync(`${store}.gbrain-owner.lock`, { force: true }); };
+  engine.registerBeforeDisconnect(async () => cleanup());
   try {
     await engine.connect({ database_path: store });
     await engine.initSchema();
+    // Every fixture starts from `resetTables`, which is raw SQL: refuse now, before any work, if the store cannot run it yet.
+    if (!engine.capabilities.has('raw_sql')) {
+      throw new RustEngineAddonUnavailableError({ code: 'rust_benchmark_unsupported', reason: 'raw_sql_missing', message: 'the Rust store cannot reset tables between fixtures yet (it does not report raw_sql)' });
+    }
   } catch (error) {
     await engine.disconnect();
+    cleanup();
     throw error;
   }
   // RustEngine has every BrainEngine member; only its `kind` ('rust') is outside BrainEngine.kind until the addon PR

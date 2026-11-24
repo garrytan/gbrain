@@ -4,8 +4,10 @@
 //! Members: `upsertOpenLoop`, `listOpenLoops` and `closeOpenLoop` (src/core/loops/loops-store.ts,
 //! SQL in src/core/engine-sql/open-loops.ts), and `closedLoopWithActiveFact` (the `loops_close`
 //! retry read) and `loopFactDrift` (the loop-fact retirement scan), SQL in
-//! src/core/engine-sql/facts-repair.ts. The other loop statements (thread auto-close, the
-//! staleness pass and mutes) still run through `executeRaw` and refuse on this engine.
+//! src/core/engine-sql/facts-repair.ts, and `readLoopFactState` and `expireSourceFactNow` (the
+//! loop-fact retirement publication, SQL in src/core/engine-sql/repair-bookkeeping.ts). Mutes, the
+//! thread auto-close and the mute re-check live in [`mutes`]. The staleness pass still runs
+//! through `executeRaw` and refuses on this engine.
 //!
 //! Keys (after `keys::FACT`; a text part ends with a NUL byte, and no text column may hold one):
 //! - `F 0x08 id -> LoopRecord`: one row, the `id` primary key (8 big-endian bytes).
@@ -13,14 +15,16 @@
 //! - meta `next_open_loops_id`: the `BIGSERIAL` sequence. Every upsert takes an id, also one that
 //!   lands on an existing row, as `nextval` runs before `ON CONFLICT` looks.
 //!
-//! Deleting a source removes its loops (`ON DELETE CASCADE`, [`remove_source_rows`]).
+//! Deleting a source removes its loops and its mutes (`ON DELETE CASCADE`, [`remove_source_rows`]).
+
+pub(crate) mod mutes;
 
 use crate::env::{iso, parse_iso};
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
+use crate::jsonb;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
-use crate::raw_files::jsonb_order;
 use crate::sources::require_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -57,6 +61,7 @@ pub(crate) struct LoopRecord {
     pub(crate) counterparty_source_id: Option<String>,
     pub(crate) counterparty_email: Option<String>,
     pub(crate) summary: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub(crate) evidence: Value,
     pub(crate) thread_id: Option<String>,
     pub(crate) page_slug: Option<String>,
@@ -169,7 +174,7 @@ fn real(value: f32) -> Value {
         .unwrap_or(Value::Null)
 }
 
-fn row_json(id: u64, r: &LoopRecord) -> Value {
+pub(crate) fn row_json(id: u64, r: &LoopRecord) -> Value {
     let mut m = Map::new();
     m.insert("id".into(), json!(id));
     m.insert("source_id".into(), json!(r.source_id));
@@ -178,7 +183,7 @@ fn row_json(id: u64, r: &LoopRecord) -> Value {
     m.insert("counterparty_slug".into(), json!(r.counterparty_slug));
     m.insert("counterparty_email".into(), json!(r.counterparty_email));
     m.insert("summary".into(), json!(r.summary));
-    m.insert("evidence".into(), r.evidence.clone());
+    m.insert("evidence".into(), jsonb::ordered(&r.evidence));
     m.insert("thread_id".into(), json!(r.thread_id));
     m.insert("page_slug".into(), json!(r.page_slug));
     m.insert("due_at".into(), json!(r.due_at_us.map(iso)));
@@ -227,8 +232,36 @@ pub(crate) fn seed_open_loop(tx: &mut dyn KvWrite, id: u64, record: &LoopRecord)
     Ok(true)
 }
 
-/// Removes every loop of a source, for the source delete.
+/// `deletePurgeOpenLoops` (a fact purge): deletes the loops of `source_id` on a purged fact
+/// (`fact_id` in `fact_ids`), with their dedup entries; how many.
+pub(crate) fn purge_rows(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_ids: &std::collections::HashSet<i64>,
+) -> Result<u64> {
+    let mut found = Vec::new();
+    scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
+        found.push((k.to_vec(), keys::be8(v)));
+        true
+    })?;
+    let mut deleted = 0;
+    for (k, id) in found {
+        let Some(id) = id else { continue };
+        let Some(row) = read_row(tx, id)? else {
+            continue;
+        };
+        if row.fact_id.is_some_and(|f| fact_ids.contains(&f)) {
+            tx.delete(&k)?;
+            tx.delete(&row_key(id))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+/// Removes every loop and every mute of a source, for the source delete.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    mutes::remove_source_rows(tx, source_id)?;
     let mut doomed = Vec::new();
     scan_prefix(tx, &source_prefix(source_id), false, &mut |k, v| {
         doomed.push((k.to_vec(), keys::be8(v)));
@@ -308,7 +341,7 @@ impl Store {
                     counterparty_source_id: input.counterparty_source_id.clone(),
                     counterparty_email: input.counterparty_email.clone(),
                     summary: input.summary.clone(),
-                    evidence: jsonb_order(input.evidence.clone()),
+                    evidence: jsonb::order(input.evidence.clone()),
                     thread_id: input.thread_id.clone(),
                     page_slug: input.page_slug.clone(),
                     due_at_us,
@@ -362,7 +395,7 @@ impl Store {
             r.counterparty_slug = input.counterparty_slug.clone().or(r.counterparty_slug);
             r.counterparty_email = input.counterparty_email.clone().or(r.counterparty_email);
             r.summary = input.summary.clone();
-            r.evidence = jsonb_order(input.evidence.clone());
+            r.evidence = jsonb::order(input.evidence.clone());
             r.page_slug = input.page_slug.clone().or(r.page_slug);
             r.due_at_us = due_at_us.or(r.due_at_us);
             r.confidence = confidence;
@@ -512,6 +545,71 @@ impl Store {
         Ok(active.then(|| json!({ "id": uid, "status": r.status, "fact_id": fact_id })))
     }
 
+    /// `readLoopFactState(loopId, { lock })` (persistence/loop-fact-retirement.ts): loop `loop_id`
+    /// as `{ id, source_id, status, fact_id }` (null when absent), its commitment fact as `{ id,
+    /// source_id, expired_at, row_num, source_markdown_slug, fact }` (null for a loop with no fact
+    /// or a fact that is gone; `expired_at` ISO text) and `shared`, whether another `open` loop
+    /// names that fact. Postgres's `lock` takes `FOR UPDATE` row locks; here a write transaction
+    /// already holds the store's one writer, so it has no argument.
+    pub fn read_loop_fact_state(&self, loop_id: i64) -> Result<Value> {
+        let read = self.read()?;
+        let row = u64::try_from(loop_id)
+            .ok()
+            .map(|uid| read_row(&*read, uid).map(|r| r.map(|r| (uid, r))))
+            .transpose()?
+            .flatten();
+        let Some((uid, r)) = row else {
+            return Ok(json!({ "loop": null, "fact": null, "shared": false }));
+        };
+        let loop_json = json!({ "id": uid, "source_id": r.source_id, "status": r.status, "fact_id": r.fact_id });
+        let Some(fact_id) = r.fact_id else {
+            return Ok(json!({ "loop": loop_json, "fact": null, "shared": false }));
+        };
+        let fact = match u64::try_from(fact_id) {
+            Ok(fid) => super::read_fact(&*read, fid)?,
+            Err(_) => None,
+        };
+        let shared = all_rows(&*read, "readLoopFactState")?
+            .iter()
+            .any(|(id, o)| *id != uid && o.status == "open" && o.fact_id == Some(fact_id));
+        let fact_json = fact.map(|f| {
+            json!({
+                "id": f.id,
+                "source_id": f.source_id,
+                "expired_at": f.expired_at_us.map(iso),
+                "row_num": f.row_num,
+                "source_markdown_slug": f.source_markdown_slug,
+                "fact": f.fact,
+            })
+        });
+        Ok(json!({ "loop": loop_json, "fact": fact_json, "shared": shared }))
+    }
+
+    /// `expireSourceFactNow(factId, sourceId)`: `UPDATE facts SET expired_at=now(),
+    /// valid_until=LEAST(COALESCE(valid_until, now()), now()) WHERE id=$1 AND source_id=$2 AND
+    /// expired_at IS NULL`, true when that one row changed.
+    pub fn expire_source_fact_now(&self, fact_id: i64, source_id: &str) -> Result<bool> {
+        no_nul("expireSourceFactNow", &[("sourceId", source_id)])?;
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Ok(fid) = u64::try_from(fact_id) else {
+                return Ok(false);
+            };
+            let Some(old) = super::read_fact(tx, fid)? else {
+                return Ok(false);
+            };
+            if old.source_id != source_id || old.expired_at_us.is_some() {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = Some(now);
+            new.valid_until_us = Some(old.valid_until_us.map_or(now, |v| v.min(now)));
+            super::write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
+    }
+
     /// `loopFactDrift(sourceIds, loopId)`: the closed (`done` or `dropped`) loops of the sources
     /// (only `loop_id` when given) whose commitment fact, in the loop's own source, has no
     /// `expired_at` and no `open` loop referencing it, as `{ loop_id, source_id, fact_id, status,
@@ -578,7 +676,7 @@ pub(crate) fn loop_fact_ids(
 }
 
 /// Every loop row, in id order (the key order of `F 0x08 id`).
-fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
+pub(crate) fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
     let mut rows = Vec::new();
     let mut failed = None;
     scan_prefix(read, &[keys::FACT, ROW], false, &mut |k, v| {
@@ -598,6 +696,20 @@ fn all_rows(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, LoopRecord)>> {
         return Err(StoreError::invalid(format!("{op}: corrupt record: {e}")));
     }
     Ok(rows)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the loop `id` with its dedup key. `false` when
+/// there is none.
+pub(crate) fn remove_open_loop(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(old) = read_row(&*tx, id)? else {
+        return Ok(false);
+    };
+    let dk = dedup_key(&old.source_id, &old.dedup_key);
+    if tx.get(&dk)?.is_some_and(|v| keys::be8(&v) == Some(id)) {
+        tx.delete(&dk)?;
+    }
+    tx.delete(&row_key(id))?;
+    Ok(true)
 }
 
 #[cfg(test)]

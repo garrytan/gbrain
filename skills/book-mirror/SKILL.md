@@ -1,7 +1,7 @@
 ---
 name: book-mirror
 version: 0.5.0
-description: Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis. Each chapter is preserved in detail (The Chapter) and mirrored back to the reader's actual life (The Mirror) using brain context. The mirror observes and resonates — a friend pointing out parallels, NOT a consultant rearranging the reader's life, NOT a therapist assigning homework. The reader decides what to do about it. Layout is a top-aligned HTML table or stacked sections, never a bare markdown pipe table (pipe tables center-misalign uneven columns). Output is a single brain page at media/books/<slug>-personalized.md plus an optional PDF via brain-pdf.
+description: Take any book (EPUB/PDF), produce a personalized chapter-by-chapter analysis. Each chapter is summarized with brief quotes (The Chapter) and mirrored back to the reader's actual life (The Mirror) using brain context. The mirror observes and resonates — a friend pointing out parallels, NOT a consultant rearranging the reader's life, NOT a therapist assigning homework. The reader decides what to do about it. Layout is a top-aligned HTML table or stacked sections, never a bare markdown pipe table (pipe tables center-misalign uneven columns). Output is a single brain page at media/books/<slug>-personalized.md plus an optional PDF via brain-pdf.
 triggers:
   - "personalized version of this book"
   - "mirror this book"
@@ -12,7 +12,6 @@ mutating: true
 writes_pages: true
 writes_to:
   - media/books/
-upstream: book-mirror@fc834ee
 ---
 
 # book-mirror — Personalized Chapter-by-Chapter Book Analysis
@@ -62,8 +61,8 @@ What this means for the agent:
 ## The pipeline
 
 ```
-1. ACQUIRE   → User has the EPUB/PDF locally (manual; book-acquisition is
-               not currently shipped — see "Acquiring the book" below).
+1. ACQUIRE   → The user supplies an EPUB/PDF of a book they own (see
+               "Acquiring the book" below).
 2. EXTRACT   → Pull chapter text from EPUB/PDF into one .txt per chapter.
 3. CONTEXT   → Gather everything the brain knows about the reader.
 4. ANALYZE   → `gbrain book-mirror` fans out N read-only subagents.
@@ -73,9 +72,8 @@ What this means for the agent:
 
 ## 1. Acquiring the book
 
-book-acquisition (legal-grey-area downloader) was deliberately not shipped
-in this skill wave. The user drops the EPUB/PDF manually. Common paths the
-user might use:
+The user supplies an EPUB or PDF of a book they own; this skill never
+downloads books. Common paths the user might use:
 
 ```bash
 # User-supplied path
@@ -99,19 +97,25 @@ extracted directory as input.
 
 ```bash
 SLUG="this-book"                                # kebab-case
-WORK="$(mktemp -d)/$SLUG"
+export WORK="$(mktemp -d)/$SLUG"
 mkdir -p "$WORK/chapters"
-unzip -o path/to/book.epub -d "$WORK/unpacked"
+unzip -o -q path/to/book.epub -d "$WORK/unpacked"
 
-# Find content files (XHTML/HTML), sorted (chapter order = sort order)
-find "$WORK/unpacked" -name "*.xhtml" -o -name "*.html" | sort > "$WORK/files.txt"
-
-# Strip HTML to text per chapter
+# Strip HTML to text per chapter, in the book's reading order (the OPF spine)
 python3 - <<'PY'
 from bs4 import BeautifulSoup
-import os, sys
+import os, posixpath, urllib.parse, xml.etree.ElementTree as ET
 work = os.environ['WORK']
-files = open(f'{work}/files.txt').read().splitlines()
+root = f'{work}/unpacked'
+container = ET.parse(f'{root}/META-INF/container.xml')
+opf_rel = container.find('.//{*}rootfile').get('full-path')
+opf = ET.parse(f'{root}/{opf_rel}')
+hrefs = {i.get('id'): i.get('href') for i in opf.iterfind('.//{*}manifest/{*}item')}
+base = posixpath.dirname(opf_rel)
+files = [f"{root}/{posixpath.join(base, urllib.parse.unquote(hrefs[r.get('idref')]))}"
+         for r in opf.iterfind('.//{*}spine/{*}itemref') if r.get('idref') in hrefs]
+inside = os.path.realpath(root) + os.sep
+files = [f for f in files if os.path.realpath(f).startswith(inside)]  # ignore paths that leave the book
 for i, path in enumerate(files, 1):
     html = open(path, encoding='utf-8', errors='replace').read()
     text = BeautifulSoup(html, 'html.parser').get_text('\n')
@@ -122,6 +126,10 @@ PY
 ```
 
 If `bs4` is missing: `pip3 install beautifulsoup4 lxml`.
+
+Extract once per book. To resume or re-run a mirror, reuse the chapter files
+from the first extraction: completed chapters are matched by number, so
+re-extracting in a different order would pair old analyses with new text.
 
 Inspect the chapter files to identify which are real chapters vs front
 matter (TOC, copyright, acknowledgments). Often the EPUB ships one file
@@ -267,7 +275,8 @@ not competing for space.
 memorable phrase the author presents gets its own section. If the author
 lists six kinds of loneliness, that's six sections. If they tell three
 stories, that's three sections. The Chapter half should be detailed enough
-that someone could skip the book and not lose much. The Mirror half
+for the reader to recall the chapter and see what each mirror responds to;
+it summarizes and quotes briefly, and is no substitute for the book. The Mirror half
 responds to EACH specific idea with a DIFFERENT personal mapping.
 
 ### Layout: top-aligned HTML tables OR stacked sections (hard rule)
@@ -374,8 +383,10 @@ gbrain eval cross-modal --slug <slug>-personalized \
 
 Pass threshold: all dimensions average 7+ across models. If any dimension
 is below 6, rebuild with targeted fixes. The eval→fix→re-eval cycle is the
-quality multiplier. Evaluator model pairs and refusal routing follow
-[conventions/cross-modal.yaml](../conventions/cross-modal.yaml).
+quality multiplier. Evaluator model pairs are set in
+[conventions/cross-modal.yaml](../conventions/cross-modal.yaml). If an
+evaluator's provider refuses, tell the user, naming the model, and stop the
+eval there.
 
 ### Children's book variant
 
@@ -423,8 +434,13 @@ If any chapter failed, the CLI exits 1 and the user can re-run — idempotency
 keys (`book-mirror:<slug>:ch-<N>`) deduplicate completed chapters at the
 queue level, so retry is cheap. Note that reproducing verbatim book quotes
 plus the reader's verbatim words can occasionally trip a provider output
-filter; a chapter blocked that way is just a failed chapter — re-run, or
-retry with a different `--model`.
+filter. The CLI marks that chapter failed with `provider refusal or output
+filter stop (job <id> stop_reason=refusal)`: that is the chapter's result, a
+provider refusal rather than a model failure. Tell the user which chapters
+the provider refused and stop there for those chapters: they stay out of the
+page, and you don't offer to run them again, even though the CLI's failure
+note prints retry steps. Quote any other error as it is; re-running the same
+command retries those other failures.
 
 ### Model: Opus by default
 
@@ -483,8 +499,10 @@ Cross-link entities mentioned in the analysis:
 The **Chapter half** should:
 
 - Preserve the author's actual stories, statistics, frameworks, examples.
-- Quote memorable phrases verbatim.
-- Be detailed enough that the reader could skip the book and not lose much.
+- Quote memorable phrases verbatim, a sentence or two at a time; never copy
+  whole passages.
+- Help the reader decide whether to read the book and remember what it said.
+  It is commentary on the book, not a replacement for it.
 
 The **Mirror half** should:
 
@@ -521,7 +539,7 @@ writing even with every citation stripped.
 
 - ❌ **Skimming chapters.** Standing instruction: preserve detail.
 - ❌ **Generic mirror.** "This might apply if you've ever felt…" →
-  kill on sight.
+  rewrite it with a specific connection, or say the chapter doesn't apply.
 - ❌ **Factual errors about the reader's life.** Always fact-check after
   assembly.
 - ❌ **Giving the subagent put_page access.** Trust contract is read-only;
@@ -587,13 +605,13 @@ This skill guarantees:
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:` (when applicable).
 - Conventions referenced (`quality.md`, `brain-first.md`, `_brain-filing-rules.md`) are followed.
-- Privacy contract preserved: no real names, no fork-specific filesystem path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).
 
 ## When it fails
 
@@ -601,8 +619,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - The CLI stops for cost confirmation (exit 3, or a non-TTY refusal without `--yes`): relay the per-chapter estimate and wait for the user's agreement before adding `--yes`.
 - A paid run stops with `no_pricing` under a user cost cap: look up the model's per-token rate, tell the user, and after they agree ask the brain host's operator to run `gbrain pricing set <model> --input <usd-per-1M> --output <usd-per-1M>`; then retry.
-- Exit 1 with `chapters_failed > 0`: the finished chapters are kept; re-run the same command to retry only the failed ones and tell the user how many chapters are still missing.
+- Exit 1 with `chapters_failed > 0`: the finished chapters are kept. Report refused chapters as above and don't retry them; re-run the same command to retry other failures, and tell the user how many chapters are still missing.
 
 ## Anti-Patterns
 
-The full anti-pattern list is in the body sections above; this header exists for the conformance test if the body uses a different casing.
+The full anti-pattern list is in the body sections above.

@@ -34,7 +34,7 @@ function getConfigDir() { return configDir(); }
 function getConfigPath() { return configPath(); }
 
 export interface GBrainConfig {
-  engine: 'postgres' | 'pglite';
+  engine: 'postgres' | 'pglite' | 'rust';
   /** File-plane hook-lane keys (read by engine-free hook/push children).
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
@@ -300,6 +300,8 @@ export interface GBrainConfig {
     last_applied_version?: string;
     /** #8776: a launcher outside gbrain's service starts autopilot again when it exits (`gbrain upgrade` hands it over). */
     autopilot_launcher?: 'external';
+    /** #9483: a launcher outside gbrain's serve service starts serve again when it exits (`gbrain upgrade` stops serve and waits for it, or restarts the systemd unit serve runs in). */
+    serve_launcher?: 'external';
   };
 
   /**
@@ -743,7 +745,7 @@ export function loadConfig(): GBrainConfig | null {
   // the local PGLite brain while claiming to use the env URL. The PGLite
   // database_path is also cleared when dbUrl is set so toEngineConfig
   // doesn't pass a stale path through alongside the URL.
-  const inferredEngine: 'postgres' | 'pglite' = dbUrl
+  const inferredEngine: 'postgres' | 'pglite' | 'rust' = dbUrl
     ? 'postgres'
     : fileConfig?.engine || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
@@ -1690,6 +1692,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'self_upgrade.last_check_ts',
   'self_upgrade.last_applied_version',
   'self_upgrade.autopilot_launcher',
+  'self_upgrade.serve_launcher',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',

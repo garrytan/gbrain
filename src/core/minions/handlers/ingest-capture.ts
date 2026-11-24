@@ -41,13 +41,14 @@ import { importFromContent } from '../../import-file.ts';
 import { maintenanceTransaction } from '../../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../../persistence/ownership.ts';
 import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
+import { readersNoncanonicalRefusal } from '../../persistence/readers-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
 import { OperationError, opError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
 import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteLabelsChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
-import { validateSlug } from '../../utils.ts';
+import { validateSlug, normalizeSlug } from '../../utils.ts';
 import { REVISION_BACKFILL_PENDING, RevisionBackfillPendingError } from '../../page-state/types.ts';
 import { appliedCaptureRequestPrefix, readAppliedCapture, recordAppliedCapture, saveAppliedCapture } from '../../ingestion/applied-captures.ts';
 
@@ -298,7 +299,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
     const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
     const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
-    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined;
+    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: normalizeSlug(slug), result: managedOutcome } : undefined;
     const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
     if (applied) return applied;
 
@@ -431,16 +432,18 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       }
     }
     if (result === null) return (await readAppliedCapture<IngestCaptureResult>(engine, appliedKey!))!;
-    const refused = result.refusal?.code === 'visibility_noncanonical';
+    const refused = result.refusal?.code === 'visibility_noncanonical' || result.refusal?.code === 'readers_noncanonical';
     if (sourceFallback) {
       console.error(
         `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
         `(${sourceFallback.reason}); ${refused ? 'refused' : 'wrote'} under default`,
       );
     }
-    // #7880: nothing was stored; the job refuses visibility_not_applied without a retry, as the door's put_page refuses it on a managed brain.
+    // #7880: nothing was stored; the job refuses without a retry (visibility_not_applied, or readers_noncanonical for a readers key page access does not read), as the door's put_page refuses it on a managed brain.
     if (refused) {
-      throw privateRequestRefusal({ slug: result.slug, source_id: sourceFallback ? 'default' : sourceId ?? 'default' }, parseMarkdown(event.content, `${result.slug}.md`).frontmatter);
+      const refusedAs = { slug: result.slug, source_id: sourceFallback ? 'default' : sourceId ?? 'default' };
+      if (result.refusal?.code === 'readers_noncanonical') throw readersNoncanonicalRefusal(refusedAs, [], false);
+      throw privateRequestRefusal(refusedAs, parseMarkdown(event.content, `${result.slug}.md`).frontmatter);
     }
 
     // The final result replaces the provisional one; an import that wrote nothing (no transaction ran) inserts the row here.

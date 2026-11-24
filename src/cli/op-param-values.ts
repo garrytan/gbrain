@@ -9,6 +9,7 @@
 import { inertText } from '../core/agent-output.ts';
 import type { OperationMeta, ParamDef } from '../core/ops/contract.ts';
 import { usageError } from './cli-error.ts';
+import { isBooleanLiteral } from '../core/op-flag-tokens.ts';
 
 /** Coerce one raw CLI token for `op.params[key]`; `positional` labels a positional slot instead of a flag. */
 export function opParamValue(op: OperationMeta, key: string, def: ParamDef | undefined, raw: string, positional = false): unknown {
@@ -27,6 +28,19 @@ export function opParamValue(op: OperationMeta, key: string, def: ParamDef | und
       `Pass one of the declared values, e.g. ${usage} ${positional ? def.enum[0] : `${name} ${def.enum[0]}`}.`);
   }
   return raw;
+}
+
+/**
+ * #9918: the value of an inline `--flag=<value>` boolean. Only true and false
+ * are read, as in the space-separated form (`isBooleanLiteral`); any other
+ * value is refused, never read as on, because `delete --purge=0` read as on
+ * is an irreversible hard delete. The refusal names the flag, not the value.
+ */
+export function opBooleanValue(op: OperationMeta, key: string, raw: string): boolean {
+  if (isBooleanLiteral(raw)) return raw === 'true';
+  const flag = `--${key.replace(/_/g, '-')}`;
+  throw usageError(`${flag}=… takes only true or false; nothing ran.`,
+    `Write ${flag}=true or ${flag}=false (e.g. gbrain ${op.cliHints?.name ?? op.name} ${flag}=false).`);
 }
 
 /**
