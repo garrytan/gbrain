@@ -320,3 +320,52 @@ describe('a privacy check that failed only in the rerun', () => {
     expect(status(dir).privacy_diverged).toBeUndefined();
   });
 });
+
+describe('a read made under excludePrivate is unsettled by default', () => {
+  const priv = (epoch: string, outcome: ShadowLedgerRow['outcome'], extra: Partial<ShadowLedgerRow> = {}): ShadowLedgerRow => row(epoch, 'searchVector', outcome, { private_read: true, ...extra });
+  const unsettled = (rows: (epoch: string) => ShadowLedgerRow[]): { unsettled: number; diverged: number | undefined } => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [row(epoch, 'getPage', 'match'), ...rows(epoch)]); // a match elsewhere: something was compared
+    return { unsettled: status(dir).evidence!.privacy_checks_unsettled_7d, diverged: status(dir).privacy_diverged };
+  };
+
+  test('every pending, skipped, timed-out, errored or never-completed row of such a read counts, whatever reason it carries or lacks', () => {
+    for (const [name, mk] of [
+      ['a reasonless inconclusive row closed as skipped', (e: string) => [priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'skipped:moved' })]],
+      ['skipped by a timeout', (e: string) => [priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'skipped:timeout' })]],
+      ['skipped by a watermark that moved', (e: string) => [priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'skipped:watermark_moved' })]],
+      ['skipped because the child closed', (e: string) => [priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'skipped:child_closing' })]],
+      ['a pending row whose child crashed (no completion row ever written)', (e: string) => [priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'pending', sid: 'crashed.1' })]],
+      ['an inconclusive row with no rerun at all', (e: string) => [priv(e, 'inconclusive', { mismatch: 'diff' })]],
+      ['a Rust read that timed out', (e: string) => [priv(e, 'timeout')]],
+      ['a Rust read that errored', (e: string) => [priv(e, 'error', { reason: 'internal_error' })]],
+    ] as const) {
+      const r = unsettled(mk);
+      expect([name, r.unsettled, r.diverged]).toEqual([name, 1, undefined]); // counted, and privacy_diverged absent while any is open
+    }
+  });
+
+  test('only a completed check with an outcome settles it: a match, a diff, a reported ranking difference, a violation, a rerun that matched or differed, a lagged mismatch', () => {
+    const r = unsettled((e) => [
+      priv(e, 'match'), priv(e, 'diff', { mismatch: 'diff', reason: 'extra_rows_cleared', rerun: 'differed' }), priv(e, 'diff', { reason: 'rerun_differs', rerun: 'differed' }),
+      priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'matched' }), priv(e, 'order_diff'), priv(e, 'stale', { mismatch: 'diff' }), priv(e, 'privacy_diverged', { reason: 'row_not_readable_by_caller' }),
+      priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'pending', sid: 'done.1' }), priv(e, 'diff', { reason: 'rerun_differs', rerun: 'differed', sid: 'done.1' }), // a pending row replaced by its completion row
+    ]);
+    expect(r).toEqual({ unsettled: 0, diverged: 1 });
+  });
+
+  test('a brain with no excludePrivate reads never reads as unsettled: its skipped, pending and timed-out rows are about other things, and status, report and the readiness verdict stay as they were', async () => {
+    const { dir, epoch } = epochDir();
+    appendLedgerRows(dir, [
+      row(epoch, 'getPage', 'match'), row(epoch, 'listPages', 'match'),
+      row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff', rerun: 'skipped:moved' }), row(epoch, 'getPage', 'inconclusive', { mismatch: 'diff', rerun: 'pending', sid: 'p.1' }), row(epoch, 'getTags', 'timeout'),
+    ]);
+    const s = status(dir);
+    expect(s.evidence!.privacy_checks_unsettled_7d).toBe(0);
+    expect(s.privacy_diverged).toBe(0); // present, not hidden: something was compared and no privacy check is open
+    expect(renderEvidenceStatus(s).join('\n')).not.toContain('could not be settled');
+    const doc = await shadowStatusDocument({ key: 'k', dir }, NOW);
+    expect(doc.privacy_diverged).toBe(0);
+    expect(evaluateReadiness(doc as never, NOW).criteria.find((c) => c.n === 6)).toMatchObject({ state: 'pass' });
+  });
+});

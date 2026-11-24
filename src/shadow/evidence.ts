@@ -139,7 +139,11 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
     if (accepted) fold.ranking_differences[r.op] = (fold.ranking_differences[r.op] ?? 0) + 1;
     if (COMPARED.has(r.outcome)) fold.compared++;
     if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
-    if (recent && r.outcome === 'inconclusive' && !rerunDone && (r.reason?.startsWith('privacy_check_') || r.rerun?.startsWith('skipped:privacy_check_'))) fold.privacy_unsettled_7d++; // a rerun closed by a privacy check that never settled counts too, whatever the first check said
+    // The privacy question of a read made under excludePrivate is open by default: only a row that completed a comparison with an outcome settles it
+    // (a match, a diff, a violation, a lagged mismatch, a rerun that matched or differed). Every other row of such a read counts as open, whatever reason it carries or
+    // lacks: a pending row (a crash or restart left it so), a skip, a timeout or error, an inconclusive row with no completed rerun. A reason alone also opens it (older rows).
+    const open = r.private_read === true && !rerunDone && (r.rerun === 'pending' || r.rerun?.startsWith('skipped:') || r.outcome === 'inconclusive' || RUST_ERRORS.has(r.outcome));
+    if (recent && !rerunDone && (open || (r.outcome === 'inconclusive' && (r.reason?.startsWith('privacy_check_') || r.rerun?.startsWith('skipped:privacy_check_'))))) fold.privacy_unsettled_7d++;
     if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
     if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);
     if (recent && r.outcome === 'capability_missing') fold.capability_missing_7d++;

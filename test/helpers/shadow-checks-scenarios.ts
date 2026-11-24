@@ -301,7 +301,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const rows = await rig.finish();
       const { evidence, ...ev } = buildEvidenceStatus({ dir: rig.dir });
       const row3 = evaluateReadiness({ epoch_id: evidence?.epoch_id, epoch_started_at: evidence?.epoch_started_at, ...ev } as never, new Date()).criteria.find((c) => c.n === 3)!;
-      return { rows, evidence: evidence!, reads: ev.reads!, row3, stopped: rig.stoppedBy };
+      return { rows, evidence: evidence!, reads: ev.reads!, row3, stopped: rig.stoppedBy, dir: rig.dir };
     }
     const counts = (r: Awaited<ReturnType<typeof ranked>>) => {
       expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', mismatch: 'diff', private_read: true });
@@ -409,6 +409,21 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const failed = await ranked(unidentified, { settle: true, noRecall: true, onPrivacyAsk: async () => { throw new Error('privacy ask failed'); } });
       expect(failed.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:privacy_check_unavailable', reason: 'privacy_check_unavailable' });
       expect(failed.evidence.privacy_checks_unsettled_7d).toBe(1);
+    });
+
+    test('a crash between reruns leaves the sample unsettled for privacy: the first rerun\'s privacy check moved, the child is held in its backoff before the second run, and whatever is on disk then (all a crash would leave) already has an open privacy check', async () => {
+      const probe = 'a2_crash_probe';
+      await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+      await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+      try {
+        const mixed = (theirs: Rows, spare: Record<string, unknown>): Rows => [...theirs, spare, { ...spare, page_id: undefined, slug: undefined, source_id: undefined }];
+        let onDisk: ReturnType<typeof buildEvidenceStatus> | undefined;
+        await ranked(mixed, { settle: true, noRecall: true, child: { random: () => 0.5, sleep: async () => undefined },
+          onPrivacyAsk: async (n) => { if (n >= 2) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); }, // the first rerun's privacy check moves
+          onRerunAsk: async (n, rig) => { if (n === 2) onDisk = buildEvidenceStatus({ dir: rig.dir }); } }); // the second run is asked for: the child has written nothing since the first rerun's answer, as if it were killed here
+        expect(onDisk?.evidence?.privacy_checks_unsettled_7d).toBeGreaterThan(0); // the unresolved row alone makes it open
+        expect(onDisk?.privacy_diverged).toBeUndefined(); // so the privacy criterion has no evidence yet, not a pass
+      } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
     });
 
     describe('an unsettled privacy reason found in a middle rerun', () => {
