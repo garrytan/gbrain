@@ -359,6 +359,7 @@ test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier-resident.test.ts
 test/engine-parity/notifier.test.ts
 test/engine-parity/oauth-clients.test.ts
+test/engine-parity/oauth-dcr.test.ts
 test/engine-parity/oauth-http.test.ts
 test/engine-parity/oauth-lifecycle.test.ts
 test/engine-parity/oauth-revocation.test.ts
