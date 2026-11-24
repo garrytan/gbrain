@@ -24,7 +24,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { __resetPrivateVisibilityCacheForTests, OWNER_MEMBER_KEY } from '../src/core/search/private-visibility.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
@@ -277,6 +277,24 @@ for (const backend of testBackends()) {
       expect(await engine.executeRaw('SELECT count(*)::int AS n FROM learning_items WHERE shown_at IS NOT NULL')).toEqual([{ n: 0 }]);
       expect(mentions(await local('learned', {}) as LearnedView, 'canarystamp')).toBe(true);
       expect(await engine.executeRaw('SELECT count(*)::int AS n FROM learning_items WHERE shown_at IS NOT NULL')).toEqual([{ n: 1 }]);
+    });
+
+    test('the user\'s own unbound stdio agent on a brain with no owner stamps: the second call shows nothing new', async () => {
+      await insertFact('Bob sails boats canarypipe', { visibility: 'world' });
+      await derive();
+      await engine.unsetConfig(OWNER_MEMBER_KEY);
+      try {
+        const pipe = async () => {
+          __resetPrivateVisibilityCacheForTests();
+          return parse(await dispatchToolCall(engine, 'learned', {}, { remote: true, transport: 'stdio', sourceId: SRC })) as LearnedView;
+        };
+        expect(mentions(await pipe(), 'canarypipe')).toBe(true);
+        expect(await engine.executeRaw('SELECT count(*)::int AS n FROM learning_items WHERE shown_at IS NOT NULL')).toEqual([{ n: 1 }]);
+        expect((await pipe()).count).toBe(0);
+      } finally {
+        await setOwner(engine, OWNER);
+        __resetPrivateVisibilityCacheForTests();
+      }
     });
 
     test('limit 20 prints and stamps 20: what is stamped is what is shown', async () => {

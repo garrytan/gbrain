@@ -9,7 +9,8 @@
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
-import { callerIsOwner, privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { ownerMemberId } from '../access/owner.ts';
+import { callerIsOwner, currentCallerAccess, privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
 import { quoteFacts } from '../search/transcript-quote.ts';
 import { CHANGE_KINDS, CONFLICT_BACKLOG_SQL, QUESTION_KINDS, type LearningKind } from './kinds.ts';
@@ -142,8 +143,9 @@ export interface LearnedView {
 
 /**
  * The note: unseen pending items of the last seven days by default, or every item since `since`. Stamps shown_at on
- * what it returns, only for a caller that reads the whole ledger (local, or the owner's token) and is not a local
- * `--as` preview, so a narrower reader never uses up the owner's unseen view.
+ * what it returns, only for a caller that reads the whole ledger (local, or the owner's token) or the unbound stdio pipe
+ * of a brain with no owner (the user's own agent), and never for a local `--as` preview, so a narrower reader never
+ * uses up the owner's unseen view.
  */
 export async function readLearned(engine: BrainEngine, ctx: OperationContext,
   opts: { sourceIds: string[] | null; since?: Date; limit: number; now?: Date }): Promise<LearnedView> {
@@ -151,7 +153,8 @@ export async function readLearned(engine: BrainEngine, ctx: OperationContext,
   const since = opts.since ?? new Date(now.getTime() - LEARNED_WINDOW_DAYS * 86_400_000);
   const f = await callerFilters(engine, ctx);
   const items = await liveItems(engine, ctx, f, { sourceIds: opts.sourceIds, since, unseenOnly: opts.since === undefined, limit: opts.limit });
-  if (!ctx.dryRun && items.length && f.full && !ctx.applyRemoteReadPolicy && !ctx.accessIdentity) {
+  const singleUserPipe = ctx.transport === 'stdio' && !ctx.auth && currentCallerAccess().identity.length === 0 && !(await ownerMemberId(engine));
+  if (!ctx.dryRun && items.length && (f.full || singleUserPipe) && !ctx.applyRemoteReadPolicy && !ctx.accessIdentity) {
     await engine.executeRaw(`UPDATE learning_items SET shown_at = now(), member_id = COALESCE(member_id, $2) WHERE id = ANY($1::bigint[]) AND shown_at IS NULL`,
       [items.map(i => i.id), ctx.auth?.member?.id ?? null]);
   }
