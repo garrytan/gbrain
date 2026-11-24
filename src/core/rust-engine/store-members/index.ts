@@ -78,7 +78,6 @@ import * as beliefPurge from './belief-purge.ts';
 import * as projectionRebuild from './projection-rebuild.ts';
 import * as factsRepair from './facts-repair.ts';
 import * as repairApplies from './repair-applies.ts';
-import * as twinMerge from './twin-merge.ts';
 import * as visibilityScans from './visibility-scans.ts';
 import * as ontologyRepair from './ontology-repair.ts';
 import * as factsTrust from './facts-trust.ts';
@@ -336,8 +335,6 @@ export const STORE_MEMBERS = {
   ...factsBackstop,
   // The rechecks and writes of the repair applies (rust/docs/store/repair-applies.md).
   ...repairApplies,
-  // The row moves of the twin merge (rust/docs/store/repair-applies.md, "Twin merge").
-  ...twinMerge,
   // The preview reads of gbrain repair visibility (rust/docs/store/repair-applies.md).
   ...visibilityScans,
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").

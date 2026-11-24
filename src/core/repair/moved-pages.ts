@@ -30,8 +30,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { mergeTwinInto } from '../persistence/twin-merge.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
+import { mergeTwinInto, requireTwinMerge } from '../persistence/twin-merge.ts';
 import { readMovedPage, type MovedEvidence, type MovedHeldReason, type MovedPageRef } from '../persistence/moved-pages.ts';
 import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { clearGitHold, movedPagesPreviewArgv } from '../persistence/sync-holds.ts';
@@ -209,8 +208,8 @@ async function applyFold(tx: BrainEngine, pair: MovedPair, incarnation: string):
 /** Folds one pair; a managed brain submits it under `requestId()`. Returns the receipt fields on success. */
 export async function foldMovedPage(ctx: OperationContext, pair: MovedPair, owner: GhostOwner | null, requestId: () => Promise<string>): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
-  // The fold's merge is typed, but its page_versions move still runs through raw SQL: an engine without it stops here by name.
-  requireRawSql(engine, 'gbrain repair moved-pages fold (the fold moves the old page\'s versions through raw SQL)');
+  // The fold runs mergeTwinInto, which still moves rows through raw SQL: an engine without it stops here by name.
+  requireTwinMerge(engine, 'gbrain repair moved-pages fold');
   const moved = await movedPairNow(engine, pair, owner);
   if (moved) return changed(moved);
   if (await managedPersistenceEnabled(engine)) {

@@ -393,69 +393,6 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
     Ok(())
 }
 
-/// The twin merge's raw data move (`mergeTwinInto`): each raw_data row of `twin` moves to `survivor`
-/// unless the survivor already has a row of that source (`UNIQUE(page_id, source)`); that row stays
-/// on the twin. A moved row keeps its id, data and fetch time.
-pub(crate) fn move_twin_raw_data(tx: &mut dyn KvWrite, twin: u64, survivor: u64) -> Result<()> {
-    let rows: Vec<(Vec<u8>, RawRecord)> = collect_values(&*tx, &raw_page_prefix(twin))?;
-    for (key, row) in rows {
-        let target = raw_key(survivor, &row.source);
-        if tx.get(&target)?.is_some() {
-            continue;
-        }
-        tx.delete(&key)?;
-        put_json(
-            tx,
-            &target,
-            &RawRecord {
-                page_id: survivor,
-                ..row
-            },
-        )?;
-    }
-    Ok(())
-}
-
-/// Whether page `page_id` has a raw_data row or an attached file (the twin merge's foreign-key check).
-pub(crate) fn page_has_raw_or_files(read: &dyn KvRead, page_id: u64) -> Result<bool> {
-    let mut any = false;
-    for prefix in [raw_page_prefix(page_id), file_page_prefix(page_id)] {
-        scan_prefix(read, &prefix, false, &mut |_, _| {
-            any = true;
-            false
-        })?;
-        if any {
-            break;
-        }
-    }
-    Ok(any)
-}
-
-/// The twin merge's file move (`UPDATE files SET page_id=survivor, page_slug=slug WHERE page_id=twin`):
-/// every file attached to `twin` is attached to `survivor` under the survivor's slug.
-pub(crate) fn move_twin_files(
-    tx: &mut dyn KvWrite,
-    twin: u64,
-    survivor: u64,
-    survivor_slug: &str,
-) -> Result<()> {
-    let attached: Vec<(Vec<u8>, String)> = collect_values(&*tx, &file_page_prefix(twin))?;
-    for (key, path) in attached {
-        tx.delete(&key)?;
-        let Some(mut file) = read_file(&*tx, &path)? else {
-            continue;
-        };
-        tx.put(
-            &file_page_key(survivor, file.id),
-            &serde_json::to_vec(&file.storage_path)?,
-        )?;
-        file.page_id = Some(survivor);
-        file.page_slug = Some(survivor_slug.to_string());
-        put_file(tx, &file)?;
-    }
-    Ok(())
-}
-
 /// The number of files of source `source_id` (the delete preview's `files` count).
 pub(crate) fn source_file_count(read: &dyn KvRead, source_id: &str) -> Result<u64> {
     let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;

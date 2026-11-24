@@ -1237,8 +1237,6 @@ export const DOMAIN_OF: Record<string, string> = {
   'listRepairScanPages': OOS.repairBookkeeping,
   'listFileTombstones': OOS.repairBookkeeping,
   'listTwinMergeLosers': OOS.repairBookkeeping,
-  'listPageRelationshipKeys': OOS.repairBookkeeping, 'moveTwinRelations': OOS.repairBookkeeping, 'moveTwinPageRows': OOS.repairBookkeeping,
-  'moveTwinFacts': OOS.repairBookkeeping, 'recordSlugRename': OOS.repairBookkeeping,
   'listContactRowPages': OOS.repairBookkeeping, 'listSplitFactsPages': OOS.repairBookkeeping,
   'listPageTruths': OOS.repairBookkeeping,
   'listPagesByOriginPath': OOS.repairBookkeeping,

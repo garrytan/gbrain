@@ -155,8 +155,6 @@ import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts'
 import * as writeAttributionImpl from './engine-sql/write-attribution.ts';
 import * as opCheckpointImpl from './engine-sql/op-checkpoint.ts';
 import * as atomGenerationImpl from './engine-sql/atom-generation.ts';
-import * as twinMergeImpl from './engine-sql/twin-merge.ts';
-import type * as TwinMergeSql from './engine-sql/twin-merge.ts';
 import * as syncPassPagesImpl from './engine-sql/sync-pass-pages.ts';
 import type { SyncImportPageQuery, SyncImportPageWindow } from './engine-sql/sync-pass-pages.ts';
 import * as syncRunReadsImpl from './engine-sql/sync-run-reads.ts';
@@ -2835,11 +2833,6 @@ export class PGLiteEngine implements BrainEngine {
   deleteOpCheckpointPaths(op: string, fingerprint: string) { return opCheckpointImpl.deleteOpCheckpointPaths(this, op, fingerprint); }
   readOpCheckpointRecords(op: string, fingerprints: readonly string[]) { return opCheckpointImpl.readOpCheckpointRecords(this, op, fingerprints); }
   writeOpCheckpointRecords(op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>) { return opCheckpointImpl.writeOpCheckpointRecords(this, op, rows); }
-  listPageRelationshipKeys(pageIds: number[]) { return twinMergeImpl.listPageRelationshipKeys(this, pageIds); }
-  moveTwinRelations(twinId: number, survivorId: number) { return twinMergeImpl.moveTwinRelations(this, twinId, survivorId); }
-  moveTwinPageRows(pair: TwinMergeSql.TwinPageRows) { return twinMergeImpl.moveTwinPageRows(this, pair); }
-  moveTwinFacts(sourceId: string, twinSlug: string, survivorSlug: string) { return twinMergeImpl.moveTwinFacts(this, sourceId, twinSlug, survivorSlug); }
-  recordSlugRename(sourceId: string, oldSlug: string, newSlug: string) { return twinMergeImpl.recordSlugRename(this, sourceId, oldSlug, newSlug); }
   readAtomGeneration(pageId: number, contentHash: string) { return atomGenerationImpl.readAtomGeneration(this, pageId, contentHash); }
   recordAtomGenerationBump(sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null) { return atomGenerationImpl.recordAtomGenerationBump(this, sourceId, incarnation, pageId, keepContentHash, keepGeneration); }
   readSyncImportPageRows(q: SyncImportPageQuery, window: SyncImportPageWindow) { return syncPassPagesImpl.readSyncImportPageRows(this, q, window); }

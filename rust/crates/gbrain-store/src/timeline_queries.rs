@@ -55,7 +55,6 @@ use serde_json::{Map, Value, json};
 mod event_rows;
 mod repair_reads;
 mod site_reads;
-pub(crate) mod twin_rows;
 pub use event_rows::{
     EventProjectionIdSpec, EventProjectionRestoreSpec, EventProjectionRowsSpec,
     EventProjectionSlugsSpec,

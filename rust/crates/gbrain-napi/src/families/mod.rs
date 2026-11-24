@@ -142,7 +142,6 @@ mod timeline_queries;
 mod transactions;
 mod trust_scan;
 mod trust_tier_reads;
-mod twin_merge;
 mod vectors;
 mod visibility_scans;
 mod wanted_links;
