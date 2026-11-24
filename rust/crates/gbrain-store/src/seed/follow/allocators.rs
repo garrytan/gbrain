@@ -66,6 +66,10 @@ const ALLOCATORS: &[(&str, Counter)] = &[
         "calibration_profiles",
         Counter::Meta(crate::eval_capture::calibration_profiles::NEXT_ID),
     ),
+    (
+        "derived_generations",
+        Counter::Meta(crate::generations::ID_COUNTER),
+    ),
     ("wake_cron_runs", Counter::Seq("wake_cron_run")),
     ("wake_forgets", Counter::Seq("wake_forget")),
 ];

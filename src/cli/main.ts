@@ -5,7 +5,7 @@
  * top-level help never pay for this module's import graph. Tests import the
  * helpers below from here.
  */
-import { affectsRecall } from '../core/types.ts';
+import { emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../core/degraded-stamp.ts';
 import { installSigchldHandler } from '../core/zombie-reap.ts';
 installSigchldHandler();
 
@@ -1507,11 +1507,10 @@ function describeEmptyRetrieval(): string {
   }
   // Ranking-only stages (a skipped reranker) never cause a miss — keep the
   // "retrieval healthy" verdict honest.
-  const stages = Array.isArray(m.degraded)
-    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
-    : [];
+  const { stages, byChoice } = emptyRetrievalStages(m.degraded);
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
+    : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY
     : 'retrieval healthy; try the display name or --match hybrid before concluding the brain has nothing');
   return ` (${parts.join('; ')})`;
 }
@@ -2761,15 +2760,16 @@ async function completeEngineStartup(engine: BrainEngine, opts: EngineConnectOpt
       : { status: 'not_needed' as const };
     if (result.status === 'persistent') {
       writeCliNotice(migrationsNotice('Schema migrations are pending: another process attempted them but they did not complete within the retry window (usually transient). If it persists, check `gbrain doctor` for stale advisory locks and `gbrain jobs supervisor status` for crashed migration workers.'));
-    } else if (result.status === 'error' && !(await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(result.error)) {
+    } else if (result.status === 'error' && !(await import('../core/rust-engine/errors.ts')).isCapabilityMissing(result.error)) {
       // Non-deadlock error during initSchema. Surface the message and continue;
-      // subsequent operations will resurface the real schema error in context. A capability refusal (no migrations to run) is no notice: reads refuse typed.
+      // subsequent operations will resurface the real schema error in context.
+      // A capability refusal (no migrations to run) is no notice: reads refuse typed.
       writeCliNotice(migrationsNotice(`Schema probe failed: ${result.error.message}`));
     }
     // 'ok', 'not_needed', 'race_resolved' → silent (the common-case outcomes).
   } catch (err) {
     // Last-resort defense in case the helper itself throws unexpectedly.
-    if (!(await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(err)) writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
+    if (!(await import('../core/rust-engine/errors.ts')).isCapabilityMissing(err)) writeCliNotice(migrationsNotice(`Schema probe failed (unexpected): ${(err as Error).message}`));
   }
 
   const pendingUpgrade = await pendingUpgradeMigrationsNotice(engine, dispatchedCommand, VERSION);

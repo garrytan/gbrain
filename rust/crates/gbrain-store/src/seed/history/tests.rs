@@ -423,6 +423,42 @@ fn code_edges_chunk_keep_ids_and_every_index_key() {
 }
 
 #[test]
+fn an_edge_to_the_highest_dropped_chunk_does_not_abort_the_seed() {
+    // Value: protects=a code edge that names a retired or segmented chunk above every kept chunk is stored, not refused; fails_when=a dropped chunk
+    // leaves the chunk id counter below its id; why_new=the edge tests only name kept chunks and a chunk id the table never reached; seam=none;
+    // no_claim=reads of dropped chunks' edges (every edge read keeps only live chunk ends).
+    let s = seeded_pages();
+    let mut retired = chunk_row("42", "9", "0", "helper");
+    retired.insert("retired_generation".into(), Some("1".into()));
+    let mut segment = chunk_row("43", "9", "1", "segment");
+    segment.insert("body_generation".into(), Some("1".into()));
+    let r = import(
+        &s,
+        "content_chunks",
+        vec![chunk_row("41", "7", "0", "run"), retired, segment],
+    );
+    assert_eq!((r.imported, r.dropped), (1, 2));
+    let r = import(
+        &s,
+        "code_edges_chunk",
+        vec![
+            edge_row("11", "41", Some("42"), "b.helper", "calls"),
+            edge_row("12", "43", Some("41"), "a.run", "calls"),
+        ],
+    );
+    assert_eq!((r.imported, r.skipped), (2, 0));
+    // A chunk id past every chunk the primary had is still a missing parent.
+    let err = s
+        .import_relation(
+            SEED,
+            "code_edges_chunk",
+            vec![edge_row("13", "41", Some("44"), "b.other", "calls")],
+        )
+        .unwrap_err();
+    assert_eq!(err.code, CONSTRAINT_VIOLATION);
+}
+
+#[test]
 fn code_edges_symbol_keep_ids_and_every_index_key() {
     let s = edges_store();
     let r = import(

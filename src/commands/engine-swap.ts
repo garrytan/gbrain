@@ -83,7 +83,7 @@ function usage(message: string): ReturnType<typeof opError> {
 export function renderPlanText(p: SwapPlan): string {
   const lines = [
     `Engine swap plan: ${p.from} -> ${p.to}   verdict: ${p.verdict}${p.reason ? ` (${p.reason})` : ''}   plan ${p.plan_hash}`,
-    p.shadow ? '' : 'No shadow runs for this brain, so there is no readiness evidence yet. Start one with `gbrain engine shadow start`.',
+    p.shadow ? '' : 'No shadow runs for this brain, so there is no readiness evidence yet. Seed one with `gbrain engine shadow seed`, then start it with `gbrain engine shadow start`.',
     'Worktree refreshes: none unfinished.',
     'Readiness:',
     ...p.criteria.map(c => `  ${String(c.n).padStart(2)}. [${c.state}] ${c.name}: ${c.detail}`),
@@ -284,7 +284,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const shadowDir = brainKey ? shadowDirFor(brainKey) : '';
     const plan = await planEngineSwap(engine, {
       // The one status builder `gbrain engine shadow status --json` prints (src/shadow/status-document.ts).
-      readShadowStatus: deps.readShadowStatus ?? (async () => (await readConfiguredShadowStatus(() => (configured ? toEngineConfig(configured) : null), deps.now)) as ShadowStatus | null),
+      readShadowStatus: deps.readShadowStatus ?? (async (primary) => (await readConfiguredShadowStatus(() => (configured ? toEngineConfig(configured) : null), deps.now, primary)) as ShadowStatus | null),
       now: deps.now, policy: deps.policy, rustServes: deps.rustServes,
       envNames, services,
       disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },

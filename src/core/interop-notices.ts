@@ -400,7 +400,7 @@ function factsDegradedReason(r: Record<string, unknown>): string | undefined {
 /** Did this call run keyword-only because the brain opted out of embedding (not a missing or failing provider)? */
 export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<string, unknown>): boolean {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
-  if (op === 'search' || op === 'query') {
+  if (op === 'search' || op === 'query' || op === 'find_experts') {
     const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
     return (retrieval?.degraded ?? []).some(d => d.reason === 'embedding_disabled');
   }
@@ -434,6 +434,15 @@ export function recallStagesFor(op: string, result: unknown, meta: Record<string
 }
 
 /**
+ * Ops whose keyword-only run on a brain that turned embeddings off on purpose is not degraded (degraded-stamp.ts
+ * stamps nothing for it either): their notice leaves out the keyword-only stage and the keyword arm finding nothing
+ * (`keyword_zero`, a true negative there), so a call with no other stage gets no `degraded_recall`. `_meta.retrieval`
+ * and recall's `search_degraded` still record that the search was keyword-only.
+ */
+const KEYWORD_ONLY_BY_CHOICE_OPS: ReadonlySet<string> = new Set(['search', 'query', 'find_experts', 'recall']);
+const KEYWORD_ONLY_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'keyword_only_no_embedding_provider', 'keyword_zero']);
+
+/**
  * The MCP dispatch producer (one call per successful tool call): the
  * `degraded_recall` notice on search/query/recall/think/context_pack and
  * `source_binding_narrowed` on an empty bound stdio read. Never throws.
@@ -445,10 +454,14 @@ export function recallInteropNotices(
   try {
     const out: Notice[] = [];
     const entries = (meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined)?.degraded ?? [];
-    const stages = recallStagesFor(op, result, meta, opts.config).map(stage => entries.find(d => d.stage === stage) ?? stage);
+    const optedOut = embeddingOptedOutFor(op, result, meta);
+    const keywordOnlyByChoice = optedOut && KEYWORD_ONLY_BY_CHOICE_OPS.has(op);
+    const stages = recallStagesFor(op, result, meta, opts.config)
+      .filter(stage => !(keywordOnlyByChoice && KEYWORD_ONLY_STAGES.has(stage)))
+      .map(stage => entries.find(d => d.stage === stage) ?? stage);
     const { _meta: _ignored, ...args } = params;
     const coverage = (meta.retrieval as { coverage?: RetrievalCoverage } | undefined)?.coverage;
-    const degraded = degradedRecallNotice(stages, { ...opts, optedOut: embeddingOptedOutFor(op, result, meta), retry: { op, args }, coverage });
+    const degraded = degradedRecallNotice(stages, { ...opts, optedOut, retry: { op, args }, coverage });
     if (degraded) out.push(degraded);
     const narrowed = opts.transport === 'stdio' ? sourceBindingNarrowedNotice(op, params, result, opts.binding) : null;
     if (narrowed) out.push(narrowed);

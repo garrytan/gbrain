@@ -39,6 +39,7 @@ const engineStub = {
   getConfig: async () => null,
   // Cat 40 Hard F2: the strict keyword count every search reports (no matches here).
   countKeywordPages: async () => 0,
+  resolveCaseSensitiveAliases: async () => [],
   executeRaw: async (sql: string) => sql.includes('AS pending') ? [{ pending: false }] : [],
 } as unknown as BrainEngine;
 

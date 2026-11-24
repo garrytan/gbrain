@@ -59,7 +59,7 @@ export interface SwapPlan {
 
 export interface SwapPlanInputs {
   /** The shadow status document (S3); null when no shadow runs for this brain. */
-  readShadowStatus?: () => Promise<ShadowStatus | null>;
+  readShadowStatus?: (engine: BrainEngine) => Promise<ShadowStatus | null>;
   /** Engine-selecting variable names set on this machine (the caller reads the environment, by name only). */
   envNames?: string[];
   services?: ServiceDefinition[];
@@ -119,7 +119,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
   await assertRefreshesSettled(engine);
   const now = deps.now ?? new Date();
   const inForce = policyInForce(deps.policy ?? READINESS_POLICY, await engine.readPersistenceBrainId(), now);
-  const status = deps.readShadowStatus ? await deps.readShadowStatus() : null;
+  const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
   const readiness = evaluateReadiness(status, now, inForce.policy);
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,

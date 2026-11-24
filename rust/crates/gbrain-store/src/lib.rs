@@ -9,6 +9,11 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+pub mod access_member_links;
+pub mod access_members;
+pub mod access_migrations;
+pub mod access_policy;
+pub mod access_rules;
 mod cascade;
 pub mod chunks;
 pub mod cli_reads;
@@ -29,10 +34,15 @@ mod owner_only_marks;
 mod page_columns;
 mod page_index;
 mod page_projection;
+mod page_withdrawals;
 pub mod pages;
+pub mod read_shared;
 pub mod redb_kv;
 pub mod search;
 pub mod seed;
+pub mod shared_skill_catalog;
+pub mod shared_skill_members;
+pub mod shared_skill_publication;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -47,28 +57,52 @@ pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
 pub mod dream;
+pub mod dream_config;
+pub mod drift_conflicts;
+pub mod edge_proposals;
 pub mod embedding_catalog;
+pub mod embedding_install;
 pub mod embeddings;
+pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
 pub mod extraction;
 pub mod facts;
 pub mod field_usage;
+pub mod generations;
+pub mod identity_auto;
+pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
 pub mod large_page;
 pub mod link_queries;
 pub mod memory_mutation_reads;
+pub mod mention_state;
+pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
 pub mod page_ops;
+pub mod page_visibility;
 pub mod persistence;
+pub mod purge_version_bodies;
 pub mod raw_files;
+pub mod reason_tombstones;
 pub mod relations;
+pub mod remote_links;
+pub mod repair_attribution;
+pub mod repair_failed_writes;
+pub mod repair_fence_scans;
+pub mod repair_plan_scans;
+pub mod repair_scans;
+pub mod repair_versions;
 pub mod salience;
+pub mod schema_detect;
+pub mod session_state;
+pub mod source_cr_mode;
 pub mod stats;
+pub mod synopsis_tier;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;
@@ -120,6 +154,10 @@ pub struct OpenOptions {
     /// `chunk_strategy`, the rows the SQL engines' schema seeds. The store has no default of
     /// its own; an existing brain keeps the rows it has.
     pub initial_config: Vec<(String, String)>,
+    /// The caller's write-gate detector version (the TypeScript `WRITE_GATE_DETECTOR_VERSION`). A fresh
+    /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
+    /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
+    pub write_gate_detector_version: Option<u32>,
 }
 
 impl Default for OpenOptions {
@@ -132,6 +170,7 @@ impl Default for OpenOptions {
             concurrent_writes: false,
             keyword_index_builder: true,
             initial_config: Vec::new(),
+            write_gate_detector_version: None,
         }
     }
 }
@@ -594,12 +633,20 @@ pub(crate) struct StoredFormat {
     pub created_at_us: i64,
 }
 
+/// The config key of the write gate's scan baseline (TypeScript `WRITE_GATE_SCAN_BASELINE_KEY`).
+pub const WRITE_GATE_SCAN_BASELINE_KEY: &str = "write_gate.scan_baseline";
+
+/// The detector version a fresh brain's scan baseline carries when the caller names none (the TypeScript
+/// `WRITE_GATE_DETECTOR_VERSION` when this store was written).
+pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
+
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
-/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
+/// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
+/// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -623,19 +670,89 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
     // column default, so the step rewrites nothing; the number keeps an older build from rewriting
     // a take without its tier.
+    // Format 6: the records the v0.60.766.0 addon's shadow seed wrote at format 5 in other shapes
+    // are carried over to this build's, or the brain is refused with the re-seed steps.
+    if stored.format_version <= 5 {
+        let from = stored.format_version;
+        seed::carry_over_format_5(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: carrying over its records failed"),
+                format!(
+                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over"
+                ),
+            )
+        })?;
+    }
+    // Format 7: the loop mutes leave the take purge ledger's `F 0x10` prefix for `F 0x11`, or the
+    // brain is refused naming the record that is neither.
+    if stored.format_version <= 6 {
+        let from = stored.format_version;
+        facts::key_split::split_take_purges_from_loop_mutes(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its take purges from its loop mutes failed"),
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes"
+                ),
+            )
+        })?;
+    }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
 }
 
+/// What the open reports when a format carry-over step fails. A record the step cannot convert is
+/// `shadow_reseed_required`, naming the record and the re-seed steps. A file system or storage
+/// engine failure (`StoreError::is_storage_failure`) keeps its own code and says nothing about
+/// re-seeding, because it is not about the records and a re-seed would not fix it. Either way the
+/// transaction is dropped and nothing changed.
+fn carry_over_failure(e: StoreError, failed: String, refused: String) -> StoreError {
+    if e.is_storage_failure() {
+        return StoreError::new(
+            e.code,
+            format!("{failed}: {}; nothing was changed", e.message),
+        );
+    }
+    StoreError::new(
+        error::SHADOW_RESEED_REQUIRED,
+        format!(
+            "{refused}: {}; nothing was changed. Re-seed the shadow store: {}",
+            e.message,
+            seed::RESEED_STEPS
+        ),
+    )
+}
+
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the
-/// `default` source and a complete, empty keyword index.
+/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the trust backfill
+/// completion and the write-gate scan baseline (what migrations v226 and v227 write on an empty brain), the
+/// `default` source, the shared-skill catalog token secret and a complete, empty keyword index.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
+    )?;
+    // Migration v226 marks the trust backfill complete on an empty brain (`trust.backfill_completed_at`, millisecond ISO
+    // text), so doctor `trust_tiers` does not ask a fresh brain to run it. A caller's `initial_config` row of the same
+    // key wins.
+    let now = env::iso(env.now_micros());
+    tx.put(
+        &keys::text(keys::CONFIG, &["trust.backfill_completed_at"]),
+        format!("{}Z", &now[..now.len() - 4]).as_bytes(),
+    )?;
+    // Migration v227: no row is older than the write gate, so the legacy trust scan and `trust claim-sources` have
+    // nothing to cover (`write_gate.scan_baseline`), recorded under the caller's detector version.
+    tx.put(
+        &keys::text(keys::CONFIG, &[WRITE_GATE_SCAN_BASELINE_KEY]),
+        scan_baseline(
+            options
+                .write_gate_detector_version
+                .unwrap_or(DEFAULT_WRITE_GATE_DETECTOR_VERSION),
+        )
+        .as_bytes(),
     )?;
     for (key, value) in &options.initial_config {
         if key.is_empty() || key == "version" {
@@ -647,8 +764,17 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
     }
     access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)?;
+    shared_skill_members::seed_state(tx, env)?;
     // No documents yet, so the keyword index is complete.
     keyword::seed_complete_index(tx)
+}
+
+/// The scan baseline of an empty brain, as Postgres prints the `jsonb` that migration v227 stores
+/// (shorter keys first): the gate is live from the first row, so the legacy scan has nothing to read.
+fn scan_baseline(detector: u32) -> String {
+    format!(
+        r#"{{"until": {{"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}}, "detector_version": {detector}}}"#
+    )
 }
 
 #[cfg(test)]

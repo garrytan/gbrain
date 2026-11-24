@@ -115,6 +115,7 @@ test/derived-origin-carry-private.test.ts
 test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-access-pages-read-by-nobody.test.ts
+test/doctor-access-reach.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
@@ -128,6 +129,7 @@ test/doctor-session-lane-gbra133.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
 test/doctor-typed-reads-deadline.test.ts
+test/doctor-write-gate-holds-stranded.test.ts
 test/edge-whitespace-twins.test.ts
 test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
@@ -139,10 +141,12 @@ test/embedding-disabled-rechecks-9715.test.ts
 test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
+test/engine-parity/alias-fanout-reads.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
 test/engine-parity/chunk-vector-overflow.test.ts
 test/engine-parity/chunks.test.ts
+test/engine-parity/cli-reads-export.test.ts
 test/engine-parity/code-eval-salience.test.ts
 test/engine-parity/config-ingest.test.ts
 test/engine-parity/cycle-locks.test.ts
@@ -153,9 +157,11 @@ test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
 test/engine-parity/import-path.test.ts
 test/engine-parity/import-writes.test.ts
+test/engine-parity/jobs-health.test.ts
 test/engine-parity/large-page.test.ts
 test/engine-parity/lifecycle.test.ts
 test/engine-parity/links.test.ts
+test/engine-parity/open-loops.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/page-vector-flip.test.ts
 test/engine-parity/page-vector-overflow.test.ts
@@ -173,17 +179,21 @@ test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segmented-body.test.ts
+test/engine-parity/slug-normalize.test.ts
 test/engine-parity/stats-vectors.test.ts
 test/engine-parity/stats.test.ts
 test/engine-parity/sync-aliases.test.ts
 test/engine-parity/sync-restored-file-holds.test.ts
 test/engine-parity/takes.test.ts
+test/engine-parity/timeline-reads.test.ts
 test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/traversal-cache.test.ts
+test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
+test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/engine-swap-managed-storage.test.ts
 test/engine-swap-pg-source.test.ts
@@ -237,6 +247,7 @@ test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
 test/ghost-pages-git-canonical-7967.test.ts
+test/ghost-pages-only-copy-gst3637.test.ts
 test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
@@ -421,6 +432,7 @@ test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
+test/loop-members-request-abort.test.ts
 test/lower-tier-label-hold.test.ts
 test/maintenance-idle-gbra438.test.ts
 test/maintenance-lowering-7917-7918.test.ts
@@ -468,9 +480,11 @@ test/migration-persistence-request-slug-index.test.ts
 test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
+test/n3-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/notifier-sync-disabled-gst2515.test.ts
+test/ns-read-move-parity.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
@@ -627,6 +641,7 @@ test/persistence-publication-deadline.test.ts
 test/persistence-receipt-git-state.test.ts
 test/persistence-receipt-true-up.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
+test/persistence-recovery-scan-payload-10083.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
@@ -780,6 +795,7 @@ test/sources-resolve-path.test.ts
 test/speaker-owner-connectors.test.ts
 test/speaker-owner-transcripts.test.ts
 test/speaker-owner-trust.test.ts
+test/st-write-move-parity.test.ts
 test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
@@ -876,8 +892,10 @@ test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
 test/think-remote-model.test.ts
+test/think-save-managed.test.ts
 test/timeline-chunk-reuse.test.ts
 test/timeline-date-parity.test.ts
+test/timeline-placement-drift.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
 test/trust-claim-chronicle-9284.test.ts

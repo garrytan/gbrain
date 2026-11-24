@@ -69,6 +69,7 @@ describe('runAdvisor resilience', () => {
       getHealth: async () => { throw new Error('boom'); },
       getConfig: async () => { throw new Error('boom'); },
       executeRaw: async () => { throw new Error('boom'); },
+      listStuckActiveJobsByName: async () => { throw new Error('boom'); },
     };
     const report = await runAdvisor(ctx(engine));
     expect(report).toBeDefined();
@@ -78,7 +79,7 @@ describe('runAdvisor resilience', () => {
   test('an unreachable engine is reported as collector_failed, never as healthy, without the error text', async () => {
     const secret = 'postgres://alice-example:hunter2@db.example.invalid:5432/brain';
     const fail = async () => { throw new Error(`connect ECONNREFUSED ${secret}`); };
-    const engine = { getStats: fail, getHealth: fail, getConfig: fail, executeRaw: fail };
+    const engine = { getStats: fail, getHealth: fail, getConfig: fail, executeRaw: fail, listStuckActiveJobsByName: fail };
     const report = await runAdvisor(ctx(engine));
     const ids = report.findings.map((f) => f.id);
     expect(ids).toContain('collector_failed:usage-shape');
@@ -208,6 +209,11 @@ describe('collect-stalled-jobs', () => {
         if (new RegExp(`FROM ${table}\\b`).test(sql)) throw err;
         return [];
       },
+      // The stuck-jobs arm reads minion_jobs through an engine member.
+      listStuckActiveJobsByName: async () => {
+        if (table === 'minion_jobs') throw err;
+        return [];
+      },
     };
   }
 
@@ -234,13 +240,9 @@ describe('collect-stalled-jobs', () => {
   });
 
   test('reports stalled jobs and stale sync', async () => {
-    let call = 0;
     const engine = {
-      executeRaw: async () => {
-        call++;
-        if (call === 1) return [{ name: 'embed-backfill', n: 2 }];
-        return [{ id: 'wiki' }];
-      },
+      listStuckActiveJobsByName: async () => [{ name: 'embed-backfill', n: 2 }],
+      executeRaw: async () => [{ id: 'wiki' }],
     };
     const out = await collectStalledJobs.collect(ctx(engine as never));
     expect(out.find((f) => f.id === 'stalled_job:embed-backfill')).toBeDefined();

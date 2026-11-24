@@ -64,14 +64,16 @@ export function isTitleStub(name: string): boolean {
 
 /**
  * A lookup read failed: the arm contributes nothing, and `degraded` says so (a miss is then not proof the entity is
- * absent). The Rust engine's typed capability refusal is not a database failure and ends the call; the raw error text goes
- * to stderr only, never onto the wire.
+ * absent). The Rust engine's typed capability refusal is not a database failure and ends the call; the raw error text is
+ * printed nowhere: stderr names the failure class only, and the wire carries the same class.
  */
 export function lookupReadFailed(err: unknown, degraded: DegradedStageEntry[] | undefined): void {
   rethrowCapabilityRefusal(err);
   if (!degraded) return; // a caller that only shapes suggestions (possible duplicates, the doctor pair scan) reports nothing
-  warnOncePerProcess('entity-lookup-failed', `[gbrain] entity lookup read failed (reported as degraded): ${err instanceof Error ? err.message : String(err)}`);
-  pushDegraded(degraded, 'entity_lookup_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
+  // The warning names the failure class only: a database error's message or code can carry a connection string or password.
+  const reason = isTimeoutError(err) ? 'timeout' : 'provider_error';
+  warnOncePerProcess('entity-lookup-failed', `[gbrain] entity lookup read failed (reported as degraded): ${reason}`);
+  pushDegraded(degraded, 'entity_lookup_failed', reason);
 }
 
 /**

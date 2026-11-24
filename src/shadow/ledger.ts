@@ -3,7 +3,9 @@
  *
  *   ledger/YYYY-MM-DD.jsonl   one row per comparison, appended by the child (UTC day)
  *   summaries/<id>.json       running counts of one child process, rewritten by that child
- *   faults.jsonl              child exits, restarts and why mirroring stopped, appended by the serving process
+ *   faults.jsonl              child exits, restarts and why mirroring stopped, appended by the serving process, and the
+ *                             child's own `rust_internal_error` lines
+ *   usage/YYYY-MM-DD.jsonl    per-operation call counts the serving processes append (usage.ts)
  *
  * A ledger row holds time, operation, outcome, reason code, both latencies and row counts: never a slug, title,
  * query, page content or source id. Every file is mode 0600. Each child owns its own summary file, so several
@@ -19,6 +21,10 @@ export interface ShadowLedgerRow {
   op: string;
   outcome: ShadowOutcome;
   reason?: string;
+  /** The evidence epoch of the child that compared it (evidence-epoch.ts); a row without one counts for no epoch. */
+  epoch_id?: string;
+  /** For stale, inconclusive and collation_order rows: the mismatch that was found. */
+  mismatch?: 'diff' | 'order_diff';
   primary_ms: number;
   rust_ms: number | null;
   primary_rows: number | null;
@@ -39,6 +45,8 @@ export interface ShadowSummaryFile {
   child_shed: number;
   /** The latest cumulative counters the serving process sent. */
   primary: MirrorCounters;
+  /** The serving process that sent them: a restarted child gets the same cumulative counters again. */
+  primary_pid?: number;
 }
 
 export interface ShadowSummary {
@@ -52,12 +60,22 @@ export interface ShadowSummary {
 
 export interface ShadowFault {
   ts: string;
-  kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause';
+  kind: 'child_exit' | 'child_hung' | 'spawn_failed' | 'mirroring_disabled' | 'privacy_pause' | 'writer_observation_failed'
+    // The child's own record of a Rust panic or internal error (evidence-epoch.ts); one union member of its own.
+    | 'rust_internal_error';
   detail: string;
+  /** The evidence epoch current when it was recorded; `rust_internal_error` always has it (evidence-epoch.ts). */
+  epoch_id?: string;
 }
 
-function ensureDir(dir: string): void {
+/**
+ * Creates a subdirectory of the shadow directory, never the shadow directory itself: `stop --delete` removes it,
+ * and a late write from a still-running child must not bring the evidence back. False when the shadow directory is gone.
+ */
+function ensureDir(dir: string, shadowDir: string): boolean {
+  if (!existsSync(shadowDir)) return false;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return true;
 }
 
 export function ledgerDir(shadowDir: string): string { return join(shadowDir, 'ledger'); }
@@ -68,7 +86,7 @@ export function faultsPath(shadowDir: string): string { return join(shadowDir, '
 export function appendLedgerRows(shadowDir: string, rows: readonly ShadowLedgerRow[]): void {
   if (rows.length === 0) return;
   const dir = ledgerDir(shadowDir);
-  ensureDir(dir);
+  if (!ensureDir(dir, shadowDir)) return;
   const byDay = new Map<string, string[]>();
   for (const row of rows) {
     const day = row.ts.slice(0, 10);
@@ -81,7 +99,7 @@ export function appendLedgerRows(shadowDir: string, rows: readonly ShadowLedgerR
 
 export function writeSummaryFile(shadowDir: string, summary: ShadowSummaryFile): void {
   const dir = summariesDir(shadowDir);
-  ensureDir(dir);
+  if (!ensureDir(dir, shadowDir)) return;
   const path = join(dir, `${summary.child_id}.json`);
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(summary) + '\n', { mode: 0o600 });
@@ -89,8 +107,39 @@ export function writeSummaryFile(shadowDir: string, summary: ShadowSummaryFile):
 }
 
 export function appendFault(shadowDir: string, fault: ShadowFault): void {
-  ensureDir(shadowDir);
+  if (!existsSync(shadowDir)) return;
   appendFileSync(faultsPath(shadowDir), JSON.stringify(fault) + '\n', { mode: 0o600 });
+}
+
+/**
+ * The records of one append-only JSON-lines file. A torn LAST line (a writer is mid-append, or the disk filled) is
+ * skipped; an unparsable line anywhere else, or a file that cannot be read, gives null: missing evidence is never read
+ * as a smaller number.
+ */
+export function readJsonlStrict<T>(path: string): T[] | null {
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch { return null; } // silent-read-ok: null is the unreadable marker; callers leave their field absent, never zero
+  const lines = text.split('\n');
+  const out: T[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    try { out.push(JSON.parse(lines[i]!) as T); } catch { if (i !== lines.length - 1) return null; }
+  }
+  return out;
+}
+
+/**
+ * The whole fault history. Null (unreadable evidence) when the file cannot be read, a complete line is not JSON, or a
+ * record is not a fault (no string `kind` and `ts`, or a non-string `epoch_id`); only an unfinished final line is
+ * tolerated. A missing file is an empty history.
+ */
+export function readAllFaults(shadowDir: string): ShadowFault[] | null {
+  const path = faultsPath(shadowDir);
+  if (!existsSync(path)) return [];
+  const faults = readJsonlStrict<ShadowFault>(path);
+  const ok = (f: unknown): boolean => !!f && typeof f === 'object' && typeof (f as ShadowFault).kind === 'string' && typeof (f as ShadowFault).ts === 'string'
+    && ((f as ShadowFault).epoch_id === undefined || typeof (f as ShadowFault).epoch_id === 'string');
+  return faults !== null && faults.every(ok) ? faults : null;
 }
 
 export function readFaults(shadowDir: string, limit = 20): ShadowFault[] {
@@ -111,6 +160,7 @@ function maxIso(a: string | null, b: string | null): string | null { return !a ?
 export function readShadowSummary(shadowDir: string): ShadowSummary {
   const total: ShadowSummary = { children: 0, first_event_at: null, last_event_at: null, by_op: {}, child_shed: 0, primary: newMirrorCounters() };
   const dir = summariesDir(shadowDir);
+  const byPid = new Map<number | string, MirrorCounters>();
   if (!existsSync(dir)) return total;
   for (const name of readdirSync(dir).sort()) {
     if (!name.endsWith('.json')) continue;
@@ -125,7 +175,13 @@ export function readShadowSummary(shadowDir: string): ShadowSummary {
       const into = total.by_op[op] ?? (total.by_op[op] = {});
       for (const [outcome, n] of Object.entries(counts) as Array<[ShadowOutcome, number]>) into[outcome] = (into[outcome] ?? 0) + n;
     }
-    for (const key of Object.keys(total.primary) as Array<keyof MirrorCounters>) total.primary[key] += file.primary?.[key] ?? 0;
+    // Cumulative per serving process: the latest file of one process wins, files of different processes add.
+    const mine = byPid.get(file.primary_pid ?? name) ?? newMirrorCounters();
+    for (const key of Object.keys(mine) as Array<keyof MirrorCounters>) mine[key] = Math.max(mine[key], file.primary?.[key] ?? 0);
+    byPid.set(file.primary_pid ?? name, mine);
+  }
+  for (const counters of byPid.values()) {
+    for (const key of Object.keys(total.primary) as Array<keyof MirrorCounters>) total.primary[key] += counters[key];
   }
   return total;
 }
