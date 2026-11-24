@@ -525,4 +525,27 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
   }, 600_000);
+
+  // `gbrain auth list` names where a key with the read-shared switch on writes and what it reads; the list read on a
+  // Rust brain returns the grant columns the line needs (source_grant, source_id, federated_read and the revisions).
+  test('auth list shows the write/reads line of a read-shared key on a Rust brain as on PGLite; --json is equal', async () => {
+    if (rustArm !== 'on') return;
+    const mark = (t: string) => t.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?/g, '<timestamp>');
+    const out: Record<string, { text: string; json: unknown }> = {};
+    for (const backend of ['pglite', 'rust'] as const) {
+      const brain = brains[backend];
+      // `auth create --sources` still refuses on Rust (raw SQL), so the key is switched with a rescope, which runs.
+      for (const args of [['auth', 'create', 'k-shared'], ['auth', 'rescope', '--token', 'k-shared', '--sources', 'default', '--read-shared', 'on']]) {
+        const run = await cli(brain, args);
+        expect({ backend, args, exitCode: run.exitCode, stderr: run.exitCode ? run.stderr : '' }).toEqual({ backend, args, exitCode: 0, stderr: '' });
+      }
+      const [text, json] = [await cli(brain, ['auth', 'list']), await cli(brain, ['auth', 'list', '--json'])];
+      expect({ backend, text: text.exitCode, json: json.exitCode }).toEqual({ backend, text: 0, json: 0 });
+      out[backend] = { text: mark(text.stdout), json: normalize(parseJson(json.stdout), pathsOf(brain)) };
+    }
+    expect(out.pglite!.text).toContain('    write: default  reads: default (+ shared)');
+    expect(out.rust).toEqual(out.pglite);
+    table.push({ command: 'auth list (read-shared key)', state: 'equal', note: '' });
+  }, 300_000);
 });

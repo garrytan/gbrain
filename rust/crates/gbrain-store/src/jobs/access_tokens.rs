@@ -366,6 +366,11 @@ impl TokenRecord {
             "private_pages": self.private_pages,
             "private_facts": self.private_facts,
             "member_id": self.member_id,
+            "source_grant": self.source_grant,
+            "source_id": self.source_id,
+            "federated_read": self.federated_read,
+            "grant_revision": self.grant_revision,
+            "read_shared_revision": self.read_shared_revision,
         })
     }
 }
