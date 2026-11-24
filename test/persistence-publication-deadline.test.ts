@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { declarePersistence } from '../src/core/engine-sql/persistence-declaration.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
@@ -182,7 +183,9 @@ for (const kind of testBackends()) {
         if (key === 'transaction') return <T>(fn: (tx: BrainEngine) => Promise<T>, opts?: { signal?: AbortSignal }) => {
           signals.push(opts?.signal);
           let seen = false;
-          return target.transaction(tx => fn(new Proxy(tx, { get(t, k) {
+          return target.transaction(tx => fn(new Proxy(tx, { get(t, k, receiver) {
+            // The declaration goes through this proxy's executeRaw, so its text is recorded below.
+            if (k === 'declarePersistence') return (opts?: Parameters<BrainEngine['declarePersistence']>[0]) => declarePersistence(receiver as BrainEngine, opts?.durable);
             if (k === 'executeRaw') return (sql: string, ...rest: unknown[]) => { if (!seen) { seen = true; first.push(sql); } return (t.executeRaw as (...a: unknown[]) => unknown)(sql, ...rest); };
             const member = Reflect.get(t, k, t); return typeof member === 'function' ? member.bind(t) : member;
           } })));
@@ -205,8 +208,10 @@ for (const kind of testBackends()) {
       process.on('unhandledRejection', onUnhandled);
       try {
         const refusing = new Proxy(engine, { get(target, key) {
-          if (key === 'transaction') return <T>(fn: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => fn(new Proxy(tx, { get(t, k) {
+          if (key === 'transaction') return <T>(fn: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => fn(new Proxy(tx, { get(t, k, receiver) {
             if (k === 'kind') return 'postgres';
+            // The declaration goes through this proxy's executeRaw, so the idle bind it carries is refused below.
+            if (k === 'declarePersistence') return (opts?: Parameters<BrainEngine['declarePersistence']>[0]) => declarePersistence(receiver as BrainEngine, opts?.durable);
             if (k === 'executeRaw') return (sql: string, ...rest: unknown[]) => sql.includes('idle_in_transaction_session_timeout')
               ? Promise.reject(Object.assign(new Error('SET refused by the pooler'), { code: '0A000' })) : (t.executeRaw as (...a: unknown[]) => unknown)(sql, ...rest);
             const member = Reflect.get(t, k, t); return typeof member === 'function' ? member.bind(t) : member;

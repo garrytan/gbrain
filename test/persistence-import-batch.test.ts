@@ -242,6 +242,8 @@ test('a batch admission whose COMMIT acknowledgment is lost replays its admitted
             if (sql.includes('INSERT INTO persistence_requests') || sql.includes('principal_id=$2 AND request_id=ANY($3::uuid[])')) admits = true;
             return tx.executeRaw(sql, params, opts as never);
           }) as BrainEngine['executeRaw'];
+          // The grouped admission reads and inserts its rows through these typed members (journal.ts admitWriteGroupInTransaction).
+          seen.readWriteRequestsByRequestIds = ((...a: Parameters<BrainEngine['readWriteRequestsByRequestIds']>) => { admits = true; return tx.readWriteRequestsByRequestIds(...a); }) as BrainEngine['readWriteRequestsByRequestIds'];
           return fn(seen);
         });
         if (admits && drops < times && ++drops) throw Object.assign(new Error('write CONNECTION_CLOSED 127.0.0.1:5432'), { code: 'CONNECTION_CLOSED' });
@@ -288,15 +290,29 @@ test('an unchanged re-import screens its files with one read of each batch-share
         if (flat.includes(key)) counted.set(key, (counted.get(key) ?? 0) + 1);
       return original.call(this, sql, params, opts);
     } as BrainEngine['executeRaw'];
-    // Authorization's local writer read moved off executeRaw onto the typed readLocalWriterRow (the identity reads already used it),
-    // so every writer read that reaches the engine is counted under the same key.
+    // The company-brain receipt read is the typed hasCompanyBrainReceipt member, counted under the same key.
+    const receipt = brain.engine.hasCompanyBrainReceipt;
+    brain.engine.hasCompanyBrainReceipt = function(this: BrainEngine, id: string) {
+      counted.set("profile='company-brain'", (counted.get("profile='company-brain'") ?? 0) + 1);
+      return receipt.call(this, id);
+    };
+    // The knowledge guard's shared skillpack roots read is the typed listSharedSkillPackRoots member, counted under its old statement text.
+    const packRoots = brain.engine.listSharedSkillPackRoots;
+    brain.engine.listSharedSkillPackRoots = function(this: BrainEngine, hostId: string) {
+      counted.set('FROM shared_skill_packs', (counted.get('FROM shared_skill_packs') ?? 0) + 1);
+      return packRoots.call(this, hostId);
+    };
+    // The local writer reads are the typed readLocalWriterRow member, counted under the same key.
     const writer = brain.engine.readLocalWriterRow;
     brain.engine.readLocalWriterRow = function(this: BrainEngine, ...args: Parameters<BrainEngine['readLocalWriterRow']>) {
       counted.set('FROM persistence_local_writers', (counted.get('FROM persistence_local_writers') ?? 0) + 1);
       return writer.apply(this, args);
     };
     let again: PromiseSettledResult<unknown>[];
-    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.readLocalWriterRow = writer; }
+    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally {
+      brain.engine.executeRaw = original; brain.engine.hasCompanyBrainReceipt = receipt;
+      brain.engine.listSharedSkillPackRoots = packRoots; brain.engine.readLocalWriterRow = writer;
+    }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).
     for (const key of counted.keys()) expect({ key, perBatch: counted.get(key)! <= 4 }).toEqual({ key, perBatch: true });

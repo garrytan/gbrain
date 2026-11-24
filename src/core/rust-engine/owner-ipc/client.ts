@@ -37,7 +37,7 @@ import { isRemoteCaller } from '../../remote-caller.ts';
 import { currentSubmissionAuthority } from '../../minions/submission-authority.ts';
 import { currentVerifiedLocalWriter } from '../../persistence/identity.ts';
 import { isWindowsIpcPipe, prepareLocalIpcPath } from '../../context/ipc-path.ts';
-import { peerCredSupport, peerUid, type PeerCredSupport } from '../../cli-socket/peer-cred.ts';
+import { peerCredSupport, peerUid, type PeerCredSupport } from '../../peer-cred.ts';
 import type { Capability } from '../../engine-capabilities.ts';
 import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';

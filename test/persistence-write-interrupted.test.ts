@@ -386,13 +386,16 @@ for (const backend of testBackends()) describe(`[${backend}] transient publicati
       });
       // The single path reads through the engine itself (a transaction's view is another object and is left alone); a shared
       // read never gets here, because its seam above threw first. The import's own screening, before any preparation, reads it too.
-      const direct = engine.executeRaw;
-      engine.executeRaw = function (this: BrainEngine, sql: string, ...rest: unknown[]) {
-        if (preparing && this === engine && /shared_skill_packs/.test(sql) && cancelled < GUARD) { cancelled++; return Promise.reject(interruption('57014')); }
-        return (direct as (...args: unknown[]) => Promise<unknown>).call(this, sql, ...rest);
-      } as BrainEngine['executeRaw'];
+      // The check's reads are the typed `sharedSkillPackTablePresent` and `listSharedSkillPackRoots` (engine-sql/write-misc.ts).
+      const direct = { present: engine.sharedSkillPackTablePresent, roots: engine.listSharedSkillPackRoots };
+      const cancelOnSinglePath = <A extends unknown[], R>(read: (...args: A) => Promise<R>) => function (this: BrainEngine, ...args: A): Promise<R> {
+        if (preparing && this === engine && cancelled < GUARD) { cancelled++; return Promise.reject(interruption('57014')); }
+        return read.apply(this, args);
+      };
+      engine.sharedSkillPackTablePresent = cancelOnSinglePath(direct.present);
+      engine.listSharedSkillPackRoots = cancelOnSinglePath(direct.roots);
       const settled = await importManagedFiles(engine, files, { sourceId, noEmbed: true })
-        .finally(() => { installFaultHook(undefined); engine.executeRaw = direct; });
+        .finally(() => { installFaultHook(undefined); engine.sharedSkillPackTablePresent = direct.present; engine.listSharedSkillPackRoots = direct.roots; });
       const rows = await engine.executeRaw<{ slug: string; state: string; error_code: string | null; transient_interruptions: number }>(
         `SELECT slug,state,error_code,transient_interruptions FROM persistence_requests WHERE source_id=$1 AND slug LIKE $2 ORDER BY slug`, [sourceId, `${dir}/%`]);
       // Each cancelled read is charged to exactly one member (the first that settles with it), so the reads stop once every

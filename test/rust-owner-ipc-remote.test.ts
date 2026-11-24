@@ -38,7 +38,8 @@ let undo: () => void;
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-remote-'));
   const owner = {
-    kind: 'pglite', capabilities: new Set<string>(),
+    // The owner reports persistence_journal: a whole operation is sent only to an owner that does (whole-op.ts).
+    kind: 'pglite', capabilities: new Set<string>(['persistence_journal']),
     getPage: async (slug: unknown) => { ran.push(`getPage:${String(slug)}`); return { slug }; },
     putPage: async (slug: unknown) => { ran.push(`putPage:${String(slug)}`); return { slug }; },
     executeRaw: async () => { ran.push('executeRaw'); return []; },
