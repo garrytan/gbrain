@@ -17,6 +17,8 @@
  * character, and a letter of a character that fails it makes `spellingKeys` answer null (the caller scans instead).
  */
 
+import type { BrainEngine } from './engine.ts';
+
 const ASCII_UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
 /** The key as SQL over the `pages.slug` column. The migration and the lookup use this one text, so the planner matches them. */
@@ -28,6 +30,12 @@ export const SPELLING_KEY_SQL = `normalize(translate(replace(replace(slug, chr(3
  * lowered by hand, never by the engine's locale, then the text is composed and cut down to ASCII letters and digits. Unindexed.
  */
 export const SCAN_KEY_SQL = `regexp_replace(${SPELLING_KEY_SQL}, '[^a-z0-9]', '', 'g')`;
+
+/** The database's server encoding. `SPELLING_KEY_SQL` can be evaluated only when it is UTF8 (PGLite always is). */
+export async function serverEncoding(db: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
+  const [row] = await db.executeRaw<{ server_encoding: string }>('SHOW server_encoding');
+  return row?.server_encoding ?? 'unknown';
+}
 
 /** The index the lookup probes: the key, then the source, so a lookup in one source never reads another's rows. */
 export const SPELLING_KEY_INDEX = 'idx_pages_spelling_key';

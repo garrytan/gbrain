@@ -6144,6 +6144,16 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
+### slug_spelling_encoding
+
+<a id="slug_spelling_encoding"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair slug-spelling did not move any page because the database's encoding is not UTF8; nothing was written. | Finding every stored spelling of a name compares composed Unicode text, which only a UTF8 database can evaluate; without it the repair could miss another page that prints the same name and merge two pages. | Move the brain to a database created with UTF8 encoding (gbrain doctor reports database_encoding), then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
 ### source_binding_required
 
 <a id="source_binding_required"></a>

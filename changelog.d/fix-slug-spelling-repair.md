@@ -14,3 +14,4 @@
 - The refusal of a replace by an older spelling, and the message that holds an import of such a page, now name `gbrain repair slug-spelling --source <id>` instead of saying a fix is coming.
 
 <!-- behavior-change: legacy_slug_put_names_repair -->
+- On a Postgres database whose encoding is not UTF8, the upgrade skips the new spelling index instead of stopping, and the repair refuses (`slug_spelling_encoding`) without reading anything.

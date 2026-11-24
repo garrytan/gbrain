@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Migration } from './types.ts';
 import { buildIndexOnline, migrationNotice } from './helpers.ts';
-import { SPELLING_KEY_INDEX, SPELLING_KEY_INDEX_SQL } from '../slug-spelling-key.ts';
+import { serverEncoding, SPELLING_KEY_INDEX, SPELLING_KEY_INDEX_SQL } from '../slug-spelling-key.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
@@ -14,6 +14,12 @@ import { SPELLING_KEY_INDEX, SPELLING_KEY_INDEX_SQL } from '../slug-spelling-key
 // interrupted build; PGLite builds it inline. schema.sql leaves it out: it replays on every boot, where a plain CREATE
 // INDEX would block page writes. An older gbrain runs against the new index unchanged and just does not use it.
 async function buildSpellingIndex(engine: BrainEngine): Promise<void> {
+  // The key holds characters only a UTF8 database can represent; on any other encoding the index is not built (the upgrade
+  // goes on, lookups run as they did before it, and gbrain repair slug-spelling refuses there).
+  if (await serverEncoding(engine) !== 'UTF8') {
+    migrationNotice(`  [335] ${SPELLING_KEY_INDEX} skipped: the database encoding is not UTF8\n`);
+    return;
+  }
   const built = await buildIndexOnline(engine, 335, { name: SPELLING_KEY_INDEX, table: 'pages', sql: SPELLING_KEY_INDEX_SQL }, { notice: migrationNotice });
   if (built === 'building') throw new Error(`${SPELLING_KEY_INDEX} is being built by another session; rerun the migration once it finishes`);
 }

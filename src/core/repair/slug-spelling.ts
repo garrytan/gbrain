@@ -43,7 +43,7 @@ import { OperationError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { resolveRecordedSourceFilePath } from '../markdown.ts';
 import { normalizeSlug, validateSlug, withStoredSlug } from '../utils.ts';
-import { SCAN_KEY_SQL, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
+import { SCAN_KEY_SQL, serverEncoding, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
@@ -246,6 +246,19 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
 }
 
 /**
+ * Refuses (`slug_spelling_encoding`, nothing read or written) on a Postgres database whose encoding is not UTF8: the
+ * collision lookup compares composed Unicode (`SPELLING_KEY_SQL`), which such a database cannot evaluate, and a page it
+ * missed would be merged into another.
+ */
+async function assertUtf8(db: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
+  const encoding = await serverEncoding(db);
+  if (encoding === 'UTF8') return;
+  throw new OperationError('slug_spelling_encoding',
+    `Pages of source ${sourceId} were not moved: the database encoding is ${encoding}, not UTF8, so the repair cannot find every stored spelling of a name; nothing was written.`,
+    'Move the brain to a database created with UTF8 encoding (gbrain doctor reports database_encoding), then preview again.', DOCS);
+}
+
+/**
  * Every other page of the source (live or soft-deleted) whose stored slug normalizes to `normal`, the normal slug itself
  * included. Found through the spelling index (`spellingKeys`; the unindexed ASCII key past `MAX_SPELLING_VARIANTS`), so the
  * answer never depends on how many candidates the preview read. The preview classes a page by it, and the apply reads it
@@ -329,6 +342,7 @@ export const slugSpellingRepair: RepairHandler = {
     const command = previewCommand(sourceId);
     const managed = await managedPersistenceEnabled(engine);
     if (managed && opts?.apply) throw managedRemedyRefusal(sourceId);
+    await assertUtf8(engine, sourceId);
     await assertGuardTablesReadable(engine, sourceId);
     const scan = await scanSlugSpellings(engine, sourceId);
     const root = await localRoot(engine, sourceId);
