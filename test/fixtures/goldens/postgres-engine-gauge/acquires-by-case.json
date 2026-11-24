@@ -438,6 +438,12 @@
     "readSourceRow#default": {
       "raw": 1
     },
+    "readSourcesNotReadable#default": {
+      "raw": 1
+    },
+    "readSourcesNotReadable#factsFloor": {
+      "raw": 1
+    },
     "refreshPageBody#default": {},
     "removeLink#default": {},
     "removeLink#linkSource": {},

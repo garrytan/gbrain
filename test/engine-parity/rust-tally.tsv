@@ -310,6 +310,7 @@ test/engine-parity/source-federate-writes.test.ts	3	0
 test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-order-callers.test.ts	3	2
 test/engine-parity/source-resolver-reads.test.ts	27	0
+test/engine-parity/source-scope-reads.test.ts	4	0
 test/engine-parity/source-verify-reads.test.ts	2	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-pages-by-type-ties.test.ts	2	0

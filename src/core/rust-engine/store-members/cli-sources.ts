@@ -4,7 +4,8 @@
  * listStaleSyncSourceIds (the advisor's stale-sync read), listSourceIds (every source id), readSoleSourceId, readFirstSourceId, lockAllSourceRows
  * (takes no lock) and readSourceRow/lockSourceRow (one source's check columns)
  * read the store's source records here; lockSourceForUpdate (the publication transaction's exclusive source lock) is a no-op.
- * countSourcePages counts one source's pages, insertSource creates a source and
+ * countSourcePages counts one source's pages, readSourcesNotReadable is the `sources_not_readable` test of an unscoped
+ * remote read, insertSource creates a source and
  * advanceSourceCommit records the commit a git sync reached; listSourcePathPages, readRenameIdentityRows and
  * readLiveIdentityHolders are a git sync's page reads, readPageSizeRows its size-state read and listQuarantinedSlugs the
  * pages its link and timeline extraction skips; deleteSourceRecord and readSourceDeleteImpact are `sources remove` and
@@ -15,11 +16,13 @@
  * sources.rs).
  */
 import type { SourceRecordRow } from '../../engine.ts';
-import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
+import type { DefaultSourceSplit, LiveIdentityHolderRow, LocalPathSourceRow, PageIdentityRow, PageSizeRow, PlainSyncSourceRow, ReasonPurgeTombstone, RenameIdentityRow, SourceCheckRow, SourcesNotReadableOpts, SourceDeleteImpact, SourceDeleteResult, SourceInsert, SourcePathPageRow, SourceRoutingRow, SourceUpstreamObservation } from '../../engine-sql/sources.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { refusing } from './constraint-errors.ts';
 import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
+import { remoteReadFloorSql } from '../../search/private-visibility.ts';
+import { storePageTextPolicy } from './private-provenance.ts';
 
 /** Any owner-only source, archived ones included: the store's source rows tested with the rule access/owner-only.ts states. */
 export const readOwnerOnlySourcesPresent: StoreMember<[], boolean> = async (brain) => {
@@ -151,6 +154,16 @@ export const writeSourceSyncHeartbeat: StoreMember<[sourceId: string], void> = a
 export const writeSourceUpstreamObservation: StoreMember<[sourceId: string, observed: SourceUpstreamObservation], void> = async (brain, sourceId, observed) => {
   await storeCall({ member: 'writeSourceUpstreamObservation', sourceId }, () =>
     brain.writeSourceUpstreamObservation(sourceId, observed.checkedAt, observed.commit, observed.behind));
+};
+
+/**
+ * The `sources_not_readable` test of an unscoped remote read (sources-not-readable.ts). `excludePrivate` sends the
+ * remote read floor as the store page policy (storePageTextPolicy); a caller whose floor the store cannot apply refuses.
+ */
+export const readSourcesNotReadable: StoreMember<[readable: readonly string[], opts: SourcesNotReadableOpts], boolean> = async (brain, readable, opts) => {
+  const member = 'readSourcesNotReadable';
+  const policy = opts.excludePrivate ? storePageTextPolicy(member, () => remoteReadFloorSql('p'), { callerReaders: true }) : null;
+  return (await storeCall({ member }, () => brain.readSourcesNotReadable([...readable], opts.facts, policy))) === true;
 };
 
 /**

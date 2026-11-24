@@ -199,7 +199,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readRowTrustRows', 'readSearchStats', 'readSegmentedEmbedPage', 'readSegmentedPageHead',
   'readRetainedSources', 'readSegmentedVersionBodyBytes', 'readSourceCheckoutPath', 'readSourceChunkerVersion', 'readSourceIncarnation',
   'readSourceJobCounts', 'readSourceLocalPath', 'readSourceLocalPathForVerify', 'readSourceMembership',
-  'readSourcePurgeFlags', 'readSourceRow', 'readSourceState', 'readSourceWriteRow', 'readStoredConversationEntry',
+  'readSourcePurgeFlags', 'readSourceRow', 'readSourcesNotReadable', 'readSourceState', 'readSourceWriteRow', 'readStoredConversationEntry',
   'readStoredPageTier', 'readSupersessionReplacement', 'readTopologyChange', 'readTrustGeneration',
   'readVersionAttributions', 'readVoiceGateHealth', 'readWaitingQueueDepths', 'readWaitingScopeState',
   'readWakeDoctor', 'readWedgeSignals', 'readWithdrawalAnchor', 'readWithdrawalDiscovery',

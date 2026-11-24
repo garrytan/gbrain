@@ -7044,6 +7044,28 @@
         ],
         "flagOnScopes": []
       },
+      "readSourcesNotReadable#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readSourcesNotReadable#factsFloor": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readTakePreimages#by-id": {
         "flagOffLanes": [
           "pool"
@@ -10623,6 +10645,7 @@
         "readSourceState": "none",
         "readSourceSyncShape": "none",
         "readSourceWriteRow": "none",
+        "readSourcesNotReadable": "none",
         "readStaleEmbeddingCounts": "none",
         "readStoredBodyBytes": "none",
         "readStoredConfigValue": "none",
