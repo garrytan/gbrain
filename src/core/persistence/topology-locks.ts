@@ -55,17 +55,7 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
     // Serializes discovery of new/unbound paths on this host. Worktree locks
     // remain the actual publication authority and never live in the checkout.
     await take(join(persistenceHome(), 'locks', `topology-${brain.brain_id}.lock`));
-    const binding = await getWorktreeBinding(engine, sourceId);
-    const bindings:TopologyBinding[] = binding ? [binding] : [];
-    if (additionalRoot) {
-      const local = await engine.executeRaw<TopologyBinding>(`SELECT w.id AS worktree_id,w.owner_host_id,w.owner_epoch,w.state,w.topology_generation,
-        h.local_path,h.coordination_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`,[hostIdFor(engine)]);
-      for (const row of local) if (row.local_path&&(containsPath(row.local_path,additionalRoot) || containsPath(additionalRoot,row.local_path))) {
-        const [member]=await engine.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id LIMIT 1',[row.worktree_id]);
-        const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true};
-        if (other && !bindings.some(item=>item.worktree_id===other.worktree_id)) bindings.push(other);
-      }
-    }
+    const bindings = await topologyBindings(engine, sourceId, additionalRoot);
     for (const item of bindings.sort((a,b) => a.worktree_id.localeCompare(b.worktree_id))) {
       if (item.owner_host_id !== hostIdFor(engine) || !item.coordination_path) throw opError('owner_unavailable', 'Run source lifecycle on the current registered owner.',
         `The worktree holding source ${item.source_id || sourceId} is owned by host ${item.owner_host_id}, not this host (${hostIdFor(engine)}), or has no coordination path here, so nothing changed. Run the lifecycle command on the owning host; moving ownership is a separate, deliberate writer transfer.`,
@@ -75,6 +65,22 @@ export async function withTopologyLocks<T>(engine: BrainEngine, sourceId: string
     }
     return await run(bindings);
   } finally { for (const handle of handles.reverse()) await handle.release(); }
+}
+
+/** Read-only discovery shared by preparation and preview; an enclosing binding can own more than the requested root. */
+async function topologyBindings(engine: BrainEngine, sourceId: string, additionalRoot?: string): Promise<TopologyBinding[]> {
+  const binding = await getWorktreeBinding(engine, sourceId);
+  const bindings:TopologyBinding[] = binding ? [binding] : [];
+  if (additionalRoot) {
+    const local = await engine.executeRaw<TopologyBinding>(`SELECT w.id AS worktree_id,w.owner_host_id,w.owner_epoch,w.state,w.topology_generation,
+      h.local_path,h.coordination_path FROM persistence_host_bindings h JOIN persistence_worktrees w ON w.id=h.worktree_id WHERE h.host_id=$1::uuid`,[hostIdFor(engine)]);
+    for (const row of local) if (row.local_path&&(containsPath(row.local_path,additionalRoot) || containsPath(additionalRoot,row.local_path))) {
+      const [member]=await engine.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id LIMIT 1',[row.worktree_id]);
+      const other = member?await getWorktreeBinding(engine,member.source_id):{...row,source_id:'',source_incarnation:'00000000-0000-0000-0000-000000000000',relative_path:'',unbound:true};
+      if (other && !bindings.some(item=>item.worktree_id===other.worktree_id)) bindings.push(other);
+    }
+  }
+  return bindings;
 }
 
 function assertBindingPhysicalRoot(item: TopologyBinding, sourceId: string, additionalRoot: string|undefined, opts: { relocation?: boolean }): void {
@@ -90,10 +96,11 @@ function assertBindingPhysicalRoot(item: TopologyBinding, sourceId: string, addi
  * new root. Read-only: it takes no lock and writes no stamp, reservation or row.
  */
 export async function inspectTopologyPhysicalRoot(engine: BrainEngine, sourceId: string, additionalRoot?: string,
-  opts: { relocation?: boolean; operation?: string } = {}): Promise<void> {
-  const binding = await getWorktreeBinding(engine, sourceId);
-  if (binding && binding.owner_host_id === hostIdFor(engine) && binding.coordination_path) assertBindingPhysicalRoot(binding, sourceId, additionalRoot, opts);
+  opts: { relocation?: boolean; operation?: string } = {}): Promise<TopologyBinding[]> {
+  const bindings = await topologyBindings(engine, sourceId, opts.operation === 'add' ? additionalRoot : undefined);
+  for (const binding of bindings) if (binding.owner_host_id === hostIdFor(engine) && binding.coordination_path) assertBindingPhysicalRoot(binding, sourceId, additionalRoot, opts);
   if (additionalRoot && (opts.operation === 'add' || opts.operation === 'claim')) await inspectClaimedPhysicalRoot(engine, sourceId, additionalRoot, opts.operation, hostIdFor(engine));
+  return bindings;
 }
 
 /** #8625: the checkout root a claim of `path` reserves (its Git top, as claimWorktree resolves it), or null for a missing path. */

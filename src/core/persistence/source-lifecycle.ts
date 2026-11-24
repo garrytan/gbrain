@@ -129,6 +129,22 @@ async function assertRetirableWithoutCheckout(tx:BrainEngine,sourceId:string,pat
   if(Number(state.pages)>0||Number(state.members)>0) throw missingCheckoutError(sourceId,path,{pages:Number(state.pages),members:Number(state.members)});
 }
 
+function sourceAddScopeWarning(source:string,worktree:string):string{
+  return `Adding ${source} binds it to the enclosing checkout ${worktree}; the canonical manifest covers that whole checkout, not only the source folder. To register an independent plain directory, choose a folder outside that checkout; --force does not detach it from Git.`;
+}
+
+/** Preserve the manifest refusal and its safety metadata while explaining which checkout an add actually inspected. */
+function sourceAddManifest(path:string,source:string):WorktreeManifest{
+  try{return worktreeManifest(path,{progress:humanManifestProgress()});}
+  catch(error){
+    if(error instanceof OperationError&&error.code==='writer_manifest_unsafe'){
+      error.message+=` Source add inspected the canonical checkout ${path}.`;
+      if(path!==source)error.suggestion=`${error.suggestion??''} ${sourceAddScopeWarning(source,path)}`;
+    }
+    throw error;
+  }
+}
+
 /** One source transition; shared-root members are fenced and invalidated together. */
 export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceLifecycleInput, admission?: {
   before(tx: BrainEngine): Promise<void>;
@@ -201,8 +217,22 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
     if(own?.local_path&&own.owner_host_id===hostIdFor(engine)&&own.coordination_path&&!existsSync(own.local_path))
       throw await movedPhysicalRootRefusal(engine,root.worktree,exit,hostIdFor(engine),own.local_path)??missingCheckoutError(input.sourceId,own.local_path);
   }
-  if(input.dryRun) await inspectTopologyPhysicalRoot(engine,input.sourceId,root?.worktree,{relocation:input.operation==='rebind',operation:input.operation});
-  if(input.dryRun) return {dry_run:true,operation:input.operation,source_id:input.sourceId,source_incarnation:before?.incarnation??null,path:root?.source??before?.local_path??null,manifest_required:manifestRequired};
+  if(input.dryRun){
+    const bindings=await inspectTopologyPhysicalRoot(engine,input.sourceId,root?.worktree,{relocation:input.operation==='rebind',operation:input.operation});
+    let addPreview:Record<string,unknown>={};
+    if(input.operation==='add'&&root){
+      const worktree=bindings.find(binding=>binding.local_path&&containsPath(binding.local_path,root.worktree))?.local_path??root.worktree;
+      let manifest:WorktreeManifest|undefined;
+      for(const path of new Set([...bindings.map(binding=>binding.local_path!).filter(Boolean),root.worktree])){
+        if(!existsSync(path)&&input.createDirectory&&path===root.worktree)continue;
+        const checked=sourceAddManifest(path,root.source);
+        if(path===worktree)manifest=checked;
+      }
+      addPreview={worktree_path:worktree,...(manifest?{manifest_scope:storedManifestScope(manifest)}:{}),
+        ...(worktree!==root.source?{warning:sourceAddScopeWarning(root.source,worktree)}:{})};
+    }
+    return {dry_run:true,operation:input.operation,source_id:input.sourceId,source_incarnation:before?.incarnation??null,path:root?.source??before?.local_path??null,manifest_required:manifestRequired,...addPreview};
+  }
   return withTopologyLocks(engine,input.sourceId,async bindings=>{
     // Hash canonical bytes while holding native exclusion, without a database
     // connection checked out. The final transaction rejects new pending mirrors.
@@ -219,7 +249,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         throw moved||missingCheckoutError(input.sourceId,path);
       }
       if(!manifestRequired)continue;
-      const manifest=worktreeManifest(path,{progress:humanManifestProgress()});
+      const manifest=input.operation==='add'&&root?sourceAddManifest(path,root.source):worktreeManifest(path,{progress:humanManifestProgress()});
       manifests.set(path,manifest);
     }
     // #6099: a rebind compares the new directory in the scope of the current checkout's manifest (Git-tracked files for a Git checkout).
