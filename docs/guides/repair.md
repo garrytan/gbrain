@@ -1617,11 +1617,13 @@ older approval names it:
 | `ghost_worktree_only` | HEAD still holds the file; only the working tree lost it. | Restore it with `git -C '<source root>' checkout HEAD -- '<path>'` and sync. If the removal is intended, commit the deletion, sync, then preview again. |
 | `database_ahead_of_file` | The page was written in the database after its file last held it. Its line carries move evidence: `matched` when a moved page holds every line of it, database edit included, and `unmatched` otherwise, naming any file that looks like where it went. | Matched: fold it into the moved page with the `gbrain repair moved-pages --source <id> --slug <slug>` command its line names ([moved pages](#moved-pages)). Otherwise recreate the file from the page (`--prefer database` above), or keep the page. |
 | `moved_to` | The file moved: Git proves the fold [moved pages](#moved-pages) makes (a live page started from the content this page still holds, or holds every line of it), so a soft-delete would drop this page's links, facts and timeline for nothing. | Fold it with the `gbrain repair moved-pages --source <id> --slug <slug>` command its line names, which previews first ([moved pages](#moved-pages)). |
-| `move_unproven` | A file in HEAD (imported or not yet) looks like where it went: Git renamed the file to it, it holds or started from the file's last committed content, or it has the same name and Git added it between the file's add and its deletion; or Git could not read whether it moved; or another ghost moved to the same page. No fold is proven to lose nothing (the line names the candidates and why). | Decide with the user: merge the pages by hand, or restore the file. |
+| `move_unproven` | A file in HEAD (imported or not yet) looks like where it went: Git renamed the file to it, the deleting commit rewrote it to the file's last committed content, it holds or started from that content, or it has the same name and Git added it between the file's add and its deletion; or more than five files share its name, too many to read the history of; or Git could not read whether it moved; or another ghost moved to the same page. No fold is proven to lose nothing (the line names the candidates and why). | Decide with the user: merge the pages by hand, or restore the file. |
 | `ghost_history_unknown` | Git cannot say which commit deleted the file (the source is not a Git checkout, its history is shallow, or the history read failed). | Recreate the file from the page. In a shallow clone, fetch the full history (`git fetch --unshallow`) and preview again. In a folder that is not a Git checkout, delete the page by hand (`gbrain delete <slug>`) if you meant to remove it. |
 
 `gbrain repair file-drift --prefer file` applies the same check before it
-soft-deletes a page whose file is gone.
+soft-deletes a page whose file is gone. When a commit lands between the
+moment a soft-delete is prepared and the moment it is written, the check runs
+again on the new commit, so a move committed in that gap still keeps the page.
 
 ```bash
 gbrain repair ghost-pages --source default        # preview: each ghost, its recorded path and revision, and a hash
@@ -4032,14 +4034,15 @@ wins) lets a managed sync delete a held `file_gone` page itself, and only when
 every check passes: the file's provenance is `deleted_by_commit`, the page at
 its current revision equals the file's last committed bytes (the blob in the
 first parent of the newest deleting commit, compared the way sync compares a
-file with a page before replacing it), and the page's revision is file-backed
-by the test above. The deletion is an ordinary sync deletion: a soft delete
+file with a page before replacing it), the page's revision is file-backed
+by the test above, and the file did not move to another page (the move check
+[ghost pages](#ghost-pages) makes). The deletion is an ordinary sync deletion: a soft delete
 with the same restore window (`gbrain restore <slug> --force`), counted by the
 mass-delete valve and the `sync.max_deletes` / `sync.max_delete_ratio` caps,
 and its write request carries `heldDeletion` (the deleting commit and the blob)
 as the page's receipt. Any other held page stays held, and its hold records why
 (`meta.held_deletion.refused`: `content_differs`, `database_ahead_of_file`,
-`not_deleted_by_commit` or `page_changed`) at the page's revision, so it is not
+`file_moved`, `not_deleted_by_commit` or `page_changed`) at the page's revision, so it is not
 screened again until the page changes. A file deleted, committed again with
 other bytes and deleted again is judged against its last committed bytes.
 Turning the switch on makes the next sync read the whole source once; a sync
