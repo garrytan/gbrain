@@ -10,8 +10,8 @@
  *     binding.
  *  3. Why new: hold-page-id-lifecycle.test.ts pins what a hold is bound to, never how many statements the bind costs.
  *  4. Seams: the PGLite statement counter and the Postgres wire trace (test/helpers/statement-counter.ts); the rows are
- *     read directly only to state what a hold is bound to. Each counting window opens after the background-work drainers
- *     settle, and the statements are compared by text as well as by number.
+ *     read directly only to state what a hold is bound to. The statements are compared by text as well as by number; on
+ *     PGLite the WAL checkpoint guard's own probe statements are left out by exact text (CHECKPOINT_GUARD_SQL).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -20,8 +20,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { CHECKPOINT_PROBE_REUSE_MS } from '../src/core/pglite-engine/checkpoint-guard.ts';
 import { countPgliteStatements, readSqlTrace, type StatementRecord } from './helpers/statement-counter.ts';
-import { drainBackgroundWorkBeforeDisconnect } from '../src/core/background-work.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { bareBody, HELD, holdFenceRow, ROWS } from './helpers/hold-page-id-fixture.ts';
@@ -41,8 +41,19 @@ const shape = (records: readonly StatementRecord[]) => records.map(r => {
   const words = r.sql.trim().split(/\s+/).slice(0, 3).join(' ').toUpperCase();
   return /^(BEGIN|COMMIT)\b/.exec(words)?.[1] ?? words; // Postgres opens with BEGIN READ WRITE, PGLite with BEGIN
 });
-/** Lets fire-and-forget work an earlier step started settle (the drainers every disconnect runs), so the window counts only the call. */
-const settle = () => drainBackgroundWorkBeforeDisconnect();
+/**
+ * The statements PGLite's WAL checkpoint guard sends on its own (src/core/pglite-engine/checkpoint-guard.ts): before an
+ * outermost write transaction it probes WAL unless its last probe is under CHECKPOINT_PROBE_REUSE_MS (50 ms) old, so a put
+ * that starts more than 50 ms after the previous write probes inside the counting window. They are the engine's, not the
+ * put's, and are matched by their exact text. Only the PGLite arm sends them.
+ */
+const CHECKPOINT_GUARD_SQL = new Set([
+  `SELECT pg_size_bytes(current_setting('max_wal_size'))::float8 AS max_wal,
+          pg_size_bytes(current_setting('wal_segment_size'))::float8 AS segment,
+          current_setting('checkpoint_completion_target')::float8 AS target`,
+  'SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), redo_lsn)::float8 AS since_redo FROM pg_control_checkpoint()',
+  'CHECKPOINT',
+]);
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-hold-bind-'));
 const backends = testBackends();
@@ -52,7 +63,14 @@ beforeAll(async () => {
     const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
     brains.push({
       backend: 'pglite', engine, close: () => engine.disconnect(),
-      measure: async work => { await settle(); const counter = countPgliteStatements(engine); try { await work(); } finally { counter.stop(); } return counter.records; },
+      measure: async work => {
+        // Let the guard's last probe age past its reuse window, so the put always probes inside the window and every run
+        // takes the path a loaded CI runner took at random.
+        await Bun.sleep(CHECKPOINT_PROBE_REUSE_MS + 20);
+        const counter = countPgliteStatements(engine);
+        try { await work(); } finally { counter.stop(); }
+        return counter.records;
+      },
     });
   }
   if (backends.includes('postgres')) {
@@ -61,7 +79,6 @@ beforeAll(async () => {
     brains.push({
       backend: 'postgres', engine: pg.engine, close: pg.close,
       measure: async work => {
-        await settle();
         const started = performance.timeOrigin + performance.now();
         await work();
         const ended = performance.timeOrigin + performance.now();
