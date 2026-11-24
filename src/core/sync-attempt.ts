@@ -26,24 +26,38 @@ export interface SyncAttempt {
   unreadable?: string;
   /** GST-3452: the newest sync job is running now (active, its job lock not expired). */
   live_job?: true;
+  /** GST-3452: when that running job started, ISO. */
+  live_job_started_at?: string;
   /**
-   * GST-3452: when the newest attempt stopped only at a provider usage or rate limit (`stopped_on: usage_limit`), the newest
-   * such run that landed pages, reached through newer runs that also only hit the limit (or skipped); ISO.
+   * GST-3452: the newest run inside the fail age that stopped only at a provider usage or rate limit (`stopped_on: usage_limit`,
+   * no writes pending) and landed pages, when every later run that finished also only hit the limit (queued, running,
+   * skipped and limited runs with writes pending pass); ISO.
    */
   usage_limited_since?: string;
 }
 
-/** GST-3452: how many recent sync jobs of a source are read back to find the last limited run that landed pages. */
-const USAGE_LIMIT_LOOKBACK = 50;
+const SUBSTANTIVE = `NOT COALESCE(status IN ('waiting', 'delayed', 'waiting-children', 'paused') OR (status = 'active' AND lock_until > now())
+  OR (status = 'completed' AND (result->>'skipped' = 'true' OR (result->>'stopped_on' = 'usage_limit' AND result->>'reason' IN ('writer_pending', 'timeout')))), false)`;
+const LIMITED = `COALESCE(status = 'completed' AND result->>'status' = 'partial' AND result->>'stopped_on' = 'usage_limit'
+  AND COALESCE(result->>'reason', '') NOT IN ('writer_pending', 'timeout'), false)`;
+const LANDED = `COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) > 0`;
 
-const JOB_SQL = `SELECT id AS job_id, status, result->>'status' AS result_status, result->>'failedFiles' AS failed_files,
-    result->>'stopped_on' AS stopped_on, result->>'skipped' AS skipped, (status='active' AND lock_until > now()) AS live,
-    COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) AS landed,
-    COALESCE(finished_at, started_at, created_at) AS at
-  FROM minion_jobs WHERE name='sync'
-    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
-      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1))))
-  ORDER BY created_at DESC, id DESC LIMIT $2`;
+/**
+ * GST-3452: the newest sync job of a source, plus, when `$2` (the fail age's start) is given, the newest limited run since then
+ * that landed pages and the newest run since then that ended any other way. Queued, running (live job lock) and skipped jobs,
+ * and limited runs whose writes were still pending, are neither; an active job whose lock expired ended the other way.
+ */
+const JOB_SQL = `WITH jobs AS (SELECT id, status, result, created_at, started_at, lock_until, COALESCE(finished_at, started_at, created_at) AS at
+    FROM minion_jobs WHERE name='sync'
+      AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+        AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1))))),
+  chain AS (SELECT max(created_at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_created, max(at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_at,
+      max(created_at) FILTER (WHERE ${SUBSTANTIVE} AND NOT (${LIMITED})) AS broken_created
+    FROM jobs WHERE $2::timestamptz IS NOT NULL AND at >= $2::timestamptz)
+SELECT j.id AS job_id, j.status, j.result->>'status' AS result_status, j.result->>'failedFiles' AS failed_files,
+    (j.status='active' AND j.lock_until > now()) AS live, j.started_at, j.at,
+    CASE WHEN c.broken_created IS NULL OR c.broken_created < c.landed_created THEN c.landed_at END AS usage_limited_since
+  FROM (SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1) j CROSS JOIN chain c`;
 
 const iso = (value: unknown): string | null => {
   if (value === null || value === undefined) return null;
@@ -51,41 +65,37 @@ const iso = (value: unknown): string | null => {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 };
 
-async function lastSyncJob(engine: BrainEngine, sourceId: string): Promise<Omit<SyncAttempt, 'managed_next'> | null> {
-  let rows: Array<{ job_id: number | string | null; status: string | null; result_status: string | null; failed_files: string | null; stopped_on: string | null;
-    skipped: string | null; live: boolean | null; landed: number | string | null; at: unknown }>;
+async function lastSyncJob(engine: BrainEngine, sourceId: string, freshSince: string | null): Promise<Omit<SyncAttempt, 'managed_next'> | null> {
+  let rows: Array<{ job_id: number | string | null; status: string | null; result_status: string | null; failed_files: string | null; live: boolean | null;
+    started_at: unknown; at: unknown; usage_limited_since: unknown }>;
   try {
-    rows = await engine.executeRaw(JOB_SQL, [sourceId, USAGE_LIMIT_LOOKBACK]);
+    rows = await engine.executeRaw(JOB_SQL, [sourceId, freshSince]);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', 'minion_jobs')) return null;
     throw error;
   }
   const row = rows?.[0];
   if (!row || row.job_id === null || row.job_id === undefined || typeof row.status !== 'string') return null;
-  const queued = ['waiting', 'delayed', 'active', 'waiting-children', 'paused'].includes(row.status);
+  const queued = ['waiting', 'delayed', 'active', 'waiting-children', 'paused'].includes(row.status) && !(row.status === 'active' && row.live !== true);
   const failed = Number(row.failed_files ?? 0);
-  const limited = (r: typeof row) => r.status === 'completed' && r.result_status === 'partial' && r.stopped_on === 'usage_limit';
-  let since: string | null = null;
-  for (const r of limited(row) ? rows : []) {
-    if (r.status === 'completed' && r.skipped === 'true') continue;
-    if (!limited(r)) break;
-    if (Number(r.landed ?? 0) > 0) { since = iso(r.at); break; }
-  }
+  const since = iso(row.usage_limited_since);
+  const started = row.live === true ? iso(row.started_at) : null;
   return {
     state: queued ? 'attempt_queued' : 'last_attempt_unsuccessful',
     last_attempt_at: iso(row.at),
     result: row.result_status ? `${row.status} (${row.result_status})` : row.status,
     held: Number.isFinite(failed) ? failed : 0,
     job_id: Number(row.job_id),
-    ...(row.live === true ? { live_job: true as const } : {}),
+    ...(row.live === true ? { live_job: true as const, ...(started ? { live_job_started_at: started } : {}) } : {}),
     ...(since ? { usage_limited_since: since } : {}),
   };
 }
 
-export async function readLastSyncAttempt(engine: BrainEngine, sourceId: string, managed: boolean): Promise<SyncAttempt> {
+/** `freshSinceMs`: sync_freshness's fail age; without it no usage-limited run is read. */
+export async function readLastSyncAttempt(engine: BrainEngine, sourceId: string, managed: boolean, freshSinceMs?: number): Promise<SyncAttempt> {
   const none: SyncAttempt = { state: 'no_attempt', last_attempt_at: null, result: null, held: 0, job_id: null, managed_next: null };
   try {
-    const job = await lastSyncJob(engine, sourceId);
+    const job = await lastSyncJob(engine, sourceId, freshSinceMs === undefined ? null : new Date(freshSinceMs).toISOString());
     if (!managed) return job ? { ...job, managed_next: null } : none;
     const { readSyncStatus } = await import('./persistence/sync-status.ts');
     const status = await readSyncStatus(engine, sourceId);
@@ -101,7 +111,7 @@ export async function readLastSyncAttempt(engine: BrainEngine, sourceId: string,
       held: held || job?.held || 0,
       job_id: job?.job_id ?? null,
       managed_next: status.next,
-      ...(job?.live_job ? { live_job: true as const } : {}),
+      ...(job?.live_job ? { live_job: true as const, ...(job.live_job_started_at ? { live_job_started_at: job.live_job_started_at } : {}) } : {}),
       ...(newerJob && job!.usage_limited_since ? { usage_limited_since: job!.usage_limited_since } : {}),
     };
   } catch (error) {

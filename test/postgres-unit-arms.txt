@@ -295,6 +295,10 @@ test/held-row-review-2891.test.ts
 test/held-row-writeback-2891.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
+test/hold-page-id-bind-in-insert.test.ts
+test/hold-page-id-lifecycle.test.ts
+test/hold-page-id-migration.test.ts
+test/hold-page-id-postgres.test.ts
 test/holding-page-saves-gst2497.test.ts
 test/holding-read-transient-gst2667.test.ts
 test/hosted-repo-g7b2.test.ts
@@ -421,6 +425,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/learning-ledger.test.ts
 test/link-context-world-rows-2957.test.ts
 test/link-cross-source.test.ts
 test/link-dates-per-row-gst2228.test.ts

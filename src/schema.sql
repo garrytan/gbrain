@@ -3541,9 +3541,13 @@ CREATE TABLE IF NOT EXISTS write_gate_holds (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   decided_at       TIMESTAMPTZ,
-  decided_by       TEXT
+  decided_by       TEXT,
+  page_id          BIGINT,
+  page_candidates  BIGINT[]
 );
-CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version);
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_bound_dedupe_idx ON write_gate_holds (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_unbound_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL;
+CREATE INDEX IF NOT EXISTS write_gate_holds_page_idx ON write_gate_holds (source_id, page_id) WHERE status = 'held' AND page_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
 DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
@@ -3776,6 +3780,34 @@ CREATE TABLE IF NOT EXISTS sync_notifier_sources (
   owner_seen_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Learning ledger (migration v334, nightly learning): pointers to what each cycle learned, no copied text.
+-- BEGIN GENERATED from src/core/learning/schema.ts (LEARNING_ITEMS_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS learning_items (
+  id                BIGSERIAL PRIMARY KEY,
+  run_id            UUID NOT NULL,
+  source_id         TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind              TEXT NOT NULL CHECK (kind IN ('fact_added','you_wrote','promise_found','page_filled','conflict_found','duplicate_to_confirm')),
+  target_table      TEXT NOT NULL CHECK (target_table IN ('facts','decide_proposals','open_loops','page_versions','pages')),
+  target_id         BIGINT NOT NULL,
+  subject_slug      TEXT,
+  subject_source_id TEXT,
+  prior_revision    TEXT,
+  state             TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','kept','undone','answered','expired')),
+  shown_at          TIMESTAMPTZ,
+  decided_at        TIMESTAMPTZ,
+  decided_by        TEXT,
+  member_id         TEXT,
+  CONSTRAINT learning_items_target_uniq UNIQUE (kind, target_table, target_id)
+);
+CREATE INDEX IF NOT EXISTS learning_items_source_state_created_idx ON learning_items (source_id, state, created_at);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE learning_items ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/learning/schema.ts (LEARNING_ITEMS_SCHEMA_SQL)
 
 -- Last statement: pg_temp ends every gbrain function's pinned search_path (#7632), after any CREATE OR REPLACE above reset it.
 -- BEGIN GENERATED from src/core/function-search-path.ts (FUNCTION_SEARCH_PATH_HARDENING_SQL). Edit that file, then run: bun run build:schema

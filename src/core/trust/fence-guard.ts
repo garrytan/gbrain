@@ -56,7 +56,7 @@ export interface FenceGuard<T extends FenceFact> {
  * not supersede. `expired()` runs the caller's expiry; then guarded renumbers
  * move and new rows are gated.
  */
-export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input: { sourceId: string; slug: string; incoming: string; rows: T[]; cfg: (db: BrainEngine) => Promise<WriteGateConfig>;
+export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input: { sourceId: string; slug: string; /** The page's permanent id, when the caller read it (a held row is bound to it). */ pageId?: number; incoming: string; rows: T[]; cfg: (db: BrainEngine) => Promise<WriteGateConfig>;
   /** #8819: rows the fence never held, which this write keeps as they are. */ kept?: readonly number[] },
   expire: () => Promise<unknown>): Promise<FenceGuard<T>> {
   const { sourceId, slug, incoming } = input;
@@ -152,7 +152,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   if (widened.size) rows = rows.map(r => fresh.has(r.row_num) && widened.has(r.row_num) ? { ...r, visibility: widened.get(r.row_num)!.from } : r);
   for (const row of rows) {
     if (!cfg || occupied.has(row.row_num)) { inserted.push(row); continue; }
-    const decision = decideFactWrite({ fact: row.fact, context: row.context ?? null, source: row.source ?? null }, { sourceId, slug,
+    const decision = decideFactWrite({ fact: row.fact, context: row.context ?? null, source: row.source ?? null }, { sourceId, slug, pageId: input.pageId,
       payload: { fact: row.fact, kind: row.kind, visibility: row.visibility, entity_slug: row.entity_slug, source: row.source, context: row.context ?? null, row_num: row.row_num },
       input: gateInput(await writerTrust(tx), null), cfg });
     if (decision.action === 'hold') { await recordWriteGateHold(tx, decision.hold!); continue; }
