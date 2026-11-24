@@ -17,7 +17,9 @@ import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { readBoundedFile } from '../src/shadow/bench-file.ts';
 import { benchSummaryPath, EXPECTED_METRICS, EXPECTED_OPS, importBenchReceipt, MAX_RECEIPT_BYTES } from '../src/shadow/bench-receipt.ts';
+import { MAX_METRICS_PER_PAIR, MAX_OPERATIONS_PER_PAIR } from '../src/shadow/bench-receipt.ts';
 import { classifyBench, readBenchSummary } from '../src/shadow/bench.ts';
+import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
@@ -629,6 +631,61 @@ describe('round 2 review fixes: a recorded sample count is never read as absent'
       const known = await importOk(c, receipt((r) => { r.arms.rust.cold_start.reps = new Array(5).fill({ total_ms: 1 }); delete r.arms.pglite.cold_start.reps; }));
       expect(known.rust_no_worse).toBe(true);
       expect((await c.run(['status'])).out).toContain('over 5 Rust and an unrecorded number of PGLite starts');
+    });
+  });
+});
+
+describe('an accepted receipt can never stop report from rendering (review of the master-based head)', () => {
+  // Grows both pairs to `ops` operations (a mix of measured and refused extras) and `metrics` metric rows, the way a very wide receipt would.
+  const grow = (ops: number, metrics: number) => (x: R): void => {
+    for (const e of ENGINES) {
+      const p = pair(x, e);
+      for (let i = EXPECTED_OPS.length; i < ops; i++) {
+        if (i % 2) p.latency[`extra_op_${i}`] = { n: 2000, p50_ratio: { ...better }, p99_ratio: { ...better } };
+        else p.missing[`extra_op_${i}`] = 'not implemented';
+      }
+      for (let i = p.metrics.length; i < metrics; i++) p.metrics.push({ metric: `extra metric ${i}`, against: e, direction: 'lower_is_better', ratio: 0.9, ci95: [0.85, 0.95], margin: 1, status: 'pass', core: false, });
+    }
+  };
+  test('at the cap the import is accepted and report renders in text and JSON', async () => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt(grow(MAX_OPERATIONS_PER_PAIR, MAX_METRICS_PER_PAIR)));
+      const text = await c.run(['report']);
+      expect(text.code).toBe(0);
+      expect(text.out).toContain('## Speed');
+      expect(text.out).toContain(`extra_op_${MAX_OPERATIONS_PER_PAIR - 1}`);
+      const json = await c.json(['report', '--json']);
+      expect(json.code).toBe(0);
+      expect(json.out.bench.sources.bench_corpus.state).toBe('measured');
+    });
+  });
+  test('above the cap the import is refused with a named reason and the earlier evidence is unchanged', async () => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt());
+      const before = readFileSync(benchSummaryPath(c.dir), 'utf8');
+      const ops = await c.json(['bench', '--import', c.file(receipt(grow(MAX_OPERATIONS_PER_PAIR + 1, 0))), '--json']);
+      expect(ops.code).not.toBe(0);
+      expect(ops.out.code).toBe('invalid_params');
+      expect(ops.out.message).toContain(`more than ${MAX_OPERATIONS_PER_PAIR} operations`);
+      expect(ops.out.message).toContain('previous bench evidence unchanged');
+      expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
+      const met = await c.json(['bench', '--import', c.file(receipt(grow(0, MAX_METRICS_PER_PAIR + 1))), '--json']);
+      expect(met.code).not.toBe(0);
+      expect(met.out.message).toContain(`more than ${MAX_METRICS_PER_PAIR} metrics`);
+      expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
+      expect((await c.run(['report'])).code).toBe(0);
+    });
+  });
+  test('the report appends lines one at a time: one million loss lines render and none is dropped', async () => {
+    await withShadow(async (c) => {
+      await importOk(c, receipt());
+      const r = buildProvisionalReport(c.dir, 'b', STATE, NOW);
+      const bench = r.bench as any;
+      bench.rust_no_worse = false;
+      bench.losses = Array.from({ length: 1_000_000 }, (_, i) => `${LOSS}synthetic_${i} vs PGLite not measured (test)`);
+      const md = renderProvisionalMarkdown(r);
+      expect(md).toContain('synthetic_0 vs PGLite');
+      expect(md).toContain('synthetic_999999 vs PGLite');
     });
   });
 });

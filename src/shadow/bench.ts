@@ -128,7 +128,7 @@ export function classifyBench(summary: BenchSummary): BenchClassification {
     ...rows.filter((r) => r.status !== 'worse' && !['better', 'not_shown'].includes(r.status) && !noPair(r)).map(lossText),
     ...unpaired.map((e) => `${LOSS_PREFIX}every operation class and metric vs ${ENGINE_LABEL[e]} not measured (the receipt has no Rust pair against ${ENGINE_LABEL[e]})`),
   ];
-  return { pairs: counted.length ? Math.min(...counted) : 0, rust_no_worse: rows.every((r) => r.status === 'better' || r.status === 'not_shown'), losses, rows };
+  return { pairs: counted.length ? counted.reduce((a, b) => Math.min(a, b)) : 0, rust_no_worse: rows.every((r) => r.status === 'better' || r.status === 'not_shown'), losses, rows };
 }
 
 // ─── status ─────────────────────────────────────────────────────────

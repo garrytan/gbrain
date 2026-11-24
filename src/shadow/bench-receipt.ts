@@ -41,6 +41,9 @@ export const EXPECTED_METRICS: readonly ExpectedMetric[] = [
 export const ENGINE_BENCH_MARGINS = { latency_ratio: 1.10, throughput_ratio: 0.90, point_ratio: 1.10, exception_ratio: 1.5, bootstrap_draws: 10000, quantile_draws: 2000 };
 export const MAX_RECEIPT_BYTES = 256 * 1024 * 1024;
 export const MAX_SUMMARY_BYTES = 8 * 1024 * 1024;
+/** Most operation names (measured plus refused) and metric rows one Rust pair may carry. perf.ts writes 13 operations and 35 metrics; a wider receipt is not an engine-bench receipt, and every row becomes a line of status and report. */
+export const MAX_OPERATIONS_PER_PAIR = 64;
+export const MAX_METRICS_PER_PAIR = 256;
 export const BENCH_DOCS = 'docs/ENGINES.md#rust-engine-shadow-mode';
 export const BENCH_SUMMARY_VERSION = 1;
 const SPEED_VERDICTS = ['no_slower', 'no_slower_with_exceptions', 'not_shown', 'slower'];
@@ -163,6 +166,9 @@ export function validateSummary(s: unknown): string | null {
     if (seen.has(p.against)) return `${where}: two Rust pairs against ${p.against}`;
     seen.add(p.against);
     if (!isObj(p.missing) || !isObj(p.latency) || !Array.isArray(p.metrics)) return `${where} needs missing, latency and metrics`;
+    const operations = Object.keys(p.missing).length + Object.keys(p.latency).length;
+    if (operations > MAX_OPERATIONS_PER_PAIR) return `${where} is larger than an engine-bench pair: it names more than ${MAX_OPERATIONS_PER_PAIR} operations (${operations}; perf.ts writes ${EXPECTED_OPS.length}), and every one becomes a line of status and report`;
+    if (p.metrics.length > MAX_METRICS_PER_PAIR) return `${where} is larger than an engine-bench pair: it has more than ${MAX_METRICS_PER_PAIR} metrics (${p.metrics.length}; perf.ts writes ${EXPECTED_OPS.length * QUANTILES.length + EXPECTED_METRICS.length}), and every one becomes a line of status and report`;
     for (const [op, why] of Object.entries(p.missing)) {
       if (!OP_NAME.test(op) || !isSafeText(why)) return `${where}.missing.${sanitizeText(op, 40)} is not an operation with a text reason`;
       if (op in p.latency) return `${where}: ${op} is both measured and missing`;

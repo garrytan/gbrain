@@ -6248,7 +6248,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   most 256 MiB (a pipe, socket, directory, device or symbolic link is refused without being read). The import never
   starts a shadow and never opens the brain: with no shadow for this brain it refuses and writes nothing. A receipt with
   other margins, a Rust arm that refused, no Rust pair against either engine, a metric that names another engine than its pair, a recorded sample count that is not a
-  non-negative integer, a reduced summary over 8 MiB, or a malformed number is refused and the earlier evidence stays. The rule is the evals' own:
+  non-negative integer, a pair that names more than 64 operations or carries more than 256 metrics (`perf.ts` writes 13 operations and 35 metrics per pair), a reduced summary over 8 MiB, or a malformed number is refused and the earlier evidence stays. The rule is the evals' own:
   for each of the 13 operation classes, at p50 and p99, against each TypeScript engine, Rust is **worse** when the 95%
   interval of the Rust over other ratio lies above 1, **better** below 1, and **not shown** otherwise; a class with
   fewer than 100 pairs (or no interval), one Rust refused, or one the receipt leaves out is **not measured** and never

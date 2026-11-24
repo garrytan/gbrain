@@ -135,8 +135,13 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
   const storage = storageLine(r.storage);
   if (storage) lines.push(`Storage: ${storage}.`);
   lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`);
-  lines.push(renderSeedLine(r.seed), '', ...renderEvidenceStatus(r.evidence), '');
-  lines.push('## Speed', '', ...renderBenchStatus(r.bench).map((l) => l.replace(/^( *)/, (m) => `${' '.repeat(Math.max(0, m.length - 2))}- `)), '');
+  // Lines are appended one at a time: a spread into push() throws RangeError past a few hundred thousand arguments.
+  lines.push(renderSeedLine(r.seed), '');
+  for (const l of renderEvidenceStatus(r.evidence)) lines.push(l);
+  lines.push('');
+  lines.push('## Speed', '');
+  for (const l of renderBenchStatus(r.bench)) lines.push(l.replace(/^( *)/, (m) => `${' '.repeat(Math.max(0, m.length - 2))}- `));
+  lines.push('');
   const cols: ShadowOutcome[] = [...SHADOW_OUTCOMES];
   lines.push(`| operation | total | ${cols.join(' | ')} |`);
   lines.push(`|---|---:|${cols.map(() => '---:').join('|')}|`);
