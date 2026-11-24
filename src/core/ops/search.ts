@@ -79,7 +79,6 @@ import {
   stampEvidenceSafe,
   maybeCaptureSearch,
 } from './context.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * The caller's effective row contract for the `query` op's non-hybrid legs
@@ -246,15 +245,16 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
  * remote result on such a brain may be incomplete, not a clean or complete
  * answer. Same scope precedence as sourceScopeOpts (federated array > scalar
  * > brain-wide); one LIMIT 1 probe through the typed `hasUnsealedPages`
- * read (engine-sql/chunk-reads.ts), fail-open except for a refused capability.
+ * read (engine-sql/chunk-reads.ts), fail-open as master's raw probe was: any
+ * failure, a refused capability included (an owner client refuses this read
+ * for a remote caller), reads as no pending pages.
  */
 async function hasUnsealedPagesInScope(ctx: OperationContext, scope: SourceScope, excludePrivate: boolean,
   filters: { types?: string[]; excludeSlugPrefixes: string[] }): Promise<boolean> {
   // The same page filters the search itself applied: a withheld page it could never return is not a gap.
   try {
     return await ctx.engine.hasUnsealedPages({ ...scope, excludePrivate, types: filters.types, excludeSlugPrefixes: filters.excludeSlugPrefixes });
-  } catch (err) {
-    rethrowCapabilityRefusal(err); // an engine that cannot read the fence refuses; it never reports a complete index
+  } catch {
     return false;
   }
 }

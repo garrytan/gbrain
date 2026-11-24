@@ -36,7 +36,7 @@ import { recordUpstreamObservation } from '../sync-upstream.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import { persistenceHome, hostIdFor, existingHostIdFor } from './identity.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
-import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { getWorktreeBinding, managedPersistenceEnabled, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
 import { isPhysicalRootMetadata } from './physical-root-record.ts';
 import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
@@ -903,16 +903,17 @@ const redact = (text: string) => {
 };
 const LOOKUP_MS = 3_000;
 /**
- * A best-effort diagnostic read on a refusal path, bounded at LOOKUP_MS: each raw statement runs under a transaction-local
- * statement_timeout and a signal that cancels it at the bound, so neither the refusal nor a pooled connection waits on it.
- * A read still pending at the bound resolves null.
+ * A best-effort diagnostic read on a refusal path, bounded at LOOKUP_MS: each raw statement (the writer binding's too, not its typed
+ * member, which would run past the bound on the engine's own connection) runs under a transaction-local statement_timeout and a
+ * signal that cancels it at the bound, so neither the refusal nor a pooled connection waits on it. A read pending at the bound resolves null.
  */
 async function boundedLookup<T>(engine: BrainEngine, read: (engine: BrainEngine) => Promise<T>): Promise<T | null> {
   const controller = new AbortController();
   const deadlineAt = Date.now() + LOOKUP_MS;
-  const bounded = new Proxy(engine, { get(target, key) {
+  const bounded: BrainEngine = new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: object) =>
       target.executeRaw(sql, params, { ...opts, signal: controller.signal, timeoutMs: LOOKUP_MS, deadlineAt });
+    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) => bounded.executeRaw<WorktreeBinding>(WORKTREE_BINDING_SQL, [sourceId, hostId]).then(([row]) => row ?? null);
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
