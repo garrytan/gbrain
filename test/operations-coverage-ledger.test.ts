@@ -183,6 +183,7 @@ const LEDGER: Record<string, string> = {
   find_contradictions: 'test/eval-contradictions-integrations.test.ts',
   find_experts: 'test/find-experts-op.test.ts',
   find_trajectory: 'test/operations-find-trajectory.test.ts',
+  learned: 'test/learning-ledger.test.ts',
   code_callers: 'test/e2e/code-intel-mcp-ops-pglite.test.ts',
   code_callees: 'test/e2e/code-intel-mcp-ops-pglite.test.ts',
   code_def: 'test/e2e/code-intel-mcp-ops-pglite.test.ts',

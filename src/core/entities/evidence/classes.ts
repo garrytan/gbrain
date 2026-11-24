@@ -38,7 +38,7 @@ export interface ClassesReport {
   verdicts: Record<Verdict, number>;
   skipped: { large_groups: number; already_linked: number; decided_apart: number; no_class: number };
   email: { pages: number };
-  messaging: { pages: number; chats: number; one_to_one: number; too_large: number; signal: 'no reader' };
+  messaging: { pages: number; chats: number; one_to_one: number; too_large: number; segmented_page: { read: number; set_aside: number; pages: Array<{ source_id: string; slug: string }> }; signal: 'no reader' };
   exa: ExaReport | { mode: 'off' };
 }
 
@@ -123,7 +123,8 @@ export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions =
     classes: Object.fromEntries(PAIR_CLASSES.map(c => [c, 0])) as Record<PairClass, number>,
     verdicts: Object.fromEntries(VERDICTS.map(v => [v, 0])) as Record<Verdict, number>,
     skipped: scan.skipped, email: { pages: email.pages },
-    messaging: { pages: messaging.pages, chats: messaging.chats, one_to_one: messaging.one_to_one, too_large: messaging.too_large, signal: 'no reader' },
+    messaging: { pages: messaging.pages, chats: messaging.chats, one_to_one: messaging.one_to_one, too_large: messaging.too_large,
+      segmented_page: { read: messaging.segmented.read, set_aside: messaging.segmented.set_aside.length, pages: messaging.segmented.set_aside }, signal: 'no reader' },
     exa,
   };
   for (const { pair, signals, emailOff } of local.values()) {

@@ -100,6 +100,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('guest_sources', 'security', 'Which sources hold outside-guest notes, their writer list and tier ceiling; dropping it would let any writer add owner-tier pages there.'),
     carry('ingest_applied_captures', 'operational', 'Applied /ingest captures by job idempotency key, so a re-run or a replay of a capture after graduation still writes nothing.'),
     carry('ingest_log', 'operational', 'Ingestion log.'),
+    carry('learning_items', 'user_data', 'The learning ledger: what each night recorded and whether the owner was shown, kept, undid or answered it; that history cannot be rebuilt from the targets.'),
     carry('links', 'user_data', 'Page graph links.'),
     carry('link_edge_proposals', 'user_data', 'Relationship contradiction proposals with the user\'s accept/reject/undo decisions and the paid judge results behind them.'),
     carry('link_relationships', 'user_data', 'Temporal relationship state; recorded_at and retired_at keep when the brain first and last saw a relationship, which a rebuild cannot recover.'),

@@ -587,6 +587,11 @@ src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
+src/core/learning/derive.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window
+src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly
+src/core/learning/duplicates.ts	execute_raw	2	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run)
+src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
+src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
 src/core/line-grammar-config.ts	execute_raw	2
 src/core/link-extraction.ts	execute_raw	1
 src/core/link-reconciliation.ts	execute_raw	5
@@ -843,7 +848,7 @@ src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened
 src/core/persistence/memory-prepare.ts	execute_raw	4
 src/core/persistence/memory-proposals.ts	execute_raw	16
 src/core/persistence/mirror-read-only.ts	execute_raw	4
-src/core/persistence/moved-pages.ts	execute_raw	7
+src/core/persistence/moved-pages.ts	execute_raw	8	GST-3623: readMoveCandidates reads the live pages a ghost may have moved to (by file name, renamed path or blob path) in one query; the moved-pages area is still raw SQL and converts with it
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/onboarding.ts	execute_raw	1
 src/core/persistence/origin-guard.ts	execute_raw	9
