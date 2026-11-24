@@ -35,6 +35,15 @@ export const listEmbeddingStores: Member<'listEmbeddingStores'> = async () => [.
 export const hasStoredVectors: Member<'hasStoredVectors'> = (brain, store) =>
   storeCall({ member: 'hasStoredVectors' }, () => brain.hasStoredVectors({ name: store }));
 
+/** No chunk holds an image vector: the store refuses one (the chunk writes take only the text `embedding`). */
+export const hasChunkImageVectors: Member<'hasChunkImageVectors'> = async () => false;
+
+/**
+ * The semantic query cache's clear: the store keeps no `query_cache` table and nothing writes one (the cache's lookup
+ * and store refuse on this engine), so there is never a row to delete.
+ */
+export const clearQueryCache: Member<'clearQueryCache'> = async () => 0;
+
 export const countStaleFactEmbeddings: Member<'countStaleFactEmbeddings'> = (brain, opts) => {
   if (!Number.isInteger(opts.dims) || Math.abs(opts.dims) > 2 ** 31 - 1) refuseMember('countStaleFactEmbeddings', 'a width that is not a 32-bit integer');
   return storeCall({ member: 'countStaleFactEmbeddings' }, () =>

@@ -456,6 +456,7 @@ test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-private-fence.test.ts
 test/engine-parity/search-reads.test.ts
+test/engine-parity/search-refusal-swallows.test.ts
 test/engine-parity/search-space-separators.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segment-regions.test.ts

@@ -264,6 +264,7 @@ export const CONTENT_MEMBERS = {
   readEmbeddingIdentity: 'embeddings',
   listEmbeddingStores: 'embeddings',
   hasStoredVectors: 'embeddings',
+  hasChunkImageVectors: 'embeddings',
   countChunkVectorCoverage: 'embeddings',
   readChunkColumnTypes: 'embeddings',
   countChunkColumnCoverage: 'embeddings',

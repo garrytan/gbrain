@@ -302,8 +302,9 @@ export class SemanticQueryCache {
         similarity,
         ageSeconds: row.age_seconds,
       };
-    } catch {
-      // Table missing, vector column missing, or any other failure: miss.
+    } catch (e) {
+      // Table missing, vector column missing, or any other failure: miss. An engine that cannot run the probe refuses.
+      rethrowCapabilityRefusal(e);
       return { hit: false };
     }
   }
@@ -380,28 +381,19 @@ export class SemanticQueryCache {
           snapshot.max_generation_at_store,
         ],
       );
-    } catch {
-      // swallow \u2014 cache write must never break the search hot path.
+    } catch (e) {
+      // A failed cache write must never break the search hot path; an engine that cannot run it refuses.
+      rethrowCapabilityRefusal(e);
     }
   }
 
-  /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted. */
+  /** Clear ALL cache rows (optionally scoped by source). Returns rows deleted (BrainEngine.clearQueryCache). */
   async clear(opts: { sourceId?: string } = {}): Promise<number> {
     try {
-      if (opts.sourceId) {
-        const rows = await this.engine.executeRaw<{ n: number }>(
-          `WITH deleted AS (DELETE FROM query_cache WHERE source_id = $1 RETURNING 1)
-           SELECT COUNT(*)::int AS n FROM deleted`,
-          [opts.sourceId],
-        );
-        return rows[0]?.n ?? 0;
-      }
-      const rows = await this.engine.executeRaw<{ n: number }>(
-        `WITH deleted AS (DELETE FROM query_cache RETURNING 1)
-         SELECT COUNT(*)::int AS n FROM deleted`,
-      );
-      return rows[0]?.n ?? 0;
-    } catch {
+      return await this.engine.clearQueryCache(opts.sourceId || undefined);
+    } catch (e) {
+      // A brain before the query_cache table has nothing to clear; an engine that cannot run the clear refuses.
+      rethrowCapabilityRefusal(e);
       return 0;
     }
   }
