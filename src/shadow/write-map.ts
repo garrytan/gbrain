@@ -262,6 +262,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'probeRetypeRows', 'probeTargetRows',
   // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.
   'filterPageIdsByFrontmatter', 'lockEffectRow', 'secretEntryExists',
+  // Lane 17: the git-gap census marks its transaction read-only and writes nothing (engine-sql/git-gap-census.ts).
+  'markTransactionReadOnly',
 ]);
 
 /**
@@ -382,6 +384,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'invalidateContentDriftChunks', 'lockContentDriftState',
   // Batch 12 typed writes (repair-rust b9/b6b, lanes 6, 13 and the segmented and secret-store members): not mapped to a write plan yet, so they publish invalid like the rest of the list.
   'clearCodeEdgesLeavingChunks', 'deleteChunksByIds', 'deleteManagedSyncFailureObservation', 'deleteUnreferencedSecretEntry', 'dispatchBudgetReservation', 'insertBackupSecretEntry', 'insertBackupSecretOccurrence', 'insertOpCheckpointIfAbsent', 'insertRemirrorEffects', 'insertSecretEntry', 'insertSecretOccurrence', 'markSecretEntryAllowed', 'movePageVersions', 'moveTwinFacts', 'moveTwinPageChildren', 'moveTwinRelationships', 'reclaimBudgetReservations', 'recordRenameAlias', 'releaseBudgetReservation', 'replaceOpCheckpointAtVersion', 'reserveBudgetReservation', 'retireStaleSegmentChunks', 'setRawDataValue', 'setRedactedPageFields', 'setRedactedRowText', 'setRetainedVersionBody', 'settleBudgetReservation', 'upsertFenceTrendRunRecord',
+  // Lane 17 typed writes (pinned questions, the volunteer log, retrieval events and ratings): not mapped to a write plan yet.
+  'applyRetrievalRatings', 'insertPinnedQuestion', 'insertRetrievalEvents', 'insertVolunteerEvents',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
