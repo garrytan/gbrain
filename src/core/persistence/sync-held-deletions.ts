@@ -9,7 +9,9 @@
  * - the page, at the revision the level read, equals the file's last committed bytes (the blob that commit's first parent
  *   held), by the canonical comparison the coordinator applies before it replaces a file (`fileMatchesSnapshot`);
  * - the page's revision is file-backed by the test `repair ghost-pages` applies (#7382, `ghostFileBacked`), so a page
- *   written in the database after its file last held it is never deleted, even with equal content.
+ *   written in the database after its file last held it is never deleted, even with equal content;
+ * - the file did not move to another live page by the test `repair ghost-pages` applies (`ghostMoveVeto`); a page whose
+ *   file moved stays held as `file_moved`.
  *
  * The deletion is an ordinary `managed_sync_delete`: a soft delete with the restore window every sync delete has, under
  * the mass-delete valve and the #7130 caps, leaving a tombstone the automatic purge holds. Its request carries
@@ -22,7 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import { execFile } from '../spawn.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
-import { ghostFileBacked } from '../repair/ghost-pages.ts';
+import { ghostFileBacked, ghostMoveVeto } from '../repair/ghost-pages.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
 import type { ManagedSyncContext } from './sync-discovery.ts';
@@ -43,7 +45,7 @@ const BLOB_MAX_BYTES = 8 * 1024 * 1024;
 /** The deleting commit and the blob the page was compared with: the receipt a held deletion's request carries. */
 export interface HeldDeletionProof { commit: string; blob_oid: string }
 /** Why the proof refused a held deletion. `provenance_unknown` and `blob_unreadable` are not recorded, so the next pass tries again. */
-export type HeldDeletionRefusal = 'not_deleted_by_commit' | 'provenance_unknown' | 'blob_unreadable' | 'content_differs' | 'database_ahead_of_file' | 'page_changed';
+export type HeldDeletionRefusal = 'not_deleted_by_commit' | 'provenance_unknown' | 'blob_unreadable' | 'content_differs' | 'database_ahead_of_file' | 'file_moved' | 'page_changed';
 const TRANSIENT: ReadonlySet<HeldDeletionRefusal> = new Set(['provenance_unknown', 'blob_unreadable']);
 
 export interface HeldDeletionState { screened: Set<string>; applied: number; refused: number }
@@ -118,8 +120,9 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
     const sourcePath = level.slugMode === 'source-root' ? holdPath(entry) : entry.path;
     const same = await fileMatchesSnapshot(engine, entry.slug!, bytes.toString('utf8'), snapshot, sourcePath, activePack).catch(() => false);
     if (!same) { verdicts.set(entry.path, { refused: 'content_differs' }); continue; }
-    const backed = await ghostFileBacked(engine, { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! }, owner, provenance.get(entry.path));
-    verdicts.set(entry.path, backed ? { commit: parent.commit, blob_oid: parent.oid! } : { refused: 'database_ahead_of_file' });
+    const ghost = { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! };
+    if (!await ghostFileBacked(engine, ghost, owner, provenance.get(entry.path))) { verdicts.set(entry.path, { refused: 'database_ahead_of_file' }); continue; }
+    verdicts.set(entry.path, await ghostMoveVeto(engine, ghost, owner) ? { refused: 'file_moved' } : { commit: parent.commit, blob_oid: parent.oid! });
   }
   return verdicts;
 }

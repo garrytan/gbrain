@@ -95,4 +95,22 @@ for (const backend of testBackends()) describe(`[${backend}] GBRA-133: sync.appl
     const again = await holds(engine);
     for (const slug of ['notes/b', 'notes/c', 'notes/d']) expect(again[`${slug}.md`]!.meta.held_deletion).toEqual(on[`${slug}.md`]!.meta.held_deletion);
   }, { databaseUrl, setup }), 300_000);
+
+  test('keeps a held deletion whose file moved to another live page (file_moved), even when the page equals its last committed blob', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    mkdirSync(join(root, 'archive'), { recursive: true });
+    writeFileSync(join(root, 'archive/a.md'), note('notes/a', 'The committed body of notes/a.'));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'copy a to the archive');
+    await performManagedSync(engine, OPTS);
+    const coordinated = (sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
+    await coordinated(`DELETE FROM op_checkpoints WHERE op='sync-import-provenance'
+      AND completed_keys->0->>'page_id' IN (SELECT id::text FROM pages WHERE source_id='default' AND slug='notes/a')`);
+    await coordinated(`UPDATE pages SET knowledge_revision = $1::uuid, revision_write_request_id = NULL, updated_at = now() - interval '1 hour'
+      WHERE source_id='default' AND slug='notes/a'`, [randomUUID()]);
+    git(root, 'rm', '-q', 'notes/a.md'); git(root, 'commit', '-qm', 'drop the old copy');
+    await engine.setConfig('sync.apply_held_deletions', 'true');
+    await performManagedSync(engine, OPTS);
+    expect(await live(engine)).toContain('notes/a');
+    expect((await holds(engine))['notes/a.md']?.meta.held_deletion?.refused).toBe('file_moved');
+  }, { databaseUrl, setup }), 300_000);
 });
