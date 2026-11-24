@@ -70,10 +70,11 @@ import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type
 import { gitChildEnv } from '../git-env.ts';
 import { commitPushCommand } from '../git/commit-push.ts';
 import { bindOrigin, originConflictMessage, pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { addVerifiedCreationDate } from './creation-date.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
-interface Selection { source_ids: string[]; include_ambiguous: boolean; only: string[]; skip: string[] }
+interface Selection { source_ids: string[]; include_ambiguous: boolean; fill_created?: boolean; only: string[]; skip: string[] }
 interface SourceRoot { sourceId: string; incarnation: string; mode: Mode; root: string }
 
 /** One approved change: everything the hash binds, never a raw frontmatter value. */
@@ -122,9 +123,10 @@ function heldElsewhere(hold: GitHoldRecord): string {
 
 const RESCUE_KEYS = new Set(['title', 'name', 'description', 'summary']);
 
-function previewArgv(scope: RepairScope, selection: Pick<Selection, 'only' | 'skip'>, includeAmbiguous: boolean): string[] {
+function previewArgv(scope: RepairScope, selection: Pick<Selection, 'only' | 'skip' | 'fill_created'>, includeAmbiguous: boolean): string[] {
   return ['gbrain', 'repair', 'frontmatter', ...(scope.source_ids.length === 1 ? ['--source', scope.source_ids[0]!] : []),
-    ...selection.only.flatMap(path => ['--only', path]), ...selection.skip.flatMap(path => ['--skip', path]), ...(includeAmbiguous ? ['--include-ambiguous'] : [])];
+    ...selection.only.flatMap(path => ['--only', path]), ...selection.skip.flatMap(path => ['--skip', path]), ...(includeAmbiguous ? ['--include-ambiguous'] : []),
+    ...(selection.fill_created ? ['--fill-created'] : [])];
 }
 
 /** Single-hunk unified diff of the changed line range. */
@@ -331,15 +333,16 @@ interface Analysis {
 
 interface FileContext {
   engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }>;
+  fillCreated?: boolean;
   /** Each recorded origin's soft-deleted page slugs. */
   deleted: Map<string, string[]>;
   /** Each file's other spellings that differ only by case and name the same page (sync holds them page_identity_changed). */
   twins: Map<string, string[]>;
 }
 
-async function fileContext(engine: BrainEngine, src: SourceRoot, includeAmbiguous: boolean): Promise<FileContext> {
+async function fileContext(engine: BrainEngine, src: SourceRoot, includeAmbiguous: boolean, fillCreated?: boolean): Promise<FileContext> {
   const { live: pages, deleted } = await pagesByOrigin(engine, src.sourceId);
-  return { engine, src, includeAmbiguous, pages, deleted, twins: spellingTwins(markdownFiles(src.root), pages) };
+  return { engine, src, includeAmbiguous, fillCreated, pages, deleted, twins: spellingTwins(markdownFiles(src.root), pages) };
 }
 
 /** Files whose paths fold to one spelling and name one page: a live origin's page slug, else the slug the path names. */
@@ -379,6 +382,11 @@ async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord |
   if (page && 'ambiguous' in page) return review('origin_conflict', originConflictMessage(src.sourceId, sourcePath, page.ambiguous));
   const slugCtx: SlugContext = { expectedSlug: resolveSlugForPath(sourcePath), slugExempt: declared => page?.source_path === sourcePath && declared === page.slug };
   const found = inspect(content, path, slugCtx, size);
+  if (ctx.fillCreated && src.mode === 'managed' && page && !hold && !found.hold && !found.errors.length) {
+    const snap = await ctx.engine.readPageSnapshot(page.slug, { sourceId: src.sourceId });
+    const fixed = snap?.revision === page.revision ? addVerifiedCreationDate(content, page.slug, snap.page.created_at) : null;
+    if (fixed) return { proposal: { content: fixed, fixes: ['Add the recorded page creation instant'], class: 'safe' } };
+  }
   const heldBefore = hold && hold.page_id !== null && ['ambiguous_protected_key', 'ambiguous_identity_key'].includes(hold.meta.reason ?? '')
     ? { flag: 'imported_before_hold' } : {};
   let renameFrom = hold?.meta.rename_from;
@@ -509,7 +517,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
   const seen = new Set<string>();
   for (const src of await sourceRoots(engine, scope, residuals, warnings)) {
     const holds = new Map(((await readGitSourceHolds(engine, { sourceIds: [src.sourceId] }))[0]?.holds ?? []).map(hold => [hold.path, hold]));
-    const ctx = await fileContext(engine, src, selection.include_ambiguous);
+    const ctx = await fileContext(engine, src, selection.include_ambiguous, selection.fill_created);
     const screenConfig = await repairScreenConfig(engine, src.sourceId);
     const paths = [...new Set([...markdownFiles(src.root), ...holds.keys()])].sort()
       .filter(path => (!selection.only.length || selection.only.includes(path)) && !selection.skip.includes(path));
@@ -556,7 +564,8 @@ export const frontmatterRepair: RepairHandler = {
   kind: 'frontmatter',
   outcomeItemsLimit: 1000,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    const selection: Selection = { source_ids: scope.source_ids, include_ambiguous: opts?.includeAmbiguous === true, only: [...(opts?.only ?? [])].sort(), skip: [...(opts?.skip ?? [])].sort() };
+    const selection: Selection = { source_ids: scope.source_ids, include_ambiguous: opts?.includeAmbiguous === true, only: [...(opts?.only ?? [])].sort(), skip: [...(opts?.skip ?? [])].sort(),
+      ...(opts?.fillCreated ? { fill_created: true } : {}) };
     const preview = previewArgv(scope, selection, selection.include_ambiguous);
     if (opts?.apply) {
       if (!opts.expect) {
@@ -650,7 +659,7 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
   const src: SourceRoot = { sourceId: repair.source_id, incarnation, mode: repair.mode, root };
   const holds = (await readGitSourceHolds(ctx.engine, { sourceIds: [repair.source_id] }))[0]?.holds ?? [];
   const hold = holds.find(entry => entry.path === repair.path);
-  const fileCtx = await fileContext(ctx.engine, src, selection.include_ambiguous);
+  const fileCtx = await fileContext(ctx.engine, src, selection.include_ambiguous, selection.fill_created);
   const analysis = await analyzeFile(fileCtx, repair.path, hold);
   if (!analysis?.proposal) return changed('the file no longer needs this change');
   const bound = await bindProposal(fileCtx, repair.path, hold, analysis.proposal, await repairScreenConfig(ctx.engine, repair.source_id));

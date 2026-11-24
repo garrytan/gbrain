@@ -144,6 +144,34 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     expect(rows.length).toBe(2);
   });
 
+  test('scoped extraction sends only the selected current page revision and no transcripts', async () => {
+    const cases = ['approved', 'stale', 'outside'];
+    for (const key of cases) {
+      await engine.putPage(`notes/${key}`, {
+        type: 'note', title: key, timeline: '',
+        compiled_truth: `${key} fixture text with original source context. `.repeat(24),
+        content_hash: key.padEnd(64, '0'),
+      });
+    }
+    const page = await engine.readPageSnapshot('notes/approved', { sourceId: 'default' });
+    expect(page).not.toBeNull();
+    const prompts: string[] = [];
+    const result = await runPhaseExtractAtoms(engine, {
+      pageSelection: new Map([['notes/approved', page!.revision], ['notes/stale', '00000000-0000-0000-0000-000000000000']]),
+      _transcripts: [{ filePath: '/fake/held.txt', content: 'withheld transcript', contentHash: 'held' }],
+      _chat: async opts => {
+        prompts.push(JSON.stringify(opts.messages));
+        return stubChat('[]')(opts);
+      },
+    });
+    expect(result.status).toBe('ok');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('approved fixture');
+    expect(prompts[0]).not.toContain('stale fixture');
+    expect(prompts[0]).not.toContain('outside fixture');
+    expect(prompts[0]).not.toContain('withheld transcript');
+  });
+
   test('dry-run counts but does NOT write', async () => {
     const chat = stubChat(`[{"title":"x","atom_type":"insight","body":"b"}]`);
     const result = await runPhaseExtractAtoms(engine, {

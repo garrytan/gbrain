@@ -286,7 +286,8 @@ async function recordModelVerdict(engine: BrainEngine, sourceId: string, factId:
     `INSERT INTO fact_relink_attempts (source_id, fact_id, outcome, reason, tier, model, target_slug, run_id, attempted_at)
      VALUES ($1, $2, $3, $3, 'model', $4, NULL, $5, now())
      ON CONFLICT (source_id, fact_id) DO UPDATE SET outcome = EXCLUDED.outcome, reason = EXCLUDED.reason, tier = 'model',
-       model = EXCLUDED.model, target_slug = NULL, run_id = EXCLUDED.run_id, attempted_at = EXCLUDED.attempted_at`,
+       model = EXCLUDED.model, target_slug = NULL, run_id = EXCLUDED.run_id, attempted_at = EXCLUDED.attempted_at
+       WHERE fact_relink_attempts.tier IS DISTINCT FROM 'operator'`,
     [sourceId, factId, outcome, model, runId]);
 }
 

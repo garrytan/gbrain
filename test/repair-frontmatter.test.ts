@@ -87,10 +87,10 @@ async function managed(engine: BrainEngine, files: Record<string, string>) {
 function fixture(engine: BrainEngine, id: string, root: string, write: (path: string, content: string) => void) {
   const sync = () => performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true, noExtract: true });
   const holds = async () => (await readGitSourceHolds(engine, { sourceIds: [id] }))[0]?.holds ?? [];
-  const run = async (opts: { apply?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[] } = {}) => {
+  const run = async (opts: { apply?: boolean; expect?: string; includeAmbiguous?: boolean; fillCreated?: boolean; only?: string[]; skip?: string[] } = {}) => {
     const runner = await repairRunner(engine, { apply: opts.apply === true, noEmbed: true, logger: quiet });
     return runner.run('frontmatter', await resolveRepairScope(engine, id), { explicit: true, sourceFlag: id, expect: opts.expect,
-      includeAmbiguous: opts.includeAmbiguous, only: opts.only, skip: opts.skip });
+      includeAmbiguous: opts.includeAmbiguous, fillCreated: opts.fillCreated, only: opts.only, skip: opts.skip });
   };
   const read = (path: string) => readFileSync(join(root, path), 'utf8');
   return { id, root, sync, holds, run, read, write };
@@ -108,6 +108,45 @@ async function gitEffectsSettled(engine: BrainEngine, sourceId: string) {
 }
 
 const details = (result: RepairResult) => result.details as unknown as FrontmatterPreviewDetails;
+
+test('fills creation metadata from the matching managed page without changing its trust or body', () => each(async engine => {
+  const path = 'notes/created.md';
+  const beforeText = note('Creation date');
+  const s = await managed(engine, { [path]: beforeText, 'notes/outside.md': note('Outside') });
+  await s.sync();
+  const key = ['notes/created', s.id];
+  const readProtected = () => engine.executeRaw(`SELECT compiled_truth,timeline,trust_tier,write_origin,created_at
+    FROM pages WHERE slug=$1 AND source_id=$2`, key);
+  const before = await readProtected();
+  expect(before).toHaveLength(1);
+  const page = await engine.readPageSnapshot('notes/created', { sourceId: s.id });
+  expect(page?.page.source_path).toBe(path);
+  expect(page?.page.created_at).toBeInstanceOf(Date);
+  const opts = { fillCreated: true, only: [path] };
+  const preview = await s.run(opts);
+  expect(preview).toMatchObject({ affected: 1 });
+  expect(preview.preview_hash).toBeTruthy();
+  const applied = await s.run({ ...opts, expect: preview.preview_hash, apply: true });
+  expect(applied.outcome_items?.[0]?.detail).toMatchObject({ path, written: true });
+  expect(s.read(path).replace(/^created: '[^']+'\n/m, '')).toBe(beforeText);
+  expect(s.read('notes/outside.md')).toBe(note('Outside'));
+  expect(await readProtected()).toEqual(before);
+}));
+
+test('date repair refuses to publish unindexed body edits with inherited trust', () => each(async engine => {
+  const path = 'notes/unindexed.md';
+  const s = await managed(engine, { [path]: note('Unindexed') });
+  await s.sync();
+  const before = await engine.readPageSnapshot('notes/unindexed', { sourceId: s.id });
+  const changed = note('Unindexed', 'This local body has not been admitted by the brain.');
+  s.write(path, changed);
+  const opts = { fillCreated: true, only: [path] };
+  const preview = await s.run(opts);
+  const result = await s.run({ ...opts, expect: preview.preview_hash, apply: true });
+  expect(result.outcomes).toMatchObject({ changed_since_preview: 1 });
+  expect(s.read(path)).toBe(changed);
+  expect(await engine.readPageSnapshot('notes/unindexed', { sourceId: s.id })).toEqual(before);
+}));
 
 async function each(run: (engine: BrainEngine) => Promise<void>) {
   await withEnv(env, async () => {

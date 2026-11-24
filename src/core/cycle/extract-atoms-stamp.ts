@@ -29,7 +29,9 @@ export async function stampExtractAtomsRun(engine: BrainEngine, sourceId: string
 /** runPhaseExtractAtoms, then stamp the source unless it was a dry run. */
 export async function runPhaseExtractAtomsStamped(engine: BrainEngine, opts: ExtractAtomsOpts = {}): Promise<PhaseResult> {
   const result = await runPhaseExtractAtoms(engine, opts);
-  if (!opts.dryRun) await stampExtractAtomsRun(engine, opts.sourceId ?? 'default', result);
+  if (!opts.dryRun && (!opts.pageSelection || Number(result.details?.pages_processed ?? 0) > 0)) {
+    await stampExtractAtomsRun(engine, opts.sourceId ?? 'default', result);
+  }
   return result;
 }
 

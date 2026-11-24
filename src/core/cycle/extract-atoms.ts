@@ -204,6 +204,7 @@ export interface ExtractAtomsOpts {
   sourceId?: string;
   dryRun?: boolean;
   affectedSlugs?: string[];
+  pageSelection?: ReadonlyMap<string, string>;
   /** Test seam: alternative chat function (bypasses real LLM calls). */
   _chat?: typeof gatewayChat;
   /**
@@ -411,8 +412,11 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
+  selection?: ReadonlyMap<string, string>,
 ): Promise<AtomPageInput[]> {
-  const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+  const slugs = selection ? [...selection.keys()] : affectedSlugs;
+  if (selection && slugs!.length === 0) return [];
+  const hasFilter = Array.isArray(slugs) && slugs.length > 0;
   const connectorExclusion = await connectorAtomExclusionSql(engine);
   const sql = `
     SELECT p.id, p.knowledge_revision,
@@ -451,7 +455,7 @@ export async function discoverExtractablePages(
     MIN_PAGE_CHARS_FOR_EXTRACTION,
     limit,
   ];
-  if (hasFilter) params.push(affectedSlugs);
+  if (hasFilter) params.push(slugs);
 
   try {
     const rows = await engine.executeRaw<{
@@ -462,13 +466,14 @@ export async function discoverExtractablePages(
       compiled_truth: string;
       content_hash: string;
     }>(sql, params);
-    return rows.map((r) => ({
+    return rows.filter(r => !selection || selection.get(r.slug) === r.knowledge_revision).map((r) => ({
       slug: r.slug,
       content: r.compiled_truth,
       contentHash: r.content_hash,
       identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision },
     }));
   } catch (err) {
+    if (selection) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
     return []; // fail-soft: transcript path still proceeds
@@ -722,7 +727,7 @@ export async function runPhaseExtractAtoms(
     transcriptDirs = cfg?.dream?.synthesize;
   } catch { transcriptDirs = undefined; }
   const sourceRouting = emptySessionSourceRouting();
-  if (managed && !opts.dryRun) { // GBRA-161 PR 1b: finish what a crash after an activation left
+  if (managed && !opts.dryRun && !opts.pageSelection) { // GBRA-161 PR 1b: finish what a crash after an activation left
     for (const member of await resumeManagedGenerationMembers(engine, managed, { corpusDir: transcriptDirs?.session_corpus_dir ?? null })) {
       if (member.outcome !== 'held_session_source') continue;
       const held = sourceRouting.generation_members_held ??= {};
@@ -734,12 +739,13 @@ export async function runPhaseExtractAtoms(
   const pageAtomTitles = new Map<string, Map<string, string[]>>();
 
   // 1a. Get transcripts (test seam OR production discovery).
-  let transcripts: Array<{ filePath: string; content: string; contentHash: string; root?: { path: string; label: string } }> = opts._transcripts ?? [];
+  let transcripts: Array<{ filePath: string; content: string; contentHash: string; root?: { path: string; label: string } }> = opts.pageSelection ? [] : opts._transcripts ?? [];
   // Configured transcript paths are brain-global: every source walks the session
   // corpus and keeps only the files #6268 resolves to it (#7846); the meeting
   // transcripts dir stays default's.
   if (
     transcripts.length === 0
+    && !opts.pageSelection
     && opts.brainDir !== undefined
     && opts._transcripts === undefined
   ) {
@@ -766,13 +772,13 @@ export async function runPhaseExtractAtoms(
   // #6503: the input cap is read before discovery so the partial dispositions
   // a raised cap supersedes are released and their items offered in this run.
   const maxInputChars = await resolveExtractAtomsInputCap(engine);
-  if (!opts.dryRun) await releasePartialDispositions(engine, sourceId, maxInputChars);
+  if (!opts.dryRun && !opts.pageSelection) await releasePartialDispositions(engine, sourceId, maxInputChars);
 
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
   //     deliberately (transcript-only regression tests).
   let pages: AtomPageInput[];
-  if (opts._pages !== undefined) {
+  if (opts._pages !== undefined && !opts.pageSelection) {
     pages = await Promise.all(opts._pages.map(async page => ({
       ...page, identity: await readAtomPageIdentity(engine, sourceId, page),
     })));
@@ -782,6 +788,7 @@ export async function runPhaseExtractAtoms(
       sourceId,
       opts.affectedSlugs,
       await resolvePageDiscoveryLimit(engine),
+      opts.pageSelection,
     );
   }
 

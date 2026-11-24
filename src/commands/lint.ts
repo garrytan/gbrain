@@ -22,7 +22,7 @@ import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
-import { parseDateLoose } from '../core/effective-date.ts';
+import { PAGE_TEMPORAL_KEYS, parseDateLoose } from '../core/effective-date.ts';
 import {
   assessContentSanity,
   type OperatorLiteral,
@@ -131,7 +131,7 @@ function findLeadingPreamble(content: string): { start: number; end: number } | 
  * `missing-created` rule. `created` first for the legacy name; the rest are
  * what effective-date resolution and the native serializer actually write.
  */
-const TEMPORAL_KEYS = ['created', 'event_date', 'date', 'published', 'captured_at', 'ingested_at'] as const;
+const TEMPORAL_KEYS = PAGE_TEMPORAL_KEYS;
 
 /**
  * Per-call options for `lintContent`. Tests pass content-sanity opts

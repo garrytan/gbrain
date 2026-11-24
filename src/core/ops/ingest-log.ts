@@ -12,6 +12,8 @@ import { linkReadScopeOpts } from './context.ts';
 import { remotePageAccess } from '../persistence/page-visibility.ts';
 
 /** Row kinds whose source_ref and summary name one page while pages_updated stays empty. */
+const LOCAL_ONLY_TYPES = new Set(['facts:relink-review']);
+
 const PAGE_REF_TYPES = new Set(['facts:absorb', 'write-verify-guard']);
 
 /** A file URL or an absolute, home-relative, relative or Windows path token in a free-form source_ref. */
@@ -85,6 +87,7 @@ const get_ingest_log: Operation = {
     const { known, readable } = await remotePageAccess(ctx.engine, rows.flatMap(r => [...(r.pages_updated ?? []), r.source_ref].map(slug => ({ source_id: r.source_id, slug }))));
     const key = (r: { source_id: string }, slug: string) => `${r.source_id}\u0000${slug}`;
     return rows.filter(r => {
+      if (LOCAL_ONLY_TYPES.has(r.source_type)) return false;
       const pages = r.pages_updated ?? [];
       if (!pages.every(slug => readable.has(key(r, slug)))) return false;
       if (pages.length === 0 && PAGE_REF_TYPES.has(r.source_type)) return readable.has(key(r, r.source_ref));

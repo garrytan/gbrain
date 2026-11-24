@@ -36,6 +36,7 @@ import { jsonGuardActive, jsonRequested, setCliExitVerdict, writeJsonDocument } 
 import { BUDGET_STOP_EXIT_CODE } from '../core/exit-codes.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { usageError, writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
+import { readAtomPageSelection } from '../core/cycle/atom-page-selection.ts';
 import { printHelpText } from '../cli/help/render.ts';
 import { cliRenderContext, renderAction, shellQuote, type Action } from '../core/agent-output.ts';
 import { codeEntry } from '../core/error-catalogue.ts';
@@ -44,6 +45,7 @@ import { existsSync } from 'fs';
 import { isAbsolute, resolve } from 'node:path';
 
 interface DreamArgs {
+  atomPages: ReadonlyMap<string, string> | undefined;
   json: boolean;
   dryRun: boolean;
   pull: boolean;
@@ -296,7 +298,23 @@ function parseArgs(args: string[]): DreamArgs {
       'Example: gbrain dream --phase synthesize --once'), json);
   }
 
+  let atomPages: DreamArgs['atomPages'];
+  if (!wantsHelp && args.includes('--atom-pages-file')) {
+    const paths = collectFlagValues(args, '--atom-pages-file');
+    const example = 'Use --phase extract_atoms --source <id> --atom-pages-file <path>.';
+    if (!paths || paths.length !== 1 || !source || !phaseWasExplicit ||
+        phases.length !== 1 || phases[0] !== 'extract_atoms' || drain || inputFile) {
+      dreamExit(usageError('An atom page list requires one explicit extract_atoms phase and source, without --drain or --input.', example), json);
+    }
+    try {
+      atomPages = readAtomPageSelection(paths[0]!);
+    } catch (error) {
+      dreamExit(usageError('Cannot load atom page list: ' + (error as Error).message, example), json);
+    }
+  }
+
   return {
+    atomPages,
     json,
     dryRun: args.includes('--dry-run'),
     pull: args.includes('--pull'),
@@ -450,6 +468,9 @@ Options:
   --from YYYY-MM-DD   Backfill range start (use with --to).
   --to   YYYY-MM-DD   Backfill range end.
 
+  --atom-pages-file <path>  JSON list of {slug, revision} entries for one
+                      explicit --phase extract_atoms --source <id> run.
+                      Only those page revisions are eligible. No transcripts.
   --drain             Bounded backlog drain for --phase extract_atoms
                       (the default phase when --drain is set). Holds the
                       cycle lock once, processes batches until the backlog
@@ -904,6 +925,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
+    atomPages: opts.atomPages,
     // issue #2860: exactly one phase is guaranteed here when opts.once is
     // set (parseArgs enforces --once requires a single explicit --phase).
     onceForPhase: opts.once ? opts.phases[0]! : undefined,

@@ -9,6 +9,9 @@ import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach } fr
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runFactsRelink } from '../src/core/facts/relink.ts';
+import { reviewRelinkMemos } from '../src/core/facts/relink-review.ts';
+import { ingestLogOperations } from '../src/core/ops/ingest-log.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
@@ -48,6 +51,37 @@ beforeEach(async () => {
 afterEach(() => {
   __setChatTransportForTests(null);
   resetGateway();
+});
+
+test('operator review preserves the previous model memo and the fact itself', async () => {
+  const slug = 'notes/source-review';
+  const fact = 'The file was absent from the capture.';
+  await importFromContent(engine, slug, `---\ntitle: Source review\ntype: note\n---\n\n${fact}\n`, { noEmbed: true });
+  const revision = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
+  const id = await unlinked(fact, { source_session: `put_page:${slug}`, visibility: 'private' });
+  await engine.executeRaw(`INSERT INTO fact_relink_attempts
+    (source_id,fact_id,outcome,reason,tier,model,run_id)
+    VALUES ('default',$1,'no_subject','no_subject','model','fixture-llm','older-run')`, [id]);
+  const items = [{ id, fact, slug, revision, quote: fact, previous_run_id: 'older-run', outcome: 'no_subject',
+    rationale: 'A capture gap concerns the evidence collection rather than a named subject.' }];
+  const before = await row(id);
+  const preview = await reviewRelinkMemos(engine, 'default', items);
+  expect(preview.status).toBe('preview');
+  await expect(reviewRelinkMemos(engine, 'default', [{ ...items[0], quote: 'Absent quote' }])).rejects.toThrow('matching quote');
+  const applied = await reviewRelinkMemos(engine, 'default', items, preview.review_hash);
+  expect(applied.status).toBe('committed');
+  expect(await row(id)).toEqual(before);
+  const [receipt] = await engine.executeRaw<{ summary: string }>(`SELECT summary FROM ingest_log WHERE source_type='facts:relink-review'`);
+  expect(JSON.parse(receipt!.summary).previous).toMatchObject({ run_id: 'older-run', model: 'fixture-llm' });
+  const readLog = ingestLogOperations.find(op => op.name === 'get_ingest_log')!;
+  const ctx: OperationContext = { engine, sourceId: 'default', config, dryRun: false, remote: false, logger: console };
+  const localLog = await readLog.handler({ ...ctx, remote: false }, {});
+  const remoteLog = await readLog.handler({ ...ctx, remote: true }, {});
+  expect(JSON.stringify(localLog)).toContain(fact);
+  expect(JSON.stringify(remoteLog)).not.toContain(fact);
+  const replay = await reviewRelinkMemos(engine, 'default', items, preview.review_hash);
+  expect(replay.rows[0]!.replay).toBe(true);
+  expect(await engine.executeRaw(`SELECT id FROM ingest_log WHERE source_type='facts:relink-review'`)).toHaveLength(1);
 });
 
 describe('relink free tiers', () => {

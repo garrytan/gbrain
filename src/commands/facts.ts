@@ -17,6 +17,11 @@ Subcommands:
   relink      Link facts saved without an entity to the person, company or
               project they are about, onto that entity page's ## Facts fence.
   retry-dead  Show or reset the retry set of dead page-write facts-absorb jobs.
+  review-relink  Review prior model memos with exact source evidence and no inference.
+
+gbrain facts review-relink --file <json> --source <id> [--expect <preview-hash>]
+  Preview without --expect. Each review contains id, fact, previous_run_id,
+  slug, revision, quote, outcome (no_subject or no_page), and rationale.
 
 gbrain facts relink [flags]
   --source <id>          Source to repair (default: the resolved source)
@@ -226,6 +231,30 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
     return 0;
   }
   if (sub === 'retry-dead') return runRetryDead(engine, args.slice(1));
+  if (sub === 'review-relink') {
+    const options = new Map<string, string>();
+    for (let i = 1; i < args.length; i += 2) {
+      const key = args[i]!;
+      const value = args[i + 1];
+      if (!['--file', '--source', '--expect'].includes(key) || options.has(key) || !value || value.startsWith('--')) {
+        console.error('Usage: gbrain facts review-relink --file <json> --source <id> [--expect <preview-hash>]');
+        return 1;
+      }
+      options.set(key, value);
+    }
+    const file = options.get('--file');
+    const source = options.get('--source');
+    const expected = options.get('--expect');
+    if (!file || !source || (expected !== undefined && !/^[a-f0-9]{64}$/.test(expected))) {
+      console.error('Usage: gbrain facts review-relink --file <json> --source <id> [--expect <preview-hash>]');
+      return 1;
+    }
+    const { readFileSync } = await import('node:fs');
+    const { reviewRelinkMemos } = await import('../core/facts/relink-review.ts');
+    const report = await reviewRelinkMemos(engine, source, JSON.parse(readFileSync(file, 'utf8')), expected);
+    console.log(JSON.stringify(report, null, 2));
+    return 0;
+  }
   if (sub !== 'relink') {
     console.error(`gbrain facts: unknown subcommand ${sub}\n\n${factsHelpText()}`);
     return 1;

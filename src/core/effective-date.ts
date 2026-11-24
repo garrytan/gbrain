@@ -179,6 +179,8 @@ function zonedWallTime(wall: Date, timeZone: string): Date {
  * (`2024-02-30`) is rejected rather than rolled over. Other strings fall back
  * to Date.parse.
  */
+export const PAGE_TEMPORAL_KEYS = ['created', 'event_date', 'date', 'published', 'captured_at', 'ingested_at'] as const;
+
 export function parseDateLoose(value: unknown, timeZone?: string): Date | null {
   if (value == null) return null;
   const zone = timeZone && timeZone !== 'UTC' ? timeZone : null;

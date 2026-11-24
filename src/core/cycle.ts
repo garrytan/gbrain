@@ -507,6 +507,8 @@ export interface CycleReport {
 }
 
 export interface CycleOpts {
+  /** An exact-revision selection for an explicit page-only Atom pass. */
+  atomPages?: ReadonlyMap<string, string>;
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
   /**
@@ -2484,9 +2486,7 @@ async function runCycleUnscoped(
         progress.start('cycle.extract_atoms');
         const { runPhaseExtractAtomsStamped: runPhaseExtractAtoms } = await import('./cycle/extract-atoms-stamp.ts');
         const xaSourceId = cycleSourceId ?? 'default';
-        // v0.41.2.1 (D9 #5): union sync + synthesize affected slugs so the
-        // incremental discovery path doesn't miss pages just-written by the
-        // synthesize phase that ran earlier in the same cycle.
+        // Include pages written by either earlier phase in incremental extraction.
         const xaAffectedSlugs =
           syncPagesAffected || synthesizeWrittenSlugs
             ? [
@@ -2503,6 +2503,7 @@ async function runCycleUnscoped(
           sourceId: xaSourceId,
           dryRun,
           affectedSlugs: xaAffectedSlugs,
+          pageSelection: opts.atomPages,
           // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
           // v0.41.19.0 (T4): pass same reporter (not a child — cycle.ts

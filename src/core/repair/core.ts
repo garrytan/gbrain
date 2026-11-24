@@ -116,7 +116,7 @@ export interface RepairListing { item: string; class: string; detail?: string; f
  * selection (`slugs` names database pages). `noLlm` keeps a `spends: 'llm'` kind to its free tiers; `maxLlmUsd` is
  * the run's paid-model allowance (it only lowers the kind's own cap). `deadline` (epoch ms) bounds a discovery scan.
  */
-export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[]; slugs?: string[];
+export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmbiguous?: boolean; fillCreated?: boolean; only?: string[]; skip?: string[]; slugs?: string[];
   /** `duplicate-facts` (#7043): also retire copies of a claim that sit on other entities than the kept row. */
   includeCrossEntity?: boolean;
   noLlm?: boolean; maxLlmUsd?: number; deadline?: number;
@@ -378,7 +378,7 @@ function writerHeld(error: unknown): error is OperationError {
  */
 export async function runRepair(ctx: OperationContext, handler: RepairHandler, scope: RepairScope,
   opts: { apply: boolean; limit?: number; embeddingModel?: string; sourceFlag?: string; embed?: boolean; applyArgs?: string[];
-    explicit?: boolean; expect?: string; includeAmbiguous?: boolean; includeCrossEntity?: boolean; only?: string[]; skip?: string[]; slugs?: string[]; noLlm?: boolean;
+    explicit?: boolean; expect?: string; includeAmbiguous?: boolean; fillCreated?: boolean; includeCrossEntity?: boolean; only?: string[]; skip?: string[]; slugs?: string[]; noLlm?: boolean;
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
@@ -402,7 +402,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   if (opts.apply) await initializeLocalPersistence(ctx);
   const { cursor: resumed, runId: storedRunId } = await readCursor(ctx.engine, handler.kind, scope, opts.apply ? opts.expect : undefined);
   const now = opts.now ?? Date.now;
-  const planOpts: RepairPlanOptions = { apply: opts.apply, expect: opts.expect, includeAmbiguous: opts.includeAmbiguous, only: opts.only, skip: opts.skip,
+  const planOpts: RepairPlanOptions = { apply: opts.apply, expect: opts.expect, includeAmbiguous: opts.includeAmbiguous, fillCreated: opts.fillCreated, only: opts.only, skip: opts.skip,
     ...(opts.includeCrossEntity ? { includeCrossEntity: true } : {}),
     ...(opts.slugs?.length ? { slugs: opts.slugs } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.maxLlmUsd !== undefined ? { maxLlmUsd: opts.maxLlmUsd } : {}),
     ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), remote: ctx.remote !== false,
@@ -447,7 +447,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
         ...(opts.held ? ['--held'] : []), ...(opts.side ? ['--side', opts.side] : []), ...(opts.state ? ['--state', opts.state] : []),
         ...(opts.provenance ? ['--provenance', opts.provenance] : []), ...(opts.cursor ? ['--cursor', opts.cursor] : []),
         ...(opts.prefer ? ['--prefer', opts.prefer] : [])].map(arg => ` ${shellQuote([arg])}`).join('')}`
-      + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${opts.includeCrossEntity ? ' --include-cross-entity' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`
+      + `${opts.includeAmbiguous ? ' --include-ambiguous' : ''}${opts.fillCreated ? ' --fill-created' : ''}${opts.includeCrossEntity ? ' --include-cross-entity' : ''}${llm && opts.noLlm ? ' --no-llm' : ''}${llm && opts.maxLlmUsd !== undefined ? ` --max-usd ${opts.maxLlmUsd}` : ''}`
       + ` --apply${plan.preview_hash ? ` --expect ${plan.preview_hash}` : ''}${spec?.consent === 'destructive' ? ' --yes' : ''}`,
     ...(plan.scan ? { scan: plan.scan } : {}),
   };
