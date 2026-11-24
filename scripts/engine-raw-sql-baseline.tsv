@@ -134,7 +134,7 @@ src/commands/doctor/checks/safe-index.ts	execute_raw	1
 src/commands/doctor/checks/schema-function-bodies.ts	execute_raw	1
 src/commands/doctor/checks/schema-health.ts	execute_raw	1
 src/commands/doctor/checks/schema-health.ts	sql_template	3
-src/commands/doctor/checks/search-eval.ts	execute_raw	2
+src/commands/doctor/checks/search-eval.ts	execute_raw	3	Bounded read-only unresolved conversation census shares the existing durable-outcome SQL until this doctor cluster moves behind typed storage reads.
 src/commands/doctor/checks/shared-agent-access.ts	execute_raw	2
 src/commands/doctor/checks/shared-skills.ts	execute_raw	1
 src/commands/doctor/checks/slug-collisions.ts	execute_raw	2

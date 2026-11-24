@@ -10,6 +10,8 @@ import type { Check } from '../../doctor.ts';
 // isn't imported from extract-conversation-facts.ts directly (#4135).
 import { ALLOWED_TYPES, conversationFactsEligibleSql, pageTypesForAllowed, isConversationFactsEligiblePage, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
 import { checkError } from '../check-fix.ts';
+import { conversationParseBlocker } from '../../../core/facts/conversation-readiness.ts';
+import { boundUnknownDetails } from '../bounded-unknown.ts';
 import { PASS_FLOOR_THRESHOLD, PASS_MEAN_THRESHOLD } from '../../../core/cross-modal-eval/aggregate.ts';
 
 /**
@@ -685,6 +687,41 @@ export async function computeConversationFactsBacklogCheck(
     let backlog = Number(rows[0]?.backlog ?? 0);
     let completed = Number(rows[0]?.completed ?? 0);
     let nonExtractable = Number(rows[0]?.non_extractable ?? 0);
+    // Bound body reads and deterministic parsing independently of corpus size.
+    // Uninspected candidates stay in backlog, never silently become complete.
+    const probeLimit = 100;
+    let parseInspected = 0;
+    let parseBlocked = 0;
+    const parseSamples: Array<{ source_id: string; slug: string; reason: string }> = [];
+    const llmFallback = await engine.getConfig('conversation_parser.llm_fallback_enabled') === 'true';
+    const probe = async (page: Parameters<typeof conversationParseBlocker>[1]) => {
+      if (parseInspected >= probeLimit) return;
+      parseInspected++;
+      const reason = await conversationParseBlocker(engine, page, llmFallback);
+      if (reason) {
+        parseBlocked++;
+        if (parseSamples.length < 5) parseSamples.push({ source_id: page.source_id ?? 'default', slug: page.slug, reason });
+      }
+    };
+    const candidates = await engine.executeRaw<{ source_id: string; slug: string }>(
+      `SELECT p.source_id, p.slug FROM pages p
+       WHERE ${conversationFactsEligibleSql('p', '$1', strict)}
+         AND p.deleted_at IS NULL AND p.content_hash IS NOT NULL
+         AND COALESCE(BTRIM(p.frontmatter->>'raw_transcript'), '') = ''
+         AND NOT EXISTS (
+           SELECT 1 FROM facts f WHERE f.source_id = p.source_id AND f.source_markdown_slug = p.slug
+             AND f.source IN ('cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2')
+             AND f.source_session = f.source || ':' || p.slug || ':page-' || p.content_hash || '-' ||
+               COALESCE(TO_CHAR(p.effective_date AT TIME ZONE 'UTC', 'YYYY-MM-DD'), 'none')
+         )
+       ORDER BY p.source_id, p.slug LIMIT 100`,
+      [concreteTypes],
+    );
+    for (const candidate of candidates) {
+      const page = await engine.getPage(candidate.slug, { sourceId: candidate.source_id });
+      if (!page) throw new Error('conversation readiness page disappeared; retry doctor');
+      await probe(page);
+    }
 
     // SQL cannot read raw_transcript files or reproduce the fallback hash for a
     // legacy NULL content_hash. Recompute those tokens through the command's
@@ -732,7 +769,7 @@ export async function computeConversationFactsBacklogCheck(
               const outcome = outcomes.get(page.slug);
               if (outcome === 'complete') completed++;
               else if (outcome === 'non_extractable') nonExtractable++;
-              else backlog++;
+              else { backlog++; await probe(page); }
             }
           }
           offset += batch.length;
@@ -741,12 +778,26 @@ export async function computeConversationFactsBacklogCheck(
       }
     }
 
+    const parseUninspected = Math.max(0, backlog - parseInspected);
+    backlog -= parseBlocked;
+    const parseHint = 'Repair conversation speaker-turn formatting (see gbrain conversation-parser --help), then rerun doctor; pages remain retryable.';
+    const readiness = {
+      parse_blocked: parseBlocked,
+      parse_blocked_samples: parseSamples,
+      parse_inspected: parseInspected,
+      parse_uninspected: parseUninspected,
+      ...(parseUninspected > 0 ? { parser_coverage: { ...boundUnknownDetails('rows'), limit: probeLimit } } : {}),
+      ...(parseBlocked > 0 ? { parse_fix_hint: parseHint } : {}),
+    };
+    const parseMessage = `${parseBlocked > 0 ? ` ${parseBlocked} page(s) blocked on speaker parsing. ${parseHint}` : ''}${parseUninspected > 0 ? ` ${parseUninspected} candidate(s) not parser-inspected (bounded probe).` : ''}`;
+
     if (backlog === 0) {
       return {
         name,
-        status: 'ok',
-        message: 'all eligible pages have fresh durable extraction outcomes',
+        status: parseBlocked > 0 ? 'warn' : 'ok',
+        message: (parseBlocked > 0 ? 'no actionable extraction backlog.' : 'all eligible pages have fresh durable extraction outcomes') + parseMessage,
         details: {
+          ...readiness,
           backlog,
           completed,
           scanned_not_extractable: nonExtractable,
@@ -758,17 +809,18 @@ export async function computeConversationFactsBacklogCheck(
 
     if (backlog > 10) {
       const fixHint =
-        'gbrain extract-conversation-facts --background --max-cost-usd 5';
+        backlog > parseUninspected ? 'gbrain extract-conversation-facts --background --max-cost-usd 5' : undefined;
       return {
         name,
         status: 'warn',
-        message: `${backlog} eligible pages without extraction. Fix: ${fixHint}`,
+        message: `${backlog} candidate pages without extraction.${fixHint ? ` Fix: ${fixHint}` : ' Parser coverage is incomplete; inspect conversation formatting before requesting paid extraction.'}` + parseMessage,
         details: {
+          ...readiness,
           backlog,
           completed,
           scanned_not_extractable: nonExtractable,
           types,
-          fix_hint: fixHint,
+          ...(fixHint ? { fix_hint: fixHint } : {}),
           freshness_rule: 'v2 snapshot token (content hash + effective date or sidecar sha256)',
         },
       };
@@ -776,9 +828,10 @@ export async function computeConversationFactsBacklogCheck(
 
     return {
       name,
-      status: 'ok',
-      message: `${backlog} eligible page(s) below warn threshold (>10)`,
+      status: parseBlocked > 0 ? 'warn' : 'ok',
+      message: `${backlog} eligible page(s) below warn threshold (>10)` + parseMessage,
       details: {
+        ...readiness,
         backlog,
         completed,
         scanned_not_extractable: nonExtractable,
