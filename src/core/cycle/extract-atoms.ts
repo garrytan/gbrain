@@ -64,7 +64,7 @@ import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
-import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
+import { chat as gatewayChat, isAvailable as isGatewayAvailable, withBudgetTracker } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
@@ -966,6 +966,19 @@ export async function runPhaseExtractAtoms(
   const costGate = resolveExtractAtomsCostGate(extractModel, resolveEmbedModelForCostGate(), pricingOverrides, { explicitBudget });
   const refused = await settleExtractAtomsCostGate(engine, sourceId, costGate, { budgetCap, extractModel, dryRun: opts.dryRun ?? false });
   if (refused) return refused;
+  // The worker's own gateway decides: a route it cannot start (no credential)
+  // is a configuration block, not an attempted provider call that failed.
+  if (!opts.dryRun && !opts._chat && !isGatewayAvailable('chat', extractModel)) {
+    const message = `extract_atoms: ${extractModel} cannot start on this worker (provider credentials are not configured); no provider call was made`;
+    console.error(`[extract_atoms] ${message}`);
+    return {
+      phase: 'extract_atoms',
+      status: 'warn',
+      duration_ms: 0,
+      summary: message,
+      details: { reason: 'provider_not_configured', source_id: sourceId, atoms_extracted: 0, model: extractModel, dry_run: false },
+    };
+  }
   const budgetTracker = opts.attempt?.budgetTracker ?? new BudgetTracker({
     maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
