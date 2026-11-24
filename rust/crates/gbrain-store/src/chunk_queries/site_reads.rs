@@ -9,8 +9,9 @@
 //!
 //! Each member answers what the SQL engines' statement answers over the same rows. The read policy
 //! is `pageReadFilter`'s source clause, its page privacy policy and its live test (not deleted,
-//! not quarantined, in a source that exists and is not archived); the TypeScript members refuse a
-//! trust, flag or safe-chunk policy before they call the store. A served page is one whose
+//! not quarantined, in a source that exists and is not archived), and under a safe-chunk read the
+//! chunker-version fence of `codeReadFilter` and `resolveFrozenHits` (`safeChunksFilter`); the
+//! TypeScript members refuse a trust or flag policy the store does not read before they call it. A served page is one whose
 //! `text_projection_revision` is its `knowledge_revision` or the v153 activation marker
 //! (`servedTextProjectionFilter`). Strings compare by bytes, as PGLite's C collation does, and a
 //! NULL sorts after every value in ascending order. Rows the SQL leaves in plan order tie-break
@@ -22,10 +23,12 @@
 //! page_body family's private state, which this family does not read (follow-up
 //! `frozen-hit-manifest-liveness`).
 
-use super::{EMBED_SKIP_KEY, QUARANTINE_KEY, sealed, segmented};
+use super::{
+    EMBED_SKIP_KEY, QUARANTINE_KEY, SAFE_FENCE_CHUNKER_VERSION, safe_chunks, sealed, segmented,
+};
 use crate::Store;
 use crate::chunks::{
-    ChunkRecord, clear_chunks, delete_chunks_matching, read_chunks, read_segment_view,
+    ChunkRecord, clear_chunks, delete_chunks_matching, in_live_body, read_chunks, read_segment_view,
 };
 use crate::error::Result;
 use crate::facts::{PrivacyPolicy, like, page_hidden, pg_lower_char};
@@ -44,8 +47,10 @@ use std::collections::{BTreeSet, HashMap};
 const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
 
 /// The read policy the TypeScript members send: `pageReadFilter`'s source clause, under
-/// `excludePrivate` the page privacy policy, and its `pageEligibleSql` trust floor and flag
-/// suppression (`minTrust`, `suppressFlagged`). `allSources` has already dropped `sourceId`.
+/// `excludePrivate` the page privacy policy, its `pageEligibleSql` trust floor and flag
+/// suppression (`minTrust`, `suppressFlagged`), and `requireSafeChunks`
+/// (`requiresSafeChunks(scope)`), the chunker-version fence. `allSources` has already dropped
+/// `sourceId`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ChunkReadScope {
@@ -54,6 +59,8 @@ pub struct ChunkReadScope {
     pub exclude_private: Option<PrivacyPolicy>,
     pub min_trust: Option<String>,
     pub suppress_flagged: bool,
+    /// Only pages at or above the safe-chunk fence (`chunker_version >= 4`) are read.
+    pub require_safe_chunks: bool,
 }
 
 impl ChunkReadScope {
@@ -87,6 +94,16 @@ pub struct CodeChunksExistInput {
     pub served: bool,
     pub with_symbol: bool,
     pub scope: ChunkReadScope,
+}
+
+/// `hasUnsealedPages(scope)`: the page read scope, and search's type list and hard-excluded slug
+/// prefixes.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UnsealedPagesInput {
+    pub scope: ChunkReadScope,
+    pub types: Option<Vec<String>>,
+    pub exclude_slug_prefixes: Vec<String>,
 }
 
 /// `listQualifiedSymbolNames(sourceId, symbol, { match, limit })`.
@@ -161,7 +178,7 @@ fn meta_line(chunk: &ChunkRecord, key: &str) -> Option<i64> {
 }
 
 /// `servedTextProjectionFilter`.
-fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     sealed(page) || page.text_projection_revision.as_deref() == Some(ACTIVATION_SERVED_REVISION)
 }
 
@@ -207,7 +224,7 @@ impl<'a> Policy<'a> {
     }
 
     pub(crate) fn passes(&mut self, page: &PageRecord, scope: &ChunkReadScope) -> Result<bool> {
-        if !scope.source_ok(&page.source_id) {
+        if !scope.source_ok(&page.source_id) || (scope.require_safe_chunks && !safe_chunks(page)) {
             return Ok(false);
         }
         if let Some(policy) = &scope.exclude_private
@@ -472,6 +489,36 @@ impl Store {
         Ok(false)
     }
 
+    /// `hasUnsealedPages(scope)`: a live page in scope whose `chunker_version` is below the
+    /// safe-chunk fence, of one of `types` when given and under none of the excluded slug prefixes
+    /// (`LEFT(p.slug, LENGTH(prefix)) <> prefix`). A record that stores no version counts as 0, as
+    /// the remote reads count it.
+    pub fn has_unsealed_pages(&self, input: &UnsealedPagesInput) -> Result<bool> {
+        if input.scope.source_ids.as_ref().is_some_and(Vec::is_empty) {
+            return Ok(false);
+        }
+        let read = self.read()?;
+        let mut policy = Policy::new(&*read);
+        for page in all_pages(&*read)? {
+            if page.chunker_version.unwrap_or(0) >= SAFE_FENCE_CHUNKER_VERSION
+                || input
+                    .types
+                    .as_ref()
+                    .is_some_and(|types| !types.contains(&page.page_type))
+                || input
+                    .exclude_slug_prefixes
+                    .iter()
+                    .any(|prefix| page.slug.starts_with(prefix.as_str()))
+            {
+                continue;
+            }
+            if policy.passes(&page, &input.scope)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// `listQualifiedSymbolNames(sourceId, symbol, { match, limit })`.
     pub fn list_qualified_symbol_names(&self, input: &QualifiedNamesInput) -> Result<Vec<String>> {
         let read = self.read()?;
@@ -646,14 +693,13 @@ impl Store {
             if !served(&page) || !policy.passes(&page, &input.scope)? {
                 continue;
             }
-            let generation = read_segment_view(&*read, page.id)?.generation;
-            let inline_ok = !segmented(&page);
+            // `chunkGenerationFilter`: a chunk of the live body. A chunk whose occurrence a deferred retire
+            // closed has no live manifest row, so it is not one, though its generation is not above the page's.
+            let view = read_segment_view(&*read, page.id)?;
+            let segmented_page = segmented(&page);
             let mut chunks: Vec<ChunkRecord> = read_chunks(&*read, page.id)?
                 .into_iter()
-                .filter(|c| match c.segment {
-                    None => inline_ok,
-                    Some(_) => c.visible_at(generation),
-                })
+                .filter(|c| in_live_body(c, segmented_page, &view))
                 .filter(|c| {
                     if hit.chunk_id > 0 {
                         i64::try_from(c.id).is_ok_and(|id| id == hit.chunk_id)
@@ -751,6 +797,45 @@ mod tests {
             def_types: vec!["function".into(), "class".into()],
             ..CodeSymbolInput::default()
         }
+    }
+
+    #[test]
+    fn has_unsealed_pages_reads_the_fence_under_the_type_and_slug_prefix_filters() {
+        let store = store();
+        let probe = |value: Value| {
+            store
+                .has_unsealed_pages(&serde_json::from_value::<UnsealedPagesInput>(value).unwrap())
+                .unwrap()
+        };
+        assert!(!probe(json!({})));
+        // A page written without the inline index stays below the fence, as PGLite's putPage leaves it.
+        let unindexed = PutPageOptions {
+            index: Some(false),
+            ..PutPageOptions::default()
+        };
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "draft".into(),
+            compiled_truth: "body".into(),
+            ..PageInput::default()
+        };
+        store.put_page("notes/draft", &input, &unindexed).unwrap();
+        assert!(probe(json!({})));
+        assert!(probe(json!({ "types": ["note"] })));
+        assert!(!probe(json!({ "types": ["concept"] })));
+        assert!(!probe(json!({ "excludeSlugPrefixes": ["notes/"] })));
+        assert!(!probe(json!({ "scope": { "sourceIds": [] } })));
+        assert!(!probe(json!({ "scope": { "sourceId": "other" } })));
+        let chunk = ChunkInput {
+            chunk_text: "body".into(),
+            ..ChunkInput::default()
+        };
+        let seal = UpsertChunksOptions {
+            seal: true,
+            ..UpsertChunksOptions::default()
+        };
+        store.upsert_chunks("notes/draft", &[chunk], &seal).unwrap();
+        assert!(!probe(json!({})));
     }
 
     #[test]

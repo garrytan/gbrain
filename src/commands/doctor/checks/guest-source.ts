@@ -40,6 +40,7 @@ async function writerFindings(engine: BrainEngine, source: string, writer: strin
   const grant = kind === 'oauth_client' ? grantFromClient(grantFromRow(json(row.row))) : grantFromTokenRow(json(row.row));
   const auth = authSourcesFromGrant(grant);
   const reads = auth.allowedSources ?? [auth.sourceId];
+  if (grant.readShared === true && grant.sources.kind !== 'none') return [{ level: 'fail', text: 'writer ' + writer + ' also reads every shared source (read-shared switch on), not exactly ' + source }];
   if (auth.sourceId === source && reads.every(s => s === source)) return [];
   return [{ level: 'fail', text: 'writer ' + writer + ' is granted ' + [...new Set([auth.sourceId, ...reads])].join(', ') + ', not exactly ' + source }];
 }
@@ -74,7 +75,7 @@ async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<F
 
 /** A schema behind the guest-notes migration has no guest_sources table: only a config can mark a guest source, and nothing enforces it. */
 async function behindGuestMigration(engine: BrainEngine): Promise<Check> {
-  const marked = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id");
+  const marked = await engine.readDoctorSources('guest_marked_ids');
   const behind = `this brain's schema is behind the guest-notes migration (v${GUEST_NOTES_MIGRATION}); gbrain apply-migrations --yes brings it up to date`;
   if (!marked.length) return infoCheck(name, `Not applicable: ${behind}.`, 'not_applicable');
   return { name, status: 'warn', message: `Source(s) ${marked.map(s => s.id).join(', ')} say guest: true in their config, but ${behind}; until then nothing enforces their writer list or trust ceiling.` };
@@ -82,9 +83,7 @@ async function behindGuestMigration(engine: BrainEngine): Promise<Check> {
 
 export async function guestSourceCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const sources = await engine.executeRaw<GuestSourceRow>(
-      'SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id '
-        + 'WHERE ' + guestSourceSql('s.config', 's.id') + ' ORDER BY s.id');
+    const sources = await engine.listGuestSourceRows() as GuestSourceRow[];
     if (!sources.length) return infoCheck(name, 'Not applicable: this brain has no guest source (gbrain guests init).', 'not_applicable');
     const findings: Finding[] = [];
     for (const s of sources) findings.push(...await sourceFindings(engine, s));

@@ -61,6 +61,9 @@ const SWEEP_STALE_PAGES_SQL = `SELECT slug, to_char(now() AT TIME ZONE 'UTC', 'Y
       ORDER BY updated_at DESC
       LIMIT $3`;
 
+const PAGE_REFS_FOR_SLUGS_SQL = `SELECT slug, source_id, type, knowledge_revision FROM pages
+        WHERE deleted_at IS NULL AND slug = ANY($1::text[])`;
+
 const SWEEP_DEFERRED_PAGES_SQL = `SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
        FROM pages
       WHERE source_id = $1
@@ -98,16 +101,11 @@ export async function listSweepDeferredPages(exec: SweepReadsExec, q: SweepDefer
 }
 
 /**
- * The links and timeline pass's page refs: the live pages of any source whose slug is in `slugs`, in no set order. The
- * slugs go 200 to a statement (the text link-reconciliation.ts lookupRefsForSlugs ran at 932324b281).
+ * The links and timeline pass's page refs: the live pages of any source whose slug is in `slugs`, in no set order. One
+ * statement with one bound array, so the text does not change with the number of slugs; a slug named twice reads its
+ * pages once.
  */
 export async function listPageRefsForSlugs(exec: SweepReadsExec, slugs: readonly string[]): Promise<SweepPageRefRow[]> {
-  const out: SweepPageRefRow[] = [];
-  for (let i = 0; i < slugs.length; i += 200) {
-    const chunk = slugs.slice(i, i + 200);
-    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-    out.push(...await exec.executeRaw<SweepPageRefRow>(`SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN (${placeholders})`, chunk));
-  }
-  return out;
+  if (slugs.length === 0) return [];
+  return exec.executeRaw<SweepPageRefRow>(PAGE_REFS_FOR_SLUGS_SQL, [[...slugs]]);
 }

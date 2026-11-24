@@ -1,6 +1,6 @@
 //! The files commands and file operations of the PGLite engine (`src/core/engine-sql/files-ops.ts`).
 //!
-//! Members: listFileRowsForSlug, listAllFileRows, listFileRowsForVerify, hasFileWithHash, upsertCliFileRow,
+//! Members: listFileRowsForVerify, hasFileWithHash, upsertCliFileRow,
 //! upsertRawFileRow, upsertSyncFileRow, upsertOpFileRow, registerFileRow, readFileOwner, claimFilePage,
 //! countFilesRegisteredElsewhere, readPageIdInSource, listReadableFileRows, listReadableFilePaths,
 //! readReadableFileForUrl, readReadableFileForVerify, readReadablePageId, countUnreadableFilesAt.
@@ -13,10 +13,11 @@
 
 use super::{
     FILE, FileRecord, FileSpec, NEXT_FILE_ID, collect_values, file_page_key, foreign_key, int4,
-    jsonb, jsonb_order, not_null, put_file, read_file, whole,
+    jsonb, not_null, put_file, read_file, whole,
 };
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::jsonb::order as jsonb_order;
 use crate::kv::{KvRead, KvWrite};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page, read_page_by_id};
@@ -143,9 +144,10 @@ fn spec_texts(spec: &FileSpec) -> Vec<(&'static str, &str)> {
 }
 
 impl Store {
-    /// `listFileRowsForSlug(slug)`, `listAllFileRows()` and `listFileRowsForVerify()`: `kind` is `slug`, `all` or
-    /// `verify`. Every `files` column of up to 100 rows (1000 for verify): by file name for one page's, by page then
-    /// name for all, by storage path for verify. `slug` is read only for `slug`.
+    /// `listFileRowsForVerify()` is `kind` `verify`; `slug` and `all` (one page's rows, every row) have no engine
+    /// member since `files list` reads the served `listFiles`. Every `files` column of up to 100 rows (1000 for
+    /// verify): by file name for one page's, by page then name for all, by storage path for verify. `slug` is read
+    /// only for `slug`.
     pub fn list_file_rows(&self, kind: &str, slug: Option<&str>) -> Result<Vec<Value>> {
         const OP: &str = "listFileRows";
         let read = self.read()?;
@@ -258,7 +260,7 @@ impl Store {
                         }
                     }
                 }
-                file.content_hash = content_hash;
+                file.content_hash = content_hash.clone();
                 file.size_bytes = size_bytes;
                 file.mime_type = spec.mime_type.clone();
                 file.metadata = merged_metadata(&file.metadata, &metadata);
@@ -280,11 +282,11 @@ impl Store {
                     source_id: source_id.to_string(),
                     page_slug: spec.page_slug.clone(),
                     page_id: page_id.map(|id| id as u64),
-                    filename,
+                    filename: filename.clone(),
                     storage_path: storage_path.clone(),
                     mime_type: spec.mime_type.clone(),
                     size_bytes,
-                    content_hash,
+                    content_hash: content_hash.clone(),
                     metadata: merged_metadata(&json!({}), &metadata),
                     created_at_us: self.env.now_micros(),
                 };

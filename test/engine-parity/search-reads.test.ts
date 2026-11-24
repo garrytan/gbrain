@@ -33,6 +33,8 @@ import { PACKS, SRC_X, SRC_Y, putTyped, writeEntityTypePacks } from '../helpers/
 import { resolveEntityTypes } from '../../src/core/schema-pack/entity-types.ts';
 import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
 import { collectOnboardOpportunities } from '../../src/core/onboard/mcp-onboarding.ts';
+import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
+import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -85,6 +87,98 @@ describe('engine parity: search reads', () => {
       expect(scoped).toEqual(open);
       expect(elsewhere).toEqual([]);
       return { before, after, open, scoped, elsewhere, none };
+    },
+  );
+
+  // Hybrid search's supersession stage reads supersedingPageSlugs after fusion and tells an empty map ("nothing here is
+  // superseded") from a rejection ("currency was not verified": the degraded stage supersede_check_failed). So every arm must
+  // reject a read it cannot run, never answer an empty map, and must see an edge written right after an empty answer.
+  // A read the database refuses is injected with a page id that is no integer (a fault the engine cannot answer as empty).
+  parityTest(
+    'supersedingPageSlugs: a read that cannot run rejects instead of answering an empty map; an edge written after an empty answer is seen at once',
+    { methods: ['putPage', 'addLink', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
+    async (engine, backend) => {
+      const canon = await put(engine, 'notes/canon');
+      const stale = await put(engine, 'notes/stale');
+      const probeBefore = await engine.hasSupersedeEdges();
+      const emptyBefore = (await engine.supersedingPageSlugs([stale.id])).size;
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const probeAfter = await engine.hasSupersedeEdges();
+      const seen = [...await engine.supersedingPageSlugs([stale.id])].map(([id, by]) => `${id === stale.id ? 'notes/stale' : 'unknown'}<${by}`);
+      expect(probeBefore).toBe(false);
+      expect(emptyBefore).toBe(0);
+      expect(probeAfter).toBe(true);
+      expect(seen).toEqual(['notes/stale<notes/canon']);
+      const failure = await engine.supersedingPageSlugs([canon.id, 1.5]).then(() => null, (e: unknown) => e);
+      expect(failure).toBeInstanceOf(Error);
+      // The Rust arm stops here on its typed refusal of a non-integer page id (rust-engine/store-members/link-queries.ts bigintIds,
+      // the links member area): a rejection, not an empty map. A real statement timeout cannot be injected from TypeScript on
+      // that arm, so the arm-level proof is that it rejects rather than answers.
+      if (backend === 'rust') throw failure;
+      return { probeBefore, emptyBefore, probeAfter, seen, rejected: true };
+    },
+  );
+
+  // The exact-lookup tier reads supersedingPageSlugs under the page-read policy alone (not its own filters), so a store that
+  // refuses unknown options (the Rust arm) answers the healthy read and the replaced page stays out of the identity slot.
+  parityTest(
+    'structuralExactLookup: a replaced page never takes the identity slot, on every arm, and a healthy read reports no degraded stage',
+    { methods: ['putPage', 'addLink', 'supersedingPageSlugs'] },
+    async (engine) => {
+      await put(engine, 'notes/canon');
+      await put(engine, 'notes/stale');
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const degraded: Array<{ stage: string }> = [];
+      const slugsOfHits = async (query: string, opts: Record<string, unknown>) =>
+        (await structuralExactLookup(engine, query, { titleCandidates: [], excludeSlugs: [], degraded: degraded as never, ...opts })).map(h => h.slug);
+      const stale = await slugsOfHits('notes/stale', { sourceId: 'default' });
+      const canon = await slugsOfHits('notes/canon', { sourceId: 'default' });
+      const unscoped = await slugsOfHits('notes/stale', {});
+      expect(stale).toEqual([]);
+      expect(canon).toEqual(['notes/canon']);
+      expect(degraded).toEqual([]);
+      return { stale, canon, unscoped, degraded };
+    },
+  );
+
+  // Search asks "does this brain have any supersedes link?" before it looks up which results are replaced. Only a YES is
+  // remembered (a NO could hide a link another process just wrote), so a brain with links costs no extra query per search
+  // and a brain without links costs one probe per search. Counted on each arm's own `hasSupersedeEdges` member, one query.
+  parityTest(
+    'hybridSearch: on a brain with a supersedes link the existence probe runs once, then every search reuses the answer; with none it runs on every search',
+    { methods: ['putPage', 'sealChunks', 'addLink', 'searchKeyword', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
+    async (engine) => {
+      for (const slug of ['notes/canon', 'notes/stale']) {
+        await seedPage(engine, { slug, input: { type: 'note', title: slug, compiled_truth: `Page ${slug}.`, timeline: '' } as never, chunks: [chunk(0, `The tapirword fee for ${slug} is stated here.`)] });
+      }
+      let probes = 0;
+      const counted = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'hasSupersedeEdges') return () => { probes++; return target.hasSupersedeEdges(); };
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const search = async () => (await hybridSearch(counted, 'tapirword', { limit: 5, useCache: false })).map(r => `${r.slug}${r.superseded ? ' (replaced)' : ''}`);
+      const probesDuring = async (searches: number) => {
+        const before = probes;
+        let last: string[] = [];
+        for (let i = 0; i < searches; i++) last = await search();
+        return { probes: probes - before, last };
+      };
+
+      _resetSupersedeProbeForTests();
+      const noLinks = await probesDuring(3);
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const first = await probesDuring(1);
+      const cached = await probesDuring(5);
+
+      expect(noLinks.probes).toBe(3); // nothing to remember: each search checks again, so a link another process wrote is seen at once
+      expect(first.probes).toBe(1);
+      expect(cached.probes).toBe(0); // the cached yes: no extra query per search
+      expect(first.last).toContain('notes/stale (replaced)'); // the link written after three no-link searches is seen by the very next search
+      expect(cached.last).toEqual(first.last);
+      return { noLinks, first, cached: cached.probes };
     },
   );
 
@@ -179,6 +273,66 @@ describe('engine parity: search reads', () => {
       expect(member).toEqual(['c/open', 'c/readers', 'c/team']);
       expect(granted).toEqual(['c/open', 'c/private', 'c/readers']);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'resolveAliases: excludePrivate hides the aliases of private pages, as hybrid search passes it',
+    { methods: ['putPage', 'setPageAliases', 'resolveAliases'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await put(engine, 'people/open', { title: 'Open One' });
+      await put(engine, 'people/hidden', { title: 'Hidden One', frontmatter: { visibility: 'private' } });
+      await put(engine, 'people/by-access', { title: 'Access One', frontmatter: { access: 'private' } });
+      await put(engine, 'people/elsewhere', { title: 'Elsewhere' }, { sourceId: 'other' });
+      await engine.setPageAliases('people/open', 'default', ['shared name', 'open alias']);
+      await engine.setPageAliases('people/hidden', 'default', ['shared name', 'hidden alias']);
+      await engine.setPageAliases('people/by-access', 'default', ['access alias']);
+      await engine.setPageAliases('people/elsewhere', 'other', ['shared name']);
+      const names = ['shared name', 'open alias', 'hidden alias', 'access alias'];
+      const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) => [...m].map(([k, v]) => `${k} -> ${v.map(r => `${r.source_id}:${r.slug}`).join(', ')}`);
+      const none = flat(await engine.resolveAliases(names));
+      const off = flat(await engine.resolveAliases(names, { excludePrivate: false }));
+      const hidden = flat(await engine.resolveAliases(names, { excludePrivate: true }));
+      // Hybrid search passes its source scope with excludePrivate, and a bag that may carry requireSafeChunks.
+      const scoped = flat(await engine.resolveAliases(names, { sourceId: 'default', excludePrivate: true, requireSafeChunks: true }));
+      const federated = flat(await engine.resolveAliases(names, { sourceIds: ['default', 'other'], excludePrivate: true }));
+      // The alias hop hands over its whole identity-tier bag: the slug excludes and the hop switches change nothing here.
+      const hop = flat(await engine.resolveAliases(names, { sourceId: 'default', excludePrivate: true, excludeSlugPrefixes: ['test/', 'attachments/'], excludeSlugs: ['people/open'], tokenHop: true, qualified: true } as never));
+      expect(off).toEqual(none);
+      expect(none).toEqual([
+        'access alias -> default:people/by-access',
+        'hidden alias -> default:people/hidden',
+        'open alias -> default:people/open',
+        'shared name -> default:people/hidden, default:people/open, other:people/elsewhere',
+      ]);
+      expect(hidden).toEqual(['open alias -> default:people/open', 'shared name -> default:people/open, other:people/elsewhere']);
+      expect(scoped).toEqual(['open alias -> default:people/open', 'shared name -> default:people/open']);
+      expect(federated).toEqual(hidden);
+      expect(hop).toEqual(scoped);
+      return { none, off, hidden, scoped, federated, hop };
+    },
+  );
+
+  // The Rust store has no writer for derived alias rows yet, so this case stops on that typed refusal there; the store's own
+  // test (rust/crates/gbrain-store/src/aliases.rs) covers the same shadow rule.
+  parityTest(
+    'resolveAliases: a private page titled like a derived alias shadows it only for a caller that may read the page',
+    { methods: ['putPage', 'replaceDerivedAliases', 'resolveAliases'] },
+    async (engine) => {
+      await put(engine, 'companies/acme', { title: 'Acme Co' });
+      await put(engine, 'companies/beta', { title: 'Beta Co' });
+      await put(engine, 'notes/acme-title', { title: 'Acme', frontmatter: { visibility: 'private' } });
+      await put(engine, 'notes/beta-title', { title: 'Beta' });
+      await engine.replaceDerivedAliases('companies/acme', 'default', [{ alias_norm: 'acme', origin: 'declared', case_sensitive: false, alias_text: 'Acme' }]);
+      await engine.replaceDerivedAliases('companies/beta', 'default', [{ alias_norm: 'beta', origin: 'declared', case_sensitive: false, alias_text: 'Beta' }]);
+      const flat = (m: Map<string, Array<{ slug: string; source_id: string }>>) => [...m].map(([k, v]) => `${k} -> ${v.map(r => `${r.source_id}:${r.slug}`).join(', ')}`);
+      const none = flat(await engine.resolveAliases(['acme', 'beta']));
+      const hidden = flat(await engine.resolveAliases(['acme', 'beta'], { excludePrivate: true }));
+      // Both derived aliases yield to a page titled with their name; the private "Acme" title is not visible under excludePrivate.
+      expect(none).toEqual([]);
+      expect(hidden).toEqual(['acme -> default:companies/acme']);
+      return { none, hidden };
     },
   );
 

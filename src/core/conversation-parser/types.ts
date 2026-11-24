@@ -93,6 +93,10 @@ export interface ParseResult {
    *  previous speaker. Undefined when zero so healthy-page JSON output is
    *  byte-identical. */
   date_fallback_count?: number;
+  /** GST-3251: why a body no built-in pattern took ended no_match: every candidate was under the 5% floor
+   *  (`below_floor`) or the best one read as a list of labels with no repeated speaker (`label_list`), naming that
+   *  best pattern and its score. Undefined for an empty body or a match. */
+  no_match?: { reason: 'below_floor' | 'label_list'; pattern_id: string; score: number };
 }
 
 /**

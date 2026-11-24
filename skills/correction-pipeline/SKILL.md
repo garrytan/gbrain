@@ -22,7 +22,6 @@ writes_to:
   - people/
   - companies/
   - concepts/
-upstream: correction-pipeline@fc834ee
 ---
 
 # Correction Pipeline
@@ -231,8 +230,7 @@ This skill guarantees:
 - Propagation is checked (whole-brain grep + `gbrain search`)
 - The user gets a clear report of what was wrong, why, and what was fixed
 - Routing matches the canonical triggers in the frontmatter
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references
+- Examples use placeholder names and paths.
 
 ## Output Format
 

@@ -37,7 +37,9 @@ one committed snapshot.
 
 Active takes with a vector, nearest first (ties: the lower take id; PGLite leaves a tie to the database).
 Filters: the holder allow list (`null` reads every holder, a `null` element matches nothing), the source
-scope on the take's page, and with an eligibility policy the page's soft delete and quarantine. Rows have
+scope on the take's page, and with an eligibility policy the page's soft delete and quarantine. The store also
+reads `exclude_private` (the caller's page policy), `min_trust` (the trust floor over the take's stored tier) and
+`suppress_flagged`. Rows have
 the shape `searchTakes` returns, with the cosine as `score`.
 
 ## Differences from PGLite
@@ -58,16 +60,31 @@ the shape `searchTakes` returns, with the cosine as `score`.
 - **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
   `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
   whose origin is private, the member-access rules). The policy is checked per page before ranking, so a
-  hidden page never takes a result slot and a limit counts only visible pages. This line has no owner-only
-  sources, so the policy carries no owner-only rule and `page_hidden` reads only the rules above.
-  The TypeScript member sends the policy (`honorAliases`, `entityPrivacy`) as `exclude_private`; a caller whose policy is wider than the
+  hidden page never takes a result slot and a limit counts only visible pages. The policy also carries the owner-only rule
+  (`ownerOnly`, as `page_hidden` reads it): a page of an owner-only source never takes a slot, nor does a concept
+  synthesized from one, and under the closed form no page is served while the brain holds an owner-only source. A page named in `owner_only_marks` (a hard delete of an owner-only input, `keyword.md`) stays hidden on every page-reading member, because the cache reads the sources and the marks together.
+  The TypeScript member sends the policy (`honorAliases`, `entityPrivacy`, `ownerOnly`) as `exclude_private`; a caller whose policy is wider than the
   store's refuses (`private-provenance.ts`). `excludePrivate` also turns on the safe-chunk rule, as in
-  PGLite (`requiresSafeChunks`). A page that records no `chunker_version` counts as safe: this store's
-  chunker seals, and `chunk_queries` reads such a page as sealed. Only a recorded version below 4 is unsafe.
-- **Refused options.** The store applies neither `where`, `afterDate`, `beforeDate`, `minTrust` nor
-  `suppressFlagged`, so a set one refuses with `engine_capability_missing` and nothing runs, even beside
-  `excludePrivate` (an empty `where` object is ignored). `searchTakesVector` refuses `excludePrivate`,
-  `eligibility.floor` and `eligibility.suppressFlagged` the same way.
+  PGLite (`requiresSafeChunks`). A safe reader sees a page only when its `chunker_version` is 4 or more,
+  as in SQL (`chunker_version >= 4`) and the keyword gate: a page that records no version is not safe.
+- **`where`.** Every key must hold; a key holds when the page's top-level frontmatter field equals one of its
+  values or is a list holding one (`frontmatterWhereClauses`). The TypeScript member sends a string's numeric and
+  boolean readings beside it (`search-filters.ts` `whereFields`), as the keyword members do. The filter applies per
+  page before ranking, so a limit counts only kept pages. An absent or empty `where` keeps every page.
+- **`afterDate` / `beforeDate`.** A page is dated by its `effective_date`, else its `updated_at` (a store page
+  always has one, so the SQL's `created_at` arm never applies). A bound is strict unless its `*Inclusive` flag is
+  set. The TypeScript member reads the bound as `$n::text::timestamptz` does under UTC (`search-filters.ts`
+  `dateMicros`), for the ISO shapes; any other shape refuses with `engine_capability_missing`. The bounds apply per
+  page before ranking, as the keyword members' do (`keyword::DateWindow`).
+- **`minTrust`.** A page whose stamped trust tier ranks below the floor drops per page before ranking
+  (`trustFloorSql`, the floor `buildVisibilityClause` adds), so a limit counts only kept pages. An unset or empty
+  floor keeps every tier; a name that is no tier refuses with `invalid_argument` (`keyword::parse_trust_floor`).
+- **`suppressFlagged`.** A page at or below `agent_written` with a `flag` receipt in an activation reason family
+  drops per page before ranking (`activationSuppressedSql`, `trust::activation_suppressed`), so a limit counts only
+  kept pages. A flag in another family, or on a page above `agent_written`, suppresses nothing.
+- **Take options.** The store applies `exclude_private`, `min_trust` and `suppress_flagged` to
+  `searchTakesVector`. The TypeScript member (`store-members/vectors.ts`) still refuses `excludePrivate`,
+  `eligibility.floor` and `eligibility.suppressFlagged` with `engine_capability_missing` until it sends them.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
   whose config sets `search_embedding_column` or `embedding_columns`, refuse with

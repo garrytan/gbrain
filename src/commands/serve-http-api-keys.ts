@@ -15,7 +15,6 @@ import type { BrainEngine } from '../core/engine.ts';
 import { cliRenderContext, toAgentError, type Action } from '../core/agent-output.ts';
 import { grantFromTokenRow } from '../core/grants/model.ts';
 import { opError } from '../core/ops/contract.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { ALLOWED_SCOPES_LIST, isScope, localCliOnlyScopeViolation } from '../core/scope.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { isValidHolder } from '../core/takes-fence.ts';
@@ -32,6 +31,8 @@ export interface ApiKeyMintRequest {
   scopes: string[];
   /** undefined = no source grant (the `gbrain auth create` default). */
   sources?: string[];
+  /** GST-2898: also read every shared source, now and later; needs sources. */
+  readShared?: boolean;
   takesHolders: string[];
   defaultsApplied: Array<'scopes' | 'sources' | 'takes_holders'>;
 }
@@ -91,9 +92,11 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
       { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'host_admin', why: 'Lists the source ids this brain serves.', requires_exclusive: false, docs: DOCS });
   }
   if (sourcesParam) {
-    const rows = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [sourcesParam]);
-    const active = new Set(rows.map(r => r.id));
-    const missing = sourcesParam.filter(id => !active.has(id));
+    const missing: string[] = [];
+    for (const id of sourcesParam) {
+      const state = await engine.readSourceAttestState(id);
+      if (!state || state.archived === true) missing.push(id);
+    }
     if (missing.length) {
       throw invalid(`Unknown or archived source: ${missing.join(', ')}.`, 'Resubmit with active source ids from gbrain sources list.',
         'A key can only be granted sources this brain serves.',
@@ -108,7 +111,15 @@ export async function parseApiKeyMintRequest(engine: BrainEngine, body: unknown)
       createFix(['--takes-holders', 'world'], 'Mints the same key with the default world takes holder.'));
   }
   const takesHolders = holdersParam ?? (defaultsApplied.push('takes_holders'), [...API_KEY_DEFAULT_TAKES_HOLDERS]);
-  return { name, scopes, ...(sourcesParam ? { sources: sourcesParam } : {}), takesHolders, defaultsApplied };
+  if (raw.read_shared !== undefined && typeof raw.read_shared !== 'boolean') {
+    throw invalid('read_shared must be true or false.', 'Resubmit with read_shared true (also read every shared source, now and later) or omit it.',
+      'The switch adds every shared source to the key\'s reads; it never changes where the key writes.', listAction('Lists existing keys and their read_shared value.'));
+  }
+  if (raw.read_shared === true && !sourcesParam) {
+    throw invalid('read_shared needs sources: a key with no sources already reads every shared source.', 'Resubmit with sources naming the write source first, or omit read_shared.',
+      'The switch adds shared reads to a key that writes to one named source.', listAction('Lists existing keys and their sources.'));
+  }
+  return { name, scopes, ...(sourcesParam ? { sources: sourcesParam } : {}), ...(raw.read_shared === true ? { readShared: true } : {}), takesHolders, defaultsApplied };
 }
 
 function grantView(row: Record<string, unknown>) {
@@ -120,6 +131,7 @@ function grantView(row: Record<string, unknown>) {
     sources: s.kind === 'default' ? 'default' : s.kind === 'none' ? [] : s.kind === 'scalar' ? [s.writeSource] : [...s.readSources],
     takes_holders: grant.takesHolders ?? ['world'],
     private_pages: grant.privatePages,
+    read_shared: grant.readShared === true,
   };
 }
 
@@ -129,7 +141,7 @@ const sendError = (res: Response, status: number, e: unknown) =>
 export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
   app.get('/admin/api/api-keys', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const rows = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens ORDER BY created_at DESC, id');
+      const rows = await engine.listAccessTokenRows();
       res.json(rows.map(row => ({
         id: String(row.id), name: row.name, created_at: row.created_at, last_used_at: row.last_used_at,
         status: row.revoked_at != null ? 'revoked' : 'active', ...grantView(row),
@@ -149,11 +161,12 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
       return;
     }
     try {
-      const minted = await mintLegacyToken(engine, { name: request.name, scopes: request.scopes, takesHolders: request.takesHolders, ...(request.sources ? { sourceGrant: request.sources } : {}) });
+      const minted = await mintLegacyToken(engine, { name: request.name, scopes: request.scopes, takesHolders: request.takesHolders, ...(request.sources ? { sourceGrant: request.sources } : {}), ...(request.readShared ? { readShared: true } : {}) });
       res.json({
         id: minted.id, name: minted.name, token: minted.token,
         scopes_applied: request.scopes,
         sources_applied: request.sources ?? 'default',
+        read_shared: request.readShared === true,
         takes_holders_applied: request.takesHolders,
         defaults_applied: request.defaultsApplied,
       });
@@ -170,7 +183,7 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
       return;
     }
     try {
-      res.json({ id, revoked: await revokeLegacyTokenById(sqlQueryForEngine(engine), id) });
+      res.json({ id, revoked: await revokeLegacyTokenById(engine, id) });
     } catch {
       res.status(500).json({ error: 'api_key_revoke_failed', message: 'Revoke failed. Refresh the key list before retrying.' });
     }

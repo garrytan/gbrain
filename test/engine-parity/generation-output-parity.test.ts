@@ -77,12 +77,12 @@ async function admitPut(engine: BrainEngine, slug: string, requestId: string, in
 }
 
 describe('engine parity: generation ledger output', () => {
-  parityTest('listSourceIncarnations lists the source ids in byte order', {
-    methods: ['listSourceIncarnations'],
+  parityTest('listGenerationSourceIncarnations lists the source ids in byte order', {
+    methods: ['listGenerationSourceIncarnations'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'ab');
     await createSource(engine, backend, 'a-z');
-    const ids = (await engine.listSourceIncarnations(['ab', 'default', 'a-z', 'missing'])).map(row => row.id);
+    const ids = (await engine.listGenerationSourceIncarnations(['ab', 'default', 'a-z', 'missing'])).map(row => row.id);
     expect(ids).toEqual(['a-z', 'ab', 'default']);
     return ids;
   });

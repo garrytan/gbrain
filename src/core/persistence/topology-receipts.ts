@@ -9,8 +9,7 @@ import { receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
 
 export type { TopologyChange } from '../engine-sql/persistence-claims.ts';
 export async function priorTopologyChange(engine:BrainEngine,principal:string,requestId:string,intent:unknown):Promise<TopologyChange|null> {
-  const page=await engine.executeRaw("SELECT id FROM persistence_requests WHERE principal_kind='local_cli' AND principal_id=$1 AND request_id=$2::uuid",[principal,requestId]);
-  if(page.length) throw opError('idempotency_conflict','This request_id belongs to a page mutation.',
+  if(await engine.readWriteRequest('local_cli',principal,requestId)) throw opError('idempotency_conflict','This request_id belongs to a page mutation.',
     `Request ${requestId} already names a page write, so this lifecycle change was not accepted. Submit it with a new request id, or omit the id so gbrain generates one.`);
   const prior=await engine.readTopologyChange(principal,requestId);
   if(prior && prior.digest!==digest(intent)) throw opError('idempotency_conflict','This lifecycle request_id was accepted with different arguments.',
@@ -50,9 +49,11 @@ export async function recordTopologyChange(tx:BrainEngine, input:{principal:stri
     sourceId:input.sourceId,sourceIncarnation:input.incarnation,worktreeIds:input.worktrees,state:recovery?'recovering':'committed',
     recovery,recoveryBytes,terminalBytes,outcome,intentBytes});
   for(const counter of counters){
-    if(!counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,terminalBytes]);
-    if(recovery && !counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET outstanding_count=outstanding_count+1,intent_bytes=intent_bytes+$2 WHERE key=$1',[counter.key,intentBytes]);
-    if(recoveryBytes && counter.key!==key) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=$1',[counter.key,recoveryBytes]);
+    const principalOrBrain=!counter.key.startsWith('worktree:');
+    const delta={...(principalOrBrain?{lifetime_ids:1,terminal_bytes:terminalBytes}:{}),
+      ...(recovery&&principalOrBrain?{outstanding_count:1,intent_bytes:intentBytes}:{}),
+      ...(recoveryBytes&&counter.key!==key?{recovery_bytes:recoveryBytes}:{})};
+    if(Object.keys(delta).length) await tx.addPersistenceCounters(counter.key,delta);
   }
   return row;
 }

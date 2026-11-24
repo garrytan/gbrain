@@ -69,6 +69,21 @@ impl Brain {
         })
     }
 
+    /// `listGlobalPurgeWithdrawals(sourceId, hashes, worldOnly)`: the source's subject `*` purges of
+    /// the fingerprints `hashes` as withdrawals, in (visibility, fact_hash) order.
+    #[napi]
+    pub fn list_global_purge_withdrawals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hashes: Vec<String>,
+        world_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_global_purge_withdrawals(&source_id, &hashes, world_only)
+        })
+    }
+
     /// `insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt | null)`: resolves
     /// true when it recorded the withdrawal, false when it was already recorded.
     #[napi]
@@ -146,6 +161,23 @@ impl Brain {
         self.run(env, move |s| {
             s.read_source_purge_flags(&source_id)
                 .map(|(facts, takes)| serde_json::json!({ "facts": facts, "takes": takes }))
+        })
+    }
+
+    /// `listPurgedTakeRows(sourceId, [{ row_num, claim }], subject | null)`: resolves the matched
+    /// row numbers, ascending.
+    #[napi]
+    pub fn list_purged_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        takes: Value,
+        subject: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let takes: Vec<gbrain_store::facts::take_purges::TakeClaimRow> =
+                required(takes, "listPurgedTakeRows takes")?;
+            s.list_purged_take_rows(&source_id, &takes, subject.as_deref())
         })
     }
 

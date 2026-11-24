@@ -20,7 +20,7 @@ import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
 import { gateField, gateInput, heldOutcome, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { finishOwnerAcceptedTake, ownerAcceptedTake, recordContestedTake, supersessionGuarded } from '../trust/supersede-handlers.ts';
-import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
+import { storedTrustTier, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import { contestHeldRows } from '../trust/fence-guard.ts';
 import { ownerAcceptedRemoval } from '../trust/held-removals.ts';
 import { transitionTrustProposal } from '../trust/proposals.ts';
@@ -98,26 +98,24 @@ async function takeRemovalRequiresOwner(engine: BrainEngine, row: WriteRequest, 
  * its take_fence generation is held `fence_absent`: once a fence parses again the projection compares it with exactly
  * these rows (canonical-projections.ts `heldTakeFence`). None otherwise.
  */
-export async function heldTakeRows(engine: BrainEngine, sourceId: string, slug: string, pageId: number): Promise<ParsedTake[]> {
-  if (!(await engine.executeRaw(`SELECT 1 FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason='fence_absent'`,
-    [sourceId, TAKE_FENCE_KIND, fenceOwnerKey(slug)])).length) return [];
-  const rows = await engine.executeRaw<{ row_num: number; claim: string; kind: string; holder: string; weight: number; since_date: string | null; until_date: string | null;
-    source: string | null; active: boolean; resolved_at: Date | string | null; resolved_quality: TakeQuality | null; resolved_outcome: boolean | null; resolved_source: string | null;
-    resolved_value: number | null; resolved_unit: string | null; resolved_by: string | null }>(`SELECT row_num, claim, kind, holder, weight, since_date, until_date, source, active,
-      resolved_at, resolved_quality, resolved_outcome, resolved_source, resolved_value, resolved_unit, resolved_by FROM takes WHERE page_id=$1 ORDER BY row_num`, [pageId]);
+export async function heldTakeRows(engine: Pick<BrainEngine, 'listHeldFenceTakeRows'>, sourceId: string, slug: string, pageId: number): Promise<ParsedTake[]> {
+  const rows = await engine.listHeldFenceTakeRows({ sourceId, kind: TAKE_FENCE_KIND, ownerKey: fenceOwnerKey(slug), pageId });
   return rows.map(t => ({ rowNum: Number(t.row_num), claim: t.claim, kind: t.kind, holder: t.holder, weight: Number(t.weight), active: t.active,
     ...(t.since_date ? { sinceDate: t.since_date } : {}), ...(t.until_date ? { untilDate: t.until_date } : {}), ...(t.source ? { source: t.source } : {}),
-    ...(t.resolved_quality ? { resolvedQuality: t.resolved_quality, resolvedAt: t.resolved_at ? new Date(t.resolved_at).toISOString() : undefined,
+    ...(t.resolved_quality ? { resolvedQuality: t.resolved_quality as TakeQuality, resolvedAt: t.resolved_at ? new Date(t.resolved_at).toISOString() : undefined,
       ...(t.resolved_outcome !== null ? { resolvedOutcome: t.resolved_outcome } : {}), ...(t.resolved_source ? { resolvedEvidence: t.resolved_source } : {}),
       ...(t.resolved_value !== null ? { resolvedValue: Number(t.resolved_value) } : {}), ...(t.resolved_unit ? { resolvedUnit: t.resolved_unit } : {}),
       ...(t.resolved_by ? { resolvedBy: t.resolved_by } : {}) } : {}) }));
 }
 
-/** `editBody`: a same-page edit published with the takes change (consolidation closes its fenced facts here). */
-export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
-  try { return await prepare(engine,row,config,editBody); } catch (error) { return fail(error); }
+/**
+ * `editBody`: a same-page edit published with the takes change (consolidation closes its fenced facts here).
+ * `declared` (GST-3612): a maintenance writer's derived tier, which the write gate and the supersession guard see instead of the request channel's.
+ */
+export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string, declared?: WriteTrust): Promise<PreparedMutation> {
+  try { return await prepare(engine,row,config,editBody,declared); } catch (error) { return fail(error); }
 }
-async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
+async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string, declared?: WriteTrust): Promise<PreparedMutation> {
   const stored = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!stored || stored.page.id !== row.page_id) throw takesRefusal('page_identity_changed','The accepted page no longer exists.',row,
     `Page ${row.slug} was deleted or replaced after the takes request was accepted.`);
@@ -153,7 +151,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   let oldRow: number | undefined;
   let removedRow: number | undefined;
   // #5575: the takes write's declared tier (ENG-18) for the guarded supersession and the write gate.
-  const trust = requestChannelTrust(row) ?? { tier: 'unknown' as const, origin: null };
+  const trust = declared ?? requestChannelTrust(row) ?? { tier: 'unknown' as const, origin: null };
   let contestedOld: { id: number; tier: string } | undefined;
   let acceptedProposal: { id: number; newId: number; newRow: number } | null = null;
   let acceptedRemoval: number | null = null;
@@ -181,7 +179,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       const citing=parsed.takes.find(t=>t.rowNum!==number && Number(t.source?.match(/superseded by #(\d+)/)?.[1])===number);
       if (citing) throw takesRefusal('invalid_params',`Row #${number} replaces row #${citing.rowNum}.`,row,
         `Row #${citing.rowNum} on ${row.slug} cites row #${number} as "superseded by #${number}"; remove row #${citing.rowNum} first, or keep both.`);
-      const [stored]=await engine.executeRaw<{id:number;claim:string;trust_tier:string}>('SELECT id,claim,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,number]);
+      const stored=await engine.readTakeRowTrust(snapshot.page.id,number);
       if (stored && stored.claim!==target.claim) throw takesRefusal('invalid_params',`Row #${number}'s database copy disagrees with the page's takes fence; run gbrain takes rebuild ${row.slug} --source-id ${row.source_id} first.`,row,
         `Rebuild the page's takes index from its fence first with gbrain takes rebuild ${row.slug} --source-id ${row.source_id}, check the row, then remove it again.`);
       // W1 #6783 §12 (a): a lower-tier writer never removes a more trusted take; a `forget` proposal asks the owner.
@@ -198,7 +196,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       // Only an explicit override is validated; the inherited holder already round-tripped with the existing fence.
       const holder=typeof p.holder==='string'?validHolder(p.holder,row):target.holder;
       edit.assertHolderAllowed(holder,holders); requiredHolders.add(holder);
-      const [stored]=await engine.executeRaw<{id:number;trust_tier:string}>('SELECT id,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,number]);
+      const stored=await engine.readTakeRowTrust(snapshot.page.id,number);
       const accepted=p.trust_accept!==undefined && stored ? await ownerAcceptedTake(engine,row,Number(stored.id),snapshot.page.id) : null;
       if (accepted) {
         // The owner accepted a supersede_take proposal (CEO-9): strike the old row toward the contested row already in the fence.
@@ -246,7 +244,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   const republished = parseTakesFence(next);
   if (republished.warnings.length) throw takesRefusal('invalid_params',`The write would publish a takes fence the next write would refuse: ${republished.warnings[0]}`,row,
     'One of the values would not round-trip through the takes fence; correct it (holder, kind, claim and source are single-line fence cells).');
-  const gate = allocated !== undefined ? decideTakeWrite({ claim: String(p.claim), source: (p.source as string | undefined) ?? null }, { sourceId: row.source_id, slug: row.slug,
+  const gate = allocated !== undefined ? decideTakeWrite({ claim: String(p.claim), source: (p.source as string | undefined) ?? null }, { sourceId: row.source_id, slug: row.slug, pageId: snapshot.page.id,
     payload: { page_id: snapshot.page.id, claim: p.claim, kind: p.kind ?? null, holder: p.holder ?? null, weight: p.weight ?? null, source: p.source ?? null, since: p.since ?? null },
     input: gateInput(trust, row.id), cfg: await loadWriteGateConfig(engine) }) : null;
   if (gate?.action === 'reject') throw writeGateRejectedError(gate.assessment);
@@ -280,7 +278,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
           value:t.resolvedValue,unit:t.resolvedUnit,source:t.resolvedEvidence,resolvedBy:t.resolvedBy!});
         await tx.executeRaw('UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,t.rowNum,t.resolvedAt]);
       }
-      const [written]=allocated!==undefined?await tx.executeRaw<{id:number;trust_tier:string}>('SELECT id,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,allocated]):[];
+      const written=allocated!==undefined?await tx.readTakeRowTrust(snapshot.page.id,allocated):null;
       if (written && contestedOld) result.contested=await recordContestedTake(tx,{sourceId:row.source_id,oldId:contestedOld.id,oldTier:storedTrustTier(contestedOld.tier),
         newId:Number(written.id),newTier:storedTrustTier(written.trust_tier),guard:'takes_supersede'});
       if (acceptedProposal) await finishOwnerAcceptedTake(tx,acceptedProposal);

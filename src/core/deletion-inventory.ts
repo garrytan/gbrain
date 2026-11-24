@@ -38,12 +38,14 @@ const ROWS: readonly Row[] = [
   ['access_group_members', 'out_of_scope', 'no_memory_text', 'group_id member_id'],
   ['access_groups', 'out_of_scope', 'no_memory_text', 'id'],
   ['access_member_links', 'out_of_scope', 'no_memory_text', 'system external_id member_id'],
+  ['access_handovers', 'out_of_scope', 'no_memory_text', 'id member_id owner_id plan_hash choices items commits state undo_of'],
   ['access_member_sources', 'out_of_scope', 'no_memory_text', 'member_id source_id'],
   ['access_members', 'out_of_scope', 'no_memory_text', 'id display_name email kind'],
   ['access_pending_coverage', 'out_of_scope', 'no_memory_text', 'source_id prefix reason detail'],
   ['access_policy_migrations', 'out_of_scope', 'no_memory_text', 'id source_id direction phase receipts'],
   ['access_policy_revisions', 'out_of_scope', 'no_memory_text', 'source_id rules digest origin proposed_by approved_by change_kind operation_id'],
   ['access_policy_state', 'out_of_scope', 'no_memory_text', 'source_id'],
+  ['access_read_log', 'out_of_scope', 'no_memory_text', 'member audience operation transport result_code'],
   ['access_rules', 'out_of_scope', 'no_memory_text', 'source_id rule_id prefix readable_by created_by'],
   ['access_tokens', 'out_of_scope', 'secret_material', 'name token_hash scopes permissions source_grant source_id federated_read allowed_operations takes_holders min_trust private_pages private_facts member_id may_act_for attest_actor attest_ops attest_read attest_sources'],
   ['belief_events', 'swept', 'belief_ledger', 'event_key source_id slug subject_kind subject_key event_type origin trust_tier writer_tier tier_basis visibility value value_hash prior_hash state_hash cause claim_fp redacted_fields'],
@@ -81,7 +83,11 @@ const ROWS: readonly Row[] = [
   ['dream_synthesis_completions', 'out_of_scope', 'no_memory_text', 'source_id idempotency_key'],
   ['dream_verdicts', 'out_of_scope', 'probed_reported', 'file_path content_hash reasons content_type segments entities model', 'segments entities reasons'],
   ['drift_decisions', 'out_of_scope', 'probed_reported', 'reasoning applied_by', 'reasoning'],
+  ['engine_writer_coverage_gaps', 'out_of_scope', 'no_memory_text', 'code'],
+  ['engine_writer_observations', 'out_of_scope', 'no_memory_text', 'host_id application_name process_kind gbrain_version'],
+  ['engine_writer_sessions', 'out_of_scope', 'no_memory_text', 'application_name client_addr'],
   ['entity_identities', 'out_of_scope', 'no_memory_text', 'entity_id source_id established_by'],
+  ['entity_identity_reviews', 'out_of_scope', 'no_memory_text', 'decision_id verdict members group_id entity_id canonical_source_id canonical_slug decided_by origin home_source_id git_blob evidence'],
   ['eval_candidates', 'out_of_scope', 'probed_reported', 'tool_name query retrieved_slugs source_ids detail detail_resolved salience_param recency_param salience_resolved recency_resolved salience_source recency_source embedding_column schema_pack_per_source', 'query'],
   ['eval_capture_failures', 'out_of_scope', 'no_memory_text', 'reason'],
   ['eval_contradictions_cache', 'out_of_scope', 'probed_reported', 'chunk_a_hash chunk_b_hash model_id prompt_version truncation_policy verdict', 'verdict'],
@@ -128,6 +134,7 @@ const ROWS: readonly Row[] = [
   ['op_checkpoint_paths', 'out_of_scope', 'no_memory_text', 'op fingerprint path'],
   ['op_checkpoints', 'out_of_scope', 'no_memory_text', 'op fingerprint completed_keys'],
   ['open_loops', 'swept', 'open_loops', 'source_id dedup_key loop_type counterparty_slug counterparty_source_id counterparty_email summary evidence thread_id page_slug status detector closed_by'],
+  ['owner_only_marks', 'out_of_scope', 'text_free_ledger', 'row_table row_id'],
   ['page_aliases', 'swept', 'page_aliases', 'source_id alias_norm slug origin alias_text'],
   ['page_body_manifest', 'swept', 'segment_manifest', 'region source_id sha256 cut_kind entry_state protected_regions facts_slots outline hash_state'],
   ['page_body_staging_parts', 'swept', 'body_stagings', 'sha256 body', 'body'],
@@ -172,6 +179,8 @@ const ROWS: readonly Row[] = [
   ['retrieval_feedback', 'swept', 'retrieval_feedback', 'event_id signal element_kind source_id element_key client_id'],
   ['retrieval_weights', 'swept', 'retrieval_feedback', 'source_id element_kind element_key content_hash'],
   ['search_telemetry', 'out_of_scope', 'no_memory_text', 'date mode intent'],
+  ['secret_store', 'out_of_scope', 'secret_material', 'id source_id rule ciphertext nonce tag key_id key_host value_mac status'],
+  ['secret_store_occurrence', 'out_of_scope', 'no_memory_text', 'entry_id source_id slug field origin commit_sha path pre_field_sha256 created_by'],
   ['session_context_state', 'out_of_scope', 'probed_reported', 'source_id client_id session_id standing_entities surfaced_slugs checkpoint_manifest', 'checkpoint_manifest standing_entities'],
   ['shared_skill_delivery_batches', 'out_of_scope', 'no_memory_text', 'view_token authority_digest revisions evidence'],
   ['shared_skill_heads', 'out_of_scope', 'no_memory_text', 'source_id pack_id name metadata policy_epoch'],
@@ -210,7 +219,9 @@ const ROWS: readonly Row[] = [
   ['wake_subscriptions', 'out_of_scope', 'no_memory_text', 'event target target_ref principal_kind principal_id member_id wake_user ws_subscription_id state delivered_marker last_error'],
   ['wake_terms_acceptances', 'out_of_scope', 'no_memory_text', 'principal_key terms_version'],
   ['wanted_links', 'out_of_scope', 'probed_reported', 'source_id producer ref_kind target_source_id target_ref link_type context', 'context'],
-  ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
+  ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug page_id page_candidates fingerprint payload write_origin tier reason_families reasons request_id status decided_by',
+    // The ids carry no text: the probe reads the columns it read before the hold followed the page id.
+    'kind source_id slug fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
   ['write_gate_receipts', 'out_of_scope', 'text_free_ledger', 'target_table target_id source_id content_hash tier verdict reason_families reasons request_id'],
 ];
 
@@ -242,3 +253,114 @@ export const OUT_OF_REACH_RESIDUALS: ReadonlyArray<{ store: string; detail: stri
   { store: 'provider_copies', detail: 'Embedding, decision and chat providers that received the text keep whatever their retention keeps.' },
   { store: 'database_physical', detail: 'Deleted rows stay in table pages, indexes and the write-ahead log until vacuum and WAL recycling; replicas and point-in-time recovery windows keep them longer.' },
 ];
+
+/**
+ * The Rust engine's store keeps keyspaces, not tables (rust/docs/store/keyspaces.md). One entry per keyspace of
+ * the store's catalog (`gbrain_store::keyspaces::KEYSPACES`), and one per record kind for the tags whose next byte
+ * names one (`A` takes, `R` keyword, `a` telemetry). `tables` names the SQL tables above whose rows, or an index
+ * over them, the keyspace keeps; the keyspace shares their class. An entry with no table says why in `none`, and
+ * is out of scope with that reason. `test/deletion-inventory.test.ts` fails when the catalog gains a tag or kind
+ * this list does not name, or when an entry names a table the inventory above does not list.
+ */
+export interface RustStoreEntry {
+  /** The tag byte, as its one ASCII character. */
+  tag: string;
+  /** The record kind byte after the tag, for `A`, `R` and `a`. */
+  kind?: number;
+  /** The catalog's record name for a kind, or the family for a tag. */
+  name: string;
+  tables: readonly string[];
+  /** True when the keyspace only indexes rows another keyspace keeps. */
+  index?: true;
+  /** For an entry with no table: the out-of-scope reason and what the keyspace holds. */
+  none?: { reason: OutOfScopeReason; detail: string };
+}
+
+type RustRow = [tag: string, kind: number | null, name: string, tables: string, index?: 'index', none?: [OutOfScopeReason, string]];
+const RUST_ROWS: readonly RustRow[] = [
+  ['1', null, 'reason_tombstones', 'reason_purge_tombstones'],
+  ['3', null, 'secret_store', 'secret_store secret_store_occurrence'],
+  ['A', 0x01, 'take', 'takes'],
+  ['A', 0x02, 'take_by_row', 'takes', 'index'],
+  ['A', 0x03, 'take_evidence', '', undefined, ['no_memory_text', 'synthesis_evidence rows: page ids, take row numbers and a citation index; the SQL table has no text-bearing column, so it has no row above']],
+  ['A', 0x04, 'take_cited', '', 'index', ['no_memory_text', 'the reverse index of take_evidence (synthesis_evidence): ids only']],
+  ['A', 0x05, 'take_grade', 'take_grade_cache'],
+  ['A', 0x06, 'take_horizon', 'take_horizons'],
+  ['A', 0x07, 'take_nudge', 'take_nudge_log'],
+  ['A', 0x08, 'take_proposal', 'take_proposals'],
+  ['A', 0x09, 'take_proposal_idempotency', 'take_proposals', 'index'],
+  ['A', 0x0A, 'extract_rollup_day', 'extract_rollup_7d'],
+  ['B', null, 'embeddings', 'content_chunks takes pages page_embedding_budget'],
+  ['C', null, 'core', 'config'],
+  ['D', null, 'core', 'timeline_entries', 'index'],
+  ['E', null, 'core', 'timeline_entries'],
+  ['F', null, 'facts', 'facts open_loops fact_relink_attempts page_purges page_facts_reconcile derived_generations derived_generation_items fact_purges'],
+  ['G', null, 'core', 'timeline_entries', 'index'],
+  ['H', null, 'code_edges', 'code_edges_chunk code_edges_symbol'],
+  ['I', null, 'core', 'pages', 'index'],
+  ['J', null, 'core', 'persistence_requests'],
+  ['K', null, 'core', 'content_chunks'],
+  ['L', null, 'core', 'links'],
+  ['M', null, 'core', 'owner_only_marks pages'],
+  ['N', null, 'ontology', '', undefined, ['no_memory_text', 'no record is written under N: ontology dimension rows are facts rows under F']],
+  ['O', null, 'core', 'links', 'index'],
+  ['P', null, 'core', 'pages'],
+  ['Q', null, 'contradictions', 'eval_contradictions_runs eval_contradictions_cache'],
+  ['R', 0x00, 'keyword_index_state', '', undefined, ['no_memory_text', 'the keyword index build state: counters and generations, rebuilt from pages and chunks']],
+  ['R', 0x01, 'keyword_chunk_posting', 'content_chunks', 'index'],
+  ['R', 0x02, 'keyword_page_posting', 'pages', 'index'],
+  ['R', 0x03, 'keyword_title_trigram', 'pages', 'index'],
+  ['R', 0x04, 'keyword_slug_basename', 'pages', 'index'],
+  ['R', 0x05, 'keyword_chunk_forward', 'content_chunks', 'index'],
+  ['R', 0x06, 'keyword_page_forward', 'pages', 'index'],
+  ['S', null, 'core', 'sources'],
+  ['T', null, 'core', 'content_chunks', 'index'],
+  ['U', null, 'core', 'links', 'index'],
+  ['V', null, 'core', 'page_versions'],
+  ['W', null, 'core', 'persistence_local_writers'],
+  ['X', null, 'vectors', '', undefined, ['no_memory_text', 'no record is written under X: the vectors family reads the embeddings under B']],
+  ['Y', null, 'dream', 'dream_verdicts'],
+  ['Z', null, 'eval_capture', 'eval_candidates eval_capture_failures decide_state decide_spend decision_receipts decide_calibrations calibration_profiles decide_proposals decide_review_proposals decide_review_queue decide_sweep_deferred'],
+  ['a', 0x01, 'search_telemetry', 'search_telemetry'],
+  ['a', 0x02, 'mcp_request_log', 'mcp_request_log'],
+  ['a', 0x03, 'mcp_request_log_rollup', 'mcp_request_log_rollup'],
+  ['a', 0x04, 'retrieval_events', 'retrieval_events'],
+  ['a', 0x05, 'retrieval_event_pages', 'retrieval_event_pages'],
+  ['a', 0x06, 'retrieval_event_links', 'retrieval_event_links'],
+  ['a', 0x07, 'retrieval_feedback', 'retrieval_feedback'],
+  ['a', 0x08, 'retrieval_weights', 'retrieval_weights'],
+  ['a', 0x09, 'budget_ledger', 'budget_ledger'],
+  ['a', 0x0A, 'budget_reservations', 'budget_reservations'],
+  ['a', 0x0B, 'chat_usage_log', 'chat_usage_log'],
+  ['b', null, 'page_body', 'page_segment_texts page_body_manifest page_body_stagings page_segment_derivations pages page_body_staging_texts'],
+  ['c', null, 'chunk_queries', '', undefined, ['no_memory_text', 'no record is written under c: the chunk_queries family reads K, T and b']],
+  ['d', null, 'persistence', 'persistence_counters op_checkpoints persistence_topology_changes page_projection_jobs persistence_effects op_checkpoint_paths'],
+  ['e', null, 'extraction', 'pages'],
+  ['f', null, 'jobs', 'dream_synthesis_completions'],
+  ['g', null, 'code_edges', 'code_traversal_cache'],
+  ['h', null, 'generations', 'derived_generations derived_generation_items derived_generation_attempts derived_generation_valve derived_generation_activations'],
+  ['i', null, 'entity_identities', 'entity_identities'],
+  ['j', null, 'core', 'persistence_requests', 'index'],
+  ['k', null, 'aliases', 'slug_aliases page_aliases pages slug_rename_history'],
+  ['l', null, 'core', 'links', 'index'],
+  ['m', null, 'jobs', 'minion_jobs minion_inbox gbrain_cycle_locks minion_attachments wake_subscriptions wake_forgets wake_terms_acceptances wake_crons wake_cron_runs subagent_messages subagent_tool_executions mcp_spend_reservations minion_lease_pressure_log mcp_spend_log oauth_clients access_tokens'],
+  ['n', null, 'stats', 'ingest_log'],
+  ['o', null, 'core', 'pages', 'index'],
+  ['p', null, 'page_ops', '', undefined, ['no_memory_text', 'page_retrievals rows: a page id and the time it was last retrieved; the SQL table has no text-bearing column, so it has no row above']],
+  ['q', null, 'link_queries', 'link_relationships link_transitions wanted_links'],
+  ['r', null, 'raw_files', 'raw_data files'],
+  ['s', null, 'salience', 'pages'],
+  ['t', null, 'trust', 'fact_withdrawals write_gate_receipts write_gate_holds trust_proposals'],
+  ['u', null, 'timeline_queries', 'timeline_entries', 'index'],
+  ['v', null, 'relations', '', undefined, ['no_memory_text', 'the relation catalog: no record is built under v yet']],
+  ['w', null, 'transactions', '', undefined, ['no_memory_text', 'the lock queue: held in memory, no record is written under w']],
+  ['x', null, 'access_members', 'access_members access_groups access_group_members access_member_links'],
+  ['y', null, 'session_state', 'session_context_state'],
+  ['z', null, 'access_rules', 'access_policy_state access_rules access_pending_coverage access_policy_revisions pages access_policy_migrations'],
+  ['~', null, 'family_escape', '', undefined, ['no_memory_text', 'the family escape: it only starts a two-byte family tag, and no record is written under ~ alone']],
+];
+
+export const RUST_STORE_INVENTORY: readonly RustStoreEntry[] = RUST_ROWS.map(([tag, kind, name, tables, index, none]) => ({
+  tag, ...(kind === null ? {} : { kind }), name, tables: tables ? tables.split(' ') : [],
+  ...(index ? { index: true as const } : {}), ...(none ? { none: { reason: none[0], detail: none[1] } } : {}),
+}));

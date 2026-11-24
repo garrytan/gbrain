@@ -268,13 +268,15 @@ export interface DreamAtomPage {
   slug: string;
   title: string;
   compiled_truth: string;
+  /** #9653: the page's knowledge_revision when it was read (a held concept's rebuild refuses if it moved). */
+  revision: string;
   frontmatter: { concepts?: string[]; imported_from?: string };
   private: boolean;
 }
 
 /** The live atom pages of `sourceId` that were not imported, with whether each is private. */
 export async function listDreamAtomPages(raw: EngineRawRead, sourceId: string): Promise<DreamAtomPage[]> {
-  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, compiled_truth, frontmatter, NOT (${trustedSql(privatePagesFilterFragment('pages'))}) AS private
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${trustedSql(privatePagesFilterFragment('pages'))}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = ${sourceId}
@@ -287,7 +289,7 @@ export async function listDreamAtomPages(raw: EngineRawRead, sourceId: string): 
 export async function listSynthesisPageBodies(raw: EngineRawRead, sourceId: string, slugs: string[]): Promise<Array<{ slug: string; title: string | null; body: string | null }>> {
   return raw<{ slug: string; title: string | null; body: string | null }>(
     `SELECT slug, title, COALESCE(compiled_truth, '') || E'\\n' || COALESCE(timeline, '') AS body FROM pages
-      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug`, [sourceId, slugs]);
+      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug COLLATE "C"`, [sourceId, slugs]);
 }
 
 /** Committed-or-pending requests on the output page after the child's put_page, oldest first. */

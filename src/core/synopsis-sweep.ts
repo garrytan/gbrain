@@ -29,6 +29,7 @@ import {
 } from './page-summary.ts';
 import { reservationCostUsd } from './budget/reservation-cost.ts';
 import type { CRMode } from './types.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 export const SYNOPSIS_SWEEP_JOB = 'contextual_reindex_per_chunk';
 export const SYNOPSIS_SWEEP_ARGV = ['gbrain', 'reindex', '--synopsis'] as const;
@@ -43,21 +44,21 @@ export interface SynopsisTierConfig {
   kill_switch: boolean;
   /** Sources whose own contextual_retrieval_mode is per_chunk_synopsis. */
   synopsis_sources: string[];
-  /** True when any page can resolve to the synopsis tier (page frontmatter overrides aside). */
+  /** True when any page can resolve to the synopsis tier: the global tier, a source row, or a trusted page frontmatter override. */
   configured: boolean;
 }
 
 export async function readSynopsisTierConfig(engine: BrainEngine): Promise<SynopsisTierConfig> {
   const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
-  const rows = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE contextual_retrieval_mode = 'per_chunk_synopsis' AND NOT archived ORDER BY id`);
-  const synopsisSources = rows.map(r => r.id);
   const killSwitch = knobs.contextual_retrieval_disabled === true;
+  // #9683: a page's trusted frontmatter can pick the tier (the trust rule of eligiblePagesSql); the check is skipped
+  // when the kill switch is on or the global tier already is the synopsis tier.
+  const tier = await engine.readSynopsisTierSources(killSwitch || knobs.contextual_retrieval === 'per_chunk_synopsis');
   return {
     global_tier: knobs.contextual_retrieval,
     kill_switch: killSwitch,
-    synopsis_sources: synopsisSources,
-    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || synopsisSources.length > 0),
+    synopsis_sources: tier.sourceIds,
+    configured: !killSwitch && (knobs.contextual_retrieval === 'per_chunk_synopsis' || tier.sourceIds.length > 0 || tier.frontmatterPicks),
   };
 }
 
@@ -233,7 +234,9 @@ export async function readLastSynopsisSweep(engine: BrainEngine): Promise<{ jobs
       `SELECT count(*)::bigint AS jobs, max(finished_at) AS last FROM minion_jobs WHERE name = $1`, [SYNOPSIS_SWEEP_JOB]);
     const last = rows[0]?.last ?? null;
     return { jobs: Number(rows[0]?.jobs ?? 0), last_finished_at: last === null ? null : new Date(last).toISOString() };
-  } catch {
+  } catch (e) {
+    // null means the queue table is unreadable on this brain, never that an engine refused the read.
+    rethrowCapabilityRefusal(e);
     return null;
   }
 }

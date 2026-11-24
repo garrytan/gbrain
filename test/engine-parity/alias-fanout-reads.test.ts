@@ -1,7 +1,8 @@
 /**
  * BrainEngine parity: the alias fan-out reads of engine-sql/alias-fanout-reads.ts (findPagesByTitles,
  * resolveCaseSensitiveAliases, readPageTitle, readPageAliasRows), which search's alias fan-out
- * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`.
+ * (src/core/search/alias-fanout.ts) used to run through `engine.executeRaw`, and readEntityAliasRows, the entity
+ * card's alias read (verbs/entity-card.ts, entity-card-identity.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member returns the same rows in the same order on every engine arm (PGLite always; Postgres with
@@ -199,6 +200,44 @@ describe('engine parity: alias fan-out reads', () => {
   );
 
   parityTest(
+    'readEntityAliasRows returns every alias row of the listed slugs in one source, by alias',
+    { methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'readEntityAliasRows'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      // Written out of alias order, with a same-named page in `other` and an unlisted page in `default`.
+      await engine.putPage('people/alice-example', page('person', 'Alice Example'), { sourceId: 'other' });
+      await engine.setPageAliases('people/alice-example', 'other', ['foreign']);
+      await engine.putPage('people/alice-example', page('person', 'Alice Example'));
+      await engine.setPageAliases('people/alice-example', 'default', ['zed', 'alice']);
+      await engine.replaceDerivedAliases('people/alice-example', 'default', [
+        { alias_norm: 'mike', origin: 'declared', case_sensitive: false, alias_text: 'Mike' },
+      ]);
+      await engine.putPage('people/al-twin', page('person', 'Al Twin'));
+      await engine.setPageAliases('people/al-twin', 'default', ['bravo']);
+      await engine.putPage('people/unlisted', page('person', 'Unlisted'));
+      await engine.setPageAliases('people/unlisted', 'default', ['able']);
+      const both = await engine.readEntityAliasRows('default', ['people/alice-example', 'people/al-twin', 'people/missing']);
+      const one = await engine.readEntityAliasRows('default', ['people/alice-example']);
+      const other = await engine.readEntityAliasRows('other', ['people/alice-example']);
+      const none = await engine.readEntityAliasRows('default', []);
+      const row = (r: { slug: string; alias_norm: string; origin: string | null; alias_text: string | null }) => `${r.slug}|${r.alias_norm}|${r.origin}|${r.alias_text}`;
+      const result = { both: both.map(row), one: one.map(row), other: other.map(row), none: none.map(row) };
+      expect(result).toEqual({
+        both: [
+          'people/alice-example|alice|frontmatter|null',
+          'people/al-twin|bravo|frontmatter|null',
+          'people/alice-example|mike|declared|Mike',
+          'people/alice-example|zed|frontmatter|null',
+        ],
+        one: ['people/alice-example|alice|frontmatter|null', 'people/alice-example|mike|declared|Mike', 'people/alice-example|zed|frontmatter|null'],
+        other: ['people/alice-example|foreign|frontmatter|null'],
+        none: [],
+      });
+      return result;
+    },
+  );
+
+  parityTest(
     'readPageTitle reads the title of a live or soft-deleted page in its own source, and null for no page',
     { methods: ['putPage', 'softDeletePage', 'readPageTitle'] },
     async (engine, backend) => {
@@ -279,9 +318,10 @@ describe('engine parity: alias fan-out reads of derived alias rows', () => {
       const both = await engine.resolveCaseSensitiveAliases(['alice', 'ae'], ['other', 'default']);
       expect(both).toEqual([
         { slug: 'people/a-founder', alias_norm: 'ae', alias_text: 'aE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        // By slug, alias, then alias text in byte order (master's R2 contract: the rows carry no source).
         { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'A.E.' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
       ]);
       // Not case-sensitive: the derived `alice` row and the frontmatter `ae` row never answer.
       const notCase = await engine.resolveCaseSensitiveAliases(['alice'], ['default']);
@@ -345,7 +385,7 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], lineage: true, hidePrivate: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));

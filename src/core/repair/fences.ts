@@ -179,7 +179,7 @@ async function recordHeld(engine: BrainEngine, src: FenceSource, cand: { path: s
   if (!cand.held || !cand.path || !(held.reason in FENCE_REASONS)) return;
   const reason = held.reason as FenceReason;
   await recordFenceHoldRepair(engine, { sourceId: src.id, incarnation: src.incarnation, path: cand.path, state: { reason, tier: heldTier(reason), at: new Date().toISOString(),
-    next_attempt_after: held.next ?? null, ...(held.gate ? { gate: held.gate } : {}), ...(held.rows?.length ? { rows: held.rows.slice(0, 50) } : {}) } }).catch(() => false);
+    next_attempt_after: held.next ?? null, ...(held.gate ? { gate: held.gate } : {}), ...(held.rows?.length ? { rows: held.rows.slice(0, 50) } : {}) } });
 }
 
 /** Candidates the selection names that the census has not judged yet: a file under a source root, or a stored page. */
@@ -196,9 +196,10 @@ async function extraCandidates(engine: BrainEngine, scope: RepairScope, selectio
   }
   for (const slug of selection.slugs) {
     if (found.some(c => c.key === slug)) continue;
-    const rows = await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM pages WHERE slug=$1 AND source_id=ANY($2::text[]) AND deleted_at IS NULL', [slug, scope.source_ids]);
-    if (!rows.length) unknown.push(`--slug ${slug}`);
-    for (const row of rows) extra.push(base(row.source_id, slug, null));
+    const hits: string[] = [];
+    for (const id of scope.source_ids) if (await engine.getPage(slug, { sourceId: id })) hits.push(id);
+    if (!hits.length) unknown.push(`--slug ${slug}`);
+    for (const id of hits) extra.push(base(id, slug, null));
   }
   return { extra, unknown };
 }
@@ -228,7 +229,7 @@ const previewFix = (sourceId: string, path: string | null, slug: string): Action
 
 /** The hash a preview of this selection prints when it finds nothing to repair. */
 async function emptyPlanHash(engine: BrainEngine, scope: RepairScope, selection: Selection): Promise<string> {
-  const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sourcesRows = await engine.listSourceIncarnations(scope.source_ids);
   return previewHash({ kind: 'fences-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: [] });
 }
 
@@ -351,7 +352,7 @@ export const fencesRepair: RepairHandler = {
     }
     let waiting = 0;
     for (const entry of [...approved].reverse()) { if (entry.tier === 'llm') waiting++; entry.llm_waiting = entry.tier === 'llm' ? waiting : 0; }
-    const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sourcesRows = await engine.listSourceIncarnations(scope.source_ids);
     const hash = previewHash({ kind: 'fences-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: approved });
     if (approved.length && !opts?.apply) await saveApprovedSet<ApprovedSetItem>(engine, { command: 'fences', hash }, approved.map(entry => ({ ...entry, selection })));
     const partial = runs.some(run => !run.complete);
@@ -554,8 +555,7 @@ async function reportFences(ctx: OperationContext, scope: RepairScope, result: R
     // An --expect apply replays the approved set only; re-check the selection for what the preview listed as held.
     if (opts.expect) for (const [reason, count] of Object.entries(await heldInScope(ctx.engine, scope, opts, result))) remaining[reason] = (remaining[reason] ?? 0) + count;
   } else if (result.affected) remaining.pending_repair = result.affected;
-  const [oldest] = await ctx.engine.executeRaw<{ held_at: string | null }>(`SELECT min(completed_keys->0->>'held_at') AS held_at FROM op_checkpoints
-    WHERE op='sync-hold' AND completed_keys->0->>'code'='invalid_fence' AND completed_keys->0->>'source_id'=ANY($1::text[])`, [scope.source_ids]).catch(() => [{ held_at: null }]);
+  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('invalid_fence', scope.source_ids) };
   const llmRepairs = repairedByTier.llm;
   const spent = typeof result.cost.llm_usd === 'number' ? result.cost.llm_usd : 0;
   const verification: FenceRepairVerification = { candidates: result.affected + Object.values(result.residuals).reduce((a, b) => a + b, 0) - (result.residuals.already_clean ?? 0),

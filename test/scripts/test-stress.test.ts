@@ -134,6 +134,45 @@ describe('test:stress runner', () => {
     expect(reason).toBeNull();
   });
 
+  test('test/e2e/openclaw-skill-resolver-real.test.ts is owned by the e2e.yml job that sets GBRAIN_TEST_REQUIRE_OPENCLAW', () => {
+    expect(skipReason('test/e2e/openclaw-skill-resolver-real.test.ts')).toContain('.github/workflows/e2e.yml supplies the prerequisite, runs it through run-with-receipt.sh with GBRAIN_TEST_REQUIRE_OPENCLAW set, and fails that lane on zero executed tests');
+  });
+
+  test('a job that names the file only in a comment does not claim it: still a zero-executed failure', () => {
+    const root = tree({ 'test/needs-bin.test.ts': "import { test } from 'bun:test';\nif (process.env.GBRAIN_TEST_REQUIRE_FIXTURE_BIN === '1') throw new Error('missing');\ntest.skipIf(true)('needs a binary', () => {});\n", '.github/workflows/claims.yml': "jobs:\n  claims:\n    # covers test/needs-bin.test.ts via scripts/run-with-receipt.sh fixture-lane\n    steps:\n      - run: bun test test/other.test.ts\n        env:\n          GBRAIN_TEST_REQUIRE_FIXTURE_BIN: '1'\n      - run: bun scripts/require-executed-tests.ts dir fixture-lane\n" });
+    const r = stress(root, 'test/needs-bin.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('zero tests executed');
+  });
+
+  test('a job that sets the variable on another step does not claim it: still a zero-executed failure', () => {
+    const root = tree({ 'test/needs-bin.test.ts': "import { test } from 'bun:test';\nif (process.env.GBRAIN_TEST_REQUIRE_FIXTURE_BIN === '1') throw new Error('missing');\ntest.skipIf(true)('needs a binary', () => {});\n", '.github/workflows/claims.yml': "jobs:\n  claims:\n    steps:\n      - run: bash scripts/run-with-receipt.sh fixture-lane x -- bun test test/needs-bin.test.ts\n      - run: echo other\n        env:\n          GBRAIN_TEST_REQUIRE_FIXTURE_BIN: '1'\n      - run: bun scripts/require-executed-tests.ts dir fixture-lane\n" });
+    const r = stress(root, 'test/needs-bin.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('zero tests executed');
+  });
+
+  test('a job that checks the receipts of another lane does not claim it: still a zero-executed failure', () => {
+    const root = tree({ 'test/needs-bin.test.ts': "import { test } from 'bun:test';\nif (process.env.GBRAIN_TEST_REQUIRE_FIXTURE_BIN === '1') throw new Error('missing');\ntest.skipIf(true)('needs a binary', () => {});\n", '.github/workflows/claims.yml': "jobs:\n  claims:\n    steps:\n      - name: run\n        run: bash scripts/run-with-receipt.sh fixture-lane x -- bun test test/needs-bin.test.ts\n        env:\n          GBRAIN_TEST_REQUIRE_FIXTURE_BIN: '1'\n      - run: bun scripts/require-executed-tests.ts dir other-lane\n" });
+    const r = stress(root, 'test/needs-bin.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('zero tests executed');
+  });
+
+  test('a job that runs the file without run-with-receipt does not claim it: still a zero-executed failure', () => {
+    const root = tree({ 'test/needs-bin.test.ts': "import { test } from 'bun:test';\nif (process.env.GBRAIN_TEST_REQUIRE_FIXTURE_BIN === '1') throw new Error('missing');\ntest.skipIf(true)('needs a binary', () => {});\n", '.github/workflows/claims.yml': "jobs:\n  claims:\n    steps:\n      - name: run\n        run: bun test test/needs-bin.test.ts\n        env:\n          GBRAIN_TEST_REQUIRE_FIXTURE_BIN: '1'\n      - run: bun scripts/require-executed-tests.ts dir fixture-lane\n" });
+    const r = stress(root, 'test/needs-bin.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(1);
+    expect(r.out).toContain('zero tests executed');
+  });
+
+  test('a job that runs the file through its receipt lane with the variable set and checks that lane claims it', () => {
+    const root = tree({ 'test/needs-bin.test.ts': "import { test } from 'bun:test';\nif (process.env.GBRAIN_TEST_REQUIRE_FIXTURE_BIN === '1') throw new Error('missing');\ntest.skipIf(true)('needs a binary', () => {});\n", '.github/workflows/claims.yml': "jobs:\n  claims:\n    steps:\n      - name: run\n        run: bash scripts/run-with-receipt.sh fixture-lane x -- bun test test/needs-bin.test.ts\n        env:\n          GBRAIN_TEST_REQUIRE_FIXTURE_BIN: '1'\n      - run: bun scripts/require-executed-tests.ts dir fixture-lane\n" });
+    const r = stress(root, 'test/needs-bin.test.ts', '--iterations', '2');
+    expect(r.code, r.out).toBe(0);
+    expect(r.manifest.files[0]).toMatchObject({ status: 'not-stressed' });
+  });
+
   test('test/e2e/pgbouncer-teardown.test.ts is pooler-owned in this repository', async () => {
     const reason = await withEnv({ GBRAIN_PGBOUNCER_URL: undefined }, () => skipReason('test/e2e/pgbouncer-teardown.test.ts'));
     expect(reason).toContain('PgBouncer fixture');

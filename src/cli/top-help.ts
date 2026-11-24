@@ -21,6 +21,7 @@ SETUP
                                      Postgres-first install ladder (env URL >
                                      Supabase token > local PG > docker > PGLite)
   engine status [--json] [--probe]   Which engine + URL source, engine-free
+  engine swap --to rust --plan       Preview moving the brain to the Rust engine (read only)
   db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
                                      (--yes --apply-rewrites for config rewrites)
   migrate --to <postgres|pglite>     Move the brain between engines (PGLite -> Postgres graduates: plan, then --yes --expect)
@@ -30,6 +31,7 @@ SETUP
   upgrade                            Self-update
   check-update [--json]              Check for new versions
   repair [<kind>] [--apply]          Preview/apply residual repairs (timeline, visibility, safe-chunks)
+  secrets list|reveal|restore|key    Originals that redaction replaced with markers (encrypted store)
   projections drain [--limit n]      Rebuild queued text projections now [--json]
   doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
@@ -39,6 +41,7 @@ MEMORY (facts agents recall; MEMORY_VERBS v1)
                                      facts are pushed into new agent sessions (private: recall only)
   recall [<entity>] [--query <q>]    Find saved facts
   forget <fact-id>                   Withdraw a fact
+  identity [--member <id>] [--json]  Who gbrain takes the owner to be, and the signals behind it
 
 PAGES
   get <slug>                         Read a page
@@ -116,6 +119,7 @@ TOOLS
   beliefs <enable|status|...>        Belief ledger coverage: enable, disable, status, reconcile, backfill
   salience [--days N] [--kind P]     v0.29: pages ranked by emotional + activity salience
   anomalies [--since D] [--sigma N]  v0.29: cohort-based statistical anomalies (tag, type)
+  dedupe --preview [--json]          Likely duplicate person and company pages, with evidence; read-only
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
@@ -123,6 +127,7 @@ TOOLS
   compile-context --target <t>       Compile a deterministic, scanned, budgeted context
         [--budget N] [--check]       file (claude-code | codex | openclaw)
   decide <status|probe|enable|...>   System One decision support (Jev); every slot off by default
+  apple-contacts <write|status>      Change Apple Contacts through GBrain Helper; writes off by default
   memory-proposals list|show|approve|deny  QM's proposed timeline entries and links awaiting your decision
   facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)

@@ -196,7 +196,22 @@ subsets distinguish `pages_skipped_unparsed`, `pages_skipped_type_mismatch`,
 `pages_skipped_insufficient_turns`, and `pages_skipped_since`; speaker-attribution
 declines retain `pages_skipped_unrecognized_speaker`. These subsets explain a
 skip without adding a second page to the aggregate. `--since` filtering is not
-a checkpoint skip, and a parse miss remains retryable.
+a checkpoint skip, and a parse miss remains retryable. `--json` lists the
+first 50 unparsed pages in `unparsed_pages`, each with its `reason` code
+(`no_format_line`, `below_floor`, `label_list`, `no_formats` or
+`no_message_lines`) and a `cause` that names the closest format and its
+score.
+
+When the extraction model declines one window (a refusal or a content-filter
+stop), that window is retried once as two halves. Whatever still declines is
+left out: the page completes with the facts of every window that read,
+published as a `window` batch that retires no prior facts, on managed and
+unmanaged brains alike. The declined spans are listed in `declined_windows`
+(page, start, end, reason; first 50) and counted in `windows_declined`, and
+the page is not counted in `pages_failed`. Re-run the page with `--force` to
+try a declined window again. A page where every window and half declined
+stays unfinished (`failed_pages`), so the next run tries it again. Any other
+window failure still fails the whole page.
 
 The result also exposes separate durable-outcome and failure counters:
 

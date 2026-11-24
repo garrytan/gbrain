@@ -12,16 +12,20 @@
  * transcript/note containers; otherwise ties break on GREATEST(updated_at,
  * last_retrieved_at) — "last_touched" is the card's OUTPUT name, not a
  * column. Multi-hit → best match wins, runners-up land in `suggestions`.
- * Miss → `found: false` + keyword near-misses with create_safety hints. NEVER
- * throws for data reasons; each arm is guarded so a pre-page_aliases brain
- * still resolves via arm 2 (same posture as the shipped reflex).
+ * Miss → `found: false` + keyword near-misses with create_safety hints. A
+ * missing name never throws; a pre-page_aliases brain still resolves via arm 2
+ * (same posture as the shipped reflex). A lookup read that FAILS is never read
+ * as a miss: it reports `entity_lookup_failed` (a DegradedStageEntry, the
+ * shape search uses) beside whatever the remaining arms found, and the Rust
+ * engine's typed capability refusal passes through untouched.
  *
  * Privacy: `summary` runs through safeSynopsis (the get_page fence boundary);
  * facts respect visibility for remote callers (world-only).
  */
 
-import { annotateTemporalRow, LIVENESS_EXEMPT_LINK_TYPES, temporalLinkJoinSql, TEMPORAL_LINK_SELECT_SQL, type TemporalAnnotation } from '../link-validity.ts';
+import { annotateTemporalRow, LIVENESS_EXEMPT_LINK_TYPES, type TemporalAnnotation } from '../link-validity.ts';
 import type { BrainEngine, FactRow } from '../engine.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
@@ -32,13 +36,14 @@ import { storedEdge, worldLinkContexts } from '../eligibility/fence-overlay.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { isIdentityEntity, slugify } from '../entities/resolve.ts';
-import { nameVariantsEnabled, readPossibleDuplicates, resolveNameVariant, type PossibleDuplicate } from './entity-variants.ts';
+import { lookupReadFailed, nameVariantsEnabled, readPossibleDuplicates, resolveNameVariant, type PossibleDuplicate } from './entity-variants.ts';
 import { readTextMentions, type TextMentions } from './entity-text-mentions.ts';
 import type { NameMatchKind } from '../entities/name-variants.ts';
 import { exactMatchPreference } from '../entities/exact-match-preference.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
-import type { Link, SearchResult } from '../types.ts';
+import type { DegradedStageEntry, Link, SearchResult } from '../types.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { NewerMentions } from '../mentions/newer-mentions.ts';
 import { linkableTypesFor, loadLinkableTypes, loadSourcePack, readMentionPolicy, type MentionPolicy, type PackTypes } from '../mentions/policy.ts';
 import { readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
@@ -47,8 +52,9 @@ import { readRowReferences, referencesUnavailableNotice, type RecordGroupView, t
 import type { Notice } from '../agent-output.ts';
 import { readCardIdentity, type CardIdentity } from './entity-card-identity.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
-import { boundedBodyPrefixSql, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
-import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { applySlotEnds } from '../search/slot-ends.ts';
+import { overlaidBoundedRows } from '../page-window/bounded-lead.ts';
+import { ENTITY_CARD_COLUMNS_SQL } from '../engine-sql/entity-reads.ts';
 
 const EDGE_CAP = 10;
 const OPEN_THREADS_CAP = 3;
@@ -197,6 +203,8 @@ export interface EntityCardResult {
   ambiguous?: true;
   /** #6723: the source of the resolved page (absent on a miss). */
   source_id?: string;
+  /** A lookup read failed (`entity_lookup_failed`): a miss or a hit here is not proof the entity is absent or the best match. */
+  degraded?: DegradedStageEntry[];
   /**
    * #6724: the full fact rows the card read (newest first, visibility and
    * eligibility already applied), for context_pack's `entity_facts`. Never part
@@ -264,8 +272,8 @@ export interface CardPageRow {
 }
 
 /** The card's page-row projection over `pages` (bounded body prefix, last retrieval). */
-const CARD_ROW_COLUMNS = `slug, source_id, title, type, frontmatter, ${boundedBodyPrefixSql('pages')} AS compiled_truth, updated_at,
-              GREATEST(last_retrieved_at, (SELECT r.last_retrieved_at FROM page_retrievals r WHERE r.page_id = pages.id)) AS last_retrieved_at`;
+/** The card row columns, one copy with the typed candidate read (engine-sql/entity-reads.ts). */
+const CARD_ROW_COLUMNS = ENTITY_CARD_COLUMNS_SQL;
 
 /** Resolution arm rank: lower = higher confidence (frozen precedence ladder). */
 const ARM_ALIAS = 0;
@@ -290,7 +298,7 @@ export interface EntityLookupScope {
 export async function entityLookupScope(engine: BrainEngine, sourceId: string, remote: boolean): Promise<EntityLookupScope> {
   const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
   const excludePrivate = await resolveExcludePrivatePages(engine, remote ? undefined : false);
-  const policy = await readMentionPolicy(engine).catch(() => undefined);
+  const policy = await readMentionPolicy(engine).catch(failOpen(undefined));
   const pack = await loadSourcePack(engine, sourceId);
   return { excludePrivate, entityTypes: new Set(policy ? linkableTypesFor(pack, policy) : []), policy, pack };
 }
@@ -306,17 +314,18 @@ export type EntityCandidates =
   | { kind: 'miss'; suggestions: EntitySuggestion[]; ambiguous?: true }
   | { kind: 'withheld' };
 
-/** Resolve a trimmed, non-empty name to its candidates. Every arm is fail-soft. */
+/** Resolve a trimmed, non-empty name to its candidates. A failed read is reported through `opts.degraded`, never as a miss. */
 export async function selectEntityCandidates(
   engine: BrainEngine,
   sourceId: string,
   trimmed: string,
   scope: EntityLookupScope,
-  opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean } = {},
+  opts: { omitQuarantined?: boolean; suggest?: boolean; variants?: boolean; degraded?: DegradedStageEntry[] } = {},
 ): Promise<EntityCandidates> {
   const { privatePagesFilterForCaller } = await import('../search/private-visibility.ts');
-  // Predicate text lives ONCE (private-visibility.ts) — both card queries
-  // below select `FROM pages` unaliased, so qualify with the table name.
+  // Predicate text lives ONCE (private-visibility.ts). The two candidate reads
+  // apply it through readEntityCardRows' excludePrivate; the name-variant arm
+  // below selects `FROM pages` unaliased, so qualify with the table name.
   const privatePredicate = scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '';
 
   const norm = normalizeAlias(trimmed);
@@ -340,10 +349,12 @@ export async function selectEntityCandidates(
     try {
       const aliasMap = await engine.resolveAliases([norm], { sourceId });
       for (const hit of aliasMap.get(norm) ?? []) consider(hit.slug, ARM_ALIAS);
-    } catch (e) {
+    } catch (err) {
       // An engine that cannot serve the read refuses the lookup; degrading would print "not found".
-      rethrowCapabilityMissing(e);
-      /* no page_aliases table — degrade to arm 2 [E3] */
+      rethrowCapabilityRefusal(err);
+      // Only the pre-migration brain (no page_aliases table yet) has an empty alias arm by design [E3]; any other
+      // failure leaves the alias arm unread and says so.
+      if (!isMissingSchemaObject(err, 'table', 'page_aliases')) lookupReadFailed(err, opts.degraded);
     }
   }
 
@@ -351,18 +362,11 @@ export async function selectEntityCandidates(
   // card's tie-break needs. Guarded like the reflex.
   let rows: CardPageRow[] = [];
   try {
-    rows = await engine.executeRaw<CardPageRow>(
-      `SELECT ${CARD_ROW_COLUMNS}
-         FROM pages
-        WHERE deleted_at IS NULL
-          AND source_id = $1
-          AND ( lower(title) = $2
-             OR slug = ANY($3::text[])
-             OR slug LIKE $4 )${privatePredicate}`,
-      [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
-    );
-  } catch (e) {
-    rethrowCapabilityMissing(e);
+    rows = await engine.readEntityCardRows(sourceId, { titleLc, slugs: exactSlugs, slugLike: `%/${slug || trimmed}` },
+      { excludePrivate: scope.excludePrivate });
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
+    lookupReadFailed(err, opts.degraded);
     rows = [];
   }
   const rowBySlug = new Map<string, CardPageRow>();
@@ -376,16 +380,12 @@ export async function selectEntityCandidates(
   const missing = [...rankBySlug.keys()].filter(s => !rowBySlug.has(s));
   if (missing.length) {
     try {
-      const extra = await engine.executeRaw<CardPageRow>(
-        `SELECT ${CARD_ROW_COLUMNS}
-           FROM pages
-          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${privatePredicate}`,
-        [sourceId, missing],
-      );
+      const extra = await engine.readEntityCardRows(sourceId, { slugs: missing }, { excludePrivate: scope.excludePrivate });
       for (const r of extra) rowBySlug.set(r.slug, r);
-    } catch (e) {
-      rethrowCapabilityMissing(e);
-      /* stale alias rows — drop */
+    } catch (err) {
+      rethrowCapabilityRefusal(err);
+      // A stale alias row hydrates to no page (zero rows, no error, dropped above); a read that throws is a failure.
+      lookupReadFailed(err, opts.degraded);
     }
   }
 
@@ -415,7 +415,7 @@ export async function selectEntityCandidates(
     const variants = opts.variants && await nameVariantsEnabled(engine)
       ? await resolveNameVariant<CardPageRow>(engine, sourceId, trimmed, {
         selectColumns: CARD_ROW_COLUMNS, privatePredicate, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' })
+        retirementPrivacy: scope.excludePrivate ? 'caller' : 'none', degraded: opts.degraded })
       : { matches: [] };
     const variantSuggestions = (matches: typeof variants.matches): EntitySuggestion[] => matches.map(m => ({
       slug: m.row.slug, title: m.row.title ?? m.row.slug, create_safety: 'exists', source_id: sourceId }));
@@ -460,7 +460,7 @@ export async function selectAcrossSources(
   sources: readonly string[],
   trimmed: string,
   remote: boolean,
-  opts: { omitQuarantined?: boolean; scopes?: Map<string, Promise<EntityLookupScope>>; variants?: boolean } = {},
+  opts: { omitQuarantined?: boolean; scopes?: Map<string, Promise<EntityLookupScope>>; variants?: boolean; degraded?: DegradedStageEntry[] } = {},
 ): Promise<{ sourceId: string; scope: EntityLookupScope; selected: EntityCandidates }> {
   let first: { sourceId: string; scope: EntityLookupScope; selected: EntityCandidates } | undefined;
   const variantHits: Array<{ sourceId: string; scope: EntityLookupScope; selected: Extract<EntityCandidates, { kind: 'hit' }> }> = [];
@@ -468,7 +468,7 @@ export async function selectAcrossSources(
   for (const sourceId of sources) {
     if (opts.scopes && !opts.scopes.has(sourceId)) opts.scopes.set(sourceId, entityLookupScope(engine, sourceId, remote));
     const scope = await (opts.scopes?.get(sourceId) ?? entityLookupScope(engine, sourceId, remote));
-    const selected = await selectEntityCandidates(engine, sourceId, trimmed, scope, { omitQuarantined: opts.omitQuarantined, suggest: first === undefined, variants: opts.variants });
+    const selected = await selectEntityCandidates(engine, sourceId, trimmed, scope, { omitQuarantined: opts.omitQuarantined, suggest: first === undefined, variants: opts.variants, degraded: opts.degraded });
     // #7160: an exact hit in any source beats a name-variant guess, and a guess must be unique across every source read.
     if (selected.kind === 'hit' && !selected.match) return { sourceId, scope, selected };
     if (selected.kind === 'hit') variantHits.push({ sourceId, scope, selected });
@@ -496,17 +496,21 @@ export async function buildEntityCard(
   // Covers entity, context_pack, and delta (all route through buildEntityCard).
   // #6723: the source with the hit owns the card; every read below uses it.
   const sources = opts.sources?.length ? opts.sources : [sourceId];
-  const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, trimmed, opts.remote, { omitQuarantined: opts.omitQuarantined, variants: opts.variants });
-  if (selected.kind === 'withheld') return { found: false, suggestions: [] };
+  const lookupDegraded: DegradedStageEntry[] = [];
+  const { sourceId: hitSource, scope, selected } = await selectAcrossSources(engine, sources, trimmed, opts.remote, { omitQuarantined: opts.omitQuarantined, variants: opts.variants, degraded: lookupDegraded });
+  // A failed lookup read rides every outcome below: the caller must not read a miss (or the best of what was read) as final.
+  const degraded = lookupDegraded.length ? { degraded: lookupDegraded } : {};
+  if (selected.kind === 'withheld') return { found: false, suggestions: [], ...degraded };
   if (selected.kind === 'miss') {
     const ambiguous = selected.ambiguous ? { ambiguous: selected.ambiguous } : {};
-    if (!opts.includeReferences) return { found: false, suggestions: selected.suggestions, ...ambiguous };
+    if (!opts.includeReferences) return { found: false, suggestions: selected.suggestions, ...ambiguous, ...degraded };
     const textMentions = await readTextMentions(engine, sources, trimmed, { remote: opts.remote, excludePrivate: scope.excludePrivate, omitQuarantined: opts.omitQuarantined });
     return {
       found: false, suggestions: selected.suggestions,
-      coverage: await readMentionCoverage(engine, [...sources]).catch(() => undefined),
+      coverage: await readMentionCoverage(engine, [...sources]).catch(failOpen(undefined)),
       ...(textMentions?.total || textMentions?.unread ? { text_mentions: textMentions } : {}),
       ...ambiguous,
+      ...degraded,
     };
   }
 
@@ -522,7 +526,7 @@ export async function buildEntityCard(
       const duplicates = await readPossibleDuplicates<CardPageRow>(engine, hitSource, row, {
         selectColumns: CARD_ROW_COLUMNS, entityTypes: scope.entityTypes, omitQuarantined: opts.omitQuarantined,
         privatePredicate: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '',
-        retirementPrivacy: scope.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '' });
+        retirementPrivacy: scope.excludePrivate ? 'caller' : 'none' });
       if (duplicates.length) card.possible_duplicates = duplicates;
     }
     // #7161: a thin card while mentions are behind may be a stale stub; show where the name appears in text.
@@ -538,6 +542,7 @@ export async function buildEntityCard(
     source_id: hitSource,
     factRows,
     ...(runnersUp.length ? { suggestions: runnersUp } : {}),
+    ...degraded,
   };
 }
 
@@ -564,7 +569,8 @@ async function cardReferences(engine: BrainEngine, sourceId: string, row: CardPa
         ...(last ? { cursor: encodeCursor(last) } : {}) }, ...(opts.surfaceCeiling === 'verbs' ? { requires_surface: 'starter' as const } : {}) } };
     });
     return { referenced_by_count: total, referenced_by, coverage };
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     opts.emitNotice?.(referencesUnavailableNotice('read_failed'));
     return { references_unavailable: 'read_failed' };
   }
@@ -593,14 +599,11 @@ async function assembleCard(
   readerRemote: boolean,
 ): Promise<{ card: EntityCard; facts: FactRow[] }> {
   const pageSlug = row.slug;
-  const { privatePagesFilterForCaller, privateLinkOriginFilterForCaller, worldOnlyFacts } = await import('../search/private-visibility.ts');
+  const { worldOnlyFacts } = await import('../search/private-visibility.ts');
   const worldOnly = worldOnlyFacts(remote);
   const visibility = worldOnly ? (['world'] as ('private' | 'world')[]) : undefined;
   // Facts saved about this entity may sit under a sibling page or the bare subject slug (siblings.ts).
-  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate, title: row.title }).catch(() => [pageSlug]);
-  const inboundPrivacy = (excludePrivate
-    ? ` AND ${privatePagesFilterForCaller('f')} AND ${privateLinkOriginFilterForCaller('l')}`
-    : '') + ` AND (l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages lo WHERE lo.id = l.origin_page_id AND lo.deleted_at IS NULL${remote ? ' AND lo.source_id = $2' : ''}))`;
+  const factSlugs = await factEntitySlugs(engine, sourceId, pageSlug, { excludePrivate, title: row.title }).catch(failOpen([pageSlug]));
 
   // Parallel depth-1 reads — every arm individually fail-soft so a partial
   // brain (no aliases, no timeline) still returns a card.
@@ -620,27 +623,18 @@ async function assembleCard(
   // applies, so a private or derived page never surfaces its slug, its
   // links.context sentence, or a count. An edge whose origin page is deleted
   // (or, for an untrusted caller, in another source) is left out the same way.
+  let endedFacts = 0;
   const [aka, outLinks, inEdges, backlinkCount, timeline, facts, activeFactCount] = await Promise.all([
     readAka(engine, sourceId, pageSlug),
-    engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
+    engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(failOpen([] as Link[])),
     engine
-      .executeRaw<{ from_slug: string; link_type: string; context: string | null }>(
-        `SELECT f.slug AS from_slug, l.link_type, l.context${TEMPORAL_LINK_SELECT_SQL}
-           FROM links l
-           JOIN pages f ON f.id = l.from_page_id
-           JOIN pages t ON t.id = l.to_page_id
-           ${temporalLinkJoinSql('l', excludePrivate)}
-          WHERE t.slug = $1 AND t.source_id = $2 AND f.source_id = $2 AND f.deleted_at IS NULL
-            AND COALESCE(l.link_source, '') <> 'mentions'${inboundPrivacy}
-          ORDER BY l.id`,
-        [pageSlug, sourceId],
-      )
+      .readEntityInboundEdges(pageSlug, sourceId, { excludePrivate: !!excludePrivate, originSameSource: !!remote })
       .then(rs => rs.map(r => annotateTemporalRow(r)))
-      .catch(() => [] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>),
+      .catch(failOpen([] as Array<{ from_slug: string; link_type: string; context: string | null } & TemporalAnnotation>)),
     engine
       .countInboundLinks(pageSlug, sourceId, { excludePrivate: !!excludePrivate, originSameSource: !!remote })
       .catch(err => { rethrowCapabilityRefusal(err); return 0; }),
-    engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate, eligibility }).catch(() => []),
+    engine.getTimeline(pageSlug, { limit: 5, sourceId, excludePrivate, eligibility }).catch(failOpen([] as Awaited<ReturnType<BrainEngine['getTimeline']>>)),
     Promise.all(factSlugs.map(slug => engine.listFactsByEntity(sourceId, slug, {
       activeOnly: true,
       limit: FACT_FETCH_CAP,
@@ -649,7 +643,14 @@ async function assembleCard(
       eligibility,
     })))
       .then(lists => lists.flat().sort((a, b) => factTime(b) - factTime(a)).slice(0, FACT_FETCH_CAP))
-      .catch(() => [] as FactRow[]),
+      // GST-3170: a slot value a later one ended at read time is no longer current (slot-ends.ts).
+      .then(async rows => {
+        const current = await applySlotEnds(engine, { sourceId, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged }, rows,
+          { activeOnly: true, entities: [{ source_id: sourceId, slugs: factSlugs }] });
+        endedFacts = rows.length - current.length;
+        return current;
+      })
+      .catch(failOpen([] as FactRow[])),
     // Exact active-fact count: the payload fetch above is capped at
     // FACT_FETCH_CAP, so facts.length silently reports the cap for bigger
     // entities. Same predicate as the fetch (active + source + caller
@@ -657,7 +658,7 @@ async function assembleCard(
     // count failure degrades to the capped payload length, never to 0.
     engine
       .countWorldFacts({ sourceId, entitySlugs: factSlugs, worldOnly: !!worldOnly, excludePrivate: !!excludePrivate, eligibility })
-      .catch(() => null),
+      .catch(failOpen(null)),
   ]);
 
   // Live relationships first so ended ones never push a current edge past the cap.
@@ -682,7 +683,7 @@ async function assembleCard(
   ].slice(0, EDGE_CAP);
   const summary = safeSynopsis(row, { keepVisibility: remote ? ['world'] : ['private', 'world'] });
   const relationshipNote = await loadRelationshipNotes(engine, [{ slug: pageSlug, source_id: sourceId, summary }], { excludePrivate })
-    .then(m => m.get(relationshipNoteKey(sourceId, pageSlug))).catch(() => undefined);
+    .then(m => m.get(relationshipNoteKey(sourceId, pageSlug))).catch(failOpen(undefined));
 
   // Open threads (best-effort v1): open-loop rows first (v0.47 — richest:
   // direction, due, loop_id), then active commitment facts NOT already
@@ -698,22 +699,7 @@ async function assembleCard(
     // (summaries derive from private mail, often another source), so a
     // world-only card never reads them; open_loops serves remote callers
     // inside their grant.
-    const loopRows = remote ? [] : await engine.executeRaw<{
-      id: number;
-      loop_type: string;
-      summary: string;
-      due_at: string | null;
-      last_activity_at: string;
-      fact_id: number | null;
-    }>(
-      `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
-       FROM open_loops
-       WHERE status = 'open' AND counterparty_slug = $1
-         AND COALESCE(counterparty_source_id, source_id) = $2
-       ORDER BY last_activity_at DESC
-       LIMIT ${OPEN_THREADS_CAP}`,
-      [pageSlug, sourceId],
-    );
+    const loopRows = remote ? [] : await engine.readEntityOpenLoops(pageSlug, sourceId, OPEN_THREADS_CAP);
     for (const l of loopRows) {
       if (l.fact_id !== null) loopFactIds.add(Number(l.fact_id));
       const direction: EntityOpenThread['direction'] =
@@ -736,7 +722,8 @@ async function assembleCard(
       });
       if (openThreads.length >= OPEN_THREADS_CAP) break;
     }
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     /* pre-v144 brains have no open_loops table — facts path below covers it */
   }
   for (const f of facts) {
@@ -760,7 +747,7 @@ async function assembleCard(
     }
   }
 
-  const pageTrust = (await loadPageTrust(engine, [{ source_id: sourceId, slug: pageSlug }]).catch(() => null))?.byKey.get(`${sourceId}\u0000${pageSlug}`);
+  const pageTrust = (await loadPageTrust(engine, [{ source_id: sourceId, slug: pageSlug }]).catch(failOpen(null)))?.byKey.get(`${sourceId}\u0000${pageSlug}`);
   return { facts, card: {
     entity: { slug: pageSlug, title: row.title ?? pageSlug, type: row.type ?? null, source_id: sourceId },
     ...(pageTrust ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' }),
@@ -777,7 +764,7 @@ async function assembleCard(
     open_threads: openThreads,
     edges,
     backlink_count: backlinkCount,
-    active_fact_count: activeFactCount ?? facts.length,
+    active_fact_count: activeFactCount === null ? facts.length : Math.max(0, activeFactCount - endedFacts),
     ...(relationshipNote ? { relationship_note: relationshipNote } : {}),
     ...(facts.length ? { recent_facts: facts.slice(0, RECENT_FACTS_CAP).map(f => ({
       id: String(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from ? toIso(f.valid_from as Date | string) : null,
@@ -789,12 +776,17 @@ async function assembleCard(
 /** The card's `aka`: the page's normalized aliases (page_aliases reverse lookup); empty on a pre-migration brain. */
 export async function readAka(engine: BrainEngine, sourceId: string, slug: string): Promise<string[]> {
   return engine
-    .executeRaw<{ alias_norm: string }>(
-      `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`,
-      [sourceId, slug],
-    )
+    .readEntityAliasRows(sourceId, [slug])
     .then(rs => rs.map(r => r.alias_norm))
-    .catch(() => [] as string[]);
+    .catch(failOpen([] as string[]));
+}
+
+/**
+ * A fail-open fallback for one card read that still lets a capability refusal through: an engine that cannot serve
+ * a read refuses the whole card, never answers with that part empty (a wrong answer).
+ */
+function failOpen<T>(fallback: T): (e: unknown) => T {
+  return (e) => { rethrowCapabilityMissing(e); return fallback; };
 }
 
 function factTime(f: FactRow): number {
@@ -828,7 +820,7 @@ async function nearMissSuggestions(
       source_id: r.source_id ?? sourceId,
     }));
   } catch (e) {
-    rethrowCapabilityMissing(e);
+    rethrowCapabilityRefusal(e);
     return [];
   }
 }

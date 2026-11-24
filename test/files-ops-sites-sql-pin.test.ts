@@ -10,6 +10,12 @@
  * filter, and the hand-numbered `$1` limit that follows `$2` in the list texts. Fails when a member reorders a clause,
  * renumbers a placeholder, re-indents a statement or binds a value differently. No database: the engine runs on the
  * recording fake. The expected texts below are copied from the call sites at 5e22f0c134.
+ *
+ * Main join (da99c637a7): the cli-members line's call sites at de72811022 sorted in bytes: commands/files.ts:499
+ * `ORDER BY storage_path COLLATE "C" LIMIT 1000`, ops/files.ts:45 `page_slug COLLATE "C", filename COLLATE "C", id` and
+ * `filename COLLATE "C", id`, and ops/files.ts:363 `ORDER BY storage_path COLLATE "C"`. The join kept main's members and
+ * re-applied that byte order and the `id` tie-break, so the verify and list pins below carry them; nothing else in those
+ * texts differs from 5e22f0c134.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
@@ -88,16 +94,6 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
-    from: 'src/commands/files.ts:156 listFiles',
-    run: e => e.listFileRowsForSlug('notes/plan'),
-    sent: [{ text: 'SELECT * FROM files WHERE page_slug = $1 ORDER BY filename LIMIT 100', params: ['notes/plan'] }],
-  },
-  {
-    from: 'src/commands/files.ts:158 listFiles',
-    run: e => e.listAllFileRows(),
-    sent: [{ text: 'SELECT * FROM files ORDER BY page_slug, filename LIMIT 100', params: [] }],
-  },
-  {
     from: 'src/commands/files.ts:197 uploadFile and :467 syncFiles',
     run: e => e.hasFileWithHash('h1', 'notes/plan/report.pdf'),
     sent: [{ text: 'SELECT id FROM files WHERE content_hash = $1 AND storage_path = $2', params: ['h1', 'notes/plan/report.pdf'] }],
@@ -105,7 +101,7 @@ const PINS: Pin[] = [
   {
     from: 'src/commands/files.ts:505 verifyFiles',
     run: e => e.listFileRowsForVerify(),
-    sent: [{ text: 'SELECT * FROM files ORDER BY storage_path LIMIT 1000', params: [] }],
+    sent: [{ text: 'SELECT * FROM files ORDER BY storage_path COLLATE "C" LIMIT 1000', params: [] }],
   },
   {
     from: 'src/commands/files.ts:550 gitRootFor',
@@ -163,14 +159,14 @@ const PINS: Pin[] = [
       run: (e: PostgresEngine) => e.listReadableFileRows(undefined, exclude),
       sent: [{ text: `SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
       FROM files f WHERE (${'TRUE'}) AND ${readable(exclude)}
-      ORDER BY ${'page_slug, filename'} LIMIT $1`, params: [100] }],
+      ORDER BY ${'page_slug COLLATE "C", filename COLLATE "C", id'} LIMIT $1`, params: [100] }],
     },
     {
       from: `src/core/ops/files.ts:45 file_list (one page, excludePrivate ${exclude})`,
       run: (e: PostgresEngine) => e.listReadableFileRows('notes/plan', exclude),
       sent: [{ text: `SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
       FROM files f WHERE (${'f.page_slug = $2'}) AND ${readable(exclude)}
-      ORDER BY ${'filename'} LIMIT $1`, params: [100, 'notes/plan'] }],
+      ORDER BY ${'filename COLLATE "C", id'} LIMIT $1`, params: [100, 'notes/plan'] }],
     },
     {
       from: `src/core/ops/files.ts:204 file_url (excludePrivate ${exclude})`,
@@ -198,13 +194,13 @@ const PINS: Pin[] = [
       from: `src/core/ops/files.ts:362 file_verify (all pages, excludePrivate ${exclude})`,
       run: (e: PostgresEngine) => e.listReadableFilePaths(undefined, exclude),
       sent: [{ text: `SELECT storage_path, page_slug FROM files f
-      WHERE (${'TRUE'}) AND ${readable(exclude)} ORDER BY storage_path LIMIT $1`, params: [100] }],
+      WHERE (${'TRUE'}) AND ${readable(exclude)} ORDER BY storage_path COLLATE "C" LIMIT $1`, params: [100] }],
     },
     {
       from: `src/core/ops/files.ts:362 file_verify (one page, excludePrivate ${exclude})`,
       run: (e: PostgresEngine) => e.listReadableFilePaths('notes/plan', exclude),
       sent: [{ text: `SELECT storage_path, page_slug FROM files f
-      WHERE (${'f.page_slug = $2'}) AND ${readable(exclude)} ORDER BY storage_path LIMIT $1`, params: [100, 'notes/plan'] }],
+      WHERE (${'f.page_slug = $2'}) AND ${readable(exclude)} ORDER BY storage_path COLLATE "C" LIMIT $1`, params: [100, 'notes/plan'] }],
     },
   ]),
   {

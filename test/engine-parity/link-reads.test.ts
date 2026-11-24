@@ -8,8 +8,9 @@
  *    always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts): coverage counts, junk hubs, entity
  *    counts, graph coverage, foreign edges, live page summaries, the entity
- *    card's backlink count, link endpoints, titled pages, word lexemes, and the
- *    link rows and origin bodies behind a world-only caller's link contexts.
+ *    card's backlink count and incoming edges, link endpoints, titled pages,
+ *    word lexemes, and the link rows and origin bodies behind a world-only
+ *    caller's link contexts.
  *  - Regression: an engine whose read drifts gives a different doctor score,
  *    orphan ratio, graph-query note, backlink count, link target or search
  *    anchor per backend.
@@ -92,6 +93,71 @@ describe('engine parity: link reads', () => {
       expect(counts.other).toBe(1);
       expect(graph).toEqual({ entities: 4, connected: 4, withTimeline: 2 });
       return { empty, emptyGraph, coverage, counts, graph };
+    },
+  );
+
+  parityTest(
+    'entityFeatureCoverage and countDatedMeetingPages: the doctor coverage population, its linked and dated pages',
+    { methods: ['putPage', 'addLink', 'addTimelineEntry', 'softDeletePage', 'entityFeatureCoverage', 'countDatedMeetingPages'] },
+    async (engine, backend) => {
+      const empty = {
+        links: await engine.entityFeatureCoverage(FILTER, 'links'),
+        timeline: await engine.entityFeatureCoverage(FILTER, 'timeline'),
+        meetings: await engine.countDatedMeetingPages(),
+      };
+      await createSource(engine, backend, 'other');
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'people/bob-example', 'person');
+      await put(engine, 'people/quarantined', 'person', { quarantine: true });
+      await put(engine, 'people/gone', 'person');
+      await put(engine, 'companies/acme-example', 'company');
+      await put(engine, 'notes/plain', 'note');
+      await put(engine, 'people/carol-example', 'person', {}, 'other');
+      await put(engine, 'companies/widget-co', 'company', {}, 'other');
+      const dated = (slug: string, date: string | null) => engine.putPage(slug, page(slug, {
+        type: 'meeting', ...(date === null ? {} : { frontmatter: { date }, effective_date: new Date(`${date}T00:00:00Z`), effective_date_source: 'date' }),
+      }));
+      await dated('meetings/2026-04-03', '2026-04-03');
+      await dated('meetings/2026-04-04', '2026-04-04');
+      await dated('meetings/undated', null);
+      await dated('meetings/2026-04-05', '2026-04-05');
+      await engine.softDeletePage('meetings/2026-04-05');
+      await engine.addLink('notes/plain', 'people/alice-example', '', 'mentions', 'manual');
+      await engine.addLink('people/alice-example', 'companies/acme-example', '', 'works_at', 'manual');
+      await engine.addLink('notes/plain', 'people/quarantined', '', 'mentions', 'manual');
+      await engine.addLink('people/gone', 'people/bob-example', '', 'cites', 'manual');
+      await engine.addLink('people/carol-example', 'companies/widget-co', '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'other', toSourceId: 'other' });
+      await engine.addTimelineEntry('people/bob-example', { date: '2026-01-02', summary: 'Met.' });
+      await engine.addTimelineEntry('people/bob-example', { date: '2026-01-03', summary: 'Met again.' });
+      await engine.addTimelineEntry('people/quarantined', { date: '2026-01-02', summary: 'Hidden.' });
+      await engine.addTimelineEntry('people/carol-example', { date: '2026-01-04', summary: 'Called.' }, { sourceId: 'other' });
+      await engine.softDeletePage('people/gone');
+      const filled = {
+        links: await engine.entityFeatureCoverage(FILTER, 'links'),
+        timeline: await engine.entityFeatureCoverage(FILTER, 'timeline'),
+        noTypes: await engine.entityFeatureCoverage({ types: [], per_source: [] }, 'links'),
+        meetings: await engine.countDatedMeetingPages(),
+      };
+      expect(empty).toEqual({ links: { sampleSize: 0, matched: 0 }, timeline: { sampleSize: 0, matched: 0 }, meetings: 0 });
+      // alice, bob, acme (default) and carol, widget-co (other, where only person is an entity: widget-co is not).
+      expect(filled.links).toEqual({ sampleSize: 4, matched: 3 });
+      expect(filled.timeline).toEqual({ sampleSize: 4, matched: 2 });
+      expect(filled.noTypes).toEqual({ sampleSize: 0, matched: 0 });
+      expect(filled.meetings).toBe(2);
+      return { empty, filled };
+    },
+  );
+
+  parityTest(
+    'entityFeatureCoverage: a 100 percent sample is the whole population (the Rust store declines a sample)',
+    { methods: ['putPage', 'addLink', 'entityFeatureCoverage'] },
+    async (engine) => {
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'people/bob-example', 'person');
+      await engine.addLink('people/bob-example', 'people/alice-example', '', 'knows', 'manual');
+      const sampled = await engine.entityFeatureCoverage(FILTER, 'links', { samplePercent: 100 });
+      expect(sampled).toEqual({ sampleSize: 2, matched: 1 });
+      return sampled;
     },
   );
 
@@ -352,6 +418,53 @@ describe('engine parity: link reads', () => {
       expect(m.get('running')).toEqual(['run']);
       expect(m.get('the')).toEqual([]);
       return sorted([...m].map(([w, lexemes]) => `${w}=>${lexemes.join('|')}`));
+    },
+  );
+
+  parityTest(
+    'readEntityInboundEdges: the links countInboundLinks counts, by link id, with the scope relationship\'s temporal columns',
+    { methods: ['putPage', 'addLink', 'addLinksBatch', 'softDeletePage', 'countInboundLinks', 'readEntityInboundEdges'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      for (const slug of ['notes/a', 'notes/b', 'notes/origin-gone', 'notes/origin-open']) await put(engine, slug, 'note');
+      await put(engine, 'people/alice-example', 'person');
+      await put(engine, 'companies/acme-example', 'company');
+      await put(engine, 'notes/private', 'note', { visibility: 'private' });
+      await put(engine, 'notes/far', 'note', {}, 'other');
+      await put(engine, 'notes/far-origin', 'note', {}, 'other');
+      const ACME = 'companies/acme-example';
+      await engine.addLink('people/alice-example', ACME, 'works at Acme', 'works_at', 'manual');
+      await engine.addLink('notes/a', ACME, 'cites Acme', 'cites', 'manual');
+      await engine.addLink('notes/b', ACME, '', 'mentions', 'mentions');
+      await engine.addLink('notes/private', ACME, 'private note', 'cites', 'manual');
+      await engine.addLink('notes/far', ACME, '', 'cites', 'manual', undefined, undefined, { fromSourceId: 'other', toSourceId: 'default' });
+      await engine.addLinksBatch([
+        { from_slug: 'notes/b', to_slug: ACME, link_type: 'cites', link_source: 'frontmatter', origin_slug: 'notes/origin-gone', origin_field: 'refs' },
+        { from_slug: 'notes/b', to_slug: ACME, link_type: 'invested_in', link_source: 'frontmatter', origin_slug: 'notes/origin-open', origin_field: 'refs' },
+        { from_slug: 'notes/a', to_slug: ACME, link_type: 'advises', link_source: 'frontmatter', origin_slug: 'notes/far-origin', origin_source_id: 'other', origin_field: 'refs' },
+      ]);
+      await engine.softDeletePage('notes/origin-gone');
+      // recorded_at is the write time on each arm: compare whether it is set, not its value.
+      const view = (rs: Awaited<ReturnType<BrainEngine['readEntityInboundEdges']>>) =>
+        rs.map(r => ({ ...r, temporal_recorded_at: r.temporal_recorded_at == null ? null : 'set' }));
+      const out: Record<string, unknown> = {};
+      for (const excludePrivate of [false, true]) {
+        for (const originSameSource of [false, true]) {
+          const opts = { excludePrivate, originSameSource };
+          const rows = await engine.readEntityInboundEdges(ACME, 'default', opts);
+          expect(rows.length).toBe(await engine.countInboundLinks(ACME, 'default', opts));
+          out[`${excludePrivate}:${originSameSource}`] = view(rows);
+        }
+      }
+      out.other = view(await engine.readEntityInboundEdges(ACME, 'other', { excludePrivate: false, originSameSource: false }));
+      out.missing = await engine.readEntityInboundEdges('companies/missing', 'default', { excludePrivate: false, originSameSource: false });
+      const local = out['false:false'] as Array<{ from_slug: string; link_type: string; temporal_semantics: string | null }>;
+      expect(local.map(r => `${r.from_slug}:${r.link_type}`)).toEqual([
+        'people/alice-example:works_at', 'notes/a:cites', 'notes/private:cites', 'notes/b:invested_in', 'notes/a:advises',
+      ]);
+      expect(local[0]!.temporal_semantics).toBe('state');
+      expect((out['true:true'] as unknown[]).length).toBe(3);
+      return out;
     },
   );
 

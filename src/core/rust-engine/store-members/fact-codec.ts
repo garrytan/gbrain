@@ -1,13 +1,8 @@
 /**
  * Fact row helpers shared by the facts store members. This module holds no members: index.ts spreads every export of a
- * member module into STORE_MEMBERS, so shared helpers live here and not in a member module.
+ * member module into STORE_MEMBERS, so shared helpers live here and not in a member module. The fact pool's scope and
+ * filters (`poolArgs`) live in fact-pool.ts.
  */
-import { escapeLikePattern } from '../../cjk.ts';
-import { factVisibilitySql } from '../../access/member-facts.ts';
-import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
-import type { FactPoolFilters, FactPoolScope } from '../../engine-sql/facts-trust.ts';
-import { refuseMember } from './common.ts';
-import { storePrivacyPolicy } from './private-provenance.ts';
 
 type Row = Record<string, unknown>;
 
@@ -15,24 +10,3 @@ export const FACT_DATES = ['valid_from', 'valid_until', 'expired_at', 'consolida
 /** A returned vector (a number list or null) as the `Float32Array` PGLite hands back. */
 export const withVector = (row: Row): Row =>
   Array.isArray(row.embedding) ? { ...row, embedding: new Float32Array(row.embedding as number[]) } : row;
-
-/** The pool's scope and filters as the store reads them, or a refusal for a policy it cannot answer. */
-export function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters | undefined): Row {
-  if (scope.worldOnly && factVisibilitySql('facts', ['world']) !== "facts.visibility IN ('world')") {
-    refuseMember(member, 'visibility widened by member pages or grants');
-  }
-  const grep = filters?.grep?.trim();
-  return {
-    sourceIds: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'])],
-    worldOnly: scope.worldOnly,
-    // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
-    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }),
-    minTrust: scope.minTrust || null,
-    suppressFlagged: scope.suppressFlagged === true,
-    ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
-    ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
-    ...(filters?.since ? { since: filters.since.toISOString() } : {}),
-    ...(grep ? { grep: `%${escapeLikePattern(grep)}%` } : {}),
-    includeExpired: filters?.includeExpired === true,
-  };
-}

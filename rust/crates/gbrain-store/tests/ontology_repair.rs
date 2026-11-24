@@ -4,7 +4,6 @@
 
 mod memory_env;
 
-use gbrain_store::facts::captured::SourceIdsArgs;
 use gbrain_store::facts::ontology_repair::{IdsArgs, RekeyArgs, RepointArgs, RestoreArgs};
 use gbrain_store::facts::remember_reads::LinkArgs;
 use gbrain_store::facts::{FactQuery, InsertFactsArgs};
@@ -265,8 +264,14 @@ fn a_delete_names_only_rows_that_hold_a_slot() {
     assert!(row(&b, "people/dan-old", plain).is_some());
 }
 
+fn source_ids(ids: &[&str]) -> gbrain_store::facts::repair_previews::SourcesArgs {
+    gbrain_store::facts::repair_previews::SourcesArgs {
+        source_ids: ids.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
 fn candidates(b: &Brain) -> Vec<Value> {
-    b.list_ontology_fact_candidates(&args::<SourceIdsArgs>(json!({ "sourceIds": ["default"] })))
+    b.list_ontology_fact_candidates(&source_ids(&["default"]))
         .unwrap()
 }
 
@@ -343,11 +348,9 @@ fn candidates_list_fenced_and_retired_rows_and_a_restore_applies_only_as_preview
     assert_eq!(all[0]["withdrawn"], json!(false));
     assert_eq!(all[0]["consolidated"], json!(false));
     assert!(
-        b.list_ontology_fact_candidates(&args::<SourceIdsArgs>(
-            json!({ "sourceIds": ["nowhere"] })
-        ))
-        .unwrap()
-        .is_empty()
+        b.list_ontology_fact_candidates(&source_ids(&["nowhere"]))
+            .unwrap()
+            .is_empty()
     );
     assert!(restore(&b, &all[0], json!({ "rowNum": 99 })).is_empty());
     assert!(restore(&b, &all[0], json!({ "page": "people/other" })).is_empty());

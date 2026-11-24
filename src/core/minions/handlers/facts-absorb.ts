@@ -9,6 +9,7 @@ import type { FactsBackstopResult } from '../../facts/backstop.ts';
 import { JobDeferredError, UnrecoverableError } from '../errors.ts';
 import { ERROR_CATALOGUE } from '../../error-catalogue.ts';
 import { readManagedMode } from '../../persistence/managed-mode.ts';
+import { withRemoteCaller } from '../../remote-caller.ts';
 
 /** Shared predicate: an inline result reporting execution-time unavailability. */
 export function factsAbsorbUnavailable(result: FactsBackstopResult): boolean {
@@ -131,5 +132,8 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     return result;
   };
   return job => withAIAttribution({ effect: 'facts-absorb', job_id: job.id, job_name: job.name,
-    ...(typeof job.data.persistence_request_id === 'string' ? { request_id: job.data.persistence_request_id } : {}) }, () => handle(job));
+    ...(typeof job.data.persistence_request_id === 'string' ? { request_id: job.data.persistence_request_id } : {}) },
+    // A job a remote write queued (effect-facts.ts) runs as a remote caller, so a Rust engine client of another process
+    // sends none of its writes to the owner. `remote_write` only ever narrows; a job without it runs as it always did.
+    () => job.data.remote_write === true ? withRemoteCaller(true, () => handle(job)) : handle(job));
 }

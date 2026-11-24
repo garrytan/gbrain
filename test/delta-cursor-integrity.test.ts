@@ -19,6 +19,15 @@ import postgres from '#postgres';
 import { __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import {
+  SESSION_CURSOR_SQL,
+  DELTA_SESSION_SQL,
+  CHECKPOINT_MANIFEST_SQL,
+  WRITE_CHECKPOINT_MANIFEST_SQL,
+  AGE_OUT_SESSION_STATE_SQL,
+  CAP_SESSION_STATE_SQL,
+  UPSERT_SESSION_STATE_SQL,
+} from '../src/core/engine-sql/session-state.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type R = Record<string, any>;
@@ -30,8 +39,21 @@ const noopLogger = { info: () => {}, warn: () => {}, error: () => {} };
  * reading the property throws, which escapes `.catch()` chains); `sql`
  * makes executeRaw reject for statements matching a pattern; `delayMs` adds
  * latency to listPages. Everything else passes through.
+ * The session-state statements run inside typed engine members, so `sql` also
+ * fails each member whose statement matches the pattern.
  */
 interface Faults { failing: Set<string>; throwOnAccess: Set<string>; sql: RegExp | null; delayMs: number }
+
+/** Each session-state engine member and the statement it runs. */
+const STATE_MEMBER_SQL: Record<string, string> = {
+  upsertSessionState: UPSERT_SESSION_STATE_SQL,
+  readSessionCursor: SESSION_CURSOR_SQL,
+  readDeltaSessionRow: DELTA_SESSION_SQL,
+  readCheckpointManifestRow: CHECKPOINT_MANIFEST_SQL,
+  writeCheckpointManifest: WRITE_CHECKPOINT_MANIFEST_SQL,
+  ageOutSessionState: AGE_OUT_SESSION_STATE_SQL,
+  capSessionStatePerClient: CAP_SESSION_STATE_SQL,
+};
 
 function faulty(engine: BrainEngine, faults: Faults): BrainEngine {
   return new Proxy(engine, {
@@ -40,6 +62,9 @@ function faulty(engine: BrainEngine, faults: Faults): BrainEngine {
       if (typeof k === 'string' && faults.throwOnAccess.has(k)) throw new Error(`injected ${k} access failure`);
       if (typeof k === 'string' && faults.failing.has(k)) {
         return async () => { throw new Error(`injected ${k} failure`); };
+      }
+      if (typeof k === 'string' && faults.sql && k in STATE_MEMBER_SQL && faults.sql.test(STATE_MEMBER_SQL[k])) {
+        return async () => { throw new Error('injected session-state failure'); };
       }
       if (k === 'executeRaw' && faults.sql) {
         const re = faults.sql;

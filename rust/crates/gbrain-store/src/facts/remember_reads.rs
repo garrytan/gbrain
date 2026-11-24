@@ -1,11 +1,12 @@
-//! The fourteen fact reads and writes a `remember`, a proposal review, a page retire and a recall by id make
+//! The fifteen fact reads and writes a `remember`, a proposal review, a page retire and a recall by id make
 //! (`engine-sql/facts-trust.ts`, `engine-sql/facts-recall.ts`):
 //!
 //! - one-fact reads: `readFactEntitySlugById`, `readFactVisibility`, `readFactActivity`, `readReviewAcceptedMark`,
 //!   `readPairFactRow`, `readSupersessionReplacement`;
 //! - list reads: `listFactsToRetireFromPage`, `listFactProvenance`, `listFactRowsByIds`;
-//! - the two reads of a save's guards: `readReplacementTarget` (the fact `replaces` names, with whether the withdrawal
-//!   ledger covers it) and `readMemberPageWithdrawal` (the withdrawal a save onto a member page meets);
+//! - the three reads of a save's guards: `readReplacementTarget` (the fact `replaces` names, with whether the withdrawal
+//!   ledger covers it), `readMemberPageWithdrawal` (the withdrawal a save onto a member page meets) and
+//!   `readClaimWithdrawal` (the withdrawal a save of a forgotten claim meets);
 //! - the supersession writes: `linkSupersededFact`, `expireSupersededFact`, `restoreSupersededFact`.
 //!
 //! Every write goes through `write_fact`, so the trust stamp and the purge refusal apply as they do for `expireFact`,
@@ -92,14 +93,6 @@ pub struct RetireArgs {
     pub pattern: String,
 }
 
-/// `listFactProvenance(sourceId, ids)`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProvenanceArgs {
-    pub source_id: String,
-    pub ids: Vec<f64>,
-}
-
 /// `listFactRowsByIds(sourceIds, ids)`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -151,7 +144,8 @@ pub struct ReplacementTargetArgs {
 }
 
 /// `readMemberPageWithdrawal({ sourceId, visibility, fact, entitySlug, page, ... })`: `policy` is the page policy of the
-/// page's member (`readPolicyFragment('pp', identity, true, [])`), read off the caller by the TypeScript member.
+/// page's member (`readPolicyFragment('pp', identity, true, [])`, or `ownerReadPolicyFragment('pp', identity, [])` for the
+/// owner), read off the caller by the TypeScript member.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MemberWithdrawalArgs {
@@ -161,7 +155,27 @@ pub struct MemberWithdrawalArgs {
     #[serde(default)]
     pub entity_slug: Option<String>,
     pub page: String,
+    /// The page's member is the enabled brain owner: a backing row of any visibility counts
+    /// (`MEMBER_READABLE_OWNER`), and `policy` is the owner read rule (`owner_read`).
+    #[serde(default)]
+    pub owner: bool,
     pub policy: PrivacyPolicy,
+}
+
+/// `readClaimWithdrawal({ sourceId, visibility, fact, entitySlug, ownPage, excludePrivate })`: `exclude_private` is the
+/// remote provenance floor the TypeScript member read off the caller (absent without `excludePrivate`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaimWithdrawalArgs {
+    pub source_id: String,
+    pub visibility: String,
+    pub fact: String,
+    #[serde(default)]
+    pub entity_slug: Option<String>,
+    #[serde(default)]
+    pub own_page: Option<String>,
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// The facts of `ids` as a set: `id = ANY(ids)` answers a repeated id once, and an id below 1 names no row.
@@ -285,21 +299,6 @@ impl Store {
             .collect())
     }
 
-    /// `listFactProvenance`: `{ id, source }` of each fact of the source named in `ids`, in id order.
-    pub fn list_fact_provenance(&self, args: &ProvenanceArgs) -> Result<Vec<Value>> {
-        const OP: &str = "listFactProvenance";
-        no_nul(OP, &[("sourceId", &args.source_id)])?;
-        let ids = id_set(OP, &args.ids)?;
-        let read = self.read()?;
-        let mut out = Vec::new();
-        for id in ids {
-            if let Some(f) = read_fact(&*read, id)?.filter(|f| f.source_id == args.source_id) {
-                out.push(json!({ "id": f.id, "source": f.source }));
-            }
-        }
-        Ok(out)
-    }
-
     /// `listFactRowsByIds`: the whole rows of these ids within these sources, in id order.
     pub fn list_fact_rows_by_ids(&self, args: &RowsByIdsArgs) -> Result<Vec<Value>> {
         const OP: &str = "listFactRowsByIds";
@@ -403,6 +402,35 @@ impl Store {
         })
     }
 
+    /// `retireSupersededFact`: the remember consumer's supersede (persistence/memory-prepare.ts):
+    /// expires the source's unexpired old fact now, links it to the new one, and ends it at `until`
+    /// when given, else keeps its end (`COALESCE($4, valid_until)`); the row count.
+    pub fn retire_superseded_fact(&self, args: &ExpireSupersededFactArgs) -> Result<u64> {
+        const OP: &str = "retireSupersededFact";
+        no_nul(OP, &[("sourceId", &args.source_id)])?;
+        let old_id = fact_number(OP, args.old_id)?;
+        let new_id = bigint(OP, "newId", args.new_id)?;
+        let until = opt_time(OP, "until", &args.until)?;
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = old_id.map(|id| read_fact(tx, id)).transpose()?.flatten() else {
+                return Ok(0);
+            };
+            if old.source_id != args.source_id || old.expired_at_us.is_some() {
+                return Ok(0);
+            }
+            let mut new = old.clone();
+            new.superseded_by = Some(require_fact(tx, new_id)?);
+            if until.is_some() {
+                new.valid_until_us = until;
+            }
+            new.expired_at_us = Some(now);
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(1)
+        })
+    }
+
     /// `restoreSupersededFact`: puts the source's old fact back as it was, only while it still points at
     /// `expectedSupersededBy` (`IS NOT DISTINCT FROM`); the row count. The withdrawal guard runs (`expired_at` is in
     /// the `SET` list): a row restored active that a withdrawal of its claim reaches comes back expired.
@@ -488,8 +516,9 @@ impl Store {
     /// `readMemberPageWithdrawal` (GST-2346): the withdrawal a save onto member page `page` meets, or `None`. A ledger row
     /// of the source and visibility under the claim's current or v1 fingerprint counts when its subject is the page, or
     /// when it is `*` or the claim's entity and withdrew a row the page's member reads: an expired row of the same
-    /// visibility and fingerprint that the withdrawal reaches, on the page itself or (world rows only) on pages the
-    /// policy lets the member read. The most specific subject comes first, then the newest.
+    /// visibility and fingerprint that the withdrawal reaches, on the page itself or (world rows only, or any
+    /// row for the enabled brain owner, `owner`) on pages the policy lets the member read. The most specific subject comes
+    /// first, then the newest.
     pub fn read_member_page_withdrawal(
         &self,
         args: &MemberWithdrawalArgs,
@@ -519,7 +548,7 @@ impl Store {
             if f.source_markdown_slug.as_deref() == Some(args.page.as_str()) {
                 return Ok(true);
             }
-            if f.visibility != "world" {
+            if !args.owner && f.visibility != "world" {
                 return Ok(false);
             }
             for slug in [f.source_markdown_slug.as_deref(), f.entity_slug.as_deref()]
@@ -579,6 +608,127 @@ impl Store {
                 "visibility": args.visibility,
                 "withdrawn_at": timestamptz_text(at),
             })
+        }))
+    }
+
+    /// `readClaimWithdrawal`: the withdrawal a save of a forgotten claim meets, as `{ hidden, row }`. The ledger rows of the
+    /// source and visibility under the claim's current or v1 fingerprint and subject `*`, the claim's entity or `ownPage`
+    /// group by subject and time; the most specific subject comes first, then the newest. Under `excludePrivate` a group
+    /// counts when a row it withdrew (an expired row of the visibility whose fingerprint is the group's and that the
+    /// withdrawal reaches) passes the floor or sits on `ownPage`, or when no row backs it; and `hidden` (no `row`) is
+    /// when the expired rows of the claim's text that a withdrawal of those subjects reaches are all ones the caller
+    /// cannot see.
+    pub fn read_claim_withdrawal(&self, args: &ClaimWithdrawalArgs) -> Result<Value> {
+        const OP: &str = "readClaimWithdrawal";
+        no_nul(
+            OP,
+            &[
+                ("sourceId", &args.source_id),
+                ("visibility", &args.visibility),
+            ],
+        )?;
+        let read = self.read()?;
+        let claim = [
+            fact_fingerprint(&args.fact),
+            fact_fingerprint_v1(&args.fact),
+        ];
+        let mut subjects = vec!["*"];
+        for s in [args.entity_slug.as_deref(), args.own_page.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            if !subjects.contains(&s) {
+                subjects.push(s);
+            }
+        }
+        let at = |subject: &str, hash: &str| {
+            withdrawal_time(&*read, &args.source_id, &args.visibility, subject, hash)
+        };
+        // The rows a withdrawal may have withdrawn (expired, this visibility), each with its two fingerprints.
+        let rows: Vec<(FactRecord, [String; 2])> = match &args.exclude_private {
+            None => Vec::new(),
+            Some(_) => source_rows(&*read, &args.source_id)?
+                .into_iter()
+                .filter(|f| f.visibility == args.visibility && f.expired_at_us.is_some())
+                .map(|f| {
+                    let hashes = [fact_fingerprint(&f.fact), fact_fingerprint_v1(&f.fact)];
+                    (f, hashes)
+                })
+                .collect(),
+        };
+        let seen = |f: &FactRecord, policy: &PrivacyPolicy| -> Result<bool> {
+            Ok(
+                (args.own_page.is_some() && f.source_markdown_slug == args.own_page)
+                    || !hidden_by_private_provenance(&*read, f, policy)?,
+            )
+        };
+        if let Some(policy) = &args.exclude_private {
+            let (mut visible, mut hidden) = (false, false);
+            for (f, hashes) in rows.iter().filter(|(_, h)| h[0] == claim[0]) {
+                let mut reached = false;
+                for subject in &subjects {
+                    for hash in hashes {
+                        if at(subject, hash)?.is_some() && withdrawal_covers(&*read, f, subject)? {
+                            reached = true;
+                        }
+                    }
+                }
+                if reached {
+                    if seen(f, policy)? {
+                        visible = true;
+                    } else {
+                        hidden = true;
+                    }
+                }
+            }
+            if hidden && !visible {
+                return Ok(json!({ "hidden": true, "row": null }));
+            }
+        }
+        let mut groups: Vec<(&str, i64, Vec<&String>)> = Vec::new();
+        for subject in &subjects {
+            for hash in claim.iter().take(if claim[0] == claim[1] { 1 } else { 2 }) {
+                let Some(when) = at(subject, hash)? else {
+                    continue;
+                };
+                match groups.iter_mut().find(|g| g.0 == *subject && g.1 == when) {
+                    Some(group) => group.2.push(hash),
+                    None => groups.push((subject, when, vec![hash])),
+                }
+            }
+        }
+        let mut kept: Vec<(&str, i64)> = Vec::new();
+        for (subject, when, ledger) in groups {
+            let counts = match &args.exclude_private {
+                None => true,
+                Some(policy) => {
+                    let (mut backed, mut shown) = (false, false);
+                    for (f, hashes) in &rows {
+                        if ledger.iter().any(|h| hashes.contains(h))
+                            && withdrawal_covers(&*read, f, subject)?
+                        {
+                            backed = true;
+                            if seen(f, policy)? {
+                                shown = true;
+                                break;
+                            }
+                        }
+                    }
+                    shown || !backed
+                }
+            };
+            if counts {
+                kept.push((subject, when));
+            }
+        }
+        kept.sort_by_key(|a| std::cmp::Reverse(((a.0 != "*") as u8, a.1)));
+        Ok(json!({
+            "hidden": false,
+            "row": kept.first().map(|(subject, when)| json!({
+                "subject": subject,
+                "visibility": args.visibility,
+                "withdrawn_at": timestamptz_text(*when),
+            })),
         }))
     }
 

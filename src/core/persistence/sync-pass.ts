@@ -14,7 +14,7 @@
  * READ ONLY` transaction and `I⋈P` is one set-based statement read through a cursor; PGLite admits one transaction at a
  * time, so there they run as bounded statements of at most 2,000 rows with writers between them.
  */
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { hardenedGitStream, hardenedStreamComplete, NulRecordSplitter } from '../hardened-git.ts';
@@ -32,11 +32,11 @@ import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { colonFileRefusal, COLON_REFUSAL_MESSAGES, readSyncFile, resolveManagedSyncContext, syncExcludePatterns, syncGitAsync, type ManagedSyncContext, type SyncFileRefusal } from './sync-discovery.ts';
 import { isWindowsColonTarget } from './native-file-target.ts';
 import { confirmedSyncDelta } from '../sync-rename-identity.ts';
-import { FILE_DRIFT_VERSION, fileDriftSide, holdBasisMoved, holdRescreenDue, type DeletionCandidate, readGitHoldRetryPaths, readGitSourceHolds, SYNC_IMPORT_PROVENANCE_OP, syncImportParser, syncImportParsers,
+import { FILE_DRIFT_VERSION, fileDriftSide, holdBasisMoved, holdRescreenDue, type DeletionCandidate, readGitHoldRetryPaths, readGitSourceHolds, syncImportParser, syncImportParsers,
   type GitHoldRecord, type SyncImportParser, type SyncImportProvenance } from './sync-holds.ts';
 import { movedDriftHolds, sameParser } from './sync-prescreen.ts';
 import { sameSyncOrigin, selectOriginClaimant, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
-import { hashWorkingLevel, probeDirtiness, readBlobs, readIndexDelta, readIndexLevel, readTreeLevel, workingChanged, type GitIndexEntry, type GitTreeEntry, type WorkingStatCache } from './sync-git-stream.ts';
+import { hashWorkingLevel, probeDirtiness, readBlobs, readIndexDelta, readIndexLevel, readTreeLevel, workingChanged, workingStatKey, type GitIndexEntry, type GitTreeEntry, type WorkingStatCache } from './sync-git-stream.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { levelReuseVerify, readTreeLevelReusing, reportLevelReuseCheck, type TreeReuse } from './sync-tree-reuse.ts';
 import { classifySyncPath, syncPassKind, type SyncClassified, type SyncIdleBlocker, type SyncPathState } from './sync-classify.ts';
@@ -44,11 +44,12 @@ import { buildConvergenceReceipt, readOnlySameContentScreen, type ConvergenceRec
 import { readManagedMode } from './ownership.ts';
 import { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP, type SyncSelection } from './sync-pass-row.ts';
 import { faultPoint } from './fault-points.ts';
-import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { filterYielding, loopYield, progressYield, sortYielding, turnYield, whileActive, type LoopYield } from './sync-yield.ts';
 import { countsMatch, proveConfirm, readLevelMark, type ConfirmProof, type LevelMark } from './sync-pass-confirm.ts';
 import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDomainCache } from './sync-pass-narrow.ts';
+import type { SyncImportPageRow } from '../engine-sql/sync-pass-pages.ts';
 import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
+import { removalPendingField, type RemovalPending } from './sync-removal-pending.ts';
 
 export { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP };
 
@@ -292,6 +293,8 @@ export interface ShadowLevel {
    * no longer live (`settledDeletionHolds`): a soft delete, a purge or the file's removal decided it.
    */
   deletionCandidates: DeletionCandidate[];
+  /** LC-1: committed-mode paths settled only because a delete's removal is not committed yet (sync-removal-pending.ts). */
+  removalPending?: RemovalPending;
   /** Working mode: the stat cache this round's rehash left (`hashWorkingLevel`); the stamp's round is the one a pass remembers. */
   workingCache: WorkingStatCache | null;
   /** Live file-backed pages whose origin is eligible: the mass-delete valve's denominator (#2828). */
@@ -370,7 +373,7 @@ export class PageTable {
   }
 }
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readSyncImportPageRows' | 'declareSyncImportPageCursor' | 'fetchSyncImportPageCursor'>;
 
 /**
  * Runs `fn` over the round's database reads: one `REPEATABLE READ, READ ONLY` snapshot on Postgres; on PGLite (one
@@ -399,32 +402,10 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   // A record's fields usually repeat the page's (origin = source_path, disk = blob, revision = the page's), so those come back
   // as a flag instead of a second copy of the string, and so does the parser when it is the Markdown one the level expects
   // (`expected`, the same object for every such page; any other comes as text parsed once per distinct value): a 600k-page
-  // read then holds about one string per field per page and decodes no parser text per page.
-  // The record's fields come out of its JSON once, in a subquery. On Postgres `OFFSET 0` keeps it unflattened, so the hash
-  // join builds over those few text columns instead of the whole record (600k: about 3.1 s of serial server time to 2.0 s);
-  // PGLite's keyset statements and a confirm round's few rows need it flattened, so each probes the record by primary key.
-  const select = `SELECT p.id, p.slug, p.source_path, p.knowledge_revision::text AS revision, p.deleted_at IS NOT NULL AS deleted,
-      p.revision_write_request_id::text AS request_id, c.fingerprint IS NOT NULL AS has_record,
-      c.origin IS NOT DISTINCT FROM p.source_path AS rec_origin_same,
-      CASE WHEN c.origin IS DISTINCT FROM p.source_path THEN c.origin END AS rec_origin,
-      c.blob_oid AS rec_blob_oid,
-      c.disk_blob_oid IS NOT DISTINCT FROM c.blob_oid AS rec_disk_same,
-      CASE WHEN c.disk_blob_oid IS DISTINCT FROM c.blob_oid THEN c.disk_blob_oid END AS rec_disk_blob_oid,
-      c.revision IS NULL AS rec_revision_null,
-      NULLIF(c.revision, p.knowledge_revision::text) AS rec_revision,
-      CASE WHEN c.parser IS DISTINCT FROM $4::jsonb THEN c.parser::text END AS rec_parser, c.parser = $4::jsonb AS rec_parser_expected,
-      c.full_episode AS rec_full_episode, c.working AS rec_working,
-      (p.page_kind = 'markdown' AND p.chunker_version = ${MARKDOWN_CHUNKER_VERSION} AND p.body_storage IS DISTINCT FROM 'segmented'
-        AND p.text_projection_revision IS NOT DISTINCT FROM p.knowledge_revision AND p.contextual_retrieval_mode IS NOT NULL) AS derived_current,
-      CASE WHEN p.deleted_at IS NOT NULL THEN ${syncDeleteOrigin('p')} ELSE false END AS sync_deleted
-    FROM pages p LEFT JOIN (SELECT fingerprint, completed_keys->0->>'origin' AS origin, completed_keys->0->>'blob_oid' AS blob_oid,
-        completed_keys->0->>'disk_blob_oid' AS disk_blob_oid, completed_keys->0->>'revision' AS revision,
-        completed_keys->0->'parser' AS parser, completed_keys->0->>'full_episode' AS full_episode, (completed_keys->0->'working')::text AS working
-      FROM op_checkpoints WHERE op=$2${kind === 'postgres' && !only ? ' OFFSET 0' : ''}) c ON c.fingerprint=$3||p.id::text
-    WHERE p.source_id=$1 AND p.source_path IS NOT NULL`;
-  const params = [sourceId, SYNC_IMPORT_PROVENANCE_OP, `${sourceId}:${incarnation}:`, JSON.stringify(expected)];
-  type Raw = Omit<PageRow, 'record' | 'arm1' | 'attested_hash'> & { has_record: boolean; rec_origin_same: boolean; rec_origin: string | null; rec_blob_oid: string | null;
-    rec_disk_same: boolean; rec_disk_blob_oid: string | null; rec_revision_null: boolean; rec_revision: string | null; rec_parser: string | null; rec_parser_expected: boolean | null; rec_full_episode: string | null; rec_working: string | null; derived_current: boolean | null; sync_deleted: boolean | null };
+  // read then holds about one string per field per page and decodes no parser text per page. The statement and its
+  // three shapes live in engine-sql/sync-pass-pages.ts.
+  const q = { sourceId, incarnation, expected };
+  type Raw = SyncImportPageRow;
   const pages = only?.table ?? new PageTable(expected);
   const parsers = new Map<string, SyncImportProvenance['parser'] | undefined>(), episodes = new Map<string, string>();
   const parserOf = (text: string | null) => {
@@ -457,7 +438,7 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   if (only) {
     // A confirm round: the previous round's rows, with the pages the pass wrote re-read into their slots (a new page last,
     // as the keyset would read it). A rewritten page that left `I⋈P` cannot be patched: the caller reads it whole.
-    const rows = await exec.executeRaw<Raw>(`${select} AND p.id = ANY($5::bigint[]) ORDER BY p.id`, [...params, only.ids]);
+    const rows = await exec.readSyncImportPageRows(q, { ids: only.ids });
     const read = new Set(rows.map(raw => String(raw.id)));
     if ([...only.slots.keys()].some(id => !read.has(id))) return null;
     for (const raw of rows) put(raw, only.slots.get(String(raw.id)) ?? pages.length);
@@ -465,11 +446,11 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   }
   let statements = 0;
   if (kind === 'postgres') {
-    const declared = Promise.all([exec.executeRaw('SET LOCAL cursor_tuple_fraction = 1'), exec.executeRaw(`DECLARE sync_pass_pages NO SCROLL CURSOR FOR ${select}`, params)]);
+    const declared = exec.declareSyncImportPageCursor(q);
     declared.catch(() => undefined);
     statements += 2;
     // A queued fetch is awaited in turn; its own catch only keeps a failure behind an earlier one from going unhandled.
-    const fetch = () => { statements++; const page = exec.executeRaw<Raw>(`FETCH ${POSTGRES_FETCH_ROWS} FROM sync_pass_pages`); page.catch(() => undefined); return page; };
+    const fetch = () => { statements++; const page = exec.fetchSyncImportPageCursor(POSTGRES_FETCH_ROWS); page.catch(() => undefined); return page; };
     const ahead = Array.from({ length: POSTGRES_FETCHES_AHEAD }, fetch);
     await declared;
     for (;;) {
@@ -485,7 +466,7 @@ async function readPages(exec: Exec, kind: 'postgres' | 'pglite', sourceId: stri
   let after = 0;
   for (;;) {
     statements++;
-    const page = await exec.executeRaw<Raw>(`${select} AND p.id>$5 ORDER BY p.id LIMIT ${PGLITE_KEYSET_ROWS}`, [...params, after]);
+    const page = await exec.readSyncImportPageRows(q, { after, limit: PGLITE_KEYSET_ROWS });
     await turn();
     take(page);
     if (page.length < PGLITE_KEYSET_ROWS) return { pages, statements };
@@ -544,16 +525,62 @@ async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, w
 }
 
 /** Deletion markers of the incarnation (a primary-key range read); none exist before PR 4b. */
-async function readMarkers(exec: Exec, sourceId: string, incarnation: string): Promise<Map<string, { kind: 'deleted' | 'legacy'; blobOids: string[]; deletion: string | null }>> {
+async function readMarkers(exec: Exec, sourceId: string, incarnation: string): Promise<Map<string, { kind: 'deleted' | 'legacy'; blobOids: string[]; deletion: string | null; slug: string | null; pageId: number | null }>> {
   const prefix = `${sourceId}:${incarnation}:`;
   // `starts_with`, not a range: under a linguistic collation (en_US) a `< prefix || U+FFFF` bound matches nothing.
-  const rows = await exec.executeRaw<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown; deletion?: unknown } | null }>(
+  const rows = await exec.executeRaw<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown; deletion?: unknown; slug?: unknown; page_id?: unknown } | null }>(
     'SELECT fingerprint, completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND starts_with(fingerprint, $2)',
     [SYNC_ORIGIN_DELETED_OP, prefix]);
   return new Map(rows.filter(row => !isWindowsColonTarget(row.fingerprint.slice(prefix.length))).map(row => [syncOriginPath(row.fingerprint.slice(prefix.length)), {
     kind: row.value?.kind === 'legacy' ? 'legacy' as const : 'deleted' as const,
     blobOids: Array.isArray(row.value?.blob_oids) ? (row.value!.blob_oids as unknown[]).filter((oid): oid is string => typeof oid === 'string') : [],
-    deletion: typeof row.value?.deletion === 'string' ? row.value.deletion : null }]));
+    deletion: typeof row.value?.deletion === 'string' ? row.value.deletion : null,
+    slug: typeof row.value?.slug === 'string' ? row.value.slug : null, pageId: Number.isSafeInteger(row.value?.page_id) ? row.value!.page_id as number : null }]));
+}
+
+/**
+ * LC-1: the paths `readFileRemovingDeletes` is asked about, read for them alone: a deleted page (or a deletion marker with
+ * no page row) whose path holds a file again. A deleted page with no file, or no deleted page, reads none.
+ */
+async function readRemovedFiles(exec: Exec, sourceId: string, input: { pages: PageTable; byOrigin: ReadonlyMap<string, number>;
+  markers: ReadonlyMap<string, { kind: 'deleted' | 'legacy'; slug: string | null; pageId: number | null }>; gitPathOf: (origin: string) => string; filed: (path: string) => boolean }): Promise<Set<string>> {
+  const { pages, byOrigin } = input, asks: Array<{ path: string; slug: string; pageId: number }> = [];
+  for (const [path, at] of byOrigin) if (pages.deleted(at) && input.filed(path)) asks.push({ path, slug: pages.slug[at]!, pageId: Number(pages.id[at]) });
+  for (const [origin, marker] of input.markers) {
+    const path = input.gitPathOf(origin);
+    if (marker.kind === 'deleted' && marker.slug && marker.pageId !== null && !byOrigin.has(path) && input.filed(path)) asks.push({ path, slug: marker.slug, pageId: marker.pageId });
+  }
+  return asks.length ? readFileRemovingDeletes(exec, sourceId, asks) : new Set<string>();
+}
+
+/**
+ * LC-1 (decision E1): the paths whose deleted page (by slug and page id) a person's delete removed the file of. The
+ * evidence is the newest committed `delete_page` of the page that is neither a retention purge (`gbrain pages purge-deleted`,
+ * the autopilot purge phase) nor a no-op repeat of a delete (`outcome.noop`, a page already deleted): it wrote the removal (`outcome.write_through.written`), it is not an owner purge, and no
+ * committed `restore_page` or `put_page` (a consented `repair file-drift --prefer file` restores through `put_page`) brought
+ * the page back after it (a no-op or a `put_page` deduplicated onto another page brings nothing back). So a later delete that left the file (`sync.write_through=false`) is the evidence, not an older
+ * removal a repair already undid. An owner purge tombstones the content source-wide, so its bytes can never be saved again
+ * and its path keeps settling `deleted_same`. Retention and owner purge are read from the receipt's outcome (`status`,
+ * `retention`), which receipt compaction keeps; the intent it clears is read only while it is there. One indexed read
+ * (`persistence_requests_slug_sequence`) per chunk of such paths.
+ */
+export async function readFileRemovingDeletes(exec: Exec, sourceId: string, asks: ReadonlyArray<{ path: string; slug: string; pageId: number }>): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < asks.length; i += 5_000) {
+    const chunk = asks.slice(i, i + 5_000);
+    const rows = await exec.executeRaw<{ path: string }>(`SELECT x.path FROM unnest($2::text[], $3::text[], $4::int[]) AS x(path, slug, page_id)
+      CROSS JOIN LATERAL (SELECT r.sequence, r.outcome FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=x.slug AND r.state='committed'
+          AND r.operation='delete_page' AND (r.page_id IS NULL OR r.page_id=x.page_id) AND r.outcome->>'noop' IS DISTINCT FROM 'true'
+          AND r.outcome->>'retention' IS DISTINCT FROM 'true' AND (r.intent IS NULL OR r.intent->>'retention' IS DISTINCT FROM 'true')
+        ORDER BY r.sequence DESC LIMIT 1) d
+      WHERE d.outcome->'write_through'->>'written'='true' AND d.outcome->>'status' IS DISTINCT FROM 'purged'
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests l WHERE l.source_id=$1 AND l.slug=x.slug AND l.sequence>d.sequence
+          AND l.state='committed' AND l.operation IN ('restore_page','put_page') AND (l.page_id IS NULL OR l.page_id=x.page_id)
+          AND l.outcome->>'noop' IS DISTINCT FROM 'true' AND l.outcome->>'status' IS DISTINCT FROM 'duplicate')`,
+      [sourceId, chunk.map(ask => ask.path), chunk.map(ask => ask.slug), chunk.map(ask => ask.pageId)]);
+    for (const row of rows) found.add(row.path);
+  }
+  return found;
 }
 
 /**
@@ -563,6 +590,7 @@ async function readMarkers(exec: Exec, sourceId: string, incarnation: string): P
  */
 async function readLegacyDeletions(exec: Exec, sourceId: string, incarnation: string, slugs: string[]): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
+  // The slug order never reaches output: DISTINCT ON only keeps the newest committed delete per slug, and the rows fold into a Map looked up by slug.
   const rows = await exec.executeRaw<{ slug: string; id: string }>(`SELECT DISTINCT ON (slug) slug, id::text AS id FROM persistence_requests
     WHERE source_id=$1 AND source_incarnation=$2::uuid AND state='committed' AND slug=ANY($3::text[])
       AND (operation='delete_page' OR intent->>'kind'='managed_sync_delete') ORDER BY slug, sequence DESC`, [sourceId, incarnation, slugs]);
@@ -781,7 +809,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     return { baseline: !deleted && revision == null && level !== null && !names && inLevel(path),
       unproven: pages.requestId[i] !== null && (deleted || level === null || !names || revision == null || String(revision) !== pages.revision[i]) };
   }, step);
-  const attestationStatements = unproven.length ? await readAttestations(engine, engineKind, sourceId, incarnation, pages, unproven) : 0;
+  const attestationStatements = unproven.length ? await readAttestations(engine, engineKind, sourceId, incarnation, pages, unproven) : 0, removedFile = await readRemovedFiles(engine, sourceId, { pages, byOrigin, markers, gitPathOf, filed: path => levelOf(path, probes.get(path)) !== null });
   timings.A = t();
 
   const baselineCommit = (context.source.last_commit && await revParse(gitRoot, context.source.last_commit)) || null;
@@ -840,7 +868,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
       spelling: legacySpelling.has(path) ? 'legacy' : twins.has(path),
       episodeUnsatisfied: input.pass ? !!input.pass.episodeFullId && live && (record ? pages.fullEpisode[at!] : undefined) !== input.pass.episodeFullId
         : input.full === true && live,
-      derivedCurrent: live && pages.derivedCurrent(at!), fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true,
+      derivedCurrent: live && pages.derivedCurrent(at!), fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true, ...(removedFile.has(path) ? { removedFile: true as const } : {}),
       keepDb: !mirror && keepDbPrefixes.length > 0 && row && isKeepDbSlug(pages.slug[at!]!, keepDbPrefixes), dbOnly: row && (dbOnlyUnknown ? isDeclaredDbOnlySlug(pages.slug[at!]!, storage) || 'unknown' : dbOnlyVerdict(pages.slug[at!]!, storage)),
       openWork: row && open.pageIds.has(Number(pages.id[at!])) || open.origins.has(origin),
     };
@@ -868,7 +896,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   t = timer();
   const paths: ShadowPath[] = [];
   let reused = 0;
-  const candidates: string[] = [], candidateAt: number[] = [];
+  const candidates: string[] = [], candidateAt: number[] = [], observed = new Map<string, string>(); // observed: LC-1 stats from before the probe (sync-removal-pending.ts)
   const settledBeforeDirtiness = new Set(['held', 'spelling', 'untracked', 'kept', 'delete', 'delete_drift', 'gone', 'deleted_same', 'deleted_edited', 'legacy_same', 'matched']);
   const shared = { mode, fullObligation: input.pass ? !!input.pass.episodeFullId : input.full === true };
   // The cached claims stay whole for the next round. A narrowed round classifies again the paths whose entry `matchedUnchanged`
@@ -890,7 +918,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     const claimed = claimants.get(path);
     const { ambiguous } = claimed ? selectOriginClaimant(claimed.map(page => ({ deleted_at: pages.deleted(page) ? true : null }))) : { ambiguous: null };
     const named = ambiguous ? claimed!.filter(page => ambiguous === 'several_tombstones' || !pages.deleted(page)) : [], ambiguousOrigin = ambiguous ? { kind: ambiguous, slugs: named.map(page => pages.slug[page]!), ids: named.map(page => Number(pages.id[page])) } : undefined;
-    if (mode === 'committed' && tree.has(path) && (!settledBeforeDirtiness.has(result.cls) || staged)) { candidates.push(path); candidateAt.push(paths.length); }
+    if (mode === 'committed' && tree.has(path) && (!settledBeforeDirtiness.has(result.cls) || result.restored || staged)) { candidates.push(path); candidateAt.push(paths.length); }
     else {
       // The row's fields the level keeps are copied onto the entry; only a candidate's row is read again (its dirtiness re-classifies it).
       if (!keepClaims) byOrigin.delete(path);
@@ -905,7 +933,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
   if (candidates.length && !strict) {
     t = timer();
     const candidateIndex = new Map<string, GitIndexEntry>();
-    for (const path of candidates) { if (step.due()) await step.pause(); const entry = indexed(path); if (entry) candidateIndex.set(path, entry); }
+    for (const path of candidates) { if (step.due()) await step.pause(); observed.set(path, workingFileStat(gitRoot, path)); const entry = indexed(path); if (entry) candidateIndex.set(path, entry); }
     const probed = await probeDirtiness(root, gitRoot, candidates, tree, candidateIndex, { step, persist: input.pass?.levelReuse === true,
       ...(levelReuseVerify() ? { verify: (reused: number, differs: string | null) => { if (reused) reportLevelReuseCheck('dirtiness probes', `${reused} reused`, differs); } } : {}) });
     timings.Dp = (timings.Dp ?? 0) + t();
@@ -951,7 +979,7 @@ export async function readShadowLevel(engine: BrainEngine, input: { sourceId: st
     releasableHolds: holds.filter(hold => releasableHold(hold, domain.has(toGit(hold.path)), dbOnlyUnknown, storage)).map(hold => hold.path),
     deletionCandidates: deletionCandidates(holds, path => domain.has(path) && !tree.has(path)
       && !(mode === 'working' && (untracked.has(path) || index.has(path))) && !readPresent(root, path, scope), toGit),
-    paths, reconcilable, ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,
+    paths, reconcilable, ...removalPendingField(mode, paths as Iterable<ShadowPath>, path => workingFileStat(gitRoot, path), observed), ...(colon.refusals.size ? { fileRefusals: [...colon.refusals.values()] } : {}), timings_ms: timings, statements: statements + attestationStatements + 3,
     ...(confirm ? { confirm: narrow ? { ...confirm, narrow: narrow === 'taken' && !reuse ? 'classified' : narrow } : confirm } : {}), ...(reuse ? { reused } : {}), ...(treeReuse ? { treeReuse } : {}), pack: pack?.identity ?? null,
     selection: { exclude: [...exclude].sort(), includeHidden: [...includeHidden].sort(), strategy, srcSubpath: scope || null, mode },
     rescreenDue: holds.filter(hold => holdRescreenDue(hold, retry.has(hold.path))).map(hold => toGit(hold.path)), workingCache: hashed?.cache ?? null };
@@ -1015,11 +1043,15 @@ const confirmGuard = <T>(read: Promise<T>) => read.catch((error: unknown) => { t
 async function readRoundSnapshot(engine: BrainEngine, input: { kind: 'postgres' | 'pglite'; sourceId: string; incarnation: string; worktreeId: string; parser: SyncImportParser; step: LoopYield;
   reuse?: { cache: PassLevelCache; passId: string; recorded?: ReadonlySet<number>; working: boolean; head: string } }, timed: <T>(key: string, read: () => Promise<T>) => Promise<T>) {
   const { kind, sourceId, incarnation, worktreeId, reuse } = input;
-  // Reused only at the same commit (a pass's own rounds; across passes any), worktree and parser, in committed mode: working mode always reads `I⋈P` whole.
+  // Reused at the same worktree and parser, in committed mode: working mode always reads `I⋈P` whole. A pass's own round at the same
+  // commit proves the previous round's table with attribution; GST-3534: one at a later commit (HEAD moved under the pass), like the
+  // next pass's first round, proves it `across` (every changed row re-read, any writer's), since `I⋈P` holds no Git state.
   const key = JSON.stringify([sourceId, incarnation, worktreeId, reuse?.head, input.parser]), acrossKey = JSON.stringify([sourceId, incarnation, worktreeId, input.parser]);
-  const cached = reuse?.cache.pages, across = cached?.across;
-  const unkeyed = cached && (reuse!.working || cached.key !== (across ? acrossKey : key)) ? { taken: false, reason: reuse!.working ? 'working' : 'key', rows: 0, ...(across ? { across } : {}) } : undefined;
-  let prior = reuse && !unkeyed ? reuse.cache.pages : undefined;
+  const cached = reuse?.cache.pages;
+  const across = cached && (cached.across || cached.key !== key) ? true as const : undefined;
+  const keyed = cached && (cached.across ? cached.key === acrossKey : cached.acrossKey === acrossKey);
+  const unkeyed = cached && (reuse!.working || !keyed) ? { taken: false, reason: reuse!.working ? 'working' : 'key', rows: 0, ...(across ? { across } : {}) } : undefined;
+  let prior = reuse && !unkeyed ? (across && !cached!.across ? { ...cached!, across } : cached) : undefined;
   const confirming = prior !== undefined;
   if (reuse) reuse.cache.pages = undefined;
   const round = (marking: boolean) => withRoundSnapshot(engine, async exec => {
@@ -1038,7 +1070,7 @@ async function readRoundSnapshot(engine: BrainEngine, input: { kind: 'postgres' 
     // A failed mark fails what was pipelined after it: the mark's failure is the one to report.
     const read = confirmed?.read ?? await timed('pages', () => readPages(exec, kind, sourceId, incarnation, input.parser, undefined, input.step)).catch(async (error: unknown) => { await marked; throw error; });
     const mark = confirmed?.mark ?? (marked ? await marked : null);
-    if (confirmed?.read && levelReuseVerify()) await verifyReusedPages(exec, { kind, sourceId, incarnation, parser: input.parser, table: confirmed.read.pages, how: across ? 'across passes' : 'in a pass' });
+    if (confirmed?.read && levelReuseVerify()) await verifyReusedPages(exec, { kind, sourceId, incarnation, parser: input.parser, table: confirmed.read.pages, how: !across ? 'in a pass' : cached!.across ? 'across passes' : 'in a pass at a later commit' });
     const [work, markers, passRow] = await others;
     if (reuse && mark) reuse.cache.pages = { key, acrossKey, mark, table: read!.pages };
     const confirm = confirmed?.confirm ?? unkeyed;
@@ -1241,7 +1273,7 @@ function readPresent(root: string, gitPath: string, scope: string): boolean {
  * (`drift_version` below FILE_DRIFT_VERSION). The pass that wrote it moved the baseline to the held file, so its one re-screen
  * (sync-holds.ts holdRescreenDue) also compares the page with the file's earlier committed versions.
  */
-const unscreenedDrift = (hold: GitHoldRecord) => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'unknown' && (hold.meta.drift_version ?? 0) < FILE_DRIFT_VERSION;
+const unscreenedDrift = (hold: GitHoldRecord) => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'unknown' && ((hold.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || hold.meta.history_unread === true);
 
 /** Whether a hold still describes the path at level `L`, in the hold's own domain (a pinned blob, working bytes, or a deletion). */
 function holdAtLevel(hold: GitHoldRecord, level: string | null, diskSha256: string | null): boolean {
@@ -1349,5 +1381,14 @@ export async function statusConvergence(engine: BrainEngine, sourceId: string): 
   } catch (error) {
     const code = (error as { code?: unknown }).code;
     return { dry_run: true, status: 'unavailable', code: typeof code === 'string' ? code : 'convergence_read_failed', message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** LC-1: a working-tree file's stat for the removal-pending check (sync-removal-pending.ts): its working-stat key (device, inode, mode, size, mtime and ctime), `absent` or `unreadable`. */
+export function workingFileStat(gitRoot: string, path: string): string {
+  try {
+    return workingStatKey(lstatSync(join(gitRoot, path), { bigint: true })) ?? 'unreadable';
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable';
   }
 }

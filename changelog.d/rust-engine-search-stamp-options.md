@@ -1,0 +1,4 @@
+**On a Rust brain, search results now carry their content warning and extraction status again, and an unverified auto-extracted stub no longer ranks with entity authority.**
+
+### Fixed
+- Search passes its whole option set (result limit, offset, page types and the rest) to the two reads that stamp a result's content warning and its extraction status. The Rust engine refused those reads because of the paging options. Search keeps going when those reads fail, so on a Rust brain `gbrain search`, `gbrain query`, `think`, `whoknows` and the MCP search tools returned results without the warning or status, and an unverified auto-extracted stub got the same ranking boost as a real entity page. The reads now use only the read policy in the option set, as Postgres and PGLite do, and the stamps and ranking match on every engine.

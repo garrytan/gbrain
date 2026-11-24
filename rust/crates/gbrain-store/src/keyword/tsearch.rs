@@ -2,6 +2,7 @@
 //! `english` configuration: `to_tsvector`, `setweight`, `tsvector || tsvector`, `plainto_tsquery`,
 //! `phraseto_tsquery`, `websearch_to_tsquery`, `@@` and the text output of both types. The ranker
 //! (`ts_rank`, `ts_rank_cd`) is in `rank.rs` and reads the same types.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 //!
 //! The C sources are `tsearch/to_tsany.c`, `tsearch/ts_parse.c`, `utils/adt/tsvector_op.c`,
 //! `utils/adt/tsquery.c`, `utils/adt/tsquery_cleanup.c` and `utils/adt/tsvector_parser.c`. Each
@@ -37,6 +38,77 @@ const MAXNUMPOS: usize = 256;
 pub(super) const MAXENTRYPOS: u32 = 1 << 14;
 /// `STACKDEPTH` of the tsquery parser's operator stack.
 const STACKDEPTH: usize = 32;
+/// The most items (operands, operators and stopword placeholders) one tsquery holds. PostgreSQL
+/// walks a query recursively under `check_stack_depth()` and raises `stack depth limit exceeded`
+/// (54001) past `max_stack_depth`; PGLite 0.5.16 answers 20,000 repeats of `quokka the ` (about
+/// 80,000 items) and fails at 50,000 repeats. Stopword placeholders carry no lexeme bytes, so the
+/// `MAXSTRPOS` check never bounds them.
+const MAX_QUERY_ITEMS: usize = 1 << 17;
+/// A query of more items than this is walked on a thread with `DEEP_STACK_BYTES` of stack.
+const DEEP_QUERY_ITEMS: usize = 1024;
+/// Stack of the thread that walks a deep query. The address space is reserved, not committed.
+const DEEP_STACK_BYTES: usize = 256 << 20;
+
+thread_local! {
+    /// True on a thread `with_query_stack` started: its stack already fits the deepest query.
+    static ON_DEEP_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f`, which recurses once per item of a query of `items` items, on a thread with a stack
+/// deep enough for `MAX_QUERY_ITEMS` frames when the query is large. Small queries, and calls
+/// already on such a thread, run in place, so a search that wraps its whole walk starts one
+/// thread, not one per page or chunk it matches.
+pub(crate) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Send) -> R {
+    if items <= DEEP_QUERY_ITEMS || ON_DEEP_STACK.with(std::cell::Cell::get) {
+        return f();
+    }
+    #[cfg(test)]
+    let spawns = DEEP_SPAWNS.with(|c| c.borrow().clone());
+    #[cfg(test)]
+    spawns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::thread::scope(|scope| {
+        let handle = std::thread::Builder::new()
+            .stack_size(DEEP_STACK_BYTES)
+            .spawn_scoped(scope, move || {
+                ON_DEEP_STACK.with(|on| on.set(true));
+                // A spawn inside counts toward the caller's tally.
+                #[cfg(test)]
+                DEEP_SPAWNS.with(|c| *c.borrow_mut() = spawns);
+                f()
+            })
+            .expect("spawn the deep-query thread");
+        match handle.join() {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many deep-query threads this thread and the deep threads it started have started.
+    static DEEP_SPAWNS: std::cell::RefCell<std::sync::Arc<std::sync::atomic::AtomicUsize>> =
+        std::cell::RefCell::new(std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+}
+
+/// Resets this thread's deep-thread tally (tests).
+#[cfg(test)]
+pub(crate) fn reset_deep_spawns() {
+    DEEP_SPAWNS
+        .with(|c| *c.borrow_mut() = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+}
+
+/// The deep-query threads started since `reset_deep_spawns`, nested ones included (tests).
+#[cfg(test)]
+pub(crate) fn deep_spawns() -> usize {
+    DEEP_SPAWNS.with(|c| c.borrow().load(std::sync::atomic::Ordering::Relaxed))
+}
+
+fn too_deep() -> StoreError {
+    StoreError::invalid(format!(
+        "stack depth limit exceeded: a tsquery holds at most {MAX_QUERY_ITEMS} items"
+    ))
+}
 
 /// `LIMITPOS`.
 fn limitpos(pos: u32) -> u16 {
@@ -83,6 +155,13 @@ pub(crate) struct TsEntry {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct TsVector {
     pub(crate) entries: Vec<TsEntry>,
+}
+
+/// Whether `error` is the tsvector size refusal (`check_tsvector_size`).
+pub(crate) fn is_vector_overflow(error: &StoreError) -> bool {
+    error
+        .message
+        .starts_with("string is too long for tsvector (")
 }
 
 /// The tsvector size limit check of `make_tsvector` and `tsvector_concat`: the lexeme bytes plus
@@ -180,6 +259,12 @@ fn english_dict(ty: TokenType) -> Option<Dict> {
 /// without taking a position; a stopword takes a position and emits no word; a lexeme longer than
 /// `MAXSTRLEN` bytes (lowercasing can lengthen a token) takes its position and is dropped.
 fn parsetext(text: &str) -> Vec<ParsedWord> {
+    parsetext_in(text, false)
+}
+
+/// [`parsetext`] for `english`, or with `simple` for the `simple` configuration: every token type
+/// `english` maps goes to the `simple` dictionary (lowercased, no stemming, no stopwords).
+fn parsetext_in(text: &str, simple: bool) -> Vec<ParsedWord> {
     let mut out = Vec::new();
     let mut pos: u32 = 0;
     for (ty, token) in parse(text) {
@@ -188,7 +273,8 @@ fn parsetext(text: &str) -> Vec<ParsedWord> {
         if token.len() >= MAXSTRLEN {
             continue;
         }
-        let lexeme = match english_dict(ty) {
+        let dict = english_dict(ty).map(|d| if simple { Dict::Simple } else { d });
+        let lexeme = match dict {
             None => continue,
             Some(Dict::EnglishStem) => english_stem(token),
             Some(Dict::Simple) => {
@@ -248,6 +334,11 @@ fn make_tsvector(mut words: Vec<ParsedWord>) -> Result<TsVector> {
 /// `to_tsvector('english', text)`.
 pub(crate) fn to_tsvector(text: &str) -> Result<TsVector> {
     make_tsvector(parsetext(text))
+}
+
+/// `to_tsvector('simple', text)`.
+pub(crate) fn to_tsvector_simple(text: &str) -> Result<TsVector> {
+    make_tsvector(parsetext_in(text, true))
 }
 
 /// `setweight(vector, weight)`: every position gets the weight; lexemes without positions stay
@@ -410,6 +501,8 @@ pub(crate) struct TsQuery {
 /// final array is the reverse).
 struct QueryBuilder {
     pushed: Vec<QItem>,
+    /// Operands parse under the `simple` configuration instead of `english`.
+    simple: bool,
     /// `curop - op`: the bytes of operand text pushed so far (each operand plus its NUL).
     sumlen: usize,
 }
@@ -418,6 +511,7 @@ impl QueryBuilder {
     fn new() -> Self {
         QueryBuilder {
             pushed: Vec::new(),
+            simple: false,
             sumlen: 0,
         }
     }
@@ -431,6 +525,14 @@ impl QueryBuilder {
         }
         self.sumlen += word.len() + 1;
         self.pushed.push(QItem::Val(word.to_string()));
+        Ok(())
+    }
+
+    /// The bound on the item count, checked where a query grows by a whole operand's text.
+    fn check_items(&self) -> Result<()> {
+        if self.pushed.len() > MAX_QUERY_ITEMS {
+            return Err(too_deep());
+        }
         Ok(())
     }
 
@@ -450,7 +552,7 @@ impl QueryBuilder {
     /// `pushval_morph`: parse one operand's text and push its lexemes, joined by `qoperator`,
     /// with stopword placeholders for the stopwords between them.
     fn pushval_morph(&mut self, text: &str, qoperator: Op) -> Result<()> {
-        let words = parsetext(text);
+        let words = parsetext_in(text, self.simple);
         if words.is_empty() {
             self.push_stop();
             return Ok(());
@@ -459,9 +561,11 @@ impl QueryBuilder {
         let mut cntpos = 0u32;
         let mut count = 0usize;
         while count < words.len() {
+            self.check_items()?;
             let wpos = u32::from(words[count].pos);
             if pos > 0 && pos + 1 < wpos {
                 while pos + 1 < wpos {
+                    self.check_items()?;
                     self.push_stop();
                     if cntpos > 0 {
                         self.push_operator(qoperator, 1);
@@ -500,22 +604,26 @@ impl QueryBuilder {
     /// The end of `parse_tsquery`: reverse into prefix order, set left offsets (`findoprnd`) and
     /// drop stopword placeholders (`cleanup_tsquery_stopwords`).
     fn finish(self) -> Result<TsQuery> {
+        self.check_items()?;
         let mut items = self.pushed;
         if items.is_empty() {
             return Ok(TsQuery::default());
         }
         items.reverse();
-        let mut pos = 0usize;
-        let mut needcleanup = false;
-        findoprnd(&mut items, &mut pos, &mut needcleanup)?;
-        if pos != items.len() {
-            return Err(StoreError::invalid("malformed tsquery: extra nodes"));
-        }
-        let query = TsQuery { items };
-        if needcleanup {
-            return Ok(cleanup_stopwords(&query));
-        }
-        Ok(query)
+        let count = items.len();
+        with_query_stack(count, move || {
+            let mut pos = 0usize;
+            let mut needcleanup = false;
+            findoprnd(&mut items, &mut pos, &mut needcleanup)?;
+            if pos != items.len() {
+                return Err(StoreError::invalid("malformed tsquery: extra nodes"));
+            }
+            let query = TsQuery { items };
+            if needcleanup {
+                return Ok(cleanup_stopwords(&query));
+            }
+            Ok(query)
+        })
     }
 }
 
@@ -711,6 +819,16 @@ pub(crate) fn plainto_tsquery(text: &str) -> Result<TsQuery> {
     b.finish()
 }
 
+/// `plainto_tsquery('simple', text)`.
+pub(crate) fn plainto_tsquery_simple(text: &str) -> Result<TsQuery> {
+    let mut b = QueryBuilder::new();
+    b.simple = true;
+    if !text.is_empty() {
+        b.pushval_morph(text, Op::And)?;
+    }
+    b.finish()
+}
+
 /// `phraseto_tsquery('english', text)`.
 pub(crate) fn phraseto_tsquery(text: &str) -> Result<TsQuery> {
     let mut b = QueryBuilder::new();
@@ -723,6 +841,22 @@ pub(crate) fn phraseto_tsquery(text: &str) -> Result<TsQuery> {
 /// C `isspace` in the C locale.
 fn c_isspace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+}
+
+/// `t_isspace` at a character boundary, as PGLite (PostgreSQL 17, UTF-8, ctype `C.UTF-8`) reads it:
+/// a one-byte character by C `isspace`, a longer one by `iswspace`, which is the `[[:space:]]`
+/// class. So U+0085, U+2000-U+200A (not U+2007), U+2028, U+2029, U+205F and U+3000 separate
+/// websearch words, as they do on PGLite. (PostgreSQL 18 reads only ASCII here; PGLite is the
+/// engine a Rust brain must answer like.)
+fn space_at(s: &[u8], at: usize) -> bool {
+    let len = mblen(s, at);
+    if len == 1 {
+        return c_isspace(s[at]);
+    }
+    std::str::from_utf8(&s[at..(at + len).min(s.len())])
+        .ok()
+        .and_then(|t| t.chars().next())
+        .is_some_and(crate::cli_reads::pg_text::is_pg_space)
 }
 
 /// `ISOPERATOR`.
@@ -778,7 +912,7 @@ fn parse_or_operator(s: &[u8], at: usize) -> bool {
         if p >= s.len() {
             return false;
         }
-        if !c_isspace(s[p]) {
+        if !space_at(s, p) {
             break;
         }
     }
@@ -792,7 +926,7 @@ fn web_word(s: &[u8], at: usize) -> usize {
     let mut p = at + mblen(s, at);
     while p < s.len() {
         let b = s[p];
-        if c_isspace(b) || is_operator(b) || b == b'"' || b == b':' {
+        if space_at(s, p) || is_operator(b) || b == b'"' || b == b':' {
             break;
         }
         p += mblen(s, p);
@@ -839,7 +973,7 @@ fn web_token<'a>(
                     *at += 1;
                     *state = WebState::WaitOperand;
                     continue;
-                } else if !c_isspace(c) {
+                } else if !space_at(s, *at) {
                     let start = *at;
                     let end = web_word(s, start);
                     *at = end;
@@ -859,7 +993,7 @@ fn web_token<'a>(
                 } else if is_operator(c) {
                     *at += 1;
                     continue;
-                } else if !c_isspace(c) {
+                } else if !space_at(s, *at) {
                     *state = WebState::WaitOperand;
                     return WebToken::Opr(Op::And);
                 }
@@ -923,7 +1057,7 @@ pub(crate) fn or_of_lexemes(q: &TsQuery) -> Option<TsQuery> {
         return None;
     }
     let mut words = Vec::new();
-    collect(&q.items, 0, &mut words);
+    with_query_stack(q.items.len(), || collect(&q.items, 0, &mut words));
     let mut b = QueryBuilder::new();
     for (i, w) in words.iter().enumerate() {
         b.push_value(w).ok()?;
@@ -934,25 +1068,44 @@ pub(crate) fn or_of_lexemes(q: &TsQuery) -> Option<TsQuery> {
     b.finish().ok()
 }
 
-/// `a || b` on tsqueries (`tsquery_or`): `b` when `a` is empty, `a` when `b` is empty, else an OR
-/// whose left operand is `a` and right operand `b`. `join_tsqueries` puts `b` in `child[0]` and
-/// `QTN2QT` writes the operator, then `child[0]` (the right operand), then `child[1]`.
-pub(crate) fn tsquery_or(a: TsQuery, b: TsQuery) -> TsQuery {
-    if a.items.is_empty() {
-        return b;
+/// The item bound on the whole of `items` items of a query that grows by whole queries (`tsquery_or_all`): the error
+/// `check_items` raises while one query is parsed.
+pub(super) fn check_query_items(items: usize) -> Result<()> {
+    if items > MAX_QUERY_ITEMS {
+        return Err(too_deep());
     }
-    if b.items.is_empty() {
-        return a;
+    Ok(())
+}
+
+/// `q1 || q2 || ... || qn` on tsqueries (`tsquery_or`, folded from the left): an empty query is skipped (`b` when `a`
+/// is empty, `a` when `b` is empty), else an OR whose left operand is what came before and whose right operand is the
+/// next query. `join_tsqueries` puts `b` in `child[0]` and `QTN2QT` writes the operator, then `child[0]` (the right
+/// operand), then `child[1]`, so the items run last operator, last query, ..., first query. They are laid out once,
+/// not copied for every `||`, and the whole is held to the item bound of a single query.
+pub(crate) fn tsquery_or_all(queries: Vec<TsQuery>) -> Result<TsQuery> {
+    let queries: Vec<TsQuery> = queries
+        .into_iter()
+        .filter(|q| !q.items.is_empty())
+        .collect();
+    let total =
+        queries.iter().map(|q| q.items.len()).sum::<usize>() + queries.len().saturating_sub(1);
+    check_query_items(total)?;
+    let mut items = Vec::with_capacity(total);
+    let mut left_len = total;
+    for next in queries.into_iter().rev() {
+        left_len -= next.items.len();
+        if left_len > 0 {
+            // `left_len` items remain after `next`: the operator joins them, and `next` sits between.
+            left_len -= 1;
+            items.push(QItem::Opr {
+                op: Op::Or,
+                distance: 0,
+                left: 1 + next.items.len() as u32,
+            });
+        }
+        items.extend(next.items);
     }
-    let mut items = Vec::with_capacity(1 + a.items.len() + b.items.len());
-    items.push(QItem::Opr {
-        op: Op::Or,
-        distance: 0,
-        left: 1 + b.items.len() as u32,
-    });
-    items.extend(b.items);
-    items.extend(a.items);
-    TsQuery { items }
+    Ok(TsQuery { items })
 }
 
 /// `ts_filter(v, weights)` (`tsvector_filter`): each lexeme keeps its positions whose weight is
@@ -1386,7 +1539,7 @@ pub(crate) fn ts_matches(v: &TsVector, q: &TsQuery) -> bool {
     if q.items.is_empty() {
         return false;
     }
-    ts_execute(q, &VectorCheck { v, q })
+    with_query_stack(q.items.len(), || ts_execute(q, &VectorCheck { v, q }))
 }
 
 #[cfg(test)]
@@ -1436,6 +1589,56 @@ mod tests {
                     "fts_input({text:?}) rust {got:?} pg {:?}",
                     s(v, "fts_input")
                 ));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} mismatches:\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
+    }
+
+    #[test]
+    fn websearch_splits_on_pglite_non_ascii_spaces() {
+        // PGLite 0.4.3 (PostgreSQL 17.5, the repository's PGLite) answers, captured from
+        // `websearch_to_tsquery('english', q)::text`. The goldens above come from PostgreSQL 18.6,
+        // which reads only ASCII whitespace here; they hold none of these characters.
+        let separators = [
+            0x85, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2008, 0x2009, 0x200a,
+            0x2028, 0x2029, 0x205f, 0x3000,
+        ];
+        let shapes = [
+            ("cat{w}dog", "'cat' & 'dog'"),
+            ("cats{w}or{w}dogs", "'cat' | 'dog'"),
+            ("cats{w}-dogs", "'cat' & !'dog'"),
+            ("-{w}cats", "!'cat'"),
+            ("{w}-dogs", "!'dog'"),
+            ("cats{w}or", "'cat'"),
+            (
+                "running{w}\"quick{w}fox\"{w}or{w}jumps",
+                "'run' & 'quick' <-> 'fox' | 'jump'",
+            ),
+        ];
+        let mut bad = Vec::new();
+        for cp in separators {
+            let w = char::from_u32(cp).expect("scalar").to_string();
+            for (shape, want) in shapes {
+                let q = shape.replace("{w}", &w);
+                let got = websearch_to_tsquery(&q).expect("web").to_text();
+                if got != want {
+                    bad.push(format!("U+{cp:04X} {shape}: rust {got} pglite {want}"));
+                }
+            }
+        }
+        // Not in PGLite's class: the word stays whole and the parser splits it into a phrase.
+        for cp in [0x1680, 0x2007, 0xa0, 0x202f] {
+            let w = char::from_u32(cp).expect("scalar").to_string();
+            let got = websearch_to_tsquery(&format!("cats{w}-dogs"))
+                .expect("web")
+                .to_text();
+            if got != "'cat' <-> 'dog'" {
+                bad.push(format!("U+{cp:04X} cats-dogs: rust {got}"));
             }
         }
         assert!(
@@ -1593,5 +1796,98 @@ mod tests {
             bad.len(),
             bad.join("\n")
         );
+    }
+
+    /// Run `f` on a thread with a 1 MiB stack, smaller than any thread the N-API host runs a
+    /// search on, so a recursion that depends on the query size overflows it.
+    fn on_small_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("the query code must not panic")
+    }
+
+    #[test]
+    fn a_query_of_many_operands_is_built_matched_and_ranked_without_deep_recursion() {
+        // GBRAIN-REVIEW 4: 'quokka the ' repeated builds a left-deep tree whose depth follows the
+        // operand count, and the recursive cleanup, matcher and ranker overflowed the stack.
+        // PGLite answers 20,000 repeats (about 80,000 items) with the match.
+        let (matched, rank, or_text) = on_small_stack(|| {
+            let text = "quokka the ".repeat(20_000);
+            let q = websearch_to_tsquery(&text).expect("web");
+            let doc = to_tsvector("quokka here").expect("doc");
+            let plain = plainto_tsquery(&text).expect("plain");
+            let phrase = phraseto_tsquery(&text).expect("phrase");
+            (
+                (
+                    ts_matches(&doc, &q),
+                    ts_matches(&doc, &phrase),
+                    q.items.len(),
+                ),
+                super::super::rank::ts_rank_cd(&doc, &q),
+                or_of_lexemes(&plain).map(|o| o.items.len()),
+            )
+        });
+        assert!(matched.0, "the AND of twenty thousand quokkas matches");
+        assert!(!matched.1, "the phrase of them does not");
+        assert!(matched.2 > 20_000);
+        assert!(rank >= 0.0);
+        assert_eq!(or_text, Some(39_999));
+    }
+
+    #[test]
+    fn a_query_at_the_item_bound_fits_the_deep_stack() {
+        // The deepest query the bound admits, in a debug build (the largest frames).
+        let items = on_small_stack(|| {
+            // Grow the query until the next step is refused, then keep the last one admitted.
+            let mut n = 1_000;
+            let mut last = websearch_to_tsquery(&"quokka the ".repeat(n)).expect("web");
+            while let Ok(q) = websearch_to_tsquery(&"quokka the ".repeat(n + 500)) {
+                n += 500;
+                last = q;
+            }
+            assert!(n > 20_000, "the bound admits what PGLite answers: {n}");
+            let q = last;
+            let doc = to_tsvector("quokka here").expect("doc");
+            assert!(ts_matches(&doc, &q));
+            assert!(super::super::rank::ts_rank_cd(&doc, &q) >= 0.0);
+            q.items.len()
+        });
+        assert!(items > 10_000);
+    }
+
+    #[test]
+    fn a_query_past_the_item_bound_is_refused_not_recursed_into() {
+        // Repeated stopwords add placeholder items but no lexeme bytes, so the byte counter
+        // never trips; the item bound does. (plainto/phraseto of a text of only stopwords is the
+        // one-placeholder empty query, so only the websearch parser grows with it.)
+        let refused = |e: Option<StoreError>, len: usize| {
+            let e = e.unwrap_or_else(|| panic!("a query of {len} bytes was not refused"));
+            assert!(
+                e.message.starts_with("stack depth limit exceeded"),
+                "{}",
+                e.message
+            );
+        };
+        let stop = "the ".repeat(400_000);
+        let len = stop.len();
+        refused(
+            on_small_stack(move || websearch_to_tsquery(&stop).err()),
+            len,
+        );
+        let mixed = "quokka the ".repeat(100_000);
+        let len = mixed.len();
+        let errs = on_small_stack(move || {
+            [
+                websearch_to_tsquery(&mixed).err(),
+                plainto_tsquery(&mixed).err(),
+                phraseto_tsquery(&mixed).err(),
+            ]
+        });
+        for e in errs {
+            refused(e, len);
+        }
     }
 }

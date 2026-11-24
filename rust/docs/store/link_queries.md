@@ -30,24 +30,37 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `listJunkEntityHubs({ edgeThreshold, maxChunks, limit })` | served |
 | `countEntityPages(filter, { sourceId?, excludeQuarantined? })` | served |
 | `entityGraphCoverage(filter)` | served |
+| `entityFeatureCoverage(filter, feature, { samplePercent? })` | served; a `samplePercent` refuses |
+| `countDatedMeetingPages()` | served |
 | `countForeignEdges(slug, sourceId, direction)` | served |
 | `listLivePageSummaries(scope?)` | served |
 | `countInboundLinks(slug, sourceId, { excludePrivate, originSameSource })` | served |
+| `readEntityInboundEdges(slug, sourceId, { excludePrivate, originSameSource })` | served |
 | `listLinkEndpointPages(sourceId, slugs, crossSourceSlugs)` | served |
 | `listPagesTitledIn(queryLower, scope)` | served |
+| `probePageTypes(sets, scope)` | served |
+| `readLongPageSizes(ids, scope, { includeTimeline })` | served |
 | `wordLexemes(words)` | served under the English text search configuration |
 | `readLinkContextMatches(asks)` | served |
 | `readLinkContextOriginPages(ids)` | served |
 
 ### Refusals (`engine_capability_missing`)
 
-- The temporal read option (`temporal`). `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
+- The temporal read option (`temporal`) on every member but `relationalFanout` and `relationalChainHop`. `minTrust` and `suppressFlagged` are served wherever `pageReadFilter` reads
   them (`getBacklinkCounts`, `getAdjacencyBoosts`, `supersedingPageSlugs`, `relationalFanout`, `relationalChainHop`,
-  `listLivePageSummaries`, `listPagesTitledIn`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
+  `listLivePageSummaries`, `listPagesTitledIn`, `probePageTypes`, `readLongPageSizes`): `GraphScope` applies `trust::TrustPolicy` to the page's stamped tier
   and its write-gate receipts. `findOrphanPages` and `listLinkSources` still refuse them: their SQL does not read
-  them through `pageReadFilter`, and no caller passes them. `requireSafeChunks` and `takesHoldersAllowList` are accepted where `pageReadFilter`
-  does not read them: they only turn the live filter on in `relationalFanout`, and they are ignored by
-  `getBacklinkCounts`, `getAdjacencyBoosts` and `relationalChainHop`, as in the SQL engines.
+  them through `pageReadFilter`, and no caller passes them. `takesHoldersAllowList` is accepted: it turns the live
+  filter on in `relationalFanout` and is ignored by `getBacklinkCounts` and `getAdjacencyBoosts`, as in the SQL
+  engines. `requireSafeChunks` is accepted everywhere `pageReadFilter` does not read it, and the relational walks model
+  it: `relationalFanout` and `relationalChainHop` give a page a `canonical_chunk_id` only when it is sealed at the safe
+  fence (`chunker_version >= 4`; a page that records no version is not safe), and `relationalChainHop` applies
+  readChainHop's `textGate` to edge context. The TypeScript member reads the caller and sends `textGate: 'body'` (the
+  evidence page must be sealed and hold no facts / takes fence; a segmented page's `body_flags.has_protected` decides,
+  fail closed), `'takes'` (an owner call whose credential names a holders list: sealed and no takes fence) or none (the
+  owner's own direct call). An unknown `textGate` is an invalid argument. `getBacklinkCounts`, `getAdjacencyBoosts` and
+  `supersedingPageSlugs` also accept and ignore the other keys of hybrid search's option bag
+  (`HYBRID_BAG_KEYS`), because hybrid search hands them that whole bag as their policy; any other key still refuses.
 - A page id that is not a 32-bit integer (`getBacklinkCounts`, `getAdjacencyBoosts`, `relationalChainHop`): Postgres
   casts the ids into `int[]`. A non-safe-integer id in `getAdjacencyBoosts` throws the same `TypeError` the SQL engines
   throw, before any option is read.
@@ -76,8 +89,10 @@ policy hides fails the filter, live or not, in `getBacklinkCounts`, `getAdjacenc
 from a hidden page or with a hidden origin (`privateLinkOriginFilterForCaller` tests the origin's privacy only, not
 whether it is live). The origin clause (`originFilter`) passes a link with no origin, or one whose origin page passes the
 live filter. The policy carries a caller's reader identity and private-readable grant (the `callerReaders`
-opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn` and `countInboundLinks`; any other caller
-whose policy differs (folder grants, lineage, an owner read) refuses.
+opt-in), in these reads and in `listLivePageSummaries`, `listPagesTitledIn`, `probePageTypes`, `readLongPageSizes` and `countInboundLinks`; any other caller
+whose policy differs (folder grants, lineage, an owner read) refuses. The owner-only part of the policy (`ownerOnly`: a
+page of an owner-only source, a concept synthesized from one, or every page under the closed form) applies to each page
+the read judges, with the owner-only sources read once per call, on the first page the call judges (`OwnerOnlyCache`).
 
 ## Derived-link replacement
 
@@ -113,9 +128,14 @@ error rolls back the whole batch.
   live filter; the trusted unscoped call counts every page.
 - `getAdjacencyBoosts`: in-set linkers per page over the subgraph the ids induce, with the cross-source subset.
 - `relationalFanout`: every simple path from the seeds up to `depth` hops, grouped per reached page; the best path is
-  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the page's lowest-index chunk.
+  the one with the lowest `(hop, path length, path text)`. `canonical_chunk_id` is the lowest-index chunk of the page's live body (`chunkGenerationProbe`): a staged chunk, one whose occurrence a deferred retire closed and an inline chunk left on a segmented page are never named.
+  With `temporal`, a step keeps an edge only while `relationshipFilterSql` would: the edge's relationship row in the
+  `world` scope with `excludePrivate`, else `all`, matches the status (`live`, `ended`, `all`) on `asOf` (today, UTC,
+  from the store clock, when absent) or overlaps `during`. An edge with no relationship row passes, and an `amends`
+  edge passes outside `ended` reads (`edge_filter.rs`).
 - `relationalChainHop`: one oriented step from the frontier, collapsed per neighbor, ordered by frontier id and lowest
-  link id; the degree saturates at 300 (`CHAIN_DEGREE_SATURATION`).
+  link id; the degree saturates at 300 (`CHAIN_DEGREE_SATURATION`). With `temporal`, both the step edges and the edges
+  the degree counts pass the same relationship filter as `relationalFanout`, scoped by the hop's `excludePrivate`.
 - `hasSupersedeEdges`: true when any `supersedes` link exists, in any source, to any page.
 - `supersedingPageSlugs`: `{ to_page_id, by_slug }` rows for `supersedes` links to the listed pages from a page that is
   not soft-deleted and is in the target's source. With a policy (even `{}`), both pages pass the live read filter and
@@ -141,16 +161,35 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   (the SQL ignores `sourceId` there); otherwise a non-empty `sourceId` filters.
 - `entityGraphCoverage`: `{ entities, connected, withTimeline }` over live, unquarantined entity pages that are not test
   fixtures (`tools/gbrain/test/`) or the person template. `withTimeline` counts pages with a timeline row.
+- `entityFeatureCoverage`: `{ sampleSize, matched }` over live, unquarantined entity pages in every source: the page
+  count, and how many are the target of a link (`links`) or have a timeline row (`timeline`). PGLite and Postgres take
+  an optional `TABLESAMPLE BERNOULLI` percent; the store reads every page, so a `samplePercent` refuses with
+  `engine_capability_missing`.
+- `countDatedMeetingPages`: live pages of type `meeting` with an effective date.
 - `countForeignEdges`: links of one page, whose other end is in another source; `in`, `out` or `both` (each link once).
 - `listLivePageSummaries`: `{ slug, type, quarantined }` for pages that are not soft-deleted and pass
   `pageReadFilter(.., scope)`, in page id order.
 - `countInboundLinks`: inbound links from live pages of the same source, `mentions` left out. With `excludePrivate`
   the referrer and the link origin must be readable; with `originSameSource` an origin must be live and in the source.
+- `readEntityInboundEdges`: the links `countInboundLinks` counts, in link id order, with the referrer's slug and the
+  temporal columns of the link's relationship in the `world` scope with `excludePrivate`, else `all`; all null when
+  there is no relationship row. The shim turns the two timestamps into `Date`, as Postgres returns them.
 - `listLinkEndpointPages`: the live pages of `sourceId` named in `slugs` (by slug), then, for slugs in
   `crossSourceSlugs` or with no row in `sourceId`, the live pages of other sources (source order, then slug). The SQL
   leaves the row order to the plan.
 - `listPagesTitledIn`: pages whose lowercased title (three characters or more) occurs in `queryLower` and that pass
   `pageReadFilter(.., scope, live)`, by source then slug in byte order, at most 50.
+- `probePageTypes`: search's type-filter probe (engine-sql/cli-reads-ops.ts). `present[i]` is whether a page that
+  passes `pageReadFilter(.., scope, live)` has a type in `sets[i]` (false for an empty set). `available` is null unless
+  a non-empty set has no such page; then it lists at most 500 distinct types of those pages. The SQL leaves which 500
+  and their order to the plan; the store returns the first 500 in byte order, and the caller sorts them.
+- `readLongPageSizes`: search's long-page size preflight (search/long-page-sizes.ts). One row `{ id, chars, bytes }`
+  per page in `ids` that passes `pageReadFilter(.., scope, live)` and `servedTextProjectionFilter`, and
+  `safeChunksFilter` when `requiresSafeChunks(scope)`. `chars` and `bytes` are the compiled truth's `char_length` and
+  `octet_length` (NULL counts 0); with `includeTimeline`, a timeline that holds a character outside `[[:space:]]` adds
+  `TIMELINE_SEPARATOR` (21) and its own length. The SQL leaves the row order to the plan; the store returns rows in
+  first-ask order, once per id, and the caller reads them into a map. An id that is not a 32-bit integer throws a
+  `TypeError` before the store is called, as the SQL's `int[]` cast fails.
 - `wordLexemes`: each word's `tsvector_to_array(to_tsvector('english', w))`, in tsvector order. The member returns a
   `Map` from word to lexemes.
 - `readLinkContextMatches`: for each ask (a returned link context and its stored edge: from page, to page, link type;
@@ -169,8 +208,6 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
 - `lockPageKeys` is not needed: the store's write transaction is serial.
 - `PageSourceMissingError` and the `REVISION_BACKFILL_PENDING` path do not occur: every store page has a source and a
   revision.
-- Chronicle-style dates in the SQL engines read the host time zone; the store reads UTC (follow-up
-  `chronicle-reads-host-time-zone`).
 - The derived-link insert repeats the core `add_links_batch` checks locally (`check_link`, `insert_row`).
 
 ## Follow-ups

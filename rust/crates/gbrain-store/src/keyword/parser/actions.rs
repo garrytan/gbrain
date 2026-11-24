@@ -1,5 +1,7 @@
-//! Generated from the PostgreSQL 18 `wparser_def.c` `actionTPS_*` tables (one item per C row,
-//! same order). Do not edit by hand; see `parser.rs` for the engine that runs them.
+//! Generated from the PostgreSQL 18.6 `wparser_def.c` `actionTPS_*` tables (one item per C row,
+//! same order) by `bun rust/scripts/gen-parser-actions.ts --write`. Do not edit by hand; see `parser.rs`
+//! for the engine that runs them.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
 
 use super::TokenType;
 

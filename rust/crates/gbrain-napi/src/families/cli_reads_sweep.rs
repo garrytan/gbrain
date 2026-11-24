@@ -56,28 +56,4 @@ impl Brain {
             s.list_page_refs_for_slugs(&required(input, "listPageRefsForSlugs input")?)
         })
     }
-
-    /// `readExtractReceiptPrior({ sourceId, slug })`: resolves the page row an extract receipt write checks, or null.
-    #[napi]
-    pub fn read_extract_receipt_prior<'env>(
-        &self,
-        env: &'env Env,
-        input: serde_json::Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_extract_receipt_prior(&required(input, "readExtractReceiptPrior input")?)
-        })
-    }
-
-    /// `readExtractReceiptSealed({ sourceId, slug, safeVersion })`: resolves `{ sealed }` of the page, or null.
-    #[napi]
-    pub fn read_extract_receipt_sealed<'env>(
-        &self,
-        env: &'env Env,
-        input: serde_json::Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_extract_receipt_sealed(&required(input, "readExtractReceiptSealed input")?)
-        })
-    }
 }

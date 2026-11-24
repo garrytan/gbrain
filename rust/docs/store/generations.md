@@ -77,7 +77,7 @@ it writes (`checkActivationId`), so Postgres's `a.id::uuid` cast never meets one
 The repair lists take the filter `{ runId?, since?, ownerKey?, id? }` (`generations/repair.rs`): each present field
 narrows the rows as its SQL fragment does, and a row with a null `run_id` never matches a run. `since` must be an ISO
 8601 instant with a zone; the TypeScript member on every engine checks it and binds it as `YYYY-MM-DDTHH:MM:SS.ffffffZ`
-(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listSourceIncarnations`
+(`repairSinceInstant`), so a bare date, a time with no zone or a word refuses on every engine. `listGenerationSourceIncarnations`
 is not a store method: the TypeScript member reads `readSourceIncarnation` once per distinct id and sorts by id in
 byte order, as the statement's `ORDER BY id COLLATE "C"` does.
 
@@ -112,7 +112,10 @@ left out). `listOrphanedChronicleOwners` keeps the live rows of the kind whose d
 `depth:`) has no live record and that hold at least one live item page, oldest `updated_at` first, then id, up to the
 limit; a negative limit refuses `INVALID_ARGUMENT` as Postgres refuses `LIMIT -1`. `listChronicleEventSlotRows` reads
 `frontmatter.event` `when`, `where` and `kind` as text (deleted pages included) in slug byte order; the SQL has no
-`ORDER BY`, and the caller folds the rows into a map. The chronicle ledger (`chronicle_page_state`) has no store yet:
+`ORDER BY`, and the caller folds the rows into a map. `listChronicleCoverageGapRows` (the chronicle advisor's
+coverage-gap read, `advisor/collect-chronicle.ts`) lists the live `meeting`, `conversation` and `calendar-event` pages
+of every source updated within 30 days of the store clock that own no timeline row with an event page, with
+`effective_date` as ISO text and `frontmatter->>'date'`/`'start'`, in page record order (the SQL has no `ORDER BY`). The chronicle ledger (`chronicle_page_state`) has no store yet:
 `listChronicleOwnedHashes` answers no hash and `hasChronicleSkipDecision` false, which is what a SQL brain answers for a
 page the ledger holds nothing for. The four projection members are in `timeline_queries.md`.
 
@@ -121,3 +124,13 @@ removes the source's rows of all five tables (`cascade.rs`).
 
 Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`; this family writes no page
 record, so it never sets the member-access flag itself.
+
+## The re-derive queue
+
+`markNeedsRederive` keeps the `needs_rederive` rows under `h 0x0C derived_table \0 derived_id`
+(`crates/gbrain-store/src/generations/needs_rederive.rs`), next to the derivation inputs (`h 0x0A`, `h 0x0B`). A
+purge's `hideDerivedRows` marks each derived row it hides. The reads whose SQL applies `rederiveHiddenSql` hide a
+marked row: the fact reads with a read eligibility, the fact pool, the saved-fact match, `countWorldFacts`,
+`findTrajectory`, `listContestedProposalPairs`, `factReadableUnder`, the take and timeline reads with a read
+eligibility, `listLiveTakesByIds`, and `getVersions` (a marked page shows no version). `pageAwaitsRederive` reads it.
+A source delete removes the source's rows.

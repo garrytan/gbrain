@@ -3,16 +3,16 @@
  * (rust/crates/gbrain-store/src/facts/recall.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served: `readFactsEmbeddingColumn`, `listNearestFacts`, `listSlotRows`, `listPoolUnbackedKeys`, `listCallOffCueFacts` and
- * `listPoolEntityPairs`. Each reads under the pool's read policy, which `poolArgs` (fact-codec.ts) resolves as it does for
- * `listFactsForRelevance`: the store answers it exactly when the visibility rule is the plain `world` one and the privacy
- * policy is the no-caller or reader-identity one; anything else refuses. `listNearestFacts` also refuses a vector-typed
+ * `listPoolEntityPairs`. Each reads under the pool's read policy, which `poolArgs` (fact-pool.ts) resolves as it does for
+ * `listFactsForRelevance`: the store answers it exactly when the visibility and privacy policies are ones it serves;
+ * anything else refuses. `listNearestFacts` also refuses a vector-typed
  * column (the store keeps `halfvec`); its `hnswIterativeScan` only changes the plan, so the store ignores it.
  * `listFactRowsByIds` is served by facts-remember.ts.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
-import { poolArgs } from './fact-codec.ts';
+import { poolArgs } from './fact-pool.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
@@ -22,6 +22,13 @@ const rows = <T>(list: Row[]): T[] => list.map(row => withDates(row, POOL_DATES)
 
 export const readFactsEmbeddingColumn: Member<'readFactsEmbeddingColumn'> = async brain =>
   storeCall({ member: 'readFactsEmbeddingColumn' }, () => brain.readFactsEmbeddingColumn());
+
+/** The facts arm's source-page read (BrainEngine listFactSourcePages), from the store's facts and pages (facts/recall.rs). */
+export const listFactSourcePages: Member<'listFactSourcePages'> = async (brain, ids) => {
+  if (!ids.length) return [];
+  if (!ids.every(Number.isSafeInteger)) refuseMember('listFactSourcePages', 'a fact id that is not an integer');
+  return await storeCall({ member: 'listFactSourcePages' }, () => brain.listFactSourcePages([...ids])) as Awaited<ReturnType<BrainEngine['listFactSourcePages']>>;
+};
 
 export const listNearestFacts: Member<'listNearestFacts'> = async (brain, q) => {
   const member = 'listNearestFacts';

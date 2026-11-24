@@ -80,7 +80,6 @@ import { readCredentials, writeCredentials, type HarnessCredentials } from '../h
 import { installSharedSkillsConnection, type SharedSkillsConnectionOptions } from '../harness/shared-skills.ts';
 import { brainSupersededEnrollments, localEnrollment, SKILLS_REFRESH_COMMAND } from './harness-skills.ts';
 import { nativeSharedSkillsDirectory } from '../harness/native-router.ts';
-import { sqlQueryForEngine } from '../sql-query.ts';
 import { BootstrapError, acquireBootstrapLock } from './lock.ts';
 import { probeLivePgliteHolder } from './uninstall.ts';
 import type { ExecRunner } from './repo.ts';
@@ -547,7 +546,7 @@ async function defaultRevokeById(id: string): Promise<boolean> {
   const engine = await createEngine(engineConfig);
   await engine.connect(engineConfig);
   try {
-    return await revokeLegacyTokenById(sqlQueryForEngine(engine), id);
+    return await revokeLegacyTokenById(engine, id);
   } finally {
     await engine.disconnect();
   }
@@ -839,8 +838,8 @@ function withheldOperationsNote(name: string, count: number): string {
 }
 
 async function harnessOperationSnapshot(follow: boolean): Promise<string[]> {
-  const { operations } = await import('../operations.ts');
-  return operations.filter(op => !op.localOnly && (op.scope === 'read' || op.scope === 'write') &&
+  const [{ operations }, { addedOnlyByName }] = await Promise.all([import('../operations.ts'), import('../ops/execution-prerequisites.ts')]);
+  return operations.filter(op => !op.localOnly && (op.scope === 'read' || op.scope === 'write') && !addedOnlyByName(op.name) &&
     (op.requiredScopes ?? []).every(scope => follow && scope === 'skills_member_self')).map(op => op.name).sort();
 }
 

@@ -1,0 +1,4 @@
+---
+kind: add
+---
+`gbrain repair secret-spans --apply` now keeps each original it redacts in an encrypted secret store in the brain's database, and the marker it writes names the entry (<REDACTED:rule:ss_...>). Retained page versions of a redacted page are redacted too. The key is a file in ~/.gbrain/secret-store/keys/ (mode 0600, created on first use, never overwritten; GBRAIN_SECRET_STORE_KEY overrides it). New commands: `gbrain secrets list`, `gbrain secrets reveal`, `gbrain secrets restore` (preview, then --expect, for a false positive) and `gbrain secrets key status|export|import` (back up the key with a passphrase). The MCP operation reveal_secret reaches a token only when the owner adds it by name with `gbrain auth rescope --refresh-operations --add reveal_secret`, and only for pages that token can read. Nothing changes on a brain that never runs the repair.

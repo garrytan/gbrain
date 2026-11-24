@@ -125,6 +125,7 @@ const MATRIX: Row[] = [
   { name: 'storage_find', mode: 'skip', reason: 'reads only the storage source, which is not federated: a remote caller reads cards only when its grant names storage; test/storage-manifest.test.ts pins the bound, unbound and granted cases' },
   { name: 'storage_get', mode: 'skip', reason: 'reads only the storage source, which is not federated: a remote caller reads cards only when its grant names storage; test/storage-manifest.test.ts pins the bound, unbound and granted cases' },
   { name: 'storage_list', mode: 'skip', reason: 'reads only the storage source, which is not federated: a remote caller reads cards only when its grant names storage; test/storage-manifest.test.ts pins the bound, unbound and granted cases' },
+  { name: 'reveal_secret', mode: 'skip', reason: 'returns one secret store entry, never page data; a remote caller needs reveal_secret named in its grant and a readable page holding the marker, which test/secret-store.test.ts pins' },
   { name: 'list_skills', mode: 'skip', reason: 'bundled skills catalog from the install tree; skills suites own it (throws outside an installed skills dir)' },
 
   // Deliberately brain-wide (config / registry / identity — not source data).

@@ -31,8 +31,6 @@ export const SLUG_PATH_SCAN_LIMIT = 20_000;
 export const SLUG_PATH_FILE_LIMIT = 200;
 const SAMPLE_LIMIT = 5;
 const FILE_MAX_BYTES = 1 << 20;
-/** Every slug slugifyPath changes matches: a hyphen run or edge hyphen, an empty segment, any character outside a-z0-9/._- (a superset: a CJK slug matches and derives unchanged). */
-const CANDIDATE_PATTERN = '[^a-z0-9/._-]|--|-/|/-|^-|-$|//';
 
 type FileVerdict = 'stamped' | 'unstamped' | 'file_missing' | 'no_checkout' | 'not_read';
 interface Mismatch { source_id: string; slug: string; source_path: string; imports_as: string; file: FileVerdict }
@@ -60,10 +58,7 @@ async function runSlugPathMismatch(ctx: DoctorContext): Promise<Check[]> {
   try {
     const engine = connectedEngine(ctx);
     const scope = doctorSourceIds(ctx);
-    const rows = await engine.executeRaw<{ source_id: string; slug: string; source_path: string }>(
-      `SELECT p.source_id, p.slug, p.source_path FROM pages p JOIN sources s ON s.id = p.source_id AND s.archived IS NOT TRUE
-        WHERE p.deleted_at IS NULL AND NULLIF(btrim(p.source_path), '') IS NOT NULL AND p.slug ~ $1${scope ? ' AND p.source_id = ANY($2::text[])' : ''}
-        ORDER BY p.id LIMIT ${SLUG_PATH_SCAN_LIMIT + 1}`, scope ? [CANDIDATE_PATTERN, scope] : [CANDIDATE_PATTERN]);
+    const rows = await engine.listSlugPathCandidates(scope ?? null);
     const truncated = rows.length > SLUG_PATH_SCAN_LIMIT;
     const inspected = rows.slice(0, SLUG_PATH_SCAN_LIMIT);
     const mismatches: Mismatch[] = inspected.flatMap(row => {

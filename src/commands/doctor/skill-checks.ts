@@ -33,6 +33,7 @@ import {
 } from '../../core/audit-skill-brain-first.ts';
 import type { Check } from '../doctor.ts';
 import { checkError, infoCheck } from './check-fix.ts';
+import { rethrowCapabilityMissing } from '../../core/rust-engine/errors.ts';
 
 /** Quick skill conformance check — frontmatter + required sections */
 export function skillConformanceCheck(skillsDir: string): Check {
@@ -236,26 +237,20 @@ export async function skillPreconditionsCheck(
   const ctx: PreconditionContext = {
     async countPages() {
       try {
-        const rows = await engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM pages');
-        return rows[0]?.n ?? 0;
+        return await engine.countPageRows();
       } catch { return 0; }
     },
     async countPagesInDir(dir: string) {
       const prefix = dir.endsWith('/') ? dir : `${dir}/`;
       try {
-        const rows = await engine.executeRaw<{ n: number }>(
-          `SELECT COUNT(*)::int AS n FROM pages WHERE slug LIKE $1 ESCAPE '\\'`,
-          [`${prefix.replace(/[%_\\]/g, m => `\\${m}`)}%`],
-        );
-        return rows[0]?.n ?? 0;
+        return await engine.countPagesBySlugPrefix(prefix);
       } catch { return 0; }
     },
     async listSourceIds() {
       // #4278: `source:<id>`'s contract is EXISTENCE — a registered-but-not-
       // yet-synced source is met. Includes 'default' (it always exists).
       try {
-        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY id`);
-        return rows.map(r => r.id);
+        return await engine.listSourceIds();
       } catch { return []; }
     },
     async listPopulatedSourceIds() {
@@ -264,27 +259,15 @@ export async function skillPreconditionsCheck(
       // page. Pre-fix this required a non-default source, so a healthy
       // default-only brain failed `requires: source` forever.
       try {
-        const rows = await engine.executeRaw<{ id: string }>(
-          `SELECT s.id
-             FROM sources s
-            WHERE EXISTS (
-              SELECT 1 FROM pages p
-               WHERE p.source_id = s.id
-                 AND p.deleted_at IS NULL
-            )
-            ORDER BY s.id`,
-        );
+        const rows = await engine.readDoctorSources('ids_with_live_pages');
         return rows.map(r => r.id);
       } catch { return []; }
     },
     async countPagesForSource(id: string) {
       try {
-        const rows = await engine.executeRaw<{ n: number }>(
-          'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1',
-          [id],
-        );
-        return rows[0]?.n ?? 0;
-      } catch { return 0; }
+        // The typed count (soft-deleted pages included, as before), so a Rust brain answers it.
+        return await engine.countSourcePages(id, { includeDeleted: true });
+      } catch (e) { rethrowCapabilityMissing(e); return 0; }
     },
     async getConfig(key: string) {
       try {

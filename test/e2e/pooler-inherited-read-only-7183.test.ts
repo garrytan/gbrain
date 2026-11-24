@@ -81,6 +81,13 @@ describeDb(`writes on read-only-default server connections (${pooled ? 'pgbounce
     expect(await engine!.executeRaw('SELECT 1 FROM sources WHERE id = $1', [id])).toHaveLength(1);
   });
 
+  test('the folder-source sync stamp writes outside any transaction', async () => {
+    const id = `ro-${randomUUID().slice(0, 8)}`;
+    await engine!.executeRaw('INSERT INTO sources(id, name) VALUES ($1, $1)', [id]);
+    expect(await engine!.markSourceSynced(id)).toBe(true);
+    expect((await engine!.getSource(id))?.last_sync_at).toBeInstanceOf(Date);
+  });
+
   test('typed autocommit writes outside any transaction write: writer registration and page upkeep', async () => {
     const id = randomUUID();
     const grant = { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null };
@@ -93,6 +100,25 @@ describeDb(`writes on read-only-default server connections (${pooled ? 'pgbounce
     const [page] = await engine!.executeRaw<{ chunker_version: string | null; source_path: string | null }>(
       "SELECT chunker_version::text AS chunker_version, source_path FROM pages WHERE slug = $1 AND source_id = 'default'", [slug]);
     expect(page).toEqual({ chunker_version: '7', source_path: `${slug}.md` });
+  });
+
+  test('typed autocommit writes outside any transaction write: open loops, memory proposal upkeep and source attach', async () => {
+    const dedupKey = `thread:ro-${randomUUID().slice(0, 8)}`;
+    const opened = await engine!.upsertOpenLoop({
+      sourceId: 'default', dedupKey, loopType: 'unanswered_inbound', counterpartyEmail: 'a@example.com',
+      summary: 'ro probe', evidence: [{ message_id: 'm1', quote: 'hi' }], threadId: 't-ro', detector: 'deterministic_thread',
+    });
+    expect(opened.created).toBe(true);
+    await engine!.closeOpenLoop('default', opened.id, 'done', 'ro-probe');
+    const [loopRow] = await engine!.executeRaw<{ status: string }>('SELECT status FROM open_loops WHERE id = $1', [opened.id]);
+    expect(loopRow.status).toBe('done');
+    await engine!.expireMemoryProposals('ro probe');
+    await engine!.purgeMemoryProposals(30);
+    const id = `ro-${randomUUID().slice(0, 8)}`;
+    await engine!.executeRaw('INSERT INTO sources(id, name) VALUES ($1, $1)', [id]);
+    await engine!.attachSourcePath(id, `/srv/${id}`);
+    const [source] = await engine!.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [id]);
+    expect(source.local_path).toBe(`/srv/${id}`);
   });
 
   test('a deliberately read-only transaction still refuses a write', async () => {

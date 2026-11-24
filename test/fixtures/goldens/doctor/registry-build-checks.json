@@ -255,6 +255,10 @@
       },
       {
         "category": "ops",
+        "name": "rust_engine_addon"
+      },
+      {
+        "category": "ops",
         "name": "ipc_socket_path"
       },
       {
@@ -292,6 +296,10 @@
       {
         "category": "ops",
         "name": "sync_admission_restricted"
+      },
+      {
+        "category": "ops",
+        "name": "topology_recovery_stopped"
       },
       {
         "category": "ops",
@@ -463,6 +471,18 @@
       },
       {
         "category": "brain",
+        "name": "access_pages_read_by_nobody"
+      },
+      {
+        "category": "brain",
+        "name": "access_shared_source_unread"
+      },
+      {
+        "category": "brain",
+        "name": "access_disabled_member_credentials"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
       },
       {
@@ -484,6 +504,10 @@
       {
         "category": "ops",
         "name": "guard_ledger_checks"
+      },
+      {
+        "category": "ops",
+        "name": "owner_only_marks_triggers"
       },
       {
         "category": "ops",
@@ -1115,6 +1139,14 @@
       },
       {
         "category": "brain",
+        "name": "write_gate_hold_ambiguous"
+      },
+      {
+        "category": "brain",
+        "name": "write_gate_holds_stranded"
+      },
+      {
+        "category": "brain",
         "name": "core_memory"
       },
       {
@@ -1219,6 +1251,10 @@
       },
       {
         "category": "brain",
+        "name": "entity_duplicates"
+      },
+      {
+        "category": "brain",
         "name": "local_edit_adoptions"
       },
       {
@@ -1240,6 +1276,14 @@
       {
         "category": "brain",
         "name": "facts_undated_lines"
+      },
+      {
+        "category": "brain",
+        "name": "secret_store"
+      },
+      {
+        "category": "ops",
+        "name": "owner_identity"
       },
       {
         "category": "brain",

@@ -3,6 +3,38 @@ import { MAX_FILE_SIZE } from '../import-file.ts';
 import { parseMarkdown, serializeMarkdown } from '../markdown.ts';
 import { loadActivePackForWriteVocabulary, undeclaredPageTypeMessage, undeclaredPageTypeSuggestion } from '../schema-pack/write-vocabulary.ts';
 import { classifyStoredType, safeCliToken, sanitizeTypeForDisplay } from '../schema-pack/type-usage.ts';
+import { stripNul } from '../batch-rows.ts';
+import { nulSelectorError } from './page-edit.ts';
+
+/** The parameters holding the page text each page mutation writes (append_page refuses U+0000 in page-append.ts). */
+const PAGE_TEXT_PARAMS: Record<string, string[]> = { put_page: ['content'], add_timeline_entry: ['summary', 'detail', 'source'] };
+
+/**
+ * GST-3170: Postgres text and jsonb cannot hold U+0000, so a page write whose text carried one failed whole with
+ * "unsupported Unicode escape sequence". It is removed from the page text here, before the intent is journaled, so the
+ * canonical file, the stored page and every row derived from it read the same text; every other character stays as
+ * written. Returns how many were removed.
+ */
+export function stripPageTextNul(operation: string, params: Record<string, unknown>): number {
+  let removed = 0;
+  const strip = (value: unknown): unknown => {
+    if (typeof value !== 'string') return value;
+    const out = stripNul(value);
+    removed += value.length - out.length;
+    return out;
+  };
+  for (const key of PAGE_TEXT_PARAMS[operation] ?? []) if (Object.hasOwn(params, key)) params[key] = strip(params[key]);
+  if (operation !== 'edit_page' || !Array.isArray(params.edits)) return removed;
+  params.edits = params.edits.map((edit: unknown, index: number) => {
+    if (!edit || typeof edit !== 'object') return edit;
+    const { old_text, new_text } = edit as { old_text?: unknown; new_text?: unknown };
+    if (typeof old_text === 'string' && old_text.includes('\0')) {
+      throw nulSelectorError(index);
+    }
+    return { ...edit, new_text: strip(new_text) };
+  });
+  return removed;
+}
 
 /** Normalize model-authored types once at admission, after an existing UUID has replayed. */
 export async function normalizeSubagentPageInput(ctx: OperationContext, intent: Record<string, unknown>): Promise<void> {

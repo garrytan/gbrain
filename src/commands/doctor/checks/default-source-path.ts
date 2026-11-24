@@ -29,9 +29,7 @@ type PathRow = { id: string; local_path: string };
 
 /** Every other live source whose local_path is relative on this host (not absolute here or on another OS). */
 async function relativeSources(engine: BrainEngine): Promise<PathRow[]> {
-  return (await engine.executeRaw<PathRow>(
-    `SELECT id, local_path FROM sources WHERE id <> 'default' AND local_path IS NOT NULL AND local_path <> '' AND archived IS NOT TRUE ORDER BY id`,
-  )).filter(row => !isHostAbsolutePath(row.local_path) && !isForeignAbsolutePath(row.local_path));
+  return (await engine.readDoctorSources('relative_paths')).filter(row => !isHostAbsolutePath(row.local_path) && !isForeignAbsolutePath(row.local_path));
 }
 
 function siblingNote(relative: PathRow[], pathless: string[]): string {
@@ -68,14 +66,9 @@ export async function defaultSourceLocalPathCheck(engine: BrainEngine): Promise<
   // Only gather the fallback-topology inputs when the pointer is actually
   // null — the set case resolves from the row alone.
   if (defaultSource && !defaultSource.local_path) {
-    const [counts] = await engine.executeRaw<{ live: number; file_backed: number }>(
-      `SELECT COUNT(*)::int AS live,
-              COUNT(*) FILTER (WHERE source_path IS NOT NULL)::int AS file_backed
-         FROM pages
-        WHERE source_id = 'default' AND deleted_at IS NULL`,
-    );
-    livePages = Number(counts?.live ?? 0);
-    fileBackedPages = Number(counts?.file_backed ?? 0);
+    const counts = await engine.countDefaultSourceFiles();
+    livePages = counts.live;
+    fileBackedPages = counts.file_backed;
     repoPath = (await engine.getConfig('sync.repo_path')) || null;
     if (repoPath && isHostAbsolutePath(repoPath)) {
       try {
@@ -103,9 +96,7 @@ export async function defaultSourceLocalPathCheck(engine: BrainEngine): Promise<
   if (relative.length > 0) {
     const globalRepo = repoPath ?? ((await engine.getConfig('sync.repo_path')) || null);
     if (globalRepo && isHostAbsolutePath(globalRepo)) {
-      pathless = (await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE (local_path IS NULL OR local_path = '') AND archived IS NOT TRUE ORDER BY id`,
-      )).map(row => row.id);
+      pathless = (await engine.readDoctorSources('pathless_live')).map(row => row.id);
     }
   }
 

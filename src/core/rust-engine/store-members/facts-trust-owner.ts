@@ -1,7 +1,7 @@
 /**
  * Group 5 facts members that serve the owner from the stamped trust columns and the write-gate receipts, served from the
- * facts store (rust/crates/gbrain-store/src/facts/trust_owner.rs): `readFactForOwnerAction`, `countDerivedFactTaint`,
- * `listLexicalContestCandidates` and `listStandingPreferences` (src/core/engine-sql/facts-trust.ts).
+ * facts store (rust/crates/gbrain-store/src/facts/trust_owner.rs): `readFactForOwnerAction`, `countDerivedFactTaint`
+ * and `listStandingPreferences` (src/core/engine-sql/facts-trust.ts).
  *
  * `readFactForOwnerAction` refuses an id that is not an integer rather than guess at PGLite's bigint error, and turns
  * `expired_at` into a `Date` as the SQL engines return it (the owner binding hashes `String(expired_at)`).
@@ -25,12 +25,6 @@ export const readFactForOwnerAction: Member<'readFactForOwnerAction'> = async (b
 
 export const countDerivedFactTaint: Member<'countDerivedFactTaint'> = (brain) =>
   storeCall({ member: 'countDerivedFactTaint' }, () => brain.countDerivedFactTaint());
-
-export const listLexicalContestCandidates: Member<'listLexicalContestCandidates'> = (brain, opts) =>
-  storeCall({ member: 'listLexicalContestCandidates', sourceId: opts.sourceId }, () => brain.listLexicalContestCandidates({
-    sourceId: opts.sourceId, entitySlug: opts.entitySlug, kind: opts.kind, visibility: opts.visibility,
-    pageSlug: opts.pageSlug ?? null, writer: opts.writer,
-  }));
 
 export const listStandingPreferences: Member<'listStandingPreferences'> = async (brain, opts) => {
   const rows: Row[] = await storeCall({ member: 'listStandingPreferences', sourceId: opts.sourceId }, () => brain.listStandingPreferences({

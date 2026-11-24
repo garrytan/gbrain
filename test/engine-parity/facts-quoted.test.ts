@@ -1,7 +1,7 @@
 /**
- * BrainEngine parity: the quote reads of search/transcript-quote.ts (which facts came from a third-party page, which
- * facts sit at or above the owner's trust tier, each page id's type) and the bare-name page lookup of a slot-history
- * question (search/slot-history.ts entityKeys), all in src/core/engine-sql/facts-recall.ts.
+ * BrainEngine parity: the quote reads of search/transcript-quote.ts (which facts came from a third-party page and which
+ * facts sit at or above the owner's trust tier, src/core/engine-sql/facts-trust.ts) and the bare-name page lookup of a
+ * slot-history question (search/slot-history.ts entityKeys, src/core/engine-sql/facts-recall.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each member below returns the same observable result on every engine arm (PGLite always; Postgres with
@@ -12,7 +12,7 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines.
  *  - Seam: none; every fact, page, source and tier is seeded through the typed members (`insertFacts`, `insertFact`,
- *    `putPage`, `softDeletePage`, `transaction`, `applyTransactionSettings`) and `createSource`. Generated ids are
+ *    `putPage`, `softDeletePage`, `recordDerivationEdges`, `transaction`, `applyTransactionSettings`) and `createSource`. Generated ids are
  *    compared by name, never by value.
  */
 import { describe, expect } from 'bun:test';
@@ -63,9 +63,9 @@ describe('engine parity: quote and slot-history reads', () => {
     for (const [n, id] of other) ids.set(n, id);
     const all = [...ids.values()];
     const answers = {
-      quoted: named(ids, await engine.listFactsFromQuotedPages([...all, all[0]!, 99_999_999], QUOTED, BACKSTOP)),
-      withNotes: named(ids, await engine.listFactsFromQuotedPages(all, [...QUOTED, 'note'], BACKSTOP)),
-      none: await engine.listFactsFromQuotedPages([], QUOTED, BACKSTOP),
+      quoted: named(ids, await engine.listFactsFromQuotedPages({ ids: [...all, all[0]!, 99_999_999], pageTypes: QUOTED, backstop: BACKSTOP })),
+      withNotes: named(ids, await engine.listFactsFromQuotedPages({ ids: all, pageTypes: [...QUOTED, 'note'], backstop: BACKSTOP })),
+      none: await engine.listFactsFromQuotedPages({ ids: [], pageTypes: QUOTED, backstop: BACKSTOP }),
     };
     expect(answers).toEqual({
       quoted: ['bySlug', 'deletedPage', 'put', 'synced'],
@@ -75,20 +75,43 @@ describe('engine parity: quote and slot-history reads', () => {
     return answers;
   });
 
+  // The derivation clause joins the edge's input id to pages.id: any source, deleted pages included, and only an
+  // input table of `pages` with an id of 1 to 18 digits (leading zeros allowed) names a page.
   parityTest('listFactsFromQuotedPages follows a derivation input edge to a quoted page', {
-    methods: ['listFactsFromQuotedPages', 'recordDerivationEdges', 'insertFacts', 'putPage', 'getPage'],
-  }, async (engine) => {
+    methods: ['listFactsFromQuotedPages', 'recordDerivationEdges', 'insertFacts', 'putPage', 'getPage', 'softDeletePage'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
     await engine.putPage('chats/a', page('chat'));
-    const chat = Number((await engine.getPage('chats/a'))!.id);
-    const ids = await facts(engine, { derived: {}, plain: {} });
-    await engine.recordDerivationEdges({ table: 'facts', id: String(ids.get('derived')) }, SRC, [{ table: 'pages', id: String(chat) }]);
-    const answers = named(ids, await engine.listFactsFromQuotedPages([...ids.values()], QUOTED, BACKSTOP));
-    expect(answers).toEqual(['derived']);
+    await engine.putPage('chats/gone', page('transcript'));
+    await engine.putPage('chats/x', page('chat'), { sourceId: 'other' });
+    await engine.putPage('notes/n', page('note'));
+    const id = async (slug: string, sourceId = SRC) => String((await engine.getPage(slug, { sourceId }))!.id);
+    const chat = await id('chats/a');
+    const gone = await id('chats/gone');
+    const elsewhere = await id('chats/x', 'other');
+    const note = await id('notes/n');
+    await engine.softDeletePage('chats/gone');
+    const inputs: Record<string, { table: string; id: string }> = {
+      derived: { table: 'pages', id: chat },
+      fromDeleted: { table: 'pages', id: gone },
+      fromOtherSource: { table: 'pages', id: elsewhere },
+      padded: { table: 'pages', id: `00${chat}` },
+      fromNote: { table: 'pages', id: note },
+      notAPage: { table: 'facts', id: chat },
+      notDigits: { table: 'pages', id: `${chat}a` },
+      tooLong: { table: 'pages', id: chat.padStart(19, '0') },
+    };
+    const ids = await facts(engine, { ...Object.fromEntries(Object.keys(inputs).map((n) => [n, {}])), plain: {} });
+    for (const [n, input] of Object.entries(inputs)) {
+      await engine.recordDerivationEdges({ table: 'facts', id: String(ids.get(n)) }, SRC, [input]);
+    }
+    const answers = named(ids, await engine.listFactsFromQuotedPages({ ids: [...ids.values()], pageTypes: QUOTED, backstop: BACKSTOP }));
+    expect(answers).toEqual(['derived', 'fromDeleted', 'fromOtherSource', 'padded']);
     return answers;
   });
 
-  parityTest('listFactIdsAtTrustFloor keeps the facts whose stored tier ranks at or above the floor', {
-    methods: ['listFactIdsAtTrustFloor', 'transaction', 'applyTransactionSettings', 'insertFact'],
+  parityTest('listOwnerTierFacts keeps the facts whose stored tier ranks at or above the floor', {
+    methods: ['listOwnerTierFacts', 'transaction', 'applyTransactionSettings', 'insertFact'],
   }, async (engine) => {
     const ids = new Map<string, number>();
     for (const tier of ['user_confirmed', 'operator_curated', 'agent_written', null] as Array<TrustTier | null>) {
@@ -103,10 +126,10 @@ describe('engine parity: quote and slot-history reads', () => {
     }
     const all = [...ids.values(), 99_999_999];
     const answers = {
-      owner: named(ids, await engine.listFactIdsAtTrustFloor(all, 'operator_curated')),
-      unknown: named(ids, await engine.listFactIdsAtTrustFloor(all, 'unknown')),
-      confirmed: named(ids, await engine.listFactIdsAtTrustFloor(all, 'user_confirmed')),
-      none: await engine.listFactIdsAtTrustFloor([], 'unknown'),
+      owner: named(ids, await engine.listOwnerTierFacts({ ids: all, floor: 'operator_curated' })),
+      unknown: named(ids, await engine.listOwnerTierFacts({ ids: all, floor: 'unknown' })),
+      confirmed: named(ids, await engine.listOwnerTierFacts({ ids: all, floor: 'user_confirmed' })),
+      none: await engine.listOwnerTierFacts({ ids: [], floor: 'unknown' }),
     };
     expect(answers).toEqual({
       owner: ['operator_curated', 'user_confirmed'],
@@ -117,21 +140,16 @@ describe('engine parity: quote and slot-history reads', () => {
     return answers;
   });
 
-  parityTest('readPageTypesByIds reads each page id type, soft-deleted pages included, and skips ids with no page', {
-    methods: ['readPageTypesByIds', 'putPage', 'getPage', 'softDeletePage'],
+  parityTest('listOwnerTierFacts refuses a floor that names no trust tier on every engine, and reads nothing for no ids', {
+    methods: ['listOwnerTierFacts', 'insertFact'],
   }, async (engine) => {
-    await engine.putPage('chats/a', page('chat'));
-    await engine.putPage('notes/gone', page('note'));
-    const chat = Number((await engine.getPage('chats/a'))!.id);
-    const gone = Number((await engine.getPage('notes/gone'))!.id);
-    await engine.softDeletePage('notes/gone');
-    const rows = await engine.readPageTypesByIds([chat, gone, chat, 99_999_999]);
-    const answers = {
-      types: sorted(rows.map((r) => `${Number(r.id) === chat ? 'chat' : Number(r.id) === gone ? 'gone' : r.id}:${r.type}`)),
-      idKinds: rows.map((r) => typeof r.id),
-      none: await engine.readPageTypesByIds([]),
-    };
-    expect(answers).toEqual({ types: ['chat:chat', 'gone:note'], idKinds: ['number', 'number'], none: [] });
+    // Before the refusal, Postgres stopped in its driver (UNDEFINED_VALUE for the missing rank) while PGLite and the Rust
+    // store returned no fact: one call, two answers.
+    const { id } = await engine.insertFact({ fact: 'f', source: 'mcp:remember', entity_slug: null, visibility: 'world', embedding: null } as never, { source_id: SRC });
+    const refused = await engine.listOwnerTierFacts({ ids: [Number(id)], floor: 'bogus' as TrustTier }).then(
+      (rows) => ({ rows }), (e: unknown) => ({ error: (e as Error).message }));
+    const answers = { refused, noIds: await engine.listOwnerTierFacts({ ids: [], floor: 'bogus' as TrustTier }) };
+    expect(answers).toEqual({ refused: { error: 'listOwnerTierFacts: unknown trust tier "bogus"' }, noIds: [] });
     return answers;
   });
 

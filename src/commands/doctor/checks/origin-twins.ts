@@ -32,8 +32,7 @@ async function runOriginTwins(ctx: DoctorContext): Promise<Check[]> {
           'origin_twins', { docs: DOCS }) });
       return checks;
     }
-    const [source] = await engine.executeRaw<{ id: string }>("SELECT id FROM sources ORDER BY (id = 'default') DESC, id LIMIT 1");
-    const id = source?.id ?? 'default';
+    const id = (await engine.readFirstSourceId()) ?? 'default';
     checks.push({ name: 'origin_twins', status: 'warn', details: { index, sources: [], docs: DOCS },
       message: `Index pending: no duplicate-origin twins remain, but ${ORIGIN_INDEX.name} is ${index}. Build it with ${originTwinsRepairCommand(id)} --apply --expect <hash from its preview> --yes (online; writes no page).`,
       fix: agentFix(['gbrain', 'repair', 'origin-twins', '--source', id, '--json'],

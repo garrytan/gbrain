@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseGlobalFlags, cliOptsToProgressOptions, DEFAULT_CLI_OPTIONS, setCliOptions, getCliOptions, _resetCliOptionsForTest } from '../src/core/cli-options.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 describe('parseGlobalFlags', () => {
   test('empty argv → defaults, empty rest', () => {
@@ -217,7 +218,7 @@ describe('cli.ts global-flag stripping (integration)', () => {
   test('gbrain --progress-json --version works (global flag stripped before dispatch)', () => {
     const res = spawnSync('bun', [CLI, '--progress-json', '--version'], {
       encoding: 'utf-8',
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' },
     });
     expect(res.status).toBe(0);
     expect(res.stdout).toContain('gbrain ');
@@ -226,7 +227,7 @@ describe('cli.ts global-flag stripping (integration)', () => {
   test('gbrain --quiet --progress-interval=500 version works (flags interleaved, all stripped)', () => {
     const res = spawnSync('bun', [CLI, '--quiet', '--progress-interval=500', 'version'], {
       encoding: 'utf-8',
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' },
     });
     expect(res.status).toBe(0);
     expect(res.stdout).toContain('gbrain ');
@@ -242,7 +243,7 @@ describe('cli.ts global-flag stripping (integration)', () => {
   test('#4557: gbrain --explain <command> dispatches on the command, not on --explain', () => {
     const res = spawnSync('bun', [CLI, '--explain', 'not-a-real-command-4557'], {
       encoding: 'utf-8',
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' },
     });
     expect(res.status).toBe(2); // usage error (agent contract v1 A3/D1)
     expect(res.stderr).toContain('Unknown command: not-a-real-command-4557');
@@ -259,7 +260,7 @@ describe('CLI integration: progress streams to the right channel', () => {
     // stray progress onto stdout for commands that don't use a reporter.
     const res = spawnSync('bun', [CLI, '--progress-json', '--version'], {
       encoding: 'utf-8',
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' },
     });
     expect(res.status).toBe(0);
     expect(res.stdout.trim()).toMatch(/^gbrain /);
@@ -272,7 +273,7 @@ describe('CLI integration: progress streams to the right channel', () => {
     // when --quiet briefly passed through argv. Now it reads the singleton.
     const res = spawnSync('bun', [CLI, '--quiet', 'skillpack-check'], {
       encoding: 'utf-8',
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' },
     });
     // Exit may be 0 or 1 depending on whether a brain is configured;
     // what matters is stdout stays empty.
@@ -427,10 +428,10 @@ describe('--wait flag (#5232 write wait; #6625 movement owns its own)', () => {
 
   test('CLI: a malformed write wait exits 2 with invalid_params; movement reads its own duration', () => {
     const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
-    const write = spawnSync('bun', [CLI, 'remember', 'x', '--wait', '5m'], { encoding: 'utf-8', env: { ...process.env, NO_COLOR: '1' } });
+    const write = spawnSync('bun', [CLI, 'remember', 'x', '--wait', '5m'], { encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' } });
     expect(write.status).toBe(2);
     expect(write.stderr).toContain('Error [invalid_params]: --wait requires a number of seconds from 0 to 600, no units (got "5m").');
-    const movement = spawnSync('bun', [CLI, 'sources', 'writer', 'movement', '--wait', '10x'], { encoding: 'utf-8', env: { ...process.env, NO_COLOR: '1' } });
+    const movement = spawnSync('bun', [CLI, 'sources', 'writer', 'movement', '--wait', '10x'], { encoding: 'utf-8', env: { ...envWithoutDatabaseUrl(), NO_COLOR: '1' } });
     expect(movement.stderr).toContain('--wait must be a positive integer with optional s/m/h suffix');
     expect(movement.stderr).not.toContain('seconds from 0 to 600');
   });

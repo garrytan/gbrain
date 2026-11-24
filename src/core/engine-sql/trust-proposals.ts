@@ -11,6 +11,8 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { TrustTable } from '../trust/schema.ts';
 import { TRUST_PROPOSAL_ACTIONS, TRUST_PROPOSAL_STATUSES } from '../trust/schema.ts';
+import { grantedPrivateFactSql, memberFactAdmitSql } from '../access/member-facts.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 export type TrustProposalAction = typeof TRUST_PROPOSAL_ACTIONS[number];
 export type TrustProposalStatus = typeof TRUST_PROPOSAL_STATUSES[number];
@@ -54,6 +56,17 @@ export interface TrustProposalFilter {
   action?: TrustProposalAction;
   since?: Date;
   limit?: number;
+}
+
+/** The filter of `listPendingContradictions`: a source and a lower bound on the proposal's creation time. */
+export interface PendingContradictionFilter { sourceId?: string; since?: Date }
+
+/** One pending decide proposal with its two facts, as `trust review` lists it. Times and numbers stay as the driver reads them. */
+export interface PendingContradictionRow {
+  id: number | string; source_id: string; sweep_id: string; created_at: string | Date;
+  new_fact_id: number | string; old_fact_id: number | string; new_fact: string; old_fact: string; trust_tier: string;
+  entity_slug: string | null; slug: string | null; claim_metric: string | null; claim_unit: string | null; claim_period: string | null;
+  new_value: number | string | null; old_value: number | string | null;
 }
 
 /** The decider a status change records (`Principal`'s kind and id). */
@@ -116,6 +129,21 @@ export async function getTrustProposal(exec: LegacyUnscopedRead, id: number, loc
   return row ? normalizeTrustProposal(row) : null;
 }
 
+/**
+ * The privacy holds among `ids` (a supersede_fact proposal whose before state names a visibility) whose target fact is
+ * missing or one the current caller's widened world-only fact reads do not admit (memberFactAdmitSql,
+ * grantedPrivateFactSql, rendered in the caller context this runs in), ascending. trust/privacy-hold-reply.ts hides
+ * these refs from the caller.
+ */
+export async function listUnreadablePrivacyHoldIds(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<number[]> {
+  if (!ids.length) return [];
+  const { text, params } = renderFragment(sqlFragment`SELECT tp.id FROM trust_proposals tp LEFT JOIN facts f ON tp.target_table = 'facts' AND f.id = tp.target_id
+        WHERE tp.id = ANY(${[...ids]}::bigint[]) AND tp.action = 'supersede_fact' AND tp.before_state->'visibility' IS NOT NULL
+          AND (f.id IS NULL OR NOT (${trustedSql(memberFactAdmitSql('f'))} OR ${trustedSql(grantedPrivateFactSql('f'))}))`);
+  const rows = await exec.executeRaw<{ id: number | string }>(text, params);
+  return rows.map(r => Number(r.id)).sort((a, b) => a - b);
+}
+
 /** Proposals by status (`pending` by default; `all`), source, action and creation time, oldest first. */
 export async function listTrustProposals(exec: LegacyUnscopedRead, filter: TrustProposalFilter = {}): Promise<TrustProposalRow[]> {
   const status = filter.status ?? 'pending';
@@ -152,4 +180,20 @@ export async function transitionTrustProposal(exec: SqlExecutor, id: number, fro
       WHERE id = $1 AND status = $2 RETURNING id`,
     [id, from, to, opts.after ? JSON.stringify(opts.after) : null, opts.decidedBy?.kind ?? null, opts.decidedBy?.id ?? null]);
   return rows.length === 1;
+}
+
+/**
+ * The contradictions `trust review` lists: pending `decide_proposals` whose two facts are both active (a decided or
+ * stale pair is not listed), oldest first, at most 1000.
+ */
+export async function listPendingContradictions(exec: LegacyUnscopedRead, filter: PendingContradictionFilter = {}): Promise<PendingContradictionRow[]> {
+  return exec.executeRaw<PendingContradictionRow>(
+    `SELECT p.id, p.source_id, p.sweep_id, p.created_at, p.new_fact_id, p.old_fact_id, n.fact AS new_fact, o.fact AS old_fact, n.trust_tier,
+            n.entity_slug, COALESCE(n.source_markdown_slug, o.source_markdown_slug) AS slug, n.claim_metric, n.claim_unit, n.claim_period,
+            n.claim_value AS new_value, o.claim_value AS old_value
+       FROM decide_proposals p
+       JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id AND n.expired_at IS NULL AND (n.valid_until IS NULL OR n.valid_until > now())
+       JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id AND o.expired_at IS NULL AND (o.valid_until IS NULL OR o.valid_until > now())
+      WHERE p.status = 'pending' AND ($1::text IS NULL OR p.source_id = $1) AND ($2::timestamptz IS NULL OR p.created_at >= $2)
+      ORDER BY p.created_at, p.id LIMIT 1000`, [filter.sourceId ?? null, filter.since?.toISOString() ?? null]);
 }

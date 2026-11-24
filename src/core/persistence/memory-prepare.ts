@@ -20,11 +20,11 @@ import { lexicalContestCandidate, recordContestedFact, recordHeldShare, restated
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
 import { prepareFenceFactAppend, prepareFenceFactCreate, prepareFenceRowRetirement, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
-import { remoteProvenanceFloorSql, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { noteBelief } from '../belief/ledger.ts';
-import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
+import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
@@ -63,11 +63,8 @@ function outcome(id: number, status: 'inserted' | 'duplicate' | 'superseded', en
 /** The newest active fact in this source and visibility that states the same normalized claim without an entity. */
 async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: SingleFactIntent, excludePrivate: boolean): Promise<number | null> {
   // GST-359 C2: a member's fact links only its own page's unlinked copy; no other write links one on a member page.
-  const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
-    WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
-      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}
-      AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
-    ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.page_slug ?? null]);
+  const row = await engine.findActiveSingleFact({ sourceId, entitySlug: null, visibility: input.visibility, fact: input.fact,
+    attributedTo: null, pageSlug: input.page_slug ?? null, remoteFloor: excludePrivate && !input.page_slug, newest: true });
   return row ? Number(row.id) : null;
 }
 
@@ -106,6 +103,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   signal?.throwIfAborted();
   // The first read is a typed keyed read (its rows ordered by key, as this statement orders them); the re-check under
   // lock keeps the statement, for its FOR SHARE.
+  // The row order never reaches output: the two keys sort the same by byte and by locale, and the rows fold into one signature text.
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = embeddingConfigText(await readConfigRows(engine, EMBEDDING_CONFIG_KEYS));
   const { embedding, embedding_model, degraded } = await prepareFactEmbedding(input.fact, signal, await factEmbeddingDisabled(engine, config), clock?.deadlineAt);
@@ -168,7 +166,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     confidence: 1, embedding, embedding_model, source_session: typeof p.session_id === 'string' ? p.session_id : null,
     ...(context ? { context } : {}), ...claimColumns(p) };
   // #5575 B3: the row-level write gate at the request's declared tier (ENG-18); a held fact inserts nothing.
-  const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug,
+  const gate = decideFactWrite({ fact: input.fact, context: context ?? null, source: fact.source }, { sourceId: row.source_id, slug: row.slug, pageId: snapshot?.page.id ?? row.page_id,
     payload: { fact: input.fact, kind: input.kind, visibility: input.visibility, entity_slug: input.entity_slug, source: fact.source, context: context ?? null,
       valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
@@ -207,8 +205,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       id = inserted.id;
     }
     if (status === 'superseded') {
-      await tx.executeRaw(`UPDATE facts SET expired_at=now(),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until)
-      WHERE id=$1 AND source_id=$2 AND expired_at IS NULL`, [decision.candidate!.id, row.source_id, id, retiredUntil]);
+      await tx.retireSupersededFact({ oldId: decision.candidate!.id, sourceId: row.source_id, newId: id, until: retiredUntil });
       noteBelief({ kind: 'superseded', oldId: Number(decision.candidate!.id), newId: id });
     }
     const contestedBy = contestedOld ? await recordContestedFact(tx, { sourceId: row.source_id, oldId: contestedOld.id,

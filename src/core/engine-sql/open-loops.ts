@@ -1,8 +1,8 @@
 /**
  * Open loops (`open_loops`, src/schema.sql): the upsert, list and close statements loops-store.ts ran through
  * `executeRaw`, with the same text and parameters, on the engine's own raw path; only their home moved. The members
- * return the raw rows; loops-store.ts still normalizes them. The other loop statements (thread auto-close, the
- * staleness pass, mutes, the loop-fact reads) stay with their callers.
+ * return the raw rows; loops-store.ts still normalizes them. Mutes and the thread auto-close are in loop-mutes.ts; the
+ * staleness pass and the loop-fact reads stay with their callers.
  *
  * `'mute_recheck'` and `'muted'` are `MUTE_RECHECK` and `MUTED` in loops-store.ts, written here as literals so this
  * module needs no runtime import of the store.
@@ -10,6 +10,8 @@
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { ListLoopsOpts, LoopStatus, OpenLoopUpsert } from '../loops/loops-store.ts';
+import { sqlFragment, trustedSql } from './fragment.ts';
+import { rows } from './search-reads.ts';
 
 /** What `upsertOpenLoop` resolves: the row id, whether the row is new, and whether the write landed. */
 export interface OpenLoopUpsertResult { id: number; created: boolean; applied: boolean }
@@ -106,6 +108,32 @@ export async function closeOpenLoop(
   return rows[0] ?? null;
 }
 
+/** An open loop on an entity card, as `readEntityOpenLoops` returns it (times are Dates on the SQL engines). */
+export interface EntityOpenLoopRow {
+  id: number;
+  loop_type: string;
+  summary: string;
+  due_at: Date | string | null;
+  last_activity_at: Date | string;
+  fact_id: number | null;
+}
+
+/**
+ * entity-card.ts assembleCard's open-loop read: the open loops whose counterparty page is (sourceId, slug), a row with
+ * no counterparty source counting as its own source's, newest activity first and then the newest loop id, at most
+ * `limit`. The caller's text and parameters, plus the `id DESC` tie-break; `limit` is the integer literal it
+ * interpolated.
+ */
+export async function readEntityOpenLoops(exec: LegacyUnscopedRead, slug: string, sourceId: string, limit: number): Promise<EntityOpenLoopRow[]> {
+  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1) throw new Error(`readEntityOpenLoops: limit must be a positive integer, got ${limit}`);
+  return rows<EntityOpenLoopRow>(exec, sqlFragment`SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = ${slug}
+         AND COALESCE(counterparty_source_id, source_id) = ${sourceId}
+       ORDER BY last_activity_at DESC, id DESC
+       LIMIT ${trustedSql(`${limit}`)}`);
+}
+
 export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpts = {}): Promise<OpenLoopDbRow[]> {
   // The clamped limit binds as `$7`; a fraction rounds as the `LIMIT ${n}` literal it replaces did.
   const limit = Math.round(Math.min(Math.max(opts.limit ?? 200, 1), 1000));
@@ -130,4 +158,21 @@ export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpt
       limit,
     ],
   );
+}
+
+/** One sender's open loop count, as `countOpenLoopsByCounterpartyEmail` returns it. */
+export interface CounterpartyEmailLoopCount { email: string; n: number }
+
+/**
+ * The open loops of `loopType` in `sourceId` per counterparty email among `emails`, one row per email with any, in no
+ * set order (the withheld-noise card of `open_loops`, ops/loops.ts). No limit: every loop counts.
+ */
+export async function countOpenLoopsByCounterpartyEmail(exec: LegacyUnscopedRead, sourceId: string, emails: readonly string[], loopType: string): Promise<CounterpartyEmailLoopCount[]> {
+  if (emails.length === 0) return [];
+  const found = await exec.executeRaw<{ email: string; n: number | string }>(
+    `SELECT counterparty_email AS email, count(*)::int AS n FROM open_loops
+      WHERE source_id = $1 AND status = 'open' AND loop_type = $3
+        AND counterparty_email = ANY(string_to_array($2, E'\n'))
+      GROUP BY counterparty_email`, [sourceId, emails.join('\n'), loopType]);
+  return found.map(r => ({ email: r.email, n: Number(r.n) }));
 }

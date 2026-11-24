@@ -26,19 +26,17 @@ import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retr
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
 import { healAndReportOverLength } from './embed-overlength-heal.ts';
-import { hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
-import {
-  resolveActiveEmbeddingColumnFromEngine,
-  quoteIdentifier,
-} from './search/embedding-column.ts';
+import { hasSignatureDrift, invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature } from './embedding-invalidation.ts';
+import { resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
+import { embeddingSendBlocked, embeddingsDisabled } from './embedding-disabled.ts';
 import { resolveStaleEmbedConcurrency } from './embed-concurrency.ts';
 import { AbortError } from './abort-check.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from './content-drift-sweep.ts';
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
-import { chunkGenerationFilter, chunkVisibleFilter, currentTextProjectionFilter } from './search/safe-chunks.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -196,16 +194,7 @@ export async function stampIfPageProvenanceComplete(
     // Signature is `<provider:model>:<dims>`; the model part is what
     // upsertChunks records in content_chunks.model.
     const { model, dims } = splitEmbeddingSignature(signature);
-    const colId = quoteIdentifier(column);
-    const rows = await tx.executeRaw<{ complete: boolean }>(
-      `SELECT count(*) > 0
-              AND bool_and(${currentSpaceChunkPredicate(colId, 1, 4)}) AS complete
-         FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-        WHERE p.slug = $2 AND p.source_id = $3 AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}
-          AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)`,
-      [model, slug, sourceId, dims],
-    );
-    if (rows[0]?.complete !== true) return false;
+    if (!await tx.readPageProvenanceComplete(slug, sourceId, model, dims, column)) return false;
     await tx.setPageEmbeddingSignature(slug, { sourceId, signature });
     return true;
   });
@@ -302,14 +291,14 @@ export async function embedStalePages(
   const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
   const result = { embedded: 0, pagesProcessed: 0, aborted: false };
+  // #9715: a brain with embedding off (either plane) sends no page text, whichever phase or repair asked.
+  if (await embeddingSendBlocked(engine)) return result;
   // S2: stale = NULL in the registry-ACTIVE column (the one upsertChunks
   // writes) — the literal legacy `embedding` stays NULL forever on a
   // registry-routed brain, which would re-embed every chunk on every phase
   // end. Resolved once per call; fallback keeps the per-page log+skip
   // contract (a broken registry surfaces at the upsert, loudly).
-  const staleColId = quoteIdentifier(
-    (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name,
-  );
+  const staleColumn = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
   for (const slug of slugs) {
     if (opts.signal?.aborted) {
       result.aborted = true;
@@ -325,25 +314,18 @@ export async function embedStalePages(
         if (page.embedded) result.pagesProcessed += 1;
         continue;
       }
-      const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]);
-      if (!page) continue;
+      const pageId = await engine.readLivePageIdBySlug(slug, sourceId);
+      if (pageId === null) continue;
+      const page = { id: pageId };
       await using lease = await acquirePageEmbeddingLease(engine, page.id, { signal: opts.signal });
       if (lease.busy) continue;
       // SUP-3874: split legacy oversized rows before embedding so a single
       // pre-cap chunk cannot permanently fail the page.
       await healOversizedPageChunks(engine, slug, { sourceId });
       const prepared = await readProjectionSnapshot(engine, slug, sourceId, { requireLiveSource: true });
-      if (!prepared || prepared.snapshot.page.id !== page.id) continue;
+      if (!prepared || prepared.snapshot.page.id !== pageId) continue;
       const existing = prepared.chunks;
-      const staleIdx = new Set(
-        (await engine.executeRaw<{ chunk_index: number }>(
-          `SELECT cc.chunk_index
-             FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-            WHERE p.slug = $1 AND p.source_id = $2 AND cc.${staleColId} IS NULL AND ${chunkGenerationFilter('p', 'cc')}
-            ORDER BY cc.chunk_index`,
-          [slug, sourceId],
-        )).map(r => r.chunk_index),
-      );
+      const staleIdx = new Set(await engine.listUnembeddedChunkIndexes(slug, sourceId, staleColumn));
       if (staleIdx.size === 0) continue;
       const pageRow = prepared.snapshot.page;
       const metered = await meterPageBatch(engine, pageRow, existing.filter(c => staleIdx.has(c.chunk_index)), { signature: opts.embeddingSignature ?? null });
@@ -379,6 +361,8 @@ export async function embedStalePages(
         result.aborted = true;
         return result;
       }
+      // A page that fails is skipped; an engine that cannot embed it refuses the whole call instead of reporting 0.
+      rethrowCapabilityMissing(e);
       process.stderr.write(`\n  [embed-stale] error on ${sourceId}/${slug}: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
@@ -411,6 +395,7 @@ export async function embedStaleForSource(
     done: false,
     aborted: false,
   };
+  if (await embeddingSendBlocked(engine)) return await embeddingsDisabled(engine) ? { ...result, done: true } : { ...result, done: true, complete: false };
   const signature = opts.embeddingSignature;
   const stopped = () => !!signal?.aborted || Date.now() >= (opts.deadline ?? Infinity);
   if (stopped()) return { ...result, aborted: true };

@@ -55,6 +55,8 @@ import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { contentHash } from '../utils.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { redactFields, residualMatches, resolveSecretRules, spanCounts, type FieldRedaction, type SecretRuleSet } from '../secret-spans.ts';
+import { allowedMatcher, markerOf, recordOccurrence, seal } from '../secret-store/store.ts';
+import type { RedactedRowStore } from '../engine-sql/secret-spans-rows.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 
 const DOCS = 'docs/guides/repair.md#secret-spans';
@@ -121,14 +123,9 @@ function withLeaf<T>(root: T, path: LeafPath, text: string): T {
   return copy as T;
 }
 
-const PAGE_SQL = `SELECT p.id,p.source_id,p.slug,p.title,p.type,p.page_kind,p.frontmatter,p.compiled_truth,p.timeline,p.body_storage,p.body_bytes,
-    COALESCE(p.body_generation,0)::text AS generation,p.body_flags,p.knowledge_revision::text AS revision,p.contextual_retrieval_mode,p.corpus_generation,
-    COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags
-  FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL`;
-
 /** Every stored text of one live page, in a stable order, or why the page is not redacted here. */
 async function readFields(engine: BrainEngine, sourceId: string, slug: string): Promise<Read | Refusal> {
-  const [page] = await engine.executeRaw<PageRow>(PAGE_SQL, [sourceId, slug]);
+  const page = await engine.readPageRedactionRow(sourceId, slug);
   if (!page) return 'page_not_found';
   if (page.page_kind !== 'markdown') return 'page_kind_unsupported';
   const id = Number(page.id);
@@ -144,29 +141,29 @@ async function readFields(engine: BrainEngine, sourceId: string, slug: string): 
     { key: 'compiled_truth', text: text.truth, store: 'page', column: 'compiled_truth' },
     { key: 'timeline', text: text.tail, store: 'page', column: 'timeline' },
   ];
-  const rows = (store: Store, columns: string[], list: Array<Record<string, unknown>>) => {
+  const rows = (store: Store, columns: string[], list: ReadonlyArray<object>) => {
     for (const row of list) {
       for (const column of columns) {
-        const value = row[column];
-        if (typeof value === 'string' && value) fields.push({ key: `${store}/${row.id}/${column}`, text: value, store, id: Number(row.id), column });
+        const value = (row as Record<string, unknown>)[column];
+        if (typeof value === 'string' && value) fields.push({ key: `${store}/${(row as { id: number }).id}/${column}`, text: value, store, id: Number((row as { id: number }).id), column });
       }
     }
   };
-  rows('timeline_entries', ['summary', 'detail', 'source'], await engine.executeRaw(
-    'SELECT id,summary,detail,source FROM timeline_entries WHERE page_id=$1 OR event_page_id=$1 ORDER BY id', [id]));
-  rows('facts', ['fact', 'context', 'value'], await engine.executeRaw(`SELECT id,fact,context,value FROM facts
-    WHERE source_id=$1 AND (source_markdown_slug=$2 OR (source_markdown_slug IS NULL AND entity_slug=$2)) ORDER BY id`, [sourceId, slug]));
-  rows('takes', ['claim', 'source', 'resolved_source'], await engine.executeRaw('SELECT id,claim,source,resolved_source FROM takes WHERE page_id=$1 ORDER BY id', [id]));
-  rows('links', ['context'], await engine.executeRaw('SELECT id,context FROM links WHERE from_page_id=$1 ORDER BY id', [id]));
-  for (const row of await engine.executeRaw<{ id: number; data: unknown }>('SELECT id,data FROM raw_data WHERE page_id=$1 ORDER BY id', [id])) {
+  const stores = await engine.readPageRedactionRows(id, sourceId, slug);
+  rows('timeline_entries', ['summary', 'detail', 'source'], stores.timeline);
+  rows('facts', ['fact', 'context', 'value'], stores.facts);
+  rows('takes', ['claim', 'source', 'resolved_source'], stores.takes);
+  rows('links', ['context'], stores.links);
+  for (const row of stores.rawData) {
     for (const leaf of leaves(row.data)) fields.push({ key: `raw_data/${row.id}/data${pointer(leaf.path)}`, text: leaf.text, store: 'raw_data', id: Number(row.id), path: leaf.path });
   }
   return { page: { ...page, id }, fields, text };
 }
 
 /** The page's redaction and the digest the plan hash binds: identity, revision, generation and every field's old text and spans. */
-function planPage(read: Read, rules: SecretRuleSet): Planned {
-  const results = redactFields(read.fields, rules);
+/** `allowed`: values the owner restored in this page's source (store status allowed), which stay as they are. */
+function planPage(read: Read, rules: SecretRuleSet, allowed: (value: string) => boolean): Planned {
+  const results = redactFields(read.fields, rules, allowed);
   const { page } = read;
   return { read, results, digest: digest(['secret-spans-page-v1', page.id, page.revision, page.generation,
     results.map(result => [result.key, result.old_sha256, result.spans_sha256])]) };
@@ -176,14 +173,13 @@ function planPage(read: Read, rules: SecretRuleSet): Planned {
  * Why a planned page cannot be rewritten as planned, or null. A timeline row's dedup key (page, date, summary, source)
  * is checked against every row of the pages its rows belong to, because the event-page rows sit on other pages.
  */
-async function planRefusal(engine: BrainEngine, planned: Planned): Promise<PlanRefusal | null> {
+async function planRefusal(engine: Pick<BrainEngine, 'listTimelineDedupRows'>, planned: Planned): Promise<PlanRefusal | null> {
   if (planned.results.some(result => !result.proven)) return 'proof_failed';
   const changed = changedOf(planned);
   if (changed.some(result => /^facts\/\d+\/value$/.test(result.key))) return 'fact_value_unsupported';
   if (!changed.some(result => result.key.startsWith('timeline_entries/'))) return null;
   const next = new Map(planned.results.map(result => [result.key, result.next]));
-  const rows = await engine.executeRaw<{ id: number | string; page_id: number | string; date: string; summary: string; source: string }>(`SELECT id,page_id,date::text AS date,summary,source
-    FROM timeline_entries WHERE page_id IN (SELECT page_id FROM timeline_entries WHERE page_id=$1 OR event_page_id=$1)`, [planned.read.page.id]);
+  const rows = await engine.listTimelineDedupRows(planned.read.page.id);
   const keys = new Set<string>();
   for (const row of rows) {
     const key = JSON.stringify([String(row.page_id), row.date, next.get(`timeline_entries/${row.id}/summary`) ?? row.summary, next.get(`timeline_entries/${row.id}/source`) ?? row.source]);
@@ -209,7 +205,7 @@ const spansOf = (page: PlannedPage) => page.fields.reduce((n, field) => n + fiel
 
 function changeDetail(page: PlannedPage): string {
   return `${spansOf(page)} span(s) in ${page.fields.length} field(s): ${ruleText(page.rules)}${page.echo ? ` (${page.echo} echo)` : ''}`
-    + `; ${page.versions} retained version(s) kept`;
+    + `; originals kept in the secret store; ${page.versions} retained version(s) get the same markers`;
 }
 
 /** The secret values of one page's spans, kept in memory only: chunk and derivation rows holding one are deleted. */
@@ -224,7 +220,7 @@ function valuesOf(planned: Planned): string[] {
 async function* once(text: string): AsyncIterable<Uint8Array> { if (text) yield Buffer.from(text, 'utf8'); }
 
 const receiptKey = (hash: string, pageId: number) => `${hash}:${pageId}`;
-const audit = createAuditWriter<{ ts: string } & Json>({ featureName: 'secret-spans', errorLabel: 'secret-spans-audit', errorTrailer: '; repair continues' });
+const audit = createAuditWriter<{ ts: string } & Json>({ featureName: 'secret-spans', errorLabel: 'secret-spans-audit', errorTrailer: '; repair continues', fileMode: 0o600 });
 
 /** Rewrites one page's changed fields in the caller's transaction; `unsealed`: a segmented body whose projection is built after commit. */
 async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed: boolean }> {
@@ -240,6 +236,9 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
   const pageChanged = planned.results.some((result, index) => result.spans.length > 0 && (fieldOf(index).store === 'page' || fieldOf(index).store === 'frontmatter'));
   let unsealed = false;
   if (pageChanged && page.body_storage === 'segmented') {
+    // Staging a replacement of a segmented body reads its chunk rows and stored vectors through typed members
+    // (listChunkedOccurrences, readRetiredChunkVectors, hasStaleSegmentChunks; engine-sql/segmented-writes.ts), so a
+    // Rust brain serves it. (A segmented page is created through typed members too: persistence/segmented-apply.ts.)
     const { principal } = await maintenanceAttribution(tx);
     const prepared = await prepareSegmentedBody(tx, { sourceId: page.source_id, slug: page.slug, title, type: page.type, frontmatter, tags: page.tags,
       live: { id: page.id, generation: Number(page.generation), storage: 'segmented', title: page.title, type: page.type, flags: page.body_flags },
@@ -255,25 +254,24 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
     if (applied.complete) await sealSegmentedPage(tx, page.id);
     else unsealed = true;
   } else if (pageChanged) {
-    await tx.executeRaw('UPDATE pages SET title=$2,frontmatter=$3::text::jsonb,compiled_truth=$4,timeline=$5,content_hash=$6,updated_at=now() WHERE id=$1',
-      [page.id, title, JSON.stringify(frontmatter), compiled, timeline, contentHash({ title, type: page.type, compiled_truth: compiled, timeline, frontmatter, tags: page.tags } as never)]);
+    await tx.setRedactedPageFields(page.id, { title, frontmatter, compiledTruth: compiled, timeline,
+      contentHash: contentHash({ title, type: page.type, compiled_truth: compiled, timeline, frontmatter, tags: page.tags } as never) });
   }
   const rawData = new Map<number, unknown>();
   for (const [index, result] of planned.results.entries()) {
     const field = fieldOf(index);
     if (!result.spans.length || field.store === 'page' || field.store === 'frontmatter') continue;
     if (field.store === 'raw_data') {
-      if (!rawData.has(field.id!)) rawData.set(field.id!, (await tx.executeRaw<{ data: unknown }>('SELECT data FROM raw_data WHERE id=$1', [field.id]))[0]?.data);
+      if (!rawData.has(field.id!)) rawData.set(field.id!, await tx.readRawDataValue(page.id, field.id!));
       rawData.set(field.id!, withLeaf(rawData.get(field.id!), field.path!, result.next));
       continue;
     }
-    const vectors = field.store === 'facts' || field.store === 'takes' ? ',embedding=NULL,embedded_at=NULL,embedding_model=NULL,embedded_text_hash=NULL' : '';
-    await tx.executeRaw(`UPDATE ${field.store} SET ${field.column}=$2${vectors}${field.store === 'takes' ? ',updated_at=now()' : ''} WHERE id=$1`, [field.id, result.next]);
+    await tx.setRedactedRowText(page.id, field.store as RedactedRowStore, field.id!, field.column!, result.next);
   }
-  for (const [id, data] of rawData) await tx.executeRaw('UPDATE raw_data SET data=$2::text::jsonb WHERE id=$1', [id, JSON.stringify(data)]);
+  for (const [id, data] of rawData) await tx.setRawDataValue(page.id, id, data);
   if (!pageChanged) {
     // Rows alone changed: a new revision tells caches and projections the page's knowledge moved.
-    await tx.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=$1', [page.id]);
+    await tx.bumpPageKnowledgeRevision(page.id);
     if (page.body_storage === 'segmented') await sealSegmentedPage(tx, page.id);
   }
   // Rows holding a value are matched here, never in SQL, so no secret is ever sent as a statement parameter (which a
@@ -281,19 +279,121 @@ async function writePage(tx: BrainEngine, planned: Planned): Promise<{ unsealed:
   const values = valuesOf(planned);
   const holds = (text: string | null | undefined) => !!text && values.some(value => text.includes(value));
   if (page.body_storage !== 'segmented') {
-    const chunks = await tx.executeRaw<{ id: number | string; chunk_text: string; doc_comment: string | null }>(
-      'SELECT id,chunk_text,doc_comment FROM content_chunks WHERE page_id=$1 -- chunk-visibility-ok: every stored row of the page is checked for a value', [page.id]);
+    const chunks = await tx.listChunkTextsForRedaction(page.id, 'rewrite');
     const doomed = chunks.filter(chunk => holds(chunk.chunk_text) || holds(chunk.doc_comment)).map(chunk => Number(chunk.id));
-    if (doomed.length) await tx.executeRaw('DELETE FROM content_chunks WHERE id=ANY($1::int[])', [doomed]);
+    if (doomed.length) await tx.deleteChunksByIds(page.id, doomed);
     await queuePageProjection(tx, page.source_id, page.slug, 'secret_spans');
   }
-  const derivations = await tx.executeRaw<{ pipeline: string; occurrence_id: number | string; output: unknown }>(
-    'SELECT pipeline,occurrence_id,output FROM page_segment_derivations WHERE page_id=$1 AND output IS NOT NULL', [page.id]);
-  for (const row of derivations.filter(row => leaves(row.output).some(leaf => holds(leaf.text)))) {
-    await tx.executeRaw('DELETE FROM page_segment_derivations WHERE page_id=$1 AND pipeline=$2 AND occurrence_id=$3', [page.id, row.pipeline, row.occurrence_id]);
+  // A derivation row that holds a value is retired by its (kind, occurrence): every other row of its kind stays live.
+  const derivations = await tx.readSegmentDerivations(page.id);
+  for (const row of derivations.filter(row => row.output != null && leaves(row.output).some(leaf => holds(leaf.text)))) {
+    await tx.retireSegmentDerivations(page.id, derivations.filter(other => other.kind === row.kind && other.occurrenceId !== row.occurrenceId).map(other => other.occurrenceId), { kind: row.kind });
   }
-  await tx.executeRaw('DELETE FROM page_view_digests WHERE page_id=$1', [page.id]);
+  await tx.deletePageViewDigests([page.id]);
   return { unsealed };
+}
+
+/**
+ * GST-2988: seals every span of a planned page in the secret store, swaps each field's `<REDACTED:rule>` text for
+ * store-backed markers (`<REDACTED:rule:id>`) at exactly the planned spans, records one occurrence per changed field,
+ * and gives the page's inline retained versions the same markers, so the database holds the value only in the store.
+ * Runs in the caller's transaction after the plan was rechecked; the proof already ran on the planned spans.
+ */
+async function bindToStore(tx: BrainEngine, planned: Planned, createdBy: string, origin: 'repair' | 'publish_rebuild' = 'repair'): Promise<{ entries: Map<string, { id: string; rule: string }>; versions: number; segmented_versions: number }> {
+  const { page } = planned.read;
+  const entries = new Map<string, { id: string; rule: string }>();
+  for (const [index, result] of planned.results.entries()) {
+    if (!result.spans.length) continue;
+    const text = planned.read.fields[index]!.text;
+    const parts: string[] = [];
+    let at = 0;
+    for (const span of result.spans) {
+      const value = text.slice(span.start, span.end);
+      let entry = entries.get(value);
+      if (!entry) {
+        entry = { id: (await seal(tx, { sourceId: page.source_id, rule: span.rule, value })).id, rule: span.rule };
+        entries.set(value, entry);
+      }
+      parts.push(text.slice(at, span.start), markerOf(span.rule, entry.id));
+      at = span.end;
+    }
+    parts.push(text.slice(at));
+    result.next = parts.join('');
+    for (const id of new Set(result.spans.map(span => entries.get(text.slice(span.start, span.end))!.id))) {
+      await recordOccurrence(tx, { entryId: id, sourceId: page.source_id, pageId: page.id, slug: page.slug, field: result.key, origin,
+        preFieldSha256: result.old_sha256, createdBy });
+    }
+  }
+  // Retained versions: every stored copy of a value becomes its marker (longest value first, so a value inside another
+  // keeps the longer one's marker). Matched here, never in SQL.
+  const ordered = [...entries].sort((a, b) => b[0].length - a[0].length);
+  const swap = (text: string) => ordered.reduce((out, [value, entry]) => out.split(value).join(markerOf(entry.rule, entry.id)), text);
+  let versions = 0, segmented = 0;
+  for (const row of await tx.listVersionBodiesForRedaction(page.id)) {
+    if (row.body_storage === 'segmented') { segmented++; continue; }
+    const truth = row.compiled_truth === null ? null : swap(row.compiled_truth);
+    const original = row.frontmatter ?? {};
+    let frontmatter = original;
+    for (const leaf of leaves(frontmatter)) {
+      const next = swap(leaf.text);
+      if (next !== leaf.text) frontmatter = withLeaf(frontmatter, leaf.path, next);
+    }
+    if (truth === row.compiled_truth && frontmatter === original) continue;
+    await tx.setRetainedVersionBody(page.id, row.id, truth, frontmatter);
+    versions++;
+  }
+  return { entries, versions, segmented_versions: segmented };
+}
+
+/**
+ * GST-2988 restore: replaces each marker with its original in every stored text of one live page (the same stores
+ * redaction rewrites) and rebuilds what derives from them. Returns how many markers were replaced, or why the page
+ * could not be read. The caller holds the transaction and decides which markers may be restored.
+ */
+export async function restoreMarkersOnPage(tx: BrainEngine, sourceId: string, slug: string, originals: ReadonlyMap<string, string>): Promise<{ replaced: number; fields: string[]; unsealed: boolean; storage: string } | Refusal> {
+  await tx.lockPageKeys([{ sourceId, slug }]);
+  const read = await readFields(tx, sourceId, slug);
+  if (typeof read === 'string') return read;
+  const markers = [...originals.keys()];
+  let replaced = 0;
+  const results: FieldRedaction[] = read.fields.map(field => {
+    const spans: FieldRedaction['spans'] = [];
+    let next = '', at = 0;
+    for (;;) {
+      let best = -1, which = '';
+      for (const marker of markers) {
+        const pos = field.text.indexOf(marker, at);
+        if (pos !== -1 && (best === -1 || pos < best)) { best = pos; which = marker; }
+      }
+      if (best === -1) break;
+      spans.push({ start: best, end: best + which.length, rule: 'restore', echo: false });
+      next += field.text.slice(at, best) + originals.get(which)!;
+      at = best + which.length;
+    }
+    next += field.text.slice(at);
+    replaced += spans.length;
+    return { key: field.key, next: spans.length ? next : field.text, spans, old_sha256: '', new_sha256: '', spans_sha256: '', proven: true };
+  });
+  if (!replaced) return { replaced: 0, fields: [], unsealed: false, storage: read.page.body_storage };
+  const { unsealed } = await writePage(tx, { read, results, digest: '' });
+  return { replaced, fields: results.filter(r => r.spans.length).map(r => r.key), unsealed, storage: read.page.body_storage };
+}
+
+/**
+ * Rebuilds a page's search projection right after a rewrite committed: the chunk reseal of an inline page and the
+ * projection build of a segmented page (page-body/projection.ts) both run through typed members on every engine.
+ */
+async function resealPage(engine: BrainEngine, sourceId: string, slug: string, storage: string, unsealed: boolean): Promise<'sealed' | 'queued'> {
+  if (storage !== 'segmented') await resealSafeChunks(engine, slug, sourceId);
+  else if (unsealed) {
+    await buildSegmentedProjection(engine, { sourceId, slug });
+  }
+  return 'sealed';
+}
+
+/** Rebuilds a page's search projection after a restore committed (the same steps a redaction runs). */
+export async function resealAfterRestore(engine: BrainEngine, sourceId: string, slug: string, storage: string, unsealed: boolean): Promise<void> {
+  await resealPage(engine, sourceId, slug, storage, unsealed);
 }
 
 interface Residual { total: number; rules: Record<string, number>; stores: Record<string, number> }
@@ -301,24 +401,24 @@ interface Residual { total: number; rules: Record<string, number>; stores: Recor
 /** Matches of the selected rules still stored for the page, by rule and by store (chunks and derivations included). */
 async function residualScan(engine: BrainEngine, sourceId: string, slug: string, rules: SecretRuleSet): Promise<Residual> {
   const out: Residual = { total: 0, rules: {}, stores: {} };
+  const allowed = await allowedMatcher(engine, sourceId);
   const add = (store: string, text: string) => {
-    for (const [rule, n] of Object.entries(residualMatches(text, rules))) {
+    for (const [rule, n] of Object.entries(residualMatches(text, rules, allowed))) {
       out.total += n; out.rules[rule] = (out.rules[rule] ?? 0) + n; out.stores[store] = (out.stores[store] ?? 0) + n;
     }
   };
   const read = await readFields(engine, sourceId, slug);
   if (typeof read === 'string') return out;
   for (const field of read.fields) add(field.store, field.text);
-  for (const row of await engine.executeRaw<{ chunk_text: string; doc_comment: string | null }>(
-    'SELECT chunk_text,doc_comment FROM content_chunks WHERE page_id=$1 -- chunk-visibility-ok: the residual scan reads every stored chunk row, staged and retired included', [read.page.id])) add('content_chunks', `${row.chunk_text}\n${row.doc_comment ?? ''}`);
-  for (const row of await engine.executeRaw<{ output: unknown }>('SELECT output FROM page_segment_derivations WHERE page_id=$1 AND output IS NOT NULL', [read.page.id])) {
+  for (const row of await engine.listChunkTextsForRedaction(read.page.id, 'scan')) add('content_chunks', `${row.chunk_text}\n${row.doc_comment ?? ''}`);
+  for (const row of await engine.readSegmentDerivations(read.page.id)) {
+    if (row.output == null) continue;
     for (const leaf of leaves(row.output)) add('page_segment_derivations', leaf.text);
   }
   return out;
 }
 
-const sourcesOf = (engine: BrainEngine, selection: Selection) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [selection.source_ids]);
+const sourcesOf = (engine: BrainEngine, selection: Selection) => engine.listSourceIncarnations(selection.source_ids);
 
 const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Selection, pages: PlannedPage[]) =>
   previewHash({ kind: 'secret-spans-v1', brain_id: scope.brain_id, sources: await sourcesOf(engine, selection), selection,
@@ -326,9 +426,9 @@ const hashOf = async (engine: BrainEngine, scope: RepairScope, selection: Select
 
 /** Pages already redacted under `hash` (a resumed apply), by page id. */
 async function receiptsOf(engine: BrainEngine, hash: string, pages: readonly PlannedPage[]): Promise<Set<number>> {
-  const rows = await engine.executeRaw<{ fingerprint: string }>('SELECT fingerprint FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])',
-    [SECRET_SPANS_RECEIPT_OP, pages.map(page => receiptKey(hash, page.id))]);
-  return new Set(rows.map(row => Number(row.fingerprint.slice(hash.length + 1))));
+  const done = new Set<number>();
+  for (const page of pages) if (await engine.readOpCheckpointRecord(SECRET_SPANS_RECEIPT_OP, receiptKey(hash, page.id))) done.add(page.id);
+  return done;
 }
 
 function selectionOf(scope: RepairScope, slugs: readonly string[] | undefined, rules: readonly string[] | undefined): Selection {
@@ -346,6 +446,39 @@ function selectionOf(scope: RepairScope, slugs: readonly string[] | undefined, r
 
 function item(page: PlannedPage, hash: string, rules: string[], last: boolean): SpanItem {
   return { cursor: { phase: 0, id: page.id }, source_id: page.source_id, slug: page.slug, chars: 0, action: changeDetail(page), page, hash, rules, last };
+}
+
+/**
+ * GST-2988 PR 2: the database half of a publish redaction. After a publish replaced the values in a page's file with
+ * store markers, the page's stored copies get the same field redaction as the repair (default named rules, originals
+ * sealed in the store, so a value maps to the same entry and marker as in the file), so database and file agree.
+ * One transaction under the page key lock, attributed as maintenance; nothing is published. Returns what happened.
+ */
+export async function redactPageForPublish(engine: BrainEngine, sourceId: string, slug: string): Promise<'redacted' | 'clean' | Refusal | PlanRefusal> {
+  const rules = resolveSecretRules();
+  const written = await engine.transaction(async tx => {
+    const managed = await readManagedMode(tx, { refusal: { subject: 'publish redaction' } });
+    const attribution = await maintenanceAttribution(tx);
+    const write = () => withTrustKeep(tx, ['pages', 'facts', 'takes', 'timeline_entries'], async (): Promise<{ outcome: 'redacted' | 'clean' | Refusal | PlanRefusal; unsealed?: boolean; storage?: string }> => {
+      await tx.lockPageKeys([{ sourceId, slug }]);
+      const read = await readFields(tx, sourceId, slug);
+      if (typeof read === 'string') return { outcome: read };
+      const planned = planPage(read, rules, await allowedMatcher(tx, sourceId));
+      if (!changedOf(planned).length) return { outcome: 'clean' };
+      const refusal = await planRefusal(tx, planned);
+      if (refusal) return { outcome: refusal };
+      const bound = await bindToStore(tx, planned, 'publish redact', 'publish_rebuild');
+      const { unsealed } = await writePage(tx, planned);
+      audit.log({ ts: new Date().toISOString(), kind: 'publish-redact', source_id: sourceId, slug, page_id: read.page.id, store_entries: [...bound.entries.values()].map(entry => entry.id).sort(),
+        fields: changedOf(planned).map(result => result.key), versions_redacted: bound.versions });
+      return { outcome: 'redacted', unsealed, storage: read.page.body_storage };
+    });
+    return managed ? withCoordinatedWrite(tx, [sourceId], write, attribution) : withWriteAttribution(tx, attribution, write);
+  });
+  if (written.outcome === 'redacted') {
+    try { await resealAfterRestore(engine, sourceId, slug, written.storage!, written.unsealed!); } catch { /* the projection is queued and rebuilt by the next pass */ }
+  }
+  return written.outcome;
 }
 
 export const secretSpansRepair: RepairHandler = {
@@ -372,7 +505,7 @@ export const secretSpansRepair: RepairHandler = {
           listing.push({ item: `${sourceId}:${slug}`, class: 'refused', detail: `${read}: ${REFUSAL_TEXT[read]}` });
           continue;
         }
-        const plan = planPage(read, rules);
+        const plan = planPage(read, rules, await allowedMatcher(engine, sourceId));
         const label = `${sourceId}:${slug} (revision ${read.page.revision})`;
         const refusal = await planRefusal(engine, plan);
         if (refusal) {
@@ -381,8 +514,7 @@ export const secretSpansRepair: RepairHandler = {
           continue;
         }
         if (!changedOf(plan).length) { residuals.clean!++; continue; }
-        const [versions] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_versions WHERE page_id=$1', [read.page.id]);
-        const page = summaryOf(plan, Number(versions?.n ?? 0));
+        const page = summaryOf(plan, await engine.countPageVersionRows(read.page.id));
         planned.push(page);
         residuals.pages_to_redact!++;
         residuals.spans! += spansOf(page);
@@ -410,7 +542,7 @@ export const secretSpansRepair: RepairHandler = {
     for (const page of pages) {
       if (done.has(page.id)) continue;
       const read = await readFields(engine, page.source_id, page.slug);
-      if (typeof read === 'string' || read.page.id !== page.id || planPage(read, rules).digest !== page.digest) throw previewChangedError(expect, command);
+      if (typeof read === 'string' || read.page.id !== page.id || planPage(read, rules, await allowedMatcher(engine, page.source_id)).digest !== page.digest) throw previewChangedError(expect, command);
     }
     return { items: pages.map((page, index) => item(page, expect, selection.rules, index === pages.length - 1)).filter(entry => afterCursor(entry.cursor, after)),
       preview_hash: expect, residuals: {} };
@@ -429,18 +561,18 @@ export const secretSpansRepair: RepairHandler = {
           await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
           const read = await readFields(tx, page.source_id, page.slug);
           if (typeof read === 'string') return { refused: read };
-          const planned = planPage(read, rules);
+          const planned = planPage(read, rules, await allowedMatcher(tx, page.source_id));
           if (read.page.id !== page.id || planned.digest !== page.digest) return { refused: 'changed_since_preview' };
           const refusal = await planRefusal(tx, planned);
           if (refusal) return { refused: refusal };
+          const bound = await bindToStore(tx, planned, 'repair secret-spans');
           const { unsealed } = await writePage(tx, planned);
-          const [after] = await tx.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [page.id]);
+          const [after] = await tx.readPageRevisions([page.id]);
           const receipt = { kind: 'secret-spans', hash, source_id: page.source_id, slug: page.slug, page_id: page.id, revision_before: page.revision,
-            revision_after: after?.revision ?? null, rules: rules.rules, fields: changedOf(planned).map(result => ({ key: result.key, old_fp: result.old_sha256.slice(0, 16),
-              new_fp: result.new_sha256.slice(0, 16), spans_sha256: result.spans_sha256, spans: result.spans.map(span => [span.start, span.end, span.rule, span.echo ? 1 : 0]) })) };
-          await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES ($1,$2,$3::text::jsonb,now())
-            ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-          [SECRET_SPANS_RECEIPT_OP, receiptKey(hash, page.id), JSON.stringify([receipt])]);
+            revision_after: after?.knowledge_revision ?? null, rules: rules.rules, fields: changedOf(planned).map(result => ({ key: result.key, old_fp: result.old_sha256.slice(0, 16),
+              new_fp: result.new_sha256.slice(0, 16), spans_sha256: result.spans_sha256, spans: result.spans.map(span => [span.start, span.end, span.rule, span.echo ? 1 : 0]) })),
+            store_entries: [...bound.entries.values()].map(entry => entry.id).sort(), versions_redacted: bound.versions, segmented_versions_kept: bound.segmented_versions };
+          await tx.writeOpCheckpointRecord(SECRET_SPANS_RECEIPT_OP, receiptKey(hash, page.id), [receipt]);
           return { receipt, unsealed, embedSkip: !!(read.page.frontmatter ?? {}).embed_skip };
         });
         return managed ? withCoordinatedWrite(tx, [page.source_id], write, attribution) : withWriteAttribution(tx, attribution, write);
@@ -449,11 +581,8 @@ export const secretSpansRepair: RepairHandler = {
         return { applied: false, outcome: 'changed_since_preview', reason: written.refused === 'changed_since_preview' ? 'the page changed since the preview' : written.refused };
       }
       audit.log(written.receipt);
-      let projection = 'sealed';
-      try {
-        if (page.storage !== 'segmented') await resealSafeChunks(ctx.engine, page.slug, page.source_id);
-        else if (written.unsealed) await buildSegmentedProjection(ctx.engine, { sourceId: page.source_id, slug: page.slug });
-      } catch { projection = 'queued'; }
+      let projection: 'sealed' | 'queued' = 'sealed';
+      try { projection = await resealPage(ctx.engine, page.source_id, page.slug, page.storage, written.unsealed); } catch { projection = 'queued'; }
       const embedded = opts?.embed && !written.embedSkip
         ? (await embedStalePages(ctx.engine, [page.slug], page.source_id).catch(() => ({ embedded: 0 }))).embedded : 0;
       const residual = await residualScan(ctx.engine, page.source_id, page.slug, rules);

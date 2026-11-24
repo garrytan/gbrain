@@ -51,6 +51,15 @@ describe.skipIf(!NPM)('scripts/ci-install-openclaw.sh', () => {
     expect(result.requests.tarball).toBe(0);
   }, 120_000);
 
+  test('a release that refuses the running Node fails on the first attempt and names that Node', async () => {
+    const result = await run({ nodeTooOld: true });
+    expect(result).toMatchObject({ exitCode: 1, installed: false });
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toStartWith('::error::openclaw install: ');
+    expect(result.warnings[0]).toContain(`does not run on this Node (${Bun.spawnSync(['node', '--version']).stdout.toString().trim()}): requires Node >=99.0.0. Pin a newer Node`);
+    expect(result.requests.tarball).toBe(1);
+  }, 120_000);
+
   test('a failure that is not a registry race keeps the three generic attempts', async () => {
     const result = await run({ platform: 'unsupported' });
     expect(result).toMatchObject({ exitCode: 1, installed: false });

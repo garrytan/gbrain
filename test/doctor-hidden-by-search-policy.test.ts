@@ -156,7 +156,7 @@ describe('checkHiddenBySearchPolicy', () => {
 
   test('SQL error → warn, not throw', async () => {
     const broken = {
-      executeRaw: async () => {
+      countPagesHiddenByPrefix: async () => {
         throw new Error('boom');
       },
     } as unknown as BrainEngine;

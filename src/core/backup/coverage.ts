@@ -14,7 +14,8 @@
  *
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -23,7 +24,7 @@ import { connectorAuthorities, type ConnectorAuthority } from '../persistence/co
 import { discoverGitRoot } from '../sync-git.ts';
 import { realpathOrResolve } from '../path-confine.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
-import { readReceipt } from '../bootstrap/format.ts';
+import { readReceiptState, receiptPath } from '../bootstrap/format.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
 import { loadBridgeState } from '../skillpack/bridge-state.ts';
 import { loadStorageConfig } from '../storage-config.ts';
@@ -101,37 +102,77 @@ function notARepoAsset(row: SourceRow, authority: ConnectorAuthority | undefined
     : { kind: 'source_repo', id: row.id, state: 'unknown', detail: 'not_a_git_repo', fix_argv: null };
 }
 
+/** The bootstrap receipt exists (or its home does) but cannot be read: the workspace's backup is unknown. */
+function receiptUnreadableAsset(): BackupAssetVerdict {
+  return { kind: 'bootstrap_workspace', id: 'install receipt', state: 'unknown', detail: 'receipt_unreadable' };
+}
+
+/**
+ * `readReceiptState` answers `absent` through existsSync, which is also false when a parent directory cannot be
+ * searched (EACCES). Only ENOENT / ENOTDIR mean nothing was ever bootstrapped; any other stat error means the
+ * receipt may exist but cannot be read.
+ */
+function receiptTrulyAbsent(home: string): boolean {
+  try {
+    statSync(receiptPath(home));
+    return false; // it exists after all (raced into place): not an all-clear
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+  }
+}
+
+/**
+ * Whether the source's gbrain.yml declares db_only dirs. Only ENOENT means "no config": loadStorageConfig's
+ * existsSync also answers false for EACCES/ELOOP (a denied parent, a symlink loop), which would read as no
+ * tiering, so the path is stat'ed first and every other error throws for the caller to report as unknown.
+ */
+function readDbOnlyDeclared(localPath: string): boolean {
+  try {
+    statSync(join(localPath, 'gbrain.yml'));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+  return (loadStorageConfig(localPath)?.db_only?.length ?? 0) > 0;
+}
+
+/** The cached verdict for a failed refresh: degraded, and without a count the failed read can no longer vouch for. */
+function degradedFromCache(cached: BackupStatus, nowMs: number): BackupStatus {
+  const { maturity: _stale, ...unaged } = cached;
+  return currentBackupEvidence({ ...unaged, degraded: true }, nowMs);
+}
+
 function yieldLoop(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
 
-/** null = the count could not be established (engine down / schema quirk). */
-/** E7: live pages + active facts, and the brain's first source/page timestamp. Null when unreadable. */
-async function brainMaturity(engine: BrainEngine): Promise<BackupStatus['maturity'] | undefined> {
+/**
+ * E7: live pages + active facts, and the brain's first source/page timestamp.
+ * `null` = the read FAILED (threw, or returned no row): the caller marks the verdict degraded, because an
+ * unreadable count must never read as a young, empty brain (coaching waits for
+ * a mature brain, so a young answer would silence a real backup warning).
+ */
+async function brainMaturity(engine: BrainEngine): Promise<NonNullable<BackupStatus['maturity']> | null | undefined> {
   try {
-    const [row] = await engine.executeRaw<{ pages: number; facts: number; since: string | Date | null }>(
-      `SELECT (SELECT COUNT(*)::int FROM pages WHERE deleted_at IS NULL) AS pages,
-              (SELECT COUNT(*)::int FROM facts WHERE expired_at IS NULL) AS facts,
-              LEAST((SELECT MIN(created_at) FROM sources), (SELECT MIN(created_at) FROM pages)) AS since`,
-    );
-    const items = Number(row?.pages) + Number(row?.facts);
-    if (!row || !Number.isFinite(items)) return undefined;
+    const row = await engine.readBrainMaturity();
+    if (!row) return null; // an aggregate SELECT always yields one row: none means the read did not happen
+    const items = Number(row.pages) + Number(row.facts);
+    if (!Number.isFinite(items)) return undefined; // a row without numeric counts: coaching treats it as mature (pre-E7 default)
     const sinceMs = row.since ? new Date(row.since).getTime() : NaN;
     return { items, since: Number.isFinite(sinceMs) ? new Date(sinceMs).toISOString() : null };
-  } catch {
-    return undefined;
+  } catch (err) {
+    process.stderr.write(`[backup] could not read the brain's page+fact count: ${err instanceof Error ? err.message : String(err)}\n`);
+    return null;
   }
 }
 
+/** null = the count could not be established (engine down / schema quirk). */
 async function countLivePages(engine: BrainEngine): Promise<number | null> {
   try {
-    const rows = await engine.executeRaw<{ n: number }>(
-      'SELECT COUNT(*)::int AS n FROM pages WHERE deleted_at IS NULL',
-    );
-    const n = rows[0]?.n;
-    // An empty rowset / non-numeric n is UNESTABLISHED, not zero — returning 0
+    // An empty rowset / non-numeric n is UNESTABLISHED (null), not zero — returning 0
     // would fabricate a "no pages at risk" all-clear and skip the degraded flag.
-    return typeof n === 'number' && Number.isFinite(n) ? n : null;
+    return await engine.countBrainLivePages();
   } catch {
     return null;
   }
@@ -143,6 +184,8 @@ export async function computeBackupCoverage(
 ): Promise<BackupStatus> {
   const now = opts.now ?? new Date();
   const assets: BackupAssetVerdict[] = [];
+  // An unreadable timeout setting falls back to the default slot, which can only
+  // report a slow remote as "check timed out" (unconfirmed), never as verified.
   const remoteBudget: RemoteProbeBudget | undefined = opts.localGitProbes === true && opts.verifyRemoteRefs === true
     ? { remaining: BACKUP_REMOTE_PROBE_CAP, timeoutMs: resolveBackupRemoteTimeoutMs(await Promise.resolve().then(() => engine.getConfig(BACKUP_REMOTE_TIMEOUT_KEY)).catch(() => null)) } : undefined;
   const previousAge = now.getTime() - Date.parse(opts.previousStatus?.checked_at ?? '');
@@ -157,7 +200,15 @@ export async function computeBackupCoverage(
   let receiptHasRepo = false;
   try {
     const home = resolveGbrainHome();
-    const receipt = readReceipt(home);
+    const state = readReceiptState(home);
+    // A MISSING receipt is legitimately empty (nothing was bootstrapped). A receipt
+    // that exists but cannot be read (corrupt, or written by a newer gbrain) is an
+    // unknown workspace: reading it as "no receipt" would turn a healthy-looking
+    // source sweep into an ok verdict while the bootstrap repo goes unchecked.
+    if (state.state === 'invalid' || state.state === 'newer' || (state.state === 'absent' && !receiptTrulyAbsent(home))) {
+      pushAsset(assets, receiptUnreadableAsset());
+    }
+    const receipt = state.state === 'ok' ? state.receipt : null;
     if (receipt) {
       // Normalized for the source-root dedup compare below — git prints a
       // resolved toplevel, so a symlinked/trailing-slash receipt path must
@@ -188,7 +239,8 @@ export async function computeBackupCoverage(
       }
     }
   } catch {
-    /* no receipt / unreadable home — the source sweep below stands alone */
+    // The home directory or the workspace could not be read: unknown, not "no receipt".
+    pushAsset(assets, receiptUnreadableAsset());
   }
 
   // ── Source repos (deduped by git root) ────────────────────────────────────
@@ -255,14 +307,16 @@ export async function computeBackupCoverage(
           continue;
         }
       }
-      if (root === workspaceRoot) continue; // the workspace asset above owns it
-      const entry = byRoot.get(root);
+      // Read gbrain.yml BEFORE the workspace dedup below: a source in the workspace root still owes this answer.
       let dbOnly = false;
       try {
-        dbOnly = (loadStorageConfig(row.local_path)?.db_only?.length ?? 0) > 0;
+        dbOnly = readDbOnlyDeclared(row.local_path);
       } catch {
-        /* storage config unreadable — treat as no db_only tiering */
+        // gbrain.yml cannot be read: db_only tiering is UNKNOWN, not absent.
+        pushAsset(assets, { kind: 'db_only', id: row.id, state: 'unknown', detail: 'storage_config_unreadable' });
       }
+      if (root === workspaceRoot) continue; // the workspace asset above owns it
+      const entry = byRoot.get(root);
       if (entry) {
         entry.ids.push(row.id);
         entry.dbOnly = entry.dbOnly || dbOnly;
@@ -352,7 +406,7 @@ export async function computeBackupCoverage(
       });
     }
   } catch {
-    /* bridge state unreadable — cosmetic row only */
+    /* Correct empty: this info row only lists installed COPIES (the originals are covered above); it never changes the verdict. */
   }
 
   // ── DB-only brain (the worst-case user) ───────────────────────────────────
@@ -360,7 +414,7 @@ export async function computeBackupCoverage(
   if (pageCountRaw === null) degraded = true;
   const pageCount = pageCountRaw ?? 0;
   const hasGitBackedAsset = assets.some(
-    (a) => a.kind === 'source_repo' || (a.kind === 'bootstrap_workspace' && a.state !== 'no_remote'),
+    (a) => a.kind === 'source_repo' || (a.kind === 'bootstrap_workspace' && a.state !== 'no_remote' && a.detail !== 'receipt_unreadable'),
   );
   let pagesAtRisk = 0;
   if (!degraded && pageCount > 0 && sourceRootCount === 0 && !hasGitBackedAsset && workspaceRoot === null) {
@@ -397,6 +451,7 @@ export async function computeBackupCoverage(
     pages_at_risk: pagesAtRisk,
   };
   const maturity = assets.some(assetBlocksRecovery) ? await brainMaturity(engine) : undefined;
+  if (maturity === null) degraded = true;
 
   return currentBackupEvidence({
     schema_version: BACKUP_STATUS_SCHEMA_VERSION,
@@ -426,6 +481,9 @@ function operatingOnHostBrain(): boolean {
   try {
     return resolveBrainId(undefined) === 'host';
   } catch {
+    // Correct as host: the resolver throws only for a malformed id, and mount ids are validated
+    // when a mount is created, so an id that fails validation cannot name a mounted brain (a typo
+    // in the env var). Treating it as host keeps what the owner reads today; it changes no verdict.
     return true; // resolver default is host; fail toward normal behavior
   }
 }
@@ -468,11 +526,13 @@ export async function getBackupStatus(
     // re-read it while the cached count still says "too young to coach".
     if (!current.maturity || backupCoachingDue(current, nowMs)) return current;
     const maturity = await brainMaturity(engine);
-    return maturity ? { ...current, maturity } : current;
+    if (maturity) return { ...current, maturity };
+    // Unreadable recount: drop the stale "young" count (coaching is due again) and say so.
+    return degradedFromCache(current, nowMs);
   }
   try {
     const fresh = await computeBackupCoverage(engine, { ...opts, previousStatus: cached ?? undefined });
-    if (fresh.degraded && cached) return currentBackupEvidence({ ...cached, degraded: true }, nowMs);
+    if (fresh.degraded && cached) return degradedFromCache(cached, nowMs);
     if (opts.localGitProbes && !fresh.degraded && hostBrain) {
       // The save gets its own guard: a failed WRITE (disk full) must not
       // discard the fresh verdict the caller just probed for.
@@ -487,7 +547,7 @@ export async function getBackupStatus(
     }
     return fresh;
   } catch (err) {
-    if (cached) return currentBackupEvidence({ ...cached, degraded: true }, nowMs);
+    if (cached) return degradedFromCache(cached, nowMs);
     throw err;
   }
 }
@@ -538,6 +598,7 @@ export function maybeRefreshBackupStatusInProcess(engine: BrainEngine): void {
     refreshInFlight = true;
     lastRefreshAttemptMs = now;
     void getBackupStatus(engine, { localGitProbes: true, computedBy: 'serve', forceRefresh: true })
+      // Correct to drop: getBackupStatus already keeps the cache on failure, and the hourly attempt floor stops a retry loop.
       .catch(() => {})
       .finally(() => {
         refreshInFlight = false;

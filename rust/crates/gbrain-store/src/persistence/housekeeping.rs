@@ -51,7 +51,7 @@ fn compactable(r: &RequestRecord) -> bool {
 }
 
 /// `jsonb ? key`: an object's key, an array's string element, or the string itself.
-fn jsonb_has(v: &Value, key: &str) -> bool {
+pub(super) fn jsonb_has(v: &Value, key: &str) -> bool {
     match v {
         Value::Object(o) => o.contains_key(key),
         Value::Array(a) => a.iter().any(|e| e.as_str() == Some(key)),
@@ -66,9 +66,11 @@ fn jsonb_bytes(v: Option<&Value>) -> Option<i64> {
         .map(|v| jsonb_text(v).len() as i64)
 }
 
-/// `COMPACTED_RECEIPT_BYTES_SQL(r, e)` with no effects: what a compacted receipt keeps.
-fn compacted_bytes(r: &RequestRecord) -> i64 {
+/// `COMPACTED_RECEIPT_BYTES_SQL(r, e)`: what a compacted receipt keeps, with the bytes of the
+/// request's effect rows (`effect_bytes`).
+fn compacted_bytes(r: &RequestRecord, effect_bytes: i64) -> i64 {
     let kept = jsonb_bytes(Some(&r.authority)).unwrap_or(0)
+        + effect_bytes
         + jsonb_bytes(r.outcome.as_ref()).unwrap_or(0)
         + jsonb_bytes(r.extra.get("error_detail")).unwrap_or(0)
         + r.client_request_id.as_ref().map_or(0, |c| c.len() as i64)
@@ -84,13 +86,15 @@ fn days_before(env: &dyn Env, days: f64) -> i64 {
 // The host's housekeeping turn.
 
 /// One housekeeping `op_checkpoints` row: `completed_keys` and `updated_at`.
+/// The resumable-op checkpoints of `op_checkpoint.rs` share the row shape and the key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct HousekeepingRow {
-    completed_keys: Value,
-    updated_at_us: i64,
+pub(crate) struct HousekeepingRow {
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
+    pub(crate) completed_keys: Value,
+    pub(crate) updated_at_us: i64,
 }
 
-fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
+pub(crate) fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     if op.contains('\0') || fingerprint.contains('\0') {
         return Err(StoreError::invalid(
             "a housekeeping checkpoint key cannot contain NUL",
@@ -471,7 +475,7 @@ pub(crate) fn read_capacity_forecast_inputs_in(
         }) {
             let sums = by_day.entry(utc_day(r.created_at_us)).or_default();
             let gross = extra_i64(r, "terminal_reservation");
-            let net = compacted_bytes(r);
+            let net = compacted_bytes(r, super::effects::effect_totals(read, &r.id)?.0);
             sums.ids += 1;
             sums.gross += gross;
             sums.net += net;
@@ -517,7 +521,7 @@ pub(crate) fn read_capacity_forecast_inputs_in(
             let scope = format!("principal:{}:{}", r.principal_kind, r.principal_id);
             let reserved = extra_i64(r, "terminal_reservation");
             let entry = by_scope.entry(scope).or_default();
-            entry.0 += reserved - compacted_bytes(r);
+            entry.0 += reserved - compacted_bytes(r, super::effects::effect_totals(read, &r.id)?.0);
             let held = jsonb_bytes(Some(&r.intent)).unwrap_or(0)
                 + jsonb_bytes(Some(&r.authority)).unwrap_or(0);
             if held > reserved {

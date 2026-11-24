@@ -7,8 +7,9 @@
  *   - entity_identity_list   (read)             — inspect groups/members
  *
  * The identity KEY is (source_id, slug) — see src/core/entity-identity.ts
- * and docs/architecture/brains-and-sources.md. There is NO auto-matching in
- * v1: every row is an explicit human assertion, which is why the write ops
+ * and docs/architecture/brains-and-sources.md. There is NO auto-matching:
+ * every row is an explicit human assertion (these ops, or gbrain dedupe
+ * confirm, whose rows these ops refuse to move), which is why the write ops
  * are localOnly (identity merges change what retrieval unions together
  * across sources — too sharp for a remote agent surface in v1).
  *
@@ -27,6 +28,29 @@ import {
   listEntityIdentities,
 } from '../entity-identity.ts';
 import { validateSourceId } from '../utils.ts';
+import { opError } from './contract.ts';
+
+/**
+ * Duplicate people PR 2 (review round 2, d5): a member that gbrain dedupe confirm linked is the projection of a recorded
+ * decision, so the hand-link ops never move or remove it; gbrain dedupe reject records the decision and removes the link.
+ * A company the sync linked ('dedupe:auto') is moved by hand like any other link, and the next sweep leaves it there; it
+ * is not unlinked by hand, since the next sweep would link it again: gbrain dedupe reject keeps the pair apart.
+ */
+async function refuseDedupeMember(ctx: Parameters<Operation['handler']>[0], slug: string, sourceId: string, op: string): Promise<void> {
+  const member = (await listEntityIdentities(ctx.engine, { slug, slugSourceId: sourceId, sourceId }))
+    .find(m => m.slug === slug && m.source_id === sourceId
+      && (m.established_by === 'dedupe:confirm' || (m.established_by === 'dedupe:auto' && op === 'entity_identity_unlink')));
+  if (!member) return;
+  const auto = member.established_by === 'dedupe:auto';
+  throw opError('identity_link_owned_by_dedupe', auto
+    ? `${op}: ${sourceId}:${slug} was linked into ${member.entity_id} by the sync, as a company that shares an id with its copies, so it is not unlinked by hand; nothing changed.`
+    : `${op}: ${sourceId}:${slug} was linked into ${member.entity_id} by gbrain dedupe confirm, so it is not moved or removed by hand; nothing changed.`,
+    `Run gbrain dedupe reject ${member.entity_id} on the brain host to record that the pages are different people or companies and remove the link.`,
+    { fix: { ask_user: true, argv: ['gbrain', 'dedupe', 'reject', member.entity_id], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Records the "different people or companies" decision (in git on a brain with a repository) and removes the confirmed link.',
+      user_message: `${sourceId}:${slug} is in the group ${auto ? 'the sync linked as one company' : 'you confirmed as one person or company'} (${member.entity_id}). Should I record that they are different people or companies?`,
+      verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
+}
 
 /** Member-visibility restriction for list/union reads (fail-closed remote). */
 function identityReadScope(ctx: Parameters<Operation['handler']>[0]): string[] | undefined {
@@ -68,6 +92,7 @@ const entity_identity_link: Operation = {
     if (ctx.dryRun) {
       return { dry_run: true, action: 'entity_identity_link', entity_id: p.entity_id, slug: p.slug, source_id: sourceId };
     }
+    await refuseDedupeMember(ctx, p.slug as string, sourceId, 'entity_identity_link');
     const member = await linkEntityIdentity(ctx.engine, {
       entityId: p.entity_id as string,
       slug: p.slug as string,
@@ -99,6 +124,7 @@ const entity_identity_unlink: Operation = {
     if (ctx.dryRun) {
       return { dry_run: true, action: 'entity_identity_unlink', entity_id: p.entity_id, slug: p.slug, source_id: sourceId };
     }
+    await refuseDedupeMember(ctx, p.slug as string, sourceId, 'entity_identity_unlink');
     const removed = await unlinkEntityIdentity(ctx.engine, {
       entityId: p.entity_id as string,
       slug: p.slug as string,

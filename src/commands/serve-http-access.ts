@@ -1,9 +1,10 @@
 import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
 import type { BrainEngine } from '../core/engine.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
 import { addMember, bindCredential, disableMember, enableMember, listMembers, setMemberEmail, type BindingPatch } from '../core/access/members.ts';
 import { ATTEST_SYSTEMS, linkMember, linkMemberByEmail, listMemberLinks, parseAttestOps, unlinkMember } from '../core/access/actor.ts';
 import { operationsByName } from '../core/operations.ts';
+import { rescopeArchiveBefore } from './archive-rescope.ts';
 
 /**
  * GST-1094 gap 4: owner administration of the people a trusted system serves, over the running server: the attest
@@ -15,6 +16,7 @@ import { operationsByName } from '../core/operations.ts';
  * instead of its id. Only here and on the brain host: no MCP operation or OAuth scope reads or sets it.
  */
 export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
+  const rescopeOnShared = async () => (await import('../core/transcripts/archive.ts')).rescopeArchiveOnShared(engine);
   app.get('/admin/api/access/members', requireAdmin, async (req, res) => {
     await answer(res, false, async () => ({ members: await listMembers(engine, { includeRemoved: req.query.all === '1' || req.query.all === 'true' }) }));
   });
@@ -28,18 +30,19 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
     if (action === 'add' && req.body.groups !== undefined && !(Array.isArray(req.body.groups) && req.body.groups.every((g: unknown) => typeof g === 'string'))) return refuse(res, 'groups must be an array of group ids.');
     await answer(res, true, async () => {
       if (action === 'add') {
-        const result = await addMember(engine, id, { name: req.body.name, email: req.body.email, groups: req.body.groups });
+        const result = await addMember(engine, id, { name: req.body.name, email: req.body.email, groups: req.body.groups, beforeWrite: () => rescopeArchiveBefore(engine, id, 'add') });
         await audit(engine, 'member_add', { member: result.member.id, groups_created: result.groups_created });
-        return { applied: true, ...result };
+        return { applied: true, ...result, archive_rescope: await rescopeOnShared() };
       }
       if (action === 'set') {
         const result = await setMemberEmail(engine, id, req.body.email);
         if (result.changed) await audit(engine, 'member_set', { member: result.member.id, email: result.member.email === null ? 'cleared' : 'declared' });
         return { applied: result.changed, ...result };
       }
+      if (action === 'enable') await rescopeArchiveBefore(engine, id, 'enable');
       const member = await (action === 'disable' ? disableMember : enableMember)(engine, id);
       await audit(engine, `member_${action}`, { member: member.id });
-      return { applied: true, member };
+      return { applied: true, member, ...(action === 'enable' ? { archive_rescope: await rescopeOnShared() } : {}) };
     });
   });
 
@@ -83,7 +86,44 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
         tokenImplications: 'Takes effect on the next request; a client that newly holds the right takes a new token with grant_type=client_credentials.' };
     });
   });
+
+  app.get('/admin/api/access/handover/:id', requireAdmin, async (req, res) => {
+    await answer(res, false, async () => {
+      const { handoverStatus } = await import('../core/access/handover.ts');
+      return { ...(await handoverStatus(engine, String(req.params.id))) };
+    });
+  });
+
+  app.post('/admin/api/access/handover', requireAdmin, express.json(), async (req, res) => {
+    const body = req.body ?? {};
+    const { member, set, expect, undo } = body;
+    const unknown = Object.keys(body).find(key => !HANDOVER_FIELDS.includes(key));
+    if (unknown !== undefined) return refuse(res, `Unknown field ${unknown}: a handover takes member, set, expect and undo.`);
+    if (member !== undefined && (typeof member !== 'string' || !member)) return refuse(res, 'member must be a member id.');
+    if (undo !== undefined && (typeof undo !== 'string' || !undo)) return refuse(res, 'undo must be a handover id.');
+    if (member === undefined && undo === undefined) return refuse(res, 'A handover needs member (or undo with the handover id to reverse).');
+    if (expect !== undefined && (typeof expect !== 'string' || !expect)) return refuse(res, 'expect must be the plan_hash a preview returned.');
+    if (set !== undefined && !(Array.isArray(set) && set.every((s: unknown) => typeof s === 'string'))) return refuse(res, 'set must be an array of <group>=<choice> strings.');
+    if (undo !== undefined && set !== undefined) return refuse(res, 'undo restores what the handover recorded; it takes no set.');
+    await answer(res, expect !== undefined, async () => {
+      const lib = await import('../core/access/handover.ts');
+      const original = undo === undefined ? undefined : await lib.getHandover(engine, undo);
+      if (original && member !== undefined && member !== original.member_id) throw opError('invalid_params', `Handover ${original.id} belongs to ${original.member_id}, not ${member}.`, 'Name the member the handover was for, or leave member out.');
+      const who: string = original?.member_id ?? member;
+      const previewCommand = 'POST /admin/api/access/handover ' + JSON.stringify({ member: who, ...(set ? { set } : {}), ...(undo ? { undo } : {}) });
+      if (expect === undefined) {
+        if (original) return { ...(await lib.previewUndo(engine, original.id)), applied: false };
+        return { ...(await lib.previewHandover(engine, who, lib.parseChoices(set ?? []))), applied: false };
+      }
+      const { ownerContext } = await import('./memory-proposals.ts');
+      const record = await lib.applyHandover(engine, who, { ctx: await ownerContext(engine, false), expect, previewCommand, ...(original ? { undo: original } : {}) });
+      await audit(engine, original ? 'member_handover_undo' : 'member_handover', { member: record.member_id, handover_id: record.id, ...(original ? { undo_of: original.id } : {}), state: record.state, items: record.items.length });
+      return { applied: true, ...record };
+    }, 'Read the handover (GET /admin/api/access/handover/<id>)');
+  });
 }
+
+const HANDOVER_FIELDS = ['member', 'set', 'expect', 'undo'];
 
 const PROPOSAL_PAGE = 50;
 const PROPOSAL_DECISION_FIELDS = ['action', 'reason', 'dryRun'];

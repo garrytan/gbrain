@@ -159,7 +159,7 @@ impl Store {
             let id = crate::pages::next_id(tx, ID_COUNTER)?;
             let record = ChatUsageRecord {
                 id,
-                model,
+                model: model.clone(),
                 provider: input.provider.clone(),
                 phase: input.phase.clone(),
                 tokens: counts,

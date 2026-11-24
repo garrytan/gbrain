@@ -3,6 +3,7 @@ import type { PageSnapshot } from '../../page-state/types.ts';
 import type { PageWriteOptions, PageSnapshotOptions } from '../../page-state/types.ts';
 import type { GetPageOpts, Page, PageFilters, PageInput, PageReadScope } from '../../types.ts';
 import { toGetPage, toListPage, toPutPage, withIsoDates } from '../store-codec.ts';
+import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -24,14 +25,21 @@ function pageScope(member: string, opts: object | undefined, allowed: readonly s
 
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
   const scope = pageScope('readPageSnapshot', opts, READ_SCOPE);
-  const snapshot: PageSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
+  const snapshot: StoreSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
+  return snapshot === null ? null : overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) });
 };
 
+/**
+ * `readPolicyOpts` (get_write_attribution) also passes `requireSafeChunks` and `takesHoldersAllowList`. The SQL page
+ * read (page-state/snapshot.ts) reads neither: they fence chunk and take reads, not the page row. The store ignores
+ * them too.
+ */
+const GET_PAGE_UNREAD = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
+
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
-  const scope = pageScope('getPage', opts, READ_SCOPE);
-  const snapshot: PageSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
-  return snapshot === null ? null : toGetPage(snapshot.page);
+  const scope = pageScope('getPage', opts, READ_SCOPE, GET_PAGE_UNREAD);
+  const snapshot: StoreSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
+  return snapshot === null ? null : overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) }).page;
 };
 
 /** The revision the page has now, for the error a rejected revision check throws. `null` when there is no page. */
@@ -87,8 +95,8 @@ function listColumns(page: Page): Page {
   const { id, source_id, slug, type, title, created_at, updated_at, updated_at_iso, deleted_at, effective_date,
     effective_date_source, body_storage, body_bytes } = page;
   return {
-    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, created_at, updated_at,
-    content_hash: undefined, emotional_weight: undefined,
+    id, source_id, slug, type, title, compiled_truth: '', timeline: '', frontmatter: {}, content_hash: undefined,
+    emotional_weight: undefined, created_at, updated_at,
     ...(updated_at_iso !== undefined && { updated_at_iso }),
     ...(deleted_at !== undefined && { deleted_at }),
     ...(effective_date !== undefined && { effective_date }),
@@ -105,13 +113,12 @@ export const listPages: StoreMember<[filters?: PageFilters], Page[]> = async (br
 };
 
 /**
- * PGLite answers an exact live slug first and otherwise ranks titles and slugs by trigram similarity. The store has the
- * exact half; a name it cannot find exactly is refused, since "no exact page" is not "nothing resembles it".
+ * An exact live slug first, otherwise up to five trigram-similar titles or slugs containing the name, as PGLite
+ * ranks them (the store's `pg_trgm` port: same similarity, same 0.3 threshold, ties by slug then source).
  */
 export const resolveSlugs: StoreMember<[partial: string, opts?: PageReadScope], string[]> = async (brain, partial, opts) => {
   // PGLite's resolveSlugs reads only the source scope and excludePrivate; the rest of a read policy has no effect there.
   const scope = pageScope('resolveSlugs', opts, ['sourceId', 'sourceIds', 'excludePrivate'], ['requireSafeChunks', 'takesHoldersAllowList', 'minTrust', 'suppressFlagged']);
   const found: string[] = await storeCall({ member: 'resolveSlugs' }, () => brain.resolveSlugs(partial, scope));
-  if (found.length === 0) refuseMember('resolveSlugs', 'a name with no exact page needs trigram matching');
   return found;
 };

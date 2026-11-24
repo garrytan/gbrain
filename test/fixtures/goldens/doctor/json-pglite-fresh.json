@@ -220,7 +220,7 @@
           "details": {
             "audience": "personal",
             "audience_reasons": [
-              "no shared declaration; 0 non-automation client(s) active in 30d"
+              "no shared declaration; 0 non-automation client(s) active in 30d, 0 people (0 member(s), 0 unbound client(s))"
             ],
             "backstop_visibility": "private",
             "capture_lanes": {
@@ -485,6 +485,15 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+          "name": "rust_engine_addon",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "Connected, 0 pages",
           "name": "connection",
           "status": "ok"
@@ -630,6 +639,20 @@
         {
           "category": "ops",
           "details": {
+            "count": 0,
+            "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+            "more": false,
+            "recovering": [],
+            "stop": null
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No topology change is recovering on this host.",
+          "name": "topology_recovery_stopped",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
             "docs": "docs/guides/repair.md#receipt-compaction",
             "last_compaction": {
               "at": "<ts>",
@@ -747,16 +770,16 @@
             "actor": "user",
             "argv": [
               "gbrain",
-              "init",
-              "--force",
+              "embeddings",
+              "enable",
               "--embedding-model",
               "voyage:voyage-4",
               "--embedding-dimensions",
               "1024",
-              "--path",
-              "<home>/.gbrain/brain.pglite"
+              "--brain",
+              "host"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
             "consent": [
               "credentials",
               "paid"
@@ -1210,6 +1233,34 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: this brain has no members (gbrain access member add <id>).",
+          "name": "access_pages_read_by_nobody",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: this brain serves one person, so no source has to be shared with members.",
+          "name": "access_shared_source_unread",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No live token or OAuth client is bound to a disabled or removed member.",
+          "name": "access_disabled_member_credentials",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
           "name": "attest_read_shared_scope",
           "readiness_state": "not_applicable",
@@ -1248,6 +1299,16 @@
         },
         {
           "category": "ops",
+          "details": {
+            "closed": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
+          "name": "owner_only_marks_triggers",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite is always UTF8)",
           "name": "database_encoding",
@@ -1263,14 +1324,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1393 column(s) verified against live schema",
+          "message": "1395 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 186 table(s) the applied migrations create exist.",
+          "message": "All 195 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -1295,16 +1356,16 @@
             "actor": "user",
             "argv": [
               "gbrain",
-              "init",
-              "--force",
+              "embeddings",
+              "enable",
               "--embedding-model",
               "voyage:voyage-4",
               "--embedding-dimensions",
               "1024",
-              "--path",
-              "<home>/.gbrain/brain.pglite"
+              "--brain",
+              "host"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
             "consent": [
               "credentials",
               "paid"
@@ -1345,16 +1406,16 @@
             "actor": "user",
             "argv": [
               "gbrain",
-              "init",
-              "--force",
+              "embeddings",
+              "enable",
               "--embedding-model",
               "voyage:voyage-4",
               "--embedding-dimensions",
               "1024",
-              "--path",
-              "<home>/.gbrain/brain.pglite"
+              "--brain",
+              "host"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
             "consent": [
               "credentials",
               "paid"
@@ -1604,6 +1665,10 @@
               },
               {
                 "name": "persistence_requests_slug_sequence",
+                "state": "valid"
+              },
+              {
+                "name": "persistence_requests_source_slug_c",
                 "state": "valid"
               }
             ],
@@ -3421,6 +3486,36 @@
         {
           "category": "brain",
           "details": {
+            "items": [],
+            "total": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Every held write is tied to one page, or waits for its page to be created.",
+          "name": "write_gate_hold_ambiguous",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": {},
+            "complete": true,
+            "items": [],
+            "items_truncated": false,
+            "row_budget": 5000,
+            "scanned": 0,
+            "stranded": {
+              "no_page": 0,
+              "page_deleted": 0
+            }
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No held write is without a live page (0 held write(s) read).",
+          "name": "write_gate_holds_stranded",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "bad_config": [],
             "chars_limit": 4000,
             "chars_used": 0,
@@ -3832,6 +3927,32 @@
         {
           "category": "brain",
           "details": {
+            "counts": {
+              "by_class": {
+                "clean": 0,
+                "conflict": 0,
+                "likely": 0,
+                "thin": 0,
+                "weak": 0
+              },
+              "by_kind": {
+                "conflict": 0,
+                "cross_source": 0,
+                "in_source": 0,
+                "thin": 0
+              },
+              "crowded_key_values": 0
+            },
+            "groups": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No likely duplicate person or company pages.",
+          "name": "entity_duplicates",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#file_database_drift",
             "sources": []
           },
@@ -3930,6 +4051,53 @@
           "elapsed_ms": "<volatile>",
           "message": "Every fact line on 0 facts page(s) carries a date.",
           "name": "facts_undated_lines",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "backup": {
+              "backend": false,
+              "carried_by": "database_backup",
+              "last_failure": null,
+              "last_success": null
+            },
+            "by_rule": {},
+            "checkouts": [],
+            "docs": "docs/guides/secret-store.md#health-and-backups",
+            "entries": 0,
+            "keys": {
+              "current": null,
+              "escrow_exported": [],
+              "in_use": [],
+              "missing": [],
+              "origin": "none",
+              "present": []
+            },
+            "occurrences": 0,
+            "spooled": 0,
+            "unreferenced": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "The secret store holds no entries.",
+          "name": "secret_store",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "entity_basis": "reserved_page",
+            "identifier_kinds": [],
+            "identifier_shared": 0,
+            "identifiers": 0,
+            "owner_member_set": false,
+            "person_types_unavailable": false,
+            "several_pages": false,
+            "unbound_google_sources": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No owner identifier yet: set the owner member's email (gbrain access member set <id> --email <addr>) or connect a Google source. The owner page is memory/owner.",
+          "name": "owner_identity",
           "status": "ok"
         },
         {
@@ -4230,16 +4398,16 @@
             "actor": "user",
             "argv": [
               "gbrain",
-              "init",
-              "--force",
+              "embeddings",
+              "enable",
               "--embedding-model",
               "voyage:voyage-4",
               "--embedding-dimensions",
               "1024",
-              "--path",
-              "<home>/.gbrain/brain.pglite"
+              "--brain",
+              "host"
             ],
-            "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --path <home>/.gbrain/brain.pglite",
+            "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
             "consent": [
               "credentials",
               "paid"

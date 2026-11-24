@@ -12,10 +12,13 @@ export const PROTECTED_PAIRS: readonly FencePair[] = [
 
 /**
  * Strict protected-body boundary shared by remote reads and chunk creation.
+ * GST-3058: `owner` is the brain owner's own read: every region as stored, except takes regions when the owner's
+ * credential names a holders list (`keepTakes` false), which are dropped as for any remote reader so a page it reads
+ * still round-trips through put_page (preserveProtectedTakes re-appends the stored fence).
  * #5567 materialized-timeline marker lines are dropped unless the caller
  * round-trips the body (`keepMaterializedMarkers`).
  */
-export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean; omitRows?: ReadonlySet<number> } = {}): string {
+export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: boolean; keepMaterializedMarkers?: boolean; omitRows?: ReadonlySet<number>; owner?: { keepTakes: boolean } } = {}): string {
   if (typeof body !== 'string') return '';
   // Parse the same free-text bytes storage accepts. Removing NUL after fence
   // detection could turn an unrecognized marker into a protected stored fence.
@@ -28,10 +31,23 @@ export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: bool
   for (const region of regions) {
     output.push(body.slice(cursor, region.start));
     cursor = region.end;
-    if (region.pair === 0) output.push(renderFactsRegion(body.slice(region.start, region.end), opts.includeWithdrawn, opts.omitRows));
+    const text = body.slice(region.start, region.end);
+    if (opts.owner) { if (region.pair === 0 || opts.owner.keepTakes) output.push(text); }
+    else if (region.pair === 0) output.push(renderFactsRegion(text, opts.includeWithdrawn, opts.omitRows));
   }
   output.push(truncatedAt === -1 ? body.slice(cursor) : body.slice(cursor, truncatedAt));
   return output.join('');
+}
+
+/**
+ * GST-3058: whether a world-only remote read of `body` (sanitizeRemoteBody as get_page applies it to a non-owner)
+ * would strip anything `body` holds: a takes fence, a facts row that is not world, or one of `omitRows` (rows held
+ * from world-only readers). The room marker reads every whole body get_page returns through it (access/room.ts), so a
+ * read that carries more than the room would read is never marked readable for the room.
+ */
+export function remoteReadStrips(body: string, omitRows?: ReadonlySet<number>): boolean {
+  const opts = { includeWithdrawn: true, keepMaterializedMarkers: true };
+  return sanitizeRemoteBody(body, { ...opts, omitRows }) !== sanitizeRemoteBody(body, { ...opts, owner: { keepTakes: true } });
 }
 
 /** What sanitizeRemoteBody puts in place of one protected facts region: its world rows rendered (less `omitRows`), or nothing. */

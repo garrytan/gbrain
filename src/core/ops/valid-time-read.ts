@@ -14,13 +14,13 @@ import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, opTransport, readFix } from './op-fix.ts';
 import { renderAction, type Action } from '../agent-output.ts';
-import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, validatePageSlug } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, readHolders, validatePageSlug } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead, readQuarantined } from './get-page-projection.ts';
 import { admitsTrust, type TrustTier } from '../trust/tier.ts';
 import { isCalendarDate } from '../link-validity.ts';
 import { VALID_TIME_CURRENT_ORD, type ValidTimeIdentityRow } from '../engine-sql/trust-tier-reads.ts';
-import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
+import { ownerFenceView, resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesStored } from '../search/transcript-quote.ts';
 import { quotedPageMeta } from './get-page-projection.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
@@ -36,6 +36,7 @@ import { LARGE_PAGE_VERSIONS_KEPT } from '../page-body/limits.ts';
 import { validTimeVerdict, type ValidTimeVerdict, type ValidTimeWhy } from '../valid-time.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
+import { noteReturnedPages } from '../access/read-log.ts';
 
 export const AS_OF_PARAM: ParamDef = { type: 'string', description: 'YYYY-MM-DD: edition in force then. No valid_time in reply: current page.' };
 
@@ -208,7 +209,7 @@ async function editionView(ctx: OperationContext, identity: Identity, e: Edition
   const omitRows = e.segmented ? undefined : await heldRowsForCaller(ctx.engine, ctx.remote, { sourceId: identity.source_id, slug: identity.slug, compiled_truth: e.compiled_truth, timeline: e.timeline });
   const clean = (s: string) => {
     if (ctx.remote === false) return s;
-    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows });
+    const safe = sanitizeRemoteBody(s, { includeWithdrawn: true, keepMaterializedMarkers: true, omitRows, owner: ownerFenceView(readHolders(ctx)) });
     return neutralize ? neutralizeToolCalls(safe) : safe;
   };
   const fence = (s: string) => quote && s ? fenceTranscriptText(s, identity.slug) : s;
@@ -291,6 +292,7 @@ export async function getPageAsOf(ctx: OperationContext, p: Record<string, unkno
   }
   if (excludePrivate && !row.visible) throw missing();
   if (!loaded) throw missing();
+  noteReturnedPages([identity.id]);
   // #6259: a quarantined page (now, or in the chosen edition) keeps its body from a remote reader, as the plain read does.
   const quarantined = readQuarantined(ctx, loaded.current.page, false)
     ?? readQuarantined(ctx, { slug: identity.slug, source_id: identity.source_id, frontmatter: loaded.edition.frontmatter }, false);

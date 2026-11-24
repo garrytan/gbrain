@@ -1,7 +1,7 @@
 //! Derivation trust: the derived-row trust writes of src/core/engine-sql/derivation-trust.ts.
 //!
-//! `lowerTrustTier` (pages), `countDerivedRowTaint` and `stampPageFrontmatter` read and write
-//! the page, take and timeline records (`countDerivedFactTaint` is in `facts::trust_owner`); this module
+//! `lowerTrustTier` (pages), `countDerivedRowTaint` and `stampPageFrontmatter`
+//! (`countDerivedFactTaint` is `facts/trust_owner.rs`) read and write the page, take, timeline and fact records; this module
 //! keeps no key of its own. The `derivation_inputs` edges are not kept here.
 
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
@@ -93,7 +93,7 @@ impl Store {
         }
         self.write(|tx| {
             let mut lowered = Vec::new();
-            for id in ids {
+            for &id in &ids {
                 let Some(page) = read_page_by_id(&*tx, id)? else {
                     continue;
                 };
@@ -152,8 +152,6 @@ impl Store {
         }
     }
 
-    // `countDerivedFactTaint` is served by `facts::trust_owner`.
-
     /// `stampPageFrontmatter(spec)`: merges `entries` into the frontmatter of the named pages of
     /// the source: `retired` stamps soft-deleted pages, `atom_source_hash` live pages of type
     /// `atom`. A page whose frontmatter changes takes a new knowledge revision and its text
@@ -173,7 +171,7 @@ impl Store {
         no_nul(op, &[("sourceId", spec.source_id.as_str())])?;
         let slugs: BTreeSet<&str> = spec.slugs.iter().map(String::as_str).collect();
         self.write(|tx| {
-            for slug in slugs {
+            for &slug in &slugs {
                 let Some(mut page) = read_page(&*tx, &spec.source_id, slug)? else {
                     continue;
                 };

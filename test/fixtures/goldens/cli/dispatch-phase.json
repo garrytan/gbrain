@@ -71,6 +71,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "apple-contacts": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "apply-migrations": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
@@ -573,6 +580,13 @@
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
+      "dedupe": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "diag": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -1056,6 +1070,13 @@
           }
         ],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "identity": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "import": {
@@ -1694,6 +1715,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "secrets": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "self-upgrade": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
@@ -2103,9 +2131,21 @@
         "thinClientRoutedSubcommands": []
       },
       "waiting": {
-        "hasSwitchCase": true,
-        "phase": "post-connect",
-        "preConnectRules": [],
+        "hasSwitchCase": false,
+        "phase": "pre-connect-own-engine",
+        "preConnectRules": [
+          {
+            "condition": "command === 'waiting'",
+            "connectsEngine": true,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "waiting"
+            ]
+          }
+        ],
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },

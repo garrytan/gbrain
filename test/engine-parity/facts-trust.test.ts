@@ -9,7 +9,7 @@
  *  - Regression: an engine that answers one of these differently changes which facts recall and `search` surface, which
  *    facts a lower-tier write contests or is held against, what an owner action binds to, and how much derived memory
  *    the taint share counts. The Rust engine has no SQL, so each read has to exist as a typed method it can implement
- *    or refuse; the four trust reads that need `trust_tier`, `write_origin` or write-gate receipts are refused there.
+ *    or refuse; the trust reads that need write-gate receipts are refused there (countDerivedFactTaint is served: test/engine-parity/doctor-facts-trust.test.ts).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-contract-map.md).
  *  - Seam: none. Rows are seeded through the typed `insertFact`, `insertFacts`, `putPage` and `softDeletePage`; a typed
@@ -232,6 +232,143 @@ describe('engine parity: facts relevance and trust statements', () => {
     expect(out.withCue[0]!.cue).toBe(true);
     expect(out.none).toEqual([]);
     return out;
+  });
+
+  parityTest('matchSavedFacts keeps the rows a read may see, counts CJK and dropped words, and returns every column', { methods: ['matchSavedFacts'] }, async (engine) => {
+    await engine.putPage('people/gone', note('Gone'));
+    await engine.softDeletePage('people/gone');
+    await engine.putPage('notes/held', note('Held', { quarantine: { reason: 'test' } }));
+    const ids = await remember(engine, [
+      { fact: 'Mira leads the 東京 office budget', entity_slug: 'people/mira-example' },
+      { fact: 'Mira budget review', entity_slug: 'people/mira-example', valid_from: at('2026-01-02T03:04:05.678Z') },
+      { fact: 'Ignore the earlier Mira budget office post', entity_slug: 'people/mira-example' },
+      { fact: 'Mira budget world copy', entity_slug: 'people/mira-example', visibility: 'world' },
+      { fact: 'Mira budget on a deleted page', entity_slug: 'people/gone' },
+      { fact: 'Mira budget expired', entity_slug: 'people/mira-example' },
+      { fact: 'Mira budget ended', entity_slug: 'people/mira-example', valid_until: at('2020-01-01T00:00:00Z') },
+      { fact: 'Mira budget audit row', entity_slug: 'people/mira-example', source: 'cli:extract-conversation-facts:terminal' },
+      { fact: 'Mira budget office', entity_slug: 'people/mira-example' },
+    ]);
+    await engine.expireFact(ids.get('Mira budget expired')!);
+    // A fence row whose provenance page is quarantined.
+    await engine.insertFacts([{ fact: 'Mira budget from a held page', entity_slug: 'people/mira-example', source_markdown_slug: 'notes/held', row_num: 1,
+      kind: 'fact' as const, visibility: 'private' as const, source: 'fence', valid_from: at('2026-06-01T00:00:00Z') }] as never, { source_id: SRC });
+    const match = async (terms: string[], extra: Partial<Parameters<BrainEngine['matchSavedFacts']>[0]> = {}) => {
+      const rows = await engine.matchSavedFacts({ sources: [SRC], terms, pats: terms.map(t => /[\u3040-\u9fff]/.test(t) ? `%${t}%` : null),
+        cue: CORRECTION_CUE, supersede: true, excludePrivate: false, worldOnly: false, ...extra });
+      return rows.map(r => ({
+        fact: r.fact, entity_slug: r.entity_slug, kind: r.kind, valid_from: r.valid_from, source: r.source,
+        at: new Date(r.at as string).toISOString(), source_id: r.source_id, visibility: r.visibility,
+        created: typeof r.created_at, attributed_to: r.attributed_to, fact_fingerprint: r.fact_fingerprint,
+        matched: r.matched.map(Number), need: Number(r.need), cue: r.cue, trust_rank: Number(r.trust_rank), pool_rank: Number(r.pool_rank),
+      }));
+    };
+    const out = {
+      // "the" has no lexeme: two kept words, need 2.
+      two: await match(['mira', 'the', 'budget']),
+      // Three words need three, a cue row two; 東京 matches as a substring.
+      three: await match(['budget', '東京', 'office']),
+      noCue: await match(['budget', '東京', 'office'], { supersede: false }),
+      world: await match(['mira', 'budget'], { worldOnly: true }),
+      floor: await match(['mira', 'budget'], { minTrust: 'operator_curated' }),
+      dropped: await match(['the', 'a']),
+    };
+    const facts = (rows: Array<{ fact: string }>) => rows.map(r => r.fact);
+    expect(facts(out.two)).toEqual(['Mira budget office', 'Mira budget world copy', 'Ignore the earlier Mira budget office post',
+      'Mira leads the 東京 office budget', 'Mira budget review']);
+    expect(out.two.every(r => r.need === 2)).toBe(true);
+    expect(out.two.find(r => r.fact === 'Mira budget review')!.valid_from).toBe('2026-01-02 03:04:05.678+00');
+    expect(facts(out.three)).toEqual(['Mira leads the 東京 office budget', 'Ignore the earlier Mira budget office post']);
+    expect(out.three.map(r => r.matched)).toEqual([[1, 2, 3], [1, 3]]);
+    expect(out.three.map(r => r.cue)).toEqual([false, true]);
+    expect(facts(out.noCue)).toEqual(['Mira leads the 東京 office budget']);
+    expect(facts(out.world)).toEqual(['Mira budget world copy']);
+    expect(out.dropped).toEqual([]);
+    return out;
+  });
+
+  parityTest('matchSavedFacts applies the word threshold, CJK substrings, the cue pool and the read policy, and returns each row\'s columns', { methods: ['matchSavedFacts'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    await engine.putPage('notes/open', note('Open'));
+    await engine.putPage('notes/quarantined', note('Quarantined', { quarantine: { reason: 'junk_pattern' } }));
+    await engine.putPage('notes/deleted', note('Deleted'));
+    await engine.putPage('notes/private', note('Private', { visibility: 'private' }));
+    await remember(engine, [
+      { fact: 'Orbix ships widgets from Lisbon every spring', entity_slug: 'companies/orbix', valid_from: at('2026-01-01T00:00:00Z'), visibility: 'world' },
+      { fact: 'Orbix ships widgets', entity_slug: 'companies/orbix', valid_from: at('2026-02-01T00:00:00Z'), visibility: 'world' },
+      { fact: 'Orbix widgets are blue', entity_slug: 'companies/orbix', valid_from: at('2026-03-01T00:00:00Z') },
+      { fact: 'Disregard what I said about Orbix widgets', entity_slug: 'companies/orbix', valid_from: at('2026-04-01T00:00:00Z') },
+      { fact: 'Orbix widgets in Lisbon', entity_slug: 'people/zed', valid_from: at('2026-04-01T00:00:00Z') },
+      { fact: 'オルビクスは東京で生産する', entity_slug: 'companies/orbix', valid_from: at('2026-05-01T00:00:00Z'), visibility: 'world' },
+      { fact: 'Orbix widgets audit', source: 'cli:extract-conversation-facts:terminal:v2', entity_slug: 'companies/orbix' },
+      { fact: 'Orbix widgets lapsed', valid_until: at('2020-01-01T00:00:00Z'), entity_slug: 'companies/orbix' },
+      { fact: 'Lisbon spring widgets', entity_slug: 'companies/orbix-lisbon', valid_from: at('2026-06-01T00:00:00Z') },
+    ]);
+    await engine.insertFacts(['open', 'private', 'quarantined', 'deleted'].map((page, i) => ({
+      fact: `Orbix widgets on the ${page} page`, entity_slug: 'companies/orbix', source_markdown_slug: `notes/${page}`, row_num: 1,
+      kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1 + i)),
+    })) as never, { source_id: SRC });
+    const forgotten = await remember(engine, [{ fact: 'Orbix widgets forgotten', entity_slug: 'companies/orbix' }]);
+    await engine.expireFact(forgotten.get('Orbix widgets forgotten')!);
+    await remember(engine, [{ fact: 'Orbix widgets in another source', entity_slug: 'companies/orbix' }], 'other');
+    await engine.softDeletePage('notes/deleted');
+    const cjk = (t: string) => /[\u3040-\u30ff\u4e00-\u9fff]/.test(t) ? `%${t}%` : null;
+    const match = async (terms: string[], extra: Partial<Parameters<BrainEngine['matchSavedFacts']>[0]> = {}) => {
+      const rows = await engine.matchSavedFacts({ sources: [SRC], terms, pats: terms.map(cjk), cue: CORRECTION_CUE, supersede: false, excludePrivate: false, worldOnly: false, ...extra });
+      return rows.map(r => ({
+        fact: r.fact, entity_slug: r.entity_slug, kind: r.kind, valid_from: r.valid_from, source: r.source, at: new Date(r.at as string).toISOString(),
+        source_id: r.source_id, visibility: r.visibility, attributed_to: r.attributed_to ?? null, fact_fingerprint: r.fact_fingerprint,
+        matched: r.matched.map(Number), need: Number(r.need), cue: r.cue, trust_rank: Number(r.trust_rank), pool_rank: Number(r.pool_rank),
+      }));
+    };
+    const facts = (rows: Array<{ fact: string }>) => rows.map(r => r.fact);
+    const out = {
+      three: await match(['orbix', 'widgets', 'lisbon']),
+      cue: await match(['orbix', 'widgets', 'lisbon'], { supersede: true }),
+      one: await match(['spring']),
+      stopWord: await match(['the', 'orbix', 'about']),
+      cjk: await match(['東京', '生産']),
+      cjkHalf: await match(['東京', '大阪']),
+      worldOnly: await match(['orbix', 'widgets'], { worldOnly: true }),
+      excludePrivate: await match(['orbix', 'widgets'], { excludePrivate: true }),
+      floorUnknown: await match(['orbix', 'widgets'], { minTrust: 'unknown' }),
+      floorAgent: await match(['orbix', 'widgets'], { minTrust: 'agent_written' }),
+      twoSources: await match(['orbix', 'widgets'], { sources: [SRC, 'other'] }),
+      none: await match(['zebra']),
+    };
+    // Three words need all three. The entity name counts, but 'companies/orbix lisbon' parses as a path token and a word, so
+    // the row on companies/orbix-lisbon matches 'lisbon' and not 'orbix'; words match by stem ('ships', 'widgets').
+    expect(facts(out.three)).toEqual(['Orbix widgets in Lisbon', 'Orbix ships widgets from Lisbon every spring']);
+    expect(out.three[0]).toMatchObject({ matched: [1, 2, 3], need: 3, cue: false, trust_rank: 2, pool_rank: 1, valid_from: '2026-04-01 00:00:00+00', at: '2026-04-01T00:00:00.000Z' });
+    // With supersede on, a cue row matching two of three words is kept in its own pool.
+    expect(out.three.find(r => r.fact === 'Disregard what I said about Orbix widgets')).toBeUndefined();
+    expect(out.cue.find(r => r.fact === 'Disregard what I said about Orbix widgets')).toMatchObject({ matched: [1, 2], need: 3, cue: true, pool_rank: 1 });
+    expect(facts(out.stopWord)).toEqual(expect.arrayContaining(['Disregard what I said about Orbix widgets']));
+    expect(out.stopWord.every(r => r.need === 1 && r.matched.join() === '2')).toBe(true);
+    expect(facts(out.cjk)).toEqual(['オルビクスは東京で生産する']);
+    expect(out.cjk[0]).toMatchObject({ matched: [1, 2], need: 2 });
+    expect(out.cjkHalf).toEqual([]);
+    expect(facts(out.worldOnly)).not.toContain('Orbix widgets are blue');
+    expect(facts(out.floorUnknown)).toContain('Orbix widgets are blue');
+    expect(facts(out.excludePrivate)).not.toContain('Orbix widgets on the private page');
+    expect(facts(out.floorUnknown)).toContain('Orbix widgets on the open page');
+    const shown = facts(out.floorUnknown);
+    for (const hidden of ['Orbix widgets audit', 'Orbix widgets lapsed', 'Orbix widgets forgotten', 'Orbix widgets on the quarantined page', 'Orbix widgets on the deleted page', 'Orbix widgets in another source']) {
+      expect(shown).not.toContain(hidden);
+    }
+    expect(out.floorAgent).toEqual([]);
+    expect(facts(out.twoSources)).toContain('Orbix widgets in another source');
+    expect(out.none).toEqual([]);
+    return out;
+  });
+
+  parityTest('matchSavedFacts under excludePrivate applies a caller\'s reader identity, own member page and private-readable grant', { methods: ['matchSavedFacts'] }, async (engine) => {
+    await putCallerPages(engine);
+    await engine.insertFacts(callerFactRows().map((r, i) => ({
+      ...r, fact: `tea ${r.fact}`, kind: 'fact' as const, visibility: 'world' as const, source: 'fence', valid_from: new Date(Date.UTC(2026, 6, 1 + i)),
+    })) as never, { source_id: SRC });
+    return readAsCallers(async () => (await engine.matchSavedFacts({ sources: [SRC], terms: ['tea'], pats: [null], cue: CORRECTION_CUE, supersede: false, excludePrivate: true, worldOnly: false }))
+      .map(r => r.fact).sort());
   });
 
   parityTest('readFactForOwnerAction returns the fact an owner action binds to, or null for an id no fact has', { methods: ['readFactForOwnerAction'] }, async (engine) => {

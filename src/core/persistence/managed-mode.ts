@@ -7,7 +7,7 @@
  */
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import type { SqlEngine } from './model.ts';
+import type { RawSqlEngine } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { MANAGED_MODE_SQL, MANAGED_MODE_ROWS_JSON_SQL } from '../engine-sql/persistence-state.ts';
 
@@ -48,20 +48,25 @@ export function managedModeFromRows<T extends { enabled: unknown }>(rows: Readon
   if (rows.length !== 1 || !row || typeof row.enabled !== 'boolean') throw unknownManagedModeRefusal(rows, context);
   return row as T & { enabled: boolean };
 }
-/** True for a Rust brain, which has no SQL dialect and is never managed (its persistence rows come from typed members). */
-function isRustBrain(engine: SqlEngine): boolean {
+/** True for a Rust brain, which has no SQL dialect (its persistence rows come from typed members). */
+function isRustBrain(engine: RawSqlEngine): boolean {
   return (engine as { kind?: unknown }).kind === 'rust';
 }
 /**
- * A Rust brain's singleton as a fresh SQL brain stores it: its own brain id, unmanaged, epoch 1, protocol floor 1 and
- * skill bundles off. With no brain id the row is missing, so the strict readers refuse as they do on a SQL brain.
+ * A Rust brain's singleton from the brain row of its writer admin state: its own brain id, its stored mode and epoch,
+ * protocol floor 1 and skill bundles off. With no brain id the row is missing, so the strict readers refuse as they do
+ * on a SQL brain.
  */
-async function rustPersistenceBrainRows(engine: SqlEngine): Promise<PersistenceBrainRow[]> {
-  const brainId = await (engine as unknown as Pick<BrainEngine, 'readPersistenceBrainId'>).readPersistenceBrainId();
-  return brainId ? [{ brain_id: brainId, enabled: false, mode_epoch: '1', skill_bundles_enabled: false, writer_protocol_floor: 1 }] : [];
+async function rustPersistenceBrainRows(engine: RawSqlEngine): Promise<PersistenceBrainRow[]> {
+  const state = JSON.parse(await (engine as unknown as Pick<BrainEngine, 'readWriterAdminState'>).readWriterAdminState()) as {
+    brain: { id: string; enabled: boolean; mode_epoch: number | string; skill_bundles_enabled: boolean; writer_protocol_floor: number } | null;
+  };
+  const brain = state.brain;
+  return brain ? [{ brain_id: brain.id, enabled: brain.enabled, mode_epoch: String(brain.mode_epoch),
+    skill_bundles_enabled: brain.skill_bundles_enabled, writer_protocol_floor: brain.writer_protocol_floor }] : [];
 }
 /** Whether the brain is managed: `true` or `false` from a well-formed singleton, `storage_error` otherwise; a query error propagates. */
-export async function readManagedMode(engine: SqlEngine, opts: ManagedModeReadOptions = {}): Promise<boolean> {
+export async function readManagedMode(engine: RawSqlEngine, opts: ManagedModeReadOptions = {}): Promise<boolean> {
   // A Rust brain has no SQL dialect: it answers through the typed member. Its store runs one writer at a time, so
   // the row lock a SQL engine takes here has nothing to wait for. SQL engines keep the statement below.
   if (isRustBrain(engine)) {
@@ -79,16 +84,29 @@ export async function readManagedModeTyped(engine: Pick<BrainEngine, 'readManage
  * Read-only inspection for the diagnostics that *report* the persistence state (`writer status`, the fix the refusal
  * names; doctor): the well-formed row, or null with the reason the strict readers refuse. Never used to route a write.
  */
-export async function inspectPersistenceBrain(engine: SqlEngine): Promise<{ row: PersistenceBrainRow | null; problem: string | null }> {
+export async function inspectPersistenceBrain(engine: RawSqlEngine): Promise<{ row: PersistenceBrainRow | null; problem: string | null }> {
   const rows = isRustBrain(engine) ? await rustPersistenceBrainRows(engine) : await engine.executeRaw<Omit<PersistenceBrainRow, 'enabled'> & { enabled: unknown }>(PERSISTENCE_BRAIN_SQL);
   try { return { row: managedModeFromRows(rows), problem: null }; }
   catch (error) { return { row: null, problem: (error as { why?: string }).why ?? String(error) }; }
 }
 /** The singleton with its identity and epoch, under the same contract as `readManagedMode`. */
-export async function readPersistenceBrain(engine: SqlEngine, opts: ManagedModeReadOptions = {}): Promise<PersistenceBrainRow> {
+export async function readPersistenceBrain(engine: RawSqlEngine, opts: ManagedModeReadOptions = {}): Promise<PersistenceBrainRow> {
   // As in readManagedMode: the Rust store runs one writer at a time, so the lock has nothing to wait for.
   if (isRustBrain(engine)) return managedModeFromRows(await rustPersistenceBrainRows(engine), opts.refusal);
   const sql = opts.lock ? `${PERSISTENCE_BRAIN_SQL} FOR ${opts.lock.toUpperCase()}` : PERSISTENCE_BRAIN_SQL;
   const rows = await engine.executeRaw<Omit<PersistenceBrainRow, 'enabled'> & { enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal);
+}
+/**
+ * The shared-skill columns `writer status` reports (undefined when the singleton is missing). A Rust brain answers
+ * from the row `rustPersistenceBrainRows` builds; SQL engines keep the statement.
+ */
+export async function readSharedSkillsState(engine: RawSqlEngine): Promise<{ writer_protocol_floor: number; skill_bundles_enabled: boolean } | undefined> {
+  if (isRustBrain(engine)) {
+    const [row] = await rustPersistenceBrainRows(engine);
+    return row ? { writer_protocol_floor: row.writer_protocol_floor ?? 1, skill_bundles_enabled: row.skill_bundles_enabled ?? false } : undefined;
+  }
+  const [row] = await engine.executeRaw<{ writer_protocol_floor: number; skill_bundles_enabled: boolean }>(
+    'SELECT writer_protocol_floor,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+  return row;
 }

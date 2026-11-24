@@ -31,15 +31,7 @@ export interface ResolvedCounterparty {
 /** The identity group's canonical member when the page has one in ANOTHER source. */
 async function canonicalTwin(engine: BrainEngine, sourceId: string, slug: string): Promise<{ slug: string; sourceId: string } | null> {
   try {
-    const rows = await engine.executeRaw<{ slug: string; source_id: string }>(
-      `SELECT c.slug, ei.source_id
-         FROM entity_identities me
-         JOIN pages p ON p.id = me.page_id AND p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-         JOIN entity_identities ei ON ei.entity_id = me.entity_id AND ei.canonical AND ei.source_id <> $1
-         JOIN pages c ON c.id = ei.page_id AND c.deleted_at IS NULL
-        LIMIT 2`,
-      [sourceId, slug],
-    );
+    const rows = await engine.readCanonicalTwin(sourceId, slug);
     return rows.length === 1 ? { slug: rows[0]!.slug, sourceId: rows[0]!.source_id } : null;
   } catch (err) {
     if (isMissingSchemaObject(err, 'table', 'entity_identities')) return null;
@@ -52,14 +44,7 @@ async function emailAliasElsewhere(engine: BrainEngine, sourceId: string, email:
   const norm = normalizeAlias(email);
   if (!norm || !norm.includes('@')) return null;
   try {
-    const rows = await engine.executeRaw<{ slug: string; source_id: string }>(
-      `SELECT DISTINCT pa.slug, pa.source_id
-         FROM page_aliases pa
-         JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id AND p.deleted_at IS NULL
-        WHERE pa.alias_norm = $1 AND pa.source_id <> $2
-        LIMIT 2`,
-      [norm, sourceId],
-    );
+    const rows = await engine.listEmailAliasPages(norm, sourceId);
     return rows.length === 1 ? { slug: rows[0]!.slug, sourceId: rows[0]!.source_id } : null;
   } catch (err) {
     if (isMissingSchemaObject(err, 'table', 'page_aliases')) return null;

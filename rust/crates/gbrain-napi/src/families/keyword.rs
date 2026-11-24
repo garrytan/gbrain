@@ -1,8 +1,9 @@
 //! Keyword search members and title trigrams.
 //!
 //! Store methods for: findByTitleFuzzy, searchKeyword (`searchKeywordArm` and
-//! `keywordRareTermPages`), searchKeywordChunks, countKeywordPages, searchKeywordPages and
-//! searchTitles (`searchTitlesAttempts`).
+//! `keywordRareTermPages`), searchKeywordChunks, the CJK fallback of both (`searchKeywordCjk`), countKeywordPages, searchKeywordPages and
+//! searchTitles (`searchTitlesAttempts`), and the frontmatter check on finished search rows
+//! (`filterPageIdsByFrontmatter`).
 //!
 //! One `#[napi] impl Brain` block per family file; each method decodes its arguments, runs one
 //! `Store` call on the pool through `Brain::run`, and resolves plain JSON.
@@ -10,9 +11,19 @@
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
+use serde::Deserialize;
 use serde_json::Value;
 
-use crate::store_binding::{Brain, arg};
+use crate::store_binding::{Brain, arg, required};
+
+/// `filterPageIdsByFrontmatter(ids, where)`: the page ids and the `where` containment forms per key.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrontmatterIdsArgs {
+    ids: Vec<u64>,
+    #[serde(rename = "where")]
+    where_fields: Vec<(String, Vec<Value>)>,
+}
 
 #[napi]
 impl Brain {
@@ -49,6 +60,26 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.search_keyword_chunks(&query, &arg(options, "searchKeywordChunks options")?)
+        })
+    }
+
+    /// `searchKeywordCjk(query, options, run)`: the CJK fallback of searchKeyword (`run.dedup`)
+    /// and searchKeywordChunks, `{ rows, capped, capHit }`. `run` carries the match terms, the OR
+    /// fallback and the bounded arm's work bound (`CjkRun`).
+    #[napi]
+    pub fn search_keyword_cjk<'env>(
+        &self,
+        env: &'env Env,
+        query: String,
+        options: Option<Value>,
+        run: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.search_keyword_cjk(
+                &query,
+                &arg(options, "searchKeywordCjk options")?,
+                &required(run, "searchKeywordCjk run")?,
+            )
         })
     }
 
@@ -133,6 +164,20 @@ impl Brain {
                 candidates_cap,
                 &arg(options, "searchTitlesAttempts options")?,
             )
+        })
+    }
+
+    /// `filterPageIdsByFrontmatter(ids, where)`: the ids, ascending, whose page frontmatter holds
+    /// every `where` entry.
+    #[napi]
+    pub fn filter_page_ids_by_frontmatter<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: FrontmatterIdsArgs = required(args, "filterPageIdsByFrontmatter args")?;
+            s.filter_page_ids_by_frontmatter(&a.ids, &a.where_fields)
         })
     }
 }

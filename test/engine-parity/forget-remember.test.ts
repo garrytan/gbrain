@@ -6,7 +6,7 @@
  *    remember of it (the remember operation, no entity, holding page `memory/unattributed`) is refused and saves
  *    nothing, and a claim that was never purged still saves into the same fence. After a forget withdraws a remembered
  *    claim, a whole remember of the same claim is refused too. The answers are equal on every engine arm (PGLite
- *    always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), except where the second case says.
+ *    always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: the whole remember's purge check answered "not purged" on the Rust engine, which kept no fact purge
  *    ledger, so a purged claim saved again on a Rust brain while PGLite and Postgres refused it. Once the ledger
  *    answered, the import's purge overlay (facts/purge-overlay.ts) read it through raw SQL, so on a Rust brain every
@@ -16,15 +16,13 @@
  *  - Seam: the forget and the purge are their ledger commits, not the whole commands. The withdrawal is written with
  *    `insertFactWithdrawal` + `expireFactsByWithdrawal`, the pair `forget` commits through (facts/withdrawal.ts; a
  *    subjectless claim withdraws source-wide, subject '*'); the tombstone with `insertFactPurge`, the ledger writer
- *    `gbrain forget <id> --purge` commits through (facts/purge.ts). The forget command's own reads
- *    (persistence/forget-prepare.ts) and the purge's sweep still send raw SQL, which the Rust engine refuses, so the
+ *    `gbrain forget <id> --purge` commits through (facts/purge.ts). The forget command's target discovery
+ *    (facts/withdrawal-discovery.ts) and the purge's sweep still send raw SQL, which the Rust engine refuses, so the
  *    whole commands cannot run on every arm yet (TODOS rust-forget-commands). The remember handler runs whole, on the
  *    arm's engine with the persistence consumer it starts. The brain is keyless, as in remember-whole.test.ts. Ids and
  *    times differ between arms, so they are folded out.
- *  - The forget case needs raw SQL: the remember's fact_withdrawn refusal reads the withdrawal it names
- *    (facts/single-prepare.ts factWithdrawnRefusal) through executeRaw, so on the Rust arm the remember still refuses
- *    and saves nothing, but with the engine's raw_sql refusal in place of fact_withdrawn (TODOS
- *    rust-fact-withdrawn-refusal). That case declares `requires: 'raw_sql'` and stops there on the Rust arm.
+ *  - The remember's fact_withdrawn refusal reads the withdrawal it names through the typed readClaimWithdrawal member
+ *    (facts/single-prepare.ts factWithdrawnRefusal), so the forget case runs whole on every arm.
  */
 import { afterAll, afterEach, describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -102,8 +100,7 @@ describe('engine parity: a whole remember of a purged or forgotten claim', () =>
   });
 
   parityTest('a forgotten claim is refused by a whole remember', {
-    methods: ['insertFactWithdrawal', 'expireFactsByWithdrawal', 'isFactWithdrawn', 'listFactsForPage'],
-    requires: 'raw_sql',
+    methods: ['insertFactWithdrawal', 'expireFactsByWithdrawal', 'isFactWithdrawn', 'readClaimWithdrawal', 'listFactsForPage'],
     timeout: 180_000,
   }, async (engine) => {
     opened.push(engine);

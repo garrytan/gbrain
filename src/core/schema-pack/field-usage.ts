@@ -38,9 +38,13 @@ function shares(counts: Map<string, number>, sampled: number): FieldShare[] {
 /** Field usage for the most common page types in a source (or the brain). */
 export async function runFieldUsage(engine: Pick<BrainEngine, 'readFieldUsageSamples'>, opts: { sourceId?: string; samplePerType?: number } = {}): Promise<TypeFieldUsage[]> {
   const sample = opts.samplePerType ?? DEFAULT_SAMPLE_PER_TYPE;
-  const types = await engine.readFieldUsageSamples({ sourceId: opts.sourceId || undefined, maxTypes: MAX_TYPES, samplePerType: sample });
+  const sourceId = opts.sourceId || undefined;
+  const types = await engine.readFieldUsageSamples({ sourceId, maxTypes: MAX_TYPES, samplePerType: sample, countsOnly: true });
   const result: TypeFieldUsage[] = [];
-  for (const { type, pages, rows } of types) {
+  for (const { type, pages } of types) {
+    // One type's sample at a time, as on master: only one type's bodies are held in memory.
+    const [one] = await engine.readFieldUsageSamples({ sourceId, maxTypes: 1, samplePerType: sample, type });
+    const rows = one?.rows ?? [];
     const keys = new Map<string, number>(); const categories = new Map<string, number>(); const relations = new Map<string, number>();
     const bump = (map: Map<string, number>, names: Iterable<string>) => { for (const name of new Set(names)) map.set(name, (map.get(name) ?? 0) + 1); };
     for (const row of rows) {

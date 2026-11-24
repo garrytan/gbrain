@@ -19,14 +19,14 @@ import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
 import { isOpPageSlug, OP_PAGE_SLUG_RE } from '../page-slug-grammar.ts';
-import { validateSlug } from '../utils.ts';
+import { normalizeSlug, validateSlug } from '../utils.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence, type EvidenceOpts } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
-import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
+import { ownerWidened, resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../access/member-facts.ts';
 import { pageNotVisibleError, remoteTargetHidden } from '../persistence/page-visibility.ts';
 
@@ -69,7 +69,7 @@ export function withFix(fix: Action | undefined): { fix?: Action } {
  * surface-correct prose plus the matching read.
  */
 export function pageNotFoundError(
-  ctx: Pick<OperationContext, 'remote' | 'transport' | 'auth'>,
+  ctx: Pick<OperationContext, 'remote' | 'transport' | 'auth' | 'isCallable'>,
   slug: string,
   opts: { includeDeleted: boolean; sourceIdParam?: string; elsewhereSource?: string },
 ): OperationError {
@@ -79,15 +79,22 @@ export function pageNotFoundError(
     return opError('page_not_found', `Page not found: ${slug}`,
       'This connection reads no page with this slug: it may not exist, or it may not be readable by this connection, since a page can be kept to other members. Do not create it to find out; ask the user whether the page exists and who can read it.');
   }
-  const retry = opts.includeDeleted ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify`;
+  // #9669: a caller whose surface refuses include_deleted or fuzzy is never pointed at them; it gets a search instead.
+  const can = (param: string) => ctx.remote === false || !ctx.isCallable || ctx.isCallable('get_page', { slug, [param]: true });
+  const fuzzy = can('fuzzy');
+  const deleted = !opts.includeDeleted && can('include_deleted');
+  const check = fuzzy ? `Check the slug or use ${paramUse(ctx, 'fuzzy')}` : 'Check the slug, or search for the page';
+  const retry = deleted ? `Page may be soft-deleted; pass ${paramUse(ctx, 'include_deleted')} to verify` : check;
   const where = opts.elsewhereSource;
   const explicit = opts.sourceIdParam !== ALL_SOURCES ? opts.sourceIdParam : undefined;
   return opError('page_not_found', `Page not found: ${slug}`,
     where !== undefined ? `Page exists in source '${where}' — pass ${paramUse(ctx, 'source', where)}. ${retry}` : retry,
     withFix(where !== undefined
       ? getPageFix(slug, `Reads the page from source ${where}, where it exists.`, { sourceId: where })
-      : getPageFix(slug, opts.includeDeleted ? 'Fuzzy-matches the slug.' : 'Shows the page if it is soft-deleted (deleted_at set).',
-        { sourceId: explicit, ...(opts.includeDeleted ? { fuzzy: true } : { includeDeleted: true }) })));
+      : deleted || fuzzy ? getPageFix(slug, deleted ? 'Shows the page if it is soft-deleted (deleted_at set).' : 'Fuzzy-matches the slug.',
+        { sourceId: explicit, ...(deleted ? { includeDeleted: true } : { fuzzy: true }) })
+      : readFix('Searches for pages matching the slug, to find the one you meant.', {
+        argv: cliSafeSlug(slug) ? ['gbrain', 'search', slug] : ['gbrain', 'search', '--', slug], mcp: { tool: 'search', arguments: { query: slug } } })));
 }
 
 const HTTP_HOST = { remote: true, transport: 'http' } as const;
@@ -407,8 +414,8 @@ export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string
   // trip the resolved-slug re-check — an error returned after the write had
   // already landed. Registration rejects non-lowercase prefixes going
   // forward; lowercasing both sides keeps pre-existing rows meaning what
-  // their operator intended.
-  const canonical = slug.toLowerCase();
+  // their operator intended. NFC too (normalizeSlug), the form validateSlug stores.
+  const canonical = normalizeSlug(slug);
   return prefixes.some((bp) => {
     const base = normalizeSlugPrefix(bp);
     if (base === '') return false;
@@ -430,7 +437,7 @@ export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string
  * what an existing client may write.
  */
 export function normalizeSlugPrefix(prefix: string): string {
-  return (prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix).toLowerCase();
+  return normalizeSlug(prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix);
 }
 
 /**
@@ -535,7 +542,13 @@ export function opAllowedForBoundClient(
  * `gbrain auth rescope-token <name> --sources none`) refuses every operation:
  * it never falls back to the `default` floor for reads or writes.
  */
-export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal'>): OperationError {
+export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'clientId' | 'principal' | 'archivedSources'>): OperationError {
+  if (auth?.archivedSources?.length) {
+    return opError('unknown_source',
+      `${operation ? `${operation}: ` : ''}the source this token writes to, or every source it reads, is archived or removed (${auth.archivedSources.join(', ')}), so it reads nothing until one is restored.`,
+      `Ask the brain host's operator to restore it if it was archived (gbrain sources restore ${auth.archivedSources[0]}), or to grant this token a live source.`,
+      { fix: sourcesListFix('Lists the live sources.') });
+  }
   const fix = sourceGrantFix(auth);
   const err = opError('permission_denied',
     `${operation ? `${operation}: ` : ''}this token is granted no sources (its source grant is an explicit empty list).`,
@@ -736,9 +749,14 @@ export function assertSourceInCallerWriteScope(ctx: OperationContext, id: string
   }
 }
 
-/** Holder permissions are independent of the operator's page-visibility opt-out. */
+/**
+ * The take holders a read returns; undefined reads every holder. Holder permissions are independent of the operator's
+ * page-visibility opt-out. A remote credential with no stored list reads world takes, except the brain owner's own
+ * direct remote call (ownerWidened, GST-3058, R94), which reads every holder; a stored list is always honoured.
+ */
 export function readHolders(ctx: OperationContext): string[] | undefined {
-  return ctx.remote === false ? ctx.takesHoldersAllowList : ctx.takesHoldersAllowList ?? ['world'];
+  if (ctx.remote === false) return ctx.takesHoldersAllowList;
+  return ctx.takesHoldersAllowList ?? (ownerWidened() ? undefined : ['world']);
 }
 
 /** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */
@@ -833,6 +851,7 @@ export function resolveRequestedScope(
     return ctx.remote === false ? {} : sourceScopeOpts(ctx);
   }
   if (sourceIdParam !== undefined) {
+    if (ctx.auth?.archivedSources?.includes(sourceIdParam)) throw archivedSourceError(ctx, sourceIdParam);
     const scope = sourceScopeOpts(ctx);
     const granted = scope.sourceIds !== undefined
       ? scope.sourceIds.includes(sourceIdParam)
@@ -1021,17 +1040,18 @@ export async function assertExplicitSourceLive(
   sourceIdParam: string | undefined,
 ): Promise<void> {
   if (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) return;
-  // Point lookup, not listAllSources (wave review): this runs on every
-  // search/query/get_page/list_pages call that names a source, and the full
-  // enumeration hauled every row's config JSONB across the wire each time.
-  // Same liveness predicate as listAllSources' default filter.
-  const live = await ctx.engine.executeRaw<{ ok: number }>(
-    `SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
-    [sourceIdParam],
-  );
-  if (live.length > 0) return;
+  // One source's row, not listAllSources (wave review): this runs on every
+  // search/query/get_page/list_pages call that names a source. Same liveness
+  // predicate as listAllSources' default filter (`archived IS NOT TRUE`).
+  const row = await ctx.engine.readSourceRow(sourceIdParam);
+  if (row && row.archived !== true) return;
+  throw archivedSourceError(ctx, sourceIdParam);
+}
+
+/** The #4620 refusal for an explicit source_id that names no live source; also a granted source archived since (GST-3163). */
+function archivedSourceError(ctx: OperationContext, sourceIdParam: string): OperationError {
   const clientId = safeClientId(ctx.auth);
-  throw opError(
+  return opError(
     'unknown_source',
     `source '${sourceIdParam}' does not exist (removed or archived)`,
     'Omit source_id to read within your grant, or pick an id from sources_list. ' +

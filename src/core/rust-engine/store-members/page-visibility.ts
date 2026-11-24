@@ -11,18 +11,19 @@
  * off. Any other caller (folder rules, an audience, lineage, a labelled-only grant) refuses with
  * `engine_capability_missing`, before any read.
  *
- * The store keeps no OAuth clients, so an OAuth client's fence refuses; a local writer's fence is its stored grant
+ * The store keeps OAuth clients, but this read does not read a client's fence yet, so it refuses; a local writer's fence is its stored grant
  * ceiling's `slugPrefixes`. What each member answers and why: rust/docs/store/page-visibility.md.
  */
 import type { CallerPageAccessRow, PagePolicyPart, WriteVisibilityProbe } from '../../engine-sql/page-visibility.ts';
 import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { readOauthClient } from './jobs-oauth-clients.ts';
 import { judgeWidenedCaller, ownerOnlyFormIn, renderForStoreCaller, storePageTextPolicy, type StorePrivacyPolicy } from './private-provenance.ts';
 
 /**
  * The store policy for page policy part `part` of the current caller, or a refusal. The caller is judged by
- * judgeWidenedCaller (private-provenance.ts), which also judges an anonymous caller on a brain whose config holds no
- * member-access restriction under the restricted rendering the store implements.
+ * judgeWidenedCaller (private-provenance.ts), which also judges a caller on a brain whose config holds no member-access
+ * restriction, anonymous or with a reader identity, under the restricted rendering the store implements.
  */
 function callerPolicy(member: string, part: PagePolicyPart): StorePrivacyPolicy {
   if (part === 'read') return storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true });
@@ -66,9 +67,16 @@ export const readWriteVisibilityProbe: StoreMember<[sourceId: string, slug: stri
       brain.readWriteVisibilityProbe(sourceId, slug, policy)) as WriteVisibilityProbe;
   };
 
-/** A local writer's fence comes from the stored registration; an OAuth client's refuses (the store keeps no OAuth clients). */
-export const readWriterSlugFence: StoreMember<[principal: { kind: string; id: string }], unknown> = async (brain, principal) => {
-  if (principal.kind === 'oauth_client') refuseMember('readWriterSlugFence', 'an OAuth client fence (the store keeps no OAuth clients)');
+/**
+ * A local writer's fence comes from the stored registration; an OAuth client's from its stored client record
+ * (`bound_slug_prefixes`, or `delegated_slug_prefixes` for a delegated write), null when the client is gone.
+ */
+export const readWriterSlugFence: StoreMember<[principal: { kind: string; id: string }, opts?: { delegated?: boolean }], unknown> =
+  async (brain, principal, opts) => {
+  if (principal.kind === 'oauth_client') {
+    const client = await readOauthClient(brain, principal.id);
+    return (opts?.delegated ? client?.delegated_slug_prefixes : client?.bound_slug_prefixes) ?? null;
+  }
   if (principal.kind !== 'local_cli' && principal.kind !== 'local_stdio') return null;
   const row = await storeCall({ member: 'readWriterSlugFence' }, () => brain.readLocalWriter(principal.id)) as
     { grant_ceiling?: { slugPrefixes?: unknown } | null } | null;

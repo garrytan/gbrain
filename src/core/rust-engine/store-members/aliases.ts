@@ -8,13 +8,15 @@
  * `suppressFlagged` over the page's stamped trust tier and its write-gate receipts. resolveAliases reads its scope as
  * `readAliases` does: the same policy on the page an alias names and on the page whose title shadows a derived alias.
  * Both also serve a caller whose record holds only a reader identity and a private-readable grant, which the store
- * reads from the policy; both refuse `excludePrivate` for any other caller whose policy differs. A
+ * reads from the policy; both refuse `excludePrivate` for any other caller whose policy differs. A rename of a
+ * segmented page versions it by reference to its live body generation first, as the SQL engines do. A
  * rename moves fact bindings only once the facts family fills its rename hook, and the `none` contextual retrieval
  * tier keeps no vectors to reset (rust/docs/store/aliases.md).
  */
 import type { DerivedAliasRow } from '../../engine-sql/pages.ts';
 import type { PageReadPolicy, PageReadScope } from '../../types.ts';
 import { validateSlug, warnOncePerProcess } from '../../utils.ts';
+import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -29,10 +31,12 @@ async function detailed(
   sourceOrSources: string | readonly string[],
   opts: { excludePrivate?: boolean } | undefined,
 ): Promise<{ canonical_slug: string; source_id: string } | null> {
-  takeOptions(member, opts, []);
+  const o = takeOptions(member, opts, ['excludePrivate']) as { excludePrivate?: boolean };
   const sources = Array.isArray(sourceOrSources) ? [...sourceOrSources] : [sourceOrSources as string];
   if (sources.length === 0) return null;
-  const found: SlugAliasMatch | null = await storeCall({ member, slug }, () => brain.resolveSlugWithAliasDetailed(slug, sources));
+  // `excludePrivate`: the alias row counts only when its live canonical page passes the caller's page policy.
+  const excludePrivate = storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null;
+  const found: SlugAliasMatch | null = await storeCall({ member, slug }, () => brain.resolveSlugWithAliasDetailed(slug, sources, excludePrivate));
   if (found === null) return null;
   if (found.matches > 1) {
     warnOncePerProcess(
@@ -47,7 +51,13 @@ export const updateSlug: StoreMember<[oldSlug: string, newSlug: string, opts?: {
   const slug = validateSlug(newSlug);
   const o = takeOptions('updateSlug', opts, ['sourceId']);
   const sourceId = o.sourceId as string | undefined;
-  return storeCall({ member: 'updateSlug', slug: oldSlug, sourceId }, () => brain.updateSlug(oldSlug, slug, sourceId ?? null));
+  // A segmented page is versioned by reference to its live body generation before the move, as the SQL engines do. A
+  // NULL body with no segmented generation (a row PGLite's CHECK forbids) answers `invalid_state` before any write.
+  return storeCall({ member: 'updateSlug', slug: oldSlug, sourceId }, () => brain.updateSlug(oldSlug, slug, sourceId ?? null)
+    .catch((error: unknown) => {
+      if (storeErrorCode(error) === 'invalid_state') refuseMember('updateSlug', 'a page whose NULL body no segmented generation holds');
+      throw error;
+    }));
 };
 
 export const resolveSlugWithAliasDetailed: StoreMember<
@@ -58,12 +68,17 @@ export const resolveSlugWithAliasDetailed: StoreMember<
 export const resolveSlugWithAlias: StoreMember<[slug: string, sourceOrSources: string | readonly string[], opts?: { excludePrivate?: boolean }], string> =
   async (brain, slug, sourceOrSources, opts) => (await detailed(brain, 'resolveSlugWithAlias', slug, sourceOrSources, opts))?.canonical_slug ?? slug;
 
+/** The keys of the alias hop's option bag (alias-hop.ts `IdentityTierOpts` and its hop switches) that are not page policy. */
+const ALIAS_HOP_KEYS = ['excludeSlugs', 'excludeSlugPrefixes', 'type', 'types', 'tokenHop', 'qualified'] as const;
+
 /**
  * `readAliases` (search/read-enrichment.ts): `pageReadFilter` reads no `requireSafeChunks`, so the store ignores it too.
- * An empty `minTrust` sets no floor, as `pageReadFilter`'s truthiness test does.
+ * An empty `minTrust` sets no floor, as `pageReadFilter`'s truthiness test does. The alias hop hands over its whole
+ * identity-tier bag; PGLite's read looks only at the scope keys in it, so the slug excludes and the hop switches are
+ * ignored here as there (the hop applies them to its own rows).
  */
 export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadScope], Map<string, AliasRef[]>> = async (brain, aliasNorms, opts) => {
-  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks']);
+  const o = takeOptions('resolveAliases', opts, ['sourceId', 'sourceIds', 'excludePrivate', 'minTrust', 'suppressFlagged'], ['requireSafeChunks', ...ALIAS_HOP_KEYS]);
   if (aliasNorms.length === 0) return new Map();
   const excludePrivate = storePagePolicy('resolveAliases', o.excludePrivate, { callerReaders: true });
   const scope = {
@@ -73,6 +88,12 @@ export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadS
   const rows: Array<[string, AliasRef[]]> = await storeCall({ member: 'resolveAliases', sourceId: o.sourceId as string | undefined }, () =>
     brain.resolveAliases(aliasNorms, scope));
   return new Map(rows);
+};
+
+/** `recordRenameAlias` (engine-sql/rename-alias-rows.ts): `old -> new` in the rename history and the slug aliases, in the engine's transaction. */
+export const recordRenameAlias: StoreMember<[sourceId: string, oldSlug: string, newSlug: string], void> = async (brain, sourceId, oldSlug, newSlug) => {
+  if (oldSlug === newSlug) return;
+  await storeCall({ member: 'recordRenameAlias', sourceId }, () => brain.recordRenameAlias(sourceId, oldSlug, newSlug));
 };
 
 export const setPageAliases: StoreMember<[slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean }], void> =

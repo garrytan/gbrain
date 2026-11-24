@@ -9,6 +9,7 @@
  * stamp and the unique indexes apply; `restoreOntologyFact` also applies the withdrawal guard.
  *
  * An id list binds as `bigint[]`, so an id that is not an integer refuses rather than guess at its cast error.
+ * `listOntologyFactCandidates` is served by doctor-derived.ts.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { REKEY_ENTITY_SHAPES, REKEY_SMS_SHAPES, REKEY_WHERE_SHAPES, type RekeyMove } from '../../engine-sql/ontology-repair.ts';
@@ -67,10 +68,6 @@ export const deleteRekeyLosers: Member<'deleteRekeyLosers'> = async (brain, ids)
   wholeIds('deleteRekeyLosers', ids);
   await storeCall({ member: 'deleteRekeyLosers' }, () => brain.deleteRekeyLosers({ ids }));
 };
-
-/** `listOntologyFactCandidates`: by id; `expired_at` is the UTC microsecond text the SQL's `to_char` gives. */
-export const listOntologyFactCandidates: Member<'listOntologyFactCandidates'> = (brain, sourceIds) =>
-  storeCall({ member: 'listOntologyFactCandidates' }, () => brain.listOntologyFactCandidates({ sourceIds: [...sourceIds] }));
 
 /** `restoreOntologyFact`: restores one row only while it is as the preview saw it; `expired` is true when a withdrawal expired it again. */
 export const restoreOntologyFact: Member<'restoreOntologyFact'> = (brain, f) => {

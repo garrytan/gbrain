@@ -65,10 +65,10 @@ export const KEYWORD_RANKED_ROWS_CTE = `ranked_rows AS (
             THEN p.frontmatter->>'message_id' END AS message_id, p.frontmatter->>'thread_id' AS thread_id,
           CASE WHEN NULLIF(regexp_replace(p.frontmatter->>'message_id', '^[[:space:]]+|[[:space:]]+$', '', 'g'), '') IS NOT NULL
             THEN NULLIF(p.frontmatter->>'subject', '') END AS source_subject,
-          rc.chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, rc.score, rc.bounded_rows, p.updated_at
+          rc.chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source, rc.score, rc.bounded_rows
         FROM ranked_chunks rc
         CROSS JOIN LATERAL (SELECT c.chunk_index, c.chunk_text, c.chunk_source FROM content_chunks c WHERE c.id = rc.chunk_id LIMIT 1) cc
-        CROSS JOIN LATERAL (SELECT pg.slug, pg.title, pg.type, pg.source_id, pg.effective_date, pg.effective_date_source, pg.frontmatter, pg.updated_at
+        CROSS JOIN LATERAL (SELECT pg.slug, pg.title, pg.type, pg.source_id, pg.effective_date, pg.effective_date_source, pg.frontmatter
           FROM pages pg WHERE pg.id = rc.page_id LIMIT 1) p
       )`;
 

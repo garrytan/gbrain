@@ -9,18 +9,21 @@
  *
  * PRIVACY: the export holds the full text of your pages and chunks. It is private data. Never commit it, share it,
  * attach it to an issue or upload it. Only aggregate numbers from a benchmark run may be published. Files are written
- * 0600 (directory 0700), and the script refuses an output directory inside a git working tree.
+ * 0600 (directory 0700), and the script refuses an output directory inside a git working tree, or one it cannot rule
+ * out: only git's own not-a-repository answer (exit 128, in the C locale) counts as outside. `--allow-in-repo` skips
+ * that check. A segmented (over 1 MiB) page is skipped and counted.
  *
  * The brain is only read. Nothing calls an embedding or chat provider: the vectors are the ones already stored.
  * Queries are sampled from stored chunk vectors, so (unlike the dbpedia corpus) they are IN the corpus: their
  * nearest neighbor is themselves. The manifest says so (`queries_in_corpus: true`).
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, writeSync, writeFileSync, chmodSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, writeSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createEngine } from '../../src/core/engine-factory.ts';
 import { loadConfig, toEngineConfig } from '../../src/core/config.ts';
 import type { EngineConfig } from '../../src/core/types.ts';
+import { isSegmentedPage } from '../../src/core/page-body/page-shape.ts';
 
 const USAGE = `usage: bun rust/scripts/export-corpus.ts --out <dir> [--database-url <url> | --pglite-dir <dir>] [--queries 1000] [--seed 1] [--allow-in-repo] [--overwrite]`;
 
@@ -58,19 +61,39 @@ const rand = () => { // mulberry32
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
-function insideGitWorkTree(dir: string): boolean {
+/** The one answer that counts as outside a repository: git's own, in the C locale, exit 128. */
+const OUTSIDE_ANY_REPOSITORY = 'fatal: not a git repository (or any of the parent directories): .git';
+
+/**
+ * Where `dir` sits relative to git. Only exit 128 with stderr exactly OUTSIDE_ANY_REPOSITORY counts as outside:
+ * a missing git, unsafe ownership, a message in another language or any other probe failure is 'unknown', which
+ * the caller refuses like 'inside'. The probe runs with LC_ALL=C and LANG=C so that message is the same on every
+ * machine, and inherited GIT_* settings are dropped so a stray GIT_DIR cannot point the probe somewhere else.
+ */
+function gitWorkTreeStatus(dir: string): { status: 'inside' | 'outside' | 'unknown'; detail: string } {
   let probe = dir;
   while (!existsSync(probe)) probe = resolve(probe, '..');
-  try {
-    execFileSync('git', ['-C', probe, 'rev-parse', '--is-inside-work-tree'], { stdio: ['ignore', 'pipe', 'ignore'] });
-    return true;
-  } catch { return false; }
+  const env: Record<string, string> = { LC_ALL: 'C', LANG: 'C' };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith('GIT_') && key !== 'LC_ALL' && key !== 'LANG') env[key] = value;
+  }
+  const run = spawnSync('git', ['-C', probe, 'rev-parse', '--is-inside-work-tree'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.status === 0) return { status: 'inside', detail: '' };
+  if (run.status === 128 && (run.stderr ?? '').replace(/\r?\n$/, '') === OUTSIDE_ANY_REPOSITORY) return { status: 'outside', detail: '' };
+  const detail = run.error ? run.error.message : (run.stderr ?? '').trim() || `git exited ${run.status}`;
+  return { status: 'unknown', detail };
 }
 
-if (insideGitWorkTree(out) && !args.has('allow-in-repo')) {
-  fail(`refusing to write private brain text inside a git working tree (${out}); pick a directory outside any repo, or pass --allow-in-repo`);
+if (!args.has('allow-in-repo')) {
+  const where = gitWorkTreeStatus(out);
+  if (where.status === 'inside') {
+    fail(`refusing to write private brain text inside a git working tree (${out}); pick a directory outside any repo, or pass --allow-in-repo`);
+  }
+  if (where.status === 'unknown') {
+    fail(`refusing to write private brain text: could not tell whether ${out} is inside a git working tree (${where.detail}); fix git, pick a directory outside any repo, or pass --allow-in-repo`);
+  }
 }
-if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files in it`);
+if (existsSync(out) && readdirSync(out).length > 0 && !args.has('overwrite')) fail(`${out} is not empty; pass --overwrite to replace the corpus files (and the cached ground truth) in it`);
 
 let config: EngineConfig;
 if (args.has('database-url')) config = { engine: 'postgres', database_url: args.get('database-url') as string, pool_max: 2 };
@@ -88,9 +111,21 @@ console.error([
   '',
 ].join('\n'));
 
+// The exact ground truth cached beside the old corpus files belongs to them, so a re-export starts without it.
+rmSync(join(out, 'truth_top10.json'), { force: true });
 mkdirSync(out, { recursive: true, mode: 0o700 });
 chmodSync(out, 0o700);
-const open = (name: string) => openSync(join(out, name), 'w', 0o600);
+// Each output file is written under a new temporary name (created exclusively, so nothing already there is opened)
+// and renamed over its final name only after the whole export succeeds. The rename replaces whatever --overwrite
+// finds at that name, a link included, without writing through it.
+const pending: { temp: string; final: string }[] = [];
+const open = (name: string) => {
+  const final = join(out, name);
+  const temp = join(out, `.${name}.${process.pid}.tmp`);
+  const fd = openSync(temp, 'wx', 0o600);
+  pending.push({ temp, final });
+  return fd;
+};
 const writeLine = (fd: number, value: unknown) => writeSync(fd, JSON.stringify(value) + '\n');
 
 const engine = await createEngine(config);
@@ -102,7 +137,7 @@ try {
   const vectorsFd = open('vectors.f32');
   const queryReservoir: { vector: Float32Array; text: string }[] = [];
 
-  let pageIndex = 0, chunkRow = 0, skippedChunks = 0, skippedPages = 0, dims = 0, seen = 0, maxNormDeviation = 0;
+  let pageIndex = 0, chunkRow = 0, skippedChunks = 0, skippedPages = 0, skippedSegmented = 0, dims = 0, seen = 0, maxNormDeviation = 0;
   const usedSources: string[] = [];
 
   for (const sourceId of sources) {
@@ -113,6 +148,12 @@ try {
       if (batch.length === 0) break;
       for (const page of batch) {
         after = page.slug;
+        // A segmented page's body getters throw page_body_segmented: skip and count it before anything is written for
+        // it, instead of aborting the export after its files were opened.
+        if (isSegmentedPage(page)) {
+          skippedSegmented++;
+          continue;
+        }
         let chunks;
         try {
           chunks = await engine.getChunks(page.slug, { sourceId, includeEmbedding: true });
@@ -120,6 +161,7 @@ try {
           skippedPages++;
           continue;
         }
+        const body = page.timeline && page.timeline.trim() ? `${page.compiled_truth}\n\n${page.timeline}` : page.compiled_truth;
         any = true;
         const embedded = chunks.filter(c => c.embedding && c.embedding.length > 0);
         skippedChunks += chunks.length - embedded.length;
@@ -142,7 +184,6 @@ try {
             if (j < queryCount) queryReservoir[j] = { vector: Float32Array.from(v), text: c.chunk_text.slice(0, 60) };
           }
         }
-        const body = page.timeline && page.timeline.trim() ? `${page.compiled_truth}\n\n${page.timeline}` : page.compiled_truth;
         writeLine(pagesFd, {
           i: pageIndex, source_id: sourceId, slug: page.slug, type: page.type, title: page.title,
           frontmatter: page.frontmatter ?? {}, body, chunk_start: chunkStart, chunk_count: embedded.length,
@@ -167,13 +208,24 @@ try {
     format: 'gbrain-bench-corpus/1', dims, pages: pageIndex, chunks: chunkRow, queries: queryReservoir.length,
     sources: usedSources, origin: `export of a ${engine.kind} gbrain brain (private; never commit or share)`,
     queries_in_corpus: true, skipped_chunks_without_embedding: skippedChunks, skipped_pages_unreadable: skippedPages,
+    skipped_pages_segmented: skippedSegmented,
     max_abs_norm_deviation: Number(maxNormDeviation.toFixed(6)),
   };
-  const manifestPath = join(out, 'manifest.json');
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
-  chmodSync(manifestPath, 0o600);
+  const manifestFd = open('manifest.json');
+  writeSync(manifestFd, JSON.stringify(manifest, null, 2) + '\n');
+  closeSync(manifestFd);
+  // An entry leaves `pending` only once its rename succeeds, so a failed rename (a directory at the final name)
+  // still has the finally block remove that temporary file and every one after it.
+  while (pending.length > 0) {
+    renameSync(pending[0]!.temp, pending[0]!.final);
+    pending.shift();
+  }
   console.error(`exported ${pageIndex} pages, ${chunkRow} chunks (${dims} dims), ${queryReservoir.length} queries to ${out}`);
-  if (skippedChunks || skippedPages) console.error(`skipped ${skippedChunks} chunks without an embedding and ${skippedPages} unreadable pages`);
+  if (skippedChunks || skippedPages || skippedSegmented) {
+    console.error(`skipped ${skippedChunks} chunks without an embedding, ${skippedPages} unreadable pages and ${skippedSegmented} segmented pages`);
+  }
 } finally {
+  // A failed export leaves no temporary file holding private text behind.
+  for (const { temp } of pending) rmSync(temp, { force: true });
   await engine.disconnect();
 }

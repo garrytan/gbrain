@@ -16,12 +16,14 @@ import { folderHoldingSlug, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../f
 import { maintenancePreflight, planHeldRowDrop, submitMaintenanceIntent, submitPlannedFactFenceAdoption, type HeldDrop } from '../persistence/prepared-maintenance.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertStrictGitHome } from '../persistence/git-declared.ts';
-import { isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
+import { isConnectionEnd, isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
 import { ReadDeadlineError, withReadDeadline } from '../read-deadline.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { requestConfigValue } from '../config-snapshot.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
@@ -52,7 +54,10 @@ export async function holdingHome(engine: BrainEngine, sourceId: string, entity:
   Promise<{ slug: string } | { refused: 'page_rule' | 'access_unreadable' } | null> {
   if ((await getWorktreeBinding(engine, sourceId))?.canonical_git !== true) return null;
   if (/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) return null;
-  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG && await engine.heldEntityPageDeleted(sourceId, entity)) return null;
+  // The SQL engines read it deadline-bound (planningView); the Rust engine, which runs no raw SQL, reads the snapshot.
+  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG && (lacksRawSql(engine)
+    ? !!(await engine.readPageSnapshot(entity, { sourceId, includeDeleted: true }))?.page.deleted_at
+    : await engine.heldEntityPageDeleted(sourceId, entity))) return null;
   return holdingPageFor(engine, sourceId, entity);
 }
 
@@ -63,6 +68,8 @@ export async function holdingPageFor(engine: BrainEngine, sourceId: string, enti
   const access = await engine.readHeldAccessState(sourceId, entity).catch((error: unknown) => {
     // GST-2667: an error the persistence consumer prepares again (a cancel, a stale plan, contention, a lost connection) is rethrown, never a refusal.
     if (error instanceof PreparationDeadlineError || transientDatabaseFailure(error) || transientInterruption(error)) throw error;
+    // An engine without raw SQL refuses the access read by name; that is never a folder-access refusal, so it stops the caller.
+    rethrowCapabilityMissing(error);
     return null;
   });
   const row = access?.[0];
@@ -208,28 +215,36 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
 
 /**
  * The engine the sync path plans a held move on: every raw read through it, the bare-name resolver's alias read and
- * holdingHome's config read included, ends on the server at `deadlineAt`, and one ended there rejects as a
+ * holdingHome's config read included, ends on the server at `deadlineAt` (its wait for a pool connection too), and one ended there rejects as a
  * PreparationDeadlineError. PGLite plans on the engine.
  */
+/** The entity resolver's typed reads (entities/resolve.ts) a plan reaches through heldFactTarget: once raw statements, each takes the plan's deadline. */
+const PLAN_TYPED_READS = new Set(['readLivePageTypes', 'readTrigramCandidates', 'readNamedEntitySlugs', 'readPrefixCandidates', 'readRetirementHop', 'readLiveSlugs', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'findExactBasenameCandidates', 'findFuzzyEntityCandidates']);
 const DEADLINE_BOUND: ReadonlySet<PropertyKey> = new Set(['resolveAliases', 'heldEntityPageDeleted', 'readHeldAccessState', 'heldTargetPageLive', 'listHeldMoveRows',
   'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue', 'readHeldConfigValue']);
 
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
   if (engine.kind !== 'postgres') return engine;
+  // #6040: the deadline also ends the wait for a free connection, which reads queued on the same lock can hold (#8155).
+  const deadline = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
   const view: BrainEngine = registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: Parameters<BrainEngine['executeRaw']>[2]) => {
       if (Date.now() >= deadlineAt) throw new PreparationDeadlineError('held_move_plan', null);
-      try { return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()) }); } catch (error) {
+      const signal = opts?.signal ?? deadline;
+      try { return await target.executeRaw(sql, params, { ...opts, timeoutMs: Math.max(1, deadlineAt - Date.now()), signal }); } catch (error) {
         if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
+        if (!opts?.signal && (signal.aborted || (isConnectionEnd(error) && Date.now() >= deadlineAt))) throw new PreparationDeadlineError('held_move_plan', null, error);
         throw error;
       }
     };
     const value = Reflect.get(target, key, target);
     // The alias read and each held-move read run on the engine's own executeRaw: bound to the view, they take the deadline too.
     if (DEADLINE_BOUND.has(key)) return value.bind(view);
-    // holdingHome's writer-binding read is a typed member: the engine ends it at the same deadline.
-    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
-      withReadDeadline(deadlineAt, () => target.getWorktreeBinding(sourceId, hostId)).catch((error: unknown) => {
+    // holdingHome's writer-binding read and the strict resolver's typed reads (heldFactTarget) are typed members: the
+    // engine ends each at the same deadline.
+    if (key === 'getWorktreeBinding' || (typeof key === 'string' && PLAN_TYPED_READS.has(key))) return (...args: unknown[]) =>
+      withReadDeadline(deadlineAt, () => (value as (...a: unknown[]) => Promise<unknown>).apply(target, args)).catch((error: unknown) => {
         if (error instanceof ReadDeadlineError) throw new PreparationDeadlineError('held_move_plan', null, error);
         if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
         throw error;

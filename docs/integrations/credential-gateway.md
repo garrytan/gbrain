@@ -31,14 +31,15 @@ raw credentials.
 1. Create agent in ClawVisor dashboard, copy agent token
 2. Set `CLAWVISOR_URL` and `CLAWVISOR_AGENT_TOKEN` in env
 3. Activate services (Google, iMessage, etc.) in the dashboard
-4. Create standing tasks with expansive scopes (narrow purposes cause false blocks)
+4. Create standing tasks with the narrowest scope that does the job
 5. Store standing task IDs in agent memory for reuse
 
-**Critical scoping rule:** Be expansive in task purposes. "Full executive assistant
-email management including inbox triage, searching by any criteria, reading emails,
-tracking threads" works. "Email triage" gets rejected. The intent verification model
-uses the purpose to judge whether each request is consistent -- if your purpose is
-narrow, legitimate requests fail verification.
+**Scoping rule:** Ask for the narrowest scope and purpose that does the job, and
+state it plainly: what the agent reads, from which accounts, and why. Don't pad the
+purpose to get more requests approved. The intent verification model uses the purpose
+to judge whether each request is consistent; when it blocks a request the user
+actually needs, tell the user what was blocked and widen the task then, with their
+agreement.
 
 **Hermes Agent: Built-in gateway.** Hermes has multi-platform messaging (Telegram,
 Discord, Slack, WhatsApp, Signal, Email) and tool access built into its gateway. Use

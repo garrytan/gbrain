@@ -21,6 +21,7 @@ import type { PageWriteOptions } from '../page-state/types.ts';
 import { moveSlugBindings, recordRenameAlias } from '../page-state/rename-alias.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { sanitizeText } from '../batch-rows.ts';
+import { assertPurgeAge } from '../engine-errors.ts';
 import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion } from '../search/safe-chunks.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privatePagesFilterForCaller, privacyForCaller, callerReadersAllowedSql, currentCallerAccess } from '../search/private-visibility.ts';
 import { validDateSql } from '../valid-time.ts';
@@ -30,6 +31,7 @@ import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMi
 import { DELETE_BATCH_SIZE } from '../engine-constants.ts';
 import { derivedOriginPurgeHold, OWED_PURGE_OP } from '../persistence/derived-origin-hold.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { HOLD_BIND_CTE } from './hold-binding.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
 import { compileRowNormalizer } from './normalize.ts';
@@ -41,9 +43,12 @@ import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fra
 import { frontmatterWhereFragment } from '../search/frontmatter-where.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
-import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
+import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
+import { slugStoreScrubber } from './purge-slug-stores.ts';
+import { purgeStoreScrubber } from './purge-stores.ts';
 import { expireFactsOfGonePages } from './facts-purge.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
 
@@ -168,8 +173,10 @@ export async function putPage(
     const crSet = cr ? sqlFragment`
         contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
         corpus_generation     = EXCLUDED.corpus_generation,` : sqlFragment``;
+    // A page created here takes over the quarantine holds that were waiting for its slug in the same statement (engine-sql/hold-binding.ts).
     // origin-guard-ok: both engines' putPage run assertOriginUnclaimed in this transaction first
     const { rows } = await exec.run(sqlFragment`
+      WITH ins AS (
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at${crColumns})
       VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}${crValues})
       ON CONFLICT (source_id, slug) DO UPDATE SET${crSet}
@@ -193,6 +200,8 @@ export async function putPage(
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
+      ), ${HOLD_BIND_CTE}
+      SELECT * FROM ins
     `);
     if (rows.length === 0 && rereadOnEmptyReturning) {
       // The row WAS written; re-read instead of crashing in rowToPage(undefined).
@@ -226,16 +235,20 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       );
     }
     return exec.transaction(async (tx) => {
-      const { rows } = await tx.run<{ slug: string }>(sqlFragment`
+      const { rows: candidates } = await tx.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}`);
+      const secrets = await pageSecretOccurrences(slugStoreScrubber(tx), candidates.map(r => r.id));
+      const { rows } = await tx.run<{ slug: string; id: number }>(sqlFragment`
         DELETE FROM pages
          WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}
-        RETURNING slug
+        RETURNING slug, id
       `);
       const deleted = rows.map(r => r.slug);
-      await scrubPurgedSlugs(tx, opts.sourceId, deleted);
-      await scrubPurgedNameStores(tx, opts.sourceId, deleted);
-      await scrubPurgedSlugStores(tx, opts.sourceId, deleted);
-      await scrubPurgedSlugHolds(tx, opts.sourceId, deleted.map(slug => ({ slug })));
+      const gone = new Set(rows.map(r => Number(r.id)));
+      await scrubPurgedSlugs(purgeStoreScrubber(tx), opts.sourceId, deleted);
+      await scrubPurgedNameStores(purgeStoreScrubber(tx), opts.sourceId, deleted);
+      // The holds go first: an unbound hold finds the purged page through the rename record, which the slug stores' scrub removes.
+      await scrubPurgedSlugHolds(slugStoreScrubber(tx), opts.sourceId, rows.map(r => ({ slug: r.slug, id: Number(r.id) })));
+      await scrubPurgedSlugStores(slugStoreScrubber(tx), opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
       return deleted;
     });
   }
@@ -257,6 +270,7 @@ export async function resolveSlugsByPaths(
         `resolveSlugsByPaths: input size ${paths.length} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`,
       );
     }
+    // The row order never reaches output: rows are grouped per path, and pickCanonicalOrigin picks by the derived slug or sorts the ambiguous slugs in JS.
     const { rows } = await exec.run<{ slug: string; source_path: string; live: boolean }>(sqlFragment`
       SELECT slug, source_path, deleted_at IS NULL AS live
         FROM pages
@@ -329,15 +343,21 @@ export async function restorePage(exec: SqlExecutor, slug: string, opts?: { sour
 export async function purgeDeletedPages(
   exec: SqlExecutor,
   olderThanHours: number,
-  opts?: { dryRun?: boolean; excludeIds?: number[] },
+  opts?: { dryRun?: boolean; excludeIds?: number[]; onlyIds?: number[] },
 ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] }> {
-    // Clamp to non-negative integer; runaway purge protection. The DELETE
-    // cascades through content_chunks, page_links, chunk_relations via FKs.
-    const hours = Math.max(0, Math.floor(olderThanHours));
+    // Refuse an age that is not a finite number of hours, 0 or more, before any statement runs: NaN, a negative
+    // number or ±Infinity used to clamp (or turn) into 0 hours and purge every tombstone. Every engine refuses the
+    // same inputs (engine-errors.ts PurgeAgeError). The DELETE cascades through content_chunks, page_links,
+    // chunk_relations via FKs.
+    assertPurgeAge(olderThanHours);
+    const hours = Math.floor(olderThanHours);
     // GBRA-130 A-49: tombstones the unmanaged belief-ledger expiry could not delete (or parked) stay for their own retry.
+    // #9653: `onlyIds` narrows the same statements to those pages (a concept rebuild's one tombstone).
+    const only = opts?.onlyIds ? sqlFragment` AND pages.id = ANY(${opts.onlyIds}::bigint[])` : sqlFragment``;
+    const onlyManifest = opts?.onlyIds ? sqlFragment` AND p.id = ANY(${opts.onlyIds}::bigint[])` : sqlFragment``;
     const excluded = opts?.excludeIds?.length ? sqlFragment`
-          AND NOT (pages.id = ANY(${opts.excludeIds}::bigint[]))` : sqlFragment``;
-    const excludedManifest = opts?.excludeIds?.length ? sqlFragment` AND NOT (p.id = ANY(${opts.excludeIds}::bigint[]))` : sqlFragment``;
+          AND NOT (pages.id = ANY(${opts.excludeIds}::bigint[]))${only}` : only;
+    const excludedManifest = opts?.excludeIds?.length ? sqlFragment` AND NOT (p.id = ANY(${opts.excludeIds}::bigint[]))${onlyManifest}` : onlyManifest;
     if (opts?.dryRun) {
       // SAME WHERE predicate as the DELETE below (same cutoff arithmetic,
       // same DB now() clock source) — only the verb differs, so preview and
@@ -351,7 +371,7 @@ export async function purgeDeletedPages(
           AND ${trustedSql(atomRetirementPurgeHold('pages'))}
           AND ${trustedSql(derivedRetirementPurgeHold('pages'))}
           AND ${trustedSql(derivedOriginPurgeHold('pages'))}${excluded}
-        ORDER BY deleted_at ASC, slug ASC
+        ORDER BY deleted_at ASC, slug COLLATE "C" ASC
       `);
       const pages = rows.map((r) => ({
         slug: r.slug,
@@ -365,7 +385,9 @@ export async function purgeDeletedPages(
       const { rows: texts } = await tx.run<{ source_id: string; sha: string }>(sqlFragment`
         SELECT DISTINCT m.source_id, encode(m.sha256, 'hex') AS sha FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
         WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - (${hours} || ' hours')::interval${excludedManifest}`);
-      const { rows } = await tx.run<{ slug: string; source_id: string; deleted_at: string }>(sqlFragment`
+      const { rows: candidates } = await tx.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - (${hours} || ' hours')::interval`);
+      const secrets = await pageSecretOccurrences(slugStoreScrubber(tx), candidates.map(r => r.id));
+      const { rows } = await tx.run<{ id: number; slug: string; source_id: string; deleted_at: string }>(sqlFragment`
         DELETE FROM pages
         WHERE deleted_at IS NOT NULL
           AND deleted_at < now() - (${hours} || ' hours')::interval
@@ -378,8 +400,10 @@ export async function purgeDeletedPages(
           AND ${trustedSql(derivedRetirementPurgeHold('pages'))}
           -- GST-2689: an origin whose derived pages could not be labelled private stays parked (derivedOriginPurgeHold).
           AND ${trustedSql(derivedOriginPurgeHold('pages'))}${excluded}
-        RETURNING slug, source_id, deleted_at::text AS deleted_at
+        RETURNING id, slug, source_id, deleted_at::text AS deleted_at
       `);
+      const gone = new Set(rows.map(r => Number(r.id)));
+      const goneSecrets = secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id);
       if (rows.length) await expireFactsOfGonePages((sql, params) => tx.executeRaw(sql, params), rows.map(r => r.source_id), rows.map(r => r.slug));
       if (rows.length) await tx.run(sqlFragment`DELETE FROM page_body_stagings s USING unnest(${rows.map(r => r.source_id)}::text[], ${rows.map(r => r.slug)}::text[]) AS d(source_id, slug)
         WHERE s.source_id = d.source_id AND s.slug = d.slug`);
@@ -388,17 +412,17 @@ export async function purgeDeletedPages(
         WHERE t.source_id = d.source_id AND t.sha256 = decode(d.sha, 'hex')
           AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
-      const bySource = new Map<string, Array<{ slug: string; deletedAt: string }>>();
-      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, deletedAt: r.deleted_at }]);
+      const bySource = new Map<string, Array<{ slug: string; id: number; deletedAt: string }>>();
+      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, id: Number(r.id), deletedAt: r.deleted_at }]);
       for (const [sourceId, purged] of bySource) {
         const slugs = purged.map(p => p.slug);
-        await scrubPurgedSlugs(tx, sourceId, slugs);
-        await scrubPurgedNameStores(tx, sourceId, slugs);
-        await scrubPurgedSlugStores(tx, sourceId, slugs);
-        await scrubPurgedSlugHolds(tx, sourceId, purged);
+        await scrubPurgedSlugs(purgeStoreScrubber(tx), sourceId, slugs);
+        await scrubPurgedNameStores(purgeStoreScrubber(tx), sourceId, slugs);
+        await scrubPurgedSlugHolds(slugStoreScrubber(tx), sourceId, purged); // before the slug stores: their scrub removes the rename record the hold sweep reads
+        await scrubPurgedSlugStores(slugStoreScrubber(tx), sourceId, slugs, { secretOccurrences: goneSecrets });
       }
       const slugs = rows.map((r) => r.slug);
-      return { slugs, count: slugs.length };
+      return { slugs, count: slugs.length, pages: rows.map(r => ({ slug: r.slug, source_id: r.source_id, deleted_at: new Date(r.deleted_at) })) };
     });
   }
 
@@ -499,14 +523,16 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       // postgres.js driver, which serializes strings through a JS Date and
       // truncates the cursor to milliseconds (re-selecting the whole
       // millisecond; a >limit cluster inside one millisecond never drains).
-      ? sqlFragment`AND (p.updated_at > ${keyset.updatedAt}::text::timestamptz OR (p.updated_at = ${keyset.updatedAt}::text::timestamptz AND p.slug > ${keyset.slug}))`
+      ? sqlFragment`AND (p.updated_at > ${keyset.updatedAt}::text::timestamptz OR (p.updated_at = ${keyset.updatedAt}::text::timestamptz AND p.slug COLLATE "C" > ${keyset.slug}))`
       : updatedAfter
         ? sqlFragment`AND p.updated_at > ${updatedAfter}::text::timestamptz`
         : sqlFragment``;
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.
     const slugPrefix = filters?.slugPrefix;
-    const slugCondition = slugPrefix
+    const slugCondition = slugPrefix && filters?.slugPrefixAlso?.length
+      ? sqlFragment`AND p.slug LIKE ANY(${[slugPrefix, ...filters.slugPrefixAlso].map(prefix => prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%')}::text[])`
+      : slugPrefix
       ? sqlFragment`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sqlFragment``;
     // Search fallbacks must exclude before LIMIT: post-filtering can lose the
@@ -517,7 +543,7 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       : sqlFragment``;
     // #6500 slug keyset (single-source contract, see PageFilters.slugAfter).
     const slugAfterCondition = filters?.slugAfter !== undefined
-      ? sqlFragment`AND p.slug > ${filters.slugAfter}`
+      ? sqlFragment`AND p.slug COLLATE "C" > ${filters.slugAfter}`
       : sqlFragment``;
     // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. When BOTH are set, the array wins (federated semantics
@@ -580,7 +606,7 @@ export async function listAllPageRefs(exec: LegacyUnscopedRead): Promise<Array<{
     const { rows } = await exec.run<{ slug: string; source_id: string; updated_at: string | Date }>(sqlFragment`
       SELECT slug, source_id, updated_at FROM pages
       WHERE deleted_at IS NULL
-      ORDER BY source_id, slug
+      ORDER BY source_id COLLATE "C", slug COLLATE "C"
     `);
     return rows.map((r) => ({
       slug: r.slug,
@@ -672,7 +698,8 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
               ELSE 0
               END) DESC,
               pp.connection_count DESC,
-              pp.slug ASC
+              pp.slug COLLATE "C" ASC,
+              pp.source_id COLLATE "C" ASC
           ) AS rn
         FROM prefix_pages pp
       ),
@@ -691,7 +718,7 @@ export async function listPrefixSampledPages(scoped: ScopedReadRunner, opts: Dom
       SELECT page_id, slug, source_id, title, compiled_truth, last_retrieved_at,
              prefix, connection_count, representative_chunk_id
       FROM with_chunk
-      ORDER BY prefix
+      ORDER BY prefix COLLATE "C"
     `);
       return rows.map(toDomainBankRow);
     });
@@ -772,12 +799,13 @@ export async function resolveSlugs(
     const exact = await exec.run<{ slug: string }>(sqlFragment`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL${scopeFragment}${privacy}`);
     if (exact.rows.length > 0) return [exact.rows[0].slug];
 
-    // Fuzzy match via pg_trgm
+    // Fuzzy match via pg_trgm. Equal similarity sorts by slug, then source, in byte order, so the
+    // five rows kept are the same on every engine (the Rust store sorts the same way).
     const fuzzy = await exec.run<{ slug: string }>(sqlFragment`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
       WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})${scopeFragment}${privacy}
-      ORDER BY sim DESC
+      ORDER BY sim DESC, slug COLLATE "C", source_id COLLATE "C"
       LIMIT 5
     `);
     return fuzzy.rows.map((r) => r.slug);
@@ -956,12 +984,13 @@ export async function countStaleFrontmatterKeyPages(exec: ScopedRead, opts: { so
     const { rows } = await exec.run<{ source_id: string; n: number | string }>(sqlFragment`
       SELECT source_id, count(*)::bigint AS n FROM pages
       WHERE source_id = ANY(${opts.sourceIds}::text[]) AND deleted_at IS NULL AND frontmatter ?| ${RESERVED_FRONTMATTER_KEYS_SQL}::text[]
-      GROUP BY source_id ORDER BY source_id
+      GROUP BY source_id ORDER BY source_id COLLATE "C"
     `);
     return rows.map(row => normalizeStaleKeyCount(row));
   }
 export async function listStaleFrontmatterKeyPages(exec: ScopedRead, opts: { sourceId: string; afterId: number; limit: number }):
   Promise<Array<{ id: number; slug: string; keys: string[] }>> {
+    // The key order never reaches output: the keys are four fixed lower-case words (slug, tags, title, type) that sort alike in every collation, and display re-sorts them.
     const { rows } = await exec.run<{ id: number | string; slug: string; keys: string[] }>(sqlFragment`
       SELECT id, slug, ARRAY(SELECT k FROM unnest(${RESERVED_FRONTMATTER_KEYS_SQL}::text[]) AS k WHERE frontmatter ? k ORDER BY k) AS keys
       FROM pages
@@ -1073,6 +1102,15 @@ export function replacedBecauseSql(pv: string, excludePrivate: boolean): string 
 const VERSION_VALID_TIME_COLUMNS = `${validDateSql("pv.frontmatter->>'valid_from'")} AS valid_from, ${validDateSql("pv.frontmatter->>'valid_until'")} AS valid_until`;
 
 /**
+ * The `excludePrivate` predicate of get_versions in the current caller context, over the live page `p` and the
+ * snapshot `pv`: the caller's page policy on `p`, the snapshot's readers, its privacy (widened by the caller's
+ * private-readable grant on `p`), and, while private pages are hidden, no `pinned_question` marker.
+ */
+export function versionPrivacySql(): string {
+  return `${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}${currentCallerAccess().hidePrivate ? " AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)" : ''}`;
+}
+
+/**
  * Newest first (`pv.id` breaks snapshot_at ties). Scope, privacy and
  * re-derivation (a page a purge hid) predicates sit in WHERE, so `limit`
  * bounds only rows the caller may read; `includeBody: false` never selects
@@ -1083,8 +1121,7 @@ export async function getVersions<B extends boolean = true>(
   slug: string,
   opts?: GetVersionsOpts<B>,
 ): Promise<PageVersionRows<B>> {
-    const privacy = opts?.excludePrivate
-      ? trustedSql(`AND ${privatePagesFilterForCaller('p')} AND ${callerReadersAllowedSql('pv', 'snapshot')} AND ${privacyForCaller('p', privateSnapshotFilterFragment('pv'))}${currentCallerAccess().hidePrivate ? " AND NOT COALESCE(pv.frontmatter ? 'pinned_question', false)" : ''}`) : sqlFragment``;
+    const privacy = opts?.excludePrivate ? trustedSql(`AND ${versionPrivacySql()}`) : sqlFragment``;
     const scope = opts?.sourceIds && opts.sourceIds.length > 0
       ? sqlFragment`AND p.source_id = ANY(${opts.sourceIds}::text[])`
       : opts?.sourceId ? sqlFragment`AND p.source_id = ${opts.sourceId}` : sqlFragment``;
@@ -1155,8 +1192,13 @@ export async function revertToVersion(
  * sweep up same-slug rows in sources B/C/D. The move advances the page's
  * knowledge revision, so it first versions the page as it stood: page-at-time
  * (belief ledger W2) reads the body before the rename from that preimage.
+ *
+ * #9735: the move re-keys the page and the facts that name it and authors no text, so it runs under withTrustKeep:
+ * the page and every re-keyed fact keep their stored tier whatever tier the caller declared (the tier trigger counts
+ * pages.slug and facts.entity_slug as content). Every caller moves through here, so none has to remember it.
  */
-export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: string, newSlug: string, sourceId: string): Promise<number> {
+export function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: string, newSlug: string, sourceId: string): Promise<number> {
+  return withTrustKeep(tx, ['pages', 'facts'], async () => {
       const preimage = await tx.readPageSnapshot(oldSlug, { sourceId, includeDeleted: true });
       if (preimage) await createPageVersion(tx, oldSlug, sourceId, preimage);
       // origin-guard-ok: the moved row keeps its own origin and liveness, so it adds no claimant (#6948); callers that record a new path bind it with bindOrigin
@@ -1171,7 +1213,8 @@ export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: st
       // #3056: rows moved — a zero-row UPDATE does not throw, so the count is
       // the only way callers can see the no-op.
       return moved.length;
-  }
+  });
+}
 
 /**
  * Replace a page's frontmatter alias set under its page-key lock, inside the
@@ -1198,15 +1241,17 @@ export interface DerivedAliasRow { alias_norm: string; origin: string; case_sens
 
 /**
  * Replace one page's derived alias rows (`origin` declared/subject) with `aliases`: delete the existing ones, insert
- * the new set (an empty list only deletes). Frontmatter rows are untouched. Runs on the caller's transaction engine
- * (the page import's, or `reindex --aliases`'s).
+ * the new set (an empty list only deletes). Frontmatter rows are untouched. A `frontmatter` row in `aliases` is
+ * stored as `setPageAliases` stores one: not case-sensitive, no `alias_text`. Runs on the caller's transaction engine
+ * (the page import's, or `reindex --aliases`'s); the engines open one for a caller outside a transaction.
  */
 export async function replaceDerivedAliases(exec: SqlExecutor, slug: string, sourceId: string, aliases: readonly DerivedAliasRow[]): Promise<void> {
   await exec.executeRaw(`DELETE FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin IN ('declared','subject')`, [sourceId, slug]);
   if (aliases.length) {
     await exec.executeRaw(
       `INSERT INTO page_aliases (source_id, alias_norm, slug, origin, case_sensitive, alias_text)
-       SELECT $1, a, $2, o, c::boolean, t FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
+       SELECT $1, a, $2, o, CASE WHEN o = 'frontmatter' THEN false ELSE c::boolean END, CASE WHEN o = 'frontmatter' THEN NULL ELSE t END
+       FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]) AS x(a, o, c, t) ON CONFLICT DO NOTHING`,
       [sourceId, slug, aliases.map(a => a.alias_norm), aliases.map(a => a.origin), aliases.map(a => String(a.case_sensitive)), aliases.map(a => a.alias_text)]);
   }
 }
@@ -1267,4 +1312,27 @@ export async function refreshPageOrigin(exec: SqlExecutor, slug: string, opts: {
   await exec.executeRaw(`UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
         AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
   [opts.sourcePath, opts.sourceId, slug, opts.sourceUri ?? null]);
+}
+
+/**
+ * The retrieval bump of `bumpLastRetrievedAt` (last-retrieved.ts): records now in page_retrievals for each id that
+ * names a page. Ids of pages that do not exist are skipped, as the UPDATE of `pages` skipped them. The SELECT drops
+ * rows still inside the 5-minute window before the upsert, because ON CONFLICT locks (and so dirties) a conflicting
+ * row even when its WHERE then skips it; the ON CONFLICT test keeps a concurrent bump from moving a row twice.
+ */
+function bumpRetrievalsFragment(pageIds: number[]): SqlFragment {
+  return sqlFragment`INSERT INTO page_retrievals (page_id, last_retrieved_at)
+  SELECT p.id, NOW() FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id
+   WHERE p.id = ANY(${pageIds}::int[]) AND (r.page_id IS NULL OR r.last_retrieved_at < NOW() - INTERVAL '5 minutes')
+  ON CONFLICT (page_id) DO UPDATE SET last_retrieved_at = EXCLUDED.last_retrieved_at
+    WHERE page_retrievals.last_retrieved_at < NOW() - INTERVAL '5 minutes'`;
+}
+
+/** The bump statement's text, with `$1` the page ids (tests run it with RETURNING). */
+export const BUMP_LAST_RETRIEVED_SQL = renderFragment(bumpRetrievalsFragment([])).text;
+
+/** Runs the retrieval bump for `pageIds`; an empty list writes nothing. */
+export async function bumpPageRetrievals(exec: SqlExecutor, pageIds: number[]): Promise<void> {
+  if (pageIds.length === 0) return;
+  await exec.run(bumpRetrievalsFragment(pageIds));
 }

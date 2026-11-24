@@ -134,7 +134,7 @@ async function repositories(engine: BrainEngine): Promise<{ repos: Repo[]; skipp
     if (hostId) {
       for (const row of await engine.executeRaw<{ local_path: string; source_id: string | null }>(
         `SELECT h.local_path, s.source_id FROM persistence_host_bindings h LEFT JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id
-          WHERE h.host_id=$1::uuid AND h.local_path IS NOT NULL ORDER BY h.local_path`, [hostId])) {
+          WHERE h.host_id=$1::uuid AND h.local_path IS NOT NULL ORDER BY h.local_path COLLATE "C"`, [hostId])) {
         const ids = roots.get(row.local_path) ?? [];
         if (row.source_id && !ids.includes(row.source_id)) ids.push(row.source_id);
         roots.set(row.local_path, ids);
@@ -242,7 +242,8 @@ function scanRepo(repo: Repo, deadline: number): { report: RepoReport; partial: 
   for (const r of ledger) {
     if (r.e === 'start') start = Date.parse(r.t);
     else if (r.e === 'commit') {
-      ledgered.add(r.sha);
+      // GST-2988: a commit a publish redaction rebuilt keeps the status of the commit it supersedes, so a rebuild never launders a foreign commit.
+      if (r.writer !== 'redact_rebuild' || r.held || r.supersedes?.some(sha => ledgered.has(sha))) ledgered.add(r.sha);
       // The intent this commit line completes: the same process's newest open one. Only an intent left open can explain a commit.
       const who = `${r.host}\0${r.pid}\0${r.writer}`;
       const open = intents.findLast(i => !i.resolved && i.who === who);

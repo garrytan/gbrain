@@ -26,18 +26,18 @@ import type { ResolvedColumn } from '../types.ts';
 import { BODY_STAGING_HARD_MS, BODY_STAGING_IDLE_MS, SEGMENT_TEXT_GC_GRACE_MS, STAGE_BATCH_BYTES } from '../page-body/limits.ts';
 import { jsonRowBatches, sanitizeText } from '../batch-rows.ts';
 import { normalizeEngineColumn, quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { currentTextProjectionFilter, SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { currentTextProjectionFilter, SAFE_FENCE_CHUNKER_VERSION, SEGMENTED_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { validateSlug } from '../utils.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { HOLD_BIND_CTE, HOLD_BIND_RETURNING } from './hold-binding.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { liveTilingSql, stagingNeedsTextSql, untiledSql } from '../page-body/schema.ts';
 import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow, type SegmentDerivationState } from '../page-body/derivations.ts';
 import { RELEASE_STAGED_CTE } from '../persistence/limits.ts';
-import { SEGMENTED_CHUNKER_VERSION } from '../page-body/chunker-version.ts';
 import { pageSearchVectorSql } from '../fts-language.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { overlayCanonicalBodies, readPageSnapshot } from '../page-state/snapshot.ts';
@@ -285,15 +285,19 @@ function metaParams(meta: SegmentedPageMeta) {
 
 export async function createSegmentedPageShell(exec: SqlExecutor, slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }> {
   const m = metaParams(meta);
+  // The new page takes over the quarantine holds waiting for its slug in the same statement (engine-sql/hold-binding.ts).
   // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
   const { rows } = await exec.run<{ id: number }>(sqlFragment`
+    WITH ins AS (
     INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, updated_at, effective_date,
       effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at,
       body_storage, body_generation, body_bytes)
     VALUES (${opts.sourceId}, ${validateSlug(slug)}, ${meta.type}, ${m.pageKind}, ${m.title}, NULL, NULL, ${m.frontmatter}, now(), ${m.effectiveDate},
       ${m.effectiveDateSource}, ${m.importFilename}, ${m.chunkerVersion ?? 0}::smallint, ${m.sourcePath}, ${m.sourceKind}, ${m.sourceUri},
       ${m.ingestedVia}, ${m.ingestedAt}, 'segmented', 0, 0)
-    RETURNING id`);
+    RETURNING ${HOLD_BIND_RETURNING}
+    ), ${HOLD_BIND_CTE}
+    SELECT id FROM ins`);
   return { id: Number(rows[0]!.id) };
 }
 
@@ -535,6 +539,7 @@ export async function readSegmentDerivations(exec: LegacyUnscopedRead, pageId: n
   if (opts.occurrenceIds !== undefined && opts.occurrenceIds.length === 0) return [];
   const kind = opts.kind !== undefined ? sqlFragment`AND d.pipeline = ${opts.kind}` : sqlFragment``;
   const occurrences = opts.occurrenceIds !== undefined ? sqlFragment`AND d.occurrence_id = ANY(${[...opts.occurrenceIds]}::bigint[])` : sqlFragment``;
+  // The row order never reaches output: every caller filters to one derivation kind and reads the rows as a keyed lookup, so occurrence_id alone orders them.
   const { rows } = await exec.run<Record<string, unknown>>(sqlFragment`
     SELECT d.page_id, d.pipeline, d.occurrence_id, d.pipeline_version, d.segment_sha256, d.context_hash, d.state, d.output, d.receipt,
            to_char(d.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,

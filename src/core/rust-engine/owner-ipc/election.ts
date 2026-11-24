@@ -5,17 +5,19 @@
  * there as a client instead of failing with `store_locked`.
  *
  * Election retries for a bounded time: an owner that holds the lock but has not bound its socket yet, or one that just
- * exited, is waited for; once the lock is free this process takes it. Handing the brain over while calls are in
- * flight is not part of this release (routes.ts `ownerGone`).
+ * exited, is waited for; once the lock is free this process takes it. A client whose owner exits runs the election
+ * again on its next call (client.ts `rejoin`, RustEngine `_takeOver`); its calls in flight end `owner_unavailable`
+ * (routes.ts `ownerGone`, `outcome_unknown`) and are never sent again, since the owner may have started them.
  */
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../persistence/native-lock.ts';
 import { parseGlobalFlags } from '../../cli-options.ts';
 import { connectOwner, type OwnerConnection } from './client.ts';
-import { ownerLockPath, ownerSocketPath } from './protocol.ts';
+import { recordOwnedRustBrain } from '../owned-brains.ts';
+import { canonicalDatabasePath, ownerLockPath, ownerSocketPath } from './protocol.ts';
 import { serveOwnerEngine, type OwnerEngineServer, type OwnerServerOptions } from './server.ts';
 
 /** How long a process keeps trying to become the owner or reach it before it reports `owner_unavailable`. */
@@ -33,6 +35,12 @@ export type OwnerRole =
 
 export interface ElectOptions extends OwnerServerOptions {
   waitMs?: number;
+  /**
+   * Runs once this process holds the owner lock and before its socket serves (the Rust engine opens its store here).
+   * It returns the step that undoes it, run before the lock is released when serving fails. When it throws, the lock
+   * is released and the election ends with that error.
+   */
+  onLock?: () => Promise<(() => Promise<void>) | void>;
 }
 
 function retryable(error: unknown): boolean {
@@ -48,18 +56,28 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
   const lockPath = ownerLockPath(databasePath);
   const socketPath = ownerSocketPath(databasePath);
   mkdirSync(dirname(lockPath), { recursive: true });
+  // The store directory is private whatever the socket length: a short socket path hardens it to 0700 as the socket's
+  // parent, but a long one moves the socket elsewhere, so the store's own files would keep the umask's mode.
+  const storeDir = canonicalDatabasePath(databasePath);
+  mkdirSync(storeDir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') chmodSync(storeDir, 0o700);
   const deadline = Date.now() + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
   let lastError: unknown;
   for (;;) {
     const lock = await tryAcquireNativeLock(lockPath);
     if (lock) {
+      let undo: (() => Promise<void>) | void = undefined;
+      try { undo = await opts.onLock?.(); }
+      catch (error) { await lock.release(); throw error; }
       try {
-        const server = await serveOwnerEngine(engine, socketPath, { ...opts, serve: opts.serve ?? processIsServe() });
-        if (server) return { role: 'owner', lock, server };
+        const { waitMs: _waitMs, onLock: _onLock, ...serverOpts } = opts;
+        const server = await serveOwnerEngine(engine, socketPath, { ...serverOpts, serve: opts.serve ?? processIsServe() });
+        if (server) { recordOwnedRustBrain(databasePath, lock); return { role: 'owner', lock, server }; }
         lastError = new Error('The owner socket is claimed by another process.');
       } catch (error) {
         lastError = error;
       }
+      if (undo) await undo();
       await lock.release();
     } else {
       try {

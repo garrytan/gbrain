@@ -33,10 +33,11 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 322-325 are master's migrations. This branch numbers its own migration 326 so it does not
-    // collide with them, and it has not merged master yet. The merge with master closes these gaps;
-    // drop them from this list in that merge.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 322, 323, 324, 325]);
+    // 331 is master's access_read_log (sync 11); 332 is master's engine_writer_observations and 333 its hold-page-id;
+    // 336 is the cli-members line's byte-order slug indexes, 337 the trunk's projection-jobs index and 338 the pages projection-waiting
+    // words index: renumbered above master's v334 (learning_items, #10193) and PR 10168's reserved v335, neither of which is on
+    // main yet, so 334 and 335 are gaps here until the next master sync brings them in (and then this list loses them).
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 334, 335]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

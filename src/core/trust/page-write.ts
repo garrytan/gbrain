@@ -44,7 +44,7 @@ import { asciiLower } from '../edge-whitespace.ts';
 
 /** Page writes that only edit a gbrain-managed fence (or strike a row) and keep the page's tier. */
 const FENCE_EDIT_OPERATIONS = ['remember', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'decide_proposal', 'loops_close', 'relink_facts', 'add_timeline_entry', 'add_link', 'remove_link', 'trust_release'];
+  'decide_proposal', 'loops_close', 'relink_facts', 'retire_connector_facts', 'add_timeline_entry', 'add_link', 'remove_link', 'trust_release'];
 /** Page writes whose caller supplies the page content: they stamp the marker and can lower the page (CEO-12). */
 const CONTENT_OPERATIONS = ['put_page', 'capture', 'edit_page', 'append_page', 'revert_version', 'restore_page'];
 
@@ -81,10 +81,9 @@ export function pageGateTrust(row: Pick<WriteRequest, 'operation' | 'intent'>, t
   return stored && compareTrust(trust.tier, OWNER_TIER_FLOOR) < 0 ? { ...trust, tier: minTrust(trust.tier, stored) } : trust;
 }
 
-export async function storedPageTier(engine: BrainEngine, sourceId: string, slug: string): Promise<TrustTier | null> {
-  // The page row as stored, soft-deleted or not (the SQL this replaced read no deleted_at).
-  const [row] = await engine.readPageTrustRows({ keys: [{ source_id: sourceId, slug }], includeDeleted: true });
-  return row ? storedTrustTier(row.trust_tier) : null;
+export async function storedPageTier(engine: Pick<BrainEngine, 'readStoredPageTier'>, sourceId: string, slug: string): Promise<TrustTier | null> {
+  const tier = await engine.readStoredPageTier(sourceId, slug);
+  return tier === null ? null : storedTrustTier(tier);
 }
 
 /**
@@ -223,15 +222,10 @@ async function ownerReader(engine: BrainEngine, frontmatter: Record<string, unkn
  * removes the guard. In the door's own transaction, after its write.
  */
 export async function raisePageLabelGuard(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
-  const [page] = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null }>('SELECT id, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  const page = await tx.readPageLabelRow(sourceId, slug);
   if (!page) return;
   const labels = page.frontmatter ?? {};
-  if (!labelledPrivate(labels) && normalizeReaders(labels) === null) {
-    await tx.executeRaw('DELETE FROM page_label_guards WHERE page_id = $1', [Number(page.id)]);
-    return;
-  }
-  await tx.executeRaw(`INSERT INTO page_label_guards (page_id, tier) VALUES ($1, $2)
-    ON CONFLICT (page_id) DO UPDATE SET tier = EXCLUDED.tier, set_at = now()`, [Number(page.id), OWNER_TIER_FLOOR]);
+  await tx.writePageLabelGuard(page.id, !labelledPrivate(labels) && normalizeReaders(labels) === null ? null : OWNER_TIER_FLOOR);
 }
 
 /**
@@ -285,14 +279,15 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
   const derived = !CONTENT_OPERATIONS.includes(row.operation) && declaresDerivation(row.intent);
   if (!prior || !(proposer || CONTENT_OPERATIONS.includes(row.operation) || derived)) return null;
   const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  const [page] = snapshot ? await tx.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE id = $1', [snapshot.page.id]) : [];
-  if (!snapshot || !page) return null;
+  // The typed reads (engine-sql/write-guards.ts, trust-proposals.ts) serve every engine; (source, slug) names the snapshot's row.
+  const pageTier = snapshot ? await tx.readStoredPageTier(row.source_id, row.slug) : null;
+  if (!snapshot || pageTier === null) return null;
   const pageId = Number(snapshot.page.id);
-  const after = { tier: storedTrustTier(page.trust_tier), revision: snapshot.revision, ...(labels ? { labels } : {}) };
+  const after = { tier: storedTrustTier(pageTier), revision: snapshot.revision, ...(labels ? { labels } : {}) };
   if (compareTrust(after.tier, prior.tier) >= 0) {
     // A later edit of an already-lowered page folds into its pending item (ENG-22): the revert binds to the newest revision.
-    const [pending] = await tx.executeRaw<{ id: number }>(`SELECT id FROM trust_proposals WHERE status = 'pending' AND action = 'lower_page'
-      AND target_table = 'pages' AND target_id = $1 LIMIT 1`, [pageId]);
+    const pending = (await tx.pendingTrustProposalsFor('pages', pageId))
+      .find(p => p.action === 'lower_page' && p.target_table === 'pages' && p.target_id === pageId);
     if (pending) {
       await updatePendingTrustProposalAfter(tx, Number(pending.id), after);
       return { proposal_ref: `tp${pending.id}` };
@@ -304,11 +299,10 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
     await propagateTierLowering(tx, [{ table: 'pages', id: pageId }]);
   }
   // GST-2518: a held write that changed nothing has no edit to revert.
-  const [version] = snapshot.revision === prior.revision ? [] : await tx.executeRaw<{ id: number }>(
-    'SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY id DESC LIMIT 1', [pageId, prior.tier]);
+  const versionId = snapshot.revision === prior.revision ? null : await tx.readLatestVersionIdAtTier(pageId, prior.tier);
   const proposal = await insertTrustProposal(tx, {
     action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: proposer ?? (derived ? `derived_page:${row.operation}` : `agent_page_edit:${row.operation}`),
-    before: { slug: row.slug, prior_tier: prior.tier, page_tier: prior.pageTier ?? prior.tier, prior_revision: prior.revision, version_id: version ? Number(version.id) : null }, after,
+    before: { slug: row.slug, prior_tier: prior.tier, page_tier: prior.pageTier ?? prior.tier, prior_revision: prior.revision, version_id: versionId }, after,
   });
   if (!proposal.created) await updatePendingTrustProposalAfter(tx, proposal.id, after);
   return { proposal_ref: `tp${proposal.id}` };

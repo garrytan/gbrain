@@ -7,10 +7,10 @@
  * config key ('personal' | 'shared'), set by the operator, by
  * company-brainify's Phase-5 handoff (shared), or from the bootstrap
  * interview's SURFACE_MULTIUSER answer. The heuristic exists only for
- * undeclared brains and is deliberately conservative: client count measures
- * surface breadth, not human count (Claude Code + Codex + a phone client is
- * three clients and one human), so only ≥3 DISTINCT non-automation MCP
- * clients active in the last 30 days reads as shared evidence — and
+ * undeclared brains and counts people, not clients (GST-3180): the
+ * non-automation MCP clients active in the last 30 days that are bound to the
+ * same member count once, and a client bound to nobody counts by itself, so
+ * 2 members or 3 people read as shared evidence — and
  * `reasons[]` always names what decided, so doctor can surface a
  * misclassification and the one-line fix (`gbrain config set brain.audience
  * personal|shared`).
@@ -32,6 +32,7 @@ import type { GBrainConfig } from '../config.ts';
 import { readClientOpUsage } from '../mcp-usage.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
 import { HOST_BRAIN_ID } from '../brain-registry.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const BRAIN_AUDIENCE_KEY = 'brain.audience';
 /** Distinct non-automation clients active in 30d that count as shared evidence. */
@@ -78,20 +79,37 @@ export async function classifyBrainAudience(
   try {
     const usage = await readClientOpUsage(engine, { days: 30 });
     const humans = usage.filter((u) => !u.likely_automation);
-    if (humans.length >= SHARED_CLIENT_THRESHOLD) {
+    const names = humans.map((u) => u.token_name);
+    // A failed binding read counts every credential as its own person (no merge); an engine that refuses the read
+    // (engine_capability_missing) refuses the caller instead of reading as "no bindings".
+    const bindings = names.length === 0 ? [] : await engine.listCredentialMemberBindings(names).catch((err: unknown) => { rethrowCapabilityRefusal(err); return null; });
+    const membersOf = new Map<string, Set<string | null>>();
+    for (const b of bindings ?? []) membersOf.set(b.name, (membersOf.get(b.name) ?? new Set()).add(b.member_id ?? null));
+    const members = new Set<string>();
+    let unbound = 0;
+    for (const name of names) {
+      const found = [...(membersOf.get(name) ?? [])];
+      if (found.length === 1 && found[0] !== null) members.add(found[0]);
+      else unbound++;
+    }
+    const people = members.size + unbound;
+    const counted = `${people} ${people === 1 ? 'person' : 'people'} (${members.size} member(s), ${unbound} unbound client(s)${bindings === null ? ', member bindings unreadable' : ''})`;
+    if (members.size >= 2 || people >= SHARED_CLIENT_THRESHOLD) {
       return {
         audience: 'shared',
         reasons: [
           ...reasons,
-          `heuristic: ${humans.length} distinct non-automation MCP clients active in 30d (threshold ${SHARED_CLIENT_THRESHOLD}) — declare the truth with: gbrain config set brain.audience personal|shared`,
+          `heuristic: ${humans.length} distinct non-automation MCP clients active in 30d, ${counted} (shared at 2 members or ${SHARED_CLIENT_THRESHOLD} people) — declare the truth with: gbrain config set brain.audience personal|shared`,
         ],
       };
     }
     return {
       audience: 'personal',
-      reasons: [...reasons, `no shared declaration; ${humans.length} non-automation client(s) active in 30d`],
+      reasons: [...reasons, `no shared declaration; ${humans.length} non-automation client(s) active in 30d, ${counted}`],
     };
-  } catch {
+  } catch (err) {
+    // An engine that refuses a read here refuses the caller: "personal" would be a guess, not evidence.
+    rethrowCapabilityRefusal(err);
     // The declaration read above already proved the DB reachable — a failed
     // usage read here means the multi-client infra isn't there (fresh or
     // pre-OAuth brain), which is itself personal-shaped evidence.

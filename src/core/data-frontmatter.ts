@@ -93,6 +93,9 @@ export class FrontmatterLanguageError extends Error {
   }
 }
 
+/** The closing fence: `---` at column 0 with only blanks after it. An indented `---` is block text, not a fence. */
+export const FRONTMATTER_CLOSE_RE = /^---[\t ]*(?:\r?\n|$)/m;
+
 /**
  * Where parseDataFrontmatter finds the block: the input without its BOM and,
  * for a fenced input, the language, the block text and the body after the
@@ -115,7 +118,7 @@ export function scanDataFrontmatter(input: string): {
     throw new FrontmatterLanguageError();
   }
   const rest = lifted.slice(opening[0].length);
-  const closing = /^---[\t ]*(?:\r?\n|$)/m.exec(rest);
+  const closing = FRONTMATTER_CLOSE_RE.exec(rest);
   // Match the established parser's missing-close behavior: parse the remaining
   // block and let the higher-level markdown validator report MISSING_CLOSE.
   return {
@@ -126,6 +129,27 @@ export function scanDataFrontmatter(input: string): {
       content: closing ? rest.slice(closing.index + closing[0].length) : null,
     },
   };
+}
+
+/**
+ * GST-3170: every string and plain-object key inside `value` without U+0000, every other character as written. Values
+ * that are not strings, arrays or plain objects (a frontmatter Date) and anything holding no U+0000 come back unchanged.
+ */
+function withoutNulJson<T>(value: T): T {
+  if (typeof value === 'string') return (value.includes('\u0000') ? value.replaceAll('\u0000', '') : value) as T;
+  if (Array.isArray(value)) {
+    const out = value.map(withoutNulJson);
+    return (out.some((item, i) => item !== value[i]) ? out : value) as T;
+  }
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  const entries = Object.entries(value);
+  const out = entries.map(([key, item]) => [withoutNulJson(key), withoutNulJson(item)] as const);
+  const keys = new Set<string>();
+  for (const [key] of out) {
+    if (keys.has(key)) throw new Error(`Frontmatter key ${JSON.stringify(key)} appears twice once U+0000 is removed`);
+    keys.add(key);
+  }
+  return (out.some(([key, item], i) => key !== entries[i]![0] || item !== entries[i]![1]) ? Object.fromEntries(out) : value) as T;
 }
 
 /** Parse data only. There is deliberately no pluggable engine or evaluator. */
@@ -146,7 +170,8 @@ export function parseDataFrontmatter(input: string): DataFrontmatter {
     throw new Error('Frontmatter must be a YAML or JSON object');
   }
   return {
-    data: (value ?? {}) as Record<string, unknown>,
+    // GST-3170: a YAML or JSON escape (`"\0"`, `"\u0000"`) still reads as U+0000, which Postgres text and jsonb cannot store.
+    data: withoutNulJson((value ?? {}) as Record<string, unknown>),
     content: fenced.content ?? '',
     hasFrontmatter: true,
   };

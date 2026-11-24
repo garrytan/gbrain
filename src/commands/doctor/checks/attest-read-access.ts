@@ -14,6 +14,7 @@ import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { authSourcesFromGrant, grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
 import { NO_SOURCES } from '../../../core/source-id.ts';
+import { credentialReadSources } from '../../../core/grants/shared-exposure.ts';
 
 const name = 'attest_read_shared_scope';
 const SAMPLE = 20;
@@ -28,18 +29,14 @@ function readSources(grant: PrincipalGrant): string[] {
 async function attestReadVerdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   try {
-    const rows = await engine.executeRaw<{ kind: 'token' | 'client'; id: string; name: string; row: Record<string, unknown> }>(
-      `SELECT 'token' AS kind, t.id::text AS id, t.name, to_jsonb(t) AS row FROM access_tokens t
-        WHERE t.revoked_at IS NULL AND to_jsonb(t)->>'attest_actor' IS NOT NULL
-       UNION ALL
-       SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row FROM oauth_clients c
-        WHERE (to_jsonb(c)->>'deleted_at') IS NULL AND to_jsonb(c)->>'attest_actor' IS NOT NULL
-       ORDER BY 1, 3`);
-    const credentials: Credential[] = rows.map(r => {
+    const rows = await engine.listAttestCredentialRows();
+    const credentials: Credential[] = await Promise.all(rows.map(async r => {
       const row = typeof r.row === 'string' ? JSON.parse(r.row) as Record<string, unknown> : r.row;
       const grant = r.kind === 'token' ? grantFromTokenRow(row) : grantFromClient(grantFromRow(row));
-      return { kind: r.kind, id: r.id, name: r.name, read: typeof row.attest_read === 'string' ? row.attest_read : null, sources: readSources(grant) };
-    });
+      // GST-2898: a switched credential also reads every shared source; credentialReadSources resolves it.
+      const sources = grant.readShared === true ? await credentialReadSources(engine, grant, typeof row.member_id === 'string' ? row.member_id : null) : readSources(grant);
+      return { kind: r.kind, id: r.id, name: r.name, read: typeof row.attest_read === 'string' ? row.attest_read : null, sources };
+    }));
     const persons = credentials.filter(c => c.read === 'person');
     if (!persons.length) return infoCheck(name, 'Not applicable: no attest credential reads named sources as the person (--attest-read person).', 'not_applicable');
     const shared = persons.map(p => ({ ...p, shared: p.sources.filter(s => credentials.some(o => o !== p && o.read !== 'person' && o.sources.includes(s))) }))

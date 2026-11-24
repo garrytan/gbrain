@@ -16,6 +16,7 @@
 import { describe, test, expect } from 'bun:test';
 import { undoWave } from '../src/core/calibration/undo-wave.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import * as takesReads from '../src/core/engine-sql/takes-reads.ts';
 
 interface MockEngineState {
   // SELECT distinct take_id results
@@ -78,6 +79,11 @@ function buildMockEngine(state: Partial<MockEngineState>): { engine: BrainEngine
       purges.push(args);
       return args.dryRun ? (state.profilesCount ?? 0) : (state.profilesRows ?? []).length;
     },
+    // The wave's take members run their real SQL against this fake, so the captured SQL text is what they send.
+    async listWaveAppliedTakeIds(waveVersion: string) { return takesReads.listWaveAppliedTakeIds(engine, waveVersion); },
+    async revertWaveTakeResolutions(spec: Parameters<typeof takesReads.revertWaveTakeResolutions>[1]) { return takesReads.revertWaveTakeResolutions(engine, spec); },
+    async unapplyWaveTakeGrades(spec: Parameters<typeof takesReads.unapplyWaveTakeGrades>[1]) { return takesReads.unapplyWaveTakeGrades(engine, spec); },
+    async purgeTakeNudgesByWave(spec: Parameters<typeof takesReads.purgeTakeNudgesByWave>[1]) { return takesReads.purgeTakeNudgesByWave(engine, spec); },
     // The take un-resolution runs in a maintenance transaction; the mock is its own transaction engine.
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(engine); },
     // The maintenance attribution reads and sets transaction settings through typed methods; nothing is set yet.

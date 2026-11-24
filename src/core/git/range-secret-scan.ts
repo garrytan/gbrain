@@ -84,12 +84,21 @@ function run(root: string, args: string[], deadline: number, opts: { input?: str
   return spawnSync('git', ['-C', root, ...args], { input: opts.input ?? '', stdio: ['pipe', opts.out ?? 'pipe', 'pipe'], timeout,
     maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...GIT_READ_ENV, LC_ALL: 'C', GIT_NO_REPLACE_OBJECTS: '1', GIT_ATTR_NOSYSTEM: '1' }) });
 }
-/** The commits the ledger records as page writes; an unreadable ledger reads as none, so everything is scanned. */
+/**
+ * The commits the ledger records as page writes; an unreadable ledger reads as none, so everything is scanned. A commit
+ * a publish redaction rebuilt (GST-2988, writer `redact_rebuild`) keeps the exemption of the commit it supersedes only
+ * when its own diff is unchanged (`verified`); any other rebuilt commit is scanned.
+ */
 function pageWriteCommits(root: string, deadline: number): Set<string> {
   const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline), 'rev-parse').toString().trim();
+  const exempt = new Set<string>();
   try {
-    return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) && !record.adopted?.length
-      && (!VERIFIED_WRITERS.has(record.writer) || record.verified) ? [record.sha] : []));
+    for (const record of readLedger(common)) {
+      if (record.e !== 'commit') continue;
+      if (PAGE_WRITERS.has(record.writer) && !record.adopted?.length && (!VERIFIED_WRITERS.has(record.writer) || record.verified)) exempt.add(record.sha);
+      else if (record.writer === 'redact_rebuild' && record.verified && record.supersedes?.some(sha => exempt.has(sha))) exempt.add(record.sha);
+    }
+    return exempt;
   }
   catch { return new Set(); }
 }
@@ -145,9 +154,12 @@ function attributesNeutral(root: string, deadline: number): boolean {
 
 /**
  * An empty `base` scans `head` and its whole history (a first push that creates the remote branch). `progress` receives a
- * line at once for a whole-history scan, and every 10 s while any scan runs.
+ * line at once for a whole-history scan, and every 10 s while any scan runs. `opts.allowlist` replaces the checkout's
+ * `.gbrain-scan-allow` (a redacting publish passes the remote's, GST-2988 D10). Each commit is scanned on its own, whatever
+ * the base: `opts.skip` leaves out commits a caller already scanned clean, and `opts.listed` collects the commits this scan covers.
  */
-export function scanRange(root: string, base: string, head: string, timeoutMs = DEFAULT_SCAN_TIMEOUT_MS, progress?: (line: string) => void): RangeScan {
+export function scanRange(root: string, base: string, head: string, timeoutMs = DEFAULT_SCAN_TIMEOUT_MS, progress?: (line: string) => void,
+  opts: { allowlist?: string[]; skip?: ReadonlySet<string>; listed?: Set<string> } = {}): RangeScan {
   const started = Date.now();
   const deadline = started + timeoutMs;
   let reported = base ? started : 0, spoke = false;
@@ -157,7 +169,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
     progress(`secret scan: ${line()} (${Math.round((reported - started) / 1000)} s of a ${Math.round(timeoutMs / 1000)} s budget)`);
   };
   const scan: RangeScan = { findings: [], unscanned: [], gate_changes: [] };
-  const allowlist = loadWorkspaceAllowlist(root);
+  const allowlist = opts.allowlist ?? loadWorkspaceAllowlist(root);
   const problems = scanAllowProblems(allowlist);
   if (problems.length) scan.allowlist_problems = problems;
   let allowFile = SCAN_ALLOW_FILENAME, prefix = '';
@@ -175,9 +187,12 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   try {
     prefix = must(run(root, ['rev-parse', '--show-prefix'], deadline), 'rev-parse').toString().replace(/\n$/, '');
     allowFile = `${prefix}${SCAN_ALLOW_FILENAME}`;
+    const range = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
+      .filter(commit => commit && !opts.skip?.has(commit));
+    for (const commit of range) opts.listed?.add(commit);
+    if (!range.length) return scan;
     const pageWrites = pageWriteCommits(root, deadline);
-    const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
-      .filter(commit => commit && !pageWrites.has(commit));
+    const commits = range.filter(commit => !pageWrites.has(commit));
     if (!commits.length) return scan;
     report(() => `reading ${commits.length} commit(s)${base ? '' : ', the whole history'}`);
 

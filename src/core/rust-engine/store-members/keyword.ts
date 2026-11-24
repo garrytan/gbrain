@@ -5,14 +5,17 @@
  *
  * The keyword members resolve every engine default here (the hard-exclude list, the source-boost map, the slug
  * handles, the dash-run collapse, the date bounds) and send the store only predicates; rust/docs/store/keyword.md
- * lists what each member reads, ignores and refuses.
+ * lists what each member reads, ignores and refuses. A CJK query takes PGLite's CJK fallback: searchKeyword and
+ * searchKeywordChunks run `searchKeywordCjk` (engine-sql/cjk-search.ts), countKeywordPages and searchKeywordPages send
+ * the match terms (`cjkTerms`), and searchTitles runs its usual statements, as both SQL engines do.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
-import { hasCJK } from '../../cjk.ts';
+import { cjkMatchTerms, hasCJK, splitCJKQueryTerms } from '../../cjk.ts';
 import { clampSearchLimit } from '../../engine.ts';
+import { CJK_CANDIDATE_CAP, PGLITE_CJK_CAPPED_CHUNKS, type CjkKeywordMeta } from '../../engine-sql/cjk-search.ts';
 import { rankByRarity } from '../../engine-sql/titles.ts';
 import { normalizeAlias } from '../../search/alias-normalize.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
@@ -24,6 +27,7 @@ import {
   RARE_TERM_CHUNK_CAP, RARITY_MAX_TERMS, rankOrFallbackByRarity, type RareTermPages,
 } from '../../search/keyword-or-rarity.ts';
 import type { KeywordPageWindow } from '../../search/keyword-statement.ts';
+import type { FrontmatterWhere } from '../../search/frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../../search/source-boost.ts';
 import {
   boundWebsearchQuery, buildOrFallbackWebsearchQuery, collapseWebsearchDashRuns, orFallbackTokens,
@@ -33,8 +37,11 @@ import { titleWholeVectorCandidates } from '../../search/title-statement.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { rowToSearchResult } from '../../utils.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { StoreBrain } from '../store.ts';
 import { storePagePolicy } from './private-provenance.ts';
+import { dateMicros, whereFields } from './search-filters.ts';
 
+type Row = Record<string, unknown>;
 type FuzzyHit = { slug: string; similarity: number } | null;
 
 export const findByTitleFuzzy: StoreMember<[name: string, dirPrefix?: string, minSimilarity?: number, sourceId?: string], FuzzyHit> =
@@ -48,7 +55,10 @@ export const findByTitleFuzzy: StoreMember<[name: string, dirPrefix?: string, mi
     return storeCall({ member: 'findByTitleFuzzy' }, () => brain.findByTitleFuzzy(String(name), dir, minSimilarity, source));
   };
 
-/** Options no keyword statement reads: hybrid-search, vector and reporting knobs. */
+/**
+ * Options no keyword statement reads: hybrid-search, vector and reporting knobs. On a CJK query searchKeyword and
+ * searchKeywordChunks read `orFallback` and `cjkKeyword` themselves (`searchCjk`).
+ */
 const NOT_READ = new Set([
   'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
   'autocut', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'embeddingColumn',
@@ -76,7 +86,6 @@ type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 's
 /** Checks every option `member` gets, refusing one it cannot answer exactly, and returns the store options. */
 function keywordOptions(member: Member, query: string, opts: (SearchOpts & { timeoutMs?: number }) | undefined): Record<string, unknown> {
   if (typeof query !== 'string') refuseMember(member, 'a query that is not a string');
-  if (hasCJK(query)) refuseMember(member, 'a CJK query (follow-up keyword-cjk)');
   if (getFtsLanguage() !== 'english') refuseMember(member, `the ${getFtsLanguage()} text search configuration`);
   const o = (opts ?? {}) as Record<string, unknown>;
   const pageGrain = member !== 'searchKeywordChunks';
@@ -123,81 +132,46 @@ function boostPairs(map: Record<string, number>, detail: unknown): [string, numb
     .sort((a, b) => b[0].length - a[0].length);
 }
 
-/** `frontmatterWhereSql`'s containment forms per key: the value, and a numeric or boolean reading of a string. */
-function whereFields(member: Member, where: unknown): [string, unknown[]][] {
-  if (typeof where !== 'object' || where === null || Array.isArray(where)) refuseMember(member, 'a where that is not an object');
-  return Object.entries(where as Record<string, unknown>).map(([key, values]) => {
-    // The SQL engines read a normalized where (every key a non-empty list); anything else fails there.
-    if (!Array.isArray(values) || values.length === 0) refuseMember(member, `where.${key} that is not a non-empty list`);
-    const forms: unknown[] = [];
-    for (const v of values) {
-      if (!(typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)))) {
-        refuseMember(member, `where.${key} value that is not a string, number or boolean`);
-      }
-      forms.push(v);
-      if (typeof v === 'string') {
-        if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(v)) forms.push(Number(v));
-        if (v === 'true' || v === 'false') forms.push(v === 'true');
-      }
-    }
-    return [key, forms];
-  });
-}
-
-// `$n::text::timestamptz` with TimeZone UTC, for the ISO shapes: a date, or a date and time with an optional
-// fraction and zone. Postgres reads the date-time separator and the zone letter in either case. Postgres reads many
-// more shapes; those refuse.
-const ISO_DATE = /^\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:[Tt ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?\s*(Z|z|[+-]\d{2}(?::?\d{2})?)?)?\s*$/;
-
-/**
- * Postgres's `ParseFractionalSecond`: `rint(strtod(".ffff") * 1e6)`, so a fraction past six digits rounds to the
- * nearest microsecond, a tie goes to the even one, and 0.9999995 or more is a whole second.
- */
-function fractionMicros(digits: string | undefined): number {
-  if (!digits) return 0;
-  const scaled = Number(`0.${digits}`) * 1_000_000;
-  const whole = Math.floor(scaled);
-  const rest = scaled - whole;
-  if (rest > 0.5) return whole + 1;
-  if (rest < 0.5) return whole;
-  return whole % 2 === 0 ? whole : whole + 1;
-}
-
-/** A date bound as UTC microseconds (decimal text), or a refusal for a shape the store does not parse. */
-function dateMicros(member: Member, raw: unknown): string {
-  const m = typeof raw === 'string' ? ISO_DATE.exec(raw) : null;
-  if (!m) refuseMember(member, 'a date bound that is not an ISO date or date-time');
-  const [year, month, day, hour = 0, minute = 0, second = 0] = [m[1], m[2], m[3], m[4], m[5], m[6]].map(v => (v === undefined ? undefined : Number(v))) as number[];
-  const fraction = fractionMicros(m[7]);
-  const monthDays = [31, isLeap(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0;
-  const midnight = hour === 24 && minute === 0 && second === 0 && fraction === 0;
-  if (month < 1 || month > 12 || day < 1 || day > monthDays || (hour > 23 && !midnight) || minute > 59 || second > 59) {
-    refuseMember(member, 'a date bound outside the calendar');
-  }
-  let offsetMinutes = 0;
-  const zone = m[8];
-  if (zone && zone !== 'Z' && zone !== 'z') {
-    const digits = zone.slice(1).replace(':', '');
-    const hh = Number(digits.slice(0, 2));
-    const mm = digits.length > 2 ? Number(digits.slice(2)) : 0;
-    if (hh > 15 || mm > 59) refuseMember(member, 'a date bound with an offset outside ±15:59');
-    offsetMinutes = (zone[0] === '-' ? -1 : 1) * (hh * 60 + mm);
-  }
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(hour, minute - offsetMinutes, second, 0);
-  return (BigInt(date.getTime()) * 1000n + BigInt(fraction)).toString();
-}
-
-function isLeap(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
 /** A row count the SQL engines bind as a bigint: refuse what Postgres would reject (fractions, negatives). */
 function wholeCount(member: Member, value: unknown, what: string): number | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) refuseMember(member, `${what} that is not a whole number of 0 or more`);
   return value;
+}
+
+/** The CJK match terms with their operator (`likeClauses`: LIKE for a term without case, else ILIKE). */
+function cjkTerms(query: string): { text: string; ilike: boolean }[] {
+  return cjkMatchTerms(query).map(text => ({ text, ilike: text.toLowerCase() !== text.toUpperCase() }));
+}
+
+/**
+ * engine-sql/cjk-search.ts `searchKeywordCJK` as PGLite runs it, over the raw query: strict AND, the OR fallback when
+ * `orFallback` applies and the strict rows fall short, and with `cjkKeyword` the bounded arm (bounded by work: the
+ * store compares its chunk count with `pgliteCappedChunks`) and its `onMeta` report. `dedup` is searchKeyword.
+ */
+async function searchCjk(
+  brain: StoreBrain, member: Member, query: string, opts: SearchOpts | undefined,
+  options: Record<string, unknown>, dedup: boolean,
+): Promise<SearchResult[]> {
+  const terms = cjkTerms(query);
+  if (query.length === 0 || terms.length === 0) return [];
+  const started = performance.now();
+  const bounded = opts?.cjkKeyword;
+  const run = {
+    terms, dedup, orFallback: opts?.orFallback === true && splitCJKQueryTerms(query).length > 1,
+    ...(bounded ? {
+      bounded: {
+        cap: bounded.candidateCap ?? CJK_CANDIDATE_CAP, cappedChunks: bounded.pgliteCappedChunks ?? PGLITE_CJK_CAPPED_CHUNKS,
+      },
+    } : {}),
+  };
+  const out: { rows: Row[]; capped: boolean; capHit: boolean } = await storeCall({ member }, () => brain.searchKeywordCjk(query, options, run));
+  if (bounded) {
+    const meta: Omit<CjkKeywordMeta, 'arm_ms'> = !out.capped ? { incomplete: false, capped: false }
+      : out.capHit ? { incomplete: true, reason: 'candidate_budget', capped: true } : { incomplete: false, capped: true };
+    bounded.onMeta?.({ ...meta, arm_ms: Math.round(performance.now() - started) });
+  }
+  return out.rows.map(rowToSearchResult);
 }
 
 export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts], SearchResult[]> = async (brain, query, opts) => {
@@ -208,15 +182,32 @@ export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts]
   }
   options.limit = clampSearchLimit(opts?.limit, 20, cap);
   options.offset = wholeCount('searchKeywordChunks', opts?.offset || 0, 'an offset');
+  if (hasCJK(query)) return searchCjk(brain, 'searchKeywordChunks', query, opts, options, false);
   const rows: Record<string, unknown>[] = await storeCall({ member: 'searchKeywordChunks' },
     () => brain.searchKeywordChunks(collapseWebsearchDashRuns(query), options));
   return rows.map(rowToSearchResult);
 };
 
+/**
+ * The frontmatter check on finished search rows (keepFrontmatterMatches): the store keeps the ids whose page holds
+ * every `where` key, by the rule the keyword and vector `where` filters use (whereFields; `frontmatter_holds`).
+ */
+export const filterPageIdsByFrontmatter: StoreMember<[ids: number[], where: FrontmatterWhere], number[]> = async (brain, ids, where) => {
+  if (!ids.every(id => Number.isSafeInteger(id) && id > 0)) refuseMember('filterPageIdsByFrontmatter', 'a page id that is not a positive integer');
+  return storeCall({ member: 'filterPageIdsByFrontmatter' },
+    () => brain.filterPageIdsByFrontmatter({ ids, where: whereFields('filterPageIdsByFrontmatter', where) })) as Promise<number[]>;
+};
+
 export const countKeywordPages: StoreMember<[query: string, opts?: SearchOpts & { timeoutMs?: number }], number> = async (brain, query, opts) => {
   const options = keywordOptions('countKeywordPages', query, opts);
   if (query.trim() === '') return 0;
-  options.handles = slugHandles(query, true) ?? [];
+  if (hasCJK(query)) {
+    // buildKeywordMatch's CJK arm: the terms ANDed, no handle arm; no terms match nothing.
+    options.cjkTerms = cjkTerms(query);
+    if ((options.cjkTerms as unknown[]).length === 0) return 0;
+  } else {
+    options.handles = slugHandles(query, true) ?? [];
+  }
   return Number(await storeCall({ member: 'countKeywordPages' }, () => brain.countKeywordPages(query, options)));
 };
 
@@ -224,7 +215,12 @@ export const searchKeywordPages: StoreMember<[query: string, opts: SearchOpts | 
   async (brain, query, opts, page) => {
     const options = keywordOptions('searchKeywordPages', query, opts);
     if (query.trim() === '') return [];
-    options.handles = slugHandles(query, true) ?? [];
+    if (hasCJK(query)) {
+      options.cjkTerms = cjkTerms(query);
+      if ((options.cjkTerms as unknown[]).length === 0) return [];
+    } else {
+      options.handles = slugHandles(query, true) ?? [];
+    }
     options.limit = wholeCount('searchKeywordPages', page?.limit, 'a page limit');
     options.offset = wholeCount('searchKeywordPages', page?.offset ?? 0, 'a page offset');
     if (page?.after) {
@@ -237,7 +233,6 @@ export const searchKeywordPages: StoreMember<[query: string, opts: SearchOpts | 
     return rows.map(rowToSearchResult);
   };
 
-type Row = Record<string, unknown>;
 
 /**
  * PGLite's keyword arm (pglite-engine.ts searchKeyword): the strict statement over the dash-collapsed query, then the
@@ -257,6 +252,8 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
   options.limit = limit;
   options.innerLimit = Math.min(limit * 3, cap * 3);
   options.offset = offset;
+  // PGLite's CJK branch returns before the strict statement and its retries.
+  if (hasCJK(query)) return searchCjk(brain, 'searchKeyword', query, opts, options, true);
   const rankQuery = opts?.rankQuery ? String(opts.rankQuery) : undefined;
   const call = (match: string, rank: string): Promise<Row[]> =>
     storeCall({ member: 'searchKeyword' }, () => brain.searchKeywordArm(match, rank, options));

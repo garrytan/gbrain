@@ -13,6 +13,9 @@
       "anomalies": [
         "./commands/anomalies.ts"
       ],
+      "apple-contacts": [
+        "./commands/apple-contacts.ts"
+      ],
       "autopilot": [
         "./commands/autopilot.ts"
       ],
@@ -54,6 +57,9 @@
       ],
       "core": [
         "./commands/core.ts"
+      ],
+      "dedupe": [
+        "./commands/dedupe.ts"
       ],
       "diag": [
         "./commands/diag.ts"
@@ -102,6 +108,9 @@
       ],
       "guests": [
         "./commands/guests.ts"
+      ],
+      "identity": [
+        "./commands/identity.ts"
       ],
       "import": [
         "./commands/import.ts",
@@ -196,6 +205,9 @@
       "salience": [
         "./commands/salience.ts"
       ],
+      "secrets": [
+        "./commands/secrets.ts"
+      ],
       "serve": [
         "./core/serve-log.ts",
         "./commands/serve.ts"
@@ -233,9 +245,6 @@
         "./core/eligibility/scan.ts",
         "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
-      ],
-      "waiting": [
-        "./commands/loops.ts"
       ],
       "wakeshift": [
         "./commands/wakeshift.ts"

@@ -8,7 +8,7 @@
  *  - Contract: each member returns the same answer on every engine arm
  *    (PGLite always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts): definition and reference rows, symbol
- *    types, doctor counts, code readiness, qualified names, withdrawal chunks,
+ *    types, doctor counts, code readiness, search's unsealed-page probe, qualified names, withdrawal chunks,
  *    the chunks two deletes leave, contextual-mode candidates and frozen hits.
  *  - Regression: an engine whose read drifts gives a different code-def or
  *    code-refs answer, doctor finding, readiness status, walk candidate,
@@ -213,6 +213,46 @@ describe('engine parity: chunk reads', () => {
       expect(result.current.other).toEqual({ any: true, symbol: false });
       expect(sealed).toEqual({ any: true, symbol: true });
       return { ...result, sealed };
+    },
+  );
+
+  parityTest(
+    'hasUnsealedPages finds a live page below the safe-chunk fence under the source, privacy, type and slug-prefix filters',
+    { methods: ['putPage', 'sealChunks', 'softDeletePage', 'hasUnsealedPages'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const note = (slug: string, frontmatter: Record<string, unknown> = {}): PageInput =>
+        ({ type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter });
+      // A brain whose every page is sealed has nothing below the fence.
+      await engine.putPage('notes/sealed', note('notes/sealed'));
+      await installChunks(engine, 'notes/sealed', [chunk(0, 'sealed body')]);
+      const sealedBrain = await engine.hasUnsealedPages({});
+      // other: one unsealed note under a hard-excluded prefix, one unsealed private note.
+      await engine.putPage('archive/old', note('archive/old'), { sourceId: 'other' });
+      await engine.putPage('notes/secret', note('notes/secret', { visibility: 'private' }), { sourceId: 'other' });
+      // default: an unsealed concept page, and an unsealed page that is deleted.
+      await engine.putPage('concepts/idea', { ...note('concepts/idea'), type: 'concept' });
+      await engine.putPage('notes/gone', note('notes/gone'));
+      await engine.softDeletePage('notes/gone');
+      const result = {
+        sealedBrain,
+        all: await engine.hasUnsealedPages({}),
+        def: await engine.hasUnsealedPages({ sourceId: 'default' }),
+        defNotes: await engine.hasUnsealedPages({ sourceId: 'default', types: ['note'] }),
+        defConcepts: await engine.hasUnsealedPages({ sourceId: 'default', types: ['concept'] }),
+        defNoTypes: await engine.hasUnsealedPages({ sourceId: 'default', types: [] }),
+        other: await engine.hasUnsealedPages({ sourceIds: ['other'] }),
+        otherPublic: await engine.hasUnsealedPages({ sourceIds: ['other'], excludePrivate: true }),
+        otherPublicKept: await engine.hasUnsealedPages({ sourceIds: ['other'], excludePrivate: true, excludeSlugPrefixes: ['archive/'] }),
+        otherKept: await engine.hasUnsealedPages({ sourceIds: ['other'], excludeSlugPrefixes: ['archive/'] }),
+        bothSources: await engine.hasUnsealedPages({ sourceIds: ['default', 'other'], types: ['note'], excludeSlugPrefixes: ['archive/', 'notes/'] }),
+        none: await engine.hasUnsealedPages({ sourceIds: [] }),
+      };
+      expect(result).toEqual({
+        sealedBrain: false, all: true, def: true, defNotes: false, defConcepts: true, defNoTypes: false,
+        other: true, otherPublic: true, otherPublicKept: false, otherKept: true, bothSources: false, none: false,
+      });
+      return result;
     },
   );
 
@@ -426,7 +466,7 @@ describe('engine parity: chunk reads', () => {
         });
       }
       const hits = pages.map(([slug], ord) => ({ source_id: 'default', slug, chunk_id: 0, ord }));
-      // A safe-chunk read refuses on Rust (no chunker-version fence), so the scope turns it off.
+      // The scope turns the chunker-version fence off, so the case reads privacy alone.
       const scope = { excludePrivate: true, requireSafeChunks: false, sourceId: 'default' };
       const read = (access: Parameters<typeof withCallerAccess>[0]) => withCallerAccess(access, async () => ({
         defs: sorted((await engine.findCodeDefinitions('run', scope)).map(r => r.slug)),
@@ -443,6 +483,41 @@ describe('engine parity: chunk reads', () => {
       expect(member.defs).toEqual(['src/open', 'src/readers', 'src/team']);
       expect(granted.frozen).toEqual(['src/open', 'src/private', 'src/readers']);
       return { member, granted, stranger };
+    },
+  );
+
+  parityTest(
+    'code reads, code readiness and frozen hits under a safe-chunk scope serve only pages at or above the chunker-version fence',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks', 'currentCodeChunksExist', 'resolveFrozenHits'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await sealedCode(engine, 'src/fenced', [sym(0, 'function run() { /* fenced */ }', 'run', 'function')]);
+      // Sealed and served, but stamped short of the safe fence: only a safe-chunk read drops them.
+      await sealedCode(engine, 'src/old', [sym(0, 'class Run { /* old */ }', 'run', 'class')]);
+      await engine.setChunkerVersion('src/old', 3);
+      await sealedCode(engine, 'src/old-other', [sym(0, 'function run() { /* old other */ }', 'run', 'function')], 'other');
+      await engine.setChunkerVersion('src/old-other', 3, { sourceId: 'other' });
+      const hits = [['default', 'src/fenced'], ['default', 'src/old'], ['other', 'src/old-other']]
+        .map(([source_id, slug], ord) => ({ source_id, slug, chunk_id: 0, ord }));
+      const read = async (scope: { requireSafeChunks?: boolean; excludePrivate?: boolean }) => ({
+        defs: (await engine.findCodeDefinitions('run', { ...scope, allSources: true })).map(r => `${r.source_id}:${r.slug}`),
+        types: await engine.listSymbolTypesForName('run', { ...scope, allSources: true }),
+        refs: (await engine.findCodeRefChunks('run', { ...scope, allSources: true })).map(r => `${r.source_id}:${r.slug}`),
+        otherReady: await engine.currentCodeChunksExist({ ...scope, sourceId: 'other' }, 'with_symbol'),
+        frozen: sorted((await engine.resolveFrozenHits(hits, scope)).map(r => `${r.source_id}:${r.slug}`)),
+      });
+      const out = {
+        fenced: await read({ requireSafeChunks: true }),
+        // An excludePrivate read asks for safe chunks unless it says otherwise.
+        privateImplied: await read({ excludePrivate: true }),
+        privateOff: await read({ excludePrivate: true, requireSafeChunks: false }),
+        open: await read({}),
+      };
+      expect(out.fenced).toEqual({ defs: ['default:src/fenced'], types: ['function'], refs: ['default:src/fenced'], otherReady: false, frozen: ['default:src/fenced'] });
+      expect(out.privateImplied).toEqual(out.fenced);
+      expect(out.open.frozen).toEqual(['default:src/fenced', 'default:src/old', 'other:src/old-other']);
+      expect(out.privateOff).toEqual(out.open);
+      return out;
     },
   );
 });
@@ -534,7 +609,7 @@ describe('engine parity: owner-only sources on excludePrivate chunk and code rea
 
       const hits = ['default', 'chat', 'vault'].map((source_id, ord) => ({ source_id, slug: 'src/open', chunk_id: 0, ord }));
       const labels = (rows: Array<{ source_id?: string | null; slug: string }>) => sorted(rows.map((r) => `${r.source_id}:${r.slug}`));
-      // A safe-chunk read refuses on Rust (no chunker-version fence), so the scope turns it off.
+      // The scope turns the chunker-version fence off, so the case reads privacy alone.
       const scope = { excludePrivate: true, requireSafeChunks: false };
       const read = () => asNoneAndReader(async () => ({
         defs: labels(await engine.findCodeDefinitions('run', scope)),
@@ -562,6 +637,31 @@ describe('engine parity: owner-only sources on excludePrivate chunk and code rea
       expect(fn.none).toEqual(kept);
       expect(fn.reader).toEqual(kept);
       return { before, closed, fn };
+    },
+  );
+});
+
+describe('engine parity: the safe-chunk fence on getChunks', () => {
+  parityTest(
+    'getChunks with requireSafeChunks reads a page only when its chunker version meets the safe fence, as the import chunk reuse asks',
+    { methods: ['putPage', 'sealChunks', 'setChunkerVersion', 'getChunks'] },
+    async (engine) => {
+      // sealChunks stamps the current chunker version, so each page's version under test is stamped after the seal.
+      const versions: Array<[string, number]> = [['notes/fence-old', 3], ['notes/fence-safe', 4], ['notes/fence-high', 9], ['notes/fence-zero', 0]];
+      for (const [slug] of versions) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+        await installChunks(engine, slug, [chunk(0, `${slug} first`), chunk(1, `${slug} second`)]);
+      }
+      for (const [slug, version] of versions) await engine.setChunkerVersion(slug, version, { sourceId: 'default' });
+      const read = async (slug: string, requireSafeChunks?: boolean) =>
+        (await engine.getChunks(slug, { sourceId: 'default', includeEmbedding: true, requireSafeChunks })).map(c => `${c.chunk_index}:${c.chunk_text}`);
+      const out: Record<string, unknown> = {};
+      for (const slug of ['notes/fence-old', 'notes/fence-safe', 'notes/fence-high', 'notes/fence-zero', 'notes/missing']) {
+        out[slug] = { safe: await read(slug, true), plain: await read(slug, false), unset: await read(slug) };
+      }
+      expect(out['notes/fence-old']).toEqual({ safe: [], plain: ['0:notes/fence-old first', '1:notes/fence-old second'], unset: ['0:notes/fence-old first', '1:notes/fence-old second'] });
+      expect((out['notes/fence-safe'] as { safe: string[] }).safe).toEqual(['0:notes/fence-safe first', '1:notes/fence-safe second']);
+      return out;
     },
   );
 });

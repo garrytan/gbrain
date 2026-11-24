@@ -5,7 +5,7 @@
  *  - Contract: after `gbrain import` of a markdown brain, repeated sweeps until nothing is left extract the same links
  *    and timeline entries on every engine arm, reconcile the facts fence the same way (the same fact rows on the
  *    fenced page, the same held row left on the holding page), and skip no pass with an error reason. No call the
- *    sweep makes refuses for want of raw SQL, except the one named Rust known stop (RUST_KNOWN_STOP, lane 3's).
+ *    sweep makes refuses for want of raw SQL or a typed capability, on any engine.
  *  - Regression: an engine that refuses one of the sweep's candidate reads makes the sweep skip the pass
  *    (`facts_fence_error`, `links_timeline_error`) and report success, so the brain never gains links or timeline
  *    entries and every graph read (backlinks, timeline, traverse) answers empty.
@@ -23,7 +23,7 @@ import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { runMaintenanceSweep } from '../../src/core/sweep.ts';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -41,16 +41,6 @@ const FENCED_BODY = [
 ].join('\n');
 const FENCED_TIMELINE = '- **2025-02-03** | joined [[companies/widget-co]] as an advisor';
 
-/**
- * The one raw-SQL stop left in pass 1 on Rust (owner: lane 3, cut 1, src/core/page-state/projections.ts). The extract
- * receipt write (receipt-writer.ts:239) calls resealSafeChunks: installPageProjection (its first raw statement is the
- * planProjectionKeep read) plus the pending-count read. Both still run through executeRaw, so the receipt write
- * refuses and extract_facts logs it and goes on. Whichever of sweep-facts-rust and lane 3's cut 1 lands second
- * removes this pin; the case must then be equal on all three arms.
- */
-const RUST_KNOWN_STOP = { member: 'resealSafeChunks', firstFrame: 'planProjectionKeep',
-  message: "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran." };
-
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
   return new Proxy(engine, {
@@ -65,7 +55,7 @@ function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine 
         const result = (value as (...a: unknown[]) => unknown).apply(target, args);
         if (!(result instanceof Promise)) return result;
         return result.catch((error: unknown) => {
-          if (isCapabilityRefusal(error, 'raw_sql')) refusals.push(error);
+          if (isCapabilityRefusal(error, 'raw_sql') || (error as { code?: unknown })?.code === 'engine_capability_missing') refusals.push(error);
           throw error;
         });
       };
@@ -94,7 +84,7 @@ describe('engine parity: maintenance sweep reads', () => {
   parityTest(
     'sweep --once after import extracts every link and timeline entry and reconciles the facts fence, with no error skip',
     { methods: ['putPage', 'insertFacts', 'getLinks', 'getTimeline', 'listFactsForPage', 'listHeldFactRows'], timeout: 120_000 },
-    async (engine, backend) => {
+    async (engine) => {
       const pages = fixturePages();
       await importAll(engine, pages);
       await engine.putPage('people/grace-example', { type: 'person', title: 'Grace Example', compiled_truth: FENCED_BODY,
@@ -118,14 +108,7 @@ describe('engine parity: maintenance sweep reads', () => {
 
       const errorSkips = [...skipped.keys()].filter(reason => reason.endsWith('_error')).sort();
       expect(errorSkips).toEqual([]);
-      if (backend === 'rust') {
-        // The known stop: every refusal is the receipt write's resealSafeChunks call (see RUST_KNOWN_STOP).
-        expect(refusals.length).toBeGreaterThan(0);
-        expect([...new Set(refusals.map(e => (e as Error).message))]).toEqual([RUST_KNOWN_STOP.message]);
-        expect(String((refusals[0] as Error).stack)).toContain(RUST_KNOWN_STOP.firstFrame);
-      } else {
-        expect(refusals.map(e => (e as Error).message)).toEqual([]);
-      }
+      expect(refusals.map(e => (e as Error).message)).toEqual([]);
       expect(facts).toBeGreaterThan(0);
 
       const stored: Record<string, { links: string[]; timeline: string[] }> = {};
@@ -144,8 +127,6 @@ describe('engine parity: maintenance sweep reads', () => {
       expect(factRows).toEqual(['1|Grace advises Widget Co|fact|world|chat|active']);
       const held = (await engine.listHeldFactRows('default', '30')).map(r => `${r.entity_slug}|${r.fact}`);
       expect(held).toEqual(['people/grace-example|Grace mentors founders']);
-      // Every other result above holds on Rust too; the arm still counts as stopped until the pin is removed.
-      if (backend === 'rust') throw refusals[0];
       return { links, timeline, facts, linkTotal, timelineTotal, stored, factRows, held };
     },
   );
@@ -180,6 +161,42 @@ describe('engine parity: maintenance sweep reads', () => {
       expect(linkTotal).toBeGreaterThan(0);
       expect(timelineTotal).toBeGreaterThan(0);
       return { links, timeline, linkTotal, timelineTotal, sweeps, stored };
+    },
+  );
+
+  // The links pass's page refs read every source, skip a soft-deleted page, and read a page once when its slug is named
+  // twice (one bound array, not chunks of 200). The caller builds sets and maps, so the order is no contract.
+  parityTest(
+    'listPageRefsForSlugs reads the live pages of every source once for a slug named twice, and nothing for an empty list',
+    { methods: ['putPage', 'softDeletePage', 'getPage', 'listPageRefsForSlugs'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      const put = (slug: string, sourceId: string, type: string) => engine.putPage(slug,
+        { type, title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter: {} }, { sourceId });
+      await put('people/a-example', 'default', 'person');
+      await put('people/a-example', 'other', 'person');
+      await put('companies/widget-co', 'default', 'company');
+      await put('notes/gone', 'default', 'note');
+      await engine.softDeletePage('notes/gone');
+      // The revision is a fresh id on each arm: compare it to the page's own, not across arms.
+      const refs = async (slugs: string[]) => {
+        const out: string[] = [];
+        for (const r of await engine.listPageRefsForSlugs(slugs)) {
+          const page = await engine.getPage(r.slug, { sourceId: r.source_id });
+          out.push(`${r.source_id}|${r.slug}|${r.type}|${r.knowledge_revision === page?.knowledge_revision}`);
+        }
+        return out.sort();
+      };
+      // More than 200 slugs, with `people/a-example` named on each side of slug 200 (where the old chunks split).
+      const filler = Array.from({ length: 220 }, (_, i) => `missing/x-${i}`);
+      const slugs = ['people/a-example', 'companies/widget-co', ...filler.slice(0, 198), 'people/a-example', 'notes/gone',
+        ...filler.slice(198)];
+      const named = await refs(slugs);
+      const empty = await engine.listPageRefsForSlugs([]);
+      expect(named).toEqual(['default|companies/widget-co|company|true', 'default|people/a-example|person|true',
+        'other|people/a-example|person|true']);
+      expect(empty).toEqual([]);
+      return { named, empty, sent: slugs.length };
     },
   );
 });

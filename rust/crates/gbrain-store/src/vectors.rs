@@ -28,34 +28,19 @@ use crate::embeddings::{
     StoredVector, scan_chunk_vectors, scan_take_vectors, text_hash, vector_generation,
 };
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy};
+use crate::keyword::{DateBound, DateWindow, frontmatter_holds, parse_trust_floor};
 use crate::kv::{KvRead, KvWrite};
 use crate::pages::{PageRecord, read_page_by_id};
 use crate::sources::read_source;
 use crate::takes::{TakeRecord, all_takes, real_out};
+use crate::trust::{TrustTier, activation_suppressed};
 use crate::{Store, env::iso};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-/// The page policy test of the scan. This line has no owner-only sources yet, so the test is the
-/// plain page policy (`facts::page_hidden`); the store line that adds owner-only sources replaces
-/// this with its cached owner-only read.
-#[derive(Debug, Default)]
-struct OwnerOnlyCache(());
-
-impl OwnerOnlyCache {
-    fn page_hidden(
-        &mut self,
-        read: &dyn KvRead,
-        page: &PageRecord,
-        policy: &PrivacyPolicy,
-    ) -> Result<bool> {
-        page_hidden(read, page, policy)
-    }
-}
 
 /// `limit` default of `searchVector` (`clampSearchLimit(opts.limit, 20, cap)`).
 const DEFAULT_VECTOR_LIMIT: u64 = 20;
@@ -88,6 +73,20 @@ pub struct VectorSearchOptions {
     pub page_type: Option<String>,
     pub types: Option<Vec<String>>,
     pub exclude_slugs: Option<Vec<String>>,
+    /// `frontmatterWhereClauses`: every entry must hold; an entry holds when the top-level field
+    /// equals one of its values or is a list holding one (`keyword::frontmatter_holds`).
+    #[serde(rename = "where")]
+    pub where_fields: Vec<(String, Vec<Value>)>,
+    /// `afterDate` / `beforeDate` with their `*Inclusive` flags, the bound in UTC microseconds
+    /// (`search-filters.ts` `dateMicros`).
+    pub after_date: Option<DateBound>,
+    pub before_date: Option<DateBound>,
+    /// `minTrust`: the trust floor (`trustFloorSql(p)`), a page's stamped tier at or above it.
+    /// `None` or empty keeps every tier; a name that is no tier refuses.
+    pub min_trust: Option<String>,
+    /// `suppressFlagged`: drop a page at or below `agent_written` that holds a `flag` receipt in an
+    /// activation reason family (`activationSuppressedSql`).
+    pub suppress_flagged: bool,
     /// `resolveHardExcludes(exclude_slug_prefixes, include_slug_prefixes)`. Absent: the defaults.
     pub hard_excludes: Option<Vec<String>>,
     pub detail: Option<String>,
@@ -118,6 +117,12 @@ pub struct TakesVectorOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide takes of soft-deleted and quarantined pages.
     pub eligible_only: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the take's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a take `activationSuppressedSql('takes')` flags.
+    pub suppress_flagged: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -182,6 +187,13 @@ pub(crate) struct VectorCache {
 }
 
 impl VectorCache {
+    /// Drops the cached index. A transaction's store calls it when a savepoint or the transaction
+    /// rolls back: the vector generation goes back with the dropped writes, so the next write
+    /// would reach a cached generation number again with other vectors.
+    pub(crate) fn clear(&self) {
+        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
     /// The index of `read`'s snapshot, from the cache when its generation matches.
     pub(crate) fn index(&self, read: &dyn KvRead) -> Result<Arc<VectorIndex>> {
         let generation = vector_generation(read)?;
@@ -290,7 +302,8 @@ fn js_number(value: f64) -> String {
     }
 }
 
-/// pgvector's parse of the query vector: at least one dimension, every value finite.
+/// pgvector's parse of the query vector: at least one dimension, every value finite and within float4 range (pgvector
+/// reads each value as a float4 and refuses one out of range; a plain cast would turn it into an infinity).
 pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
     if query.is_empty() {
         return Err(StoreError::invalid("vector must have at least 1 dimension"));
@@ -301,6 +314,12 @@ pub(crate) fn check_query(query: &[f64]) -> Result<Vec<f32>> {
         }
         if value.is_infinite() {
             return Err(StoreError::invalid("infinite value not allowed in vector"));
+        }
+        // Rounds as strtof does: a value that rounds past f32::MAX overflows (ERANGE in pgvector).
+        if (*value as f32).is_infinite() {
+            return Err(StoreError::invalid(format!(
+                "\"{value}\" is out of range for type vector"
+            )));
         }
     }
     Ok(query.iter().map(|v| *v as f32).collect())
@@ -376,12 +395,35 @@ fn source_factor(page: &PageRecord, factors: &[(String, f64)]) -> f64 {
         .map_or(1.0, |(_, factor)| *factor)
 }
 
+/// The page filters of a read parsed once before the scan.
+struct ScanBounds {
+    hard_excludes: Vec<String>,
+    dates: DateWindow,
+    floor: Option<TrustTier>,
+}
+
+impl ScanBounds {
+    fn parse(options: &VectorSearchOptions) -> Result<Self> {
+        let hard_excludes = options.hard_excludes.clone().unwrap_or_else(|| {
+            DEFAULT_HARD_EXCLUDES
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
+        Ok(Self {
+            hard_excludes,
+            dates: DateWindow::parse(options.after_date.as_ref(), options.before_date.as_ref())?,
+            floor: parse_trust_floor(options.min_trust.as_deref())?,
+        })
+    }
+}
+
 /// The page-level filters of the scan; `archived` caches each source's archive flag.
 fn page_passes(
     read: &dyn KvRead,
     page: &PageRecord,
     options: &VectorSearchOptions,
-    hard_excludes: &[String],
+    bounds: &ScanBounds,
     archived: &mut HashMap<String, bool>,
     owner_only: &mut OwnerOnlyCache,
 ) -> Result<bool> {
@@ -404,25 +446,43 @@ fn page_passes(
             .exclude_slugs
             .as_ref()
             .is_some_and(|slugs| slugs.contains(&page.slug))
-        || hard_excludes
+        || !bounds.dates.admits(page)
+        || bounds
+            .hard_excludes
             .iter()
             .any(|p| !p.is_empty() && page.slug.starts_with(p.as_str()))
         || options
             .source_ids
             .as_ref()
             .is_some_and(|ids| !ids.contains(&page.source_id))
-        // A store page that records no version was chunked by this store's chunker, which seals (as
-        // `chunk_queries` reads it); only a recorded version below the safe fence chunker is unsafe.
+        || !options
+            .where_fields
+            .iter()
+            .all(|(key, values)| frontmatter_holds(&page.frontmatter, key, values))
+        // `safeChunksFilter` is `chunker_version >= 4`: a page that records no version is not safe (the SQL
+        // comparison is NULL), the same rule as the keyword gate and the relational evidence gate.
         || (options.require_safe_chunks
-            && page
+            && !page
                 .chunker_version
-                .is_some_and(|v| v < SAFE_FENCE_CHUNKER_VERSION));
+                .is_some_and(|v| v >= SAFE_FENCE_CHUNKER_VERSION));
     if hidden {
         return Ok(false);
     }
     if let Some(policy) = &options.exclude_private
         && owner_only.page_hidden(read, page, policy)?
     {
+        return Ok(false);
+    }
+    // `pageEligibleSql(p)`: the trust floor, then the flagged-page filter.
+    let tier = TrustTier::stored(page.trust_tier.as_deref());
+    if bounds
+        .floor
+        .as_ref()
+        .is_some_and(|floor| tier.rank() < floor.rank())
+    {
+        return Ok(false);
+    }
+    if options.suppress_flagged && activation_suppressed(read, "pages", page.id, tier)? {
         return Ok(false);
     }
     let is_archived = match archived.get(&page.source_id) {
@@ -493,12 +553,7 @@ fn search_chunks(
     let limit = options.limit.unwrap_or(DEFAULT_VECTOR_LIMIT);
     let offset = resolve_offset(&options.offset, limit)?;
     let limit = limit as usize;
-    let hard_excludes: Vec<String> = options.hard_excludes.clone().unwrap_or_else(|| {
-        DEFAULT_HARD_EXCLUDES
-            .iter()
-            .map(|s| s.to_string())
-            .collect()
-    });
+    let bounds = ScanBounds::parse(options)?;
     let query_norm_sq = dot(&query, &query);
     // Read once, and only when the guard needs it.
     let mut migrating: Option<bool> = None;
@@ -515,7 +570,7 @@ fn search_chunks(
             read,
             &page,
             options,
-            &hard_excludes,
+            &bounds,
             &mut archived,
             &mut owner_only,
         )? {
@@ -624,12 +679,28 @@ fn search_takes(
     query: &[f64],
     options: &TakesVectorOptions,
 ) -> Result<Vec<Value>> {
+    // Postgres refuses a NUL byte in a text parameter before it runs the statement.
+    let texts: Vec<(&str, &str)> = [
+        ("takesHoldersAllowList", &options.allow_list),
+        ("sourceIds", &options.source_ids),
+    ]
+    .into_iter()
+    .flat_map(|(name, list)| {
+        list.iter()
+            .flatten()
+            .flatten()
+            .map(move |v| (name, v.as_str()))
+    })
+    .collect();
+    crate::links::no_nul("searchTakesVector", &texts)?;
     let query = check_query(query)?;
     let limit = options.limit.unwrap_or(DEFAULT_TAKES_LIMIT) as usize;
     if index.takes.is_empty() {
         return Ok(Vec::new());
     }
     let query_norm_sq = dot(&query, &query);
+    let trust =
+        crate::trust::TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
     let mut takes: HashMap<u64, TakeRecord> =
         all_takes(read)?.into_iter().map(|t| (t.id, t)).collect();
     let mut pages: HashMap<u64, Option<PageRecord>> = HashMap::new();
@@ -657,6 +728,14 @@ fn search_takes(
         {
             continue;
         }
+        if let Some(policy) = &options.exclude_private
+            && crate::facts::page_hidden(read, page, policy)?
+        {
+            continue;
+        }
+        if !trust.admits(read, "takes", take.id, take.trust.tier())? {
+            continue;
+        }
         if stored.vector.len() != query.len() {
             return Err(dims_mismatch(query.len(), stored.vector.len()));
         }
@@ -666,7 +745,12 @@ fn search_takes(
         hits.push((distance, take, slug));
     }
     // `ORDER BY embedding <=> q`: nearest first, NaN last; equal distances by take id.
-    hits.sort_by(|(da, a, _), (db, b, _)| da.total_cmp(db).then(a.id.cmp(&b.id)));
+    hits.sort_by(|(da, a, _), (db, b, _)| {
+        da.is_nan()
+            .cmp(&db.is_nan())
+            .then(da.total_cmp(db))
+            .then(a.id.cmp(&b.id))
+    });
     Ok(hits
         .iter()
         .take(limit)
@@ -743,6 +827,19 @@ mod tests {
     use crate::sources::SourceInput;
     use crate::takes::TakeInput;
     use crate::test_support::store;
+
+    #[test]
+    fn a_query_value_beyond_float4_range_is_refused_not_turned_into_infinity() {
+        // pgvector parses each value as a float4 and refuses one out of its range; a cast would make it infinite.
+        for value in [1e39, -1e39, f64::from(f32::MAX) * 2.0] {
+            let error = check_query(&[0.5, value]).expect_err("out of range");
+            assert_eq!(error.code, crate::error::INVALID_ARGUMENT, "{value}");
+        }
+        assert_eq!(
+            check_query(&[f64::from(f32::MAX), f64::from(f32::MIN)]).unwrap(),
+            vec![f32::MAX, f32::MIN]
+        );
+    }
 
     const MODEL: &str = "openai:text-embedding-3-large";
 
@@ -1042,19 +1139,29 @@ mod tests {
             .search_vector(&q(&axis(0, 4)), &opts(json!({"detail": "low"})))
             .unwrap();
         assert!(names(&low).contains(&"d-multi#0 0.0000".to_string()));
-        // A page that records no version was chunked by this store and counts as safe; a page recorded as
-        // chunked before the safe fence chunker drops out when safe chunks are required.
+        // Safe readers see a page only when its recorded chunker is at or above the safe fence chunker. A page
+        // that records no version (a store written before chunks were stamped) is not certified safe: SQL's
+        // `chunker_version >= 4` is NULL, and the keyword gate refuses it too.
         assert_eq!(
             top(json!({"require_safe_chunks": true, "limit": 1})),
             ["a-exact"]
         );
-        s.write(|tx| {
-            let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
-            p.chunker_version = Some(3);
-            crate::pages::write_page(tx, &p)?;
-            Ok(())
-        })
-        .unwrap();
+        let stamp = |version: Option<i16>| {
+            s.write(|tx| {
+                let mut p = crate::pages::read_page(&*tx, "default", "a-exact")?.unwrap();
+                p.chunker_version = version;
+                crate::pages::write_page(tx, &p)?;
+                Ok(())
+            })
+            .unwrap();
+        };
+        stamp(None);
+        assert_eq!(
+            top(json!({"require_safe_chunks": true, "limit": 1})),
+            ["f-srcb"]
+        );
+        // A page recorded as chunked before the safe fence chunker drops out too.
+        stamp(Some(3));
         assert_eq!(
             top(json!({"require_safe_chunks": true, "limit": 1})),
             ["f-srcb"]
@@ -1110,7 +1217,7 @@ mod tests {
         };
         let all = ["a-exact", "m-visibility", "n-access", "o-public", "p-atom"];
         assert_eq!(top(json!({"limit": 5})), all);
-        let policy = json!({"honorAliases": true, "entityPrivacy": true});
+        let policy = json!({"honorAliases": true, "entityPrivacy": true, "ownerOnly": "fn"});
         // The limit counts visible pages only: the hidden pages tie at the top score and take no slot.
         assert_eq!(
             top(json!({"limit": 3, "exclude_private": policy})),
@@ -1125,13 +1232,14 @@ mod tests {
             ["o-public"]
         );
         // Without the alias keys only `visibility` (and a derived page's default) hides a page.
-        let visibility_only = json!({"honorAliases": false, "entityPrivacy": true});
+        let visibility_only =
+            json!({"honorAliases": false, "entityPrivacy": true, "ownerOnly": "fn"});
         assert_eq!(
             top(json!({"limit": 3, "exclude_private": visibility_only})),
             ["a-exact", "n-access", "o-public"]
         );
         // With the privacy part of the entity gate relaxed, only the member-access part applies: nothing here is hidden.
-        let relaxed = json!({"honorAliases": true, "entityPrivacy": false});
+        let relaxed = json!({"honorAliases": true, "entityPrivacy": false, "ownerOnly": "fn"});
         assert_eq!(top(json!({"limit": 5, "exclude_private": relaxed})), all);
         // `null` (excludePrivate off) hides nothing, and the policy composes with the other filters.
         assert_eq!(top(json!({"limit": 5, "exclude_private": null})), all);
@@ -1142,6 +1250,340 @@ mod tests {
         assert_eq!(
             top(json!({"exclude_private": policy, "exclude_slugs": ["a-exact"], "limit": 2})),
             ["o-public", "d-multi"]
+        );
+    }
+
+    /// The owner-only part of the page policy: a page of an owner-only source never takes a result slot, nor (under the
+    /// lineage form) a concept synthesized from one; under the closed form no page is served while the brain holds an
+    /// owner-only source. A relaxed privacy part keeps it.
+    #[test]
+    fn exclude_private_hides_owner_only_pages_and_what_is_derived_from_them() {
+        let s = corpus();
+        let source: crate::sources::SourceInput =
+            serde_json::from_value(json!({"id": "vault", "config": {"owner_only": true}})).unwrap();
+        s.upsert_source(&source).unwrap();
+        page(&s, "vault", "q-vault", &[axis(0, 4)], json!({}));
+        let derived = json!({"frontmatter": {"synthesized_by": "dream", "visibility": "world"}, "type": "concept"});
+        page(
+            &s,
+            "default",
+            "r-from-vault",
+            &[axis(0, 4)],
+            derived.clone(),
+        );
+        page(&s, "default", "s-from-open", &[axis(0, 4)], derived);
+        let link = |from: &str, to: &str, to_source: &str| {
+            let options = crate::links::AddLinkOptions {
+                link_type: Some("synthesized_from".into()),
+                link_source: Some("concept-provenance".into()),
+                to_source_id: Some(to_source.into()),
+                ..Default::default()
+            };
+            s.add_link(from, to, &options).unwrap();
+        };
+        link("r-from-vault", "q-vault", "vault");
+        link("s-from-open", "a-exact", "default");
+        let top = |form: &str, privacy: bool| -> Vec<String> {
+            let policy = json!({"honorAliases": true, "entityPrivacy": privacy, "ownerOnly": form});
+            let o = opts(json!({"limit": 20, "exclude_private": policy}));
+            let rows = s.search_vector(&q(&axis(0, 4)), &o).unwrap();
+            let mut slugs: Vec<String> = rows
+                .iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect();
+            slugs.sort();
+            slugs
+        };
+        let plain = opts(json!({"limit": 20}));
+        let every = s.search_vector(&q(&axis(0, 4)), &plain).unwrap();
+        let has = |slug: &str| every.iter().any(|r| r["slug"] == slug);
+        assert!(has("q-vault") && has("r-from-vault"));
+        for privacy in [true, false] {
+            let served = top("fn", privacy);
+            assert!(!served.iter().any(|x| x == "q-vault" || x == "r-from-vault"));
+            assert!(served.iter().any(|x| x == "a-exact"));
+            assert!(served.iter().any(|x| x == "s-from-open"));
+            assert!(top("closed", privacy).is_empty());
+        }
+    }
+
+    /// `where` (`frontmatterWhereClauses`): every key holds, a key's values OR together, a list
+    /// field holds a value it contains, and the filter applies before the limit.
+    #[test]
+    fn where_keeps_the_pages_whose_frontmatter_holds_every_key() {
+        let s = corpus();
+        let fm = |v: Value| json!({ "frontmatter": v });
+        page(
+            &s,
+            "default",
+            "m-draft",
+            &[axis(0, 4)],
+            fm(json!({"status": "draft"})),
+        );
+        page(
+            &s,
+            "default",
+            "n-listed",
+            &[axis(0, 4)],
+            fm(json!({"status": ["active", "x"]})),
+        );
+        page(
+            &s,
+            "default",
+            "o-ranked",
+            &[axis(0, 4)],
+            fm(json!({"status": "active", "rank": 3})),
+        );
+        page(
+            &s,
+            "default",
+            "p-pinned",
+            &[axis(0, 4)],
+            fm(json!({"pinned": true})),
+        );
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let all = ["a-exact", "m-draft", "n-listed", "o-ranked", "p-pinned"];
+        assert_eq!(top(json!({"limit": 5})), all);
+        assert_eq!(top(json!({"limit": 5, "where": []})), all);
+        assert_eq!(
+            top(json!({"where": [["status", ["active"]]]})),
+            ["n-listed", "o-ranked"]
+        );
+        // The limit counts kept pages only: the dropped pages tie at the top score and take no slot.
+        assert_eq!(
+            top(json!({"limit": 1, "where": [["status", ["active"]]]})),
+            ["n-listed"]
+        );
+        assert_eq!(
+            top(json!({"limit": 1, "offset": 1, "where": [["status", ["active"]]]})),
+            ["o-ranked"]
+        );
+        assert_eq!(
+            top(json!({"where": [["status", ["draft", "x"]]]})),
+            ["m-draft", "n-listed"]
+        );
+        // The member sends a string's numeric and boolean readings beside it.
+        assert_eq!(top(json!({"where": [["rank", ["3", 3]]]})), ["o-ranked"]);
+        assert_eq!(
+            top(json!({"where": [["rank", ["3"]]]})),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            top(json!({"where": [["pinned", ["true", true]]]})),
+            ["p-pinned"]
+        );
+        assert_eq!(
+            top(json!({"where": [["status", ["active"]], ["rank", [3]]]})),
+            ["o-ranked"]
+        );
+        assert_eq!(
+            top(json!({"where": [["missing", ["x"]]]})),
+            Vec::<String>::new()
+        );
+    }
+
+    /// `afterDate` / `beforeDate`: a page is dated by its effective date, else its `updated_at`;
+    /// a bound is strict unless inclusive, and applies before the limit.
+    #[test]
+    fn date_bounds_keep_the_pages_dated_inside_them() {
+        let s = corpus();
+        let on = |iso: &str| json!({ "effective_date": iso });
+        page(
+            &s,
+            "default",
+            "m-edge",
+            &[axis(0, 4)],
+            on("2026-02-01T00:00:00Z"),
+        );
+        page(
+            &s,
+            "default",
+            "n-late",
+            &[axis(0, 4)],
+            on("2026-05-10T00:00:00Z"),
+        );
+        page(
+            &s,
+            "default",
+            "o-old",
+            &[axis(0, 4)],
+            on("2019-07-04T00:00:00Z"),
+        );
+        // 2026-02-01T00:00:00Z in microseconds.
+        let edge = "1769904000000000";
+        let bound = |inclusive: bool| json!({ "micros": edge, "inclusive": inclusive });
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let exclude = json!(["a-exact", "b-tie1", "c-tie2", "d-multi", "e-opposite"]);
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "after_date": bound(false)})),
+            ["n-late"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "after_date": bound(true)})),
+            ["m-edge", "n-late"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "before_date": bound(false)})),
+            ["o-old"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "before_date": bound(true)})),
+            ["m-edge", "o-old"]
+        );
+        // The limit counts kept pages only.
+        assert_eq!(
+            top(json!({"limit": 1, "before_date": bound(false), "exclude_slugs": ["a-exact"]})),
+            ["o-old"]
+        );
+        // The corpus pages have no effective date: their `updated_at` (now) dates them.
+        assert_eq!(
+            top(json!({"limit": 3, "after_date": bound(true)})),
+            ["a-exact", "m-edge", "n-late"]
+        );
+        let err = s
+            .search_vector(
+                &q(&axis(0, 4)),
+                &opts(json!({"after_date": {"micros": "soon", "inclusive": false}})),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("afterDate"), "{err}");
+    }
+
+    /// A page written in a transaction that declares `tier` as the writer's trust tier.
+    fn page_at(s: &Store, tier: &str, slug: &str) {
+        let tx = s.begin_transaction(false).unwrap();
+        let names = ["gbrain.write_trust_tier", "gbrain.write_origin"].map(String::from);
+        tx.apply_write_trust(
+            &names,
+            &[tier.to_string(), r#"{"channel":"test"}"#.to_string()],
+        )
+        .unwrap();
+        page(&tx, "default", slug, &[axis(0, 4)], json!({}));
+        tx.commit_transaction().unwrap();
+    }
+
+    /// `minTrust` (`trustFloorSql`): a page's stamped tier at or above the floor, applied before
+    /// the limit; an empty floor keeps every tier and a name that is no tier refuses.
+    #[test]
+    fn min_trust_keeps_the_pages_at_or_above_the_floor() {
+        let s = corpus();
+        page_at(&s, "operator_curated", "m-curated");
+        page_at(&s, "tool_observed", "n-observed");
+        page_at(&s, "agent_written", "o-agent");
+        page_at(&s, "external_untrusted", "p-outside");
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let exclude = json!(["a-exact", "b-tie1", "c-tie2", "d-multi", "e-opposite"]);
+        let tiered = ["m-curated", "n-observed", "o-agent", "p-outside"];
+        assert_eq!(top(json!({"exclude_slugs": exclude})), tiered);
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": ""})),
+            tiered
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": "external_untrusted"})),
+            tiered
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": "tool_observed"})),
+            ["m-curated", "n-observed"]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "min_trust": "agent_written"})),
+            ["m-curated", "n-observed", "o-agent"]
+        );
+        // The limit counts kept pages only: the dropped page ties at the top score and takes no slot.
+        assert_eq!(
+            top(
+                json!({"limit": 1, "offset": 1, "exclude_slugs": ["a-exact"], "min_trust": "operator_curated"})
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            top(
+                json!({"limit": 1, "exclude_slugs": ["a-exact", "m-curated"], "min_trust": "tool_observed"})
+            ),
+            ["n-observed"]
+        );
+        let err = s
+            .search_vector(&q(&axis(0, 4)), &opts(json!({"min_trust": "trusted"})))
+            .unwrap_err();
+        assert!(err.to_string().contains("names no trust tier"), "{err}");
+    }
+
+    /// A `flag` receipt on a page, in the given reason families.
+    fn flag(s: &Store, slug: &str, families: &[&str]) {
+        let families: Vec<String> = families.iter().map(|f| f.to_string()).collect();
+        let fields = crate::trust::write_gate::ReceiptFields {
+            content_hash: "h1".into(),
+            tier: "agent_written".into(),
+            detector_version: 1,
+            verdict: "flag".into(),
+            reason_families: families.clone(),
+            reasons: families,
+            detector_error: false,
+            request_id: None,
+        };
+        assert!(
+            s.upsert_page_write_gate_receipt("default", slug, fields)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// `suppressFlagged` (`activationSuppressedSql`): a page at or below `agent_written` with a flag
+    /// receipt in an activation family drops before the limit; a flag in another family, or on a
+    /// page above `agent_written`, suppresses nothing.
+    #[test]
+    fn suppress_flagged_drops_the_flagged_pages_at_or_below_agent_written() {
+        let s = corpus();
+        page_at(&s, "operator_curated", "m-curated-flagged");
+        page_at(&s, "agent_written", "n-agent-flagged");
+        page_at(&s, "agent_written", "o-agent-other");
+        page_at(&s, "agent_written", "p-agent");
+        flag(&s, "m-curated-flagged", &["override"]);
+        flag(&s, "n-agent-flagged", &["exfiltration"]);
+        flag(&s, "o-agent-other", &["other"]);
+        let top = |o: Value| -> Vec<String> {
+            let rows = s.search_vector(&q(&axis(0, 4)), &opts(o)).unwrap();
+            rows.iter()
+                .map(|r| r["slug"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let exclude = json!(["a-exact", "b-tie1", "c-tie2", "d-multi", "e-opposite"]);
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude})),
+            [
+                "m-curated-flagged",
+                "n-agent-flagged",
+                "o-agent-other",
+                "p-agent"
+            ]
+        );
+        assert_eq!(
+            top(json!({"exclude_slugs": exclude, "suppress_flagged": true})),
+            ["m-curated-flagged", "o-agent-other", "p-agent"]
+        );
+        // The limit counts kept pages only: the suppressed page takes no slot.
+        assert_eq!(
+            top(
+                json!({"limit": 1, "exclude_slugs": ["a-exact", "m-curated-flagged"], "suppress_flagged": true})
+            ),
+            ["o-agent-other"]
         );
     }
 

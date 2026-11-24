@@ -43,6 +43,15 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
+
+/** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
+export const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
+/** An observation with the same dedup key as `f` once its provenance is restored (the ontology unique index). */
+export const DUPLICATE_SQL = (f: string) => `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=${f}.source_id AND d.entity_slug=${f}.entity_slug
+  AND d.dimension=${f}.dimension AND d.value_hash=${f}.value_hash AND d.source_markdown_slug=${f}.source
+  AND d.valid_from=${f}.valid_from AND d.id<>${f}.id)`;
 
 export interface OntologyFactCandidate {
   id: number;
@@ -127,6 +136,8 @@ export const ontologyFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { fact, hash, last } = entry as FactItem;
+    // The Rust engine refuses restoreOntologyFact, so a Rust brain stops here by name, before the managed write records intent.
+    requireRawSql(ctx.engine, 'repair ontology-facts fact write', { capability: 'facts' });
     const restore = (tx: BrainEngine) => tx.restoreOntologyFact({ id: fact.id, source_id: fact.source_id, row_num: fact.row_num, page: fact.page, expired_at: fact.expired_at });
     const keys = [...new Set([fact.entity_slug, ...(fact.page ? [fact.page] : [])])];
     const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', fact.entity_slug, keys, restore);

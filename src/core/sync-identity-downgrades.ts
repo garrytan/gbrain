@@ -16,14 +16,14 @@
  */
 import type { BrainEngine } from './engine.ts';
 import { isConnectorSourceKind } from './persistence/connector-identity.ts';
-import { getWorktreeBinding } from './persistence/ownership.ts';
-import { readDatabaseOnlyActivatedSources } from './persistence/unbound-source.ts';
+import { autoClaimsUnboundSource } from './persistence/unbound-source.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
 import { canonicalOriginPage, pickCanonicalOrigin } from './persistence/origin-guard.ts';
 import { resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason } from './sync.ts';
 
-export const IDENTITY_DOWNGRADE_OP = 'sync-identity-downgrade';
+import { IDENTITY_DOWNGRADE_OP } from './persistence/sync-status-sql.ts';
+export { IDENTITY_DOWNGRADE_OP };
 
 export interface IdentityDowngrade extends DowngradedRename {
   source_id: string;
@@ -39,19 +39,21 @@ export interface IdentityDowngrade extends DowngradedRename {
   restore_available?: boolean;
 }
 
-type RestoreProbeEngine = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'kind'>;
+type RestoreProbeEngine = Pick<BrainEngine, 'getSource' | 'getWorktreeBinding' | 'getConfig' | 'kind' | 'readIdentityDowngradeRows'>;
 
 /**
  * Whether a restore of a page that came from a canonical file can be admitted on this source, by the rule page writes
- * follow (decideUnboundWrite): a bound source, a connector source, a source with no checkout, or a PGLite source not
- * activated database-only can; an unbound Postgres source with a checkout refuses `owner_unavailable`, so no surface
- * offers the restore there.
+ * follow (decideUnboundWrite): a bound source, a connector source, a source with no checkout, or a single-process
+ * engine's source not activated database-only can; an unbound Postgres source with a checkout refuses
+ * `owner_unavailable`, so no surface offers the restore there. It reads through the typed source, binding and config
+ * members, so every engine answers it.
  */
 export async function identityRestoreAvailable(engine: RestoreProbeEngine, sourceId: string): Promise<boolean> {
-  const [source] = await engine.executeRaw<{ local_path: string | null; kind: string | null }>("SELECT local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
-  if (!source?.local_path || isConnectorSourceKind(source.kind)) return true;
-  if (await getWorktreeBinding(engine as never, sourceId, null)) return true;
-  return engine.kind === 'pglite' && !(await readDatabaseOnlyActivatedSources(engine)).includes(sourceId);
+  const source = await engine.getSource(sourceId);
+  const config: unknown = typeof source?.config === 'string' ? JSON.parse(source.config) : source?.config;
+  if (!source?.local_path || isConnectorSourceKind((config as { kind?: unknown } | null | undefined)?.kind)) return true;
+  if (await engine.getWorktreeBinding(sourceId, null)) return true;
+  return autoClaimsUnboundSource(engine, sourceId);
 }
 
 /** SQL: the downgrade record `dg` is open for the page aliased `alias` (no disposition, old page still soft-deleted by that sync). */
@@ -83,7 +85,7 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
   for (const pair of pairs) {
     const [old] = await engine.executeRaw<{ id: number | string; slug: string; deleted_at: string }>(
       `SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
-        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC LIMIT 1`,
+        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`,
       [sourceId, pair.from, resolveSlugForPath(pair.from)]);
     if (!old) continue;
     const owner = await canonicalOriginPage(engine, sourceId, pair.to);
@@ -110,12 +112,7 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
  * `new_slug` is read live: the live page at the new path now (a held new file that was fixed later counts once it imports).
  */
 export async function listIdentityDowngrades(engine: RestoreProbeEngine, sourceIds?: readonly string[]): Promise<IdentityDowngrade[]> {
-  const rows = await engine.executeRaw<{ record: IdentityDowngrade | string; new_slugs: string[] | null }>(
-    `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
-      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
-      WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
-        AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
-      ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`, [IDENTITY_DOWNGRADE_OP, sourceIds ? [...sourceIds] : null]);
+  const rows = await engine.readIdentityDowngradeRows<IdentityDowngrade>(sourceIds ?? null);
   const records = rows.map(row => {
     const record = typeof row.record === 'string' ? JSON.parse(row.record) as IdentityDowngrade : row.record;
     const owner = pickCanonicalOrigin((row.new_slugs ?? []).map(slug => ({ slug })), record.to);

@@ -137,6 +137,26 @@ describe('engine parity: minion jobs', () => {
       };
     });
 
+  parityTest('coalesceOnIdempotencyKey alone: no row reads null, a live row is returned, another authority is refused, a dead row frees its key',
+    { methods: ['admitJob', 'coalesceOnIdempotencyKey', 'claimNextJob', 'failJob', 'getJob'] }, async (engine) => {
+      const step = (authority: SubmissionAuthority = APPLICATION_AUTHORITY) =>
+        engine.coalesceOnIdempotencyKey('k1', { authority, decide: policy(authority).decide });
+      const none = await step();
+      const first = await admit(engine, { insert: values('work', { idempotency_key: 'k1', data: { n: 1 } }) });
+      const base = Number(first.row.id);
+      const view = rowView(base);
+      const live = await step();
+      const crossed = await thrown(() => step(OTHER_AUTHORITY));
+      const stillHeld = (await engine.getJob(base))?.idempotency_key;
+      await engine.claimNextJob(claimSpec('w1:k'));
+      await engine.failJob(base, 'w1:k', 'boom', 'dead');
+      const released = await step();
+      const freed = await engine.getJob(base);
+      expect(live?.id != null && Number(live.id)).toBe(base);
+      expect(crossed?.code).toBe('permission_denied');
+      return { none, live: view(live), crossed, stillHeld, released, freed: view(freed), afterRelease: await step() };
+    });
+
   parityTest('admitJob coalesces an identical waiting payload and enforces the name quota and backpressure caps',
     { methods: ['admitJob'] }, async (engine) => {
       const first = await admit(engine, { insert: values('work', { data: { __param_hash: 'h1', sourceId: 's1' } }) });
@@ -295,7 +315,7 @@ describe('engine parity: minion jobs', () => {
       };
     });
 
-  // Options the Rust store does not run yet: PGLite serves them and the Rust arm stops on the typed refusal.
+  // A delegated client's lock and capacity check run in the admission's transaction on every arm, before the insert.
   parityTest('admitJob runs a delegated client\'s lock and capacity check inside the admission',
     { methods: ['admitJob'] }, async (engine) => {
       const seen: Array<number | null> = [];
@@ -310,6 +330,39 @@ describe('engine parity: minion jobs', () => {
     const row = await engine.claimNextJob(claimSpec('w1:a', { suspectWaitMs: 60_000 }));
     return rowView(id)(row);
   });
+
+  parityTest('claimNextJob from eight workers at once, while jobs keep arriving, hands each job to exactly one worker',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'getJob'] }, async (engine) => {
+      // The engines serialize this differently (row locks with SKIP LOCKED, one writer, or optimistic commits that
+      // rerun on a conflict); what must match is the outcome: no job claimed twice, none lost, one claim each.
+      const base = await add(engine, 'work');
+      for (let i = 1; i < 24; i++) await add(engine, 'work', { priority: i % 3 });
+      const total = 32;
+      const claimed: number[] = [];
+      const refusedCompletes: number[] = [];
+      let idlePolls = 0;
+      const submitter = (async () => { for (let i = 0; i < total - 24; i++) await add(engine, 'work', { priority: i % 2 }); })();
+      const worker = async (w: number) => {
+        while (claimed.length < total && idlePolls < 5_000) {
+          const row = await engine.claimNextJob(claimSpec(`w${w}:a`));
+          if (!row) { idlePolls++; await Bun.sleep(1); continue; }
+          const id = Number(row.id);
+          claimed.push(id - base);
+          if (!(await engine.completeJob(id, `w${w}:a`))) refusedCompletes.push(id - base);
+        }
+      };
+      await Promise.all([submitter, ...Array.from({ length: 8 }, (_, w) => worker(w))]);
+      const rows = await Promise.all(Array.from({ length: total }, (_, i) => engine.getJob(base + i)));
+      const tally = (values: unknown[]) => Object.fromEntries(sorted([...new Set(values.map(String))]).map(v => [v, values.filter(x => String(x) === v).length]));
+      return {
+        claimed: [...claimed].sort((a, b) => a - b),
+        twice: claimed.length - new Set(claimed).size,
+        refusedCompletes,
+        status: tally(rows.map(r => r?.status)),
+        claimGeneration: tally(rows.map(r => Number(r?.claim_generation))),
+        attemptsStarted: tally(rows.map(r => Number(r?.attempts_started))),
+      };
+    });
 
   parityTest('reclaimStalledJobs requeues an expired lease, kills one at max_stalled, requeues a dead worker\'s co-runners marked, and clears drain-lease holders',
     { methods: ['admitJob', 'claimNextJob', 'reclaimStalledJobs', 'getJob', 'acquireCycleLock'] }, async (engine) => {

@@ -25,7 +25,6 @@ import {
 } from './facts-trust.ts';
 import type { FactRowSqlShape } from './facts.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
-import { isTrustTier, trustRankSql, TRUST_TIER_RANK, type TrustTier } from '../trust/tier.ts';
 import type { PageReadScope } from '../types.ts';
 
 // The vetted builder below is named in scripts/check-engine-sql-dynamic.ts: it wraps one constant fragment.
@@ -63,6 +62,23 @@ export interface NearestFactsQuery {
   hnswIterativeScan?: HnswIterativeScanMode;
 }
 
+/** One fact the facts arm reserves and the live page that holds it (search/facts-arm.ts applyFactSourcePages). */
+export interface FactSourcePageRow { id: number; page_id: number; slug: string; title: string | null; type: string | null }
+
+/**
+ * The facts arm's source-page read: for each of `ids`, the live page of its own source whose slug is the fact's
+ * `source_markdown_slug`, when that slug is not the fact's entity (a fact held on its entity's page names no other
+ * page). Facts of any source; a fact with no such page has no row. The rows come in no set order.
+ */
+export async function listFactSourcePages(raw: EngineRawRead, ids: readonly number[]): Promise<FactSourcePageRow[]> {
+  if (!ids.length) return [];
+  const rows = await raw<{ id: number | string; page_id: number | string; slug: string; title: string | null; type: string | null }>(
+    `SELECT f.id, p.id AS page_id, p.slug, p.title, p.type FROM facts f
+       JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
+       WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`, [[...ids]]);
+  return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), slug: r.slug, title: r.title, type: r.type }));
+}
+
 /**
  * The pool facts nearest `vector.literal` by cosine distance under the pool's read policy, closest first, with `similarity` on rows
  * whose embedding is comparable. With `hnswIterativeScan` the read is wrapped in the iterative-scan settings of
@@ -72,8 +88,12 @@ export async function listNearestFacts(raw: EngineRawRead, transaction: EngineRa
   const v = q.vector;
   const cast = v.type === 'halfvec' ? '::halfvec' : '::vector';
   const dimsMatch = q.declared ? sqlFragment`` : sqlFragment` AND vector_dims(f.embedding) = ${v.dims}`;
-  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${relevanceSimilarity(v)} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.embedding IS NOT NULL AND f.embedding_model = ${v.model}${dimsMatch}
-       ORDER BY f.embedding <=> ${v.literal}${trustedSql(cast)} LIMIT ${q.limit}`);
+  // The inner query orders by distance alone so the HNSW index (and its iterative scan) serves it; the outer sort breaks ties
+  // inside the limit by fact id. Which rows tie at the cut stays approximate, as any ANN read is.
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, f.similarity FROM (
+       SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${relevanceSimilarity(v)}, f.embedding <=> ${v.literal}${trustedSql(cast)} AS distance FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.embedding IS NOT NULL AND f.embedding_model = ${v.model}${dimsMatch}
+        ORDER BY f.embedding <=> ${v.literal}${trustedSql(cast)} LIMIT ${q.limit}) f
+       ORDER BY f.distance, f.id`);
   if (!q.hnswIterativeScan) return raw<PoolFactRow>(text, params);
   const mode = q.hnswIterativeScan;
   return transaction(async tx => {
@@ -101,9 +121,9 @@ export async function listSlotRows(raw: EngineRawRead, scope: FactPoolScope,
  * policy and have no live page at that slug (an unbacked name key), at most `limit`, by source then slug.
  */
 export async function listPoolUnbackedKeys(raw: EngineRawRead, scope: FactPoolScope, keys: readonly string[], limit: number): Promise<Array<{ source_id: string; entity_slug: string }>> {
-  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.entity_slug = ANY(${[...keys]}::text[])
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C" FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.entity_slug = ANY(${[...keys]}::text[])
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     ORDER BY f.source_id, f.entity_slug LIMIT ${limit}`);
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C" LIMIT ${limit}`);
   return raw<{ source_id: string; entity_slug: string }>(text, params);
 }
 
@@ -112,7 +132,7 @@ export async function listPoolUnbackedKeys(raw: EngineRawRead, scope: FactPoolSc
  * facts whose text matches the call-off words, under exactly the pool's read policy.
  */
 export async function listCallOffCueFacts(raw: EngineRawRead, scope: FactPoolScope, pairs: ReadonlyArray<{ source_id: string; entity_slug: string }>): Promise<CueFactRow[]> {
-  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY f.valid_from DESC, f.id DESC) AS call_off_rank
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)} FROM (SELECT f.*, row_number() OVER (PARTITION BY f.source_id, f.entity_slug ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC) AS call_off_rank
        FROM facts f WHERE ${poolWhere(scope, undefined)} AND f.fact ~* ${CALL_OFF_SQL}
          AND (f.source_id, f.entity_slug) IN (SELECT * FROM unnest(${pairs.map(p => p.source_id)}::text[], ${pairs.map(p => p.entity_slug)}::text[]))) f
      WHERE f.call_off_rank <= ${CALL_OFF_DEPTH}`);
@@ -121,52 +141,13 @@ export async function listCallOffCueFacts(raw: EngineRawRead, scope: FactPoolSco
 
 /** The distinct (source_id, entity_slug) pairs with a fact in the authorized, filtered pool (the namesake check runs on these before any ranking). */
 export async function listPoolEntityPairs(raw: EngineRawRead, scope: FactPoolScope, filters: FactPoolFilters): Promise<Array<{ source_id: string; entity_slug: string }>> {
-  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id, f.entity_slug FROM facts f WHERE ${poolWhere(scope, filters)} AND f.entity_slug IS NOT NULL ORDER BY f.source_id, f.entity_slug`);
+  const { text, params } = renderFragment(sqlFragment`SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C" FROM facts f WHERE ${poolWhere(scope, filters)} AND f.entity_slug IS NOT NULL ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`);
   return raw<{ source_id: string; entity_slug: string }>(text, params);
 }
 
 /** The whole fact rows of these ids within these sources (recall's final read; the caller strips the embedding). */
 export async function listFactRowsByIds(raw: EngineRawRead, sourceIds: readonly string[], ids: readonly number[]): Promise<FactRowSqlShape[]> {
   return raw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [[...sourceIds], [...ids]]);
-}
-
-/** The backstop provenance pairs `listFactsFromQuotedPages` reads: `[source, source_session prefix]` for a synced, then a written page. */
-export type QuotedBackstopSessions = readonly [readonly [string, string], readonly [string, string]];
-
-/**
- * Of `ids`, the facts taken from a page of one of `pageTypes`: the page holding the fact, a page recorded as its derivation
- * input, or the page a backstop fact's `source_session` names (search/transcript-quote.ts factsFromQuotedPages).
- */
-export async function listFactsFromQuotedPages(raw: EngineRawRead, ids: readonly number[], pageTypes: readonly string[],
-  backstopSessions: QuotedBackstopSessions): Promise<number[]> {
-  if (!ids.length) return [];
-  const [[syncSource, syncPrefix], [putSource, putPrefix]] = backstopSessions;
-  const rows = await raw<{ id: number | string }>(
-    `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
-       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
-       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
-         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
-       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
-         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
-         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`,
-    [[...new Set(ids.map(Number))], [...pageTypes], syncSource, syncPrefix, putSource, putPrefix]);
-  return rows.map(r => Number(r.id));
-}
-
-/** Of `ids`, the facts whose stored tier ranks at or above `floor` (an unknown stored tier ranks 0); an id with no row is absent. */
-export async function listFactIdsAtTrustFloor(raw: EngineRawRead, ids: readonly number[], floor: TrustTier): Promise<number[]> {
-  if (!ids.length) return [];
-  if (!isTrustTier(floor)) throw new Error(`listFactIdsAtTrustFloor: unknown trust tier ${JSON.stringify(floor)}`);
-  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${[...new Set(ids.map(Number))]}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[floor]}`);
-  const rows = await raw<{ id: number | string }>(text, params);
-  return rows.map(r => Number(r.id));
-}
-
-/** Each page id's stored type, deleted or not; an id with no page is absent. */
-export async function readPageTypesByIds(raw: EngineRawRead, ids: readonly number[]): Promise<Array<{ id: number; type: string | null }>> {
-  if (!ids.length) return [];
-  const rows = await raw<{ id: number | string; type: string | null }>('SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(ids.map(Number))]]);
-  return rows.map(r => ({ id: Number(r.id), type: r.type }));
 }
 
 const READABLE_PAGE_SLUGS_HEAD = 'SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ';

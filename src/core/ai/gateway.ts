@@ -3392,13 +3392,10 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
  * neutral `stopReason`. This is the structural-signal layer that
  * `chatWithFallback` (chat-fallback.ts) consults BEFORE any regex heuristic (per D8).
  */
-function mapStopReason(
-  finishReason: string | undefined,
-  providerMetadata: Record<string, any> | undefined,
-): ChatResult['stopReason'] {
-  // Anthropic: `stop_reason: 'refusal'` lands in providerMetadata.anthropic.
+function mapStopReason(finishReason: string | undefined, rawFinishReason: string | undefined, providerMetadata: Record<string, any> | undefined): ChatResult['stopReason'] {
+  // Anthropic `stop_reason: 'refusal'`: @ai-sdk/anthropic maps it to 'content-filter' and keeps it in rawFinishReason (GST-3251).
   const anthropicStop = providerMetadata?.anthropic?.stopReason ?? providerMetadata?.anthropic?.stop_reason;
-  if (anthropicStop === 'refusal') return 'refusal';
+  if (rawFinishReason === 'refusal' || anthropicStop === 'refusal') return 'refusal';
   // OpenAI: `finish_reason: 'content_filter'`.
   if (finishReason === 'content-filter' || finishReason === 'content_filter') return 'content_filter';
   if (finishReason === 'tool-calls' || finishReason === 'tool_calls') return 'tool_calls';
@@ -3813,9 +3810,10 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     } catch (err) {
       if (!output || isAIInvocationPolicyError(err) || !isStructuredOutputRejection(err)) throw err;
       gw().structuredOutputRejected.add(recipe.id);
+      // Failure class only: a provider's error text can echo the request URL or a key.
       console.warn(
         `[ai.gateway] ${recipe.id} rejected response_format json_schema; retrying without a schema ` +
-        `and skipping it for the rest of this process: ${(err as Error)?.message ?? String(err)}`,
+        `and skipping it for the rest of this process: structured_output_rejected`,
       );
       result = await generate(undefined);
     }
@@ -3891,7 +3889,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     return {
       text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
       blocks,
-      stopReason: mapStopReason((result as any).finishReason, providerMetadata),
+      stopReason: mapStopReason((result as any).finishReason, (result as any).rawFinishReason, providerMetadata),
       usage: usageOut,
       model: `${recipe.id}:${modelId}`,
       ...(typeof responseModelId === 'string' && responseModelId.length > 0 ? { responseModel: responseModelId } : {}),

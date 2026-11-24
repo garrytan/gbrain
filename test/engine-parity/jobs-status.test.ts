@@ -19,8 +19,10 @@
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). A lease that has run out comes from a negative
  *    duration. A time window can only be told apart by letting time pass, so the window cases wait 0.8 s once and read a
  *    0.5 s window (the store's own clock is moved in rust/crates/gbrain-store/tests/jobs_status.rs, where whole
- *    minutes and hours can be crossed). Ids are compared relative to the case's first job and clock readings only as
- *    present, ordered, or equal to the job's own row. Submissions are 2 ms apart so created_at never ties.
+ *    minutes and hours can be crossed). The one age read (waiting queue depths) is a rounded wall-clock age, so it is
+ *    checked against bounds measured around the calls, not compared as a raw number across arms. Ids are compared
+ *    relative to the case's first job and clock readings only as present, ordered, or equal to the job's own row.
+ *    Submissions are 2 ms apart so created_at never ties.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -38,6 +40,10 @@ const DAY = 86_400;
 /** The wait before a window case reads a 0.5 s window: the jobs made before it are 0.8 s old, the ones after it are new. */
 const PAUSE_MS = 800;
 const WINDOW = 0.5;
+/** How old the oldest waiting job of a queue is by the clock before its age is read: past the 0.5 s rounding boundary, short of 1 s. */
+const AGE_TARGET_MS = 700;
+/** Date.now() reads whole milliseconds and the engine stamps its own clock: every measured bound is widened by this much. */
+const CLOCK_SLOP_MS = 2;
 
 function values(name: string, extra: Partial<JobInsertValues> = {}): JobInsertValues {
   return {
@@ -164,17 +170,105 @@ describe('engine parity: minion status reads', () => {
   parityTest('readWaitingQueueDepths lists the queues with waiting work, deepest first, with the oldest waiting age rounded to seconds',
     { methods: ['admitJob', 'claimNextJob', 'readWaitingQueueDepths'] }, async (engine) => {
       expect(await engine.readWaitingQueueDepths()).toEqual([]);
-      // Only queue alpha has work that is 0.8 s old: a half second rounds up to a whole one, so a truncating store reads 0.
-      await add(engine, 'work', { queue: 'alpha' });
-      await Bun.sleep(PAUSE_MS);
-      await add(engine, 'work', { queue: 'alpha' });
-      await add(engine, 'work', { queue: 'alpha' });
-      for (const queue of ['beta', 'beta', 'beta', 'gamma', 'epsilon', 'epsilon']) await add(engine, 'work', { queue });
+      // admitJob takes no created_at, so the age cannot be set; it is bounded by clock readings taken around the calls
+      // instead, which holds however slow the runner is. `first` holds, per queue, the readings around its oldest add.
+      const first = new Map<string, { before: number; after: number }>();
+      const addTo = async (queue: string) => {
+        const before = Date.now();
+        await add(engine, 'work', { queue });
+        if (!first.has(queue)) first.set(queue, { before, after: Date.now() });
+      };
+      for (const queue of ['alpha', 'alpha', 'alpha', 'beta', 'beta', 'beta', 'gamma', 'epsilon', 'epsilon']) await addTo(queue);
       // Not waiting: a queue with only active, delayed or paused work is absent.
       await active(engine, 'run', { queue: 'delta' });
       await add(engine, 'later', { queue: 'zeta', status: 'delayed', delay_until: FAR });
+      // Wait until queue alpha's oldest job is at least AGE_TARGET_MS old by the clock, so the setup above counts toward
+      // the wait and a slow runner waits less. The age is then 0.7 s plus the time of one read: a truncating store reads 0.
+      const alpha = first.get('alpha')!;
+      while (Date.now() - alpha.after < AGE_TARGET_MS) await Bun.sleep(5);
+      const readFrom = Date.now();
       const rows = await engine.readWaitingQueueDepths();
-      return rows.map(r => ({ queue: r.queue, depth: r.depth, age: r.oldest_waiting_age_seconds }));
+      const readTo = Date.now();
+      // A queue's true age at the read is in [readFrom - after, readTo - before]; a store that rounds returns a whole
+      // number of seconds within half a second of some age in that range. The slop covers whole-millisecond readings.
+      for (const row of rows) {
+        const born = first.get(row.queue)!;
+        const youngest = (readFrom - born.after - CLOCK_SLOP_MS) / 1000;
+        const oldest = (readTo - born.before + CLOCK_SLOP_MS) / 1000;
+        expect(row.oldest_waiting_age_seconds).toBeGreaterThanOrEqual(Math.ceil(youngest - 0.5));
+        expect(row.oldest_waiting_age_seconds).toBeLessThanOrEqual(Math.floor(oldest + 0.5));
+      }
+      // Whole seconds only, and alpha's age is past 0.5 s by construction, so it reads at least 1.
+      expect(rows.every(r => Number.isInteger(r.oldest_waiting_age_seconds))).toBe(true);
+      expect(rows.find(r => r.queue === 'alpha')!.oldest_waiting_age_seconds).toBeGreaterThanOrEqual(1);
+      return rows.map(r => ({ queue: r.queue, depth: r.depth }));
+    });
+
+  parityTest('readLastFinishedJobAt reads the latest finished_at of a completed job of one name, in UTC ISO seconds',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'readLastFinishedJobAt'] }, async (engine) => {
+      const name = 'autopilot-global-maintenance';
+      const empty = await engine.readLastFinishedJobAt(name);
+      await finished(engine, name, 'failed');
+      await finished(engine, 'other-job', 'completed');
+      const noneCompleted = await engine.readLastFinishedJobAt(name);
+      await finished(engine, name, 'completed');
+      const last = await finished(engine, name, 'completed');
+      const at = await engine.readLastFinishedJobAt(name);
+      const finishedAt = (await engine.getJob(last))?.finished_at;
+      const seconds = finishedAt == null ? null : new Date(finishedAt as string | Date).toISOString().slice(0, 19) + 'Z';
+      return { empty, noneCompleted, shape: typeof at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/.test(at), latest: at === seconds };
+    });
+
+  parityTest('listRecentSourceCycleFailures counts whole-cycle failures of autopilot-cycle jobs by source, leaving out failed phases, no source id and other jobs',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getJob', 'listRecentSourceCycleFailures'] }, async (engine) => {
+      const cycle = (source: unknown) => ({ data: { source_id: source } } as Partial<JobInsertValues>);
+      const a1 = await active(engine, 'autopilot-cycle', cycle('a'));
+      await engine.failJob(a1, `st:${a1}`, 'boom', 'dead');
+      const a2 = await active(engine, 'autopilot-cycle', cycle('a'));
+      await engine.failJob(a2, `st:${a2}`, 'boom', 'failed');
+      const b = await active(engine, 'autopilot-cycle', cycle('b'));
+      await engine.failJob(b, `st:${b}`, 'boom', 'dead');
+      const phase = await active(engine, 'autopilot-cycle', cycle('c'));
+      await engine.failJob(phase, `st:${phase}`, 'phase failed', 'failed', undefined, { job_outcome: 'phase_failed' });
+      const other = await active(engine, 'autopilot-cycle', cycle('c'));
+      await engine.failJob(other, `st:${other}`, 'boom', 'dead', undefined, { job_outcome: 'blocked_by_failures' });
+      for (const data of [{}, { source_id: null }]) {
+        const id = await active(engine, 'autopilot-cycle', { data });
+        await engine.failJob(id, `st:${id}`, 'boom', 'dead');
+      }
+      const work = await active(engine, 'work', cycle('d'));
+      await engine.failJob(work, `st:${work}`, 'boom', 'dead');
+      await finished(engine, 'autopilot-cycle', 'completed', cycle('f'));
+      await add(engine, 'autopilot-cycle', cycle('e'));
+      const past = '2000-01-01T00:00:00.000Z';
+      const view = (rows: Array<{ source_id: string; fail_count: number; last_failed_at: Date }>) => rows.map(r => ({ source_id: r.source_id, fail_count: r.fail_count, dated: r.last_failed_at instanceof Date }));
+      const lastOfA = (await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: 'a' }))[0]!.last_failed_at;
+      return {
+        all: view(await engine.listRecentSourceCycleFailures({ cutoff: past })),
+        onlyB: view(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: 'b' })),
+        phaseOnly: view(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: 'd' })),
+        none: await engine.listRecentSourceCycleFailures({ cutoff: FAR }),
+        lastIsLatestFinish: lastOfA.getTime() === time((await engine.getJob(a2))?.finished_at),
+      };
+    });
+
+  parityTest('listRecentSourceCycleFailures names a source by its jsonb text (objects and arrays with Postgres spacing, numbers, booleans), and an empty source filter is no filter',
+    { methods: ['admitJob', 'claimNextJob', 'failJob', 'listRecentSourceCycleFailures'] }, async (engine) => {
+      const ids: unknown[] = [{ x: 1 }, { a: [1, { b: 'c' }] }, [1, 2], ['a'], 5, true, 'plain'];
+      for (const source of ids) {
+        const id = await active(engine, 'autopilot-cycle', { data: { source_id: source } });
+        await engine.failJob(id, `st:${id}`, 'boom', 'dead');
+      }
+      const past = '2000-01-01T00:00:00.000Z';
+      const names = (rows: Array<{ source_id: string; fail_count: number }>) => rows.map(r => [r.source_id, r.fail_count]);
+      const all = await engine.listRecentSourceCycleFailures({ cutoff: past });
+      return {
+        all: names(all),
+        emptyFilter: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '' })),
+        nullFilter: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: null })),
+        object: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '{"x": 1}' })),
+        compactMiss: names(await engine.listRecentSourceCycleFailures({ cutoff: past, sourceId: '{"x":1}' })),
+      };
     });
 
   parityTest('readLastCompletedJobAt reads the freshest updated_at of a completed job, and nothing else moves it',
@@ -297,6 +391,28 @@ describe('engine parity: minion status reads', () => {
       const rel = (rows: Awaited<ReturnType<BrainEngine['listRecentFailedJobErrors']>>) => rows.map(r => ({ id: r.id - first, error: r.last_error }));
       expect(failed).toBeGreaterThan(first);
       return { day: rel(await engine.listRecentFailedJobErrors(DAY)), recent: rel(await engine.listRecentFailedJobErrors(WINDOW)), zero: await engine.listRecentFailedJobErrors(0), late: late - first };
+    });
+
+  // A pin, not a fix: no admit path writes the three budget columns on any engine (engine-sql/jobs.ts INSERT_COLUMNS
+  // names none of them; their only writer, minions/budget-tracker.ts, was removed in v0.59.20.0). The Rust store
+  // refuses listBudgetOwners by name if a row ever owns a budget, so the answer below is never a silent [].
+  parityTest('listBudgetOwners: a job admitted with budget-shaped data owns no budget, and its budget columns stay null',
+    { methods: ['admitJob', 'claimNextJob', 'getJob', 'listBudgetOwners'] }, async (engine) => {
+      const before = await engine.listBudgetOwners();
+      const budgetShaped = { budget_remaining_cents: 500, budget_owner_job_id: 1, budget_root_owner_id: 1 };
+      const waiting = await add(engine, 'work', { data: budgetShaped });
+      const running = await active(engine, 'budgeted', { data: budgetShaped });
+      const columns = async (id: number) => {
+        const row = await engine.getJob(id) as Record<string, unknown> | null;
+        // A column the row does not carry reads 'absent', so a missing column never passes as null.
+        const col = (k: string) => (row && k in row ? row[k] : 'absent');
+        return { budget_remaining_cents: col('budget_remaining_cents'), budget_owner_job_id: col('budget_owner_job_id'),
+          budget_root_owner_id: col('budget_root_owner_id'), status: row?.status };
+      };
+      const got = { before, after: await engine.listBudgetOwners(), waiting: await columns(waiting), running: await columns(running) };
+      const none = { budget_remaining_cents: null, budget_owner_job_id: null, budget_root_owner_id: null };
+      expect(got).toEqual({ before: [], after: [], waiting: { ...none, status: 'waiting' }, running: { ...none, status: 'active' } });
+      return got;
     });
 
   parityTest('readQueuedPageChars averages the capped text length of the pages waiting or delayed drain jobs point at',

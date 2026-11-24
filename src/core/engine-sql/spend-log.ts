@@ -7,8 +7,8 @@
  * What is here: the atomic admission of a client hold and of a group hold (`reserveClientSpend`, `reserveGroupSpend`:
  * the lock, the cap read, the sweep, the sums, the refusal and the insert as one unit), the group totals, the settle
  * that also writes the ledger row, the ledger insert and the daily sum, the budget text of one client, the agent spend
- * view of the admin page, and the writers of a client row (`insertOauthClient`, `updateOauthClientBudget`). What is not:
- * every other column and reader of `oauth_clients` (grants, tokens, the OAuth provider), which stay raw.
+ * view of the admin page, and the cap writer of a client row (`updateOauthClientBudget`); the insert and the whole-row
+ * read of a client are in oauth-clients.ts. What is not served: the other readers and writers of `oauth_clients`.
  *
  * A function that runs more than one statement takes a transaction (the engine delegates wrap the call in
  * `engine.transaction`). The decisions are made here, with the arithmetic in the same order the callers had it, so the
@@ -246,24 +246,8 @@ export async function readClientBudgetUsd(tx: Raw, clientId: string): Promise<st
   return rows[0]?.cap ?? null;
 }
 
-/** The columns of an `oauth_clients` row the spend surfaces read; the store keeps no others. */
-export interface OauthClientInsert {
-  client_id: string;
-  client_name: string;
-  scope: string | null;
-  /** Dollars per day, to two decimals; null for no cap. */
-  budget_usd_per_day: number | null;
-  bound_tools: string[] | null;
-  deleted_at: Date | null;
-}
-
-/** `INSERT` one client row. A repeated `client_id` is a constraint error. */
-export async function insertOauthClient(tx: Raw, row: OauthClientInsert): Promise<void> {
-  await tx.executeRaw(
-    `INSERT INTO oauth_clients (client_id, client_name, scope, budget_usd_per_day, bound_tools, deleted_at)
-     VALUES ($1, $2, $3, $4, $5::text[], $6)`,
-    [row.client_id, row.client_name, row.scope, row.budget_usd_per_day, row.bound_tools, row.deleted_at]);
-}
+// The writer and the whole-row read of a client are in oauth-clients.ts; re-exported for the callers of this file.
+export { insertOauthClient, type OauthClientInsert } from './oauth-clients.ts';
 
 /** Set (or clear, with null) a client's daily cap in dollars. Returns whether the client exists. */
 export async function updateOauthClientBudget(tx: Raw, clientId: string, usd: number | null): Promise<boolean> {

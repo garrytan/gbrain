@@ -22,6 +22,8 @@
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { OAUTH_CLIENT_PROBE_COLUMNS } from '../core/engine-sql/access-credentials.ts';
+import type { ManualClientPlan } from '../core/oauth-provider.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
 import { isTrustTier, TRUST_TIERS, type TrustTier } from '../core/trust/tier.ts';
 import { setMinTrust } from '../core/trust/min-trust.ts';
@@ -31,13 +33,15 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
+import { rescopeOAuthClient } from '../core/grants/rescope.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
-import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
+import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, readSharedFromColumns, type ClientGrant, type PrincipalGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { PRIVATE_FACTS_HELP, privateFactsRescopeLines, privateFactsWarning, renderPrivateFacts } from './auth-private-facts.ts';
 import { listClientRows } from './auth-client-rows.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
-import { credentialCensus, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { credentialCensus, credentialReadSources, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { assertActiveSourceIds, clientReadsChange, parseCreateSourceFlags, readSetLines, readsChangeLines } from './auth-read-shared.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
@@ -83,8 +87,8 @@ async function withConfiguredSql<T>(
 /** GBRA-585 E: the scopes a token bound to a member gets when --scopes is not given; an explicit --scopes always wins. */
 export const MEMBER_TOKEN_SCOPES: readonly string[] = ['read', 'write'];
 
-async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]'); process.exit(1); }
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null; sources?: string[]; readShared?: boolean } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>] [--sources <write-source>,...] [--read-shared on|off] [--member <id>] [--reads-unscoped --yes]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
   // here, never silently brick (or widen) the token.
@@ -102,7 +106,9 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
   try {
     await withConfiguredSql(async (_sql, engine) => {
       await assertCredentialScoped(engine, opts.binding ?? null, 'token', name);
-      const { token, id, takesHolders, bound } = await mintToken(engine, name, opts);
+      if (opts.sources) await assertActiveSourceIds(engine, opts.sources);
+      const sources = opts.sources ? { kind: 'federated' as const, writeSource: opts.sources[0]!, readSources: opts.sources } : undefined;
+      const { token, id, takesHolders, bound } = await mintToken(engine, name, { takesHolders: opts.takesHolders, scopes: opts.scopes, minTrust: opts.minTrust, binding: opts.binding, sources, readShared: opts.readShared });
       if (bound) auditReadsUnscoped(bound, `token ${name}`, false);
       const scopeLine = memberDefault
         ? `scopes=${JSON.stringify(opts.scopes)} (the default for a token bound to a member; pass --scopes read,write,admin for admin access)`
@@ -115,7 +121,8 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       console.log('Save this token — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
       console.log(`Change its grants: gbrain auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
-      const grant = { principal: { kind: 'legacy_token' as const, id }, scopes: opts.scopes ?? ['read', 'write', 'admin'], sources: { kind: 'default' as const } };
+      const grant = { principal: { kind: 'legacy_token' as const, id }, scopes: opts.scopes ?? ['read', 'write', 'admin'], sources: sources ?? { kind: 'default' as const }, readShared: opts.readShared === true };
+      if (sources) for (const line of await readSetLines(engine, grant, bound?.member ?? opts.binding?.member ?? null)) console.log(line);
       if (!opts.binding?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'legacy_token', name }, { census: await credentialCensus(engine, grant), serves: await exposureServes(engine) }));
     });
   } catch (e: any) {
@@ -174,13 +181,10 @@ export function renderTokenScopes(scopes: unknown): string {
 }
 
 async function list(json: boolean) {
-  await withConfiguredSql(async (sql) => {
-    // SELECT * reads every schema generation (private_pages and private_facts arrive with their migrations; absent reads as none).
-    const rows = await sql`
-      SELECT * FROM access_tokens
-      ORDER BY created_at DESC
-    `;
-    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(sql, rows);
+  await withConfiguredSql(async (_sql, engine) => {
+    // Every schema generation lists (private_pages and private_facts arrive with their migrations; absent reads as none).
+    const rows = await engine.listAccessTokens();
+    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(engine, rows);
     if (json) {
       console.log(JSON.stringify(rows.map(r => ({
         id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
@@ -196,26 +200,27 @@ async function list(json: boolean) {
     console.log('─'.repeat(158));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
-      const name = (r.name as string).padEnd(20);
+      const name = r.name.padEnd(20);
       const scopes = renderTokenScopes(r.scopes).padEnd(21);
-      const created = new Date(r.created_at as string).toISOString().slice(0, 19);
-      const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
+      const created = r.created_at.toISOString().slice(0, 19);
+      const lastUsed = r.last_used_at ? r.last_used_at.toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = (r.revoked_at ? 'REVOKED' : (memberStatus(r) ?? 'enabled') !== 'enabled' ? 'refused' : 'active').padEnd(7);
       const facts = privatePagesFromColumn(r.private_facts) === 'granted_sources' ? 'granted-sources' : 'none';
       console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${facts.padEnd(15)}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
+      // GST-2898: a switched key names where it writes and that it reads every shared source.
+      if (r.source_grant != null && r.source_grant !== 'none' && readSharedFromColumns(r.read_shared_revision, r.grant_revision)) {
+        const reads = Array.isArray(r.federated_read) ? (r.federated_read as string[]) : [String(r.source_id)];
+        console.log(`    write: ${String(r.source_id)}  reads: ${reads.join(', ')} (+ shared)`);
+      }
     }
   });
 }
 
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name> | auth revoke --id <uuid>'); process.exit(1); }
-  await withConfiguredSql(async (sql) => {
-    const rows = await sql`
-      UPDATE access_tokens SET revoked_at = now()
-      WHERE name = ${name} AND revoked_at IS NULL
-      RETURNING id
-    `;
-    for (const row of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id: String(row.id) });
+  await withConfiguredSql(async (_sql, engine) => {
+    const rows = await engine.revokeAccessTokensNamed(name);
+    for (const id of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'legacy_token', id });
     if (rows.length === 0) {
       console.error(`No active token found with name "${name}".`);
       process.exit(1);
@@ -227,27 +232,23 @@ async function revoke(name: string) {
   });
 }
 
-/** #4043: names are not unique — revoke-by-id is the precise path. The
- * revocation semantics are canonical in src/core/token-mint.ts
- * (revokeLegacyTokenById); this CLI wrapper keeps its own UPDATE only to
- * RETURN the name for the confirmation line — keep the two in lockstep. */
+/** #4043: names are not unique — revoke-by-id is the precise path. This CLI
+ * wrapper and src/core/token-mint.ts (revokeLegacyTokenById) send the same
+ * typed revoke (engine.revokeAccessToken), which returns the name for the
+ * confirmation line. */
 async function revokeById(id: string) {
   if (!id || !TOKEN_ID_RE.test(id)) {
     console.error('Usage: auth revoke --id <uuid>   (ids are shown by `gbrain auth list`)');
     process.exit(1);
   }
-  await withConfiguredSql(async (sql) => {
-    const rows = await sql`
-      UPDATE access_tokens SET revoked_at = now()
-      WHERE id = ${id}::uuid AND revoked_at IS NULL
-      RETURNING name
-    `;
-    if (rows.length === 0) {
+  await withConfiguredSql(async (_sql, engine) => {
+    const revoked = await engine.revokeAccessToken(id);
+    if (revoked === null) {
       console.error(`No active token found with id "${id}".`);
       process.exit(1);
     }
-    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id });
-    console.log(`Token "${rows[0].name}" (${id}) revoked.`);
+    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'legacy_token', id });
+    console.log(`Token "${revoked}" (${id}) revoked.`);
   });
 }
 
@@ -377,20 +378,17 @@ async function revokeClient(clientId: string) {
     process.exit(1);
   }
   try {
-    await withConfiguredSql(async (sql) => {
+    await withConfiguredSql(async (_sql, engine) => {
       // Atomic single-statement delete: no race window between count + delete.
       // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
       // declared in src/schema.sql:370,382) before the transaction commits.
-      const rows = await sql`
-        DELETE FROM oauth_clients WHERE client_id = ${clientId}
-        RETURNING client_id, client_name
-      `;
-      if (rows.length === 0) {
+      const deleted = await engine.deleteOAuthClient(clientId);
+      if (deleted === null) {
         console.error(`No client found with id "${clientId}"`);
         process.exit(1);
       }
-      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'oauth_client', id: clientId });
-      console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'oauth_client', id: clientId });
+      console.log(`OAuth client revoked: "${deleted.client_name}" (${clientId})`);
       console.log('Tokens and authorization codes purged via cascade.');
     });
   } catch (e: any) {
@@ -426,6 +424,8 @@ export interface RegisterClientArgs {
   boundMaxConcurrent: number | undefined;
   budgetUsdPerDay: string | null | undefined;
   tokenTtlSeconds: number | undefined;
+  /** GST-2898: `--read-shared on|off`, also read every shared source, now and later. */
+  readShared?: boolean;
 }
 
 /** --token-ttl bounds: 1 minute .. 90 days (defined in src/core/grants/model.ts). The SERVER default for CLI-minted
@@ -566,6 +566,12 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
         out.tokenTtlSeconds = parseTokenTtl(requireValue(), 'Omit the flag to keep the server default.');
         i += 2; break;
       }
+      case '--read-shared': {
+        const v = requireValue();
+        if (v !== 'on' && v !== 'off') throw new Error('--read-shared must be on or off');
+        out.readShared = v === 'on';
+        i += 2; break;
+      }
       default:
         throw new Error(`Unknown flag: ${flag}`);
     }
@@ -587,14 +593,8 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
  * is impossible inside a tx — optional-column degrades must be decided here,
  * outside, once.
  */
-export async function preflightOauthClientColumns(sql: SqlQuery): Promise<Set<string>> {
-  const rows = await sql`
-    SELECT column_name FROM information_schema.columns
-    WHERE table_name = 'oauth_clients'
-      AND table_schema = current_schema()
-      AND column_name IN ('token_ttl', 'surface', 'federated_read', 'source_id', 'deleted_at')
-  `;
-  return new Set(rows.map(r => String(r.column_name)));
+export async function preflightOauthClientColumns(engine: Pick<BrainEngine, 'readOauthClientColumns'>): Promise<Set<string>> {
+  return new Set(await engine.readOauthClientColumns('preflight'));
 }
 
 export interface RegisterScopedClientOpts {
@@ -613,6 +613,10 @@ export interface RegisterScopedClientOpts {
   /** Result of preflightOauthClientColumns — decides which optional-column
    * writes are attempted. Absent → attempt everything (caller owns errors). */
   columns?: Set<string>;
+  /** The engine `sql` runs on. When set, the client insert and its token_ttl write go through the typed engine
+   * members (one statement text on Postgres and PGLite, the store on a Rust brain); the surface write still goes
+   * through the provider. `transaction` then runs the insert in `engine.transaction`. */
+  engine?: BrainEngine;
 }
 
 /**
@@ -637,6 +641,24 @@ export interface RegisteredClient {
   surfaceOld?: string | null;
   /** Optional-column writes skipped by the pre-flight (pre-migration brain). */
   skipped?: { tokenTtl?: boolean; surface?: boolean };
+}
+
+/**
+ * The up-to-date-schema branch of registerClientManual over typed engine members: the grant validated against the
+ * active sources, the scope-source check, then the client and its register audit row in one insert (in one engine
+ * transaction when `inTransaction`).
+ */
+async function insertScopedClientGrant(engine: BrainEngine, plan: ManualClientPlan, inTransaction: boolean): Promise<{ clientId: string; clientSecret?: string }> {
+  const { grantValidationContext, clientGrantInsert } = await import('../core/grants/service.ts');
+  const { assertScopeSourceGrant, clientGrantReads } = await import('../core/access/attest-sources.ts');
+  const grant = plan.grant(await grantValidationContext(engine));
+  const row = clientGrantInsert(grant, plan.metadata);
+  const write = async (db: BrainEngine) => {
+    await assertScopeSourceGrant(db, null, clientGrantReads(grant));
+    await db.insertOauthClientGrant(row);
+  };
+  await (inTransaction ? engine.transaction(write) : write(engine));
+  return { clientId: plan.clientId, ...(plan.clientSecret ? { clientSecret: plan.clientSecret } : {}) };
 }
 
 /**
@@ -669,11 +691,17 @@ export async function registerScopedClient(
       budgetUsdPerDay: parsed.budgetUsdPerDay,
     }
     : undefined;
-  const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-  const provider = new GBrainOAuthProvider({ sql, transaction: opts.transaction });
-  const { clientId, clientSecret } = await provider.registerClientManual(
-    name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
-  );
+  const { GBrainOAuthProvider, planManualClient } = await import('../core/oauth-provider.ts');
+  const provider = () => new GBrainOAuthProvider({ sql, transaction: opts.transaction });
+  const engine = opts.engine;
+  const grantColumns = engine ? await engine.readOauthClientColumns('grant') : [];
+  const { clientId, clientSecret } = engine && grantColumns.length === OAUTH_CLIENT_PROBE_COLUMNS.grant.length
+    ? await insertScopedClientGrant(engine, planManualClient(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
+    ), opts.transaction !== undefined)
+    : await provider().registerClientManual(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
+    );
 
   const ttl = parsed.tokenTtlSeconds ?? opts.tokenTtlSeconds;
   let tokenTtl: number | undefined;
@@ -684,12 +712,14 @@ export async function registerScopedClient(
       // OUTSIDE any transaction — nothing here throws-and-continues.
       ttlSkipped = true;
     } else {
-      const updated = await sql`
+      const updated = engine
+        ? await engine.setOauthClientTokenTtl(clientId, ttl)
+        : (await sql`
         UPDATE oauth_clients SET token_ttl = ${ttl}
         WHERE client_id = ${clientId}
         RETURNING client_id
-      `;
-      if (updated.length === 0) {
+      `).length > 0;
+      if (!updated) {
         throw new Error(`token_ttl update matched no row for client ${clientId}`);
       }
       tokenTtl = ttl;
@@ -703,7 +733,8 @@ export async function registerScopedClient(
     if (opts.columns && !opts.columns.has('surface')) {
       surfaceSkipped = true;
     } else {
-      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
+      // An engine rescopes through typed members (the surface write is a grant write); a bare SqlQuery keeps the raw path.
+      const rescoped = await rescopeOAuthClient(engine ?? sql, clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
       surfaceApplied = opts.surface;
       surfaceOld = rescoped.surfaceOld ?? null;
     }
@@ -793,11 +824,13 @@ async function registerClient(name: string, args: string[]) {
       await checkBindingTarget(engine, binding.patch);
       await assertCredentialScoped(engine, binding.patch, 'client', name);
       const columns = parsed.tokenTtlSeconds !== undefined
-        ? await preflightOauthClientColumns(sql)
+        ? await preflightOauthClientColumns(engine)
         : undefined;
-      const registered = await registerScopedClient(sql, name, parsed, { columns, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const registered = await registerScopedClient(sql, name, parsed, { columns, engine, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (bound) auditReadsUnscoped(bound, `OAuth client ${registered.clientId}`, false);
+      // GST-2898: the switch is a grant write after registration, so it is stamped at the client's revision like any rescope.
+      if (parsed.readShared) await rescopeClientGrant(engine, registered.clientId, { readShared: true }, { actor: 'operator:cli' });
       if (registered.skipped?.tokenTtl) {
         console.error('Note: this brain predates the token_ttl column; run `gbrain apply-migrations --yes`, then rescope. The server default TTL applies.');
       }
@@ -806,6 +839,7 @@ async function registerClient(name: string, args: string[]) {
       }
       if (bound) console.log(bindingLine(bound));
       const grant = await readClientGrant(engine, registered.clientId).then(grantFromClient).catch(() => null);
+      if (grant?.readShared) for (const line of await readSetLines(engine, grant, bound?.member ?? null)) console.log(line);
       if (grant && !binding.patch?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'oauth_client', id: registered.clientId, name }, { census: await credentialCensus(engine, grant), serves: await exposureServes(engine) }));
     });
   } catch (e: any) {
@@ -940,10 +974,12 @@ async function rescopeClientWith(engine: BrainEngine, clientId: string, parsed: 
     repair: parsed.repair, dryRun: parsed.dryRun,
   });
   const bound = bind ? await bind() : undefined;
-  if (parsed.json) { console.log(JSON.stringify({ ...result, principal_grant: grantFromClient(result.after), ...(bound ? { binding: bound } : {}) }, null, 2)); return; }
+  const reads = await clientReadsChange(engine, clientId, result.before, result.after);
+  if (parsed.json) { console.log(JSON.stringify({ ...result, principal_grant: grantFromClient(result.after), reads, ...(bound ? { binding: bound } : {}) }, null, 2)); return; }
   console.log(`OAuth client ${parsed.dryRun ? 'grant preview' : 'rescoped'}: ${result.after.clientName} (${clientId})`);
   console.log(`  Revision: ${result.before.revision} -> ${result.after.revision}`);
   printClientGrantAxes(result.after, parsed.dryRun ? result.before : undefined);
+  for (const line of readsChangeLines(reads, result.before.readShared === true, result.after.readShared === true, `--client ${clientId}`)) console.log(line);
   if (bound) console.log(bindingLine(bound, parsed.dryRun));
   console.log('Restrictions apply on the next request. Added scopes require a new access token; the client secret is unchanged.');
 }
@@ -974,6 +1010,7 @@ function printTokenRescope(result: RescopeTokenResult, json: boolean, bound?: Bi
   }
   for (const line of privateFactsRescopeLines(result.before.privateFacts, result.after.privateFacts)) console.log(line);
   console.log(`  Grant revision: ${result.revision.before === result.revision.after ? result.revision.after : `${result.revision.before} -> ${result.revision.after}`}`);
+  for (const line of readsChangeLines(result.reads, !!result.before.readShared, !!result.after.readShared, `--token ${result.name}`)) console.log(line);
   if (bound) console.log(bindingLine(bound, result.dryRun));
   if (result.drift.length && !result.written) {
     console.log(`  Drift: ${result.drift.join(', ')} deny every request (the permissions JSON disagrees with the grant columns). `
@@ -1051,6 +1088,8 @@ export interface ClientRow {
   surface_set_by: string | null;
   source_id: string | null;
   federated_read: string[] | null;
+  /** GST-2898: the read-shared switch is on; absent on a brain before the private-pages column. */
+  read_shared?: boolean;
   /** The operation snapshot: NULL = none stored; absent = the brain predates the column. */
   allowed_operations?: string[] | null;
   /** Soft-revoke stamp (`auth` lifecycle revoke); absent on schemas without it. */
@@ -1118,10 +1157,7 @@ export function clientOperationsLines(row: ClientRow): string[] {
 /** Clients whose stored or outstanding access-token lifetime an upgrade brought inside the 90-day maximum. */
 export async function tokenLifetimeClampedClients(engine: BrainEngine): Promise<Set<string>> {
   try {
-    const rows = await engine.executeRaw<{ client_id: string }>(
-      `SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`,
-    );
-    return new Set(rows.map(r => r.client_id));
+    return new Set(await engine.readTokenLifetimeClampedClients());
   } catch (e) {
     if (isMissingSchemaObject(e, 'table', 'oauth_grant_audit')) return new Set();
     throw e;
@@ -1192,7 +1228,7 @@ async function clientsCmd(args: string[]) {
           ? `${c.surface}${c.surface_set_by ? ` (set by ${c.surface_set_by})` : ''}`
           : '<server/config resolution>';
         console.log(`  scopes: ${c.scope ?? '<none>'}    surface: ${surfaceStr}`);
-        console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}`);
+        console.log(`  write source: ${c.source_id ?? '<none>'}    federated reads: ${(c.federated_read ?? []).join(', ') || '<none>'}${c.read_shared ? ' (+ shared)' : ''}`);
         console.log(`  private pages: ${renderPrivatePages(privatePagesFromColumn(c.private_pages))}`);
         console.log(`  private facts: ${renderPrivateFacts(privatePagesFromColumn(c.private_facts))}`);
         for (const line of clientOperationsLines(c)) console.log(line);
@@ -1241,7 +1277,7 @@ async function clientsCmd(args: string[]) {
  * register-client #3990 normalization precedent). Validation against the
  * allowed scope set happens in create() so the error path exits cleanly.
  */
-export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; error?: string } {
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; sources?: string[]; readShared?: boolean; error?: string } {
   const takesIdx = rest.indexOf('--takes-holders');
   const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
   // Fail closed on a missing/flag-like value: `--scopes` as the last arg
@@ -1266,8 +1302,12 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   if (minIdx >= 0 && !isTrustTier(minValue)) {
     return { name: '', error: `the min-trust flag requires a tier: ${TRUST_TIERS.join(', ')}` };
   }
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== minValue);
-  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}), ...(isTrustTier(minValue) ? { minTrust: minValue } : {}) };
+  const shared = parseCreateSourceFlags(rest);
+  if (shared.error) return { name: '', error: shared.error };
+  const flagValueAt = new Set(['--takes-holders', '--scopes', '--min-trust', '--sources', '--read-shared'].map(flag => rest.indexOf(flag)).filter(i => i >= 0).map(i => i + 1));
+  const positional = rest.find((a, i) => !a.startsWith('--') && !flagValueAt.has(i));
+  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}), ...(isTrustTier(minValue) ? { minTrust: minValue } : {}),
+    ...(shared.sources ? { sources: shared.sources } : {}), ...(shared.readShared ? { readShared: true } : {}) };
 }
 
 const AUTH_USAGE = `GBrain Token Management
@@ -1280,7 +1320,7 @@ Admin dashboard login (running HTTP server):
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--sources <id,...>] [--read-shared on|off] [--member <id>] [--reads-unscoped --yes]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
@@ -1295,6 +1335,9 @@ Usage:
                                                           On a brain that serves several people a new token needs
                                                           --member <id>, or --reads-unscoped --yes to read every
                                                           page no rule restricts on purpose (credential_scope_required)
+                                                          --sources names the write source first (and any other
+                                                          sources it reads); --read-shared on also reads every
+                                                          shared source (see auth rescope)
   gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
                                                           or legacy token (id or name). Local CLI only.
   gbrain auth list [--json]                                List all tokens (id, scopes, usage, private facts and pages)
@@ -1332,6 +1375,10 @@ Usage:
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source
                                                           or a request's source_ids); 'none' (default) hides them
+     --read-shared <on|off>                               Also read every shared source, now and later: default
+                                                          plus every federated source, never a guest source or
+                                                          another member's own source. Writes stay in the write
+                                                          source. Needs a source (read_shared_needs_source)
 ${PRIVATE_FACTS_HELP}
      --reset-default <sources,takes-holders,operations>   Token only: restore the auth create default for those axes
      --refresh-operations [--add <op,...>|--all-new]      Token only: preview operations added since the snapshot;
@@ -1358,6 +1405,7 @@ ${PRIVATE_FACTS_HELP}
      --redirect-uri <https://...>                          (v0.41.3+; repeatable; required for authorization_code)
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
+     --read-shared <on|off>                                Also read every shared source, now and later (see auth rescope)
      --member <id> / --may-act-for <list>                  Bind the client to a member (see auth rescope)
      --reads-unscoped --yes                                Read unscoped on a brain that serves several people
                                                           (without it or --member, refused: see auth create)
@@ -1428,7 +1476,7 @@ export async function runAuth(args: string[]): Promise<void> {
         console.error(`Error: ${parsed.error}`);
         process.exit(1);
       }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, minTrust: parsed.minTrust, binding: binding.patch });
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, minTrust: parsed.minTrust, binding: binding.patch, sources: parsed.sources, readShared: parsed.readShared });
       return;
     }
     case 'set-min-trust': await setMinTrustCmd(rest); return;

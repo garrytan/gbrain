@@ -31,13 +31,24 @@ export async function readPageOrigin(exec: LegacyUnscopedRead, target: PageOrigi
   return row ?? null;
 }
 
+/** A soft-deleted page a restore of its slug would revive. */
+export interface RevivalPageRow { id: number; source_id: string }
+
+// moved from persistence/origin-guard.ts assertRevivalUnclaimed unchanged
+const REVIVAL_PAGES_SQL = 'SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$2) ORDER BY source_id COLLATE "C"';
+
+/** The soft-deleted pages with `slug` (of `sourceId` only, when given), by source id in byte order. */
+export async function listRevivalPages(exec: LegacyUnscopedRead, slug: string, sourceId: string | null): Promise<RevivalPageRow[]> {
+  return exec.executeRaw<RevivalPageRow>(REVIVAL_PAGES_SQL, [slug, sourceId]);
+}
+
 /**
  * Takes the transaction advisory lock of each origin key in `lockKeys` (in the order given), then returns the live
  * pages of `sourceId`, other than page `excludePageId`, whose origin is one of `spellings`, in slug order. On Windows
  * a stored origin is compared with `\` read as `/` and case folded, as the caller folds `spellings`.
  */
-const ORIGIN_CLAIMS_SQL = 'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) AND id<>$3 ORDER BY slug';
-const ORIGIN_CLAIMS_WIN32_SQL = "SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[]) AND id<>$3 ORDER BY slug";
+const ORIGIN_CLAIMS_SQL = 'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) AND id<>$3 ORDER BY slug COLLATE "C"';
+const ORIGIN_CLAIMS_WIN32_SQL = "SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND lower(replace(source_path,chr(92),'/'))=ANY($2::text[]) AND id<>$3 ORDER BY slug COLLATE \"C\"";
 
 export async function listOriginClaims(exec: SqlExecutor, sourceId: string, spellings: readonly string[],
   opts: { lockKeys: readonly string[]; excludePageId?: number | null }): Promise<OriginClaimRow[]> {
@@ -101,6 +112,21 @@ export async function readLivePageBody(exec: LegacyUnscopedRead, slug: string, o
   return row ?? null;
 }
 
+/** The body columns of a page, read raw (no withdrawal overlay): NULL on a segmented page. */
+export interface InlinePageRegionsRow { compiled_truth: string | null; timeline: string | null }
+
+/** The stored body columns of page `pageId`, live or a tombstone (page-body/tail-digest.ts inlineRegions), or null when no page has the id. */
+export async function readInlinePageRegions(exec: LegacyUnscopedRead, pageId: number): Promise<InlinePageRegionsRow | null> {
+  const [row] = await exec.executeRaw<InlinePageRegionsRow>('SELECT compiled_truth, timeline FROM pages WHERE id=$1', [pageId]);
+  return row ?? null;
+}
+
+/** The stored `trust_tier` of the page `slug` names in the source, live or a tombstone (trust/page-write.ts storedPageTier), or null without one. */
+export async function readStoredPageTier(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  return row ? row.trust_tier : null;
+}
+
 /** The page row columns a text projection is keyed on (page-state/projections.ts indexingContext). */
 export interface PageIndexingState { chunker_version: number | null; corpus_generation: string | null; page_kind: PageKind }
 
@@ -121,4 +147,37 @@ export async function hasSegmentStorage(exec: LegacyUnscopedRead): Promise<boole
   const [row] = await exec.executeRaw<{ present: boolean }>(
     'SELECT EXISTS (SELECT 1 FROM page_body_stagings) OR EXISTS (SELECT 1 FROM page_segment_texts) AS present');
   return row?.present === true;
+}
+
+/**
+ * Forgets the file page `pageId` records (`source_path` and `source_uri` set to NULL) and marks it database-only with
+ * `reason` (`detached`, `origin_twin`): the repair detach statement origin-twins.ts, persistence/twin-merge.ts and
+ * file-drift.ts sent. Live or a tombstone. The knowledge revision stays: neither column is part of it.
+ */
+export async function detachPageOrigin(exec: SqlExecutor, pageId: number, reason: string): Promise<void> {
+  await exec.run(sqlFragment`UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=${reason} WHERE id=${pageId}`);
+}
+
+/** The `database_only_reason` of the page `slug` names in the source, live or a tombstone, or null (also for no such page). */
+export async function readPageDatabaseOnlyReason(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ database_only_reason: string | null }>('SELECT database_only_reason FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+  return row?.database_only_reason ?? null;
+}
+
+/** Gives page `pageId` a new knowledge revision (live or a tombstone), which also clears its text projection seal. */
+export async function bumpPageKnowledgeRevision(exec: SqlExecutor, pageId: number): Promise<void> {
+  await exec.run(sqlFragment`UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=${pageId}`);
+}
+
+/**
+ * Removes `keys` from the frontmatter of live page `pageId` of the source. A page that held one of them takes a new
+ * knowledge revision; a tombstone, another source's page or a page without the keys keeps its revision.
+ */
+export async function removePageFrontmatterKeys(exec: SqlExecutor, sourceId: string, pageId: number, keys: readonly string[]): Promise<void> {
+  await exec.run(sqlFragment`UPDATE pages SET frontmatter=frontmatter-${[...keys]}::text[] WHERE id=${pageId} AND source_id=${sourceId} AND deleted_at IS NULL`);
+}
+
+/** Sets the `type` of the page `slug` names in the source, live or a tombstone. A changed type takes a new knowledge revision. */
+export async function setPageType(exec: SqlExecutor, sourceId: string, slug: string, type: string): Promise<void> {
+  await exec.run(sqlFragment`UPDATE pages SET type=${type} WHERE source_id=${sourceId} AND slug=${slug}`);
 }

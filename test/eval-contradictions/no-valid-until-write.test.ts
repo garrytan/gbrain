@@ -62,7 +62,8 @@ import { join } from 'node:path';
 //     contradiction PROPOSAL only when the user runs `gbrain decide proposals
 //     accept|undo <id>` (local CLI); the sweep and the inline fact write path
 //     never call it, so a probe still never mutates (auto-supersession.ts:4).
-//   - persistence/loop-fact-retirement.ts (#5869) — retires a commitment fact
+//   - engine-sql/repair-bookkeeping.ts expireSourceFactNow, called only by
+//     persistence/loop-fact-retirement.ts (#5869) — retires a commitment fact
 //     only when its loop is closed through `loops_close` or `gbrain repair
 //     loop-facts` (expired_at + valid_until with the struck fence row); the
 //     contradiction sweep and probes never call it.
@@ -87,6 +88,7 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/insert-guard-schema.ts',
   'src/core/facts/proposal-supersede.ts',
   'src/core/facts/withdrawal.ts',
+  'src/core/engine-sql/repair-bookkeeping.ts', // the loop-fact retirement expiry (expireSourceFactNow), moved from persistence/loop-fact-retirement.ts
   'src/core/engine-sql/facts-cycle.ts', // the fence row's cells statement (updateFenceFactCells), moved from cycle/extract-facts.ts
   'src/core/engine-sql/dream-cycle.ts', // setConsolidatedFactValidUntil, moved from cycle/phases/consolidate.ts: the consolidate phase closes a fact's interval when its take supersedes it
   'src/core/engine-sql/facts-purge.ts', // the withdrawal expiry statement (expireFactsByWithdrawal), moved from facts/withdrawal.ts
@@ -94,8 +96,8 @@ const VALID_UNTIL_WRITE_ALLOWLIST: ReadonlySet<string> = new Set([
   'src/core/facts/withdrawal-schema.ts',
   'src/core/generations/adapters/fact-rows.ts',
   'src/core/persistence/canonical-projections.ts',
+  'src/core/persistence/connector-fact-retirement.ts', // GST-3256: a connector expires only rows whose source is exactly its own provenance; no withdrawal record
   'src/core/persistence/facts-prepare.ts', // #7214: a published supersession closes the retired interval (supersededValidUntil)
-  'src/core/persistence/loop-fact-retirement.ts',
   'src/core/persistence/memory-prepare.ts', // #7214: remember (replaces or cosine) closes the retired interval (supersededValidUntil)
   'src/core/persistence/prepared-maintenance.ts',
   'src/core/postgres-engine.ts',

@@ -1,97 +1,104 @@
 /**
- * The extract bookkeeping statements (core/extract/rollup-writer.ts and receipt-writer.ts): one SQL implementation for
- * both engines. Each statement is the text its caller ran through `executeRaw` at 54246f2bd8, byte for byte
- * (test/engine-sql-caller-raw-sql-pins.test.ts). Every member runs on the executor it is given, so a member of a
- * transaction-bound engine runs on that transaction.
+ * Extract bookkeeping writes: the two page reads an extract receipt write makes inside its transaction
+ * (src/core/extract/receipt-writer.ts) and the `extract_rollup_7d` day upsert the extract steps add their
+ * deltas with (src/core/extract/rollup-writer.ts). Each statement ran through `executeRaw`; SQL once for both
+ * engines, so a store that is not SQL serves the same members (rust/docs/store/extract-bookkeeping.md).
+ *
+ * The rollup reads (doctor's extract_health) are not here.
  */
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
-import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import type { BrainEngine } from '../engine.ts';
 
-/** The engine's own executeRaw (a transaction-bound engine inside a transaction). */
-export interface ExtractBookkeepingExec {
-  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+type Raw = Pick<BrainEngine, 'executeRaw'>;
+
+/** What a receipt write checks before it writes its slug: the page the slug holds, live or a tombstone. */
+export interface ExtractReceiptSlot {
+  type: string | null;
+  source_path: string | null;
+  source_uri: string | null;
+  withheld_source_path: string | null;
+}
+
+/** One event's deltas for its `(kind, source_id, day)` rollup row. `halt_reason`: the bucket the halts count under. */
+export interface ExtractRollupDelta {
+  kind: string;
+  source_id: string;
+  /** `YYYY-MM-DD`. */
+  day: string;
+  cost_usd: number;
+  halt_count: number;
+  eval_fail_count: number;
+  eval_pass_count: number;
+  round_completed_count: number;
+  expected_limit_count: number;
+  rollup_write_failures: number;
+  halt_reason: string | null;
+}
+
+export async function readExtractReceiptSlot(exec: Raw, sourceId: string, slug: string): Promise<ExtractReceiptSlot | null> {
+  const [row] = await exec.executeRaw<ExtractReceiptSlot>(
+    'SELECT type, source_path, source_uri, withheld_source_path FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+  return row ?? null;
 }
 
 /**
- * One extract_rollup_7d event, its deltas already defaulted to 0. `reason` is the halt reason bucket (null: none or
- * unclassified, read back as `unknown`).
+ * Whether the page's chunks are sealed: `chunker_version >= safeVersion AND text_projection_revision =
+ * knowledge_revision`. Null for no page, or when SQL's answer is NULL.
  */
-export interface ExtractRollupRow {
-  kind: string; sourceId: string; day: string; cost: number; halts: number; evalFails: number; evalPasses: number;
-  completed: number; expectedLimits: number; failures: number; reason: string | null;
+export async function readExtractReceiptSeal(exec: Raw, sourceId: string, slug: string, safeVersion: number): Promise<boolean | null> {
+  const [row] = await exec.executeRaw<{ sealed: boolean | null }>(
+    'SELECT chunker_version >= $3::int AND text_projection_revision = knowledge_revision AS sealed FROM pages WHERE source_id=$1 AND slug=$2',
+    [sourceId, slug, safeVersion]);
+  return row ? row.sealed ?? null : null;
 }
 
-/** The page row a receipt write checks before it writes (`pages` columns of that slug, deleted or not). */
-export interface ExtractReceiptPriorRow { type: string | null; source_path: string | null; source_uri: string | null; withheld_source_path: string | null }
-
-const ROLLUP_SQL = `INSERT INTO extract_rollup_7d (
+/**
+ * Inserts the day row or adds the deltas to the stored one; a named halt reason adds `halt_count` to its
+ * `halt_reasons` bucket (bound as text and keyed in SQL, never JSON text cast to jsonb). `preV141`: a brain
+ * without `expected_limit_count` (migration v141) counts expected limits as halts and has no `halt_reasons`.
+ */
+export async function upsertExtractRollupDay(exec: Raw, d: ExtractRollupDelta, opts: { preV141?: boolean } = {}): Promise<void> {
+  if (opts.preV141) {
+    await exec.executeRaw(
+      `INSERT INTO extract_rollup_7d (
          kind, source_id, day,
          cost_usd, halt_count, eval_fail_count, eval_pass_count,
-         round_completed_count, expected_limit_count, rollup_write_failures, halt_reasons, updated_at
+         round_completed_count, rollup_write_failures, updated_at
        )
-       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10,
-         CASE WHEN $11::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object($11::text, $5::int) END, now())
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, now())
        ON CONFLICT (kind, source_id, day) DO UPDATE SET
          cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
          halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
          eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
          eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
          round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
-         expected_limit_count   = extract_rollup_7d.expected_limit_count   + EXCLUDED.expected_limit_count,
          rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
-         halt_reasons           = CASE WHEN $11::text IS NULL THEN extract_rollup_7d.halt_reasons
-           ELSE jsonb_set(extract_rollup_7d.halt_reasons, ARRAY[$11::text],
-             to_jsonb(COALESCE((extract_rollup_7d.halt_reasons->>$11::text)::int, 0) + $5::int)) END,
-         updated_at             = now()`;
-
-// A brain before migration v141 has no expected_limit_count column: the cap stop is added to halt_count.
-const ROLLUP_PRE_V141_SQL = `INSERT INTO extract_rollup_7d (
-             kind, source_id, day,
-             cost_usd, halt_count, eval_fail_count, eval_pass_count,
-             round_completed_count, rollup_write_failures, updated_at
-           )
-           VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, now())
-           ON CONFLICT (kind, source_id, day) DO UPDATE SET
-             cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
-             halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
-             eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
-             eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
-             round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
-             rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
-             updated_at             = now()`;
-
-/**
- * Adds one event to its (kind, source, day) rollup row. `pre_v141` is the statement of a brain whose schema is behind
- * v141 (the caller retries with it when the column is missing). Errors reach the caller, which records them.
- */
-export async function upsertExtractRollup(exec: ExtractBookkeepingExec, row: ExtractRollupRow, form?: 'pre_v141'): Promise<void> {
-  if (form === 'pre_v141') {
-    await exec.executeRaw(ROLLUP_PRE_V141_SQL,
-      [row.kind, row.sourceId, row.day, row.cost, row.halts + row.expectedLimits, row.evalFails, row.evalPasses, row.completed, row.failures]);
+         updated_at             = now()`,
+      [d.kind, d.source_id, d.day, d.cost_usd, d.halt_count + d.expected_limit_count, d.eval_fail_count,
+        d.eval_pass_count, d.round_completed_count, d.rollup_write_failures],
+    );
     return;
   }
-  await exec.executeRaw(ROLLUP_SQL,
-    [row.kind, row.sourceId, row.day, row.cost, row.halts, row.evalFails, row.evalPasses, row.completed, row.expectedLimits, row.failures, row.reason]);
-}
-
-/** The page row at (sourceId, slug), deleted or not; undefined when there is none. */
-export async function readExtractReceiptPrior(exec: ExtractBookkeepingExec, sourceId: string, slug: string): Promise<ExtractReceiptPriorRow | undefined> {
-  const [row] = await exec.executeRaw<ExtractReceiptPriorRow>(
-    'SELECT type, source_path, source_uri, withheld_source_path FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
-  return row;
-}
-
-/**
- * Whether the page at (sourceId, slug) is sealed at the safe-chunk fence: its chunker version is at least
- * SAFE_FENCE_CHUNKER_VERSION and its text projection is at its knowledge revision. The SQL value (true, false or null)
- * is returned as read; undefined when there is no row.
- */
-export async function readExtractReceiptSealed(exec: ExtractBookkeepingExec, sourceId: string, slug: string): Promise<{ sealed: boolean | null } | undefined> {
-  // The fence version is spliced as constant text, as the caller's template did; the text Postgres gets is unchanged.
-  const version = SAFE_FENCE_CHUNKER_VERSION;
-  if (!Number.isFinite(version)) throw new Error(`invalid safe-chunk fence version: ${version}`);
-  const fence = trustedSql(`${version}`);
-  const { text, params } = renderFragment(sqlFragment`SELECT chunker_version >= ${fence} AND text_projection_revision = knowledge_revision AS sealed FROM pages WHERE source_id=${sourceId} AND slug=${slug}`);
-  const [row] = await exec.executeRaw<{ sealed: boolean | null }>(text, params);
-  return row;
+  await exec.executeRaw(
+    `INSERT INTO extract_rollup_7d (
+       kind, source_id, day,
+       cost_usd, halt_count, eval_fail_count, eval_pass_count,
+       round_completed_count, expected_limit_count, rollup_write_failures, halt_reasons, updated_at
+     )
+     VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10,
+       CASE WHEN $11::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object($11::text, $5::int) END, now())
+     ON CONFLICT (kind, source_id, day) DO UPDATE SET
+       cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
+       halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
+       eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
+       eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
+       round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
+       expected_limit_count   = extract_rollup_7d.expected_limit_count   + EXCLUDED.expected_limit_count,
+       rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
+       halt_reasons           = CASE WHEN $11::text IS NULL THEN extract_rollup_7d.halt_reasons
+         ELSE jsonb_set(extract_rollup_7d.halt_reasons, ARRAY[$11::text],
+           to_jsonb(COALESCE((extract_rollup_7d.halt_reasons->>$11::text)::int, 0) + $5::int)) END,
+       updated_at             = now()`,
+    [d.kind, d.source_id, d.day, d.cost_usd, d.halt_count, d.eval_fail_count, d.eval_pass_count,
+      d.round_completed_count, d.expected_limit_count, d.rollup_write_failures, d.halt_reason],
+  );
 }

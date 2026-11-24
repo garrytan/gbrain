@@ -139,7 +139,7 @@ export function syncRepoPathRefusal(value: string): string | null {
  * which writes nothing. A rollback key's `set` returns false so the write goes ahead; any other key returns false.
  * #6712 PR 4b: `get sync.admission` prints the value in effect (`normal` when unset) and when it was set.
  */
-export async function handleSyncKeyConfig(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>, action: 'get' | 'set', key: string): Promise<boolean> {
+export async function handleSyncKeyConfig(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw' | 'readSyncAdmissionSettingRow'>, action: 'get' | 'set', key: string): Promise<boolean> {
   if (action === 'get' && key === 'sync.admission') {
     const { readSyncAdmissionSetting } = await import('./persistence/sync-admission.ts');
     const setting = await readSyncAdmissionSetting(engine);

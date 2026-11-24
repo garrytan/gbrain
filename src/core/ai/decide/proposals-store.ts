@@ -1,7 +1,8 @@
 /**
  * S9 storage. The deferred-retry table and the decide_proposals reads and writes go through engine members
- * (engine-sql/decide-proposals.ts). The per-source sweep watermark (an internal decide_state key), sweep fact
- * selection, neighbour lookup and the answered-pair read stay on `engine.executeRaw` (the store.ts pattern).
+ * (engine-sql/decide-proposals.ts). The per-source sweep watermark (an internal decide_state key) goes through the
+ * typed decide-state members (`getDecideState`/`setDecideState` in store.ts). Sweep fact selection (including
+ * `maxFactId`), neighbour lookup and the answered-pair read stay on `engine.executeRaw`.
  * Proposals are never pruned by receipt retention.
  */
 import type { BrainEngine } from '../../engine.ts';

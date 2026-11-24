@@ -14,6 +14,7 @@ and a refused insert takes no id. Page deletes do not cascade here.
 | --- | --- | --- |
 | `brain.logEvalCandidate(input)` | the new id. `retrieved_slugs` keeps, in order, only slugs a page of `source_ids` holds (any source when `source_ids` is empty; soft-deleted pages count; null elements drop). `constraint_violation` for a `NOT NULL` or `CHECK` failure (`tool_name` in `query`/`search`, `query` at most 51200 characters, `detail`/`detail_resolved` in `low`/`medium`/`high`); `invalid_argument` for a NUL byte or a number that is not an `int4` | `logEvalCandidate` |
 | `brain.listEvalCandidates({ since?, limit?, tool? }?)` | `EvalCandidate[]` with every column (`as_of_ts`, `schema_pack_per_source` and the salience/recency columns are null), `created_at >= since` (epoch when absent), `tool_name = tool` when given, `created_at DESC, id DESC`. `limit` is 1000 when absent, not finite or not positive, else `min(floor(limit), 100000)` | `listEvalCandidates` |
+| `brain.listEvalCandidateQueries(limit)` | `string[]`: the `query` of the newest rows by id (`ORDER BY id DESC LIMIT $1`), at most `limit`. A negative limit is `invalid_argument`, as Postgres refuses it; the TypeScript member refuses a limit that is not an integer with `engine_capability_missing` | `listEvalCandidateQueries` |
 | `brain.deleteEvalCandidatesBefore(date)` | number of rows with `created_at < date`, deleted | `deleteEvalCandidatesBefore` |
 | `brain.logEvalCaptureFailure(reason)` | `null`; `constraint_violation` for a reason outside `db_down`, `rls_reject`, `check_violation`, `scrubber_exception`, `other` | `logEvalCaptureFailure` |
 | `brain.listEvalCaptureFailures({ since? }?)` | `{ id, ts, reason }[]`, `ts >= since`, newest first | `listEvalCaptureFailures` |
@@ -34,3 +35,11 @@ transaction after the pages are gone. It touches candidates whose `source_ids` c
 each slug in `slugs` unless a page by that name lives in another source the candidate covers, keeps the
 order of the rest, and returns the number of candidates changed. A candidate with empty `source_ids` is
 never touched, as in PGLite.
+
+The page purge's retrieval, name and cache scrubs: `brain.scrubEvalCandidateSlugs(sourceId, slugs) -> number` runs
+`remove_retrieved_slugs` in its own write transaction (`Store::scrub_eval_candidate_slugs`) and serves the eval candidate count of the
+`deletePurgedFeedbackRows` member (`src/core/engine-sql/purge-stores.ts`). The rest of what that purge scrubs is answered in
+TypeScript without a store call, because the store keeps no such rows: `deletePurgedFeedbackRows` reports 0 for the retrieval event,
+link event, rating and weight stores (reserved keyspaces that hold no record); `deletePurgedNameStoreRows` reports 0 for the volunteer
+log and the gazetteer; `clearQueryCache` reports 0 rows removed (the cache is present and empty, so the purge receipt names no missing
+cache, as on PGLite). A candidate scrub in a purge transaction runs after the pages are gone, as `remove_retrieved_slugs` requires.

@@ -7,6 +7,7 @@
  * (rust/crates/gbrain-store/src/embedding_catalog.rs).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { quoteIdentifier } from '../search/embedding-column.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -95,10 +96,101 @@ const HAS_VECTORS_SQL: Readonly<Record<EmbeddingStore, string>> = {
   takes: 'SELECT EXISTS (SELECT 1 FROM takes WHERE embedding IS NOT NULL) AS present',
 };
 
+// chunk-visibility-ok: image vectors live on image pages, which are never segmented (chooseBodyStorage)
+const HAS_CHUNK_IMAGE_VECTORS_SQL = 'SELECT EXISTS (SELECT 1 FROM content_chunks WHERE embedding_image IS NOT NULL) AS present';
+
+/** Whether any chunk holds an image vector (`embedding_image`), the one column the cross-modal image arm reads. */
+export async function hasChunkImageVectors(raw: EngineRawRead): Promise<boolean> {
+  const [row] = await raw<{ present: boolean | string }>(HAS_CHUNK_IMAGE_VECTORS_SQL);
+  return row?.present === true || row?.present === 't';
+}
+
 /** Whether any row of `store` holds a vector. */
 export async function hasStoredVectors(raw: EngineRawRead, store: EmbeddingStore): Promise<boolean> {
   const sql = HAS_VECTORS_SQL[store];
   if (!sql) throw new Error(`hasStoredVectors: '${String(store)}' is not an embedding store`);
   const [row] = await raw<{ present: boolean }>(sql);
   return !!row?.present;
+}
+
+/** The fixed-width `content_chunks` vector columns beside `embedding` (`vector(1024)` on Postgres and PGLite). */
+export const FIXED_VECTOR_COLUMNS = ['embedding_image', 'embedding_multimodal'] as const;
+export type FixedVectorColumn = typeof FIXED_VECTOR_COLUMNS[number];
+
+/** One source's `content_chunks` rows and how many of them hold a vector in the column. */
+export interface ChunkVectorCoverageRow { source_id: string; total: number; covered: number }
+
+/** One constant statement per column, so no column name is spliced into SQL (the doctor's unified_multimodal_coverage text). */
+const COVERAGE_SQL: Readonly<Record<FixedVectorColumn, string>> = {
+  // chunk-visibility-ok: doctor coverage ratio moved verbatim from doctor/checks/data-integrity.ts; it counts every chunk row, as before.
+  embedding_image: `SELECT
+           COALESCE(p.source_id, 'default') AS source_id,
+           COUNT(*)::text AS total,
+           SUM(CASE WHEN cc.embedding_image IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         GROUP BY p.source_id`,
+  // chunk-visibility-ok: doctor coverage ratio moved verbatim from doctor/checks/data-integrity.ts; it counts every chunk row, as before.
+  embedding_multimodal: `SELECT
+           COALESCE(p.source_id, 'default') AS source_id,
+           COUNT(*)::text AS total,
+           SUM(CASE WHEN cc.embedding_multimodal IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+         GROUP BY p.source_id`,
+};
+
+/**
+ * Per source with at least one chunk, the chunks (every generation, soft-deleted pages too) and how many hold a vector in
+ * `column`, in source id order. Throws when the column is missing (a brain from before v0.36 that has not migrated).
+ */
+export async function countChunkVectorCoverage(raw: EngineRawRead, column: FixedVectorColumn): Promise<ChunkVectorCoverageRow[]> {
+  const sql = COVERAGE_SQL[column];
+  if (!sql) throw new Error(`countChunkVectorCoverage: '${String(column)}' is not a fixed vector column`);
+  const rows = await raw<{ source_id: string | null; total: string; covered: string }>(sql);
+  return rows
+    .map((r) => ({ source_id: r.source_id || 'default', total: parseInt(String(r.total), 10), covered: parseInt(String(r.covered), 10) }))
+    .sort((a, b) => (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
+}
+
+/** A `content_chunks` column and its type as `format_type` prints it (`vector(1024)`, `halfvec(2560)`). */
+export interface ChunkColumnType { attname: string; formatted: string }
+
+/**
+ * The type of each named `content_chunks` column that exists, in no set order (doctor embedding_column_registry's
+ * batch probe). A name with no column has no row.
+ */
+export async function readChunkColumnTypes(raw: EngineRawRead, columns: string[]): Promise<ChunkColumnType[]> {
+  return raw<ChunkColumnType>(
+    `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS formatted
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public'
+            AND c.relname = 'content_chunks'
+            AND a.attname = ANY($1::text[])
+            AND NOT a.attisdropped`,
+    [columns],
+  );
+}
+
+/** Every `content_chunks` row and the percent of them that hold a value in a column (null when there is no row). */
+export interface ChunkColumnCoverage { pct: number | null; total: number }
+
+/**
+ * How full a `content_chunks` column is over every row (every generation, soft-deleted pages too): doctor
+ * embedding_column_registry's coverage gate on the active vector column. Throws when the column is missing.
+ */
+export async function countChunkColumnCoverage(raw: EngineRawRead, column: string): Promise<ChunkColumnCoverage> {
+  const rows = await raw<{ pct: number | null; total: number }>(
+    `-- chunk-visibility-ok: doctor coverage ratio moved from doctor/checks/embedding-health.ts; it counts every chunk row, as before.
+     SELECT (
+             COUNT(*) FILTER (WHERE ${quoteIdentifier(column)} IS NOT NULL)::float
+             / NULLIF(COUNT(*), 0) * 100
+           )::float AS pct,
+           COUNT(*)::int AS total
+           FROM content_chunks`,
+  );
+  const pct = rows[0]?.pct;
+  return { pct: pct === null || pct === undefined ? null : Number(pct), total: Number(rows[0]?.total ?? 0) };
 }

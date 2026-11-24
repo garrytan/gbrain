@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "skill-resolver.v1.turn-output.json",
   "title": "gbrain skill resolver: turn output (schema_version 1)",
-  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state. Within v1, changes are additive only.",
+  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state, except on a turn the model picker answered or was asked (router). Within v1, changes are additive only.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -76,13 +76,14 @@
         "match_strength": {
           "enum": [
             "named",
+            "picked",
             "name",
             "triggers",
             "routing",
             "description",
             "body"
           ],
-          "description": "The strongest way it matched: named in the turn, else the first matched field of name, triggers, routing, description, body. An adapter that wants a floor drops body-only (or description-only) suggestions."
+          "description": "The strongest way it matched: named in the turn, picked by the model picker (skills.resolver.router), else the first matched field of name, triggers, routing, description, body. An adapter that wants a floor drops body-only (or description-only) suggestions."
         },
         "path": {
           "type": "string",
@@ -189,7 +190,18 @@
     },
     "block_reason": {
       "description": "Why the block is empty; null when it has a suggestion.",
-      "enum": ["ack", "no_match", "filtered", "weak_top_match", "deduped", "paced", "budget_exhausted", "shadow", "error", null]
+      "enum": [
+        "ack",
+        "no_match",
+        "filtered",
+        "weak_top_match",
+        "deduped",
+        "paced",
+        "budget_exhausted",
+        "shadow",
+        "error",
+        null
+      ]
     },
     "suggestions": {
       "type": "array",
@@ -221,6 +233,73 @@
     },
     "error": {
       "$ref": "#/$defs/error"
+    },
+    "router": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Present only when the model picker was on for the turn (skills.resolver.router, and a caller allowed to start it: the command line or the Claude Code and Codex hook lanes). Says who answered, with which model, how long the turn waited for it in milliseconds, its estimated cost in USD, and why it fell back to the word matcher.",
+      "required": [
+        "mode",
+        "answered_by",
+        "model",
+        "ms",
+        "est_usd",
+        "fallback"
+      ],
+      "properties": {
+        "mode": {
+          "const": "picker"
+        },
+        "answered_by": {
+          "enum": [
+            "picker",
+            "words"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "est_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code"
+              ],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "timeout",
+                    "provider_error",
+                    "missing_key",
+                    "daily_cap",
+                    "parse_failed",
+                    "no_known_ids",
+                    "config_invalid",
+                    "no_pricing",
+                    "ledger_unavailable"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
     },
     "explain": {
       "type": "object",

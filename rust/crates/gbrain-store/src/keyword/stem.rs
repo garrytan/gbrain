@@ -1,6 +1,8 @@
 //! A port of PostgreSQL's `english_stem` text search dictionary (`ts_lexize('english_stem', word)`),
 //! PostgreSQL 18: `dict_snowball.c` around the generated Snowball 2.2.0 `stem_UTF_8_english.c`
 //! (with the runtime in `utilities.c` and `api.c`) and the `english.stop` stopword list.
+//! Derived from PostgreSQL 18.6; licence and notice: third-party/postgresql/NOTICE.md
+//! Also derived from Snowball 2.2.0; licence and notice: third-party/snowball/NOTICE.md
 //!
 //! `dsnowball_lexize` for a UTF-8 database:
 //!
@@ -1912,6 +1914,20 @@ const A_10: &[Among] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lower_matches_pglite_on_every_code_point() {
+        let one = |c: char| {
+            let lowered = pg_lower(&c.to_string());
+            let mut chars = lowered.chars();
+            match (chars.next(), chars.next()) {
+                (Some(l), None) => l,
+                _ => panic!("pg_lower of U+{:04X} is not one character", c as u32),
+            }
+        };
+        let mismatches = crate::fingerprint_fixture::lower_mismatches(one);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
 
     /// `ts_lexize('english_stem', word)` from PostgreSQL 18 (PGLite) for each word: vocabulary of
     /// Snowball's English stemmer, case variants, apostrophes, non-ASCII, long words and fuzz.

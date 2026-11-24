@@ -116,16 +116,16 @@ test('a typed preparation read runs under the clock\'s deadline in every prepare
   const seen: Array<{ key: string; deadline: number | undefined }> = [];
   const engine = { kind: 'postgres', executeRaw: async () => [],
     getPageSealState: async () => { seen.push({ key: 'getPageSealState', deadline: readDeadline() }); return null; },
-    getConfig: async () => { seen.push({ key: 'getConfig', deadline: readDeadline() }); return null; } } as unknown as BrainEngine;
+    getStats: async () => { seen.push({ key: 'getStats', deadline: readDeadline() }); return null; } } as unknown as BrainEngine;
   for (const opts of [{}, { engineReads: true }]) {
     seen.length = 0;
     const clock = startClaimPhase(Date.now(), undefined, 10_000);
     const reads = boundedReads(engine, clock, opts);
     expect(TYPED_PREPARATION_READS.has('getPageSealState')).toBe(true);
     await reads.getPageSealState(7);
-    await reads.getConfig('k');
+    await reads.getStats();
     expect(seen[0]).toEqual({ key: 'getPageSealState', deadline: clock.deadlineAt });
-    expect(seen[1]).toEqual({ key: 'getConfig', deadline: 'engineReads' in opts ? clock.deadlineAt : undefined });
+    expect(seen[1]).toEqual({ key: 'getStats', deadline: 'engineReads' in opts ? clock.deadlineAt : undefined });
     expect(clock.lastSql?.label).toBe('SELECT getPageSealState');
   }
 });

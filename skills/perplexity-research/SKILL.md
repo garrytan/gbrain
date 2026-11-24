@@ -1,7 +1,7 @@
 ---
 name: perplexity-research
 version: 0.1.0
-description: Brain-augmented web research. Sends brain context about a topic to Perplexity, which searches the web with citations and returns what is NEW vs what the brain already knows. Use for entity enrichment, current-state checks, deal monitoring, and freshness deltas. NOT for simple URL fetches (use web_fetch) or brain-only queries (use gbrain query).
+description: Brain-augmented web research. Asks Perplexity about a topic, with a short summary of what the brain already knows, and returns what is NEW with citations. Sends page content only after the user agrees. Use for current-state checks and freshness deltas on topics. NOT for simple URL fetches (use web_fetch) or brain-only queries (use gbrain query).
 triggers:
   - "perplexity research"
   - "perplexity-research"
@@ -23,21 +23,22 @@ writes_to:
 > citation, not a paraphrase.
 >
 > **Convention:** see [conventions/brain-first.md](../conventions/brain-first.md)
-> for the lookup chain. This skill ENFORCES brain-first by sending brain
-> context as part of the Perplexity prompt — the web search focuses on
-> the delta between brain knowledge and current web state.
+> for the lookup chain. This skill reads the brain first and tells
+> Perplexity what is already known, so the web search focuses on the delta
+> between brain knowledge and current web state.
 
 ## What this does
 
 Combines existing brain knowledge with Perplexity's web search. The
-agent sends brain context about a topic into a Perplexity query;
-Perplexity searches + reads + synthesizes multiple pages with citations,
-focused on what's NEW relative to the supplied context.
+agent reads the brain on a topic, then asks Perplexity what's NEW relative
+to a short summary of what the brain already knows; Perplexity searches,
+reads and synthesizes multiple pages with citations.
 
-**The key insight:** Perplexity doesn't just search — it reads and
-synthesizes with citations. By sending brain context in the
-instructions, it knows what you already know, so it surfaces the delta
-instead of repeating settled fact.
+**What leaves the machine.** Everything in the query goes to Perplexity. By
+default send only the topic and a few lines of public facts the brain
+already holds (names of public companies, dates, published events). Before
+sending page content, private notes, or anything about a private person,
+tell the user what would be sent and wait for their agreement.
 
 ## When to use this vs other tools
 
@@ -97,11 +98,12 @@ API directly (or a host-provided `perplexity` CLI if installed):
 gbrain get <slug>                    # or
 gbrain query "<topic keywords>"
 
-# 2. Compose the Perplexity query with brain context inline:
+# 2. Compose the Perplexity query (topic plus a short public summary;
+#    page content only after the user agreed to send it):
 #    """
 #    Topic: <topic>
-#    Brain context (what we already know): <embedded gbrain content>
-#    Find: what's NEW since 2026-MM-DD that the brain doesn't reflect.
+#    Already known: <a few lines of public facts>
+#    Find: what's NEW since 2026-MM-DD.
 #    Cite every claim.
 #    """
 
@@ -109,8 +111,9 @@ gbrain query "<topic keywords>"
 #    Sonar chat-completions endpoint (/chat/completions with
 #    "model": "sonar-pro") is being retired and refuses migrated accounts
 #    with 403 agent_api_migration_required; use POST /v1/agent:
-#    curl https://api.perplexity.ai/v1/agent \
-#      -H "Authorization: Bearer $PERPLEXITY_API_KEY" \
+#    The key goes in on stdin so it stays out of the process list:
+#    printf 'Authorization: Bearer %s\n' "$PERPLEXITY_API_KEY" | \
+#    curl https://api.perplexity.ai/v1/agent -H @- \
 #      -H "Content-Type: application/json" \
 #      -d '{"preset": "low", "instructions": "Cite every claim.", "input": "..."}'
 #    Read the answer from the output item with "type": "message" (SDKs
@@ -118,7 +121,7 @@ gbrain query "<topic keywords>"
 #    in the output array; inline [n] markers refer to them.
 
 # 4. Write the structured research page via put_page:
-gbrain put research/<slug>      # via the put_page operation
+gbrain put research/<slug>      # via the put_page operation; if refused with slug_in_other_source, retry with the --source-id it names
 
 # 5. Cross-link entities mentioned (people, companies) per Iron Law.
 ```
@@ -127,33 +130,14 @@ gbrain put research/<slug>      # via the put_page operation
 
 | Agent API preset | Replaces | Use when |
 |-------|-------------|----------|
-| `"preset": "low"` | Sonar Pro | Deep analysis, entity enrichment, deal research (multi-step search) |
+| `"preset": "low"` | Sonar Pro | Deep analysis (multi-step search) |
 | `"preset": "fast"` | Sonar | Quick lookups, bulk monitoring, briefing pipelines |
 
-Default to `low`. Drop to `fast` for bulk / cron contexts where cost
+Default to `low`. Drop to `fast` for bulk contexts where cost
 matters more than depth. Perplexity does not publish a fixed per-request
 price for presets; check its pricing page before running bulk jobs.
 
 ## Integration patterns
-
-### Entity enrichment
-
-Called by `skills/enrich/SKILL.md` when an entity page (person, company)
-needs current web context:
-
-```bash
-BRAIN=$(gbrain get people/<slug> 2>/dev/null)
-# Send <slug>'s page content as brain_context to Perplexity, get current
-# news / role / context, then update the brain page with what's new.
-```
-
-### Deal / company monitoring (cron)
-
-For each active item under `deals/` or `companies/`:
-
-```bash
-# Weekly: pull recent news per company; flag changes for review.
-```
 
 ### Morning briefing
 
@@ -178,10 +162,10 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 ## Anti-Patterns
 
-- ❌ Sending NO brain context. Then it's just a search — use `web_fetch`
-  instead.
-- ❌ Truncating the brain context. The whole point is "knows what you
-  know." Send dense context.
+- ❌ Skipping the brain read. Without it the result can't say what's new
+  — use `web_fetch` instead.
+- ❌ Sending page content, private notes or details about a private person
+  without the user's agreement.
 - ❌ Discarding citations. Every claim in the output must have a URL.
 - ❌ Skipping the cross-link step when entities are mentioned. Iron Law.
 
@@ -195,8 +179,6 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - `skills/academic-verify/SKILL.md` — wraps perplexity-research for
   citation-verified academic claim checking
-- `skills/enrich/SKILL.md` — calls perplexity-research as part of the
-  entity-enrichment loop
 - `skills/data-research/SKILL.md` — structured-data trackers (different
   shape: parameterized YAML recipes, not free-form research)
 
@@ -208,10 +190,10 @@ This skill guarantees:
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:` (when applicable).
 - Conventions referenced (`quality.md`, `brain-first.md`, `_brain-filing-rules.md`) are followed.
-- Privacy contract preserved: no real names, no fork-specific filesystem path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).

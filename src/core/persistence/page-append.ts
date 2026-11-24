@@ -20,6 +20,7 @@
  * which mines those bytes alone (#7122, effect-links.ts); timeline rows and fence projections of the appended text follow
  * PR 4's incremental derivation.
  */
+import { normalizeSlug } from '../utils.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -176,7 +177,7 @@ export async function admitPageAppend(ctx: OperationContext, input: AppendPageIn
   } catch (error) {
     if (!(error instanceof OperationError) || (error.canonical ?? error.code) !== 'tail_changed') throw error;
     const sourceId = String(error.receiptFields?.source_id ?? input.source_id ?? ctx.sourceId ?? 'default');
-    const slug = String(error.receiptFields?.slug ?? input.slug).toLowerCase();
+    const slug = normalizeSlug(String(error.receiptFields?.slug ?? input.slug));
     const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId });
     const found = snapshot && !snapshot.page.deleted_at ? await regionTail(ctx.engine, snapshot, intent.region) : null;
     const tail = found && !(ctx.remote !== false && found.guarded) ? found : null;
@@ -434,8 +435,7 @@ export async function prepareAppendMutation(engine: BrainEngine, row: WriteReque
   const appended = truth && truth.length > start && truth.subarray(0, start).equals(Buffer.from(before, 'utf8')) ? truth.subarray(start) : null;
   const result = { ...prepared, apply: async (tx, preimage) => {
     const outcome = await apply(tx, preimage);
-    const [row2] = await tx.executeRaw<{ bytes: string | null; truth: string | null }>(`SELECT COALESCE(body_bytes, octet_length(COALESCE(compiled_truth,'')) + octet_length(COALESCE(timeline,'')))::text AS bytes,
-      (CASE WHEN body_storage='segmented' THEN truth_bytes ELSE octet_length(COALESCE(compiled_truth,'')) END)::text AS truth FROM pages WHERE id=$1`, [stored.page.id]);
+    const row2 = await tx.readPageBodySizes(Number(stored.page.id));
     const bodyBytes = Number(row2?.bytes ?? 0);
     const truthEnd = Number(row2?.truth ?? 0);
     if (appended && truthEnd >= appended.length) result.mentionRange = { start: truthEnd - appended.length, end: truthEnd, sha256: sha256Hex(appended) };

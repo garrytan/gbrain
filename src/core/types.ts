@@ -352,6 +352,8 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /** More literal prefixes whose pages are listed too, with `slugPrefix`: one name stored under another spelling (see ops/slug-params.ts). */
+  slugPrefixAlso?: string[];
   /** Literal slug prefixes to omit before ordering/pagination. Opt-in: ordinary listings remain unrestricted. */
   excludeSlugPrefixes?: string[];
   /**
@@ -443,7 +445,7 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // imports stamp one now() across a transaction) lists deterministically.
   // OFFSET over it is still unstable under timestamp-changing writes; walk
   // a source by `sort: 'slug'` + `slugAfter` when every page must be seen once.
-  updated_desc: 'p.updated_at DESC, p.slug DESC, p.source_id DESC, p.id DESC',
+  updated_desc: 'p.updated_at DESC, p.slug COLLATE "C" DESC, p.source_id COLLATE "C" DESC, p.id DESC',
   // v0.45.7: slug tiebreaker makes updated_asc a TOTAL order, so keyset
   // pagination (updatedAfterKeyset) can page deterministically through a
   // cluster of pages sharing one updated_at (bulk syncs stamp identical
@@ -453,12 +455,12 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // resume from `Page.updated_at_iso`, never from a JS Date. Slug is unique
   // only per source, so a federated listing needs source_id + id behind it to
   // stay a total order (same tiebreakers as `slug` below).
-  updated_asc:  'p.updated_at ASC, p.slug ASC, p.source_id ASC, p.id ASC',
-  created_desc: 'p.created_at DESC',
+  updated_asc:  'p.updated_at ASC, p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC',
+  created_desc: 'p.created_at DESC, p.id DESC',
   // Slug uniqueness is per (source_id, slug), so a federated listing can hold
   // the same slug from several sources; source_id + id make slug+offset paging
   // a TOTAL order (same class as the updated_asc tiebreaker above).
-  slug:         'p.slug ASC, p.source_id ASC, p.id ASC',
+  slug:         'p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC',
 };
 
 /**
@@ -531,6 +533,8 @@ export interface SalienceOpts extends PageReadPolicy {
   limit?: number;
   /** Optional slug-prefix filter (e.g., `personal`, `wiki/people`). */
   slugPrefix?: string;
+  /** More prefixes read with `slugPrefix` (one name stored under another spelling). */
+  slugPrefixAlso?: string[];
   /**
    * v0.29.1 — recency-decay treatment for the salience formula's third term.
    *   - 'flat' (default): v0.29.0 behavior, `1.0 / (1 + days_old)` for every page
@@ -613,9 +617,9 @@ export interface EnrichCandidate {
  * tied scores produce a deterministic order across engines and runs.
  */
 export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
-  'inbound-links': 'inbound_count DESC, p.source_id ASC, p.slug ASC',
-  'updated':       'p.updated_at DESC, p.source_id ASC, p.slug ASC',
-  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id ASC, p.slug ASC',
+  'inbound-links': 'inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
+  'updated':       'p.updated_at DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
+  'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
 };
 
 /**
@@ -1286,11 +1290,11 @@ export interface SearchOpts extends PageReadPolicy {
    */
   adaptiveReturn?: import('./search/return-policy.ts').AdaptiveReturnInput;
   /**
-   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default-ON in
-   * reranked modes (the floor). Pass `false` to force the full top-K for breadth
-   * / exploration (the ceiling override). Cuts the ranked set at the largest
-   * cross-encoder rerank-score cliff; no-op without a reranker. Only fires when
-   * offset===0. See src/core/search/autocut.ts.
+   * v0.42.3.0 — autocut (score-discontinuity result-sizing). OFF in every mode
+   * bundle; `true` (or config `search.autocut true`) cuts the ranked set at the
+   * steepest rerank-score drop, which can drop relevant hits on multi-part
+   * questions. `false` forces the full top-K. No-op without a reranker; only
+   * fires when offset===0. See src/core/search/autocut.ts.
    */
   autocut?: import('./search/autocut.ts').AutocutInput;
   type?: PageType;
@@ -2106,7 +2110,9 @@ export const DEGRADED_STAGES = [
   'rescore_skipped',
   'vector_arm_failed',
   'keyword_arm_failed',
+  'supersede_check_failed',
   'title_arm_failed',
+  'entity_lookup_failed',
   'budget_dropped_all',
   'budget_truncated',
   'keyword_zero',

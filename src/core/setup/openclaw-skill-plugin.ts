@@ -36,14 +36,14 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSy
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
-import { bunSpawnSync } from '../spawn.ts';
 import { VERSION } from '../../version.ts';
 import { buildSkillIndex, catalogStatus } from '../skills/resolver/build.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
 import { logsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { readDirSources } from '../skills/resolver/sources.ts';
-import { openclawConfigPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
+import { openclawConfigPath, openclawPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
 import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
+import { openclawPluginRegistered, runOpenclawCli } from './openclaw-turn-plugin.ts';
 import { catalogSkillIds, pinnedBlockFor } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
 import { laneTurnSettings } from '../skills/resolver/config.ts';
@@ -82,7 +82,7 @@ export interface OpenclawSkillResult {
   error?: OpenclawSkillError;
 }
 
-type Run = (argv: string[]) => { ok: boolean; output: string };
+type Run = (argv: string[]) => { ok: boolean; output: string; stdout?: string };
 
 export interface OpenclawSkillDeps {
   openclawBin?: string | null;
@@ -93,11 +93,6 @@ export interface OpenclawSkillDeps {
 export const openclawSkillPluginDir = (): string => join(openclawStateDir(), 'gbrain', OPENCLAW_SKILL_PLUGIN_ID);
 export const openclawSkillStatePath = (home: string): string => join(home, OPENCLAW_SKILL_STATE_FILE);
 export const openclawSkillLibDir = (home: string): string => join(home, 'lib');
-
-function defaultRun(argv: string[]): { ok: boolean; output: string } {
-  const r = bunSpawnSync(argv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env, timeout: 120_000 });
-  return { ok: r.exitCode === 0, output: `${r.stdout.toString()}${r.stderr.toString()}`.trim() };
-}
 
 function which(name: string): string | null {
   try { return Bun.which(name, { PATH: process.env.PATH ?? '' }); } catch { return null; }
@@ -138,7 +133,7 @@ export function openclawAgentSkillDirs(agentId: string, roster: RosterEntry[] = 
     const w = resolveOpenclawWorkspace();
     if (!('error' in w)) workspace = w.path;
   }
-  const dirs = [workspace ? join(workspace.replace(/^~(?=\/|$)/, process.env.HOME ?? '~'), 'skills') : null, join(openclawStateDir(), 'skills')];
+  const dirs = [workspace ? join(openclawPath(workspace), 'skills') : null, join(openclawStateDir(), 'skills')];
   return [...new Set(dirs.filter((d): d is string => !!d && existsSync(d)))];
 }
 
@@ -166,12 +161,7 @@ const installArgv = (bin: string, dir: string): string[][] => [
 
 /** Whether OpenClaw's config already loads, enables and allows the plugin (so no CLI call is needed). */
 export function openclawSkillPluginRegistered(dir = openclawSkillPluginDir()): boolean {
-  try {
-    const cfg = parseJson5ish(readFileSync(openclawConfigPath(), 'utf8')) as { plugins?: { load?: { paths?: unknown }; entries?: Record<string, { enabled?: unknown; hooks?: { allowConversationAccess?: unknown } }> } } | undefined;
-    const entry = cfg?.plugins?.entries?.[OPENCLAW_SKILL_PLUGIN_ID];
-    const paths = Array.isArray(cfg?.plugins?.load?.paths) ? cfg!.plugins!.load!.paths as unknown[] : [];
-    return !!entry && entry.enabled !== false && entry.hooks?.allowConversationAccess === true && paths.includes(dir);
-  } catch { return false; }
+  return openclawPluginRegistered(OPENCLAW_SKILL_PLUGIN_ID, dir);
 }
 
 /** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only; the prune keeps every library a consumer's state (OpenClaw, Pi) still names. */
@@ -210,7 +200,8 @@ function hostSkills(run: Run, bin: string, agentId: string): { listed: Set<strin
   const r = run([bin, 'skills', 'list', '--json', '--agent', agentId]);
   if (!r.ok) return null;
   try {
-    const j = JSON.parse(r.output.slice(r.output.indexOf('{'))) as unknown;
+    const stdout = r.stdout ?? r.output;
+    const j = JSON.parse(stdout.slice(stdout.indexOf('{'))) as unknown;
     const list = Array.isArray((j as { skills?: unknown })?.skills) ? (j as { skills: Array<Record<string, unknown>> }).skills : null;
     if (!list) return null;
     const named = list.filter((e) => e && typeof e.name === 'string');
@@ -218,6 +209,21 @@ function hostSkills(run: Run, bin: string, agentId: string): { listed: Set<strin
       : e.eligible === true && e.disabled !== true && e.blockedByAgentFilter !== true && e.blockedByAllowlist !== true);
     return { listed: new Set(named.map((e) => e.name as string)), visible: new Set(named.filter(shows).map((e) => e.name as string)) };
   } catch { return null; }
+}
+
+/**
+ * Doctor's re-check of what setup filtered: the agent's catalog skills that setup still offers (not in excluded) but
+ * OpenClaw now hides from the agent's model (hidden) or no longer lists at all (cut, its load limits). Read-only; null
+ * with no openclaw on PATH, a failed list, or a list naming none of the catalog.
+ */
+export function openclawHostDrift(agentId: string, catalogIds: string[], excluded: string[], deps: OpenclawSkillDeps = {}): { hidden: string[]; cut: string[] } | null {
+  const bin = deps.openclawBin !== undefined ? deps.openclawBin : which('openclaw');
+  if (!bin) return null;
+  const host = hostSkills(deps.run ?? ((argv) => runOpenclawCli(argv, 20_000)), bin, agentId);
+  if (!host || !catalogIds.some((n) => host.listed.has(n))) return null;
+  const offered = catalogIds.filter((n) => !excluded.includes(n) && !host.visible.has(n));
+  const cut = offered.filter((n) => !host.listed.has(n));
+  return { hidden: offered.filter((n) => !cut.includes(n)), cut };
 }
 
 const someNames = (ids: string[]) => `${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ` and ${ids.length - 10} more` : ''}`;
@@ -248,7 +254,7 @@ function openclawLaneConfig(home: string): { top_k: number; min_match: string; t
 export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): Promise<OpenclawSkillResult> {
   const { home, dryRun } = opts;
   const deps = opts.deps ?? {};
-  const run = deps.run ?? defaultRun;
+  const run = deps.run ?? runOpenclawCli;
   const out: OpenclawSkillResult = { mode: opts.mode ?? 'live', steps: [], agents: [], notes: [] };
   const fail = (e: OpenclawSkillError) => ({ ...out, error: e });
   const bin = deps.openclawBin !== undefined ? deps.openclawBin : which('openclaw');
@@ -298,7 +304,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const cut = host ? hidden.filter((n) => !host.listed.has(n)) : [];
     const shut = hidden.filter((n) => !cut.includes(n));
     if (shut.length) out.notes.push(`agent ${id}: ${shut.length} skill(s) OpenClaw hides from this agent's model (ineligible on this host, outside its skill filter, or model invocation off) are never suggested: ${someNames(shut)}`);
-    if (cut.length) out.notes.push(`agent ${id}: OpenClaw does not list ${cut.length} of ${catalog}'s skills (dropped at load by skills.limits.maxCandidatesPerRoot, or not in its skill roots), so they are never suggested: ${someNames(cut)} (skill_resolver_host_load_cut)`);
+    if (cut.length) out.notes.push(`agent ${id}: OpenClaw does not list ${cut.length} of ${catalog}'s skills (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource, or not in its skill roots), so they are never suggested: ${someNames(cut)} (skill_resolver_host_load_cut)`);
     const pins = dryRun ? { block: '', ids: [], unknown: [] as string[] } : pinnedBlockFor(home, catalog, 'openclaw');
     agents[id] = {
       mode: opts.mode ?? before?.mode ?? 'live', catalog, skill_dirs: dirs,
@@ -420,7 +426,7 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
     const uninstall = [bin ?? 'openclaw', 'plugins', 'uninstall', OPENCLAW_SKILL_PLUGIN_ID, '--force'];
     if (opts.dryRun) out.steps.push({ step: 'install', action: 'remove', detail: `${shown(uninstall)}, then ${dir}` });
     else {
-      const r = bin ? (deps.run ?? defaultRun)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
+      const r = bin ? (deps.run ?? runOpenclawCli)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
       if (!r.ok) {
         if (prior) atomicWriteTextFile(openclawSkillStatePath(opts.home), `${JSON.stringify({ ...prior, agents }, null, 2)}\n`, { freshMode: 0o600 });
         return { ...out, error: { code: 'skill_resolver_plugin_not_installed', message: `Every agent is off (the plugin injects nothing now), but \`${shown(uninstall)}\` did not run (${lastLine(r.output)}), so ${dir} stays in place.`, commands: [shown(uninstall)], argv: uninstall, recovery: `partial: state set to off; run the command on the OpenClaw host, then delete ${dir}` } };

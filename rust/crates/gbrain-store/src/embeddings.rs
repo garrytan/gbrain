@@ -1,7 +1,7 @@
 //! Embedding state of chunks, pages and takes (core).
 //!
 //! Members: getEmbeddingsByChunkIds, countStaleChunks, sumStaleChunkChars,
-//! setPageEmbeddingSignature, invalidateStaleSignatureEmbeddings, invalidateContentDriftEmbeddings,
+//! setPageEmbeddingSignature, readPageProvenanceComplete, invalidateStaleSignatureEmbeddings, invalidateContentDriftEmbeddings,
 //! listStaleChunks, readEmbeddingStateCounts, listEmbeddingStateRows, getChunksWithEmbeddings,
 //! updateTakeEmbeddings, getTakeEmbeddings, countStaleTakes, listStaleTakes.
 //!
@@ -25,7 +25,9 @@
 //! pending stamp, the vector's width) lives on the chunk record (`chunks::EmbedState`), so the
 //! stale and state reads never decode a vector.
 
-use crate::chunks::{ChunkRecord, EmbedState, chunk_rows, read_chunks, read_segment_view};
+use crate::chunks::{
+    ChunkRecord, EmbedState, SegmentView, chunk_rows, read_chunks, read_segment_view,
+};
 use crate::error::{STORE_CORRUPT, StoreError};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::{PageRecord, all_pages, read_page};
@@ -37,6 +39,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+pub mod stale_work;
 
 const CHUNK_VECTOR: u8 = b'c';
 const TAKE_VECTOR: u8 = b't';
@@ -75,10 +79,25 @@ fn generation_key() -> [u8; 2] {
     [keys::EMBEDDING_STATE, GENERATION]
 }
 
-fn signature_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn signature_key(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::EMBEDDING_STATE, PAGE_SIGNATURE];
     key.extend_from_slice(&page_id.to_be_bytes());
     key
+}
+
+/// The shadow seed (`seed.rs`): stores a page's `embedding_signature` as another engine holds it.
+pub(crate) fn seed_page_signature(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    signature: &str,
+) -> Result<()> {
+    tx.put(&signature_key(page_id), signature.as_bytes())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes a page's `embedding_signature` and nothing else:
+/// the vectors of its chunks are the chunks' own.
+pub(crate) fn clear_page_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    tx.delete(&signature_key(page_id))
 }
 
 fn take_state_key(take_id: u64) -> Vec<u8> {
@@ -272,7 +291,10 @@ fn take_vector_rev(read: &dyn KvRead, take_id: u64) -> Result<Option<u64>> {
 }
 
 /// The take's vector when it was written for the take's current claim.
-fn current_take_vector(read: &dyn KvRead, take: &TakeRecord) -> Result<Option<StoredVector>> {
+pub(crate) fn current_take_vector(
+    read: &dyn KvRead,
+    take: &TakeRecord,
+) -> Result<Option<StoredVector>> {
     if take_vector_rev(read, take.id)? != Some(take.claim_rev) {
         return Ok(None);
     }
@@ -361,6 +383,27 @@ pub(crate) fn remove_chunk_vector(
     bump_generation(tx)
 }
 
+/// Resets what a contextual retrieval tier embedded on a page (`updatePageContextualRetrievalState` to `none`): its
+/// embedding signature goes, and every chunk with a vector, staged or not, loses it, its embed time and its text and
+/// input hashes and is stamped pending at `now_us`. Each dropped vector raises the vector generation.
+pub(crate) fn reset_page_vectors(tx: &mut dyn KvWrite, page_id: u64, now_us: i64) -> Result<()> {
+    tx.delete(&signature_key(page_id))?;
+    for mut chunk in read_chunks(&*tx, page_id)? {
+        if !chunk.embed.has_vector() {
+            continue;
+        }
+        let embed = EmbedState {
+            dims: 0,
+            embedded_at_us: None,
+            text_hash: None,
+            input_hash: None,
+            pending_since_us: Some(now_us),
+        };
+        drop_vector(tx, &mut chunk, embed)?;
+    }
+    Ok(())
+}
+
 /// Clears a page's embedding signature (PGLite's `embedding_signature=NULL`), as a fact
 /// withdrawal does for each page it invalidates (`facts::withdrawal_pages`).
 pub(crate) fn clear_signature(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
@@ -421,8 +464,8 @@ struct PageCtx {
     signature: Option<String>,
     /// Every chunk record of the page, visible or not.
     chunks: Vec<ChunkRecord>,
-    /// The body generation chunks are visible at (PGLite's `chunkGenerationFilter`).
-    generation: u64,
+    /// The page's segment view: its body generation and live occurrences.
+    view: SegmentView,
 }
 
 impl PageCtx {
@@ -442,9 +485,20 @@ impl PageCtx {
         self.page.text_projection_revision.as_deref() == Some(self.page.knowledge_revision.as_str())
     }
 
-    /// The generation-visible chunks in chunk index order.
+    /// The generation-visible chunks in chunk index order (`chunkVisibleFilter`, the served reads).
     fn visible(&self) -> impl Iterator<Item = &ChunkRecord> {
-        self.chunks.iter().filter(|c| c.visible_at(self.generation))
+        self.chunks
+            .iter()
+            .filter(|c| c.visible_at(self.view.generation))
+    }
+
+    /// The live body's chunks in chunk index order (`chunkGenerationFilter`, the stale and state reads): a closed
+    /// occurrence's chunk that a deferred retire left and an inline chunk left on a segmented page are not.
+    fn live_body(&self) -> impl Iterator<Item = &ChunkRecord> {
+        let segmented_page = crate::chunks::segmented(&self.page);
+        self.chunks
+            .iter()
+            .filter(move |c| crate::chunks::in_live_body(c, segmented_page, &self.view))
     }
 
     /// PGLite's `chunklessPagesWhere` without the source filter. A segmented page's body lives in
@@ -519,13 +573,13 @@ fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     let mut out = Vec::with_capacity(pages.len());
     for page in pages {
         let chunks = read_chunks(read, page.id)?;
-        let generation = read_segment_view(read, page.id)?.generation;
+        let view = read_segment_view(read, page.id)?;
         let signature = read_signature(read, page.id)?;
         out.push(PageCtx {
             page,
             signature,
             chunks,
-            generation,
+            view,
         });
     }
     Ok(out)
@@ -724,7 +778,11 @@ impl Store {
         let read = self.read()?;
         let mut out = Vec::new();
         for ctx in page_contexts(&*read)? {
-            for chunk in ctx.visible() {
+            // `staleChunkWhere`'s `NOT budgetLimited`: a held or capped large page leaves the queue.
+            if !ctx.live() || ctx.embed_skip() || stale_work::budget_limited(&*read, &ctx.page)? {
+                continue;
+            }
+            for chunk in ctx.live_body() {
                 if options.stale(&ctx, chunk) {
                     out.push(each(chunk));
                 }
@@ -747,7 +805,7 @@ impl Store {
             .sum())
     }
 
-    /// `listStaleChunks(opts?)`: vector-less chunks of live, non-embed_skip pages, keyset-paged in
+    /// `listStaleChunks(opts?)`: vector-less chunks of live, non-embed_skip, not budget-limited pages, keyset-paged in
     /// `(page_id, chunk_index)` order, or newest page first with `orderBy: 'updated_desc'`.
     pub fn list_stale_chunks(&self, options: &ListStaleChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
@@ -771,10 +829,11 @@ impl Store {
                     .source_id
                     .as_deref()
                     .is_some_and(|id| id != ctx.page.source_id)
+                || stale_work::budget_limited(&*read, &ctx.page)?
             {
                 continue;
             }
-            for chunk in ctx.visible().filter(|c| !c.embed.has_vector()) {
+            for chunk in ctx.live_body().filter(|c| !c.embed.has_vector()) {
                 let index = i64::from(chunk.chunk_index);
                 let updated = ctx.page.updated_at_us;
                 let after = if updated_desc {
@@ -821,6 +880,26 @@ impl Store {
             .collect())
     }
 
+    /// `readUnembeddedPageSummary(sourceId, column)`: `{ pages, oldest, held }` over the live,
+    /// non-embed_skip pages of the source with a visible chunk that has no vector. This store keeps
+    /// no embedding budget rows, so `held` is 0.
+    pub fn read_unembedded_page_summary(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = 0u64;
+        let mut oldest: Option<i64> = None;
+        for ctx in page_contexts(&*read)? {
+            if !ctx.live() || ctx.embed_skip() || ctx.page.source_id != source_id {
+                continue;
+            }
+            if ctx.visible().any(|c| !c.embed.has_vector()) {
+                pages += 1;
+                let at = ctx.page.updated_at_us;
+                oldest = Some(oldest.map_or(at, |o| o.min(at)));
+            }
+        }
+        Ok(json!({ "pages": pages, "oldest": oldest.map(crate::env::iso), "held": 0 }))
+    }
+
     /// `setPageEmbeddingSignature(slug, { signature, sourceId? })`: stamps the page (slug as
     /// written, in `sourceId` or `default`). A missing page is a no-op.
     pub fn set_page_embedding_signature(
@@ -835,6 +914,40 @@ impl Store {
             }
             Ok(())
         })
+    }
+
+    /// `readPageProvenanceComplete(slug, sourceId, model, dims, column)`: whether the page (in an
+    /// unarchived source) has at least one visible chunk of its current text projection and every
+    /// one holds a vector in the target space (`in_current_space`). A missing page, an archived or
+    /// missing source and an unsealed page answer false. The store keeps one vector column, so the
+    /// shell refuses any other `column` before this call.
+    pub fn read_page_provenance_complete(
+        &self,
+        slug: &str,
+        source_id: &str,
+        model: &str,
+        dims: Option<u32>,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let Some(page) = read_page(&*read, source_id, slug)? else {
+            return Ok(false);
+        };
+        if !read_source(&*read, source_id)?.is_some_and(|s| !s.archived) {
+            return Ok(false);
+        }
+        let chunks = read_chunks(&*read, page.id)?;
+        let view = read_segment_view(&*read, page.id)?;
+        let ctx = PageCtx {
+            signature: None,
+            page,
+            chunks,
+            view,
+        };
+        if !ctx.sealed() {
+            return Ok(false);
+        }
+        let mut visible = ctx.visible().peekable();
+        Ok(visible.peek().is_some() && visible.all(|c| in_current_space(c, model, dims)))
     }
 
     /// `invalidateStaleSignatureEmbeddings({ signature, sourceId?, includeNullSignature? })`: drops
@@ -902,6 +1015,7 @@ impl Store {
                         .as_deref()
                         .is_some_and(|id| id != ctx.page.source_id)
                     || !source_live(&*tx, &mut sources, &ctx.page.source_id)?
+                    || stale_work::budget_limited(&*tx, &ctx.page)?
                 {
                     continue;
                 }
@@ -1012,7 +1126,7 @@ impl Store {
             if !options.include_unsealed && !sealed {
                 continue;
             }
-            for row in chunk_rows(&*read, &page, true)? {
+            for row in chunk_rows(&*read, &page, true, options.include_unsealed)? {
                 rows.push(row);
             }
         }
@@ -1040,7 +1154,7 @@ impl Store {
         let mut eligible = 0u64;
         let mut overdue = 0u64;
         for ctx in &pages {
-            for chunk in ctx.visible() {
+            for chunk in ctx.live_body() {
                 if ops && chunk.embed.has_vector() {
                     continue;
                 }
@@ -1169,7 +1283,7 @@ impl Store {
                 })
             };
             let mut by_state: BTreeMap<&'static str, (u64, u64)> = BTreeMap::new();
-            for chunk in ctx.visible() {
+            for chunk in ctx.live_body() {
                 let entry = by_state.entry(ctx.chunk_state(chunk)).or_default();
                 entry.0 += 1;
                 entry.1 += chunk.chunk_text.len() as u64;

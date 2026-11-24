@@ -5,8 +5,8 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the three command upserts (upsertCliFileRow, upsertRawFileRow, upsertSyncFileRow) write one files row and
- *    on a repeated storage path update the hash, size and type and merge the metadata; listFileRowsForSlug,
- *    listAllFileRows and listFileRowsForVerify read them in page-then-name and path order; hasFileWithHash says whether
+ *    on a repeated storage path update the hash, size and type and merge the metadata; listFiles (the engine's
+ *    one list member, `files list`) and listFileRowsForVerify read them in page-then-name and path order; hasFileWithHash says whether
  *    the pair is stored; readSourceLocalPathForVerify answers a source's checkout or null; sourceIdExists and
  *    readPageIdInSource say whether a source and a page in it exist; readFileOwner answers the row holding a path;
  *    claimFilePage moves a row to a source and page; upsertOpFileRow keeps an existing row's source and page when the
@@ -44,10 +44,13 @@ const row = (storage_path: string, over: Record<string, unknown> = {}) => ({
 });
 
 /** A files row as every engine reports it, without its id or clock. */
-const shown = (r: Record<string, unknown>) => ({
-  page_slug: r.page_slug, filename: r.filename, storage_path: r.storage_path, mime_type: r.mime_type,
-  size_bytes: r.size_bytes == null ? null : Number(r.size_bytes), content_hash: r.content_hash, metadata: r.metadata,
-});
+const shown = (row: object) => {
+  const r = row as Record<string, unknown>;
+  return {
+    page_slug: r.page_slug, filename: r.filename, storage_path: r.storage_path, mime_type: r.mime_type,
+    size_bytes: r.size_bytes == null ? null : Number(r.size_bytes), content_hash: r.content_hash, metadata: r.metadata,
+  };
+};
 
 async function pageId(engine: BrainEngine, slug: string, sourceId = 'default'): Promise<number> {
   const id = await engine.readPageIdInSource(slug, sourceId);
@@ -57,7 +60,7 @@ async function pageId(engine: BrainEngine, slug: string, sourceId = 'default'): 
 
 describe('engine parity: files commands and file operations statements', () => {
   parityTest('the command upserts write a row, merge the metadata on a repeat, and the list reads see it', {
-    methods: ['upsertCliFileRow', 'upsertRawFileRow', 'upsertSyncFileRow', 'listAllFileRows', 'listFileRowsForSlug', 'listFileRowsForVerify', 'hasFileWithHash'],
+    methods: ['upsertCliFileRow', 'upsertRawFileRow', 'upsertSyncFileRow', 'listFiles', 'listFileRowsForVerify', 'hasFileWithHash'],
   }, async (engine) => {
     await engine.upsertCliFileRow(row('plan/a.png', { page_slug: 'plan' }), { storage: 'local' });
     await engine.upsertRawFileRow({ ...row('plan/b.pdf', { page_slug: 'plan', mime_type: 'application/pdf', content_hash: 'sha256:bbb' }), source_id: 'default' }, { storage: 'git', type: 'pdf' });
@@ -65,11 +68,11 @@ describe('engine parity: files commands and file operations statements', () => {
     // A repeat of a stored path takes the new hash, size and type, and keeps what the old metadata held beside the new keys.
     await engine.upsertCliFileRow(row('plan/a.png', { page_slug: 'plan', size_bytes: 20, content_hash: 'hash-new', mime_type: 'image/jpeg' }), { storage: 's3', upload_method: 'standard' });
     const out = {
-      all: (await engine.listAllFileRows()).map(shown),
-      plan: (await engine.listFileRowsForSlug('plan')).map(shown),
-      none: (await engine.listFileRowsForSlug('nowhere')).map(shown),
+      all: (await engine.listFiles({ limit: 100 })).map(shown),
+      plan: (await engine.listFiles({ pageSlug: 'plan', limit: 100 })).map(shown),
+      none: (await engine.listFiles({ pageSlug: 'nowhere', limit: 100 })).map(shown),
       verify: (await engine.listFileRowsForVerify()).map(shown),
-      sourceOfRaw: (await engine.listAllFileRows()).find(r => r.storage_path === 'plan/b.pdf')!.source_id,
+      sourceOfRaw: (await engine.listFiles({ limit: 100 })).find(r => r.storage_path === 'plan/b.pdf')!.source_id,
       hashed: await engine.hasFileWithHash('hash-new', 'plan/a.png'),
       oldHash: await engine.hasFileWithHash('hash-plan/a.png', 'plan/a.png'),
       otherPath: await engine.hasFileWithHash('hash-new', 'plan/b.pdf'),
@@ -106,7 +109,7 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('the file operations read the owner of a path, claim it for a page, keep it on a page-less upsert and register once', {
-    methods: ['upsertOpFileRow', 'readFileOwner', 'claimFilePage', 'countFilesRegisteredElsewhere', 'registerFileRow', 'listAllFileRows', 'readPageIdInSource'],
+    methods: ['upsertOpFileRow', 'readFileOwner', 'claimFilePage', 'countFilesRegisteredElsewhere', 'registerFileRow', 'listFiles', 'readPageIdInSource'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('notes/plan', note('Plan'));
@@ -135,7 +138,7 @@ describe('engine parity: files commands and file operations statements', () => {
     out.refreshed = await engine.registerFileRow({ ...base, content_hash: 'h3', size_bytes: 15, source_id: 'other', page_id: there }, { storage: 'local', prefix: 'p' });
     out.refusedElsewhere = await engine.registerFileRow({ ...base, filename: 'moved.pdf', source_id: 'other', page_id: there }, { storage: 'local' });
     out.registeredNew = await engine.registerFileRow({ ...base, storage_path: 'notes/plan/new.pdf', filename: 'new.pdf', source_id: 'default', page_id: here }, { storage: 'local' });
-    out.rows = (await engine.listAllFileRows()).map(shown);
+    out.rows = (await engine.listFiles({ limit: 100 })).map(shown);
     expect(out).toMatchObject({
       before: null,
       uploaded: { source_id: 'default', page: 'here', content_hash: 'h1' },
@@ -241,18 +244,18 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('the lists stop at 100 rows after the readable filter, and the verify list at 1000', {
-    methods: ['upsertCliFileRow', 'listAllFileRows', 'listFileRowsForVerify', 'listFileRowsForSlug', 'listReadableFileRows', 'listReadableFilePaths'],
+    methods: ['upsertCliFileRow', 'listFiles', 'listFileRowsForVerify', 'listReadableFileRows', 'listReadableFilePaths'],
   }, async (engine) => {
     await engine.putPage('apriv', note('Private', { visibility: 'private' }));
     await engine.upsertCliFileRow(row('apriv/file', { page_slug: 'apriv' }), { storage: 'local' });
     for (let n = 0; n < 101; n++) {
       await engine.upsertCliFileRow(row(`bulk/f${String(n).padStart(3, '0')}`, { page_slug: 'bulk' }), { storage: 'local' });
     }
-    const paths = (rows: Array<Record<string, unknown>>) => ({ count: rows.length, first: rows[0]?.storage_path, last: rows.at(-1)?.storage_path });
+    const paths = (rows: ReadonlyArray<{ storage_path?: unknown }>) => ({ count: rows.length, first: rows[0]?.storage_path, last: rows.at(-1)?.storage_path });
     const out = {
-      all: paths(await engine.listAllFileRows()),
+      all: paths(await engine.listFiles({ pageSlug: null, limit: 100 })),
       verify: paths(await engine.listFileRowsForVerify()),
-      slug: paths(await engine.listFileRowsForSlug('bulk')),
+      slug: paths(await engine.listFiles({ pageSlug: 'bulk', limit: 100 })),
       shown: paths(await engine.listReadableFileRows(undefined, false)),
       excluded: paths(await engine.listReadableFileRows(undefined, true)),
       pathsShown: paths(await engine.listReadableFilePaths(undefined, false)),
@@ -271,7 +274,7 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('a write that names a source or page that does not exist writes nothing, and a claim on a missing path is a no-op', {
-    methods: ['upsertRawFileRow', 'upsertOpFileRow', 'registerFileRow', 'claimFilePage', 'readFileOwner', 'upsertCliFileRow', 'listAllFileRows'],
+    methods: ['upsertRawFileRow', 'upsertOpFileRow', 'registerFileRow', 'claimFilePage', 'readFileOwner', 'upsertCliFileRow', 'listFiles'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('notes/plan', note('Plan'));
@@ -282,7 +285,7 @@ describe('engine parity: files commands and file operations statements', () => {
       unknownSource: await outcome(() => engine.upsertRawFileRow({ ...base, source_id: 'never-made' }, { storage: 'git' })),
       unknownPage: await outcome(() => engine.upsertOpFileRow({ ...base, source_id: 'default', page_id: 999_999 }, { storage: 'local' })),
       registerUnknownPage: await outcome(() => engine.registerFileRow({ ...base, source_id: 'default', page_id: 999_999 }, { storage: 'local' })),
-      afterRefused: (await engine.listAllFileRows()).length,
+      afterRefused: (await engine.listFiles({ pageSlug: null, limit: 100 })).length,
     };
     await engine.upsertCliFileRow({ ...base, page_slug: null }, { storage: 'local' });
     out.claimUnknownSource = await outcome(() => engine.claimFilePage(base.storage_path, 'never-made', here));
@@ -299,7 +302,7 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('a repeat upsert merges the new metadata keys into the stored object, in key order, and an operation upsert keeps the other keys', {
-    methods: ['upsertFile', 'upsertSyncFileRow', 'upsertOpFileRow', 'listAllFileRows'],
+    methods: ['upsertFile', 'upsertSyncFileRow', 'upsertOpFileRow', 'listFiles'],
   }, async (engine) => {
     await engine.putPage('notes/plan', note('Plan'));
     const here = await pageId(engine, 'notes/plan');
@@ -307,7 +310,7 @@ describe('engine parity: files commands and file operations statements', () => {
     await engine.upsertSyncFileRow(row('object.bin', { filename: 'o.bin' }), { over: 'new', extra: { n: 1 } });
     await engine.upsertOpFileRow({ ...row('op.bin', { filename: 'op.bin', page_slug: 'notes/plan' }), source_id: 'default', page_id: here }, { b: 1, a: 2, ab: 3 });
     await engine.upsertOpFileRow({ ...row('op.bin', { filename: 'op.bin', page_slug: 'notes/plan' }), source_id: 'default', page_id: here }, { b: 9 });
-    const out = (await engine.listAllFileRows()).map(shown);
+    const out = (await engine.listFiles({ pageSlug: null, limit: 100 })).map(shown);
     expect(out.map(r => [r.storage_path, r.metadata])).toEqual([
       ['op.bin', { b: 9, a: 2, ab: 3 }], ['object.bin', { keep: 1, over: 'new', extra: { n: 1 } }],
     ]);

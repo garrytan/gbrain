@@ -219,7 +219,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/cycle/synthesize-concepts.ts:178 runPhaseSynthesizeConcepts',
     run: e => e.listDreamAtomPages('default'),
-    sent: [{ text: `SELECT slug, title, compiled_truth, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
+    sent: [{ text: `SELECT slug, title, compiled_truth, knowledge_revision::text AS revision, frontmatter, NOT (${privatePagesFilterFragment('pages')}) AS private
            FROM pages
           WHERE type = 'atom'
             AND source_id = $1
@@ -227,10 +227,12 @@ const PINS: Pin[] = [
             AND (frontmatter->>'imported_from') IS NULL`, params: ['default'] }],
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (synthesize-generations.ts:68 at de72811022) sorted with
+    // `ORDER BY slug COLLATE "C"`; the join re-applied that byte order to main's member, so the pin carries it too.
     from: 'src/core/cycle/synthesize-generations.ts:66 pages',
     run: e => e.listSynthesisPageBodies('default', ['notes/a', 'notes/b']),
     sent: [{ text: `SELECT slug, title, COALESCE(compiled_truth, '') || E'\\n' || COALESCE(timeline, '') AS body FROM pages
-      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug`,
+      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug COLLATE "C"`,
     params: ['default', ['notes/a', 'notes/b']] }],
   },
   {

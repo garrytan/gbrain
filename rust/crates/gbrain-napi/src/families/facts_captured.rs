@@ -62,19 +62,6 @@ impl Brain {
         })
     }
 
-    /// `listPagelessEntityFacts({ sourceIds })`: resolves `[{ source_id, slug, ids, fenced }]`.
-    #[napi]
-    pub fn list_pageless_entity_facts<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: SourceIdsArgs = required(args, "listPagelessEntityFacts args")?;
-            s.list_pageless_entity_facts(&a)
-        })
-    }
-
     /// `listSourceIncarnations({ sourceIds })`: resolves `[{ id, incarnation }]`.
     #[napi]
     pub fn list_source_incarnations<'env>(

@@ -8,6 +8,7 @@
 //!   store codes in the README;
 //! - a call made while the brain is closed rejects with `store_closed`.
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,7 @@ use serde_json::Value;
 use crate::binding::{Pool, spawn};
 use crate::error::TaskError;
 use crate::pool;
+use crate::store_bind::bind_into;
 
 type Slot = Arc<Mutex<Option<Arc<Store>>>>;
 
@@ -57,12 +59,29 @@ pub struct BrainOpenOptions {
     pub schema_version: Option<u32>,
     /// Recorded in `FORMAT` when the brain is created.
     pub created_by: Option<String>,
+    /// Opt-in: let many write transactions run at once. Off unless this is true or
+    /// `GBRAIN_RUST_CONCURRENT_WRITES=1` is set.
+    pub concurrent_writes: Option<bool>,
+    /// The embedding identity a fresh brain records as config `embedding_model` and
+    /// `embedding_dimensions`, resolved by the caller the way the SQL engines resolve it.
+    pub embedding_model: Option<String>,
+    pub embedding_dimensions: Option<u32>,
+    /// What a fresh brain records as config `chunk_strategy`.
+    pub chunk_strategy: Option<String>,
+    /// A fresh brain records the write gate's scan baseline under this detector version (the
+    /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
+    pub write_gate_detector_version: Option<u32>,
 }
 
 #[napi]
 pub struct Brain {
     pool: pool::Pool,
     slot: Slot,
+    /// Bumped by every `close`. An `open` still queued when `close` is called sees a newer value
+    /// and refuses, so a close never resolves while a queued open can still take the brain's lock.
+    closes: Arc<AtomicU64>,
+    /// True while a `bind` on this handle is running, so a second one is refused at once.
+    binding: Arc<AtomicBool>,
 }
 
 impl Brain {
@@ -95,23 +114,20 @@ impl Brain {
 
     /// Runs `open` on this handle's pool and makes the store it returns this handle's store: how a
     /// handle comes to run on a store bound to a transaction (`families/transactions.rs`). Rejects
-    /// `invalid_state` when this handle is already open. `run` then works unchanged.
+    /// `invalid_state` when this handle is already open or binding, and `store_closed` when `close`
+    /// was called on it after the bind was queued. `run` then works unchanged. The wait inside
+    /// `open` does not hold the handle's slot (`store_bind.rs`).
     pub(crate) fn bind<'env>(
         &self,
         env: &'env Env,
         open: impl FnOnce() -> Result<Store, StoreError> + Send + 'static,
     ) -> napi::Result<Object<'env>> {
         let slot = self.slot.clone();
+        let binding = self.binding.clone();
+        let closes = self.closes.clone();
+        let closes_at_call = closes.load(Ordering::SeqCst);
         spawn(env, &self.pool, move || {
-            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_some() {
-                return Err(TaskError::new(
-                    gbrain_store::error::INVALID_STATE,
-                    "this handle already has a brain open; close it first",
-                ));
-            }
-            *guard = Some(Arc::new(open().map_err(task_error)?));
-            Ok(Value::Null)
+            bind_into(&slot, &binding, &closes, closes_at_call, open)
         })
     }
 }
@@ -124,6 +140,8 @@ impl Brain {
         Self {
             pool: pool.pool.clone(),
             slot: Arc::new(Mutex::new(None)),
+            closes: Arc::new(AtomicU64::new(0)),
+            binding: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -140,7 +158,8 @@ impl Brain {
     /// resolves `{ brain_id, format_version, schema_version, created }`.
     ///
     /// Rejects `store_locked` when another handle or process owns the brain, `format_unknown` for
-    /// a format this build does not read, `invalid_state` when this handle is already open.
+    /// a format this build does not read, `invalid_state` when this handle is already open, and
+    /// `store_closed` when `close` was called on this handle before the open ran.
     #[napi]
     pub fn open<'env>(
         &self,
@@ -149,23 +168,50 @@ impl Brain {
         options: Option<BrainOpenOptions>,
     ) -> napi::Result<Object<'env>> {
         let slot = self.slot.clone();
+        let closes = self.closes.clone();
+        let closes_at_call = closes.load(Ordering::SeqCst);
         spawn(env, &self.pool, move || {
             let mut opts = OpenOptions {
                 engine_abi: crate::ENGINE_ABI,
                 catalog_version: crate::CATALOG_VERSION,
+                concurrent_writes: std::env::var("GBRAIN_RUST_CONCURRENT_WRITES")
+                    .is_ok_and(|v| v == "1"),
                 ..OpenOptions::default()
             };
             if let Some(options) = options {
+                if let Some(on) = options.concurrent_writes {
+                    opts.concurrent_writes = on;
+                }
                 if let Some(v) = options.schema_version {
                     opts.schema_version = v;
                 }
                 if let Some(by) = options.created_by {
                     opts.created_by = by;
                 }
+                if let Some(model) = options.embedding_model {
+                    opts.initial_config.push(("embedding_model".into(), model));
+                }
+                if let Some(dims) = options.embedding_dimensions {
+                    opts.initial_config
+                        .push(("embedding_dimensions".into(), dims.to_string()));
+                }
+                if let Some(strategy) = options.chunk_strategy {
+                    opts.initial_config
+                        .push(("chunk_strategy".into(), strategy));
+                }
+                opts.write_gate_detector_version = options.write_gate_detector_version;
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.
             let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+            // `close` bumps the counter before it takes the slot lock, so a close called after this
+            // open was queued is seen here, or else waits for this open and releases what it opened.
+            if closes.load(Ordering::SeqCst) != closes_at_call {
+                return Err(TaskError::new(
+                    gbrain_store::error::STORE_CLOSED,
+                    "the brain was closed before it opened",
+                ));
+            }
             if guard.is_some() {
                 return Err(TaskError::new(
                     gbrain_store::error::INVALID_STATE,
@@ -181,9 +227,11 @@ impl Brain {
     }
 
     /// `close()`: waits for calls already running, then releases the brain and its lock. Resolves
-    /// `undefined`; closing a closed handle is a no-op.
+    /// `undefined`; closing a closed handle is a no-op. An `open` queued before the close and not
+    /// yet run rejects `store_closed` and opens nothing.
     #[napi]
     pub fn close<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.closes.fetch_add(1, Ordering::SeqCst);
         let taken = self.slot.lock().unwrap_or_else(|e| e.into_inner()).take();
         spawn(env, &self.pool, move || {
             let Some(mut store) = taken else {

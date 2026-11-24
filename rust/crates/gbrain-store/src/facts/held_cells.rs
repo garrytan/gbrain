@@ -18,19 +18,20 @@
 //!   source (`unpagedFactSql`), and whose holding, provenance and entity pages are none of member, derivation-private
 //!   in their stored row (deleted or not), missing or quarantined (`factPagesOpenSql`). The grant also needs every
 //!   visibility proposal that names the fact (`supersede_fact` or `confirm`, a `visibility` key in `before_state`, any
-//!   status) to target a fact the caller's reads admit by either rule.
+//!   status) to target a fact the caller's reads admit by either rule, a copy the grant opens counting only when its
+//!   own proposals pass too (the hold chain, `widen::hold_refused`).
 //!
 //! With neither, nothing is admitted. See rust/docs/store/facts.md, "Held fence cells".
 
 use super::privacy::{PrivacyPolicy, access_readers, page_hidden};
 use super::repair::{derivation_private, provenance_slug};
-use super::{FactRecord, MEMBER_PAGE_PREFIX, QUARANTINE_KEY, page_rows, read_fact};
+use super::widen::hold_refused;
+use super::{FactRecord, MEMBER_PAGE_PREFIX, QUARANTINE_KEY, page_rows};
 use crate::Store;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
-use crate::trust::proposals::visibility_proposal_targets;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::hash_map::Entry;
@@ -120,7 +121,9 @@ fn page_keeps_private(read: &dyn KvRead, source: &str, slug: &str, entity: bool)
     let row = read_page(read, source, slug)?;
     // Both alias forms are derivation-private (`derivationPrivateSql` ORs `privacyAliasSql`), so the alias setting
     // does not change the answer.
-    if row.as_ref().is_some_and(|p| derivation_private(p, true)) {
+    if let Some(page) = row.as_ref()
+        && derivation_private(read, page, true)?
+    {
         return Ok(true);
     }
     if entity {
@@ -180,27 +183,16 @@ fn member_admits_fact(
     }
 }
 
-/// `heldRowSql`'s `granted(row)`: the grant admits the fact, and every visibility proposal that names it targets a
-/// fact the caller's reads admit (a missing target, or one in another table, keeps the fact narrower).
+/// `heldRowSql`'s `granted(row)`: the grant admits the fact, and it is not a held row the grant refuses: every
+/// visibility proposal that names it targets a fact the caller's reads admit, along the hold chain (a missing target,
+/// or one in another table, keeps the fact narrower).
 fn granted(read: &dyn KvRead, input: &HeldFenceCellsInput, row: &FactRecord) -> Result<bool> {
     if input.grant_sources.is_empty() || !grant_admits(read, &input.grant_sources, row)? {
         return Ok(false);
     }
-    for (table, target) in visibility_proposal_targets(read, row.id)? {
-        let copy = match u64::try_from(target) {
-            Ok(id) if table == "facts" => read_fact(read, id)?,
-            _ => None,
-        };
-        let Some(copy) = copy else {
-            return Ok(false);
-        };
-        if !(member_admits_fact(read, input.member.as_ref(), &copy)?
-            || grant_admits(read, &input.grant_sources, &copy)?)
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    let member = |copy: &FactRecord| member_admits_fact(read, input.member.as_ref(), copy);
+    let opens = |copy: &FactRecord| grant_admits(read, &input.grant_sources, copy);
+    Ok(!hold_refused(read, row, &member, &opens)?)
 }
 
 /// A live fact of the page as `heldRowSql` reads it: the row and whether the caller's reads admit it.
@@ -213,9 +205,12 @@ pub(super) struct LiveRow {
 pub(super) fn held(rows: &[LiveRow], key: &HeldFenceCellKey, row_num: i32) -> bool {
     let narrower = |r: &&LiveRow| r.row.visibility != "world" && !r.admitted;
     rows.iter()
-        .filter(narrower)
+        .filter(|r| narrower(r))
         .any(|r| r.row.row_num == Some(row_num))
-        || (rows.iter().filter(narrower).any(|r| states(&r.row, key))
+        || (rows
+            .iter()
+            .filter(|r| narrower(r))
+            .any(|r| states(&r.row, key))
             && !rows
                 .iter()
                 .any(|r| r.row.visibility == "world" && states(&r.row, key)))

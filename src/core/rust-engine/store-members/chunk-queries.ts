@@ -3,9 +3,9 @@
  * windows for evidence delivery (getChunkWindows), the pages with a body but no chunks
  * (countChunklessPagesWithContent, listChunklessPagesWithContent), the import's deleteChunksExcept, and the chunk reads
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
- * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, currentCodeChunksExist,
+ * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
  * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
- * resolveFrozenHits).
+ * resolveFrozenHits), and search dedup's segmented-region read (readSegmentRegions).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -17,8 +17,8 @@
  * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy, a caller's reader identity
  * and private-readable grant included) and the live test of the
  * read policy (src/core/search/read-policy-sql.ts); resolveFrozenHits also models the trust floor and flag suppression
- * (`minTrust`, `suppressFlagged`). A safe-chunk policy on a chunk-reads member refuses with `engine_capability_missing`.
- * The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
+ * (`minTrust`, `suppressFlagged`). A safe-chunk read applies the chunker-version fence of `codeReadFilter` on the code
+ * reads and `currentCodeChunksExist`, and of the frozen-hit read on resolveFrozenHits. The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
  * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
@@ -26,7 +26,7 @@ import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
 import { DEF_TYPES } from '../../chunkers/def-types.ts';
 import type {
   CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow,
-  WithdrawalChunkKey, WithdrawalChunkRow,
+  UnsealedPageScope, WithdrawalChunkKey, WithdrawalChunkRow,
 } from '../../engine-sql/chunk-reads.ts';
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { storePagePolicy } from './private-provenance.ts';
@@ -46,13 +46,12 @@ export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fr
       ['sourceId', 'sourceIds', 'fromIndex', 'limit', 'excludePrivate', 'requireSafeChunks'], UNREAD_SCOPE) as
       { sourceId?: unknown; sourceIds?: unknown[]; fromIndex?: number; limit?: number; excludePrivate?: unknown };
     // The scope resolves as getChunks resolves it: `sourceIds` when not empty, else `sourceId` (default `default`). A
-    // scope that names no source matches nothing, and a read over several sources is refused (the chunk order ties).
+    // scope that names no source matches nothing, and a read over several sources reads the page in each.
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return { chunks: [], total_chunks: 0, max_chunk_index: null };
-    if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
     const options = {
-      sourceId: named[0]!, fromIndex, limit,
+      sourceId: named[0]!, ...(named.length > 1 ? { sourceIds: named } : {}), fromIndex, limit,
       excludePrivate: storePagePolicy('getChunkPage', excludePrivate, { callerReaders: true }) ?? null,
       requireSafeChunks: requiresSafeChunks(opts),
     };
@@ -118,10 +117,10 @@ function int32Ids(member: string, ids: readonly number[]): number[] {
 
 /**
  * The wire scope of `pageReadFilter`: the source filter (`codeReadFilter` drops `sourceId` under `allSources` when no
- * `sourceIds` is given) and, under `excludePrivate`, the store page policy. A safe-chunk scope refuses.
+ * `sourceIds` is given), under `excludePrivate` the store page policy, and under a safe-chunk read
+ * (`requiresSafeChunks`) the chunker-version fence.
  */
 function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
-  if (requiresSafeChunks(o as PageReadScope)) refuseMember(member, 'a safe-chunk read (the store records no chunker-version fence)');
   const dropSource = code && !!o.allSources && o.sourceIds === undefined;
   return {
     sourceId: dropSource ? undefined : o.sourceId,
@@ -129,6 +128,7 @@ function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
     excludePrivate: storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null,
     minTrust: (o.minTrust as string | undefined) || null,
     suppressFlagged: o.suppressFlagged === true,
+    requireSafeChunks: requiresSafeChunks(o as PageReadScope),
   };
 }
 
@@ -197,6 +197,27 @@ export const codeChunksExist: StoreMember<[sourceId: string | undefined, policy?
     return !!(await storeCall({ member: 'codeChunksExist' }, () => brain.codeChunksExist({ served: false, withSymbol: false, scope })));
   };
 
+/**
+ * Search's safe-index probe: a live page in scope below the chunker-version fence, under the type list and the
+ * hard-excluded slug prefixes. `pageReadFilter` reads no `allSources` or safe-chunk key, so neither does the store.
+ */
+export const hasUnsealedPages: StoreMember<[scope: UnsealedPageScope], boolean> = async (brain, scope) => {
+  const taken = takeOptions('hasUnsealedPages', scope, ['sourceId', 'sourceIds', 'excludePrivate', ...TRUST_KEYS, 'types', 'excludeSlugPrefixes'],
+    ['allSources', 'requireSafeChunks', ...UNREAD_BY_FILTER]);
+  if (namesNoSource(taken)) return false;
+  const o = taken as UnsealedPageScope;
+  const input = {
+    scope: {
+      sourceId: o.sourceId, sourceIds: o.sourceIds,
+      excludePrivate: storePagePolicy('hasUnsealedPages', o.excludePrivate, { callerReaders: true }) ?? null,
+      minTrust: o.minTrust || null, suppressFlagged: o.suppressFlagged === true,
+    },
+    types: o.types ?? null,
+    excludeSlugPrefixes: o.excludeSlugPrefixes ?? [],
+  };
+  return !!(await storeCall({ member: 'hasUnsealedPages' }, () => brain.hasUnsealedPages(input)));
+};
+
 export const currentCodeChunksExist: StoreMember<[scope: CodeChunkScope, predicate: 'any' | 'with_symbol'], boolean> =
   async (brain, scope, predicate) => {
     const o = takeOptions('currentCodeChunksExist', scope, POLICY_KEYS, UNREAD_BY_FILTER);
@@ -259,4 +280,18 @@ export const resolveFrozenHits: StoreMember<[hits: FrozenHitKey[], scope: PageRe
       page_id: Number(r.page_id),
       effective_date: r.effective_date === null || r.effective_date === undefined ? null : new Date(r.effective_date),
     }));
+  };
+
+/**
+ * Where each search hit on a served segmented page starts in its body (`segmentRegions`, search/dedup.ts), from the
+ * page's segment view instead of the SQL engines' manifest join. Rows are in chunk id order.
+ */
+export const readSegmentRegions: StoreMember<[hits: ReadonlyArray<{ pageId: number; chunkId: number }>], Array<{ chunk_id: number; byte_start: number }>> =
+  async (brain, hits) => {
+    if (hits.length === 0) return [];
+    // The SQL engines bind the chunk ids into int[]; a value outside int4 is refused there.
+    int32Ids('readSegmentRegions', hits.map(h => h.chunkId));
+    const rows: Array<{ chunk_id: number | string; byte_start: number | string }> = await storeCall({ member: 'readSegmentRegions' },
+      () => brain.readSegmentRegions(hits.map(h => ({ pageId: h.pageId, chunkId: h.chunkId }))));
+    return rows.map(r => ({ chunk_id: Number(r.chunk_id), byte_start: Number(r.byte_start) }));
   };

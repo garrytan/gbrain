@@ -216,12 +216,7 @@
       "code": {
         "edits": [
           {
-            "file": "src/core/db-lock.ts",
-            "before": "        SET id = EXCLUDED.id,\n            holder_pid = ${pid},",
-            "after": "        SET holder_pid = ${pid},"
-          },
-          {
-            "file": "src/core/db-lock.ts",
+            "file": "src/core/engine-sql/cycle-locks.ts",
             "before": "         SET id = EXCLUDED.id,\n             holder_pid = $2,",
             "after": "         SET holder_pid = $2,"
           }
@@ -252,12 +247,7 @@
       "code": {
         "edits": [
           {
-            "file": "src/core/db-lock.ts",
-            "before": "        WHERE gbrain_cycle_locks.ttl_expires_at < NOW()\n          AND (gbrain_cycle_locks.last_refreshed_at IS NULL\n               OR gbrain_cycle_locks.last_refreshed_at < NOW() - ${stealGraceSeconds} * INTERVAL '1 second')",
-            "after": "        WHERE ${stealGraceSeconds}::int IS NOT NULL"
-          },
-          {
-            "file": "src/core/db-lock.ts",
+            "file": "src/core/engine-sql/cycle-locks.ts",
             "before": "         WHERE gbrain_cycle_locks.ttl_expires_at < NOW()\n           AND (gbrain_cycle_locks.last_refreshed_at IS NULL\n                OR gbrain_cycle_locks.last_refreshed_at < NOW() - $5 * INTERVAL '1 second')",
             "after": "         WHERE $5::int IS NOT NULL"
           }
@@ -288,14 +278,9 @@
       "code": {
         "edits": [
           {
-            "file": "src/core/db-lock.ts",
-            "before": "      release: async () => {\n        deregister();\n        await retryReadOnlyAutocommit(maybePG.sql as any, (sql: any) => sql`\n          DELETE FROM gbrain_cycle_locks\n          WHERE id = ${lockId} AND holder_pid = ${pid} AND acquisition_token = ${acquisitionToken}::uuid",
-            "after": "      release: async () => {\n        deregister();\n        await retryReadOnlyAutocommit(maybePG.sql as any, (sql: any) => sql`\n          DELETE FROM gbrain_cycle_locks\n          WHERE id = ${lockId} AND holder_pid = ${pid} AND ${acquisitionToken}::uuid IS NOT NULL"
-          },
-          {
-            "file": "src/core/db-lock.ts",
-            "before": "      release: async () => {\n        deregister();\n        await db.query(\n          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND acquisition_token = $3::uuid`,",
-            "after": "      release: async () => {\n        deregister();\n        await db.query(\n          `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND $3::uuid IS NOT NULL`,"
+            "file": "src/core/engine-sql/cycle-locks.ts",
+            "before": "const RELEASE_SQL = `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND acquisition_token = $3::uuid`;",
+            "after": "const RELEASE_SQL = `DELETE FROM gbrain_cycle_locks WHERE id = $1 AND holder_pid = $2 AND $3::uuid IS NOT NULL`;"
           }
         ],
         "tests": [
@@ -350,14 +335,9 @@
       "code": {
         "edits": [
           {
-            "file": "src/core/db-lock.ts",
-            "before": "            WHERE id = $2 AND holder_pid = $3 AND acquisition_token = $4::uuid\n            RETURNING id`,\n          [ttl, lockId, pid, acquisitionToken],\n          refreshOpts,",
-            "after": "            WHERE id = $2 AND holder_pid = $3 AND $4::uuid IS NOT NULL\n            RETURNING id`,\n          [ttl, lockId, pid, acquisitionToken],\n          refreshOpts,"
-          },
-          {
-            "file": "src/core/db-lock.ts",
-            "before": "            WHERE id = $2 AND holder_pid = $3 AND acquisition_token = $4::uuid\n            RETURNING id`,\n          [ttl, lockId, pid, acquisitionToken],\n        );\n        return res.rows.length > 0;",
-            "after": "            WHERE id = $2 AND holder_pid = $3 AND $4::uuid IS NOT NULL\n            RETURNING id`,\n          [ttl, lockId, pid, acquisitionToken],\n        );\n        return res.rows.length > 0;"
+            "file": "src/core/engine-sql/cycle-locks.ts",
+            "before": "            WHERE id = $2 AND holder_pid = $3 AND acquisition_token = $4::uuid\n            RETURNING id`;",
+            "after": "            WHERE id = $2 AND holder_pid = $3 AND $4::uuid IS NOT NULL\n            RETURNING id`;"
           }
         ],
         "tests": [

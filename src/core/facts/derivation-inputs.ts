@@ -69,6 +69,29 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
 }
 
 /**
+ * #9653: a page this function hid keeps `marked_at` equal to its `deleted_at`, so the automatic purge can tell a concept
+ * hidden only because an input was purged (purge-deleted.ts readRederiveHeldConcepts) from one a person or sync deleted. A later mark of
+ * that page keeps the moment; any other mark is stamped now.
+ */
+export const KEEP_HIDDEN_AT = `CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
+  WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END`;
+
+/**
+ * The mark's whole statement (the engine-sql member markNeedsRederive sends it as it is): constant text plus KEEP_HIDDEN_AT, no
+ * value in the text. $1 table, $2 ids, $3 source, $4 request, $5 reason, $6 the pages this transaction just hid (used twice).
+ */
+export const MARK_NEEDS_REDERIVE_SQL = `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
+      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
+      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`;
+
+/** #9653: a delete of a page already hidden this way (a person's or a sync's) ends the automatic purge's hold on it. */
+export async function releaseHiddenMoment(tx: BrainEngine, pageId: number): Promise<void> {
+  await tx.executeRaw(`UPDATE needs_rederive n SET marked_at=clock_timestamp() FROM pages p
+    WHERE n.derived_table='pages' AND n.derived_id=p.id::text AND p.id=$1 AND n.marked_at=p.deleted_at`, [pageId]);
+}
+
+/**
  * Hide each derived row through its table's own inactive state and mark it
  * `needs_rederive`. Facts expire, takes deactivate, pages soft-delete;
  * a table without a known inactive state is only marked (reported unverified).
@@ -84,10 +107,15 @@ export async function hideDerivedRows(tx: BrainEngine, rows: readonly DerivedRow
     let count = 0;
     if (table === 'facts') count = await tx.expireDerivedFacts(numeric, mark.sourceId);
     else if (table === 'takes') count = await tx.deactivateDerivedTakes(numeric, mark.sourceId);
-    else if (table === 'pages') count = await tx.softDeleteDerivedPages(numeric, mark.sourceId);
+    let hiddenNow: string[] = [];
+    if (table === 'pages') {
+      const pages = await tx.softDeleteDerivedPages(numeric, mark.sourceId);
+      hiddenNow = pages.filter(row => row.now).map(row => String(row.id));
+      count = pages.length;
+    }
     if (count) hidden[table] = count;
     if (count < ids.length) markedOnly[table] = ids.length - count;
-    await tx.markNeedsRederive(table, ids, mark.sourceId, mark.requestId, mark.reason);
+    await tx.markNeedsRederive(table, ids, mark.sourceId, mark.requestId, mark.reason, hiddenNow);
   }
   return { hidden, markedOnly };
 }

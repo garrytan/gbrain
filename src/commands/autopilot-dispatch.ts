@@ -10,6 +10,7 @@ import { syncIntervalMinutes } from '../core/meetings/source-config.ts';
 import { MEETINGS_DEFAULT_SYNC_INTERVAL_MIN } from '../core/meetings/types.ts';
 import { SLACK_DEFAULT_SYNC_INTERVAL_MIN } from '../core/slack/types.ts';
 import { IMESSAGE_DEFAULT_SYNC_INTERVAL_MIN } from '../core/imessage/types.ts';
+import { APPLE_CONTACTS_DEFAULT_SYNC_INTERVAL_MIN } from '../core/apple-contacts/types.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { loadAllSources, parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, type SourceRow } from '../core/sources-load.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
@@ -32,6 +33,7 @@ import { readCheckoutHead } from '../core/checkout-head.ts';
 import { SYNC_ON_COMMIT_KEY } from '../core/sync-config-keys.ts';
 import { autopilotPaused } from '../core/autopilot-paths.ts';
 import { cooldownMinForCount, resolveFailureCooldownOpts } from './autopilot-fanout.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 /**
  * cycleOk is false only when the dispatch itself threw. health is the snapshot the plan routed on (null: the bounded
@@ -586,6 +588,7 @@ export function connectorSyncIntervalMs(config: unknown, baseIntervalMs: number)
     case 'meetings': return syncIntervalMinutes(parsed, MEETINGS_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
     case 'slack': return syncIntervalMinutes(parsed, SLACK_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
     case 'imessage': return syncIntervalMinutes(parsed, IMESSAGE_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
+    case 'apple-contacts': return syncIntervalMinutes(parsed, APPLE_CONTACTS_DEFAULT_SYNC_INTERVAL_MIN)! * 60_000;
     default: return assertNever(kind);
   }
 }
@@ -825,6 +828,9 @@ export async function submitAutoDrains(
         console.log(`[dispatch] job #${job.id} extract-atoms-drain (auto-drain: ${src.id}; backlog=${backlog})`);
       }
     } catch (e) {
+      // A capability refusal means the engine cannot run this pass at all: no source would ever be drained. Let it out
+      // (the gate in dispatchAutoDrain logs it) instead of skipping each source in turn.
+      rethrowCapabilityRefusal(e);
       logError('dispatch.auto-drain', e);
     }
   }

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 300780,
-    "stdoutSha256": "8f97f2de38e80665f2b4290a0c7b3235c552b728d3957ed59861c8c0a49bbc96",
+    "stdoutBytes": 301882,
+    "stdoutSha256": "efc88a5959bf2855fe9b39c41daf3e5be6d0f67e5b9370ab50c12e22cf26917d",
     "toolNames": [
       "remember",
       "entity",
@@ -99,6 +99,7 @@
       "storage_list",
       "storage_register",
       "storage_update",
+      "reveal_secret",
       "submit_job",
       "get_job",
       "wait_job",
@@ -1922,7 +1923,7 @@
               "type": "boolean"
             },
             "autocut": {
-              "description": "Default on (never empty); false: full top-K for breadth.",
+              "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
               "type": "boolean"
             },
             "cross_modal": {
@@ -4282,7 +4283,7 @@
         "scope": "read"
       },
       {
-        "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+        "description": "Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). Never fuzzy: empty matches means no exact match; ambiguous means several.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -4296,7 +4297,7 @@
         "schema": {
           "properties": {
             "query": {
-              "description": "Email address or name, e.g. 'alice@acme-example.com'.",
+              "description": "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'.",
               "type": "string"
             },
             "source_id": {
@@ -4758,6 +4759,30 @@
           "type": "object"
         },
         "scope": "write"
+      },
+      {
+        "description": "Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation list names reveal_secret and read access to a page holding the marker; every call is audited.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "reveal_secret",
+        "parameters": {
+          "id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Entry id from the marker (ss_ followed by 12 hex).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
       },
       {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",
@@ -6416,7 +6441,7 @@
         "scope": "read"
       },
       {
-        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+        "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
         "idempotent": false,
         "local_only": false,
         "mutating": true,
@@ -8208,7 +8233,7 @@
         "scope": "read"
       },
       {
-        "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
+        "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct, direction: 'down'|'up'}], drift_score: number|null, schema_version: 1}`. A regression is a 10% drop, or a 10% rise for a lower-is-better metric (burn, churn, cac, cost, expense, loss, latency, payback, debt; not a name that also says savings, recovered, reduction or avoided). Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

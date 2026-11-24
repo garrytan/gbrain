@@ -1,26 +1,33 @@
 /**
- * The extract bookkeeping members (BrainEngine upsertExtractRollup, readExtractReceiptPrior, readExtractReceiptSealed;
- * SQL in engine-sql/extract-bookkeeping.ts). The receipt reads are served from the store's page records
- * (rust/crates/gbrain-store/src/cli_reads/extract_receipt.rs, rust/docs/store/sweep-reads.md).
+ * Extract bookkeeping writes (engine-sql/extract-bookkeeping.ts), served by the store (gbrain-store
+ * extract_bookkeeping.rs; rust/docs/store/extract-bookkeeping.md): the receipt write's two page reads and the
+ * `extract_rollup_7d` day upsert (store A 0x0A).
  *
- * `upsertExtractRollup` writes nothing and resolves: the store keeps no `extract_rollup_7d` rows yet, so doctor's
- * extract_health reads no rollup rows on this engine (a known difference, rust/docs/store/sweep-reads.md). The rollup is
- * a best-effort cache on every engine; its caller records a failed write and goes on.
+ * The store keeps no withheld origin, so a slot's `withheld_source_path` is always null. Its schema is current, so
+ * the pre-v141 upsert is never needed and refuses. A count that is not a 32-bit integer refuses, as the SQL's `int`
+ * parameters refuse it.
  */
-import type { ExtractReceiptPriorRow, ExtractRollupRow } from '../../engine-sql/extract-bookkeeping.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../../search/safe-chunks.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import type { ExtractReceiptSlot, ExtractRollupDelta } from '../../engine-sql/extract-bookkeeping.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
-export const upsertExtractRollup: StoreMember<[row: ExtractRollupRow, form?: 'pre_v141'], void> = async () => {};
+const COUNTS = ['halt_count', 'eval_fail_count', 'eval_pass_count', 'round_completed_count', 'expected_limit_count', 'rollup_write_failures'] as const;
 
-export const readExtractReceiptPrior: StoreMember<[sourceId: string, slug: string], ExtractReceiptPriorRow | undefined> = async (brain, sourceId, slug) => {
-  const row: ExtractReceiptPriorRow | null = await storeCall({ member: 'readExtractReceiptPrior', sourceId }, () =>
-    brain.readExtractReceiptPrior({ sourceId, slug }));
-  return row ?? undefined;
-};
+export const readExtractReceiptSlot: StoreMember<[sourceId: string, slug: string], ExtractReceiptSlot | null> = async (brain, sourceId, slug) =>
+  (await storeCall({ member: 'readExtractReceiptSlot', sourceId }, () => brain.readExtractReceiptSlot(sourceId, slug))) ?? null;
 
-export const readExtractReceiptSealed: StoreMember<[sourceId: string, slug: string], { sealed: boolean | null } | undefined> = async (brain, sourceId, slug) => {
-  const row: { sealed: boolean | null } | null = await storeCall({ member: 'readExtractReceiptSealed', sourceId }, () =>
-    brain.readExtractReceiptSealed({ sourceId, slug, safeVersion: SAFE_FENCE_CHUNKER_VERSION }));
-  return row ?? undefined;
+export const readExtractReceiptSeal: StoreMember<[sourceId: string, slug: string, safeVersion: number], boolean | null> =
+  async (brain, sourceId, slug, safeVersion) =>
+    (await storeCall({ member: 'readExtractReceiptSeal', sourceId }, () => brain.readExtractReceiptSeal(sourceId, slug, safeVersion))) ?? null;
+
+export const upsertExtractRollupDay: StoreMember<[d: ExtractRollupDelta, opts?: { preV141?: boolean }], void> = async (brain, d, opts) => {
+  if (opts?.preV141) refuseMember('upsertExtractRollupDay', 'the pre-v141 rollup statement (the store schema is current)');
+  for (const k of COUNTS) {
+    if (!Number.isInteger(d[k]) || d[k] < -2147483648 || d[k] > 2147483647) refuseMember('upsertExtractRollupDay', `a ${k} that is not a 32-bit integer`);
+  }
+  const delta = {
+    kind: d.kind, sourceId: d.source_id, day: d.day, costUsd: d.cost_usd, haltCount: d.halt_count, evalFailCount: d.eval_fail_count,
+    evalPassCount: d.eval_pass_count, roundCompletedCount: d.round_completed_count, expectedLimitCount: d.expected_limit_count,
+    rollupWriteFailures: d.rollup_write_failures, haltReason: d.halt_reason,
+  };
+  await storeCall({ member: 'upsertExtractRollupDay', sourceId: d.source_id }, () => brain.upsertExtractRollupDay(delta));
 };

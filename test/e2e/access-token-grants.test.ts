@@ -6,6 +6,7 @@
  * JSONB edit fails closed on the OAuth-provider path. PGLite coverage:
  * test/access-token-grants.test.ts and test/auth-rescope-unified.test.ts.
  */
+import { readOnlySqlFor } from '../helpers/read-only-sql.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -108,8 +109,7 @@ d('F3 token grant columns on Postgres', () => {
     const preview = await migrateLegacyTokens(engine, { dryRun: true });
     expect(preview.migrated.map(m => m.id)).toContain(inserted.id);
     expect((await row(inserted.id)).source_grant).toBeNull();
-    const readOnly = sqlQueryForEngine(engine);
-    const before = await new GBrainOAuthProvider({ sql: (strings, ...values) => /^\s*UPDATE/i.test(strings[0]!) ? Promise.reject(new Error('read-only')) : readOnly(strings, ...values) })
+    const before = await new GBrainOAuthProvider({ sql: readOnlySqlFor(engine) })
       .verifyAccessToken(token);
     expect((await row(inserted.id)).source_grant).toBeNull();
     await migrateLegacyTokens(engine, { dryRun: false });

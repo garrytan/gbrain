@@ -21,33 +21,8 @@ function wholeId(member: string, id: number): void {
   if (!Number.isSafeInteger(id)) refuseMember(member, 'an id that is not a whole number');
 }
 
-export const readFactForForget: Member<'readFactForForget'> = async (brain, id) => {
-  wholeId('readFactForForget', id);
-  const row: ForgetFactRow | null = await storeCall({ member: 'readFactForForget' }, () => brain.readFactForForget({ id }));
-  return row ? withDates(row, ['expired_at']) : null;
-};
-
 /** A real `YYYY-MM-DD` day. */
 const realDay = (day: string): boolean => DATE.test(day) && new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) === day;
-
-export const expireFactSuperseded: Member<'expireFactSuperseded'> = async (brain, factId, validUntil) => {
-  wholeId('expireFactSuperseded', factId);
-  // `$2::timestamptz` reads a bare date as that day's midnight (UTC, the session zone every engine runs in).
-  let until = validUntil;
-  if (until !== null && realDay(until)) until = `${until}T00:00:00Z`;
-  else if (until !== null && (!ISO_INSTANT.test(until) || Number.isNaN(Date.parse(until)))) {
-    refuseMember('expireFactSuperseded', 'a validUntil that is not an ISO instant or a date');
-  }
-  await storeCall({ member: 'expireFactSuperseded' }, () => brain.expireFactSuperseded({ factId, validUntil: until }));
-};
-
-export const expireFactAtDate: Member<'expireFactAtDate'> = async (brain, factId, today) => {
-  wholeId('expireFactAtDate', factId);
-  if (!realDay(today)) {
-    refuseMember('expireFactAtDate', 'a date that is not a real YYYY-MM-DD day');
-  }
-  await storeCall({ member: 'expireFactAtDate' }, () => brain.expireFactAtDate({ factId, today }));
-};
 
 export const readWithdrawalAnchor: Member<'readWithdrawalAnchor'> = async (brain, factId, sourceId) => {
   wholeId('readWithdrawalAnchor', factId);

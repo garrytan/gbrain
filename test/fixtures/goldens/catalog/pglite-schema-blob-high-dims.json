@@ -967,7 +967,6 @@
       "idx_pages_slug_basename": "CREATE INDEX idx_pages_slug_basename ON public.pages USING btree (source_id, regexp_replace(slug, '^.*/'::text, ''::text))",
       "idx_pages_slug_trgm": "CREATE INDEX idx_pages_slug_trgm ON public.pages USING gin (slug gin_trgm_ops)",
       "idx_pages_source_id": "CREATE INDEX idx_pages_source_id ON public.pages USING btree (source_id)",
-      "idx_pages_source_title_lower": "CREATE INDEX idx_pages_source_title_lower ON public.pages USING btree (source_id, lower(title))",
       "idx_pages_title_search": "CREATE INDEX idx_pages_title_search ON public.pages USING gin (ts_filter(search_vector, '{a}'::\"char\"[]))",
       "idx_pages_trgm": "CREATE INDEX idx_pages_trgm ON public.pages USING gin (title gin_trgm_ops)",
       "idx_pages_type": "CREATE INDEX idx_pages_type ON public.pages USING btree (type)",
@@ -1079,6 +1078,7 @@
       "persistence_requests_sequence_key": "CREATE UNIQUE INDEX persistence_requests_sequence_key ON public.persistence_requests USING btree (sequence)",
       "persistence_requests_slug_intent": "CREATE INDEX persistence_requests_slug_intent ON public.persistence_requests USING btree (source_id, slug, sequence) WHERE ((intent IS NOT NULL) AND (NOT compacted))",
       "persistence_requests_slug_sequence": "CREATE INDEX persistence_requests_slug_sequence ON public.persistence_requests USING btree (source_id, slug, sequence)",
+      "persistence_requests_source_slug_c": "CREATE INDEX persistence_requests_source_slug_c ON public.persistence_requests USING btree (source_id, slug COLLATE \"C\")",
       "persistence_requests_sync_run_committed": "CREATE INDEX persistence_requests_sync_run_committed ON public.persistence_requests USING btree (source_id, ((intent ->> 'runId'::text)), ((intent ->> 'index'::text))) WHERE ((state = 'committed'::text) AND (intent ? 'runId'::text))",
       "persistence_requests_sync_run_open": "CREATE INDEX persistence_requests_sync_run_open ON public.persistence_requests USING btree (worktree_id, ((intent ->> 'runId'::text))) WHERE ((state <> 'committed'::text) AND ((intent ->> 'kind'::text) = ANY (ARRAY['managed_sync_import'::text, 'managed_sync_delete'::text])))",
       "persistence_requests_sync_watermark": "CREATE INDEX persistence_requests_sync_watermark ON public.persistence_requests USING btree (worktree_id, source_incarnation, completed_at DESC) WHERE ((state = 'committed'::text) AND (COALESCE((intent ->> 'kind'::text), ''::text) ~~ 'managed_sync_%'::text))",
@@ -1169,9 +1169,11 @@
       "wanted_links_reference_unique": "CREATE UNIQUE INDEX wanted_links_reference_unique ON public.wanted_links USING btree (origin_page_id, producer, ref_kind, target_source_id, target_ref)",
       "wanted_links_source_idx": "CREATE INDEX wanted_links_source_idx ON public.wanted_links USING btree (source_id)",
       "wanted_links_target_idx": "CREATE INDEX wanted_links_target_idx ON public.wanted_links USING btree (target_source_id, target_ref)",
-      "write_gate_holds_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_dedupe_idx ON public.write_gate_holds USING btree (source_id, slug, fingerprint, detector_version)",
+      "write_gate_holds_bound_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_bound_dedupe_idx ON public.write_gate_holds USING btree (source_id, page_id, fingerprint, detector_version) WHERE (page_id IS NOT NULL)",
+      "write_gate_holds_page_idx": "CREATE INDEX write_gate_holds_page_idx ON public.write_gate_holds USING btree (source_id, page_id) WHERE ((status = 'held'::text) AND (page_id IS NOT NULL))",
       "write_gate_holds_pkey": "CREATE UNIQUE INDEX write_gate_holds_pkey ON public.write_gate_holds USING btree (id)",
       "write_gate_holds_status_idx": "CREATE INDEX write_gate_holds_status_idx ON public.write_gate_holds USING btree (status, source_id, id)",
+      "write_gate_holds_unbound_dedupe_idx": "CREATE UNIQUE INDEX write_gate_holds_unbound_dedupe_idx ON public.write_gate_holds USING btree (source_id, slug, fingerprint, detector_version) WHERE ((page_id IS NULL) AND (page_candidates IS NULL))",
       "write_gate_receipts_pkey": "CREATE UNIQUE INDEX write_gate_receipts_pkey ON public.write_gate_receipts USING btree (id)",
       "write_gate_receipts_seen_idx": "CREATE INDEX write_gate_receipts_seen_idx ON public.write_gate_receipts USING btree (last_seen_at)",
       "write_gate_receipts_target_idx": "CREATE UNIQUE INDEX write_gate_receipts_target_idx ON public.write_gate_receipts USING btree (target_table, target_id, content_hash, detector_version)"
@@ -3275,7 +3277,9 @@
           "16 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "17 last_seen_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "18 decided_at timestamp with time zone/timestamptz NULL",
-          "19 decided_by text/text NULL"
+          "19 decided_by text/text NULL",
+          "20 page_id bigint/int8 NULL",
+          "21 page_candidates ARRAY/_int8 NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

@@ -3,7 +3,7 @@
  * (rust/crates/gbrain-store/src/facts/repair.rs). A member not exported here refuses with `engine_capability_missing`.
  *
  * Served from facts/captured.rs: listActiveSourceIds, readRepairBrainId (the persistence brain id), listFenceRewriteRows,
- * expireCapturedFacts, listExpiredFactIds, listPagelessEntityFacts, listSourceIncarnations, readEntityRehomeState and
+ * expireCapturedFacts, listExpiredFactIds, listPagelessEntityFacts, readEntityRehomeState and
  * rehomeEntityFacts. The two writers (expireCapturedFacts, rehomeEntityFacts) write through the store's fact writer, and
  * rehomeEntityFacts also applies the withdrawal guard (facts/withdrawal_guard.rs) the SQL gets from its trigger.
  * Served from facts/session_takes.rs (`gbrain repair agent-session-facts`): listAgentSessionTakeCandidates,
@@ -17,13 +17,14 @@
  * served, but they write the `fact_purges` ledger, not `page_purges`, so they do not change that.) listUnwithdrawnFacts reads
  * the store's derived generation ledger (facts/generations.rs), which no member writes on Rust either: the fence writer publishes
  * generations with raw SQL and refuses, so on Rust it lists nothing. loopFactDrift and closedLoopWithActiveFact are
- * served from open-loops.ts. listExtractorFactsForClassification (facts/extractor_classify.rs) reads its receipts from
+ * served from open-loops.ts. listExtractorFactsForClassification reads its receipts from
  * the write journal's committed requests (`persistence_requests` on SQL), the requests the store's journal records.
  *
  * An id list binds as `bigint[]` on PGLite, so an id that is not an integer refuses rather than guess at its cast error.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { privacyAliasSql, privateSnapshotFilterFragment } from '../../search/private-visibility.ts';
+import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { labelsOf } from './label-line.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
@@ -62,10 +63,6 @@ export const listExpiredFactIds: Member<'listExpiredFactIds'> = (brain, sourceId
 /** `listPagelessEntityFacts`: per page-less entity of the sources, its database-only fact ids and its fenced count. */
 export const listPagelessEntityFacts: Member<'listPagelessEntityFacts'> = (brain, sourceIds) =>
   storeCall({ member: 'listPagelessEntityFacts' }, () => brain.listPagelessEntityFacts({ sourceIds }));
-
-/** `listSourceIncarnations`: the id and incarnation of each named source that exists, archived ones too, by id. */
-export const listSourceIncarnations: Member<'listSourceIncarnations'> = (brain, sourceIds) =>
-  storeCall({ member: 'listSourceIncarnations' }, () => brain.listSourceIncarnations({ sourceIds: [...sourceIds] }));
 
 /** `readEntityRehomeState`: whether each page is live and the database-only fact ids keyed under `from`. */
 export const readEntityRehomeState: Member<'readEntityRehomeState'> = (brain, sourceId, from, to) =>
@@ -158,6 +155,67 @@ export const countPurgedPageFacts: Member<'countPurgedPageFacts'> = (brain, sour
 /** `listUnwithdrawnFacts`: the store answers the rows in the SQL's order with its columns. */
 export const listUnwithdrawnFacts: Member<'listUnwithdrawnFacts'> = (brain, sourceIds, slug, fenceKind) =>
   storeCall({ member: 'listUnwithdrawnFacts' }, () => brain.listUnwithdrawnFacts({ sourceIds, slug, fenceKind }));
+
+/**
+ * The previews of `gbrain repair consolidate-ties`, `facts-rehome`, `ontology-facts` and `duplicate-facts`: the store reads its
+ * facts (and pages and withdrawals) and answers the rows of the SQL in its order. Text columns order by byte, as the lowercase
+ * ids, slugs and hex fingerprints they hold do under a database collation.
+ */
+export const listClosedConsolidationTies: Member<'listClosedConsolidationTies'> = (brain, sourceIds) =>
+  storeCall({ member: 'listClosedConsolidationTies' }, () => brain.listClosedConsolidationTies({ sourceIds }));
+
+export const listOntologyFactCandidates: Member<'listOntologyFactCandidates'> = (brain, sourceIds) =>
+  storeCall({ member: 'listOntologyFactCandidates' }, () => brain.listOntologyFactCandidates({ sourceIds }));
+
+export const listDuplicateFactRows: Member<'listDuplicateFactRows'> = (brain, sourceIds, excludedSources) =>
+  storeCall({ member: 'listDuplicateFactRows' }, () => brain.listDuplicateFactRows({ sourceIds, excludedSources }));
+
+/**
+ * The previews of `gbrain repair fact-claim-dates` and `url-clone-fences`: the store reads the facts of the UTC day, and the
+ * live page of a path (the lowest id, as the SQL's `ORDER BY id LIMIT 1`). A day that is not a real `YYYY-MM-DD` refuses: the
+ * SQL's `$2::date` would read other spellings, which a caller never sends.
+ */
+export const listFactsOnValidDay: Member<'listFactsOnValidDay'> = (brain, sourceId, day) => {
+  const m = 'listFactsOnValidDay';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) refuseMember(m, 'a day that is not a real YYYY-MM-DD date');
+  return storeCall({ member: m }, () => brain.listFactsOnValidDay({ sourceId, day }));
+};
+
+export const readLivePageByPath: Member<'readLivePageByPath'> = async (brain, sourceId, path) =>
+  await storeCall({ member: 'readLivePageByPath', sourceId }, () => brain.readLivePageByPath({ sourceId, path })) as { id: number; slug: string } | null;
+
+/** `listPurgedPageFactCandidates`: the store answers the rows of the SQL in its order; `purged` reads its `page_purges` ledger, which no member writes on Rust. */
+export const listPurgedPageFactCandidates: Member<'listPurgedPageFactCandidates'> = (brain, sourceIds, ids) => {
+  wholeIds('listPurgedPageFactCandidates', ids);
+  return storeCall({ member: 'listPurgedPageFactCandidates' }, () => brain.listPurgedPageFactCandidates({ sourceIds, ids }));
+};
+
+/**
+ * The scan of `gbrain repair facts-home` and the approved-set digest of the maintenance repairs: the store answers the rows of the
+ * SQL in its order (text sorts by byte). `listHeldHomeRows` counts `days` as 24-hour days from the store's clock, so a count that is
+ * not a whole number refuses. `readFactSnapshots` has no row lock: `lock` (FOR UPDATE, only inside a SQL transaction) refuses.
+ */
+const HOME_DATES = ['valid_from', 'valid_until'] as const;
+
+export const listFactsHomeCandidates: Member<'listFactsHomeCandidates'> = async (brain, sourceId) => {
+  const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listFactsHomeCandidates' }, () => brain.listFactsHomeCandidates({ sourceId }));
+  return rows.map(row => withDates(row, HOME_DATES)) as never;
+};
+
+export const listHeldHomeRows: Member<'listHeldHomeRows'> = async (brain, sourceId, days) => {
+  if (!Number.isSafeInteger(days)) refuseMember('listHeldHomeRows', 'a day count that is not a whole number');
+  const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listHeldHomeRows' }, () => brain.listHeldHomeRows({ sourceId, days }));
+  return rows.map(row => withDates(row, HOME_DATES)) as never;
+};
+
+export const listOrphanedFenceRows: Member<'listOrphanedFenceRows'> = (brain, sourceId) =>
+  storeCall({ member: 'listOrphanedFenceRows' }, () => brain.listOrphanedFenceRows({ sourceId }));
+
+export const readFactSnapshots: Member<'readFactSnapshots'> = (brain, sourceId, ids, lock) => {
+  if (lock) refuseMember('readFactSnapshots', 'a row lock (FOR UPDATE)');
+  wholeIds('readFactSnapshots', ids);
+  return storeCall({ member: 'readFactSnapshots' }, () => brain.readFactSnapshots({ sourceId, ids }));
+};
 
 /** `listAgentSessionTakeCandidates`: the open self fact takes of the sources with their consolidated facts, by source, slug and id. */
 export const listAgentSessionTakeCandidates: Member<'listAgentSessionTakeCandidates'> = async (brain, sourceIds, ids, noteMark) => {

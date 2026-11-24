@@ -8,6 +8,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { LATEST_VERSION } from '../migrate.ts';
+import type { CatalogForeignKey, CatalogRelation } from '../engine-sql/graduation-catalog.ts';
+import { refuseKeyspaceStore, rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import type { ColumnTransform, Inventory, InventoryClass, InventoryEntry, LossKind } from './engine-graduation.types.ts';
 
 type EngineKind = 'pglite' | 'postgres';
@@ -34,12 +36,14 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('access_group_members', 'security', 'Group membership behind readable_by group:<id> grants; without it carried pages would resolve readers differently.'),
     carry('access_groups', 'security', 'Access groups that readable_by names; carried so grants keep meaning the same people.'),
     carry('access_member_links', 'security', 'Links from attested outside identities (QM actors) to brain members; dropping them would unlink every attested person.'),
+    carry('access_handovers', 'security', 'Each member handover with the readers it moved; dropping them would lose the record undo restores and the commit ids of the rule writes.'),
     carry('access_member_sources', 'security', 'Personal sources bound to their members; dropping them would let every attested person read every member\'s personal source.'),
     carry('access_members', 'security', 'Brain members that readable_by member:<id> names, with each declared email; carried so per-page readers stay the same people.'),
     carry('access_pending_coverage', 'security', 'Prefixes that read as nobody while a narrowing stamps or a policy file is invalid; dropping them would reveal pages.'),
     carry('access_policy_migrations', 'operational', 'In-flight folder-policy store switches (git and database) and their receipts.'),
     carry('access_policy_revisions', 'security', 'Folder-policy revision history: desired rules, change class, proposer and approver.'),
     carry('access_policy_state', 'security', 'One row per source with a folder policy; the lock row access_rules and its history hang off.'),
+    carry('access_read_log', 'operational', 'Member and audience read audit (who read which page ids, kept a year); dropping it would lose the record of who read what.'),
     carry('access_rules', 'security', 'Applied folder rules that pages.folder_rule_ids names; on a repo-less source they are the record.'),
     carry('access_tokens', 'security', 'Legacy bearer tokens and their unified grant columns; token hashes keep authorizing on the target.'),
     carry('belief_commit_marks', 'user_data', 'Belief ledger post-commit observations; without them carried events would read as unproven (W2 visibility).'),
@@ -78,6 +82,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('dream_verdicts', 'operational', 'Paid dream triage verdict cache.'),
     carry('drift_decisions', 'user_data', 'Take drift decisions and when they were applied.'),
     carry('entity_identities', 'user_data', 'Established entity identities.'),
+    carry('entity_identity_reviews', 'user_data', "The owner's duplicate-people decisions: the record on a brain with no repository, else the projection of the committed decision files."),
     carry('eval_candidates', 'operational', 'Captured retrieval eval candidates.'),
     carry('eval_capture_failures', 'operational', 'Eval capture failure log.'),
     carry('eval_contradictions_cache', 'operational', 'Paid contradiction judge cache; rebuilding spends money.'),
@@ -131,6 +136,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('op_checkpoint_paths', 'operational', 'Resumable operation checkpoints.'),
     carry('op_checkpoints', 'operational', 'Resumable operation checkpoints.'),
     carry('open_loops', 'user_data', 'Open loops and their status.'),
+    carry('owner_only_marks', 'security', 'Rows derived from a removed owner-only origin (GST-3032); dropping them would reopen those rows to other members.'),
     carry('page_aliases', 'user_data', 'Page aliases.'),
     carry('page_body_manifest', 'user_data', 'Segmented page bodies: which segment texts make each body generation, in order; without it a large page has no body.'),
     carry('page_body_staging_parts', 'operational', 'Raw parts of open upload sessions; without them a client resuming an upload starts over.'),
@@ -186,6 +192,8 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('retrieval_feedback', 'user_data', 'Ratings and citation signals with the weight change each applied.'),
     carry('retrieval_weights', 'user_data', 'Learned retrieval feedback weights per page and edge.'),
     carry('search_telemetry', 'operational', 'Search telemetry rollups.'),
+    carry('secret_store', 'user_data', 'Encrypted originals of redacted secrets; without them a marker can never be revealed or restored.'),
+    carry('secret_store_occurrence', 'user_data', 'Where each secret store entry was redacted; restore splices the original back at these places.'),
     carry('session_context_state', 'operational', 'Ambient recall session state.'),
     carry('shared_skill_delivery_batches', 'operational', 'Shared-skill delivery batches and acknowledgments.'),
     carry('shared_skill_heads', 'user_data', 'Shared-skill heads.'),
@@ -239,6 +247,9 @@ export const GRADUATION_INVENTORY: Inventory = {
     entry('gbrain_cycle_locks', 'discard', 'operational', 'TTL run locks; every row is an orphan under the kernel lock.'),
     entry('budget_reservations', 'discard', 'operational', 'Daily-ledger holds (src/core/budget/daily-ledger.ts) that expire within minutes; budget_ledger carries the day\'s totals, so a hold dropped mid-graduation stays counted as reserved until its UTC day ends (only tightening that day\'s cap).'),
     entry('subagent_rate_leases', 'discard', 'operational', 'Job-owned concurrency leases that expire.'),
+    entry('engine_writer_coverage_gaps', 'discard', 'operational', 'Swap eligibility gap rows (shadow mode only): when the source brain could not record a writer; the target starts its own window.'),
+    entry('engine_writer_observations', 'discard', 'operational', 'Swap eligibility writer observations (shadow mode only): which processes wrote the source brain; the target starts its own window.'),
+    entry('engine_writer_sessions', 'discard', 'operational', 'Swap eligibility writing connections (shadow mode only, recorded by the writer hooks on the source brain); the target starts its own window.'),
     entry('persistence_consumers', 'discard', 'operational', 'Per-process consumer heartbeat rows (#6317): each is renewed every 10 s by a live process on the source host and lapses in 90 s; the target\'s consumers write their own rows.'),
     entry('sync_notifier_leases', 'discard', 'operational', 'Host notifier lease (GBRA-133): renewed every heartbeat by a live resident on the source engine and lapses in two; the target\'s residents claim their own.'),
     entry('sync_notifier_sources', 'discard', 'operational', 'Per-source notifier runtime state and coverage (GBRA-133), written by the source engine\'s resident; the target\'s resident re-observes HEAD, and a classic source\'s syncer host is recorded again by its next sync on the target (until then it reads not monitored).'),
@@ -255,19 +266,25 @@ export function expectedRelations(engine: EngineKind, inv: Inventory = GRADUATIO
   return inv.entries.filter(e => e.engines[engine]).map(e => e.relation).sort();
 }
 
-/** Tables, partitioned tables, views, materialized views and foreign tables in the current schema. */
-export async function listRelations(engine: BrainEngine): Promise<readonly { relation: string; kind: 'table' | 'view' }[]> {
-  const rows = await engine.executeRaw<{ relname: string; relkind: string }>(`SELECT c.relname, c.relkind::text AS relkind FROM pg_class c
-    JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND c.relkind IN ('r','p','v','m','f') AND NOT c.relispartition
-    ORDER BY c.relname COLLATE "C"`);
-  return rows.map(r => ({ relation: r.relname, kind: r.relkind === 'v' || r.relkind === 'm' ? 'view' : 'table' }));
+/**
+ * Tables, partitioned tables, views, materialized views and foreign tables in the current schema. An engine whose
+ * store keeps keyspaces, not relations (the Rust engine), refuses by name: graduation copies SQL relations only.
+ */
+export async function listRelations(engine: BrainEngine): Promise<readonly CatalogRelation[]> {
+  const catalog = await engine.listCatalogRelations();
+  if (catalog.store !== 'sql') {
+    refuseKeyspaceStore('listRelations', `graduation copies SQL relations; this store keeps ${catalog.keyspaces.length} keyspaces of format ${catalog.formatVersion} instead`);
+  }
+  return catalog.relations;
 }
 
 async function schemaVersion(engine: BrainEngine): Promise<number | null> {
   try {
-    const [row] = await engine.executeRaw<{ value: string }>("SELECT value FROM config WHERE key='version'");
-    return row ? Number(row.value) : null;
-  } catch { return null; }
+    return await engine.readCatalogSchemaVersion();
+  } catch (e) {
+    rethrowCapabilityMissing(e);
+    return null;
+  }
 }
 
 /** Throws graduation_unclassified_table when the live relation set differs from the inventory for this engine. */
@@ -304,19 +321,9 @@ export async function assertRelationSet(engine: BrainEngine, kind: EngineKind, i
     });
 }
 
-interface ForeignKey { name: string; child: string; parent: string; childColumns: string[]; parentColumns: string[] }
-
-/** Every FK constraint in the current schema, read from pg_constraint. */
-export async function foreignKeys(engine: BrainEngine): Promise<readonly ForeignKey[]> {
-  const rows = await engine.executeRaw<{ name: string; child: string; parent: string; child_cols: string; parent_cols: string }>(`SELECT c.conname AS name,
-      ch.relname AS child, pa.relname AS parent,
-      (SELECT json_agg(a.attname ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(n,ord) JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=k.n)::text AS child_cols,
-      (SELECT json_agg(a.attname ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(n,ord) JOIN pg_attribute a ON a.attrelid=c.confrelid AND a.attnum=k.n)::text AS parent_cols
-    FROM pg_constraint c JOIN pg_class ch ON ch.oid=c.conrelid JOIN pg_class pa ON pa.oid=c.confrelid
-    JOIN pg_namespace n ON n.oid=c.connamespace
-    WHERE c.contype='f' AND n.nspname=current_schema()
-    ORDER BY ch.relname COLLATE "C", c.conname COLLATE "C"`);
-  return rows.map(r => ({ name: r.name, child: r.child, parent: r.parent, childColumns: JSON.parse(r.child_cols), parentColumns: JSON.parse(r.parent_cols) }));
+/** Every FK constraint in the current schema. An engine that keeps no list of its references refuses by name. */
+export async function foreignKeys(engine: BrainEngine): Promise<readonly CatalogForeignKey[]> {
+  return engine.listCatalogForeignKeys();
 }
 
 /** Kahn's algorithm over parent -> child edges (self-FKs ignored), ties broken by name; throws on a cycle. */

@@ -15,15 +15,21 @@
  * false) is settled and not listed.
  *
  * Bounded: titled candidates come from exact slug-prefix reads
- * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count.
+ * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count,
+ * all through typed engine members, so every engine answers them.
+ *
+ * entity_duplicates (plan autoplan-20261117192252, PR 1): the duplicate finder's groups (core/entities/duplicates.ts)
+ * counted by kind and class, the first few listed by slug; never a key value, never a write.
  */
 import type { Check } from '../../doctor.ts';
 import { NAME_TITLE_TOKENS, hasLeadingTitle, stripLeadingTitles } from '../../../core/entities/name-variants.ts';
-import { resolveNameVariant } from '../../../core/verbs/entity-variants.ts';
-import { retiredPageSql } from '../../../core/entities/resolve.ts';
+import { resolveNameVariant, VARIANT_ROW_COLUMNS } from '../../../core/verbs/entity-variants.ts';
 import { doctorVerify } from '../check-fix.ts';
+import { DUPLICATE_KINDS, findDuplicateGroups } from '../../../core/entities/duplicates.ts';
+import { decidedSets, identityDrift, type IdentityDrift } from '../../../core/entities/identity-decisions.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { sortSourcesById } from '../../../core/source-rows.ts';
+import type { IdentityDecisionsRead, PendingIdentityMember } from '../../../core/engine-sql/identity-decisions.ts';
 
 export const NAME = 'person_title_duplicates';
 /** Titled person pages examined per run; more are reported as not examined. */
@@ -48,10 +54,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
     let capped = false;
     for (const sourceId of sources) {
       if (scanned >= PAIR_SCAN_CAP) { capped = true; break; }
-      const stubs = await engine.executeRaw<{ slug: string; title: string | null }>(
-        `SELECT slug, title FROM pages
-          WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE ANY($2::text[]) AND NOT ${retiredPageSql('pages')}
-          ORDER BY slug LIMIT ${PAIR_SCAN_CAP - scanned + 1}`, [sourceId, PREFIXES]);
+      const stubs = await engine.listUnretiredPagesBySlugPattern(sourceId, PREFIXES, PAIR_SCAN_CAP - scanned + 1);
       if (stubs.length > PAIR_SCAN_CAP - scanned) capped = true;
       for (const stub of stubs.slice(0, PAIR_SCAN_CAP - scanned)) {
         scanned++;
@@ -59,19 +62,14 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
         const remainder = named ? stripLeadingTitles(named) : '';
         if (!remainder) continue;
         const res = await resolveNameVariant(engine, sourceId, remainder, {
-          selectColumns: 'slug, title, type, frontmatter', privatePredicate: '', retirementPrivacy: '', entityTypes: new Set(['person']), exclude: [stub.slug],
+          selectColumns: VARIANT_ROW_COLUMNS, privatePredicate: '', retirementPrivacy: 'none', entityTypes: new Set(['person']), exclude: [stub.slug],
         });
         if (res.hit && res.hit.row.slug.startsWith('people/')) pairs.push({ source_id: sourceId, stub: stub.slug, canonical: res.hit.row.slug, stub_links: 0, canonical_links: 0 });
       }
     }
     if (pairs.length) {
-      const counts = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(
-        `SELECT p.source_id, p.slug, count(DISTINCT l.from_page_id)::int AS n
-           FROM pages p JOIN links l ON l.to_page_id = p.id
-          WHERE (p.source_id, p.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))
-          GROUP BY p.source_id, p.slug`,
-        [pairs.flatMap(p => [p.source_id, p.source_id]), pairs.flatMap(p => [p.stub, p.canonical])]);
-      const n = new Map(counts.map(c => [`${c.source_id}:${c.slug}`, Number(c.n)]));
+      const counts = await engine.countDistinctInboundLinkers(pairs.flatMap(p => [p.source_id, p.source_id]), pairs.flatMap(p => [p.stub, p.canonical]));
+      const n = new Map(counts.map(c => [`${c.source_id}:${c.slug}`, c.n]));
       for (const p of pairs) {
         p.stub_links = n.get(`${p.source_id}:${p.stub}`) ?? 0;
         p.canonical_links = n.get(`${p.source_id}:${p.canonical}`) ?? 0;
@@ -103,3 +101,92 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
 }
 
 export const personTitleDuplicatesEntry: DoctorEntry = { name: 'person_title_duplicates', emits: ['person_title_duplicates'], run: runPersonTitleDuplicates };
+
+const DUP_NAME = 'entity_duplicates';
+
+async function runEntityDuplicates(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const checks: Check[] = [];
+  ctx.progress.heartbeat(DUP_NAME);
+  try {
+    const read = await engine.listIdentityDecisions();
+    const { groups, counts } = await findDuplicateGroups(engine, { ...(ctx.orphanRatioSourceId ? { sourceId: ctx.orphanRatioSourceId } : {}), decided: decidedSets(read) });
+    const shown = groups.slice(0, SHOWN).map(g => ({ id: g.id, kind: g.kind, class: g.class, members: g.members }));
+    const drift = await identityDrift(engine, read);
+    const driftText = driftLine(drift);
+    const reconcilable = drift.store_mismatch || drift.database_only > 0 || drift.unsynced_files > 0 || drift.rows_without_file > 0
+      || drift.pending.some(p => p.reason === 'unlinked');
+    if (driftText && !reconcilable) {
+      checks.push({
+        name: 'entity_duplicates', status: 'warn', message: `${driftText} ${groups.length} duplicate group(s) are undecided.`,
+        details: { counts, groups: shown, drift },
+        fix: { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, verify: doctorVerify(DUP_NAME), argv: ['gbrain', 'entity-identity-list', '--json'],
+          why: 'gbrain dedupe reconcile cannot clear these: a missing page has to come back, a page in another identity group has to leave it, and a decision file that does not validate has to be edited.',
+          user_message: remedies(drift, read) },
+      });
+      return checks;
+    }
+    if (driftText) {
+      checks.push({
+        name: 'entity_duplicates', status: 'warn', message: `${driftText} ${groups.length} duplicate group(s) are undecided.`,
+        details: { counts, groups: shown, drift },
+        fix: drift.store_mismatch
+          ? { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, verify: doctorVerify(DUP_NAME), argv: ['gbrain', 'sources', 'list', '--json'],
+            why: 'The decisions live in git on another host; only the host that holds the checkout can change them.',
+            user_message: 'Run gbrain dedupe reconcile on the host that holds the brain repository.' }
+          : { actor: 'agent', consent: [], requires_exclusive: false, verify: doctorVerify(DUP_NAME), argv: ['gbrain', 'dedupe', 'reconcile'],
+            why: 'Writes decisions the database holds alone into git, re-reads the committed decisions and links pages that arrived since; it never decides anything new.' },
+      });
+      return checks;
+    }
+    if (!groups.length) {
+      checks.push({ name: 'entity_duplicates', status: 'ok', message: `No likely duplicate person or company pages.${counts.crowded_key_values ? ` ${counts.crowded_key_values} key value(s) carried by more than five pages were not used as keys.` : ''}`, details: { counts, groups: [] } });
+      return checks;
+    }
+    const byKind = DUPLICATE_KINDS.map(k => `${k} ${counts.by_kind[k]}`).join(', ');
+    const list = shown.map(g => `${g.id} ${g.kind}/${g.class}: ${g.members.map(m => `${m.source_id}:${m.slug}`).join(' + ')}`).join('; ');
+    checks.push({
+      name: 'entity_duplicates',
+      status: 'warn',
+      message: `${groups.length} group(s) of pages are likely the same person or company (${byKind}; clean ${counts.by_class.clean}). Nothing was changed. ${list}${groups.length > SHOWN ? `; ${groups.length - SHOWN} more with gbrain dedupe --preview` : ''}.`,
+      details: { counts, groups: shown },
+      fix: {
+        ask_user: true, actor: 'user', consent: [], requires_exclusive: false, verify: doctorVerify(DUP_NAME),
+        argv: ['gbrain', 'dedupe', '--preview'],
+        why: 'Each group is evidence, not a decision; only the owner can say whether the pages are one person or company.',
+        user_message: 'Read the groups with `gbrain dedupe --preview`. Nothing is merged or linked yet; a conflict means two different names share a key and needs a look.',
+      },
+    });
+  } catch (err) {
+    checks.push({ name: 'entity_duplicates', status: 'warn', message: `Duplicate person and company pages could not be checked: ${err instanceof Error ? err.message : String(err)}. Health is unknown.` });
+  }
+  return checks;
+}
+
+/** What the owner does about drift reconcile cannot clear: missing pages, pages in another group, invalid decision files. */
+function remedies(d: IdentityDrift, read: IdentityDecisionsRead): string {
+  const groupOf = (p: PendingIdentityMember) => {
+    const d = read.decisions.find(x => x.decision_id === p.decision_id);
+    return d?.group_id ?? d?.entity_id ?? p.decision_id;
+  };
+  const rejects = (reason: PendingIdentityMember['reason']) => [...new Set(d.pending.filter(p => p.reason === reason).map(groupOf))].map(g => `\`gbrain dedupe reject ${g}\``).join(', ');
+  const lines: string[] = [];
+  if (d.pending.some(p => p.reason === 'page_missing')) lines.push(`A page of a confirmed group is missing: restore or import it and it links on the next sync, or undo the group with ${rejects('page_missing')}.`);
+  if (d.pending.some(p => p.reason === 'other_group')) lines.push(`A page of a confirmed group is in another identity group: remove it from that group with \`gbrain entity-identity-unlink\`, or undo the group with ${rejects('other_group')}.`);
+  if (d.invalid_files.length) lines.push(`Fix or delete ${d.invalid_files.join(', ')} in source ${d.home}'s repository and commit it; until then the last valid version of that decision, if one was read, stays applied, and an edit that does not validate is skipped.`);
+  return lines.join(' ');
+}
+
+/** What disagrees between the recorded duplicate decisions and their projection, in one sentence, or ''. */
+function driftLine(d: IdentityDrift): string {
+  const parts: string[] = [];
+  if (d.store_mismatch) parts.push('duplicate decisions are kept in git, but this host sees no repository for the brain');
+  if (d.database_only) parts.push(`${d.database_only} duplicate decision(s) are in the database but not in git (source ${d.home})`);
+  if (d.unsynced_files) parts.push(`${d.unsynced_files} committed decision file(s) are not read into the database yet`);
+  if (d.invalid_files.length) parts.push(`${d.invalid_files.length} committed decision file(s) do not validate: ${d.invalid_files.slice(0, 3).join(', ')}`);
+  if (d.rows_without_file) parts.push(`${d.rows_without_file} decision row(s) have no committed file`);
+  if (d.pending.length) parts.push(`${d.pending.length} page(s) of confirmed groups are not linked (${d.pending.slice(0, 3).map(p => `${p.source_id}:${p.slug} ${p.reason}`).join(', ')})`);
+  return parts.length ? `Duplicate decisions drift: ${parts.join('; ')}.` : '';
+}
+
+export const entityDuplicatesEntry: DoctorEntry = { name: 'entity_duplicates', emits: ['entity_duplicates'], run: runEntityDuplicates };

@@ -361,6 +361,13 @@ describe('durable delegated provider accounting', () => {
     expect(Number(effective.budgetUsdPerDay)).toBe(1);
     expect(effective.tools).toEqual(['get_page','put_page']);
   });
+  it('a delegated job reads its client\'s stored takes holders list, read fresh with the grant (GST-3058)', async () => {
+    const ctx = await ownedJob();
+    const snapshot = snapshotFromJob(ctx.data)!;
+    expect((await effectiveDelegation(engine, snapshot, ctx.id)).takesHolders ?? null).toBeNull();
+    await engine.executeRaw("UPDATE oauth_clients SET takes_holders=ARRAY['brain'] WHERE client_id='owner'");
+    expect((await effectiveDelegation(engine, snapshot, ctx.id)).takesHolders).toEqual(['brain']);
+  });
   it('protected ownership wins over caller-selected accounting fields', () => {
     expect(getJobClientId({ id: 1, data: { __owner_client_id: 'owner', client_id: 'spoof' } })).toBe('owner');
     expect(getJobClientId({ id: 1, data: { __owner_client_id: null, client_id: 'spoof' } })).toBeUndefined();

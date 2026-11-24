@@ -42,7 +42,7 @@
 //!
 //! JSON columns (`completeness`, `held_context`, `proposal`, `preimage`) arrive as JSON text or
 //! values, are refused where Postgres `jsonb` refuses them, and are stored in Postgres `jsonb` key
-//! order (`dream::jsonb`).
+//! order (`jsonb::ordered`).
 //!
 //! A source delete removes the source's rows of all five tables (`remove_source_rows`); a deleted
 //! generation row sets its activations' `generation_id` to null.
@@ -53,8 +53,10 @@
 
 use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
-use crate::dream::{int4, jsonb, jsonb_check};
+use crate::dream::{int4, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
@@ -68,6 +70,8 @@ mod chronicle_events;
 mod derivation_inputs;
 mod fence_evidence;
 mod fence_restore;
+mod lost_fence;
+pub mod needs_rederive;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
@@ -76,7 +80,9 @@ pub use chronicle_events::{
     RetiredItemKeysSpec,
 };
 pub use derivation_inputs::DerivationInputsArgs;
-pub(crate) use derivation_inputs::{derived_from, hop_limit};
+pub(crate) use derivation_inputs::{
+    derived_closure, derived_from, has_inputs, hop_limit, inputs_of, lineage_reaches,
+};
 pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 
@@ -89,7 +95,7 @@ const LIVE_OPERATION: u8 = 0x06;
 const ATTEMPT_BY_KEY: u8 = 0x07;
 
 /// The id counter (`pages::next_id`).
-const ID_COUNTER: &str = "next_derived_generation_id";
+pub(crate) const ID_COUNTER: &str = "next_derived_generation_id";
 
 /// `derived_generations.held_reason` CHECK.
 const HELD_REASONS: &[&str] = &[
@@ -169,7 +175,7 @@ struct GenerationRecord {
 struct ItemRecord {
     identity_hash: String,
     action: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     preimage: Option<Value>,
     #[serde(default)]
     preimage_bytes: Option<i32>,
@@ -390,6 +396,15 @@ fn read_record(read: &dyn KvRead, id: u64) -> Result<Option<GenerationRecord>> {
     get_json(read, &record_key(id))
 }
 
+/// Whether the held row of `key` is held for `reason` (`state='held' AND held_reason=…`; the gate of
+/// `listHeldFenceTakeRows`).
+pub(crate) fn held_for(read: &dyn KvRead, key: &GenerationKey, reason: &str) -> Result<bool> {
+    Ok(
+        pointed_record(read, key, "held")?
+            .is_some_and(|r| r.held_reason.as_deref() == Some(reason)),
+    )
+}
+
 /// The record a pointer names; a pointer to no record is corrupt.
 fn pointed_record(
     read: &dyn KvRead,
@@ -519,7 +534,7 @@ fn jsonb_text(op: &str, column: &str, text: &str) -> Result<Value> {
         )
     })?;
     jsonb_check(op, column, &value)?;
-    Ok(jsonb(&value))
+    Ok(ordered(&value))
 }
 
 fn check_violation(constraint: &str, table: &str) -> StoreError {
@@ -633,7 +648,7 @@ impl Store {
                 None | Some(Value::Null) => None,
                 Some(value) => {
                     jsonb_check(OP, "preimage", value)?;
-                    Some(jsonb(value))
+                    Some(ordered(value))
                 }
             };
             let preimage_bytes = item
@@ -1336,6 +1351,193 @@ pub(crate) fn source_generation_views(
     Ok(out)
 }
 
+/// What the shadow seed (`seed/history.rs`) copies of a `derived_generations` row.
+pub(crate) struct SeedGeneration {
+    pub source_id: String,
+    pub kind: String,
+    pub owner_key: String,
+    pub generation: i32,
+    pub state: String,
+    pub created_at_us: i64,
+}
+
+/// The shadow seed: stores a generation copied from another engine under its own id, with no
+/// items yet. The columns the seed does not copy keep their defaults (no operation, an empty
+/// completeness); a live or held row takes its key's pointer, as the store's own writers do.
+/// `false` when the id already holds a generation.
+pub(crate) fn seed_generation(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    seed: &SeedGeneration,
+) -> Result<bool> {
+    if read_record(&*tx, id)?.is_some() {
+        return Ok(false);
+    }
+    let key = GenerationKey {
+        source_id: seed.source_id.clone(),
+        kind: seed.kind.clone(),
+        owner_key: seed.owner_key.clone(),
+    };
+    let pointed_state = matches!(seed.state.as_str(), "live" | "held");
+    if pointed_state && pointed(&*tx, &key, &seed.state)?.is_some() {
+        return Err(unique_violation("derived_generations_one_live"));
+    }
+    crate::sources::require_source(&*tx, &seed.source_id)?;
+    let record = GenerationRecord {
+        id,
+        source_id: seed.source_id.clone(),
+        kind: seed.kind.clone(),
+        owner_key: seed.owner_key.clone(),
+        generation: seed.generation,
+        state: seed.state.clone(),
+        run_id: None,
+        operation_id: String::new(),
+        hold_id: None,
+        input_pin: None,
+        input_size: None,
+        completeness: json!({}),
+        item_set_hash: String::new(),
+        held_reason: None,
+        held_context: None,
+        proposal: None,
+        held_context_text: None,
+        proposal_text: None,
+        fence_text: None,
+        proposal_bytes: None,
+        attempts: 0,
+        superseded_by: None,
+        restore_of: None,
+        created_at_us: seed.created_at_us,
+        updated_at_us: seed.created_at_us,
+        locator: None,
+        activation_id: None,
+    };
+    put_json(tx, &record_key(id), &record)?;
+    if pointed_state {
+        tx.put(&pointer_key(&key, &seed.state), &id.to_be_bytes())?;
+    }
+    crate::seed::raise_counter(tx, ID_COUNTER, id)?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the generation `id` with its items, pointers and
+/// activation links. `false` when there is none.
+pub(crate) fn remove_generation(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    delete_row(tx, &record)?;
+    Ok(true)
+}
+
+/// The shadow follow: replaces the header of generation `id` and keeps its items and the columns
+/// the seed does not copy, as an `UPDATE` of the row does. Stores a new generation when there is
+/// none. A state change moves the key's `live` or `held` pointer with it.
+pub(crate) fn replace_generation(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    seed: &SeedGeneration,
+) -> Result<()> {
+    let Some(old) = read_record(&*tx, id)? else {
+        seed_generation(tx, id, seed)?;
+        return Ok(());
+    };
+    // Release what the old header pointed at, then point the new one.
+    if old.state == "live" {
+        tx.delete(&live_operation_key(&old))?;
+    }
+    if old.state == "live" || old.state == "held" {
+        let old_key = record_generation_key(&old);
+        if pointed(&*tx, &old_key, &old.state)? == Some(id) {
+            tx.delete(&pointer_key(&old_key, &old.state))?;
+        }
+    }
+    let key = GenerationKey {
+        source_id: seed.source_id.clone(),
+        kind: seed.kind.clone(),
+        owner_key: seed.owner_key.clone(),
+    };
+    let pointed_state = matches!(seed.state.as_str(), "live" | "held");
+    if pointed_state && pointed(&*tx, &key, &seed.state)?.is_some_and(|other| other != id) {
+        return Err(unique_violation("derived_generations_one_live"));
+    }
+    crate::sources::require_source(&*tx, &seed.source_id)?;
+    let mut record = old;
+    record.source_id = seed.source_id.clone();
+    record.kind = seed.kind.clone();
+    record.owner_key = seed.owner_key.clone();
+    record.generation = seed.generation;
+    record.state = seed.state.clone();
+    record.created_at_us = seed.created_at_us;
+    put_json(tx, &record_key(id), &record)?;
+    if pointed_state {
+        tx.put(&pointer_key(&key, &seed.state), &id.to_be_bytes())?;
+    }
+    if record.state == "live" {
+        tx.put(&live_operation_key(&record), &[])?;
+    }
+    Ok(())
+}
+
+/// The shadow follow: removes the item `item_key_text` of generation `generation_id`. `false` when
+/// there is none.
+pub(crate) fn remove_item(
+    tx: &mut dyn KvWrite,
+    generation_id: u64,
+    item_key_text: &str,
+) -> Result<bool> {
+    let key = item_key(generation_id, item_key_text);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
+/// The shadow seed: appends an item to its generation, where the items' foreign key keeps them. A
+/// generation that is not stored is the foreign key violation; `false` when it already holds the
+/// item key.
+pub(crate) fn seed_item(
+    tx: &mut dyn KvWrite,
+    generation_id: u64,
+    item_key_text: &str,
+    action: &str,
+    preimage: Option<Value>,
+) -> Result<bool> {
+    if read_record(&*tx, generation_id)?.is_none() {
+        return Err(crate::takes::fk_failed(
+            "derived_generation_items",
+            "derived_generation_items_generation_id_fkey",
+        ));
+    }
+    if !ITEM_ACTIONS.contains(&action) {
+        return Err(check_violation(
+            "derived_generation_items_action_check",
+            "derived_generation_items",
+        ));
+    }
+    let key = item_key(generation_id, item_key_text);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    let preimage = match preimage {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(ordered(&value)),
+    };
+    put_json(
+        tx,
+        &key,
+        &ItemRecord {
+            identity_hash: String::new(),
+            action: action.to_string(),
+            preimage,
+            preimage_bytes: None,
+            pending: false,
+        },
+    )?;
+    Ok(true)
+}
+
 /// `proposal @> jsonb_build_array(jsonb_build_object('key', slug))`: the proposal is an array
 /// with an object element whose `key` is the string `slug`.
 fn proposes_key(proposal: &Value, slug: &str) -> bool {
@@ -1363,11 +1565,64 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     }
     activations::remove_source_activations(tx, source_id)?;
     derivation_inputs::remove_source_edges(tx, source_id)?;
+    needs_rederive::remove_source_rows(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;
     }
     Ok(())
+}
+
+/// The `derived_generations` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`): the ledger's
+/// own columns, the jsonb ones as Postgres prints them.
+pub(crate) fn probe_generations(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<GenerationRecord>(read, &[keys::DERIVED_GENERATION, RECORD], &mut |_, g| {
+        let jsonb = |text: &Option<String>, value: &Option<Value>| match text {
+            Some(_) => ProbeCell::opt_jsonb_text(text.as_deref()),
+            None => ProbeCell::opt_jsonb(value.as_ref()),
+        };
+        let cells = vec![
+            ("source_id", ProbeCell::text(&g.source_id)),
+            ("kind", ProbeCell::text(&g.kind)),
+            ("owner_key", ProbeCell::text(&g.owner_key)),
+            ("state", ProbeCell::text(&g.state)),
+            ("run_id", ProbeCell::opt_text(g.run_id.as_deref())),
+            ("operation_id", ProbeCell::text(&g.operation_id)),
+            ("hold_id", ProbeCell::opt_text(g.hold_id.as_deref())),
+            ("input_pin", ProbeCell::opt_text(g.input_pin.as_deref())),
+            ("completeness", ProbeCell::jsonb(&g.completeness)),
+            ("item_set_hash", ProbeCell::text(&g.item_set_hash)),
+            ("held_reason", ProbeCell::opt_text(g.held_reason.as_deref())),
+            ("held_context", jsonb(&g.held_context_text, &g.held_context)),
+            ("proposal", jsonb(&g.proposal_text, &g.proposal)),
+            ("locator", ProbeCell::opt_text(g.locator.as_deref())),
+            (
+                "activation_id",
+                ProbeCell::opt_text(g.activation_id.as_deref()),
+            ),
+        ];
+        f(ProbeRow {
+            source_id: Some(g.source_id),
+            cells,
+        })
+    })
+}
+
+/// The `derived_generation_items` rows as the table probe reads them: the table has no `source_id`, so the probe is brain-wide.
+pub(crate) fn probe_items(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<ItemRecord>(read, &[keys::DERIVED_GENERATION, ITEM], &mut |k, item| {
+        // The key is `h 0x03 id(8) item_key`.
+        let item_key = String::from_utf8_lossy(k.get(10..).unwrap_or_default()).into_owned();
+        f(ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("item_key", ProbeCell::text(&item_key)),
+                ("identity_hash", ProbeCell::text(&item.identity_hash)),
+                ("action", ProbeCell::text(&item.action)),
+                ("preimage", ProbeCell::opt_jsonb(item.preimage.as_ref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]
@@ -1378,6 +1633,17 @@ mod tests {
     use super::*;
     use crate::access_flag::RESTRICTIONS_PRESENT_KEY as FLAG;
     use crate::test_support::store;
+
+    /// A stored page with no readers (a real `put_page`), so a raw write can name its readers.
+    fn put_open_page(store: &Store, slug: &str) {
+        let input: crate::pages::PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": {"tags": ["a"]}
+        }))
+        .unwrap();
+        let opts: crate::pages::PutPageOptions =
+            serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+        store.put_page(slug, &input, &opts).unwrap();
+    }
 
     fn key() -> GenerationKey {
         GenerationKey {
@@ -1404,6 +1670,7 @@ mod tests {
     #[test]
     fn a_generation_write_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
         assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
@@ -1412,7 +1679,9 @@ mod tests {
                 tx.put(&pointer_key(&key(), "held"), &id.to_be_bytes())?;
                 tx.delete(&pointer_key(&key(), "held"))?;
                 let page = keys::page("default", "notes/closed");
-                let record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&record)?)
             })
             .unwrap();
@@ -1601,6 +1870,8 @@ mod tests {
     #[test]
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
+        put_open_page(&store, "notes/closed");
+        assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
                 let record = AttemptRecord {
@@ -1614,7 +1885,9 @@ mod tests {
                 put_json(tx, &attempt_key("a1"), &record)?;
                 tx.put(&attempt_index_key(&record, "a1"), &[])?;
                 let page = keys::page("default", "notes/closed");
-                let page_record = json!({"slug": "notes/closed", "frontmatter": {"readable_by": ["alice-example"]}});
+                let mut page_record: serde_json::Value =
+                    serde_json::from_slice(&tx.get(&page)?.unwrap())?;
+                page_record["frontmatter"]["readable_by"] = json!(["alice-example"]);
                 tx.put(&page, &serde_json::to_vec(&page_record)?)
             })
             .unwrap();

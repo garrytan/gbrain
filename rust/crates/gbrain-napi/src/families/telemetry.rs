@@ -95,6 +95,34 @@ impl Brain {
         self.run(env, move |s| s.read_mcp_rollup_pruned_before())
     }
 
+    /// `countMcpRequestsLastDay(kind)`: the count of the last 24 hours.
+    #[napi]
+    pub fn count_mcp_requests_last_day<'env>(
+        &self,
+        env: &'env Env,
+        kind: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_mcp_requests_last_day(&kind))
+    }
+
+    /// `readPendingWriteHealth()`: the in-flight writes, the oldest one's age, and the pending writes that later failed.
+    #[napi]
+    pub fn read_pending_write_health<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_pending_write_health())
+    }
+
+    /// `countMcpRequestsLastDayByToken(tokenNames)`: `{ token_name, requests }` rows.
+    #[napi]
+    pub fn count_mcp_requests_last_day_by_token<'env>(
+        &self,
+        env: &'env Env,
+        token_names: Option<Vec<Option<String>>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_mcp_requests_last_day_by_token(token_names.as_deref())
+        })
+    }
+
     /// `readMcpLifetimeUsage(tokenNames)`: `{ token_name, requests, last_used_at }` rows,
     /// `last_used_at` as ISO text.
     #[napi]
@@ -105,6 +133,94 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_mcp_lifetime_usage(token_names.as_deref())
+        })
+    }
+
+    /// `reclaimBudgetReservations({ scope, resolver }, nowIso)`: `{ released, uncertain }`.
+    #[napi]
+    pub fn reclaim_budget_reservations<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        now_iso: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.reclaim_budget_reservations(&scope, &resolver, &now_iso)
+        })
+    }
+
+    /// `reserveBudgetReservation({ scope, resolver }, spec)`: true when held.
+    #[napi]
+    pub fn reserve_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            let spec: gbrain_store::budget_ledger::BudgetReservationSpec =
+                required(spec, "reserveBudgetReservation spec")?;
+            s.reserve_budget_reservation(&scope, &resolver, &spec)
+        })
+    }
+
+    /// `dispatchBudgetReservation({ scope, resolver }, id, nowIso)`: true when dispatched.
+    #[napi]
+    pub fn dispatch_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        id: String,
+        now_iso: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.dispatch_budget_reservation(&scope, &resolver, &id, &now_iso)
+        })
+    }
+
+    /// `settleBudgetReservation({ scope, resolver }, id, actual)`: `{ prior, estimate, day, current }`.
+    #[napi]
+    pub fn settle_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        id: String,
+        actual: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.settle_budget_reservation(&scope, &resolver, &id, &actual)
+        })
+    }
+
+    /// `releaseBudgetReservation({ scope, resolver }, id)`: true when the day row moved.
+    #[napi]
+    pub fn release_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.release_budget_reservation(&scope, &resolver, &id)
+        })
+    }
+
+    /// `readBudgetLedgerDay(scope, resolver, day)`: `{ reserved, committed, cap }` as numeric text, or null.
+    #[napi]
+    pub fn read_budget_ledger_day<'env>(
+        &self,
+        env: &'env Env,
+        scope: String,
+        resolver: String,
+        day: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_budget_ledger_day(&scope, &resolver, &day)
         })
     }
 
@@ -128,4 +244,34 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_chat_usage(days))
     }
+
+    /// `readMcpRequestLogPage(spec)`: `{ rows, total }`, one page of the request log.
+    #[napi]
+    pub fn read_mcp_request_log_page<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::telemetry::McpRequestLogPageInput =
+                required(input, "readMcpRequestLogPage input")?;
+            s.read_mcp_request_log_page(&input)
+        })
+    }
+}
+
+/// A ledger key `{ scope, resolver }` from the caller.
+fn ledger_key(key: &Value) -> gbrain_store::error::Result<(String, String)> {
+    let field = |name: &str| {
+        key.get(name)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                gbrain_store::error::StoreError::new(
+                    gbrain_store::error::INVALID_ARGUMENT,
+                    format!("a budget ledger key needs a text {name}"),
+                )
+            })
+    };
+    Ok((field("scope")?, field("resolver")?))
 }

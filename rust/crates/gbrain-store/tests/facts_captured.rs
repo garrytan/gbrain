@@ -86,6 +86,12 @@ fn rehome(source_id: &str, from: &str, to: &str) -> RehomeArgs {
     args(json!({ "sourceId": source_id, "from": from, "to": to }))
 }
 
+fn pageless_args(ids: &[&str]) -> gbrain_store::facts::repair_previews::SourcesArgs {
+    gbrain_store::facts::repair_previews::SourcesArgs {
+        source_ids: ids.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
 fn sources(ids: &[&str]) -> SourceIdsArgs {
     args(json!({ "sourceIds": ids }))
 }
@@ -261,7 +267,7 @@ fn pageless_entities_and_the_rehome_of_their_database_only_facts() {
     let o1 = loose(&b, "other", "other ghost", Some("people/ghost"), json!({}));
 
     let pageless = b
-        .list_pageless_entity_facts(&sources(&["other", "default"]))
+        .list_pageless_entity_facts(&pageless_args(&["other", "default"]))
         .unwrap();
     assert_eq!(
         pageless,
@@ -272,7 +278,7 @@ fn pageless_entities_and_the_rehome_of_their_database_only_facts() {
         ]
     );
     assert_eq!(
-        b.list_pageless_entity_facts(&sources(&[])).unwrap(),
+        b.list_pageless_entity_facts(&pageless_args(&[])).unwrap(),
         Vec::<Value>::new()
     );
 
@@ -304,7 +310,7 @@ fn pageless_entities_and_the_rehome_of_their_database_only_facts() {
     moved.sort();
     assert_eq!(moved, [d1, d2, ro]);
     let left = b
-        .list_pageless_entity_facts(&sources(&["default", "other"]))
+        .list_pageless_entity_facts(&pageless_args(&["default", "other"]))
         .unwrap();
     assert_eq!(
         left[0],

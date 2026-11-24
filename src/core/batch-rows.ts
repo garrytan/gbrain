@@ -72,8 +72,10 @@ import { ensureWellFormed } from './text-safe.ts';
  *
  * This is the NUL-only primitive. For anything serialized into a `::jsonb` cast,
  * prefer `sanitizeForJsonb` below — NUL alone does not protect against the lone
- * surrogate that aborts a jsonb batch (#2011). Exported only as the building
- * block for `sanitizeForJsonb`; don't reach for it directly on a jsonb path.
+ * surrogate that aborts a jsonb batch (#2011). Exported as the building block
+ * for `sanitizeForJsonb`, and for the page write path, which removes U+0000
+ * alone and keeps every other character as written (persistence/page-input.ts,
+ * GST-3170); don't reach for it directly on any other jsonb path.
  */
 export const stripNul = (s: string): string => (s.includes('\0') ? s.replace(/\0/g, '') : s);
 

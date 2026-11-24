@@ -26,6 +26,11 @@
  * registry `caller` refusal such as `skill_bundle_required`) is recorded `refused` with its code
  * and the apply continues; any other error (storage, contention, owner) still stops it.
  *
+ * GST-3637: only a ghost whose file a commit deleted is ever approved (`ghostBacking`). A ghost whose file no commit ever held
+ * (`ghost_never_committed`), whose file HEAD still holds (`ghost_worktree_only`) or whose deletion Git cannot place
+ * (`ghost_history_unknown`) is listed apart with its restore route, like a page written after its file
+ * (`database_ahead_of_file`), and the soft-delete itself refuses each.
+ *
  * Refuses off the owner host (`not_owner_host`), fails closed when the source
  * root is unavailable or a check is ambiguous (`ghost_storage_unknown`),
  * never lists a declared db_only page, and applies the sync mass-delete valve
@@ -50,7 +55,7 @@ import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { nativeFileTarget } from '../persistence/native-file-target.ts';
 import { clearDeletionHold, readSyncImportProvenance } from '../persistence/sync-holds.ts';
 import { readRevisionAttestations } from '../persistence/sync-pass.ts';
-import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
+import { blobBeforeDeletion, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
@@ -167,8 +172,14 @@ export const ghostPagesRepair: RepairHandler = {
     const mass = massGhosts(scan.ghosts.length, scan.file_backed);
     if (!opts?.apply) {
       const skillPaths = scan.skill_paths.length;
-      const ahead: GhostPage[] = [], ghosts: GhostPage[] = [];
-      for (const ghost of scan.ghosts) (await ghostFileBacked(engine, ghost, scan.owner!) ? ghosts : ahead).push(ghost);
+      const provenance = await readDeletionProvenance(scan.root!, scan.ghosts.map(ghost => ghost.path));
+      const kept: Array<{ ghost: GhostPage; code: GhostKeptCode }> = [], ghosts: GhostPage[] = [];
+      for (const ghost of scan.ghosts) {
+        const backing = await ghostBacking(engine, ghost, scan.owner!, provenance.get(ghost.path));
+        if (backing === 'file_backed') ghosts.push(ghost); else kept.push({ ghost, code: backing });
+      }
+      const keptCount = (code: GhostKeptCode) => kept.filter(entry => entry.code === code).length;
+      const keptResiduals = Object.fromEntries(GHOST_KEPT_CODES.flatMap(code => keptCount(code) ? [[GHOST_KEPT_RESIDUAL[code], keptCount(code)]] : []));
       const hash = previewHash(hashParts(scope, scan.owner, ghosts));
       if (ghosts.length) await saveApprovedSet<ApprovedGhost>(engine, { command: 'ghost-pages', hash },
         ghosts.map(ghost => ({ ...ghost, owner: scan.owner!, selection: scope.source_ids })));
@@ -177,16 +188,16 @@ export const ghostPagesRepair: RepairHandler = {
         ...(scan.truncated ? [`More ghosts may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
         ...(skillPaths ? [`${skillPaths} ghost page(s) on files of the shared skillpack are listed apart (${SKILL_PACK_MEMBER_CODE}) and not applied: ${SKILL_PATH_NOTE}`] : []),
         ...(scan.unresolvable_count ? [`${scan.unresolvable_count} page(s) record a file path that names no file inside the source; they are listed apart (${UNRESOLVABLE_PATH_CODE}) and not applied: ${UNRESOLVABLE_NOTE}`] : []),
-        ...(ahead.length ? [`${ahead.length} ghost page(s) were written in the database after their file last held them, so each holds the only copy of that content; they are listed apart (${DATABASE_AHEAD_CODE}) and not applied.`] : []),
+        ...GHOST_KEPT_CODES.flatMap(code => keptCount(code) ? [`${keptCount(code)} ghost page(s) ${GHOST_KEPT_WARNING[code]}; they are listed apart (${code}) and not applied.`] : []),
         ...(scan.reason === 'mirror_read_only' ? [`Source ${sourceId} is a read-only mirror: its pages publish no file, so none is a ghost.`] : []),
         ...(ghosts.length ? Object.values(GHOST_CONSEQUENCES) : []),
       ];
       return { warnings, items: ghosts.map((ghost, index) => item(ghost, scan.owner!, hash, index === ghosts.length - 1)), preview_hash: hash,
-        residuals: { ghosts: ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}), ...(ahead.length ? { database_ahead: ahead.length } : {}),
+        residuals: { ghosts: ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}), ...keptResiduals,
           ...(scan.unresolvable_count ? { unresolvable: scan.unresolvable_count } : {}) },
         listing: [...ghosts.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: 'canonical_file_missing',
           detail: `file ${ghost.path} is missing; revision ${ghost.revision}` })),
-        ...ahead.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: DATABASE_AHEAD_CODE, detail: databaseAheadDetail(ghost) })),
+        ...kept.map(({ ghost, code }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: code, detail: ghostKeptDetail(code, ghost, scan.root) })),
         ...scan.skill_paths.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: SKILL_PACK_MEMBER_CODE,
           detail: `shared skillpack file ${ghost.path} is missing; not applied. Restore it: ${skillPathRestore(scan.root, ghost)}` })),
         ...scan.unresolvable.map(page => ({ item: `${page.source_id}:${page.slug}`, class: UNRESOLVABLE_PATH_CODE,
@@ -233,32 +244,78 @@ const restored = (ghost: GhostPage): RepairItemOutcome => ({ applied: false, out
   reason: `The canonical file ${ghost.path} exists again, so ${ghost.slug} was kept; run ${ghostPreviewCommand(ghost.source_id)} again for a new preview.` });
 const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason });
 
-/**
- * Whether a ghost's live revision is file-backed: the revision sync last imported from its file (the import record), or
- * one a committed sync write or a Git-published write produced (the attestation sync's own deletion proof reads). Any
- * other revision of a recorded page was written in the database after its file last held it, so the file's absence,
- * even a committed deletion, says nothing about that content and soft-deleting the page would drop the only copy of it.
- * A page with no import record is judged against the date of the commit that deleted its file, when one did.
- */
-export async function ghostFileBacked(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<boolean> {
-  const recorded = (await readSyncImportProvenance(engine, ghost.source_id, owner.source_incarnation, ghost.page_id))?.revision;
-  if (recorded === ghost.revision) return true;
-  const [page] = await engine.executeRaw<{ request_id: string | null; source_path: string | null; updated_ms: number }>(
-    'SELECT revision_write_request_id::text AS request_id, source_path, (extract(epoch FROM updated_at) * 1000)::float8 AS updated_ms FROM pages WHERE id=$1 AND knowledge_revision::text=$2', [ghost.page_id, ghost.revision]);
-  if (!page) return false;
-  const [hit] = page.request_id ? await readRevisionAttestations(engine, ghost.source_id, owner.source_incarnation,
-    [{ pageId: ghost.page_id, requestId: page.request_id, revision: ghost.revision, sourcePath: page.source_path ?? ghost.path }]) : [];
-  if (hit && (hit.arm1 || hit.attested_hash !== null)) return true;
-  if (recorded !== undefined) return false;
-  // A page no import record covers (an older or unmanaged import) is ahead only when it was written after the commit that deleted its file.
-  const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
-  if (!binding?.local_path) return true;
-  const deletion = (await readDeletionProvenance(join(binding.local_path, binding.relative_path), [ghost.path])).get(ghost.path);
-  return deletion?.kind !== 'deleted_by_commit' || Number(page.updated_ms) <= Date.parse(deletion.date);
+export const DATABASE_AHEAD_CODE = 'database_ahead_of_file';
+/** GST-3637: a ghost whose file no commit ever held; the page holds the only copy of its content. */
+export const NEVER_COMMITTED_CODE = 'ghost_never_committed';
+/** GST-3637: a ghost whose file HEAD still holds; only the working tree lost it. */
+export const WORKTREE_ONLY_CODE = 'ghost_worktree_only';
+/** GST-3637: a ghost whose deletion Git cannot place (no Git checkout, a shallow history, a failed history read). */
+export const HISTORY_UNKNOWN_CODE = 'ghost_history_unknown';
+export const GHOST_KEPT_CODES = [DATABASE_AHEAD_CODE, NEVER_COMMITTED_CODE, WORKTREE_ONLY_CODE, HISTORY_UNKNOWN_CODE] as const;
+export type GhostKeptCode = typeof GHOST_KEPT_CODES[number];
+const GHOST_KEPT_RESIDUAL: Record<GhostKeptCode, string> = { database_ahead_of_file: 'database_ahead', ghost_never_committed: 'never_committed', ghost_worktree_only: 'worktree_only', ghost_history_unknown: 'history_unknown' };
+const GHOST_KEPT_WARNING: Record<GhostKeptCode, string> = {
+  database_ahead_of_file: 'were written in the database after their file last held them, so each holds the only copy of that content',
+  ghost_never_committed: 'record a file no commit ever held, so each holds the only copy of its content',
+  ghost_worktree_only: 'lost their file in the working tree only (HEAD still holds it), so Git can restore each',
+  ghost_history_unknown: 'record a file whose deletion Git cannot place, so each may hold the only copy of its content',
+};
+const recreateFile = (ghost: GhostPage) => `gbrain repair file-drift --source ${ghost.source_id} --slug ${ghost.slug} --prefer database`;
+export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with ${recreateFile(ghost)}, or keep the page as it is`;
+
+/** Why a ghost is kept, and the route that resolves it; every reader of a kept ghost prints this. */
+export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: string): string {
+  if (code === DATABASE_AHEAD_CODE) return databaseAheadDetail(ghost);
+  if (code === NEVER_COMMITTED_CODE) return `file ${ghost.path} is gone and no commit ever held it, so page ${ghost.slug} holds the only copy of its content; not soft-deleted. `
+    + `Write the file from the page with ${recreateFile(ghost)}, then commit it and sync the source, or keep the page as it is`;
+  if (code === WORKTREE_ONLY_CODE) return `file ${ghost.path} is deleted in the working tree only: HEAD still holds it; not soft-deleted. `
+    + `Restore it with git -C '${root ?? '<source root>'}' checkout HEAD -- '${ghost.path}' and sync the source; if the removal is intended, commit the deletion, sync, then preview again`;
+  return `Git could not say which commit deleted ${ghost.path} (the source is not a Git checkout, its history is shallow, or the history read failed), so page ${ghost.slug} may hold the only copy of its content; not soft-deleted. `
+    + `Write the file from the page with ${recreateFile(ghost)}; in a shallow clone, fetch the full history (git fetch --unshallow) and preview again; `
+    + `in a folder that is not a Git checkout, delete the page by hand (gbrain delete ${ghost.slug}) if its removal is intended`;
 }
 
-export const DATABASE_AHEAD_CODE = 'database_ahead_of_file';
-export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with gbrain repair file-drift --source ${ghost.source_id} --slug ${ghost.slug} --prefer database, or keep the page as it is`;
+/**
+ * Whether a ghost may be soft-deleted (`file_backed`), or why it is kept. GST-3637: only a file a commit deleted can be
+ * removed, since only then does Git still hold what the file held: a file no commit ever held leaves the page as the only
+ * copy (`ghost_never_committed`), a file HEAD still holds was lost from the working tree only (`ghost_worktree_only`),
+ * and a deletion Git cannot place is kept too (`ghost_history_unknown`). A committed deletion counts only when the live
+ * revision is file-backed: the revision sync last imported from the file (the import record; an import of working-tree
+ * bytes counts only when the deleting commit's parent held those bytes, else the page holds the only copy of them:
+ * `ghost_never_committed`), or one a committed sync
+ * write or a Git-published write produced (the attestation sync's own deletion proof reads). Any other revision of a
+ * recorded page was written in the database after its file last held it (`database_ahead_of_file`). A page with no
+ * import record is judged against the date of the commit that deleted its file. `provenance` is the path's deletion
+ * provenance when the caller already read it.
+ */
+export async function ghostBacking(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner, provenance?: DeletionProvenance): Promise<'file_backed' | GhostKeptCode> {
+  const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
+  if (!binding?.local_path) return HISTORY_UNKNOWN_CODE;
+  const root = join(binding.local_path, binding.relative_path);
+  const deletion = provenance ?? (await readDeletionProvenance(root, [ghost.path])).get(ghost.path);
+  if (deletion?.kind === 'never_committed') return NEVER_COMMITTED_CODE;
+  if (deletion?.kind === 'deletion_uncommitted') return WORKTREE_ONLY_CODE;
+  if (deletion?.kind !== 'deleted_by_commit') return HISTORY_UNKNOWN_CODE;
+  const record = await readSyncImportProvenance(engine, ghost.source_id, owner.source_incarnation, ghost.page_id);
+  const recorded = record?.revision;
+  if (recorded === ghost.revision) {
+    if (!record!.working) return 'file_backed';
+    const deleted = await blobBeforeDeletion(root, deletion.commit, ghost.path);
+    return deleted !== null && (deleted === record!.blob_oid || deleted === record!.disk_blob_oid) ? 'file_backed' : NEVER_COMMITTED_CODE;
+  }
+  const page = (await engine.listRepairScanPages(ghost.source_id, { ids: [ghost.page_id] })).find(row => row.revision === ghost.revision);
+  if (!page) return DATABASE_AHEAD_CODE;
+  const [hit] = page.request_id ? await readRevisionAttestations(engine, ghost.source_id, owner.source_incarnation,
+    [{ pageId: ghost.page_id, requestId: page.request_id, revision: ghost.revision, sourcePath: page.source_path ?? ghost.path }]) : [];
+  if (hit && (hit.arm1 || hit.attested_hash !== null)) return 'file_backed';
+  if (recorded !== undefined) return DATABASE_AHEAD_CODE;
+  return Number(page.updated_ms) <= Date.parse(deletion.date) ? 'file_backed' : DATABASE_AHEAD_CODE;
+}
+
+/** Whether `ghostBacking` lets the ghost be soft-deleted (sync's held-deletion proof and file-drift --prefer file read it). */
+export async function ghostFileBacked(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner, provenance?: DeletionProvenance): Promise<boolean> {
+  return await ghostBacking(engine, ghost, owner, provenance) === 'file_backed';
+}
 
 /** Whether the live page is still the approved ghost under the approved owner, with a file-backed revision; otherwise the outcome that skips it. */
 async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<RepairItemOutcome | null> {
@@ -266,7 +323,8 @@ async function stillApproved(engine: BrainEngine, ghost: GhostPage, owner: Ghost
   if (!now.ghost) return ['agrees', 'file_database_drift', 'recorded_file_present'].includes(now.reason) ? restored(ghost) : changed(`the page is no longer a ghost (${now.reason})`);
   if (!sameOwner(now.owner, owner)) return changed('the source\'s canonical owner changed since the preview');
   if (now.ghost.revision !== ghost.revision || now.ghost.page_id !== ghost.page_id || now.ghost.path !== ghost.path) return changed('the page or its recorded canonical path changed since the preview');
-  if (!await ghostFileBacked(engine, ghost, owner)) return { applied: false, outcome: 'refused', reason: DATABASE_AHEAD_CODE, detail: { message: databaseAheadDetail(ghost) } };
+  const backing = await ghostBacking(engine, ghost, owner);
+  if (backing !== 'file_backed') return { applied: false, outcome: 'refused', reason: backing, detail: { message: ghostKeptDetail(backing, ghost) } };
   return null;
 }
 

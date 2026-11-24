@@ -52,8 +52,8 @@ fn held_by(token: &str) -> impl Fn(&JobRecord) -> bool + '_ {
     move |r| r.status == "active" && r.lock_token.as_deref() == Some(token)
 }
 
-fn add_token(what: &str, have: i32, delta: i64) -> Result<i32> {
-    i32::try_from(i64::from(have) + delta)
+pub(super) fn add_token(what: &str, have: i32, delta: impl Into<i64>) -> Result<i32> {
+    i32::try_from(i64::from(have) + delta.into())
         .map_err(|_| StoreError::invalid(format!("addJobTokens: {what} is out of integer range")))
 }
 
@@ -252,6 +252,30 @@ impl Store {
                 r.updated_at = now;
             })?;
             Ok(row.map(|r| r.to_json()))
+        })
+    }
+
+    /// `releaseClaimForPause` and `deferClaimForQuietHours` (the worker's two un-run hand-backs): the
+    /// row this token locks goes to `delayed` with its lock dropped and `delay_until = now + delayMs`.
+    /// `started_at`, `error_text`, the attempt counts and `timeout_at` stay as the claim left them.
+    /// The SQL statement has no status guard (only a claim holds a token), so neither has this one.
+    /// Whether a row matched (the members return nothing).
+    pub fn delay_held_claim(&self, id: i64, lock_token: &str, delay_ms: f64) -> Result<bool> {
+        self.write(|tx| {
+            let now = self.env.now_micros();
+            let row = update(
+                tx,
+                id,
+                |r| r.lock_token.as_deref() == Some(lock_token),
+                |r| {
+                    r.status = "delayed".into();
+                    r.lock_token = None;
+                    r.lock_until = None;
+                    r.delay_until = Some(now + ms_to_us(delay_ms));
+                    r.updated_at = now;
+                },
+            )?;
+            Ok(row.is_some())
         })
     }
 

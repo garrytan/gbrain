@@ -214,6 +214,7 @@ import {
 import { loadGbrainEnvFile } from './gbrain-env-file.ts';
 import { configDir } from './config.ts';
 import { bunSpawn } from './spawn.ts';
+import { noteJsonDocumentDelegated } from './json-document-delegation.ts';
 
 /**
  * Set on the sanitized re-run to `JSON {cwd, neutral}` (see "Loop guard").
@@ -540,6 +541,7 @@ async function reexecSanitized(originalCwd: string, dropped: readonly string[]):
     const signals = osConstants.signals as Record<string, number | undefined>;
     process.exit(128 + (signals[signalCode] ?? 1)); // shell convention for a signal death
   }
+  noteJsonDocumentDelegated();
   process.exit(code);
 }
 

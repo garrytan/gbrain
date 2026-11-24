@@ -171,8 +171,7 @@ export async function movedPairNow(engine: BrainEngine, pair: MovedPair, owner: 
   if (!now.ghost) return `${pair.old.slug} is no longer a live page whose file is gone (${now.reason})`;
   if (owner && !sameOwner(now.owner, owner)) return 'the source\'s canonical owner changed since the preview';
   if (now.ghost.page_id !== pair.old.page_id || now.ghost.revision !== pair.old.revision || now.ghost.path !== pair.old.path) return `${pair.old.slug} has a new revision or recorded path`;
-  const [survivor] = await engine.executeRaw<{ slug: string; revision: string; source_path: string | null }>(`SELECT slug, knowledge_revision::text AS revision, source_path FROM pages
-    WHERE source_id=$1 AND id=$2 AND deleted_at IS NULL`, [pair.source_id, pair.survivor.page_id]);
+  const [survivor] = await engine.readLivePagesByIds(pair.source_id, [pair.survivor.page_id]);
   if (!survivor) return `${pair.survivor.slug} was deleted or purged`;
   if (survivor.slug !== pair.survivor.slug || String(survivor.revision) !== pair.survivor.revision || survivor.source_path !== pair.survivor.path) return `${pair.survivor.slug} has a new revision, slug or recorded path`;
   const context = await sourceContext(engine, pair.source_id);
@@ -184,8 +183,7 @@ export async function movedPairNow(engine: BrainEngine, pair: MovedPair, owner: 
 
 /** Under both page keys: why the locked pair is no longer the approved one, or null; the old file must still be gone. */
 async function pairLocked(tx: BrainEngine, pair: MovedPair): Promise<string | null> {
-  const rows = await tx.executeRaw<{ id: number; slug: string; revision: string; source_path: string | null }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
-    WHERE source_id=$1 AND id=ANY($2::int[]) AND deleted_at IS NULL`, [pair.source_id, [pair.old.page_id, pair.survivor.page_id]]);
+  const rows = await tx.readLivePagesByIds(pair.source_id, [pair.old.page_id, pair.survivor.page_id]);
   for (const page of [pair.old, pair.survivor]) {
     const row = rows.find(candidate => Number(candidate.id) === page.page_id);
     if (!row || row.slug !== page.slug || String(row.revision) !== page.revision || row.source_path !== page.path) return `${page.slug} changed`;
@@ -198,7 +196,7 @@ async function pairLocked(tx: BrainEngine, pair: MovedPair): Promise<string | nu
 async function applyFold(tx: BrainEngine, pair: MovedPair, incarnation: string): Promise<Record<string, unknown>> {
   const merged = await mergeTwinInto(tx, { sourceId: pair.source_id, incarnation, survivor: { page_id: pair.survivor.page_id, slug: pair.survivor.slug },
     twin: { page_id: pair.old.page_id, slug: pair.old.slug } });
-  const versions = await tx.executeRaw('UPDATE page_versions SET page_id=$2 WHERE page_id=$1 RETURNING id', [pair.old.page_id, pair.survivor.page_id]);
+  const versions = await tx.movePageVersions(pair.old.page_id, pair.survivor.page_id);
   const holdCleared = await clearGitHold(tx, { sourceId: pair.source_id, incarnation, path: pair.old.path, observedAt: pair.observed_at });
   const restore = ['gbrain', 'restore', pair.old.slug, '--source-id', pair.source_id];
   return { status: 'moved_page_folded', source_id: pair.source_id, old_slug: pair.old.slug, old_path: pair.old.path, survivor_slug: pair.survivor.slug, survivor_path: pair.survivor.path,
@@ -226,7 +224,7 @@ export async function foldMovedPage(ctx: OperationContext, pair: MovedPair, owne
     await tx.lockPageKeys([{ sourceId: pair.source_id, slug: pair.survivor.slug }, { sourceId: pair.source_id, slug: pair.old.slug }].sort((a, b) => a.slug.localeCompare(b.slug)));
     const reason = await pairLocked(tx, pair);
     if (reason) return { reason };
-    const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [pair.source_id]);
+    const source = await tx.readSourceIncarnation(pair.source_id);
     return { receipt: await applyFold(tx, pair, source!.incarnation) };
   });
   return 'reason' in result ? changed(result.reason!) : { applied: true, outcome: 'folded', detail: result.receipt };

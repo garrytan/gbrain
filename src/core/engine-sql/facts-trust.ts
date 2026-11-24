@@ -5,15 +5,16 @@
  * remaining raw reads (`poolWhere`, `FactPoolScope`, `FactPoolFilters`) live here too: search/fact-relevance.ts renders them.
  */
 import type { TrustTier } from '../trust/tier.ts';
-import { TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
+import { isTrustTier, TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST, contextHeadSql } from '../facts/gone-page-facts.ts';
-import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
+import { factsFtsDocument, getFtsLanguage, headStemsSql } from '../fts-language.ts';
 import { ownerReadPolicyFragment, privateFactFilterForCaller, privateFactFilterForReader, privateProvenanceFilterUnderPolicy, readPolicyFragment, remoteProvenanceFloorSql, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { factVisibilitySql, grantedPrivateFactSql, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { retiredPageSql } from '../entities/resolve.ts';
+import { MARK_NEEDS_REDERIVE_SQL } from '../facts/derivation-inputs.ts';
 import { eligibleFactEmbedding, OVERSIZED_SCAN_CAP, staleFactEmbedding } from '../facts/embedding-identity.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import type { FactCandidate as ReplacementFact } from '../facts/single-prepare.ts';
@@ -23,6 +24,7 @@ import { claimPendingSql } from '../trust/claim-state.ts';
 import { escapeLikePattern } from '../cjk.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from '../search/saved-fact-collapse.ts';
 import type { SavedFactMatch } from '../search/saved-facts-match.ts';
+import type { EntityFact } from '../search/entity-facts.ts';
 import { renderFragment, sqlFragment, trustedSql, joinFragments, type SqlFragment } from './fragment.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -162,7 +164,8 @@ function customPlan<T>(transaction: EngineRawTransaction, fragment: SqlFragment)
 
 /**
  * The pool's candidate rows of one arm: the keyword arm (full-text over the fact and its entity name, best rank
- * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first.
+ * first, under a custom plan), the named entity's active facts, or that entity's ended facts (history), newest first
+ * (a future-dated fact as of when it was written).
  * Every arm reads under the caller's read policy and filters, and `similarity` is the row's cosine to `vector` when
  * the row's embedding is comparable with it.
  */
@@ -175,11 +178,15 @@ export async function listFactsForRelevance(raw: EngineRawRead, transaction: Eng
        ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
   }
   const named = q.entity!;
+  // GST-3170: a future-dated fact ranks as of when it was written; each active branch keeps an index-ordered scan.
+  const ranked = trustedSql('(CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC');
+  const branch = (order: ReturnType<typeof trustedSql>, from: ReturnType<typeof trustedSql>) => sqlFragment`(SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)}
+       AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug} AND ${from} ORDER BY ${order} DESC, f.id DESC LIMIT ${q.limit})`;
   const { text, params } = renderFragment(q.arm === 'entity'
-    ? sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, q.filters)} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`
+    ? sqlFragment`SELECT * FROM (${branch(trustedSql('f.valid_from'), trustedSql('f.valid_from <= now()'))} UNION ALL ${branch(trustedSql('f.created_at'), trustedSql('f.valid_from > now()'))}) f
+       ORDER BY ${ranked} LIMIT ${q.limit}`
     : sqlFragment`SELECT ${trustedSql(FACT_POOL_COLUMNS)}, ${sim} FROM facts f WHERE ${poolWhere(q.scope, { ...q.filters, includeExpired: true })} AND ${endedFactSql()} AND f.source_id = ${named.sourceId} AND f.entity_slug = ${named.slug}
-       ORDER BY f.valid_from DESC, f.id DESC LIMIT ${q.limit}`);
+       ORDER BY ${ranked} LIMIT ${q.limit}`);
   return raw<FactRelevanceRow>(text, params);
 }
 
@@ -208,7 +215,7 @@ export async function countUncomparableFacts(raw: EngineRawRead, transaction: En
   const rows = await customPlan<{ source_id: string; n: number | string }>(transaction,
     sqlFragment`WITH u AS MATERIALIZED (${uncomparable})
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${poolWhere(q.scope, q.filters)}
-     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id`);
+     GROUP BY f.source_id ORDER BY count(*) DESC, f.source_id COLLATE "C"`);
   return rows.map(r => ({ source_id: r.source_id, n: Number(r.n) }));
 }
 
@@ -227,7 +234,7 @@ export interface SavedFactsMatchQuery {
 }
 
 export type SavedFactMatchRow = SavedFactMatch & CollapseColumns
-  & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown };
+  & { at: unknown; matched: unknown[]; need: unknown; cue: boolean; trust_rank: unknown; pool_rank: unknown; dimension: string | null };
 
 /**
  * The keyword scan behind a `search` / `query` saved-facts block: active facts that share the query's words, matched as
@@ -258,7 +265,7 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
          FROM w
        )
        SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, ${trustedSql(savedFactCollapseColumns())},
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, f.dimension, ${trustedSql(savedFactCollapseColumns())},
            ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
              ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
            LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,
@@ -273,6 +280,53 @@ export async function matchSavedFacts(raw: EngineRawRead, q: SavedFactsMatchQuer
        WHERE p.pool_rank <= 200
        ORDER BY cardinality(p.matched) DESC, p.at DESC, p.id DESC`);
   return raw<SavedFactMatchRow>(text, params);
+}
+
+/** Rows `readEntityNewestFacts` reads, so copies of one claim collapse before the caller's cap (#7043). */
+const COLLAPSE_WINDOW_SQL = '50';
+export const SAVED_FACTS_COLLAPSE_WINDOW = Number(COLLAPSE_WINDOW_SQL);
+
+/** What `readEntityNewestFacts` reads: one source's entity slugs and the read policy the caller resolved. */
+export interface EntityNewestFactsQuery {
+  sourceId: string;
+  slugs: string[];
+  /** A remote caller: the private-provenance filter applies, and `worldOnly` (worldOnlyFacts) adds the visibility rule. */
+  remote: boolean;
+  worldOnly: boolean;
+  minTrust?: TrustTier;
+}
+
+export type EntityNewestFactRow = EntityFact & CollapseColumns;
+
+/**
+ * A named entity's newest active facts under the caller's read policy, with the collapse columns, newest first
+ * (search/entity-facts.ts): at most SAVED_FACTS_COLLAPSE_WINDOW rows, which the caller collapses and caps.
+ */
+export async function readEntityNewestFacts(raw: EngineRawRead, q: EntityNewestFactsQuery): Promise<EntityNewestFactRow[]> {
+  const visibility = q.remote ? `${q.worldOnly ? `AND (f.visibility = 'world' OR ${grantedPrivateFactSql('f')})` : ''} AND ${privateFactFilterForReader('f')}` : '';
+  const { text, params } = renderFragment(sqlFragment`SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, ${trustedSql(savedFactCollapseColumns())}
+       FROM facts f
+      WHERE f.source_id = ${q.sourceId} AND f.entity_slug = ANY(${q.slugs}::text[])
+        AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+        AND f.source != ALL(${factsAuditSources()}::text[])
+        ${trustedSql(visibility)}
+        AND ${trustedSql(projectionEligibleSql('facts', 'f', { floor: q.minTrust }))}
+      ORDER BY (CASE WHEN f.valid_from > now() THEN f.created_at ELSE f.valid_from END) DESC, f.id DESC
+      LIMIT ${trustedSql(COLLAPSE_WINDOW_SQL)}`);
+  return raw<EntityNewestFactRow>(text, params);
+}
+
+/** One name head and the 1-based indexes of the query terms it matches (`matchHeadStems`). */
+export interface HeadStemRow { h: string; i: number[] }
+
+/**
+ * Which query terms each name head matches after stemming with the brain's full-text language, as the keyword scan
+ * matches words: one row per head, in `heads` order, each with the 1-based indexes of the matching terms in `terms`
+ * order. A term the language drops as a stopword matches nothing.
+ */
+export async function matchHeadStems(raw: EngineRawRead, heads: readonly string[], terms: readonly string[]): Promise<HeadStemRow[]> {
+  const rows = await raw<{ h: string; i: unknown[] }>(headStemsSql(), [[...heads], [...terms]]);
+  return rows.map(r => ({ h: r.h, i: r.i.map(Number) }));
 }
 
 /** One fact row as the owner-action preview binds it: the 16 columns the binding hashes, with its stored tier. */
@@ -331,6 +385,46 @@ export async function listRestatedPrivateCopies(raw: EngineRawRead,
          AND (w.valid_until IS NULL OR w.valid_until > now()))
      ORDER BY f.id LIMIT 1`);
   return raw(text, params);
+}
+
+/**
+ * Of `ids`, the facts taken from a page whose type is one of `pageTypes`, in the fact's own source: the page that holds
+ * the fact (`source_markdown_slug`), a page recorded as its derivation input, or the page a backstop fact's
+ * `source_session` names (`backstop`: each `[source, session prefix]` pair, the slug after the prefix). Any page row
+ * counts, a soft-deleted one too.
+ */
+export async function listFactsFromQuotedPages(raw: EngineRawRead,
+  opts: { ids: readonly number[]; pageTypes: readonly string[]; backstop: readonly [readonly [string, string], readonly [string, string]] }): Promise<number[]> {
+  if (!opts.ids.length) return [];
+  const [[syncSource, syncPrefix], [putSource, putPrefix]] = opts.backstop;
+  const rows = await raw<{ id: number | string }>(
+    `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
+       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
+         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
+         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
+         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`,
+    [[...new Set(opts.ids.map(Number))], [...opts.pageTypes], syncSource, syncPrefix, putSource, putPrefix]);
+  return rows.map(r => Number(r.id));
+}
+
+/**
+ * Refuses an owner-tier floor that names no trust tier. Without this, Postgres refuses the missing rank in its driver
+ * (UNDEFINED_VALUE) while PGLite binds NULL and returns no fact, so one call answers differently per engine.
+ */
+export function assertOwnerTierFloor(floor: unknown): asserts floor is TrustTier {
+  if (!isTrustTier(floor)) throw new Error(`listOwnerTierFacts: unknown trust tier ${JSON.stringify(floor)}`);
+}
+
+/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. An unknown floor is refused. */
+export async function listOwnerTierFacts(raw: EngineRawRead, opts: { ids: readonly number[]; floor: TrustTier }): Promise<number[]> {
+  if (!opts.ids.length) return [];
+  assertOwnerTierFloor(opts.floor);
+  const ids = [...new Set(opts.ids.map(Number))];
+  const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${ids}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[opts.floor]}::int`);
+  const rows = await raw<{ id: number | string }>(text, params);
+  return rows.map(r => Number(r.id));
 }
 
 /** How many facts carry `taint_inputs` in their write origin, and how many of those are stamped external_untrusted. */
@@ -457,8 +551,13 @@ export async function countClaimConflictPairs(raw: EngineRawRead, sourceId: stri
 }
 
 /** The ids of every source that is not archived, in id order (the claim-conflict sweep's default scope). */
-export async function listUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
-  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id');
+export async function listUnarchivedSourceRows(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
+}
+
+/** The ids of every source that is not archived, in byte order of the id (the same read as `listUnarchivedSourceRows`). */
+export async function listAllUnarchivedSourceIds(raw: EngineRawRead): Promise<Array<{ id: string }>> {
+  return raw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"');
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +655,8 @@ export async function listContestedProposalPairs(raw: EngineRawRead, ids: number
 
 /** The stored provenance (`facts.source`) of these facts of the source. */
 export async function listFactProvenance(raw: EngineRawRead, sourceId: string, ids: number[]): Promise<Array<{ id: number | string; source: string | null }>> {
-  return raw<{ id: number | string; source: string | null }>('SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])', [sourceId, ids]);
+  const rows = await raw<{ id: number | string; source: string | null }>('SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id', [sourceId, ids]);
+  return rows.map(r => ({ id: Number(r.id), source: r.source }));
 }
 
 /** A row reference in the derivation graph: the owning table's name and the row's primary key (stringified). */
@@ -569,14 +669,6 @@ export async function recordDerivationEdges(raw: EngineRawRead, derived: Derivat
     ON CONFLICT DO NOTHING`, [derived.table, derived.id, sourceId, JSON.stringify(edges.map(e => ({ input_table: e.table, input_id: e.id })))]);
 }
 
-/** The rows derived from any of `frontier`, sorted by table and id, at most `limit` (the caller asks for one more than it keeps to learn whether any were left). */
-export async function listDerivedRows(raw: EngineRawRead, frontier: readonly DerivationEdgeRef[], limit: number): Promise<Array<{ derived_table: string; derived_id: string }>> {
-  return raw<{ derived_table: string; derived_id: string }>(`SELECT DISTINCT d.derived_table,d.derived_id
-      FROM derivation_inputs d JOIN jsonb_to_recordset($1::text::jsonb) AS f(input_table text,input_id text)
-        ON d.input_table=f.input_table AND d.input_id=f.input_id
-      ORDER BY d.derived_table,d.derived_id LIMIT $2`, [JSON.stringify(frontier.map(f => ({ input_table: f.table, input_id: f.id }))), limit]);
-}
-
 /** Expires these facts of the source (those already expired keep their time); returns how many rows it touched. Runs in the caller's transaction. */
 export async function expireDerivedFacts(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
   return (await raw(`UPDATE facts SET expired_at=COALESCE(expired_at,now()) WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [ids, sourceId])).length;
@@ -587,16 +679,23 @@ export async function deactivateDerivedTakes(raw: EngineRawRead, ids: number[], 
   return (await raw(`UPDATE takes k SET active=false FROM pages p WHERE k.id=ANY($1::bigint[]) AND p.id=k.page_id AND p.source_id=$2 RETURNING k.id`, [ids, sourceId])).length;
 }
 
-/** Soft-deletes these pages of the source; returns how many rows it touched. Runs in the caller's transaction. */
-export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], sourceId: string): Promise<number> {
-  return (await raw(`UPDATE pages SET deleted_at=COALESCE(deleted_at,now()) WHERE id=ANY($1::integer[]) AND source_id=$2 RETURNING id`, [ids, sourceId])).length;
+/**
+ * Soft-deletes these pages of the source (#9653: only a page not already deleted keeps a fresh `deleted_at`); returns one row per page of
+ * the source that is now hidden, `now` true when this call hid it. Runs in the caller's transaction.
+ */
+export async function softDeleteDerivedPages(raw: EngineRawRead, ids: number[], sourceId: string): Promise<Array<{ id: number; now: boolean }>> {
+  return raw<{ id: number; now: boolean }>(`WITH gone AS (SELECT id FROM pages WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NOT NULL),
+        hid AS (UPDATE pages SET deleted_at=now() WHERE id=ANY($1::integer[]) AND source_id=$2 AND deleted_at IS NULL RETURNING id)
+        SELECT id, true AS now FROM hid UNION ALL SELECT id, false AS now FROM gone`, [ids, sourceId]);
 }
 
-/** Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). Runs in the caller's transaction. */
-export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string): Promise<void> {
-  await raw(`INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason)
-      SELECT $1,unnest($2::text[]),$3,$4::uuid,$5 ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,marked_at=now()`,
-  [table, ids, sourceId, requestId, reason]);
+/**
+ * Marks each derived row of `table` as needing re-derivation (a later mark replaces the reason and request). `hiddenNow` names the pages
+ * this transaction just hid: their `marked_at` is their `deleted_at`; any other mark keeps that moment or is stamped now (MARK_NEEDS_REDERIVE_SQL,
+ * #9653). Runs in the caller's transaction.
+ */
+export async function markNeedsRederive(raw: EngineRawRead, table: string, ids: string[], sourceId: string, requestId: string | null, reason: string, hiddenNow: string[]): Promise<void> {
+  await raw(MARK_NEEDS_REDERIVE_SQL, [table, ids, sourceId, requestId, reason, hiddenNow]);
 }
 
 export interface MemberPageWithdrawalQuery {
@@ -636,6 +735,60 @@ export async function readMemberPageWithdrawal(raw: EngineRawRead, q: MemberPage
   const { text } = renderFragment(sqlFragment`${trustedSql(MEMBER_WITHDRAWAL_HEAD)}${trustedSql(withdrawalReachedFactSql('w', 'f'))}${trustedSql(MEMBER_READABLE_HEAD)}${trustedSql(q.owner ? MEMBER_READABLE_OWNER : MEMBER_READABLE_WORLD)}${trustedSql(MEMBER_READABLE_PAGE)}${trustedSql(memberReadsSql('pp', q))}${trustedSql(MEMBER_READABLE_ENTITY)}${trustedSql(memberReadsSql('ep', q))}${trustedSql(MEMBER_WITHDRAWAL_TAIL)}`);
   const [row] = await raw<WithdrawalRow>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.page]);
   return row ?? null;
+}
+
+export interface ClaimWithdrawalQuery {
+  sourceId: string; visibility: string; fact: string; entitySlug: string | null | undefined;
+  /** The owned memory page the save lands on (`ownedPageWithdrawalSubject`), or null: its withdrawals apply and the caller sees its rows. */
+  ownPage: string | null;
+  /** A remote caller: only withdrawals whose withdrawn rows pass the remote provenance floor, or that no row backs, count. */
+  excludePrivate?: boolean;
+}
+/** `hidden`: under `excludePrivate`, every withdrawn row backing the claim is one the caller cannot see (no `row` then). */
+export interface ClaimWithdrawal { hidden: boolean; row: WithdrawalRow | null }
+
+const CLAIM_SEEN_OWN_BACKING = ' OR COALESCE(f.source_markdown_slug = $5::text, false))';
+const CLAIM_SEEN_OWN_LEDGER = ' OR COALESCE(f.source_markdown_slug = $6::text, false))';
+const CLAIM_BACKING_HEAD = `SELECT
+        COALESCE(bool_or(`;
+const CLAIM_BACKING_HIDDEN = `), false) AS visible,
+        COALESCE(bool_or(NOT `;
+const CLAIM_BACKING_FROM = `), false) AS hidden
+      FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND `;
+const CLAIM_BACKING_WHERE = `
+      WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
+        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`;
+const CLAIM_LEDGER_HEAD = `SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
+    FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
+      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND `;
+const CLAIM_LEDGER_HAVING = `
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+      AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
+    GROUP BY w.subject,w.visibility,w.withdrawn_at
+    HAVING $5::boolean=false OR COALESCE(bool_or(`;
+const CLAIM_LEDGER_TAIL = `), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
+    ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`;
+
+/**
+ * The withdrawal a save of a forgotten claim meets (facts/single-prepare.ts factWithdrawnRefusal): the most specific
+ * subject first, then the newest withdrawal, among the withdrawals whose withdrawn rows the caller sees, or that no row
+ * backs. GST-359 D: a member saving to its own memory page sees that page's withdrawn rows.
+ */
+export async function readClaimWithdrawal(raw: EngineRawRead, q: ClaimWithdrawalQuery): Promise<ClaimWithdrawal> {
+  const floor = trustedSql(remoteProvenanceFloorSql('f'));
+  const reached = trustedSql(withdrawalReachedFactSql('w', 'f'));
+  if (q.excludePrivate) {
+    const seen = sqlFragment`(${floor}${trustedSql(CLAIM_SEEN_OWN_BACKING)}`;
+    const { text } = renderFragment(sqlFragment`${trustedSql(CLAIM_BACKING_HEAD)}${seen}${trustedSql(CLAIM_BACKING_HIDDEN)}${seen}${trustedSql(CLAIM_BACKING_FROM)}${reached}${trustedSql(CLAIM_BACKING_WHERE)}`);
+    const [backing] = await raw<{ visible: boolean; hidden: boolean }>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.ownPage]);
+    if (backing?.hidden && !backing.visible) return { hidden: true, row: null };
+  }
+  const seen = sqlFragment`(${floor}${trustedSql(CLAIM_SEEN_OWN_LEDGER)}`;
+  const { text } = renderFragment(sqlFragment`${trustedSql(CLAIM_LEDGER_HEAD)}${reached}${trustedSql(CLAIM_LEDGER_HAVING)}${seen}${trustedSql(CLAIM_LEDGER_TAIL)}`);
+  const [row] = await raw<WithdrawalRow>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.excludePrivate === true, q.ownPage]);
+  return { hidden: false, row: row ?? null };
 }
 
 /** The visibility of one fact of the source, or null. */
@@ -693,6 +846,15 @@ export async function expireSupersededFact(raw: EngineRawRead, q: { oldId: numbe
     [q.oldId, q.sourceId, q.newId, q.until])).length;
 }
 
+/**
+ * The remember consumer's supersede (persistence/memory-prepare.ts): expires the old fact now, links it to the new one and
+ * ends it at `until` when given (else keeps its end); returns how many rows it touched. Runs in the caller's transaction.
+ */
+export async function retireSupersededFact(raw: EngineRawRead, q: { oldId: number | string; sourceId: string; newId: number; until: Date | null }): Promise<number> {
+  return (await raw(`UPDATE facts SET expired_at=now(),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until)
+      WHERE id=$1 AND source_id=$2 AND expired_at IS NULL RETURNING id`, [q.oldId, q.sourceId, q.newId, q.until])).length;
+}
+
 /** Puts the old fact of an undone supersede pair back as it was (only while it still points at `expectedSupersededBy`); returns how many rows it touched. Runs in the caller's transaction. */
 export async function restoreSupersededFact(raw: EngineRawRead, q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number> {
   return (await raw(
@@ -720,7 +882,11 @@ export async function expireFactSuperseded(raw: EngineRawRead, factId: number, v
       WHERE id = $1 AND expired_at IS NULL`, [factId, validUntil]);
 }
 
-/** Ends an active fact on `today` (a date) and expires it. Runs in the caller's transaction. */
+/**
+ * Ends an active fact on `today` (a date) and expires it, as master's forget file-mirror stamp did. Runs in the caller's
+ * transaction. PGLite casts the day text to midnight in the session TimeZone; postgres.js turns it into a Date
+ * (`new Date(text)`), so Postgres stores UTC midnight; the Rust store stores UTC midnight.
+ */
 export async function expireFactAtDate(raw: EngineRawRead, factId: number, today: string): Promise<void> {
   await raw(`UPDATE facts SET valid_until = $1, expired_at = now()
          WHERE id = $2 AND expired_at IS NULL`, [today, factId]);
@@ -766,4 +932,43 @@ export async function readFactsFtsIndexState(raw: EngineRawRead, name: string): 
 export async function swapFactsFtsIndex(raw: EngineRawRead): Promise<void> {
   await raw('ALTER INDEX IF EXISTS idx_facts_fts RENAME TO idx_facts_fts_old');
   await raw('ALTER INDEX idx_facts_fts_next RENAME TO idx_facts_fts');
+}
+
+/**
+ * The provenance (`source_markdown_slug`) of each open stint of an entity's dimension: every unexpired, unclosed row
+ * that is not a conversation slot (belief/writers.ts `ontologyStreamSlugs`, the streams an observation can change).
+ * `dimension` is already normalised. Each slug once, in code-unit order; a row with no provenance adds nothing.
+ * The conversation test is chronicle/ontology.ts NOT_CONVERSATION_SLOT_SQL written out (both texts are pinned).
+ */
+export async function listOntologyStreamSlugs(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string): Promise<string[]> {
+  const rows = await raw<{ slug: string | null }>(`SELECT DISTINCT source_markdown_slug AS slug FROM facts
+    WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND expired_at IS NULL AND valid_until IS NULL AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'`, [sourceId, entitySlug, dimension]);
+  return rows.map(r => r.slug).filter((slug): slug is string => slug !== null).sort();
+}
+
+/**
+ * The stint an ontology observation `excludeId` left open (trust/supersede-handlers.ts `contestOntologySupersession`):
+ * the newest open, active, non-conversation row of the entity's dimension other than `excludeId`, with its stored
+ * `trust_tier` (the caller reads it through storedTrustTier). `dimension` is already normalised. Null: no such row.
+ */
+export async function readOntologyRival(raw: EngineRawRead, sourceId: string, entitySlug: string, dimension: string, excludeId: number): Promise<{ id: number; trust_tier: string } | null> {
+  const [row] = await raw<{ id: number | string; trust_tier: string }>(
+    `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND entity_slug = $2 AND dimension = $3 AND id <> $4
+       AND expired_at IS NULL AND valid_until IS NULL AND (dim_status IS NULL OR dim_status = 'active') AND COALESCE(source, '') NOT LIKE 'cli:extract-conversation-facts%'
+     ORDER BY valid_from DESC NULLS LAST, confidence DESC, id DESC LIMIT 1`, [sourceId, entitySlug, dimension, excludeId]);
+  return row ? { id: Number(row.id), trust_tier: row.trust_tier } : null;
+}
+
+/**
+ * The ledger stream slug of each listed row (belief/writers.ts `beliefStreamSlugs`): a fact's fence page else its
+ * entity, a take's page, a page's own slug; deleted pages included. One entry per row found, null where the row has
+ * none, in no promised order: the caller drops the invalid ones, removes repeats and sorts.
+ */
+export async function listBeliefStreamSlugs(raw: EngineRawRead, table: 'facts' | 'takes' | 'pages', ids: readonly number[]): Promise<Array<string | null>> {
+  if (ids.length === 0) return [];
+  const sql = table === 'facts' ? 'SELECT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts WHERE id = ANY($1::bigint[])'
+    : table === 'takes' ? 'SELECT p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = ANY($1::bigint[])'
+      : 'SELECT slug FROM pages WHERE id = ANY($1::int[])';
+  const rows = await raw<{ slug: string | null }>(sql, [[...ids]]);
+  return rows.map(r => r.slug ?? null);
 }

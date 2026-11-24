@@ -103,9 +103,7 @@ async function passIntervalMs(engine: BrainEngine): Promise<number> {
 
 /** Lock the cursor row for this step (creating it first), so concurrent runs advance one shared pass. */
 async function lockState(tx: BrainEngine, key: string): Promise<ContentDriftSweepState> {
-  await tx.executeRaw(`INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, [key, JSON.stringify(EMPTY_STATE)]);
-  const [row] = await tx.executeRaw<{ value: string }>(`SELECT value FROM config WHERE key = $1 FOR UPDATE`, [key]);
-  return parseContentDriftSweepState(row?.value);
+  return parseContentDriftSweepState(await tx.lockContentDriftState(key, JSON.stringify(EMPTY_STATE)));
 }
 
 export async function runContentDriftSweep(engine: BrainEngine, opts: ContentDriftSweepOpts = {}): Promise<ContentDriftSweepStatus> {

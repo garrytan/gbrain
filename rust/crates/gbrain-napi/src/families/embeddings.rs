@@ -57,6 +57,16 @@ impl Brain {
         })
     }
 
+    /// `readUnembeddedPageSummary(sourceId)`: `{ pages, oldest, held }`.
+    #[napi]
+    pub fn read_unembedded_page_summary<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_unembedded_page_summary(&source_id))
+    }
+
     /// `sumStaleChunkChars({ sourceId?, signature?, includeNullSignature? }?)`.
     #[napi]
     pub fn sum_stale_chunk_chars<'env>(
@@ -93,6 +103,22 @@ impl Brain {
         self.run(env, move |s| {
             let options = required(options, "setPageEmbeddingSignature options")?;
             s.set_page_embedding_signature(&slug, &options)
+        })
+    }
+
+    /// `readPageProvenanceComplete(slug, sourceId, model, dims)`: whether every visible chunk of
+    /// the page holds a vector current for `model` at `dims` wide.
+    #[napi]
+    pub fn read_page_provenance_complete<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+        model: String,
+        dims: Option<u32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_provenance_complete(&slug, &source_id, &model, dims)
         })
     }
 

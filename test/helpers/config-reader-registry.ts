@@ -24,7 +24,10 @@ export interface InternalConfigState {
 }
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
+  { key: 'dedupe.exa_spent_usd', reason: 'the running total gbrain dedupe --exa has paid Exa (entities/evidence/exa.ts); the total cap dedupe.exa_total_cap_usd is checked against it' },
+  { key: 'dedupe.exa_cache.', prefix: true, reason: 'one cached Exa answer per query hash (entities/evidence/exa.ts), so a query is never paid for twice' },
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'persistence.writer_admin_lock', reason: 'the writer administration lock gbrain writer lock/unlock writes (persistence/admin-contract.ts); writer claim, activate and transfer refuse while it is set, so it is not a config set knob' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },
   { key: 'transcripts.archive.rescope_capped.', prefix: true, reason: 'the number of archive folders when the owner-only re-scope passed the per-source rule limit and kept the whole conversations/ folder to the owner instead (transcripts/archive.ts); status and doctor report it' },
@@ -54,6 +57,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'ocr_skipped_budget', reason: 'image-OCR run counter (import-file.ts), read by doctor queue_assets' },
   { key: 'page_state.revision_backfill', reason: 'page-state revision backfill progress marker' },
   { key: 'schema_migration_timeout', reason: 'the last schema migration that ran out of its statement budget, written and cleared by migrate.ts (migration-timeout.ts, #7108)' },
+  { key: 'persistence.writer_admin_lock', reason: 'the brain-level writer admin lock that only gbrain sources writer lock/unlock set (persistence/admin-lock.ts); gbrain config set refuses it as reserved, and the typed lock reads (writer-admin, worktree claim, administration) read it' },
   { key: 'persistence.database_only_sources', reason: 'list maintained by gbrain sources writer activate/deactivate; config unset (which takes any key) is the documented escape hatch' },
   { key: 'persistence.maintenance.last_compaction', reason: 'receipt compaction pass cursor (compaction-pass.ts)' },
   { key: 'persistence.true_up.compacted_through', reason: 'receipt true-up cursor (receipt-true-up.ts)' },
@@ -91,6 +95,7 @@ const P = 'parameter' as const;
 export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/commands/autopilot/install-consent.ts', expr: 'k', why: P },
   { file: 'src/commands/config.ts', expr: 'key', why: 'gbrain config get <key>: the operator names the key' },
+  { file: 'src/core/rust-engine/store-members/managed-sync-orphans.ts', expr: 'key', why: P },
   { file: 'src/core/heal-audit.ts', expr: 'key', why: P },
   { file: 'src/commands/decide/probe-query.ts', expr: 'key', why: P },
   { file: 'src/commands/doctor/checks/keyword-plan.ts', expr: 'key', why: P },
@@ -110,6 +115,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/consent-cli.ts', expr: 'key', why: P },
   { file: 'src/core/content-repair/llm.ts', expr: 'key', why: P },
   { file: 'src/core/cycle/auto-think.ts', expr: 'key', why: P },
+  { file: 'src/core/cycle/base-phase.ts', expr: 'this.budgetUsdKey', why: 'the subclass budget key: cycle.propose_takes.budget_usd, cycle.grade_takes.budget_usd, cycle.calibration_profile.budget_usd (registered in config-runtime-keys.ts)' },
   { file: 'src/core/cycle/extract-atoms-cost-gate.ts', expr: 'key', why: 'listConfigKeys walk over ATOMS_NO_PRICING_KEY_PREFIX (cycle. prefix)' },
   { file: 'src/core/cycle/nightly-probe-routes.ts', expr: 'key', why: 'Object.entries walk over NIGHTLY_PROBE_SLOT_KEYS' },
   { file: 'src/core/cycle/nightly-probe-search-config.ts', expr: 'key', why: 'walk over NIGHTLY_PROBE_SEARCH_CONFIG_KEYS (search. prefix)' },
@@ -156,7 +162,13 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/questions/auto-think-migration.ts', expr: 'key', why: P },
   { file: 'src/core/questions/phase.ts', expr: 'key', why: P },
   { file: 'src/core/reindex-consent.ts', expr: 'key', why: P },
+  // readLiveMember reads a stdio server's member binding under the config key its caller names.
+  { file: 'src/core/rust-engine/store-members/access-members.ts', expr: 'key', why: P },
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
+  // readStoredConfigValue reads the stored value through the same store call, so config.ts has a second parameter read.
+  { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
+  // readSyncAdmissionSettingRow reads the sync admission setting under the config key its doctor check names.
+  { file: 'src/core/rust-engine/store-members/doctor-checkpoints.ts', expr: 'key', why: P },
   // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
   // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
   { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
@@ -166,6 +178,8 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   // loaders, whose getConfig reads (direct or in the helpers they call) carry the keys and are scanned there.
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
+  // readMayActFor reads a stdio server's may_act_for under the config key its caller names.
+  { file: 'src/core/rust-engine/store-members/write-misc.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'input.configKey ?? RETURN_UNIT_CONFIG_KEY', why: 'per-op return-unit key option (search. prefix), else the registered default' },
   { file: 'src/core/search/mode.ts', expr: 'k', why: P },

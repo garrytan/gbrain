@@ -22,14 +22,19 @@ microsecond ISO text.
 | Member | What it does |
 |---|---|
 | `mergeOntologyFact` | Finds the current row of the dimension: the newest open, active, non-conversation row (by `valid_from`, then confidence, then id). The same value from a new provenance is stored expired with `consolidated_into` the current row (`corroborated`); a repeat of a seen provenance is a `noop`. A different value is stored live. When it is forward of an active current row, the current row closes at the new `valid_from` (or now) with `superseded_by` the new row (`superseded_prior`); else the result is `inserted`. A dated observation first frees the stint key from conversation-slot rows. A taken stint key is a `noop`. |
-| `getOntology` | The best row per dimension as of `asof` (default now): `valid_from <= asof < valid_until`, active unless `includeQuarantined`, at or above `minConfidence`, filtered by the visibility list, `excludeDiary` (`life/diary/` sources) and soft-deleted provenance pages. Dimensions come out in byte order. |
+| `getOntology` | The best row per dimension as of `asof` (default now): `valid_from <= asof < valid_until`, active unless `includeQuarantined`, at or above `minConfidence` (compared as a 32-bit float, as SQL's `REAL` column is, so a stored 0.7 meets a floor of 0.7), filtered by the visibility list, `excludeDiary` (`life/diary/` sources) and soft-deleted provenance pages. Dimensions come out in byte order. |
 | `discoverOntologyDimensions` | Per dimension, the distinct entities and the observation count of open slot rows. Most entities first, then dimension. |
 | `findOntologyConflicts` | Open, active slot rows grouped by entity and dimension, kept when they hold two or more distinct values from two or more distinct sources. Values come out in id order. A null entity sorts last. |
+| `listOntologyStreamSlugs` | For `belief/writers.ts` `ontologyStreamSlugs`: the distinct non-null `source_markdown_slug` of every open (unexpired, unclosed), non-conversation row of one entity's dimension in one source, in byte order. The dimension comes in normalised. |
+| `readOntologyRival` | For `trust/supersede-handlers.ts` `contestOntologySupersession`: `{ id, trust_tier }` of the newest open, active, non-conversation row of one entity's dimension in one source other than `excludeId` (the same order as `mergeOntologyFact`), or null. A non-integer `excludeId` is refused before the store is read. |
+| `listBeliefStreamSlugs` | For `belief/writers.ts` `beliefStreamSlugs`: the ledger stream slug of each listed row found, by id, once each: a fact's `source_markdown_slug` else its `entity_slug` (null when it has neither), a take's page slug, a page's own slug (deleted pages included). An unknown or negative id answers nothing; the caller drops invalid slugs, removes repeats and sorts. |
 
 `sourceIds` scopes every read to a list of sources; with neither `sourceIds` nor `sourceId`
 every source is read. An empty `visibility` list matches no rows.
 
-`ONTOLOGY_SUPERSEDE_GUARD` always passes: rows in the Rust store carry trust tier `unknown`.
+`ONTOLOGY_SUPERSEDE_GUARD` is evaluated: `mergeOntologyFact` closes the current observation only when its trust rank is no higher than
+the writer's (an undeclared writer ranks as `unknown`). A lower-trust writer still inserts its observation, but it does not close the
+higher-trust row, and the call returns `action: inserted` with `supersededId: null`.
 
 ## Known divergences
 
@@ -47,7 +52,7 @@ These do not show in the parity cases. Each is a documented edge, not a normalis
   does at `src/core/pglite-engine.ts:2225` and `:2269`. A caller with only a reader identity and a
   private-readable grant is served (`callerReaders`): the entity gate reads both; this form has no
   member-page CASE. Any other caller whose policy differs refuses. `requireSafeChunks`, `minTrust`, `suppressFlagged` and
-  `takesHoldersAllowList` are ignored, as no Rust row carries those signals.
+  `takesHoldersAllowList` are ignored: the member does not yet route the trust and suppression reads to this lookup.
 - The Rust `now()` is one value per member call. PGLite takes one value per statement.
 
 ## Ontology re-key and repair statements (`src/core/engine-sql/ontology-repair.ts`)

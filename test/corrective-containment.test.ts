@@ -69,16 +69,14 @@ describe('remote history uses strict body sanitization', () => {
         const getVersions = mock(async () => [version]);
         const result = await operationsByName.get_versions.handler(context({
           getVersions: getVersions as never,
-          // Trusted local history also reads write attribution (Foundations 1 F1b); none is recorded here.
+          // Trusted local history also reads write attribution (Foundations 1 F1b) through the typed member; none is recorded here.
+          readVersionAttributions: (async () => []) as never,
+          readWriteAttributionNames: (async () => ({ requests: [], clients: [], tokens: [], writers: [] })) as never,
           executeRaw: (async () => []) as never,
           // Guest stamping reads page trust through the typed member; no page rows are recorded here either.
           readPageTrustRows: (async () => []) as never,
           // Remote history reads each version's stamped trust tier through the typed member; none is stamped here.
           listVersionTrustTiers: (async () => []) as never,
-          // Remote history reads each version's live page through the typed member; no live page row is recorded here.
-          readPagesForVersionHistory: (async () => []) as never,
-          // Fact-table history reads the held and low-trust row overlay through the typed member; no overlay row is recorded here.
-          readFenceOverlayRows: (async () => []) as never,
           listVersionReasonWriters: (async () => []) as never,
           readRowTrustRows: (async () => []) as never,
           // Even an operator opt-out cannot disable the Facts/Takes boundary.

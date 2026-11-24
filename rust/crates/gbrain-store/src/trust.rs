@@ -21,11 +21,20 @@
 //! - `t 0x06 id` -> a trust proposal; `t 0x07 action \0 target_table \0 target_id \0
 //!   related_table \0 related_id` -> the id of the pending one; `t 0x08 table \0 row_id
 //!   proposal_id` -> empty, a proposal that names the row ([`proposals`]).
+//! - `t 0x09` (events, their event-key, subject, publication and baseline indexes, and commit marks) and
+//!   `t 0x0b` (the claim fingerprint index): the belief ledger's events ([`belief_events`]).
+//! - `t 0x0a`: the belief ledger's page lifetimes ([`belief_lifetimes`]).
+//! - `t 0x0c`: the belief ledger's suppressions ([`belief_redactions`]).
+//! - `t 0x0e page_id` (8-byte big-endian) -> `{"tier", "set_at_us"}`: a page's label guard
+//!   ([`label_guards`]).
+//!
+//! The belief ledger's history and source reads ([`belief_history`]) and its coverage reads
+//! ([`belief_coverage`]) have no keys of their own.
 //!
 //! A page's trust tier and write origin have no key of their own: they are fields of the page
 //! record (`pages::PageRecord`, stamped by `pages::write_page`) and of each version record (copied
 //! by `pages::snapshot_in`). No read looks a page up by its tier, so no tier index exists; a later
-//! one takes `t 0x09`. The design sketch's `t 0x04` and `t 0x05` page keys were not built, and
+//! one takes `t 0x0d`. The design sketch's `t 0x04` and `t 0x05` page keys were not built, and
 //! those bytes hold the write gate.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("trust").
@@ -37,18 +46,32 @@
 #[allow(dead_code)]
 mod stamp;
 
+pub mod belief_coverage;
+pub mod belief_events;
+pub mod belief_history;
+pub mod belief_lifetimes;
+pub mod belief_purge;
+pub mod belief_redactions;
+pub mod belief_state;
 pub mod derivation;
 mod eligibility;
 pub(crate) mod fingerprint;
+#[cfg(test)]
+mod fingerprint_corpus;
+pub(crate) use fingerprint::fact_fingerprint_v1;
+pub mod held_rows;
+pub mod label_guards;
 pub mod proposals;
 mod row_trust;
+pub mod scan_state;
 pub mod tier_reads;
 pub mod valid_time;
+pub mod withdrawal_commit;
 pub mod withdrawals;
 pub mod write_gate;
 
 pub(crate) use eligibility::TrustPolicy;
-pub(crate) use row_trust::{RowTrust, stamp_row};
+pub(crate) use row_trust::{RowTrust, check_insert, stamp_row};
 pub(crate) use write_gate::activation_suppressed;
 
 pub(crate) use stamp::{

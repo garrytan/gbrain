@@ -1,14 +1,16 @@
 /**
  * The facts members a remember, a proposal review, a page retire and a recall by id use, served from the facts store
  * (rust/crates/gbrain-store/src/facts/remember_reads.rs): `readFactEntitySlugById`, `readSupersessionReplacement`,
- * `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactProvenance`, `listFactRowsByIds`, `readFactVisibility`,
- * `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`, `expireSupersededFact`, `restoreSupersededFact`,
- * `readReplacementTarget` and `readMemberPageWithdrawal` (src/core/engine-sql/facts-trust.ts, facts-recall.ts).
+ * `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactRowsByIds`, `readFactVisibility`,
+ * `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`, `expireSupersededFact`, `retireSupersededFact`, `restoreSupersededFact`,
+ * `readReplacementTarget`, `readMemberPageWithdrawal` and `readClaimWithdrawal` (src/core/engine-sql/facts-trust.ts,
+ * facts-recall.ts).
  *
  * An id that is not a whole number refuses rather than guess at PGLite's `bigint` error, and so does a time that is not
  * an ISO instant: the callers pass ids from rows and `toISOString()` text, so the refusal is a guard, never a path they
- * take. `readReplacementTarget` under `excludePrivate` serves the remote provenance floor (`storeFloorPolicy`), and
- * `readMemberPageWithdrawal` the page policy of a member that is not the owner (`storeMemberReadPolicy`); any other
+ * take. `readReplacementTarget` and `readClaimWithdrawal` under `excludePrivate` serve the remote provenance floor
+ * (`storeFloorPolicy`: no caller record, or a member, owner or unrestricted record), and `readMemberPageWithdrawal` the
+ * page policy of a page's member, or the owner read rule for the brain owner (`storeMemberReadPolicy`); any other
  * caller refuses.
  */
 import type { BrainEngine } from '../../engine.ts';
@@ -54,11 +56,6 @@ export const linkSupersededFact: Member<'linkSupersededFact'> = async (brain, ol
 export const listFactsToRetireFromPage: Member<'listFactsToRetireFromPage'> = async (brain, sourceId, session, slug, pattern) =>
   storeCall({ member: 'listFactsToRetireFromPage', sourceId }, () => brain.listFactsToRetireFromPage({ sourceId, session, slug, pattern }));
 
-export const listFactProvenance: Member<'listFactProvenance'> = async (brain, sourceId, ids) => {
-  for (const id of ids) wholeId('listFactProvenance', id);
-  return storeCall({ member: 'listFactProvenance', sourceId }, () => brain.listFactProvenance({ sourceId, ids }));
-};
-
 export const listFactRowsByIds: Member<'listFactRowsByIds'> = async (brain, sourceIds, ids) => {
   for (const id of ids) wholeId('listFactRowsByIds', id);
   const rows: Row[] = await storeCall({ member: 'listFactRowsByIds' }, () => brain.listFactRowsByIds({ sourceIds: [...sourceIds], ids: [...ids] }));
@@ -93,6 +90,13 @@ export const expireSupersededFact: Member<'expireSupersededFact'> = async (brain
   return storeCall({ member: 'expireSupersededFact', sourceId: q.sourceId }, () => brain.expireSupersededFact({ oldId: q.oldId, sourceId: q.sourceId, newId: q.newId, until: q.until }));
 };
 
+export const retireSupersededFact: Member<'retireSupersededFact'> = async (brain, q) => {
+  wholeId('retireSupersededFact', Number(q.oldId));
+  wholeId('retireSupersededFact', q.newId);
+  return storeCall({ member: 'retireSupersededFact', sourceId: q.sourceId }, () => brain.retireSupersededFact({ oldId: Number(q.oldId), sourceId: q.sourceId,
+    newId: q.newId, until: q.until === null ? null : q.until.toISOString() }));
+};
+
 export const restoreSupersededFact: Member<'restoreSupersededFact'> = async (brain, q) => {
   wholeId('restoreSupersededFact', q.oldId);
   wholeId('restoreSupersededFact', q.supersededBy);
@@ -113,5 +117,11 @@ export const readReplacementTarget: Member<'readReplacementTarget'> = async (bra
 export const readMemberPageWithdrawal: Member<'readMemberPageWithdrawal'> = async (brain, q) => {
   const policy = storeMemberReadPolicy('readMemberPageWithdrawal', q);
   return storeCall({ member: 'readMemberPageWithdrawal', sourceId: q.sourceId }, () =>
-    brain.readMemberPageWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, page: q.page, policy }));
+    brain.readMemberPageWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, page: q.page, owner: q.owner, policy }));
+};
+
+export const readClaimWithdrawal: Member<'readClaimWithdrawal'> = async (brain, q) => {
+  const excludePrivate = q.excludePrivate ? storeFloorPolicy('readClaimWithdrawal') : undefined;
+  return storeCall({ member: 'readClaimWithdrawal', sourceId: q.sourceId }, () =>
+    brain.readClaimWithdrawal({ sourceId: q.sourceId, visibility: q.visibility, fact: q.fact, entitySlug: q.entitySlug ?? null, ownPage: q.ownPage ?? null, excludePrivate }));
 };

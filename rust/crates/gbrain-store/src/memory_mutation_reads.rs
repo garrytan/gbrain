@@ -140,8 +140,12 @@ pub struct WithdrawalClaimQuery {
 
 /// Whether `floor` hides `row` (`privateProvenanceFilterFragment`): its provenance page fails the
 /// page policy for the empty identity, or the fact is owner-only in the floor's form.
-fn floor_hides(read: &dyn KvRead, row: &FactRecord, floor: &RemoteFloor) -> Result<bool> {
-    if fact_owner_only(read, &row.source_id, floor.owner_only)? {
+pub(crate) fn floor_hides(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    floor: &RemoteFloor,
+) -> Result<bool> {
+    if fact_owner_only(read, row.id, &row.source_id, floor.owner_only)? {
         return Ok(true);
     }
     let policy = PrivacyPolicy {
@@ -154,7 +158,11 @@ fn floor_hides(read: &dyn KvRead, row: &FactRecord, floor: &RemoteFloor) -> Resu
 }
 
 /// Fact `id` when it belongs to `source_id`.
-fn source_fact(read: &dyn KvRead, id: i64, source_id: &str) -> Result<Option<FactRecord>> {
+pub(crate) fn source_fact(
+    read: &dyn KvRead,
+    id: i64,
+    source_id: &str,
+) -> Result<Option<FactRecord>> {
     let Ok(id) = u64::try_from(id) else {
         return Ok(None);
     };
@@ -232,8 +240,8 @@ impl Store {
     }
 
     /// `factReadableUnder`: whether fact `id` of `source_id` passes the caller's visibility rule,
-    /// `projectionEligibleSql('facts')` (deleted and quarantined provenance pages, the trust floor and flag
-    /// suppression; the store keeps no `needs_rederive` queue, so that clause hides nothing) and, with
+    /// `projectionEligibleSql('facts')` (deleted and quarantined provenance pages, a row marked in
+    /// `needs_rederive`, the trust floor and flag suppression) and, with
     /// `excludePrivate`, the private-provenance policy.
     pub fn fact_readable_under(&self, q: &FactReadableQuery) -> Result<bool> {
         no_nul("factReadableUnder", &[("sourceId", &q.source_id)])?;
@@ -249,6 +257,7 @@ impl Store {
             && (q.any_visibility || row.visibility == "world")
             && !hidden_by_deleted_page(&*read, &row)?
             && !hidden_by_quarantine(&*read, &row)?
+            && !crate::facts::hidden_by_rederive(&*read, &row)?
             && trust.admits(&*read, "facts", row.id, row.tier())?
             && !hidden_by_policy(&*read, &row, &q.exclude_private)?)
     }

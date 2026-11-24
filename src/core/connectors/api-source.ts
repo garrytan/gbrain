@@ -31,6 +31,7 @@ import { isWriteTargetContained } from '../path-confine.ts';
 import { slugifyPath } from '../sync.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { connectorFactsSession, retireFactsFromPage } from '../facts/retire.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const DAY_MS = 86_400_000;
 
@@ -72,9 +73,9 @@ export function runScoped(error: unknown): boolean {
 
 /** Records the provider's reset time so the scheduler does not resubmit before it (D1). */
 export async function recordRateLimit(engine: BrainEngine, sourceId: string, retryAt: number): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('connector-rate-limit',$1,$2::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [sourceId, JSON.stringify([{ version: 1, retry_at: new Date(retryAt).toISOString() }])]).catch(() => undefined);
+  // Best-effort (the caller rethrows the provider error next), except that an engine that cannot record it says so.
+  await engine.writeOpCheckpointRecord('connector-rate-limit', sourceId, [{ version: 1, retry_at: new Date(retryAt).toISOString() }])
+    .catch((e: unknown) => { rethrowCapabilityRefusal(e); });
 }
 
 export function connectorBindingMissing(label: string, sourceId: string): OperationError {
@@ -170,8 +171,11 @@ export async function publishConnectorPage(ctx: ConnectorPublishCtx, page: Conne
   return 'modified';
 }
 
-/** Deletes one page whose item was deleted upstream, after retiring its facts. */
-export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: string, commitMessage: string, retireReason: string): Promise<void> {
+/**
+ * Deletes one page whose item was deleted upstream, after retiring its facts. `soft` (apple-contacts) soft-deletes the
+ * database row, so `gbrain restore` brings it back within the purge window; the default removes it.
+ */
+export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: string, commitMessage: string, retireReason: string, opts: { soft?: boolean } = {}): Promise<void> {
   const { engine, sourceId, managed, summary } = ctx;
   const slug = slugifyPath(relPath);
   const retired = await retireFactsFromPage(engine, { sourceId, slug, reason: retireReason, managed: !!managed });
@@ -191,7 +195,14 @@ export async function deleteConnectorPage(ctx: ConnectorPublishCtx, relPath: str
     }
   }
   const rows = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
-  if (rows.length) { await engine.deletePages([slug], { sourceId }); summary.deleted++; }
+  if (rows.length) {
+    if (opts.soft) {
+      const { maintenanceTransaction } = await import('../persistence/attribution.ts');
+      await maintenanceTransaction(engine, tx => tx.softDeletePages([slug], { sourceId }));
+    }
+    else await engine.deletePages([slug], { sourceId });
+    summary.deleted++;
+  }
 }
 
 /** A connector run queues fact extraction for at most this many pages; the cycle's backfill covers the rest. */

@@ -74,13 +74,18 @@ process, delete its lock, or start another server to obtain administration.
   explain both consequences: removed authority applies immediately; expanded
   scopes require fresh native authorization or a newly issued machine token.
   Refresh cannot expand the original scope grant.
+- **Shared reads:** a member key that should also read every shared source,
+  now and later, gets `gbrain auth rescope --token NAME --read-shared on` on the
+  brain host (`--client ID` for a client). It needs a write source; narrow a
+  switched key with `--sources none --read-shared off` in one command.
 - **End access:** `invalidate-tokens ID`, `revoke ID`, and `delete ID` preview
   consequences by default; apply an authorized reviewed action with
   `--yes --if-version N`. Explain that invalidation removes access/refresh tokens
   and authorization codes and invalidates pending approvals; it retains the
   active client and secret, so machine credentials can obtain new tokens.
   Revocation disables access; deletion removes its registration while audit
-  history remains. Never substitute one for another silently.
+  history remains. Never substitute one for another silently. When a teammate
+  leaves, also preview `gbrain access member handover <member>` on the host.
 
 A failed transport after a mutation was sent can mean **unknown outcome**.
 Inspect the existing client before retrying. Recover a committed secret delivery

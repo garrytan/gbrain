@@ -123,7 +123,7 @@ export function classifyConnectorError(error: unknown): ClassifiedConnectorError
   if (named === 'LockStolenError') return { code: 'lock_stolen', scope: 'source', class: 'transient', message };
   if (named === 'ConnectorWaitBudgetStop') return { code: 'write_pending', scope: 'source', class: 'transient', message };
   if (isCredentialError(error)) {
-    if (error.code === 'rate_limited') return { code: 'rate_limited', scope: 'rate_limit', class: 'transient', message };
+    if (error.code === 'rate_limited' || error.code === 'gbrainio_limit_reached') return { code: 'rate_limited', scope: 'rate_limit', class: 'transient', message };
     if (error.code !== 'upstream') return { code: error.code, scope: 'source', class: 'transient', message };
     const status = Number(message.match(/HTTP (\d{3})/)?.[1] ?? NaN);
     if (status === 401 || status === 403) return { code: 'auth', scope: 'source', class: 'transient', message };

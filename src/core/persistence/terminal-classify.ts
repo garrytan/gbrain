@@ -28,6 +28,9 @@ import { publicCategory, type PublicCategory } from './public-category.ts';
 import { ownerMarkerRestoreFix } from './owner-marker.ts';
 import { GRANDFATHER_RETIRED } from './publication-failure.ts';
 import { FILE_DRIFT_APPLY_STEP } from './sync-holds.ts';
+import { TERMINAL_FIXED_IN, LEGACY_PUBLICATION_PREFIX, PAGE_REMOVAL_OPERATIONS, CONNECTOR_RETRY_LINEAGE_MAX_DEPTH, CONNECTOR_WRITE_KIND_LIST } from './terminal-constants.ts';
+// The constants live in a leaf module so the Rust store member can splice them without this module's import closure.
+export { TERMINAL_FIXED_IN, LEGACY_PUBLICATION_PREFIX, PAGE_REMOVAL_OPERATIONS, CONNECTOR_RETRY_LINEAGE_MAX_DEPTH, CONNECTOR_WRITE_KIND_LIST };
 
 export type TerminalCategory =
   | 'recovery_pending' | 'recovery_blocked'
@@ -38,7 +41,9 @@ export type TerminalCategory =
   // #6904: the write met a missing relation or column (42P01 / 42703); the schema is behind this build or lost a table.
   | 'schema_missing'
   // #7837: a request for a write gbrain retired (the v0.13.1 grandfather, #7814) that an older build queued; nothing to do.
-  | 'retired_operation';
+  | 'retired_operation'
+  // The brain's engine does not serve a member this write needs (engine_capability_missing); every retry meets the same refusal.
+  | 'needs_engine_upgrade';
 
 /** The receipt columns the classifier reads; every one but `intent_kind` and `error_message` survives compaction. */
 export interface TerminalInput {
@@ -89,25 +94,11 @@ export interface TerminalVerdict {
   action: Action;
 }
 
-/** #6650: classes a release fixed. A row written by an older build is history: it does not warn. */
-export const TERMINAL_FIXED_IN = {
-  // #6643: the run re-freezes its own knock-ons and the checkpoint no longer waits on them.
-  knock_on: '0.60.216.0',
-  // #5974/#5982: a guard P0001 is classified (writer_coordinator_required, origin database_guard) and the misread is fixed;
-  // an unclassified "Publication failed (P0001)" receipt can only come from an older build.
-  legacy_publication_refusal: '0.60.40.0',
-  // #6657: a refused fact-fence adoption is no longer resubmitted every cycle and keeps its metadata.
-  fence_unrenderable: '0.60.218.0',
-  // #7814: the v0.13.1 grandfather writes nothing; a queued managed_grandfather request only an older build admitted ends refused.
-  retired_operation: '0.60.479.0',
-} as const satisfies Partial<Record<TerminalCategory, string>>;
 
 /** The connection-loss texts `classifySyncFault` reads as `connection_lost`; POSIX-compatible, so readers match it in SQL (`~*`). */
 export const CONNECTION_MESSAGE_PATTERN = 'ECONN|ETIMEDOUT|EPIPE|connection.*closed|CONNECTION_ENDED';
-/** The prefix of an unclassified database refusal written before #5974. */
-export const LEGACY_PUBLICATION_PREFIX = 'Publication failed (P0001)';
 
-const DEFECTS = new Set<TerminalCategory>(['outside_fence', 'writer_guard', 'database_refusal', 'owner_exception', 'gbrain_defect', 'fence_unrenderable']);
+const DEFECTS = new Set<TerminalCategory>(['outside_fence', 'writer_guard', 'database_refusal', 'owner_exception', 'gbrain_defect', 'fence_unrenderable', 'needs_engine_upgrade']);
 const FAULT_CODES = new Set(SYNC_FAULT_TABLE.map(rule => rule.code));
 const escalateOf = (code: string) => SYNC_FAULT_TABLE.find(rule => rule.code === code)?.escalate ?? 'always';
 
@@ -170,6 +161,20 @@ function diagnosis(input: TerminalInput, code: string, origin: string | null, wh
     human_reason: `${why} The receipt does not record enough to name a fix; inspect it and the writer before acting.`,
     escalate: 'always: a person reads the writer status and the receipt',
     action: inspect(input.source_id, `${why} Writer status and the receipt are read-only; nothing is guessed.`) };
+}
+
+/**
+ * The brain's engine refused a member this write needs (`engine_capability_missing`, today the Rust engine preview). The
+ * refusal repeats on every attempt, so nothing clears it but a gbrain release whose engine serves the member, or running
+ * the write on a pglite or postgres brain: the user's choice. Warns as an unresolved class until then.
+ */
+function needsEngineUpgrade(input: TerminalInput, code: string, origin: string | null, capability: string | null): Partial_ {
+  const needs = capability ? `the ${capability} capability` : 'a capability';
+  return { category: 'needs_engine_upgrade', code, origin, class: 'systemic', safe_actions: ['upgrade'], needs_human: true,
+    human_reason: `The brain's engine does not serve ${needs} this write needs, so every attempt is refused the same way and nothing was written.`,
+    escalate: 'always: the same refusal on every attempt until the engine serves the capability',
+    action: inspect(input.source_id, `The write was refused because the brain's engine lacks ${needs}. Writer status names the engine and the build, read-only; gbrain errors ${code} explains the refusal.`,
+      `Upgrade gbrain to a release whose engine reports ${needs}, or run the write on a pglite or postgres brain; then submit it again with a new request id.`) };
 }
 
 function route(input: TerminalInput): Partial_ {
@@ -309,6 +314,7 @@ function route(input: TerminalInput): Partial_ {
         why: 'The page changed after the caller read it. Read the current revision and resubmit against it with a new request id.',
         verify: { argv: failuresArgv(source) } } };
   }
+  if (code === 'engine_capability_missing') return needsEngineUpgrade(input, code, origin, stringField(detail, 'capability'));
   if (code === 'owner_marker_missing') return fromTable('sync_fault', code, origin, ownerMarkerRestoreFix(source));
   if (FAULT_CODES.has(code)) {
     const verdict = fromTable('sync_fault', code, origin, faultAction(code, input), null, input.error_message);
@@ -359,7 +365,7 @@ function schemaMissingVerdict(input: TerminalInput, code: string, origin: string
 /** #7630: the caller-submitted page and memory writes a caller resubmits; no sync replays them. */
 const RESUBMITTED_WRITES = new Set(['put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page', 'remember', 'forget', 'forget_fact',
   'add_tag', 'remove_tag', 'add_link', 'remove_link', 'add_timeline_entry', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove',
-  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']);
+  'loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts', 'retire_connector_facts']);
 
 /**
  * #7630: the operation a fault's fix depends on. A reconcile or managed write (import, repair, quarantine clear,
@@ -427,8 +433,6 @@ export function terminalKnockOnSql(alias: string): string {
   return `(${syncKnockOnSql(a)} AND CASE WHEN ${a}.error_detail->>'origin' = '${SYNC_KNOCK_ON_ORIGIN}' THEN (${a}.intent->>'kind' IS NULL OR ${sync}) ELSE COALESCE(${sync}, false) END)`;
 }
 
-/** Page removals: a later one supersedes any earlier write of the page. */
-export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge_page'];
 
 /** The writes `gbrain repair failed-writes` replays: a caller's own `put_page` (no owner `kind`), `add_timeline_entry` and `remember`. */
 export const CALLER_REPLAYABLE_OPERATIONS: readonly string[] = ['put_page', 'add_timeline_entry', 'remember'];
@@ -467,9 +471,7 @@ export function supersessionSql(r: string, c: string, rKind?: string): string {
     OR ${connectorRetrySql(r, c, rKind)}))`;
 }
 
-/** Hops a connector retry's `retryOf` lineage is followed back; a longer chain leaves the refusal unresolved (fail closed). */
-export const CONNECTOR_RETRY_LINEAGE_MAX_DEPTH = 32;
-const CONNECTOR_WRITE_KINDS = `'connector_v2_import','connector_v2_delete','connector_v2_checkpoint'`;
+const CONNECTOR_WRITE_KINDS = CONNECTOR_WRITE_KIND_LIST.map(kind => `'${kind}'`).join(',');
 const UUID_TEXT = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'`;
 
 /**

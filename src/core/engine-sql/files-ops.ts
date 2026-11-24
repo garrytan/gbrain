@@ -32,16 +32,6 @@ const jsonbOn = (raw: EngineRawRead) => ({ executeRaw: raw as never });
 // src/commands/files.ts
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** `gbrain files list <slug>`: the page's files by name, at most 100. */
-export async function listFileRowsForSlug(raw: EngineRawRead, slug: string): Promise<FileRecord[]> {
-  return raw<FileRecord>('SELECT * FROM files WHERE page_slug = $1 ORDER BY filename LIMIT 100', [slug]);
-}
-
-/** `gbrain files list`: every file by page then name, at most 100. */
-export async function listAllFileRows(raw: EngineRawRead): Promise<FileRecord[]> {
-  return raw<FileRecord>('SELECT * FROM files ORDER BY page_slug, filename LIMIT 100');
-}
-
 /** Whether a row already holds this hash at this storage path (`gbrain files upload` and `sync` skip it). */
 export async function hasFileWithHash(raw: EngineRawRead, contentHash: string, storagePath: string): Promise<boolean> {
   const rows = await raw('SELECT id FROM files WHERE content_hash = $1 AND storage_path = $2', [contentHash, storagePath]);
@@ -50,7 +40,7 @@ export async function hasFileWithHash(raw: EngineRawRead, contentHash: string, s
 
 /** `gbrain files verify`: every file by storage path, at most 1000. */
 export async function listFileRowsForVerify(raw: EngineRawRead): Promise<FileRecord[]> {
-  return raw<FileRecord>('SELECT * FROM files ORDER BY storage_path LIMIT 1000');
+  return raw<FileRecord>('SELECT * FROM files ORDER BY storage_path COLLATE "C" LIMIT 1000');
 }
 
 /** The checkout path of a source for `gbrain files verify`, null when it has none or no such source exists. A missing sources table throws, as the old statement did. */
@@ -133,7 +123,7 @@ function fileListFilterSql(slug: string | undefined): string {
 
 /** The order of the file lists: page then name across pages, name within one page. No values. */
 function fileListOrderSql(slug: string | undefined): string {
-  return slug === undefined ? 'page_slug, filename' : 'filename';
+  return slug === undefined ? 'page_slug COLLATE "C", filename COLLATE "C", id' : 'filename COLLATE "C", id';
 }
 
 /** The binds of a file list: the limit, then the page slug when one scopes it. */
@@ -208,7 +198,7 @@ export async function readReadableFileForVerify(raw: EngineRawRead, storagePath:
 /** file_verify: the storage paths (and pages) the caller can read, for the page or every page, at most 100. */
 export async function listReadableFilePaths(raw: EngineRawRead, slug: string | undefined, excludePrivate: boolean): Promise<Array<{ storage_path: string; page_slug: string | null }>> {
   const { text } = renderFragment(sqlFragment`SELECT storage_path, page_slug FROM files f
-      WHERE (${trustedSql(fileListFilterSql(slug))}) AND ${trustedSql(fileReadableSql(excludePrivate))} ORDER BY storage_path ${trustedSql(LIMIT_SQL)}`);
+      WHERE (${trustedSql(fileListFilterSql(slug))}) AND ${trustedSql(fileReadableSql(excludePrivate))} ORDER BY storage_path COLLATE "C" ${trustedSql(LIMIT_SQL)}`);
   return raw<{ storage_path: string; page_slug: string | null }>(text, fileListParams(slug));
 }
 

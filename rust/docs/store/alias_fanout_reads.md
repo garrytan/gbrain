@@ -34,9 +34,9 @@ TypeScript members return `[]` with no call when a list is empty, as the SQL mem
 
 The TypeScript `findPagesByTitles` member passes `excludePrivate` through `storePagePolicy`
 (`src/core/rust-engine/store-members/private-provenance.ts`). A caller whose record holds a reader identity and a
-private-readable grant is served: the store reads both from the policy (`facts/privacy.rs`). A caller whose policy
-differs in any other way (folder rules, pending coverage, lineage, an owner read) gets the typed
-`engine_capability_missing` refusal. The caller in `alias-fanout.ts` keeps master's
+private-readable grant, the folder rules it satisfies and the pending prefixes its record holds is served: the store
+reads them from the policy (`facts/privacy.rs`). A caller whose policy differs in any other way (an audience, lineage,
+an owner read, a labelled-only grant) gets the typed `engine_capability_missing` refusal. The caller in `alias-fanout.ts` keeps master's
 `.catch(() => [])`, so that caller reads the refusal as no title hit, as it read a refused raw statement before.
 
 Differences from PGLite:
@@ -51,7 +51,4 @@ Differences from PGLite:
 
 ## Known gaps
 
-None in this family. A `replaceDerivedAliases` row with origin `frontmatter` is a gap of the writer, not of these
-reads: `aliases.rs` stores no value for it, so its `case_sensitive` and `alias_text` read as the defaults
-([aliases.md](aliases.md)), where PGLite keeps them. No caller sends that origin (follow-up
-`frontmatter-derived-alias-value`).
+None in this family.

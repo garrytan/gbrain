@@ -44,9 +44,12 @@ export function refuseMember(member: string, what: string): never {
 /** Runs one store call and maps a rejection. `ctx` names the page and source for the errors that need them. */
 /**
  * Refuses a member when the brain's config makes PGLite read another vector column than `embedding`, the one vector
- * column the store keeps. The embedding members and getStats/getHealth call it.
+ * column the store keeps. The embedding members and getStats/getHealth call it. `search_embedding_column =
+ * embedding_image` is not refused: PGLite's active column is then `embedding` whatever `embedding_columns` holds
+ * (resolveWriteColumnFromConfigRows in search/embedding-column.ts).
  */
 export async function requireTextColumn(brain: StoreBrain, member: string): Promise<void> {
+  if (await brain.getConfig('search_embedding_column') === 'embedding_image') return;
   for (const key of ['search_embedding_column', 'embedding_columns']) {
     if (await brain.getConfig(key)) refuseMember(member, `config ${key} selects another embedding column`);
   }

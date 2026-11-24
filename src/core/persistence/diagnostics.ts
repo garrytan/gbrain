@@ -156,36 +156,12 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   // #6482: writer status is the probe the mode refusal names, so a malformed singleton is reported here, never refused.
   const inspected = await inspectPersistenceBrain(engine);
   const brain = inspected.row ? { enabled: inspected.row.enabled, brain_id: inspected.row.brain_id } : { enabled: false, brain_id: null, persistence_mode_problem: inspected.problem };
-  const worktrees = await engine.executeRaw(`SELECT w.id,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.topology_generation::text AS topology_generation,w.state,w.heartbeat_at,
-    COUNT(r.id) FILTER (WHERE r.state='queued')::integer AS queued,
-    COUNT(r.id) FILTER (WHERE r.state='running')::integer AS running,
-    COUNT(r.id) FILTER (WHERE r.state='recovering')::integer AS recovering,
-    MIN(r.created_at) FILTER (WHERE r.state IN ('queued','deferred','running','recovering')) AS oldest_request_at,
-    (MAX(r.sequence) FILTER (WHERE r.state='committed'))::text AS last_completed_sequence,
-    COALESCE((SELECT c.recovery_bytes FROM persistence_counters c WHERE c.key='worktree:'||w.id::text),0)::text AS recovery_bytes,
-    (SELECT COUNT(*)::integer FROM persistence_effects e WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL) AS recovering_effects
-    FROM persistence_worktrees w LEFT JOIN persistence_requests r ON r.worktree_id=w.id
-    GROUP BY w.id ORDER BY w.id`);
-  const counters = await engine.executeRaw<Counter>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,terminal_bytes::text,recovery_bytes::text FROM persistence_counters ORDER BY key`);
-  // #6278: the operation and intent kind say which budget applies and tell a sync member from a maintenance write; the owner process comes from the live claim's stamp.
-  const blockers = await engine.executeRaw<{ id: string; request_id: string; worktree_id: string | null; source_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null;
-    operation: string; intent_kind: string | null; preparation_attempts: number | null } & Omit<ClaimRow, 'state'>>(
-    `SELECT request_id,worktree_id,source_id,state,blocked_reason,error_code,created_at,claim_phase,execution_token,claim_expires_at<now() AS claim_lapsed,publication_started,
-      operation,intent->>'kind' AS intent_kind,preparation_attempts,id::text AS id,
-      ($1::timestamptz IS NOT NULL AND state='running' AND recovery IS NULL AND updated_at<$1::timestamptz) AS abandoned
-    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`, [abandonedClaimCutoff(engine)?.toISOString() ?? null]);
-  const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
-    MIN(created_at) AS oldest_request_at,
-    MAX(EXTRACT(EPOCH FROM (now()-created_at))*1000)::bigint::text AS oldest_age_ms
-    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') GROUP BY state ORDER BY state`);
-  const effects = await engine.executeRaw(`SELECT e.kind,e.state,COUNT(*)::integer AS count,MIN(r.created_at) AS oldest_at
-    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-    WHERE e.state<>'committed' AND NOT (e.data ? 'settled') GROUP BY e.kind,e.state ORDER BY e.kind,e.state`);
-  // #5974: trusted-admin view of database refusals, including owner-only source ids and the executing build.
-  const failures = await engine.executeRaw<{ request_id: string; operation: string; source_id: string; state: WriteRequestState;
-    error_code: string | null; error_detail: Record<string, unknown>; completed_at: Date | string | null }>(
-    `SELECT request_id,operation,source_id,state,error_code,error_detail,completed_at FROM persistence_requests
-    WHERE error_detail IS NOT NULL AND NOT COALESCE(error_detail->>'origin','')=ANY($1::text[]) ORDER BY sequence DESC LIMIT 20`, [['fence', ...SOURCE_CHANGED_ORIGINS]]);
+  // The six row sets in one typed read (engine-sql/writer-status.ts). #6278: the operation and intent kind say which
+  // budget applies; the owner process comes from the live claim's stamp. #5974: the failures are the trusted-admin
+  // view of database refusals, including owner-only source ids and the executing build.
+  const { worktrees, counters, blockers: blockerRows, queue, effects, failures } = await engine.readWriterDiagnosticRows(
+    abandonedClaimCutoff(engine)?.toISOString() ?? null, ['fence', ...SOURCE_CHANGED_ORIGINS]);
+  const blockers = blockerRows as Array<typeof blockerRows[number] & { state: WriteRequestState } & Omit<ClaimRow, 'state'>>;
   const limits = await readJournalLimits(engine);
   // #6278: the budgets, ceiling, attempt limit and switch in effect, next to every running blocker's step age.
   const snapshot = await readWriteSwitchSnapshot(engine).catch(() => null);

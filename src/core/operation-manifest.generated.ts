@@ -1699,7 +1699,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "autocut": {
         "type": "boolean",
-        "description": "Default on (never empty); false: full top-K for breadth.",
+        "description": "Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.",
         "fullSurfaceOnly": true
       },
       "relational": {
@@ -3689,12 +3689,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "outputRedaction": "retrieval",
     "scope": "read",
-    "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+    "description": "Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). Never fuzzy: empty matches means no exact match; ambiguous means several.",
     "params": {
       "query": {
         "type": "string",
         "required": true,
-        "description": "Email address or name, e.g. 'alice@acme-example.com'."
+        "description": "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'."
       },
       "types": {
         "type": "array",
@@ -4099,6 +4099,28 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "positional": [
         "id"
       ]
+    }
+  },
+  {
+    "name": "reveal_secret",
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "returns the original value of a secret-store entry by design; gated by an explicit grant and page read access, and audited"
+    },
+    "description": "Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation list names reveal_secret and read access to a page holding the marker; every call is audited.",
+    "params": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "Entry id from the marker (ss_ followed by 12 hex)."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "area": "secrets",
+    "cliHints": {
+      "name": "reveal-secret",
+      "hidden": true
     }
   },
   {
@@ -5504,7 +5526,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "request_tools",
     "idempotent": false,
     "outputRedaction": "no_stored_text",
-    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns full schemas, every optional param included; {surface} widens it (per client or stdio session).",
+    "description": "More tools and params: no arguments lists your catalog; {tools: [names]} returns schemas with every param you may pass; {surface} widens it (per client or stdio session).",
     "area": "discovery",
     "agentCallable": true,
     "params": {
@@ -7146,7 +7168,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct}], drift_score: number|null, schema_version: 1}`. Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
+    "description": "Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). Use this when the user asks 'how has Acme's MRR trended', 'show me what alice-example said about runway over time', 'is this founder consistent', 'find regressions for fund-a's portfolio', or wants a time-series view of an entity's structured claims. Returns `{points: [{fact_id, valid_from, metric, value, unit, period, text, source_session, source_markdown_slug}], regressions: [{metric, from_value, from_date, to_value, to_date, delta_pct, direction: 'down'|'up'}], drift_score: number|null, schema_version: 1}`. A regression is a 10% drop, or a 10% rise for a lower-is-better metric (burn, churn, cac, cost, expense, loss, latency, payback, debt; not a name that also says savings, recovered, reduction or avoided). Drift score 0 = stable narrative, 1 = every consecutive claim is unrelated; null when fewer than 3 typed points exist. Visibility-filtered for remote callers (world-only); source-scoped by the caller's OAuth source binding. Pair with `gbrain founder scorecard <slug>` for an aggregated rollup of the same data.",
     "scope": "read",
     "params": {
       "entity_slug": {

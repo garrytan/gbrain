@@ -6,6 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub trait Env: Send + Sync {
     /// Microseconds since the Unix epoch, UTC.
     fn now_micros(&self) -> i64;
+    /// Microseconds since the Unix epoch at the moment of the call, as Postgres `clock_timestamp()`. The same as
+    /// `now_micros` except inside a bound transaction, whose `now_micros` stays at its start (`now()`).
+    fn clock_micros(&self) -> i64 {
+        self.now_micros()
+    }
     /// A fresh random UUID (version 4 text form).
     fn new_uuid(&self) -> String;
 }
@@ -71,14 +76,36 @@ pub fn iso(micros: i64) -> String {
     )
 }
 
+/// Days in month `m` (1 to 12) of year `y`, by the Gregorian leap rule; `None` for any other month.
+pub(crate) fn days_in_month(y: i64, m: i64) -> Option<i64> {
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => Some(31),
+        4 | 6 | 9 | 11 => Some(30),
+        2 if leap => Some(29),
+        2 => Some(28),
+        _ => None,
+    }
+}
+
 /// Parses the output of `iso` (and the millisecond form `Date#toISOString` gives). Returns `None`
-/// for any other shape.
+/// for any other shape, and for a date or time Postgres refuses: a month outside 1 to 12, a day
+/// past the end of its month (2026-02-30), an hour past 24, a minute past 59 or a second past 60.
+/// As in Postgres, `24:00:00` (the next midnight) and a leap second `:60` are accepted and roll
+/// over.
 pub fn parse_iso(text: &str) -> Option<i64> {
     let b = text.as_bytes();
     if b.len() < 20 || *b.last()? != b'Z' {
         return None;
     }
-    let num = |a: usize, z: usize| text.get(a..z)?.parse::<i64>().ok();
+    // Digits only: `str::parse` would also take a sign (`-1` as a month).
+    let num = |a: usize, z: usize| {
+        let field = text.get(a..z)?;
+        if !field.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        field.parse::<i64>().ok()
+    };
     if b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
         return None;
     }
@@ -95,6 +122,12 @@ pub fn parse_iso(text: &str) -> Option<i64> {
     } else {
         return None;
     };
+    if d < 1 || d > days_in_month(y, m)? || mm > 59 || ss > 60 {
+        return None;
+    }
+    if hh > 24 || (hh == 24 && (mm > 0 || ss > 0 || frac > 0)) {
+        return None;
+    }
     let days = days_from_civil(y, m, d);
     Some(((days * 86_400 + hh * 3600 + mm * 60 + ss) * 1_000_000) + frac)
 }
@@ -179,6 +212,39 @@ mod tests {
             Some(1_786_363_200_000_000)
         );
         assert_eq!(parse_iso("2026-08-10"), None);
+    }
+
+    #[test]
+    fn impossible_dates_and_times_are_refused() {
+        for bad in [
+            "2026-02-30T00:00:00Z",
+            "2026-02-29T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-00-10T00:00:00Z",
+            "2026-01-00T00:00:00Z",
+            "2026-01-01T25:00:00Z",
+            "2026-01-01T24:00:01Z",
+            "2026-01-01T24:00:00.5Z",
+            "2026-01-01T12:60:00Z",
+            "2026-01-01T12:00:61Z",
+            "2026--1-01T00:00:00Z",
+            "2026-+1-01T00:00:00Z",
+        ] {
+            assert_eq!(parse_iso(bad), None, "accepted {bad}");
+        }
+        // Leap days and the two roll-overs Postgres accepts.
+        assert!(parse_iso("2024-02-29T00:00:00Z").is_some());
+        assert!(parse_iso("2000-02-29T00:00:00Z").is_some());
+        assert_eq!(parse_iso("1900-02-29T00:00:00Z"), None);
+        assert_eq!(
+            parse_iso("2026-01-01T24:00:00Z"),
+            parse_iso("2026-01-02T00:00:00Z")
+        );
+        assert_eq!(
+            parse_iso("2026-01-01T23:59:60Z"),
+            parse_iso("2026-01-02T00:00:00Z")
+        );
     }
 
     #[test]

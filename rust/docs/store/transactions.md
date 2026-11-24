@@ -2,7 +2,14 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-`engine.transaction(fn, opts?)`, `engine.transactionDirect(fn)` and `engine.lockPageKeys(keys)` run on
+The native store and addon provide explicit transaction handles, savepoints, commit, rollback and page-key
+holds (`crates/gbrain-napi/src/families/transactions.rs`). The TypeScript side is not landed: the current
+`src/core/rust-engine/store-members/transactions.ts` exports no BrainEngine member, so `engine.transaction`,
+`engine.transactionDirect`, `engine.lockPageKeys`, `readTransactionSettings` and `applyTransactionSettings` refuse
+with `engine_capability_missing` on this landing. The JavaScript callback, gating, re-entry and disconnect behaviour
+below is the intended adapter contract, not BrainEngine behaviour available now.
+
+`engine.transaction(fn, opts?)`, `engine.transactionDirect(fn)` and `engine.lockPageKeys(keys)` are meant to run on
 the Rust engine with PGLite's observable behaviour. `fn` gets a transaction engine (a clone of the
 engine); every member called on it reads the transaction's own writes, and the whole transaction
 becomes visible to the brain in one commit, or not at all.
@@ -52,14 +59,28 @@ becomes visible to the brain in one commit, or not at all.
       settings and the three attribution settings (`gbrain.write_request`,
       `gbrain.write_principal_kind`, `gbrain.write_principal_id`) go to the write context on the
       transaction's handle ([`write_trust.md`](write_trust.md)). `gbrain.write_sources`,
+      `gbrain.git_protocol`, `gbrain.persistence_protocol` and `gbrain.writer_quiesced` stay on
+      the transaction in TypeScript (`RustTransactionScope.settings`).
       `gbrain.git_protocol` and `gbrain.persistence_protocol` stay on the transaction in
       TypeScript (`RustTransactionScope.settings`).
+    - Any other custom name Postgres accepts, `gbrain` and one or more simple identifiers
+      (`^gbrain(\.[a-z_][a-z0-9_]*)+$`), stays on the transaction too, unless schema SQL reads it.
+      The names the schema's triggers and functions read and no store writer reads yet
+      (`gbrain.materializing_revision`, `writer_quiesced`, `topology_change`, `refresh_barrier`,
+      `trust_generation_bumped`, `guest_note`, `graduation_run`) refuse, so a caller never sets
+      one that changes Postgres and nothing here.
+    - `plan_cache_mode` stays on the transaction too, for the belief batch probe
+      (`readLedgerSource` with `batch`). It reads `auto` when unset, inside a transaction or not,
+      and an apply takes `auto`, `force_generic_plan` or `force_custom_plan` (any case, kept in
+      lower case) or throws `invalid value for parameter "plan_cache_mode": "<value>"`. The store
+      has no planner, so the setting changes nothing else.
     - They end with the transaction. A savepoint rollback restores them; a release keeps them.
     - Outside a transaction an apply keeps nothing, as a lone `set_config(..., true)` on PGLite.
     - A name never set reads `null`. A name set before on the engine reads `''`, as Postgres
       keeps a placeholder for it on the connection.
     - A name outside `^[a-z_][a-z0-9_.]*$` throws `Invalid transaction setting name: <name>`, as
-      on PGLite. Any other name refuses with `engine_capability_missing`, reason `transactions`,
+      on PGLite. Any other name (`gbrain.`, `gbrain..x`, `gbrain.1x`, a name with no dot, a
+      schema-read name) refuses with `engine_capability_missing`, reason `transactions`,
       `detail: "member=<m> capability=transactions setting=<name> outcome=none written=nothing"`.
     - Two transactions never see each other's settings. The store admits one write transaction at
       a time: a second `begin_transaction` waits for the writer, and each transaction's handle has

@@ -597,15 +597,11 @@ function timelineChunks(timeline: ReadonlyMap<string, ExtractedTimelineEntry>): 
 
 /**
  * #6574: a page's canonical timeline rows in one statement per chunk, in body order. The publication already holds the page's
- * row lock (lockPageKeys), so the rows go straight to its id; free text is sanitized as addTimelineEntry does (#2011).
+ * row lock (lockPageKeys), so the rows go straight to its id; the engine sanitizes free text as addTimelineEntry does (#2011).
  */
 function insertCanonicalTimeline(tx: BrainEngine, pageId: number, entries: ExtractedTimelineEntry[]) {
-  const rows = JSON.stringify(entries.map((entry, ord) => ({ ord, date: entry.date, source: sanitizeForJsonb(entry.source || ''),
+  return tx.insertCanonicalTimelineRows(pageId, entries.map(entry => ({ date: entry.date, source: sanitizeForJsonb(entry.source || ''),
     summary: sanitizeForJsonb(entry.summary), detail: sanitizeForJsonb(entry.detail || '') })));
-  return tx.executeRaw(`INSERT INTO timeline_entries (page_id,date,source,summary,detail)
-    SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text)
-    ORDER BY r.ord
-    ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING`, [pageId, rows]);
 }
 
 /** The page body's own entry for one timeline row (same date, source and summary), inserted when the page carries it. */
@@ -719,7 +715,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const removedDates: string[] = [];
     // W1 #6783 §12 (a): a timeline row or take more trusted than the writer is never deleted, replaced or deactivated by
     // it. It stays as it is and a `forget` proposal asks the owner (trust/fence-guard.ts), decided before any statement runs.
-    const heldTimeline = await heldRows(tx, 'timeline_entries', [...deletionRows, ...refreshRows].map(row => Number(row.id)));
+    const heldTimeline = await heldRows(tx, 'timeline_entries', id, [...deletionRows, ...refreshRows].map(row => Number(row.id)));
     const deletions = deletionRows.filter(row => !heldTimeline.has(Number(row.id)));
     const refreshes = refreshRows.filter(row => !heldTimeline.has(Number(row.id)));
     const heldTakes = projectFences ? await guardFenceTakes(tx, id, takes, takeRowsGone) : [];
@@ -821,7 +817,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
       // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
       // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline. The expire uses the
       // generation's retire predicate under the page lock, so it runs only when that generation found rows to retire.
-      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig, kept },
+      const guard = factsHeld ? { rows: [] as typeof factRows, finish: async () => [] as string[] } : await step('timeline', () => guardFenceRows(tx, { sourceId, slug, pageId: id, incoming, rows: factRows, cfg: loadWriteGateConfig, kept },
         () => pipelined(tx, factGeneration.retiring ? [expireFacts(factGeneration.retireIds), ...timelineRows] : timelineRows)));
       if (factsHeld) await step('timeline', () => pipelined(tx, timelineRows));
       if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId })); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction

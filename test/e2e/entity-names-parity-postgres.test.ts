@@ -52,7 +52,7 @@ import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
     expect(plans.some(p => p.sql.startsWith('SELECT slug, source_id, title'))).toBe(true);
     expect(plans.some(p => p.sql.startsWith('WITH a AS MATERIALIZED'))).toBe(true);
     for (const p of plans) {
-      const wanted = p.sql.startsWith('WITH a') ? ['idx_pages_source_title_lower'] : ['idx_pages_source_title_lower', 'idx_pages_slug_trgm'];
+      const wanted = p.sql.startsWith('WITH a') ? ['idx_pages_title_lower_hash'] : ['idx_pages_title_lower_hash', 'idx_pages_slug_trgm'];
       expect({ sql: p.sql, seqScan: /Seq Scan on pages\b/.test(p.plan), indexes: wanted.filter(i => p.plan.includes(i)) })
         .toEqual({ sql: p.sql, seqScan: false, indexes: wanted });
     }

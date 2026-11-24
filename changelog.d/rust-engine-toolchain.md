@@ -1,7 +1,0 @@
-**Contributors can now build an experimental Rust engine addon and check it against Bun with `bun run rust:build` and `bun rust/smoke/run.ts`; gbrain itself does not use it yet and still builds without Rust.**
-
-### Added
-- A Rust workspace under `rust/` with one Node-API addon crate. It loads in Bun and reports its target, engine version, a build hash and catalog version. It also holds the proof pieces the later Rust engine work builds on: a worker pool whose calls return promises, cancellation, panics turned into ordinary JavaScript errors, a shutdown that cancels queued work and waits a bounded time for running work, typed-array calls, and a bounded callback queue.
-- `bun run rust:build` builds the addon and prints its path and the `GBRAIN_RUST_ENGINE_ADDON=...` line to export. Without Rust installed it stops with install instructions and writes nothing.
-- `bun rust/smoke/run.ts` runs the addon through those behaviors under Bun, including a child process that calls `process.exit(0)` while native work is running and a single-file `bun build --compile` executable that loads the addon.
-- A `Rust engine` workflow runs only when Rust files or the engine files it depends on change. It checks formatting, clippy, unit tests and cargo-deny, builds and smoke-tests the addon on Linux and macOS, and builds and runs gbrain with Rust removed from `PATH`. `rust/README.md` covers the contributor setup.
