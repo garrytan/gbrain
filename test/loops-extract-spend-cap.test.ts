@@ -15,6 +15,7 @@
  * PGLite in memory; the chat transport is a stub that throws, so no model is
  * ever called and nothing is spent. Synthetic data only.
  */
+import { CredentialError } from '../src/core/creds/errors.ts';
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -163,6 +164,26 @@ describe('P4.6b enqueue sites', () => {
     expect(parseSpendAuthorization(job.spend_authorization)).toMatchObject({ group_id: loopsSpendGroupId(loopsSpendDay(Date.now())), command: 'loops_extract' });
     await chargeDay(200);
     expect(await runLoopsCatchup({ ...ctx(), state: {} as GoogleSourceState })).toMatchObject({ enqueued: 0, skipped_reason: 'daily_spend_cap' });
+  });
+});
+
+describe('managed loops catch-up at a usage limit', () => {
+  test('stops reading threads at the first usage limit and stays unfinished', async () => {
+    await engine.setConfig('loops.extraction_enabled', 'true');
+    for (const n of ['4444dddd', '5555eeee', '6666ffff']) {
+      await engine.putPage(`emails/2026/08/2026-08-25-d-${n}`, { type: 'email', title: 'Plan', compiled_truth: 'Peer: Can you review the plan?',
+        frontmatter: { thread_id: n, date: new Date(Date.now() - 86_400_000).toISOString() } }, { sourceId: SRC });
+    }
+    const state = {} as GoogleSourceState;
+    const logs: string[] = [];
+    let reads = 0;
+    const r = await runLoopsCatchup({ engine, sourceId: SRC, state, log: (l: string) => logs.push(l), myAddresses: new Set(['a@example.com']), inFlight: new Set<string>(),
+      fetchThread: async () => { reads++; throw new CredentialError('gbrainio_limit_reached'); } });
+    expect(reads).toBe(1);
+    expect(r).toMatchObject({ enqueued: 0 });
+    expect(state.loops_catchup?.done).toBe(false);
+    expect(logs.filter((l) => l.includes('could not read thread'))).toHaveLength(0);
+    expect(logs.some((l) => l.includes('loops catch-up stopped at a usage limit'))).toBe(true);
   });
 });
 
