@@ -23,3 +23,9 @@ export function isEngineCapabilityRefusal(err: unknown): boolean {
 export function rethrowCapabilityRefusal(err: unknown): void {
   if (isEngineCapabilityRefusal(err)) throw err;
 }
+
+/** A `.catch` handler for a fail-open read whose fallback is `null`: a capability refusal still throws. */
+export function nullUnlessCapabilityRefusal(err: unknown): null {
+  rethrowCapabilityRefusal(err);
+  return null;
+}

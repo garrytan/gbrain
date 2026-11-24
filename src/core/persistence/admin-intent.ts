@@ -2,6 +2,9 @@ import type { SqlEngine } from './model.ts';
 import { OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import { PAGE_EMBEDDING_LEASE_PREFIX } from '../page-embedding-lease.ts';
+import type { BrainEngine } from '../engine.ts';
+
+type WriterAdminStateEngine = Pick<BrainEngine, 'readWriterAdminState'>;
 
 export const WRITER_INSPECTION_HINT = 'Inspect gbrain sources writer status --json on the selected brain host first to identify the designated owner and any recovery. Routine repair must not claim, activate, or transfer ownership. Ask the operator to review docs/architecture/topologies.md before a deliberate topology change.';
 
@@ -23,18 +26,15 @@ export async function writerAdminState(engine: SqlEngine): Promise<string> {
   return sha256(row.state);
 }
 
-export async function assertWriterAdminState(engine: SqlEngine, expected: string | undefined, lock = true): Promise<void> {
+/** Inside a transaction, `lock` holds the brain row and the topology tables until commit (a no-op on a Rust brain). */
+export async function assertWriterAdminState(engine: WriterAdminStateEngine, expected: string | undefined, lock = true): Promise<void> {
   if (expected === undefined) return;
-  if (lock) {
-    await engine.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
-    await engine.executeRaw('LOCK TABLE sources, config, persistence_worktrees, persistence_source_bindings, persistence_host_bindings, gbrain_cycle_locks IN SHARE ROW EXCLUSIVE MODE');
-  }
-  if (await writerAdminState(engine) !== expected) {
+  if (sha256(await engine.readWriterAdminState({ lock })) !== expected) {
     throw new OperationError('writer_admin_state_changed', 'Writer topology changed since inspection; the administrative request was not applied.', WRITER_INSPECTION_HINT);
   }
 }
 
-export async function requireWriterAdminIntent(engine: SqlEngine, operation: string, params: Record<string, unknown>): Promise<string | undefined> {
+export async function requireWriterAdminIntent(engine: WriterAdminStateEngine, operation: string, params: Record<string, unknown>): Promise<string | undefined> {
   if (params.dry_run === true) return;
   if (params.admin_intent !== operation || typeof params.expected_state !== 'string' || !/^[a-f0-9]{64}$/.test(params.expected_state)) {
     throw new OperationError('writer_admin_intent_required', 'Topology changes require an action-specific --admin-intent and the --expected-state from a reviewed writer status. A TTY, --yes, or --confirm-quiesced alone is not authorization.', WRITER_INSPECTION_HINT);

@@ -102,26 +102,9 @@ export interface NewTrustProposal {
  * attribution settings.
  */
 export async function insertTrustProposal(tx: BrainEngine, input: NewTrustProposal): Promise<{ id: number; created: boolean }> {
-  const params = [input.action, input.sourceId, input.target.table, input.target.id, input.related?.table ?? null, input.related?.id ?? null,
-    JSON.stringify(input.before), JSON.stringify(input.after ?? {}), input.proposer];
-  const [inserted] = await tx.executeRaw<{ id: number }>(
-    `INSERT INTO trust_proposals (action, source_id, target_table, target_id, related_table, related_id, before_state, after_state, proposer,
-        proposer_principal_kind, proposer_principal_id, write_request_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8::text::jsonb, $9,
-        NULLIF(current_setting('gbrain.write_principal_kind', true), ''), NULLIF(current_setting('gbrain.write_principal_id', true), ''),
-        NULLIF(current_setting('gbrain.write_request', true), '')::uuid)
-      ON CONFLICT DO NOTHING RETURNING id`, params);
-  if (inserted) {
-    noteBelief({ kind: 'contested', table: input.target.table, rowId: input.target.id, proposalId: Number(inserted.id), guard: input.proposer });
-    return { id: Number(inserted.id), created: true };
-  }
-  const [existing] = await tx.executeRaw<{ id: number }>(
-    `SELECT id FROM trust_proposals WHERE status = 'pending' AND action = $1 AND target_table = $2 AND target_id = $3
-       AND related_table IS NOT DISTINCT FROM $4 AND related_id IS NOT DISTINCT FROM $5 ORDER BY id LIMIT 1`,
-    [input.action, input.target.table, input.target.id, input.related?.table ?? null, input.related?.id ?? null]);
-  if (!existing) throw new Error('trust proposal insert conflicted but no pending row was found');
-  noteBelief({ kind: 'contested', table: input.target.table, rowId: input.target.id, proposalId: Number(existing.id), guard: input.proposer });
-  return { id: Number(existing.id), created: false };
+  const result = await tx.insertTrustProposal(input);
+  noteBelief({ kind: 'contested', table: input.target.table, rowId: input.target.id, proposalId: result.id, guard: input.proposer });
+  return result;
 }
 
 export async function getTrustProposal(engine: BrainEngine, id: number, lock = false): Promise<TrustProposalRow | null> {
@@ -138,14 +121,7 @@ export interface TrustProposalFilter {
 }
 
 export async function listTrustProposals(engine: BrainEngine, filter: TrustProposalFilter = {}): Promise<TrustProposalRow[]> {
-  const status = filter.status ?? 'pending';
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM trust_proposals
-      WHERE ($1::text = 'all' OR status = $1) AND ($2::text IS NULL OR source_id = $2) AND ($3::text IS NULL OR action = $3)
-        AND ($4::timestamptz IS NULL OR created_at >= $4)
-      ORDER BY created_at, id LIMIT $5`,
-    [status, filter.sourceId ?? null, filter.action ?? null, filter.since?.toISOString() ?? null, Math.min(Math.max(filter.limit ?? 500, 1), 5000)]);
-  return rows.map(normalize);
+  return engine.listTrustProposals(filter);
 }
 
 /** Pending proposals naming a row as target or related (guards and explain read this). */

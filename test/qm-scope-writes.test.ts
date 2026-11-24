@@ -271,25 +271,34 @@ for (const kind of testBackends()) {
       expect(out.structured!.status).toBe('committed');
       const [row] = await engine.executeRaw<{ authority: any }>('SELECT authority FROM persistence_requests WHERE request_id = $1::uuid', [out.structured!.request_id]);
       const authority = typeof row!.authority === 'string' ? JSON.parse(row!.authority) : row!.authority;
-      const original = engine.executeRaw;
       let removed = false;
-      engine.executeRaw = (async function (this: BrainEngine, ...args: Parameters<typeof engine.executeRaw>) {
-        if (!removed && /FROM oauth_clients WHERE client_id\s*=\s*\$1.*FOR SHARE/s.test(String(args[0]))) {
-          removed = true;
-          await original.call(this, 'UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]);
-        }
-        return original.apply(this, args);
-      }) as typeof engine.executeRaw;
       const ROLLBACK = new Error('rollback');
       let outcome: Error | null = null;
-      try {
-        await engine.transaction(async tx => {
-          outcome = await refusal(authorizeWrite(tx as never, authority, 'remember', 'memory/scope', true));
-          throw ROLLBACK;
-        }).catch(e => { if (e !== ROLLBACK) throw e; });
-      } finally {
-        engine.executeRaw = original;
-      }
+      // The removal lands in the transaction just before the credential row is locked FOR SHARE (the typed
+      // shareLockWriteCredential member when the engine has it, else the raw statement), so the recheck must see it.
+      await engine.transaction(async tx => {
+        const lockMember = (tx as { shareLockWriteCredential?: (kind: string, id: string) => Promise<void> }).shareLockWriteCredential;
+        const rawOriginal = tx.executeRaw.bind(tx);
+        const raced = new Proxy(tx, {
+          get(target, key) {
+            if (key === 'shareLockWriteCredential' && typeof lockMember === 'function') return async (kind: string, id: string) => {
+              if (!removed && kind === 'oauth_client') { removed = true; await rawOriginal('UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]); }
+              return lockMember.call(target, kind, id);
+            };
+            if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+              if (!removed && /FROM oauth_clients WHERE client_id\s*=\s*\$1.*FOR SHARE/s.test(String(args[0]))) {
+                removed = true;
+                await rawOriginal('UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]);
+              }
+              return rawOriginal(...args);
+            };
+            const value = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+        outcome = await refusal(authorizeWrite(raced as never, authority, 'remember', 'memory/scope', true));
+        throw ROLLBACK;
+      }).catch(e => { if (e !== ROLLBACK) throw e; });
       expect(removed).toBe(true);
       expect((outcome as (Error & { reason?: string }) | null)?.reason).toBe('source_not_attested');
       const [still] = await engine.executeRaw<{ attest_sources: string[] | null }>('SELECT attest_sources FROM oauth_clients WHERE client_id = $1', [clients.scopes!.id]);

@@ -154,66 +154,47 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
   opts: { signature?: string | null; approvedCapUsd?: number; maxMarkupRatio?: number } = {}): Promise<PageEmbedDecision> {
   if (stale.length === 0) return { kind: 'unmetered' };
   const approved = opts.approvedCapUsd !== undefined;
-  const holds = await readHolds(engine, page.id);
+  // One point read per plan: the archive's frontmatter hold marker (transcript_archive.embedding_hold) and the page's
+  // budget row. An archive page names its hold in frontmatter from its first write; the first plan for it, before any
+  // budget row exists, records that hold, so a page published ahead of its hold row is never embedded without the
+  // owner's approval. An approved page keeps its row (open), so the marker holds once.
+  const holds = await engine.readPageEmbeddingBudget(page.id);
   if (!approved && holds.state === null && holds.marker && ANY_SIZE_HOLD_REASONS.includes(holds.marker)) {
-    await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason) VALUES ($1, 'held', $2) ON CONFLICT (page_id) DO NOTHING", [page.id, holds.marker]);
+    await engine.recordPageEmbeddingHold(page.id, holds.marker);
     return { kind: 'held', reason: holds.marker };
   }
   if (!isLargePageBytes(pageBodyBytes(page))) {
     if (holds.state !== 'held' || !holds.reason || !ANY_SIZE_HOLD_REASONS.includes(holds.reason)) return { kind: 'unmetered' };
     if (!approved) return { kind: 'held', reason: holds.reason };
-    await engine.executeRaw("UPDATE page_embedding_budget SET state = 'open', reason = NULL, updated_at = now() WHERE page_id = $1", [page.id]);
+    await engine.openPageEmbeddingHold(page.id);
     return { kind: 'unmetered' };
   }
   const configured = await resolvePageEmbedCapUsd(engine);
   const { rate, priced } = ledgerPricePerMTok(opts.signature);
-  return engine.transaction(async tx => {
-    await tx.executeRaw('INSERT INTO page_embedding_budget (page_id) VALUES ($1) ON CONFLICT (page_id) DO NOTHING', [page.id]);
-    const [row] = await tx.executeRaw<BudgetRow>(`SELECT state, reason, embedding_signature, spent_usd, reserved_usd, cap_usd,
-        (reserved_usd > 0 AND updated_at < now() - interval '1 hour') AS stale_reservation
-      FROM page_embedding_budget WHERE page_id = $1 FOR UPDATE`, [page.id]);
-    if (!row) return { kind: 'unmetered' } as const;
-    if (row.state === 'held' && !approved) return { kind: 'held', reason: row.reason ?? 'awaiting_approval' } as const;
-    if (!approved && row.state === 'open') {
-      const junk = isSegmentedPage(page)
-        ? assessJunkWindows(await segmentedSampleWindows(tx, page.id), { max_markup_ratio: opts.maxMarkupRatio })
-        : assessSampledJunk(`${page.compiled_truth}\n${page.timeline ?? ''}`, { max_markup_ratio: opts.maxMarkupRatio });
-      if (junk.junk) {
-        const reason = junk.reasons.join(',');
-        await tx.executeRaw(`UPDATE page_embedding_budget SET state = 'held', reason = $2, updated_at = now() WHERE page_id = $1`, [page.id, reason]);
-        return { kind: 'held', reason } as const;
-      }
-    }
-    const sameLedger = !row.embedding_signature || !opts.signature || row.embedding_signature === opts.signature;
-    const spent = sameLedger ? Number(row.spent_usd) + (row.stale_reservation ? Number(row.reserved_usd) : 0) : 0;
-    let reserved = sameLedger && !row.stale_reservation ? Number(row.reserved_usd) : 0;
-    const stored = row.cap_usd === null ? configured : Number(row.cap_usd);
-    const capUsd = approved ? Math.max(stored, spent + reserved + opts.approvedCapUsd!) : stored;
-    const remaining = Math.max(0, capUsd - spent - reserved);
-    const chunkIndexes = new Set<number>();
-    let reservedUsd = 0;
-    for (const chunk of [...stale].sort((a, b) => b.chunk_index - a.chunk_index)) {
-      const cost = estimateCostFromChars(chunk.chunk_text.length, rate);
-      if (reservedUsd + cost > remaining) break;
-      reservedUsd += cost;
-      chunkIndexes.add(chunk.chunk_index);
-    }
-    const deferred = stale.length - chunkIndexes.size;
-    const openWindow = reserved > 0;
-    reserved += reservedUsd;
-    const state: PageBudgetState = deferred > 0 ? 'capped' : 'open';
-    const [written] = await tx.executeRaw<{ reservation_window: string | null }>(`UPDATE page_embedding_budget SET state = $2, reason = $3, embedding_signature = COALESCE($4, embedding_signature),
-        spent_usd = $5::float8, reserved_usd = $6::float8, ${RESERVED_AT_SQL('$6::float8', '$8::boolean')},
-        cap_usd = $7::float8, updated_at = now() WHERE page_id = $1 RETURNING ${RESERVATION_WINDOW_SQL} AS reservation_window`,
-    [page.id, state, deferred > 0 ? 'cap_reached' : null, opts.signature ?? null, spent, reserved,
-      approved && Number.isFinite(capUsd) ? capUsd : row.cap_usd, openWindow]);
-    const grant: PageEmbedGrant = {
-      chunkIndexes, reservedUsd, deferred, capUsd,
-      settle: ({ ok }) => settleLedgerReservation(engine, { table: 'page_embedding_budget', pageId: page.id }, written?.reservation_window ?? null,
-        reservedUsd, ok ? reservedUsd : 0, ok && !priced ? 1 : 0),
-    };
-    return { kind: 'grant', grant } as const;
-  });
+  // The sampled junk check holds an open page before any spend; the grant asks for it when the row turned open since.
+  const assessJunk = async (): Promise<{ reason: string | null }> => {
+    const junk = isSegmentedPage(page)
+      ? assessJunkWindows(await segmentedSampleWindows(engine, page.id), { max_markup_ratio: opts.maxMarkupRatio })
+      : assessSampledJunk(`${page.compiled_truth}\n${page.timeline ?? ''}`, { max_markup_ratio: opts.maxMarkupRatio });
+    return { reason: junk.junk ? junk.reasons.join(',') : null };
+  };
+  const input = {
+    approved, approvedCapUsd: opts.approvedCapUsd ?? null, configuredCapUsd: configured, signature: opts.signature ?? null,
+    chunks: stale.map(chunk => ({ chunkIndex: chunk.chunk_index, costUsd: estimateCostFromChars(chunk.chunk_text.length, rate) })),
+    junk: !approved && (holds.state === null || holds.state === 'open') ? await assessJunk() : null,
+  };
+  let reservation = await engine.reservePageEmbedding(page.id, input);
+  if (reservation.kind === 'needs_junk') reservation = await engine.reservePageEmbedding(page.id, { ...input, junk: await assessJunk() });
+  if (reservation.kind === 'needs_junk') throw new Error(`page ${page.id}: the embedding grant asked twice for a junk verdict`);
+  if (reservation.kind !== 'grant') return reservation;
+  const { chunkIndexes, reservedUsd, deferred, capUsd, window } = reservation;
+  const grant: PageEmbedGrant = {
+    chunkIndexes: new Set(chunkIndexes), reservedUsd, deferred, capUsd,
+    settle: ({ ok }) => engine.settlePageEmbeddingReservation(page.id, {
+      window, reservedUsd, bookedUsd: ok ? reservedUsd : 0, unpricedCalls: ok && !priced ? 1 : 0,
+    }),
+  };
+  return { kind: 'grant', grant };
 }
 
 /**

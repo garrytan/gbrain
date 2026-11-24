@@ -6,12 +6,18 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/361
+# covered: 327/396
+# trust_proposals: 0/3
+# remote_links: 0/4
+# page_visibility: 0/2
+# write_guards: 0/1
+# access_members: 0/1
+# cli_reads_import: 0/2
 # lifecycle: 9/9
-# pages: 32/32
+# pages: 32/36
 # search: 7/7
 # search_reads: 9/9
-# chunks: 22/22
+# chunks: 22/31
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -22,7 +28,7 @@
 # dream: 3/3
 # contradictions: 5/5
 # facts: 14/14
-# segmented_body: 15/15
+# segmented_body: 15/16
 # versions: 3/3
 # stats_ingest: 5/5
 # sync_aliases: 10/10
@@ -30,7 +36,7 @@
 # withdrawal_pages: 0/2
 # withdrawal_fence: 0/1
 # import_guards: 9/9
-# cycle_locks: 6/6
+# cycle_locks: 6/9
 # raw_sql: 4/4
 # code_edges: 8/8
 # eval_capture: 5/5
@@ -38,7 +44,7 @@
 # field_usage: 1/1
 # decide_proposals: 16/16
 # decide_store: 20/20
-# alias_fanout_reads: 4/4
+# alias_fanout_reads: 4/5
 # cli_reads_export: 9/12
 # jobs_health: 8/8
 # trust_tier_reads: 1/3
@@ -46,11 +52,24 @@
 # belief_reads: 0/1
 # search_vector: 0/1
 # open_loops: 5/7
-# write_misc: 0/21
+# write_misc: 0/25
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
+insertTrustProposal	trust_proposals	no	0	no	-	-	-
+getTrustProposal	trust_proposals	no	0	no	-	-	-
+listTrustProposals	trust_proposals	no	0	no	-	-	-
+setEffectTransactionLimits	remote_links	no	0	no	-	-	-
+readOwnedLinks	remote_links	no	0	no	-	-	-
+deleteOwnedLinks	remote_links	no	0	no	-	-	-
+readLinkTargetPages	remote_links	no	0	no	-	-	-
+readWriteVisibilityProbe	page_visibility	no	0	no	-	-	-
+readWriterSlugFence	page_visibility	no	0	no	-	-	-
+readPageIndexingState	write_guards	no	0	no	-	-	-
+readLinkedMember	access_members	no	0	no	-	-	-
+listGuestSourceIds	cli_reads_import	no	0	no	-	-	-
+readPageTrustRows	cli_reads_import	no	0	no	-	-	-
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
@@ -88,6 +107,10 @@ listAllSources	pages	yes	5	no	yes	yes	serves
 updateSourceConfig	pages	yes	13	no	yes	yes	serves
 getSource	pages	yes	1	no	yes	yes	serves
 listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
+readOwnerOnlySourcesPresent	pages	no	0	no	-	-	-
+readOwnerOnlySourceConfig	pages	no	0	no	-	-	-
+readSourceRow	pages	no	0	no	-	-	-
+lockSourceRow	pages	no	0	no	-	-	-
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	refuses:pages
@@ -129,6 +152,15 @@ setChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
 writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
 moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
 getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
+readPageEmbeddingBudget	chunks	no	0	no	-	-	-
+recordPageEmbeddingHold	chunks	no	0	no	-	-	-
+openPageEmbeddingHold	chunks	no	0	no	-	-	-
+reservePageEmbedding	chunks	no	0	no	-	-	-
+settlePageEmbeddingReservation	chunks	no	0	no	-	-	-
+readEmbeddingCompletion	chunks	no	0	no	-	-	-
+lockEffectClaimRow	chunks	no	0	no	-	-	-
+lockEmbeddingSwitch	chunks	no	0	no	-	-	-
+installChunkEmbeddings	chunks	no	0	no	-	-	-
 getChunksWithEmbeddings	chunks	yes	2	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
@@ -238,6 +270,7 @@ stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
 stageManifestRows	segmented_body	yes	12	no	yes	yes	serves
 readManifest	segmented_body	yes	7	no	yes	yes	serves
+readSegmentedEmbedPage	segmented_body	no	0	no	-	-	-
 stageSegmentChunks	segmented_body	yes	8	no	yes	yes	serves
 createSegmentedPageShell	segmented_body	yes	17	no	yes	yes	serves
 flipBodyGeneration	segmented_body	yes	22	no	yes	yes	serves
@@ -290,6 +323,9 @@ releaseCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 readCycleLocks	cycle_locks	yes	8	no	yes	yes	refuses:minion_queue
 deleteCycleLock	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
 deleteCycleLockIfStale	cycle_locks	yes	1	no	yes	yes	refuses:minion_queue
+takePageEmbeddingLease	cycle_locks	no	0	no	-	-	-
+renewPageEmbeddingLease	cycle_locks	no	0	no	-	-	-
+releasePageEmbeddingLease	cycle_locks	no	0	no	-	-	-
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 executeRaw	raw_sql	yes	7	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
@@ -350,6 +386,7 @@ resolveCaseSensitiveAliases	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
 readPageTitle	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
 readPageAliasRows	alias_fanout_reads	yes	3	no	yes	yes	refuses:raw_sql
 readEntityAliasRows	alias_fanout_reads	yes	1	no	yes	yes	refuses:raw_sql
+listSlugAliases	alias_fanout_reads	no	0	no	-	-	-
 listExportPageKeys	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
 readExportWithdrawalLedgerBytes	cli_reads_export	no	0	no	-	-	-
 listExportWithdrawals	cli_reads_export	no	0	no	-	-	-
@@ -388,12 +425,16 @@ readAdmissionSource	write_misc	no	0	no	-	-	-
 sharedSkillPackTablePresent	write_misc	no	0	no	-	-	-
 listSharedSkillPackRoots	write_misc	no	0	no	-	-	-
 getWorktreeBinding	write_misc	no	0	no	-	-	-
+worktreeClaimStore	write_misc	no	0	no	-	-	-
+readWriterAdminState	write_misc	no	0	no	-	-	-
+writerAdminStore	write_misc	no	0	no	-	-	-
 hasExtractedEvents	write_misc	no	0	no	-	-	-
 listActiveAccessMembers	write_misc	no	0	no	-	-	-
 hasLabelledOnlyMember	write_misc	no	0	no	-	-	-
 listAccessTokens	write_misc	no	0	no	-	-	-
 notifierCoverageRecorded	write_misc	no	0	no	-	-	-
 readOpCheckpointKeys	write_misc	no	0	no	-	-	-
+deleteOpCheckpoint	write_misc	no	0	no	-	-	-
 readHealthMemoClock	write_misc	no	0	no	-	-	-
 listSynopsisSourceIds	write_misc	no	0	no	-	-	-
 expireMemoryProposals	write_misc	no	0	no	-	-	-

@@ -189,10 +189,19 @@ test('a column switch after context validation cannot redirect vectors into the 
           get(target, key) {
             if (key === 'transaction') return <T>(run: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => run(new Proxy(tx, {
               get(inner, prop) {
+                // The validated config rows and descriptor have already been read when the page's indexing state
+                // is read (the typed readPageIndexingState member when the engine has it, else the raw statement);
+                // simulate a config writer right then, before the first vector write.
+                if (prop === 'readPageIndexingState' && typeof (inner as { readPageIndexingState?: unknown }).readPageIndexingState === 'function') return async (pageId: number) => {
+                  const result = await (inner as unknown as { readPageIndexingState(id: number): Promise<unknown> }).readPageIndexingState(pageId);
+                  if (!switched) {
+                    switched = true;
+                    await inner.setConfig('search_embedding_column', 'embedding_origin_next');
+                  }
+                  return result;
+                };
                 if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
                   const result = await inner.executeRaw(sql, params);
-                  // The validated config rows and descriptor have already been
-                  // read; simulate a config writer before the first vector write.
                   if (!switched && sql === 'SELECT chunker_version,corpus_generation FROM pages WHERE id=$1') {
                     switched = true;
                     await inner.setConfig('search_embedding_column', 'embedding_origin_next');

@@ -1,4 +1,14 @@
-
+/**
+ * The persistence protocol declaration (BrainEngine declarePersistence): one SQL text for both engines.
+ *
+ * One SELECT of transaction-local settings that declares protocol 2 and, for a durable write, synchronous commit and
+ * the lock, statement and (optionally) idle-in-transaction timeouts, then reads the brain row FOR SHARE in the same
+ * statement. The text is the one `src/core/persistence/protocol.ts` has always sent, byte for byte: the connection
+ * matches it to send it before BEGIN's answer (`isPersistenceDeclaration`, `TransactionOptions.pipelineFirst`), and
+ * tests match it too. Both engines send it through their own `executeRaw`, so a transaction engine declares inside its
+ * transaction. This module imports no persistence code.
+ */
+import type { BrainEngine } from '../engine.ts';
 
 /** The durable-write settings a declaration may carry. `idleInTransaction` is set first, in the same statement. */
 export interface DurablePersistenceSettings {
@@ -23,4 +33,18 @@ export function persistenceDeclarationStatement(durable?: DurablePersistenceSett
   return durable.idleInTransaction === undefined
     ? { sql: DURABLE, params: [durable.lockTimeout, durable.statementTimeout] }
     : { sql: DURABLE_IDLE, params: [durable.lockTimeout, durable.statementTimeout, durable.idleInTransaction] };
+}
+
+/** Sends the declaration through `engine.executeRaw` and returns the brain id read under it (null when the row is missing). */
+export async function declarePersistence(engine: Pick<BrainEngine, 'executeRaw'>, durable?: DurablePersistenceSettings): Promise<string | null> {
+  const { sql, params } = persistenceDeclarationStatement(durable);
+  const [row] = params.length
+    ? await engine.executeRaw<{ brain: string | null }>(sql, params)
+    : await engine.executeRaw<{ brain: string | null }>(sql);
+  return row?.brain ?? null;
+}
+
+/** Sends `SYNCHRONOUS_COMMIT_SQL` through `engine.executeRaw`: this transaction's commit waits for the flush. */
+export async function requireSynchronousCommit(engine: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
+  await engine.executeRaw(SYNCHRONOUS_COMMIT_SQL);
 }

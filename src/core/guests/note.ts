@@ -35,21 +35,20 @@ export const GUEST_SOURCES_HIDDEN_SQL = `(pg_catalog.row_security_active('guest_
   + ` AND EXISTS (SELECT 1 FROM pg_catalog.unnest(p.polroles) AS r(id) WHERE CASE WHEN r.id = 0::oid THEN true ELSE pg_catalog.pg_has_role(r.id, 'USAGE') END)))`;
 
 /** The guest sources among `sourceIds`, by guestSourceSql. Throws when the lookup fails (a schema behind the guest-notes migration included). */
-export async function readGuestSourceIds(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds: readonly string[]): Promise<Set<string>> {
+export async function readGuestSourceIds(engine: Pick<BrainEngine, 'listGuestSourceIds'>, sourceIds: readonly string[]): Promise<Set<string>> {
   if (sourceIds.length === 0) return new Set();
-  const rows = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE s.id = ANY($1::text[]) AND ${guestSourceSql('s.config', 's.id')}`, [[...new Set(sourceIds)]]);
-  return new Set(rows.map(row => row.id));
+  return new Set(await engine.listGuestSourceIds(sourceIds));
 }
 
 /** Whether `sourceId` is a guest source; a lookup that failed answers guest, with its error, so a caller can say it failed. */
-export async function guestSourceVerdict(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<{ guest: boolean; lookupError?: string }> {
+export async function guestSourceVerdict(engine: Pick<BrainEngine, 'listGuestSourceIds'>, sourceId: string): Promise<{ guest: boolean; lookupError?: string }> {
   try { return { guest: (await readGuestSourceIds(engine, [sourceId])).has(sourceId) }; } catch (e) {
     return { guest: true, lookupError: e instanceof Error ? e.message : String(e) };
   }
 }
 
 /** For a derived producer: true when `sourceId` is a guest source, or when that cannot be told (the lookup failed). */
-export async function isGuestSource(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
+export async function isGuestSource(engine: Pick<BrainEngine, 'listGuestSourceIds'>, sourceId: string): Promise<boolean> {
   return (await guestSourceVerdict(engine, sourceId)).guest;
 }
 

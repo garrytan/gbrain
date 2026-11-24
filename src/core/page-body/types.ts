@@ -6,6 +6,14 @@
  * owns their contents.
  */
 import type { ChunkInput, PageType, PageKind, EffectiveDateSource } from '../types.ts';
+/**
+ * Segmented page storage (Wave B): the row shapes shared by the engine
+ * methods (engine-sql/page-body.ts), the pure segmenter (page-body/segmenter.ts)
+ * and the ingest/publication path. Parser state, protected regions, facts
+ * slots, outline and page flags are opaque JSON to the engine: the segmenter
+ * owns their contents.
+ */
+import type { CRMode } from '../types.ts';
 
 export type BodyStorage = 'inline' | 'segmented';
 export type BodyRegion = 'truth' | 'timeline';
@@ -14,6 +22,20 @@ export type BodyStagingKind = 'upload' | 'import' | 'sync' | 'put' | 'append' | 
 export type BodyStagingMode = 'create' | 'replace' | 'append';
 export type BodyStagingState = 'open' | 'sealed' | 'prepared' | 'committed' | 'aborted' | 'expired';
 export type JsonObject = Record<string, unknown>;
+
+/** The page fields a segmented embed reads (`readSegmentedEmbedPage`): metadata only, never the body. */
+export interface SegmentedEmbedPage {
+  id: number;
+  slug: string;
+  source_id: string;
+  title: string;
+  contextual_retrieval_mode: CRMode | null;
+  body_storage: 'segmented';
+  body_bytes: number;
+}
+
+/** A page by id, or by source and slug (`readSegmentedEmbedPage`). */
+export type SegmentedEmbedRef = { id: number } | { sourceId: string; slug: string };
 
 /** One segment's stored text, deduplicated per (source, sha256). */
 export interface SegmentTextInput {

@@ -61,14 +61,18 @@ const sqlOf = (db: Db): SqlQuery => typeof db === 'function' ? db : sqlQueryForE
  */
 export async function markedScopeSources(db: Db, ids: readonly string[], lock?: 'share' | 'update'): Promise<Set<string>> {
   if (!ids.length) return new Set();
-  const sql = sqlOf(db);
+  const rows = typeof db === 'function' ? await scopeSourceRows(db, ids, lock) : await db.readScopeSourceConfigs(ids, lock);
+  return new Set(rows.filter(r => isScopeSourceConfig(r.config)).map(r => String(r.id)));
+}
+
+/** The same read through a caller's SqlQuery (a transaction handle the grant writes hold). */
+async function scopeSourceRows(sql: SqlQuery, ids: readonly string[], lock?: 'share' | 'update'): Promise<Record<string, unknown>[]> {
   const list = JSON.stringify([...new Set(ids)]);
-  const rows = lock === 'update'
+  return lock === 'update'
     ? await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb)) ORDER BY id FOR UPDATE`
     : lock === 'share'
       ? await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb)) ORDER BY id FOR SHARE`
       : await sql`SELECT id, config FROM sources WHERE id IN (SELECT jsonb_array_elements_text(${list}::text::jsonb))`;
-  return new Set(rows.filter(r => isScopeSourceConfig(r.config)).map(r => String(r.id)));
 }
 
 export interface CredentialRef { kind: 'token' | 'client'; id: string }

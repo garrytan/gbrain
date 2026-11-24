@@ -211,7 +211,9 @@ for (const kind of testBackends()) {
       await engine.setConfig('pages.segmented_storage', 'on');
       const denied = Object.create(engine, { executeRaw: { value: (sql: string, ...rest: unknown[]) => /persistence_requests/.test(sql)
         ? Promise.reject(Object.assign(new Error('permission denied for table persistence_requests'), { code: '42501' }))
-        : (engine.executeRaw as (...a: unknown[]) => Promise<unknown>)(sql, ...rest) } }) as BrainEngine;
+        : (engine.executeRaw as (...a: unknown[]) => Promise<unknown>)(sql, ...rest) },
+        // Where the gate's evidence is the typed read readSegmentedGateEvidence, the denial lands there too.
+        readSegmentedGateEvidence: { value: () => Promise.reject(Object.assign(new Error('permission denied for table persistence_requests'), { code: '42501' })) } }) as BrainEngine;
       expect(await readPageBodyPolicy(engine)).toMatchObject({ segmented: true });
       expect(await segmentedNow(denied)).toBe(false);
       expect(await readPageBodyPolicy(denied)).toMatchObject({ segmented: false, maxBytes: PAGE_MAX_BYTES });

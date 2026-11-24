@@ -45,3 +45,47 @@ export const LIST_WRITER_VERSIONS_SQL = `SELECT * FROM (SELECT * FROM (
 export async function listWriterVersions(exec: LegacyUnscopedRead, limit: number): Promise<WriterVersionRow[]> {
   return (await exec.executeRaw<RawRow>(LIST_WRITER_VERSIONS_SQL, [limit])).map(writerVersionRow);
 }
+
+/** One group of the segmented-storage gate's evidence (persistence/writer-versions.ts segmentedGateEvidence), times as ISO text. */
+export interface SegmentedGateEvidenceRow {
+  role: 'admitter' | 'consumer' | 'importer' | 'resident';
+  host_id: string | null; principal: string; version: string | null; segment_reader: boolean;
+  last_seen: string | null; requests: number; first_seen: string | null;
+}
+
+/**
+ * The segmented-storage gate's evidence: every writer seen in the last `$1` days, per role, host, principal, version and
+ * segment-reader mark, newest first. The ingest log is read in two arms, unmarked and marked rows, each on its partial
+ * index (ingest_log_unmarked_idx, v254; ingest_log_marked_idx, v259), so the read never scans the whole log.
+ */
+export const SEGMENTED_GATE_EVIDENCE_SQL = `WITH win AS (SELECT now()-($1::double precision*interval '1 day') AS since)
+    SELECT 'admitter' AS role,r.admitter_host_id::text AS host_id,r.principal_kind||':'||r.principal_id AS principal,r.admitter_version AS version,
+      COALESCE(r.admitter_segment_reader,false) AS segment_reader,MAX(r.created_at) AS last_seen,COUNT(*)::integer AS requests,
+      MIN(r.created_at) AS first_seen
+    FROM persistence_requests r CROSS JOIN win WHERE r.created_at>=win.since GROUP BY 2,3,4,5
+    UNION ALL
+    SELECT 'consumer',COALESCE(r.consumer_host_id,w.owner_host_id)::text,r.principal_kind||':'||r.principal_id,r.consumer_version,
+      COALESCE(r.consumer_segment_reader,false),MAX(COALESCE(r.published_at,r.completed_at)),COUNT(*)::integer,
+      MIN(COALESCE(r.published_at,r.completed_at))
+    FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id CROSS JOIN win
+    WHERE r.state='committed' AND COALESCE(r.published_at,r.completed_at)>=win.since GROUP BY 2,3,4,5
+    UNION ALL
+    SELECT 'importer',l.writer_host_id::text,'ingest:'||l.source_type,l.writer_version,false,MAX(l.created_at),COUNT(*)::integer,MIN(l.created_at)
+    FROM ingest_log l CROSS JOIN win WHERE l.writer_segment_reader IS NOT TRUE AND l.created_at>=win.since GROUP BY 2,3,4
+    UNION ALL
+    SELECT 'importer',l.writer_host_id::text,'ingest:'||l.source_type,l.writer_version,true,MAX(l.created_at),COUNT(*)::integer,MIN(l.created_at)
+    FROM ingest_log l CROSS JOIN win WHERE l.writer_segment_reader IS TRUE AND l.created_at>=win.since GROUP BY 2,3,4
+    UNION ALL
+    SELECT 'resident',c.host_id::text,'process:'||c.kind,c.version,COALESCE(c.segment_reader,false),MAX(c.renewed_at),COUNT(*)::integer,MIN(c.started_at)
+    FROM persistence_consumers c CROSS JOIN win WHERE c.renewed_at>=win.since GROUP BY 2,3,4,5
+    ORDER BY last_seen DESC`;
+
+/** The row as every engine returns it (ISO times, a numeric count, a boolean mark). */
+export function segmentedGateEvidenceRow(row: Omit<SegmentedGateEvidenceRow, 'last_seen' | 'first_seen' | 'requests'> & { last_seen: unknown; first_seen: unknown; requests: unknown }): SegmentedGateEvidenceRow {
+  return { role: row.role, host_id: row.host_id ?? null, principal: row.principal, version: row.version ?? null, segment_reader: row.segment_reader === true,
+    last_seen: isoTime(row.last_seen), requests: Number(row.requests), first_seen: isoTime(row.first_seen) };
+}
+
+export async function readSegmentedGateEvidence(exec: LegacyUnscopedRead, days: number): Promise<SegmentedGateEvidenceRow[]> {
+  return (await exec.executeRaw<Parameters<typeof segmentedGateEvidenceRow>[0]>(SEGMENTED_GATE_EVIDENCE_SQL, [days])).map(segmentedGateEvidenceRow);
+}

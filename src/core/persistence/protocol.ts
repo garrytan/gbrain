@@ -1,8 +1,11 @@
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readPersistenceBrain } from './managed-mode.ts';
+import type { BrainEngine } from '../engine.ts';
 
 const declared = new WeakSet<object>();
+/** An engine that can declare the protocol (BrainEngine declarePersistence; engine-sql/persistence-declaration.ts holds the text). */
+export type DeclaringEngine = Pick<BrainEngine, 'declarePersistence'>;
 /**
  * Global persistence lock order: the `persistence_brain` row, then worktree
  * rows (id order), then source rows (id order), then counters, requests and
@@ -17,12 +20,25 @@ const declared = new WeakSet<object>();
  * first and declares after it.
  */
 const BRAIN_SHARE = '(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain';
-
-/** Transaction-local; #5984: a transaction engine declares it once (a savepoint is its own engine object). */
-export async function declarePersistenceProtocol(tx: SqlEngine): Promise<void> {
+/**
+ * Global persistence lock order: the `persistence_brain` row, then worktree
+ * rows (id order), then source rows (id order), then counters, requests and
+ * page keys. The request and effect protocol triggers read the brain row
+ * FOR SHARE, and worktree claims and topology changes lock it FOR UPDATE
+ * before their worktrees, sources and counters. A transaction that locked a
+ * source or counter row before its first request or effect write would wait
+ * for the brain row while holding what the topology change waits for, so
+ * every protocol declaration takes the brain row FOR SHARE first, in the same
+ * statement as its settings (a missing row still declares). Declare before
+ * any other row lock. A transaction needing the exclusive brain lock takes it
+ * first and declares after it.
+ *
+ * Transaction-local; #5984: a transaction engine declares it once (a savepoint is its own engine object).
+ */
+export async function declarePersistenceProtocol(tx: DeclaringEngine): Promise<void> {
   const inTransaction = (tx as { _pageTransaction?: boolean })._pageTransaction === true;
   if (inTransaction && declared.has(tx)) return;
-  await tx.executeRaw(`SELECT set_config('gbrain.persistence_protocol','2',true),${BRAIN_SHARE}`);
+  await tx.declarePersistence();
   if (inTransaction) declared.add(tx);
 }
 

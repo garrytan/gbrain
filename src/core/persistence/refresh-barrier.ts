@@ -18,6 +18,7 @@ import { completeWrite, SYNC_KIND } from './journal.ts';
 import { PENDING_IMPORT } from './pending-import.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
+import { type AuthorityEngine } from './authority.ts';
 
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', LC_ALL: 'C', GIT_OPTIONAL_LOCKS: '0' };
 const DIFF_TIMEOUT_MS = 30_000;
@@ -78,7 +79,7 @@ async function laterWriteRefusal(engine: SqlEngine, row: WriteRequest): Promise<
  * refusal to record. A row that was never deferred is not checked. GST-1623: a write held for an import is checked too, for a
  * later write to its page that committed first.
  */
-export async function deferredReplayRefusal(engine: SqlEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
+export async function deferredReplayRefusal(engine: AuthorityEngine, row: WriteRequest, files: ReadonlyArray<{ path: string; root: string }>): Promise<DeferredRefusal | null> {
   const refreshId = row.deferred_refresh_id;
   if (!refreshId && row.deferred_import_from == null) return null;
   const later = await laterWriteRefusal(engine, row);

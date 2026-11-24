@@ -45,9 +45,15 @@ export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
  * method forces a visible family assignment here.
  */
 export const FAMILIES: Record<string, readonly string[]> = {
+  trust_proposals: ['listTrustProposals', 'getTrustProposal', 'insertTrustProposal'],
+  remote_links: ['readLinkTargetPages', 'deleteOwnedLinks', 'readOwnedLinks', 'setEffectTransactionLimits'],
+  page_visibility: ['readWriterSlugFence', 'readWriteVisibilityProbe'],
+  write_guards: ['readPageIndexingState'],
+  access_members: ['readLinkedMember'],
+  cli_reads_import: ['readPageTrustRows', 'listGuestSourceIds'],
   lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
     'registerBeforeDisconnect', 'withReservedConnection'],
-  pages: ['getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
+  pages: ['lockSourceRow', 'readSourceRow', 'readOwnerOnlySourceConfig', 'readOwnerOnlySourcesPresent', 'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
     'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',
     'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions', 'listAllSources', 'listSourceLocalPaths', 'updateSourceConfig', 'getSource',
     'listPrefixSampledPages', 'listCorpusSample', 'getPageSealState', 'refreshPageOrigin'],
@@ -55,7 +61,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'searchKeywordChunks'],
   search_reads: ['cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts',
     'slugsEndingIn', 'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo'],
-  chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
+  chunks: ['installChunkEmbeddings', 'lockEmbeddingSwitch', 'lockEffectClaimRow', 'readEmbeddingCompletion', 'settlePageEmbeddingReservation', 'reservePageEmbedding', 'openPageEmbeddingHold', 'recordPageEmbeddingHold', 'readPageEmbeddingBudget', 'upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
     'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
     'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'writeTextProjectionSeal',
@@ -81,7 +87,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   facts: ['insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset',
     'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts', 'findCandidateDuplicates', 'consolidateFact',
     'findTrajectory', 'getFactsHealth'],
-  segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest',
+  segmented_body: ['readSegmentedEmbedPage', 'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest',
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
     'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
   versions: ['createVersion', 'getVersions', 'revertToVersion'],
@@ -95,7 +101,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   withdrawal_fence: ['hasWithdrawnFenceClaim'],
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'readLedgerSource', 'isFolderRestricted'],
-  cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
+  cycle_locks: ['releasePageEmbeddingLease', 'renewPageEmbeddingLease', 'takePageEmbeddingLease', 'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale'],
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
   code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
     // group D (code traversal cache)
@@ -120,7 +126,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listDecideResolvedModels', 'listDecideSpendBySlot', 'pruneDecideReceipts', 'readDecideState',
     'setDecideCalibrationRetired', 'storeDecideQualification', 'upsertDecideState'],
   // alias_fanout_reads: the alias reads of search's alias fan-out and the entity card (engine-sql/alias-fanout-reads.ts)
-  alias_fanout_reads: ['resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows'],
+  alias_fanout_reads: ['listSlugAliases', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows'],
   // cli_reads_export: the reads gbrain export ran through executeRaw (engine-sql/export-reads.ts)
   cli_reads_export: ['listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines',
     'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'listAccessPolicySourceIds', 'readBodyManifestOutline',
@@ -139,7 +145,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   open_loops: [
     'closeOpenLoop', 'listOpenLoops', 'purgeStaleAppliedCaptures', 'listPendingCoreEditNotices', 'countOpenLoopsByCounterpartyEmail', 'readEntityOpenLoops', 'upsertOpenLoop'],
   // write_misc: the small write-side reads (engine-sql/write-misc.ts)
-  write_misc: [
+  write_misc: ['deleteOpCheckpoint', 'writerAdminStore', 'readWriterAdminState', 'worktreeClaimStore', 
     'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',
     'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
     'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'notifierCoverageRecorded',

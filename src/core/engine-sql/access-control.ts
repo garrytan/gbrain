@@ -27,6 +27,32 @@ export interface MemberLookupRead {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
 }
 
+/**
+ * Where a caller's may_act_for list is stored: a live legacy token row (id), a live OAuth client row (client id), or the
+ * config value a stdio server reads (config key, mcp.stdio_may_act_for).
+ */
+export type MayActForVia = 'legacy_token' | 'oauth_client' | 'stdio_config';
+
+/** The statements access/caller.ts mayActForOf ran through executeRaw, by where the list is stored. */
+export const MAY_ACT_FOR_SQL: Record<MayActForVia, string> = {
+  legacy_token: 'SELECT may_act_for FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL',
+  oauth_client: 'SELECT may_act_for FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL',
+  stdio_config: 'SELECT value FROM config WHERE key = $1',
+};
+
+/**
+ * The stored may_act_for of one caller: a live token's or client's list (null when the row is revoked, deleted, absent
+ * or holds no list), or the stdio config text as stored (null when the key is unset). The caller parses the text.
+ */
+export async function readMayActFor(exec: MemberLookupRead, via: MayActForVia, key: string): Promise<string[] | string | null> {
+  if (via === 'stdio_config') {
+    const [row] = await exec.executeRaw<{ value: string | null }>(MAY_ACT_FOR_SQL.stdio_config, [key]);
+    return row?.value ?? null;
+  }
+  const [row] = await exec.executeRaw<{ may_act_for: unknown }>(MAY_ACT_FOR_SQL[via], [key]);
+  return Array.isArray(row?.may_act_for) ? row!.may_act_for as string[] : null;
+}
+
 /** A live (enabled, not tombstoned) access member and its groups, by group id. */
 export interface LiveMemberRow {
   id: string;
@@ -96,4 +122,27 @@ export async function readFolderAccess(exec: MemberLookupRead, readers: readonly
   const rules = readers.length ? await exec.executeRaw<FolderRuleRow>(FOLDER_RULES_READABLE_BY_SQL, [[...readers]]) : [];
   const coverage = await exec.executeRaw<FolderCoverageRow>(FOLDER_COVERAGE_SQL);
   return { rules, coverage };
+}
+
+/** The enabled members and the existing groups an asserted audience names. */
+export interface AudiencePrincipalRows {
+  members: LiveMemberRow[];
+  groups: string[];
+}
+
+/** The statements access/caller.ts resolveAudienceIdentities ran through executeRaw: the members, then the groups. */
+export const AUDIENCE_MEMBERS_SQL = `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
+  WHERE m.id = ANY($1::text[]) AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL
+  GROUP BY m.id`;
+export const AUDIENCE_GROUPS_SQL = 'SELECT id FROM access_groups WHERE id = ANY($1::text[])';
+
+/**
+ * Which of `memberIds` are enabled, untombstoned members (each with its groups) and which of `groupIds` are existing
+ * groups. An empty list reads nothing. A failure is thrown unchanged; the caller reads every entry as unknown.
+ */
+export async function readAudiencePrincipals(exec: MemberLookupRead, memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows> {
+  const members = memberIds.length ? await exec.executeRaw<LiveMemberRow>(AUDIENCE_MEMBERS_SQL, [memberIds]) : [];
+  const groups = groupIds.length ? (await exec.executeRaw<{ id: string }>(AUDIENCE_GROUPS_SQL, [groupIds])).map(r => r.id) : [];
+  return { members: members.map(r => ({ id: r.id, groups: r.groups ?? [] })), groups };
 }

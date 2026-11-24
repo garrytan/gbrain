@@ -11,6 +11,8 @@
  * before.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { sqlFragment } from './fragment.ts';
+import { rows } from './search-reads.ts';
 
 /** Bytewise order, the order a Rust store sorts strings in. */
 const byteCmp = (a: string | null, b: string | null): number => Buffer.compare(Buffer.from(a ?? ''), Buffer.from(b ?? ''));
@@ -56,4 +58,16 @@ export async function readEntityAliasRows(exec: LegacyUnscopedRead, sourceId: st
   return exec.executeRaw<EntityAliasRow>(
     `SELECT slug, alias_norm, origin, alias_text FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) ORDER BY alias_norm`,
     [sourceId, [...slugs]]);
+}
+
+/** One `slug_aliases` row: an old slug and the slug it resolves to. */
+export interface SlugAliasRow { alias_slug: string; canonical_slug: string }
+
+/**
+ * Every `slug_aliases` row of the source (extract.ts `loadSlugAliasTargets`, which maps old slugs of renamed pages to
+ * their current slug so a link written before a rename still resolves). The text is the caller's statement, byte for
+ * byte; it has no order, as the caller builds a map. The caller keeps its missing-table fallback.
+ */
+export async function listSlugAliases(exec: LegacyUnscopedRead, sourceId: string): Promise<SlugAliasRow[]> {
+  return rows<SlugAliasRow>(exec, sqlFragment`SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = ${sourceId}`);
 }
