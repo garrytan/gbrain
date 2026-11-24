@@ -157,7 +157,7 @@ describe('doctor.ts keeps the guard installed while a connect it abandoned at th
       try {
         await runDoctorCommand(['--tier', 'ops', '--budget-ms', '200', '--json'], ctx as never);
       } finally {
-        console.log = out; console.error = err; process.stdout.write = wrote; process.exitCode = exitCode;
+        console.log = out; console.error = err; process.stdout.write = wrote; process.exitCode = exitCode ?? 0;
       }
       const lockedDir = dirname(pgliteLockDirFor(store)); // the canonical (realpath) form acquireLock hands the guard
       try {
