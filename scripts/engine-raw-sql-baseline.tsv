@@ -472,7 +472,7 @@ src/core/persistence/sync-delete-tombstones.ts	execute_raw	2
 src/core/persistence/sync-discovery.ts	execute_raw	6
 src/core/persistence/sync-drain.ts	execute_raw	2
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
-src/core/persistence/sync-failures.ts	execute_raw	7
+src/core/persistence/sync-failures.ts	execute_raw	4
 src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
@@ -663,7 +663,6 @@ src/core/url-source-origin.ts	execute_raw	1
 src/core/vector-index.ts	driver_call	2
 src/core/vector-index.ts	execute_raw	9
 src/core/vector-prewarm.ts	execute_raw	4
-src/core/verbs/entity-names.ts	execute_raw	1
 src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4

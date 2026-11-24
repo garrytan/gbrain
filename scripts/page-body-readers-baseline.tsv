@@ -714,8 +714,8 @@ src/core/utils.ts	contentHashLegacy	field	META	legacy formula over an inline pag
 src/core/utils.ts	rowToPage	field	INLINE	installs throwing body getters on a segmented row (guardSegmentedBody); inline rows copy the columns
 src/core/utils.ts	rowToStalePage	field	STREAM	listStalePagesForExtraction lists inline pages only (segmented skipped in SQL, still counted stale)
 src/core/verbs/entity-card-identity.ts	excerptSource	field	LEAD	inline pages only; a segmented page reads truthLead (EXCERPT_LEAD_BYTES)
-src/core/verbs/entity-names.ts	lookupOne	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
-src/core/verbs/entity-names.ts	lookupOne	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
+src/core/verbs/entity-names.ts	lookupOne	field	LEAD	bounded prefix rows
+src/core/verbs/entity-names.ts	lookupOne	field	LEAD	bounded prefix rows
 src/core/write-gate-scan.ts	SPECS	sql	STREAM	
 src/core/write-gate-scan.ts	SPECS	sql	STREAM	
 src/core/write-gate.ts	assessPageForGate	field	STREAM	

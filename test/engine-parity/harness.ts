@@ -327,6 +327,27 @@ export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend
 }
 
 /**
+ * Fixture: write an op checkpoint row stamped `iso`. BrainEngine's checkpoint writes stamp the database clock, so the
+ * SQL arms insert the stamp with harness-only SQL. The Rust store stamps each write with its own clock, as in
+ * `stampUpdatedAt`: a case writes its rows in the order their stamps put them, and reads a stamp it asserts back through
+ * readOpCheckpointRecord rather than comparing it with `iso`.
+ */
+export async function writeCheckpointAt(engine: BrainEngine, backend: ParityBackend, op: string, fingerprint: string, keys: unknown[], iso: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await engine.writeOpCheckpointRecord(op, fingerprint, keys);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, $4::timestamptz)',
+        [op, fingerprint, JSON.stringify(keys), iso]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
  * Fixture: create a source whose last sync finished at `syncedAt` (ISO, ending in Z). BrainEngine has no typed write
  * of a sync time, so the SQL arms insert it with harness-only SQL and the Rust arm passes it to the store's upsert.
  */

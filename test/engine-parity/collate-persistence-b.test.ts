@@ -26,6 +26,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSource, enableBeliefCoverage, parityArms } from './harness.ts';
 import { seedTypedEffects, seedTypedRequest, settleTypedEffects } from '../helpers/persistence-typed-seed.ts';
+import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
+
+type Backend = Parameters<typeof createSource>[1];
+
+/** Source ids every engine accepts (the Rust store takes a-z, 0-9 and -) that a locale and a byte sort still order apart. */
+const SOURCE_IDS = ['ab', 'a-z', 'a-y'] as const;
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -85,6 +91,18 @@ async function hostBind(engine: BrainEngine, worktreeId: string, hostId: string,
     [worktreeId, hostId, localPath, `${localPath}.lock`]);
 }
 
+/** bindEach through the typed seeders (persistence-fixtures.ts), so the rows land on the Rust store too. */
+async function bindEachTyped(engine: BrainEngine, backend: Backend, ids: readonly string[], real: boolean): Promise<Map<string, { worktree: string; incarnation: string }>> {
+  const made = new Map<string, { worktree: string; incarnation: string }>();
+  for (const id of ids) {
+    const incarnation = real ? await seedSource(engine, backend, id) : randomUUID();
+    const worktree = await seedWorktree(engine);
+    await seedSourceBinding(engine, id, incarnation, worktree);
+    made.set(id, { worktree, incarnation });
+  }
+  return made;
+}
+
 /** One worktree per id, a binding for each, and (with `real`) a source row behind it. */
 async function bindEach(engine: BrainEngine, ids: readonly string[], real: boolean): Promise<Map<string, { worktree: string; incarnation: string }>> {
   const made = new Map<string, { worktree: string; incarnation: string }>();
@@ -99,32 +117,32 @@ async function bindEach(engine: BrainEngine, ids: readonly string[], real: boole
 
 describe('persistence binding listings sort source ids by byte', () => {
   parityTest('listOrphanBindings lists orphan bindings by byte source id, and its limit keeps the byte-first ones', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
-    await bindEach(engine, MIXED_IDS, false);
+    methods: ['worktreeClaimStore'],
+  }, async (engine, backend) => {
+    await bindEachTyped(engine, backend, SOURCE_IDS, false);
     const all = (await listOrphanBindings(engine)).map(row => row.source_id);
-    const limited = (await listOrphanBindings(engine, { limit: 3 })).map(row => row.source_id);
-    expect(all).toEqual([...BYTE_IDS]);
-    expect(limited).toEqual(BYTE_IDS.slice(0, 3));
+    const limited = (await listOrphanBindings(engine, { limit: 2 })).map(row => row.source_id);
+    expect(all).toEqual(byteOrder(SOURCE_IDS));
+    expect(limited).toEqual(byteOrder(SOURCE_IDS).slice(0, 2));
     return { all, limited };
   });
 
   parityTest('preActivationClaims, readSyncFreshness and readSourceMovement list bound sources by byte id, and a claim lists its roots by byte path', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
-    const made = await bindEach(engine, MIXED_IDS, true);
+    methods: ['worktreeClaimStore'],
+  }, async (engine, backend) => inHome(async () => {
+    const made = await bindEachTyped(engine, backend, SOURCE_IDS, true);
     const host = localHostId();
     const other = randomUUID();
     const worktree = made.get('ab')!.worktree;
-    await hostBind(engine, worktree, host, '/collate/ab');
-    await hostBind(engine, worktree, other, '/collate/a-z');
+    await seedHostBinding(engine, worktree, host, '/collate/ab');
+    await seedHostBinding(engine, worktree, other, '/collate/a-z');
     const claims = await preActivationClaims(engine as never);
     const fresh = await readSyncFreshness(engine, { behind: async () => null, commitTimes: async () => new Map() });
     const moved = await readSourceMovement(engine);
-    expect(claims.map(claim => claim.source_id)).toEqual([...BYTE_IDS]);
+    expect(claims.map(claim => claim.source_id)).toEqual(byteOrder(SOURCE_IDS));
     expect(claims.find(claim => claim.source_id === 'ab')!.roots).toEqual(['/collate/a-z', '/collate/ab']);
-    expect(fresh.map(row => row.source_id)).toEqual([...BYTE_IDS]);
-    expect(moved.map(row => row.source_id)).toEqual([...BYTE_IDS]);
+    expect(fresh.map(row => row.source_id)).toEqual(byteOrder(SOURCE_IDS));
+    expect(moved.map(row => row.source_id)).toEqual(byteOrder(SOURCE_IDS));
     return { claims: claims.map(claim => ({ id: claim.source_id, roots: claim.roots })), fresh: fresh.map(row => row.source_id), moved: moved.map(row => row.source_id) };
   }));
 });
@@ -170,20 +188,21 @@ describe('persistence doctor groupings sort source ids and codes by byte', () =>
 });
 
 describe('moved-checkout members and topology refusals name sources by byte', () => {
+  // managed_persistence held for callers: a moved checkout is read through the managed worktree it belongs to, which a Rust brain refuses.
   parityTest('movedPhysicalRoot lists the members of a moved checkout by byte source id', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async home => {
+    methods: ['writerReleaseStore', 'worktreeClaimStore'], requires: 'managed_persistence',
+  }, async (engine, backend) => inHome(async home => {
     const root = join(home, 'brains', 'old', 'root');
-    const members = ['ab', 'a-z', 'a.b'];
+    const members = [...SOURCE_IDS];
     for (const id of members) mkdirSync(join(root, id), { recursive: true });
     execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main']);
     await withEnv({ GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await (await engine.writerReleaseStore()).setBrainEnabled(false);
       for (const id of members) {
-        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, join(root, id)]);
+        await seedSource(engine, backend, id, join(root, id));
         await claimWorktree(engine, id, join(root, id));
       }
-      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      await (await engine.writerReleaseStore()).setBrainEnabled(true);
     });
     const moved = join(home, 'brains', 'moved-root');
     renameSync(root, moved);
@@ -531,11 +550,11 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
   });
 
   parityTest('acknowledgeManagedSyncFailures refuses every matching failure in byte fingerprint order', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
-    const incarnation = await addSource(engine, 'ab');
+    methods: ['readSourceState', 'writeOpCheckpointRecord', 'listSourceManagedSyncFailures'],
+  }, async (engine, backend) => {
+    const incarnation = await seedSource(engine, backend, 'ab');
     for (const fingerprint of MIXED_SLUGS) {
-      await checkpoint(engine, 'managed-sync-failure', fingerprint, {
+      await typedCheckpoint(engine, 'managed-sync-failure', fingerprint, {
         source_id: 'ab', source_incarnation: randomUUID(), path: 'shared.md', code: 'x', message: 'x', request_id: null, run_id: 'r', target: null,
         cursor_key: fingerprint, phase: 'discovery', state: 'failed', observation_id: fingerprint, first_seen: 'x', attempts: 1,
       });
@@ -548,13 +567,45 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
     return refused;
   });
 
+  parityTest('acknowledgeManagedSyncFailures clears a failure the imported state settles and keeps one a live page still claims', {
+    methods: ['readSourceState', 'writeOpCheckpointRecord', 'putPage', 'listSourceManagedSyncFailures', 'listLiveOriginPages', 'deleteManagedSyncFailureObservation'],
+  }, async (engine, backend) => {
+    const incarnation = await seedSource(engine, backend, 'ab');
+    await engine.putPage('notes/claimed', { type: 'note', title: 'claimed', compiled_truth: 'claimed body', timeline: '', source_path: 'claimed.md' }, { sourceId: 'ab' });
+    const record = (path: string) => ({ source_id: 'ab', source_incarnation: incarnation, path, code: 'x', message: 'x', request_id: null, run_id: 'r', target: null,
+      cursor_key: path, phase: 'discovery', state: 'failed', observation_id: `o-${path}`, first_seen: 'x', attempts: 1 });
+    for (const path of ['gone.md', 'claimed.md']) await typedCheckpoint(engine, 'managed-sync-failure', path, record(path));
+    // The imported commit is empty, so it holds neither file: a file no live page claims is settled.
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-collate-ack-'));
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
+      git('init', '-q');
+      git('commit', '-q', '--allow-empty', '-m', 'empty');
+      const run = { sourceId: 'ab', incarnation, root, gitRoot: root, target: git('rev-parse', 'HEAD') };
+      const gone = await acknowledgeManagedSyncFailures(engine, run, 'gone.md');
+      const claimed = await acknowledgeManagedSyncFailures(engine, run, 'claimed.md');
+      const again = await acknowledgeManagedSyncFailures(engine, run, 'gone.md');
+      const left = (await engine.listSourceManagedSyncFailures('ab')).map(row => (row.failure as { path: string }).path);
+      // A row that now records another observation is kept.
+      const kept = await engine.deleteManagedSyncFailureObservation('claimed.md', 'o-other');
+      expect(kept).toBe(false);
+      expect(gone.cleared.map(f => f.path)).toEqual(['gone.md']);
+      expect(claimed.refused.map(entry => entry.reason)).toEqual(['not_deleted']);
+      expect(again).toEqual({ cleared: [], refused: [] });
+      expect(left).toEqual(['claimed.md']);
+      return { gone: gone.cleared.map(f => f.path), claimed: claimed.refused.map(entry => entry.reason), again, left, kept };
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   parityTest('readGitHoldListing lists each source in byte id order and its holds in byte fingerprint order, within the limit', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['readSourceState', 'writeOpCheckpointRecord'],
+  }, async (engine, backend) => {
     for (const id of ['ab', 'a-z']) {
-      const incarnation = await addSource(engine, id);
-      await checkpoint(engine, GIT_HOLD_SUMMARY_OP, `${id}:${incarnation}`, { count: MIXED_SLUGS.length });
-      for (const slug of MIXED_SLUGS) await checkpoint(engine, GIT_HOLD_OP, `${id}/${slug}`, { source_id: id, incarnation, code: 'x', path: slug });
+      const incarnation = await seedSource(engine, backend, id);
+      await typedCheckpoint(engine, GIT_HOLD_SUMMARY_OP, `${id}:${incarnation}`, { count: MIXED_SLUGS.length });
+      for (const slug of MIXED_SLUGS) await typedCheckpoint(engine, GIT_HOLD_OP, `${id}/${slug}`, { source_id: id, incarnation, code: 'x', path: slug });
     }
     const listing = await readGitHoldListing(engine, ['ab', 'a-z'], 3);
     expect(listing.map(entry => entry.sourceId)).toEqual(['a-z', 'ab']);
@@ -564,16 +615,16 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
 });
 
 describe('a worktree refresh orders its member sources by byte', () => {
+  // managed_persistence held for callers: the refresh needs a managed sync of each member, which a Rust brain refuses.
   parityTest('refreshWorktree plans the members of one worktree in byte id order, so the topology fence accepts the plan and the refresh completes', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
-    await engine.executeRaw('SELECT 1');
+    methods: ['writerReleaseStore', 'worktreeClaimStore'], requires: 'managed_persistence',
+  }, async (engine, backend) => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-collate-refresh-'));
     try {
       return await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
         try {
           const remote = join(dir, 'origin.git'), upstream = join(dir, 'upstream'), root = join(dir, 'brain');
-          const members = ['ab', 'a-z', 'a.b'];
+          const members = [...SOURCE_IDS];
           execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
           execFileSync('git', ['clone', '-q', remote, upstream], { stdio: 'ignore' });
           git(upstream, 'checkout', '-q', '-b', 'main');
@@ -581,12 +632,12 @@ describe('a worktree refresh orders its member sources by byte', () => {
           git(upstream, 'push', '-q', 'origin', 'main');
           execFileSync('git', ['clone', '-q', remote, root], { stdio: 'ignore' });
           await registerLocalWriter(engine, 'cli');
-          await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+          await (await engine.writerReleaseStore()).setBrainEnabled(false);
           for (const id of members) {
-            await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, join(root, id), JSON.stringify({ remote_url: remote })]);
+            await createSource(engine, backend, id, { remote_url: remote }, join(root, id));
             await claimWorktree(engine, id, join(root, id));
           }
-          await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+          await (await engine.writerReleaseStore()).setBrainEnabled(true);
           for (const id of members) await performManagedSync(engine, { sourceId: id, noPull: true, noEmbed: true });
           const dry = await refreshWorktree(engine, 'ab', { dryRun: true });
           expect(dry.status).toBe('dry_run');

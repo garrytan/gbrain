@@ -165,7 +165,7 @@ import type { ConnectorSourceRow, LoopFactState, OrphanBinding, OrphanCheckpoint
 import type { ContentReceiptBinding, OwnedContentRow } from './engine-sql/owned-content.ts';
 import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginClaimantRow, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers } from './engine-sql/repair-page-scans.ts';
 import type { LinkTargetPage, LinksRearm, OwnedLink, WriterReadPolicy } from './engine-sql/remote-links.ts';
-import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget } from './engine-sql/managed-sync-orphans.ts';
+import type { ManagedSyncOrphanRows, ManagedSyncRetireMode, ManagedSyncRetireTarget, SourceManagedSyncFailure } from './engine-sql/managed-sync-orphans.ts';
 import type { OriginIndexState, OriginTwinCount, PageRef, TornPages } from './engine-sql/repair-page-reads.ts';
 import type { PageRevisionWriter, RevisionWriterRequest } from './engine-sql/sync-run-reads.ts';
 import type { RepairBusyRows } from './engine-sql/repair-busy.ts';
@@ -1801,6 +1801,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   deleteManagedSyncFailureRow(key: string, retired: boolean): Promise<boolean>;
   /** Deletes the run's `managed-sync-manifest` row when no cursor names the run; false when kept. */
   deleteManagedSyncManifest(runId: string): Promise<boolean>;
+  /** The source's recorded managed-sync failures (any incarnation) by byte key, each with whether an unfinished cursor shares its key. */
+  listSourceManagedSyncFailures<F = Record<string, unknown>>(sourceId: string): Promise<Array<SourceManagedSyncFailure<F>>>;
+  /** Deletes the `managed-sync-failure` row under `key` while it still records `observationId`; false when it is gone or records another. */
+  deleteManagedSyncFailureObservation(key: string, observationId: string): Promise<boolean>;
   /** Active owned content sources with their receipt and owner binding (engine-sql/owned-content.ts). */
   listOwnedContentRows(sourceIds: readonly string[] | null, inheritsPersistence: boolean): Promise<OwnedContentRow[]>;
   /** The source's content receipt and owner binding, or null. */

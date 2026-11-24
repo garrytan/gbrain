@@ -258,8 +258,8 @@ export const PAGES_MEMBERS = {
   readSyncAdmissionEffects: 'persistence_journal',
   // Postgres's whole-source sync pass cursor (persistence/sync-pass.ts readPages). The store has no cursor; a Rust sync
   // pass stops before it, at the round snapshot's raw SET TRANSACTION. Both refuse by name.
-  declareSyncImportPageCursor: 'raw_sql',
-  fetchSyncImportPageCursor: 'raw_sql',
+  declareSyncImportPageCursor: 'persistence_journal',
+  fetchSyncImportPageCursor: 'persistence_journal',
   readOpCheckpointRecord: 'persistence_journal',
   writeOpCheckpointRecord: 'persistence_journal',
   // Repair bookkeeping (engine-sql/repair-bookkeeping.ts): source incarnations, writer bindings and connector
@@ -283,6 +283,8 @@ export const PAGES_MEMBERS = {
   retireManagedSyncCursor: 'persistence_journal',
   deleteManagedSyncFailureRow: 'persistence_journal',
   deleteManagedSyncManifest: 'persistence_journal',
+  listSourceManagedSyncFailures: 'persistence_journal',
+  deleteManagedSyncFailureObservation: 'persistence_journal',
   listOwnedContentRows: 'persistence_journal',
   readContentReceiptBinding: 'persistence_journal',
   readConfigForUpdate: 'config',

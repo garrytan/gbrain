@@ -7,8 +7,8 @@
  *  - Contract: every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
  *    answers the same rows for an id window and a keyset page: only pages of the source with a `source_path`, in page id
  *    order, each record field folded to a flag when it repeats the page's, parsers compared as jsonb, `->>` / `::text`
- *    giving jsonb text for a non-string, and `sync_deleted` false for a deletion no managed sync made. Postgres's
- *    whole-source cursor answers the keyset's rows on the SQL arms and refuses by name on Rust. The expected parser
+ *    giving jsonb text for a non-string, and `sync_deleted` false for a deletion no managed sync made. The
+ *    whole-source cursor answers the keyset's rows on every arm (on Rust it pages the keyset by id). The expected parser
  *    binds as an object, so a record with that parser reads `rec_parser_expected` true on Postgres too.
  *  - Regression: a wrong flag or field makes the classifier see a page as changed, unchanged or deleted by sync when it
  *    is not, so a pass re-imports, skips or holds the wrong file.
@@ -113,8 +113,8 @@ parityTest('readSyncImportPageRows inside a transaction reads the record the tra
   return { inside, after: view(await engine.readSyncImportPageRows(Q, { after: 0, limit: 10 }), seeded) };
 });
 
-parityTest('the whole-source sync pass cursor answers the keyset\'s rows on SQL engines and refuses by name on Rust', {
-  methods: ['transaction', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor', 'readSyncImportPageRows'], requires: 'raw_sql',
+parityTest('the whole-source sync pass cursor answers the keyset\'s rows on every engine', {
+  methods: ['transaction', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor', 'readSyncImportPageRows'],
 }, async (engine) => {
   const seeded = await seed(engine);
   const keyset = await engine.readSyncImportPageRows(Q, { after: 0, limit: 100 });
