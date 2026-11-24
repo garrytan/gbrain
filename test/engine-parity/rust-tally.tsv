@@ -321,6 +321,7 @@ test/engine-parity/sweep-reads.test.ts	2	1
 test/engine-parity/sync-admission-effects.test.ts	7	0
 test/engine-parity/sync-admission.test.ts	3	0
 test/engine-parity/sync-aliases.test.ts	11	0
+test/engine-parity/sync-checkpoint-callers.test.ts	1	0
 test/engine-parity/sync-checkpoint.test.ts	2	0
 test/engine-parity/sync-import-provenance.test.ts	4	0
 test/engine-parity/sync-pass-pages.test.ts	3	1

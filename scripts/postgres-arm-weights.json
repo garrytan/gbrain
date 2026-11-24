@@ -440,6 +440,7 @@
   "test/engine-parity/sync-admission-effects.test.ts": 8500,
   "test/engine-parity/sync-admission.test.ts": 7800,
   "test/engine-parity/sync-aliases.test.ts": 9790,
+  "test/engine-parity/sync-checkpoint-callers.test.ts": 5000,
   "test/engine-parity/sync-checkpoint.test.ts": 7200,
   "test/engine-parity/sync-import-provenance.test.ts": 8100,
   "test/engine-parity/sync-pass-pages.test.ts": 8500,
