@@ -31,7 +31,7 @@ export interface HistoryOutcome {
 }
 
 /** Parses the history flags; a string is the exit-2 refusal, returned before anything is written. */
-export function parseHistoryFlags(args: string[], value: (flag: string) => string | undefined, harness: string | undefined): HistoryFlags | string {
+export function parseHistoryFlags(args: string[], value: (flag: string) => string | undefined, harness: string | undefined, stdioMember?: string): HistoryFlags | string {
   const raw = value('--history');
   const dir = value('--history-dir');
   const decision = value('--history-decision');
@@ -47,7 +47,7 @@ export function parseHistoryFlags(args: string[], value: (flag: string) => strin
   if (dir !== undefined && !dir.startsWith('/')) return '--history-dir needs an absolute path; nothing was written';
   const blocker = harness !== 'claude-code' && harness !== 'codex' ? 'gbrain setup ' + (harness ?? '') + ' (only claude-code and codex)'
     : args.includes('--remove') ? '--remove' : args.includes('--instructions-only') ? '--instructions-only' : value('--serves') === 'several' ? '--serves several'
-    : args.some(a => a === '--stdio-member' || a.startsWith('--stdio-member=')) ? '--stdio-member' : args.includes('--team') ? '--team' : null;
+    : stdioMember !== undefined ? '--stdio-member' : args.includes('--team') ? '--team' : null;
   if (blocker) return 'the history import runs in gbrain setup claude-code or codex for a personal brain one person uses, so ' + blocker + ' does not take the history flags; nothing was written';
   return { ...(history !== undefined ? { history } : {}), ...(dir !== undefined ? { historyDir: dir } : {}), ...(decision !== undefined ? { historyDecision: decision } : {}), ...(noExtract ? { noExtract } : {}) };
 }

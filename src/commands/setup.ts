@@ -392,7 +392,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> per person); nothing was written`;
   const layout = parseLayoutFlags(value, (f) => args.includes(f), positionals[0]);
   if (typeof layout === 'string') return layout;
-  const historyImport = parseHistoryFlags(args, value, positionals[0]);
+  const historyImport = parseHistoryFlags(args, value, positionals[0], stdioMember);
   if (typeof historyImport === 'string') return historyImport;
   if (layout.brain && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return '--shape shapes the brain behind gbrain setup claude-code or codex (not --instructions-only or --remove); nothing was written';
   const workspace = value('--workspace');
