@@ -16,7 +16,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { initGuestSource } from '../src/core/guests/sources.ts';
-import { grantOwnerCredentials, ownerCredentials } from '../src/core/guests/owner-credentials.ts';
+import { grantOwnerCredentials, ownerCredentialRows, ownerCredentials } from '../src/core/guests/owner-credentials.ts';
 import { rescopeClientGrant } from '../src/core/grants/service.ts';
 import { runGuests } from '../src/commands/guests.ts';
 
@@ -72,20 +72,16 @@ describe('gbrain guests grant-owner-clients', () => {
     expect(await grantOf(member)).toEqual(before.member);
   }, 60_000);
 
-  test('the owner credential read loads no token hash, only the columns the grant needs', async () => {
+  test('the owner credential rows carry no token hash or client secret, whatever the typed read loaded', async () => {
     const { token } = await brain();
-    const loaded: unknown[] = [];
-    const read = engine.executeRaw.bind(engine);
-    const spy = spyOn(engine, 'executeRaw').mockImplementation((async (sql: string, params?: unknown[]) => {
-      const rows = await read(sql, params);
-      loaded.push(...rows);
-      return rows;
-    }) as never);
-    try {
-      const { credentials } = await ownerCredentials(engine, SRC);
-      expect(credentials.map(c => c.id)).toContain(token);
-    } finally { spy.mockRestore(); }
-    expect(JSON.stringify(loaded)).not.toContain('token_hash');
+    const [{ token_hash: stored }] = await engine.executeRaw<{ token_hash: string }>('SELECT token_hash FROM access_tokens WHERE id = $1::uuid', [token]);
+    const rows = await ownerCredentialRows(engine, OWNER);
+    const { credentials } = await ownerCredentials(engine, SRC);
+    expect(credentials.map(c => c.id)).toContain(token);
+    expect(rows.some(r => r.kind === 'token' && r.id === token)).toBe(true);
+    for (const { row } of rows) expect(Object.keys(row).filter(k => k === 'token_hash' || k === 'client_secret_hash')).toEqual([]);
+    expect(stored.length).toBeGreaterThan(0);
+    expect(JSON.stringify({ rows, credentials })).not.toContain(stored);
   }, 60_000);
 
   test('the preview lists owner credentials that cannot read the guest source and writes nothing', async () => {

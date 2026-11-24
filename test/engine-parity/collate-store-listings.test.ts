@@ -18,8 +18,9 @@
  *    en_US Postgres to see it fail.
  *  - Seam: rows are written with the production writers where one exists (insertPin, insertRetrievalEvents, the
  *    OAuth provider, addMember, bindCredential, setOwner, insertCalibration) and harness-only SQL otherwise
- *    (receipts, weights, plain OAuth clients). Every reader goes through raw SQL, so the Rust arm stops on its
- *    raw_sql refusal.
+ *    (receipts, weights, plain OAuth clients). Every reader except ownerCredentials and the guest-source check of
+ *    `gbrain guests grant-owner-clients` goes through raw SQL, so the Rust arm stops on its raw_sql refusal there;
+ *    those two read through typed members and run on every arm.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,7 +42,7 @@ import { PAGE_INLINE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
 import { inspectSharedMemberMigration } from '../../src/core/shared-skills/migration-members.ts';
 import { addMember } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
-import { ownerCredentials } from '../../src/core/guests/owner-credentials.ts';
+import { ownerCredentialRows, ownerCredentials } from '../../src/core/guests/owner-credentials.ts';
 import { runGuests } from '../../src/commands/guests.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -153,7 +154,7 @@ describe('store listings come out by byte', () => {
   const OWNER_NAMES = ['zed', 'Zed', '\u00e9clair', 'apple', '\uFF5Ebar', '\u{1F600}bar'];
 
   parityTest('ownerCredentials lists the owner\'s clients and tokens by byte of kind, name and id, and never a hash',
-    { methods: ['insertOauthClient', 'insertAccessToken', 'getConfig', 'setConfig'] }, async (engine) => {
+    { methods: ['insertOauthClient', 'insertAccessToken', 'getConfig', 'setConfig', 'readLiveOauthClients', 'readLiveAccessTokenRows'] }, async (engine) => {
       await addMember(engine, 'owner-example');
       await addMember(engine, 'other-example');
       await setOwner(engine, 'owner-example');
@@ -173,10 +174,15 @@ describe('store listings come out by byte', () => {
       expect(byBytes).not.toEqual([...OWNER_NAMES].sort());
       expect(names).toEqual([...byBytes.map(n => `client:${n}`), 'token:Tok-c', 'token:tok-a', 'token:tok-b']);
       expect(JSON.stringify(credentials)).not.toContain(secret);
+      // The rows the credentials are built from carry no hash either (a token's, a client's secret).
+      const rows = await ownerCredentialRows(engine, 'owner-example');
+      expect(rows.length).toBe(credentials.length);
+      for (const { row } of rows) expect(Object.keys(row).filter(k => k === 'token_hash' || k === 'client_secret_hash')).toEqual([]);
+      expect(JSON.stringify(rows)).not.toContain(secret);
       return names;
     });
 
-  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['insertOauthClient', 'getConfig', 'setConfig'] }, async (engine) => {
+  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['insertOauthClient', 'getConfig', 'setConfig', 'readLiveOauthClients', 'readLiveAccessTokenRows'] }, async (engine) => {
     await addMember(engine, 'owner-example');
     await setOwner(engine, 'owner-example');
     for (const id of MIXED_SLUGS) await engine.insertOauthClient({ client_id: id, client_name: 'same-name', member_id: 'owner-example' });
@@ -184,7 +190,7 @@ describe('store listings come out by byte', () => {
   });
 
   // The command checks the guest source with one read before it lists any credential; a source that is not one stops there on every engine.
-  parityTest('guests grant-owner-clients names a source that is not a guest source and exits 2 on every engine', { methods: [] }, async (engine) => {
+  parityTest('guests grant-owner-clients names a source that is not a guest source and exits 2 on every engine', { methods: ['readGuestSourceRow'] }, async (engine) => {
     const printed: string[] = [];
     const [error, exit] = [console.error, process.exit];
     console.error = (...parts: unknown[]) => { printed.push(parts.join(' ')); };

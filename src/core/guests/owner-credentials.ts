@@ -64,20 +64,32 @@ function credential(kind: 'client' | 'token', id: string, name: string, g: Princ
 // read_shared_revision (GST-2898) reads through to_jsonb so a brain whose migration is pending reads it as absent (off).
 export const tokenGrantJsonSql = (alias: string) => `jsonb_build_object(${[...TOKEN_GRANT_ROW_COLUMNS, 'min_trust'].map(c => c === 'read_shared_revision' ? `'${c}', to_jsonb(${alias})->'${c}'` : `'${c}', ${alias}.${c}`).join(', ')})`;
 
-const json = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v) as Record<string, unknown>;
+/** UTF-8 byte order, the order `COLLATE "C"` gives (not localeCompare, not the default string order, which is UTF-16). */
+const byBytes = (a: string, b: string) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+
+export interface OwnerCredentialRow { kind: 'client' | 'token'; id: string; name: string; row: Record<string, unknown> }
+
+/**
+ * The live credentials bound to `owner`, from the typed reads (so a store with no raw SQL answers), tokens and clients
+ * together in byte order of kind, name and id. Each row has its hash (`token_hash`, `client_secret_hash`) dropped here,
+ * before anything else sees it.
+ */
+export async function ownerCredentialRows(engine: BrainEngine, owner: string): Promise<OwnerCredentialRow[]> {
+  const [tokens, clients] = [await engine.readLiveAccessTokenRows(), await engine.readLiveOauthClients()];
+  const rows: OwnerCredentialRow[] = [
+    ...tokens.filter(t => t.member_id === owner).map(({ token_hash: _hash, ...row }) => ({ kind: 'token' as const, id: String(row.id), name: String(row.name), row })),
+    ...clients.filter(c => c.member_id === owner).map(({ client_secret_hash: _secret, ...row }) => ({ kind: 'client' as const, id: String(row.client_id), name: String(row.client_name ?? row.client_id), row: row as Record<string, unknown> })),
+  ];
+  return rows.sort((x, y) => byBytes(x.kind, y.kind) || byBytes(x.name, y.name) || byBytes(x.id, y.id));
+}
 
 /** Every live credential bound to the brain owner, read against guest source guestSourceId; no owner, no credentials. */
 export async function ownerCredentials(engine: BrainEngine, guestSourceId: string): Promise<{ owner: string | null; credentials: OwnerCredential[] }> {
   const owner = await ownerMemberId(engine);
   if (!owner) return { owner, credentials: [] };
-  const rows = await engine.executeRaw<{ kind: 'client' | 'token'; id: string; name: string; row: unknown }>(
-    "SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, " + tokenGrantJsonSql('t') + " AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL "
-      + "UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row "
-      + "FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE \"C\", name COLLATE \"C\", id COLLATE \"C\"", [owner]);
-  return { owner, credentials: rows.map(r => {
-    const row = json(r.row);
-    const grant = r.kind === 'token' ? grantFromTokenRow(row) : grantFromClient(grantFromRow(row));
-    return credential(r.kind, r.id, r.name, grant, row.min_trust, guestSourceId);
+  return { owner, credentials: (await ownerCredentialRows(engine, owner)).map(r => {
+    const grant = r.kind === 'token' ? grantFromTokenRow(r.row as never) : grantFromClient(grantFromRow(r.row));
+    return credential(r.kind, r.id, r.name, grant, r.row.min_trust, guestSourceId);
   }) };
 }
 
