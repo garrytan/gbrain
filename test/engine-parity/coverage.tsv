@@ -133,7 +133,7 @@ getPage	pages	yes	220	yes	yes	yes	serves
 readPageSnapshot	pages	yes	65	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
-putPage	pages	yes	1178	yes	yes	yes	serves
+putPage	pages	yes	1179	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
@@ -152,9 +152,9 @@ countPagesByTypeForSource	pages	yes	2	no	yes	yes	serves
 resolveSlugs	pages	yes	7	no	yes	yes	serves
 getAllSlugs	pages	yes	4	no	yes	yes	serves
 listEntityKeyRows	pages	yes	9	no	yes	yes	serves
-listIdentityDecisions	pages	yes	9	no	yes	yes	serves
+listIdentityDecisions	pages	yes	10	no	yes	yes	serves
 listRestrictedIdentityMembers	pages	yes	1	no	yes	yes	serves
-applyIdentityDecisions	pages	yes	11	no	yes	yes	serves
+applyIdentityDecisions	pages	yes	12	no	yes	yes	serves
 listAllPageRefs	pages	yes	4	yes	yes	yes	serves
 listAllSources	pages	yes	19	no	yes	yes	serves
 updateSourceConfig	pages	yes	18	no	yes	yes	serves
