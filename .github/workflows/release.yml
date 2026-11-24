@@ -539,7 +539,7 @@ jobs:
           export GBRAIN_HOME="$work/home"
           mkdir -p "$GBRAIN_HOME/.gbrain"
           ok=0
-          for attempt in 1 2 3; do
+          for _ in 1 2 3; do
             if "$gbrain" engine install rust --json > "$work/install.json"; then ok=1; break; fi
             cat "$work/install.json"
             sleep 60
