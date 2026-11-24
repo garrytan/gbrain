@@ -1,5 +1,7 @@
 **You can now keep or undo what the nightly run learned, and your agent hears about it when a session starts.**
 
+<!-- behavior-change: learned_keep_undo_push -->
+
 ### Added
 - `gbrain learned-keep <ids>` (MCP tool `learned_keep`) marks items from `gbrain learned` as right. `gbrain learned-keep all` keeps every pending change from the last 7 days. Keep writes only the note's own record; no page, fact or loop changes.
 - `gbrain learned-undo <ids> [--reason "<why>"]` (MCP tool `learned_undo`) reverses an item through the command that owns it: a new fact is forgotten, a promise is closed as dropped, and a filled-in page goes back to the version before it was filled. A page edited after it was filled is never overwritten; undo refuses and prints the `gbrain history` and `gbrain revert` commands instead. A disagreeing pair of facts is answered by rejecting the newer one, on the brain host only; a remote caller gets the command to run there. A possible duplicate hands back its `gbrain dedupe reject` command, and a row you typed in a Facts table is edited on the page. Pass ids as `12,15`.

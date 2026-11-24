@@ -57,7 +57,7 @@ export async function learnedLineFromEngine(engine: BrainEngine, sourceId: strin
     const { learnedPushLine } = await loadContextModule('src/core/learning/push.ts', () => import('../learning/push.ts'));
     const line = await learnedPushLine(engine, sourceId);
     return line ? { text: line.text, run_id: line.run_id } : null;
-  } catch {
+  } catch { // silent-read-ok: the count line is optional; a failed read must never drop core memory, and the next refresh reads it again
     return null;
   }
 }
