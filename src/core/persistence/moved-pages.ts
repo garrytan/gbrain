@@ -92,20 +92,23 @@ function inHead(root: string, paths: string[]): Set<string> {
 }
 
 /** What makes a file in HEAD look like where a ghost's file went (GST-3623 class a). */
-export type MoveMatch = 'git_rename' | 'same_blob' | 'first_blob' | 'same_file_name';
+export type MoveMatch = 'git_rename' | 'commit_copy' | 'same_blob' | 'first_blob' | 'same_file_name';
 /** A file in HEAD that looks like where a ghost went; `page_id`, `slug` and `revision` are null when sync has not imported it yet. */
 export interface MoveCandidate { match: MoveMatch; page_id: number | null; slug: string | null; revision: string | null; path: string; linked?: boolean | null }
 /** Per ghost page id, the candidates found; `unread` names the ghosts whose history or HEAD listing Git could not read. */
 export interface MoveCandidates { found: Map<number, MoveCandidate[]>; unread: Set<number> }
 
-/** Per deleted path, the path its deleting commit renamed it to and its last committed blob (one diff-tree per commit). */
-function commitChanges(root: string, commit: string): { renames: Map<string, string>; blobs: Map<string, string> } | null {
+/**
+ * Per deleted path, the path its deleting commit renamed it to and its last committed blob, and per blob the paths the
+ * commit wrote it to in place of what they held (one diff-tree per commit).
+ */
+function commitChanges(root: string, commit: string): { renames: Map<string, string>; blobs: Map<string, string>; written: Map<string, string[]> } | null {
   const out = git(root, ['diff-tree', '-r', '-M', '--no-commit-id', '--relative', '-z', `${commit}^`, commit]);
   if (out === null) return null;
   const fields = out.split('\0');
-  const renames = new Map<string, string>(), blobs = new Map<string, string>();
+  const renames = new Map<string, string>(), blobs = new Map<string, string>(), written = new Map<string, string[]>();
   for (let i = 0; i < fields.length - 1;) {
-    const [, , old, , status] = fields[i]!.split(' ');
+    const [, , old, next, status] = fields[i]!.split(' ');
     const from = fields[i + 1]!;
     if (status?.startsWith('R') || status?.startsWith('C')) {
       if (status.startsWith('R')) { renames.set(from, fields[i + 2]!); blobs.set(from, old!); }
@@ -113,9 +116,10 @@ function commitChanges(root: string, commit: string): { renames: Map<string, str
       continue;
     }
     if (status === 'D') blobs.set(from, old!);
+    if (status === 'M') { const list = written.get(next!); if (list) list.push(from); else written.set(next!, [from]); }
     i += 2;
   }
-  return { renames, blobs };
+  return { renames, blobs, written };
 }
 
 /** Per blob of \`blobs\`, the paths (relative to \`root\`) whose first commit in HEAD's history added that blob: one history walk asking only for those blobs; null when Git could not read it. */
@@ -156,9 +160,9 @@ function linkedByHistory(root: string, path: string, added: string | null, commi
 
 /**
  * For each ghost whose file a commit deleted, the files in HEAD that look like where it went, with their live page when
- * sync imported one (\`page_id\` null: not imported yet): the path the deleting commit renamed it to, a path holding its last
- * committed blob or whose first commit added it, or a path with the same file name (\`linked\` when Git first added it
- * between the old file's add and its deletion). Evidence, not proof: \`readMovedPage\` decides whether a fold loses nothing.
+ * sync imported one (\`page_id\` null: not imported yet): the path the deleting commit renamed it to or rewrote to its last
+ * committed blob in place of what that path held, a path holding that blob or whose first commit added it, or a path with
+ * the same file name (\`linked\` when Git first added it between the old file's add and its deletion). Evidence, not proof: \`readMovedPage\` decides whether a fold loses nothing.
  * Read once per call: one HEAD listing, one diff-tree per deleting commit, one history walk for the ghosts' blobs and one
  * page query. A ghost whose reads failed is \`unread\`, never "no candidate".
  */
@@ -185,7 +189,7 @@ export async function readMoveCandidates(engine: BrainEngine, input: { sourceId:
   const firsts = firstBlobPaths(input.root, [...new Set(deleted.map(blobOf).filter(Boolean))]);
   if (firsts === null) return unread();
   const named = (ghost: typeof deleted[number]) => (byName.get(basename(ghost.path)) ?? []).filter(path => path !== ghost.path);
-  const paths = [...new Set(deleted.flatMap(ghost => [changes.get(ghost.deletion.commit)?.renames.get(ghost.path) ?? '', ...(byBlob.get(blobOf(ghost)) ?? []),
+  const paths = [...new Set(deleted.flatMap(ghost => [changes.get(ghost.deletion.commit)?.renames.get(ghost.path) ?? '', ...(changes.get(ghost.deletion.commit)?.written.get(blobOf(ghost)) ?? []), ...(byBlob.get(blobOf(ghost)) ?? []),
     ...(firsts.get(blobOf(ghost)) ?? []), ...named(ghost)].filter(path => path && head.has(path))))];
   const pages = paths.length ? await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
     WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[])`, [input.sourceId, paths]) : [];
@@ -201,6 +205,7 @@ export async function readMoveCandidates(engine: BrainEngine, input: { sourceId:
       found.push({ match, page_id: page?.id ?? null, slug: page?.slug ?? null, revision: page?.revision ?? null, path, ...(linked === undefined ? {} : { linked }) });
     };
     add('git_rename', change.renames.get(ghost.path));
+    for (const path of change.written.get(blobOf(ghost)) ?? []) add('commit_copy', path);
     for (const path of byBlob.get(blobOf(ghost)) ?? []) add('same_blob', path);
     for (const path of firsts.get(blobOf(ghost)) ?? []) add('first_blob', path);
     const sameName = named(ghost).filter(path => !found.some(candidate => candidate.path === path));

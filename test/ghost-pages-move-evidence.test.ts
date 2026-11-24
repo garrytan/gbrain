@@ -61,6 +61,12 @@ async function movedAway(engine: BrainEngine, move: () => void, revert = true): 
   await performManagedSync(engine, SYNC);
   if (revert) await raw(engine, "UPDATE pages SET timeline=$1, knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/alpha'", [before!.timeline]);
 }
+const OLDER = '---\ntitle: Older\n---\n\nAn older note that the move overwrote.\n';
+/** One commit rewrites archive/older.md to the alpha content and deletes notes/alpha.md; a later commit edits archive/older.md. */
+const rewriteOlder = (root: string) => {
+  writeFileSync(join(root, 'archive/older.md'), ALPHA); git(root, 'add', 'archive/older.md'); git(root, 'rm', '-q', 'notes/alpha.md'); git(root, 'commit', '-qm', 'rewrite older with the alpha content, drop alpha');
+  commit(root, { 'archive/older.md': `${ALPHA}\nA line added after the move.\n` }, 'edit the rewritten file');
+};
 const renameEdited = (root: string, content: string) => () => {
   mkdirSync(join(root, 'notes/archive'), { recursive: true });
   git(root, 'mv', 'notes/alpha.md', 'notes/archive/alpha.md');
@@ -279,4 +285,25 @@ A line added at the move.
     expect(listed(drift, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('archive/alpha.md') });
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend)));
+
+  test(`${backend}: a ghost whose deleting commit rewrote another, differently named file to its content, edited later, is moved_to, never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    rewriteOlder(root);
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'moved_to', detail: expect.stringContaining('gave archive/older.md its content') });
+    expect((await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true })).outcomes ?? {}).not.toHaveProperty('soft_deleted');
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend, { 'archive/older.md': OLDER })));
+
+  test(`${backend}: a page edited in the database after its deleting commit rewrote another file to its content folds into that file's page`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, () => rewriteOlder(root));
+    const preview = await runner(engine, 'ghost-pages');
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'database_ahead_of_file', detail: expect.stringContaining('Move evidence: matched') });
+    const fold = await runner(engine, 'moved-pages', { slugs: ['notes/alpha'] });
+    expect(fold.affected).toBe(1);
+    expect((fold.details as { pairs: unknown[] }).pairs[0]).toMatchObject({ survivor: { slug: 'archive/older' }, evidence: 'same_commit' });
+    expect((await runner(engine, 'moved-pages', { slugs: ['notes/alpha'], expect: fold.preview_hash, yes: true })).outcomes).toEqual({ folded: 1 });
+  }, opts(backend, { 'archive/older.md': OLDER })));
 }
