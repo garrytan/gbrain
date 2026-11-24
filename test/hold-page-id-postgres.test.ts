@@ -161,4 +161,72 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     await expectHeldHidden(engine, sourceId, 'notes/gamma');
     await expectHeldHidden(engine, sourceId, 'notes/alpha');
   });
+
+  // An unbound hold at A whose rename record reaches B, with pages A and B both live. Two connections purge A and B, each deleting its page row
+  // and running its hold sweep before the other commits, so each sees the other page as surviving. The second purge waits on a lock the first
+  // holds when it takes one; the first purge is released once the second has finished or is waiting for a lock. Returns the hold's id.
+  async function purgeReachedPagesSideBySide(sourceId: string): Promise<number> {
+    const late = await holdFenceRow(engine, { sourceId, slug: 'notes/alpha', claim: HELD, rowNum: 1 });
+    await engine.executeRaw("UPDATE write_gate_holds SET created_at = now() + interval '1 day' WHERE id=$1", [late]);
+    await putPage(sourceId, 'notes/alpha');
+    await engine.executeRaw("UPDATE write_gate_holds SET created_at = now() - interval '1 day' WHERE id=$1", [late]);
+    await renameWhile(sourceId, 'notes/alpha', 'notes/beta', async () => {});
+    await putPage(sourceId, 'notes/alpha');
+    expect((await holds(sourceId)).map(h => [Number(h.id), h.status])).toEqual([[late, 'held']]);
+
+    let firstDone!: () => void, release!: () => void;
+    const deletedFirst = new Promise<void>(r => { firstDone = r; });
+    const go = new Promise<void>(r => { release = r; });
+    const first = engine.transaction(async (t: BrainEngine) => {
+      expect(await t.deletePages(['notes/alpha'], { sourceId })).toEqual(['notes/alpha']);
+      firstDone();
+      await go;
+    });
+    await bounded('the first purge to delete its page', Promise.race([deletedFirst, first]));
+    let secondDeleted = false;
+    const second = engine.transaction(async (t: BrainEngine) => {
+      expect(await t.deletePages(['notes/beta'], { sourceId })).toEqual(['notes/beta']);
+      secondDeleted = true;
+    });
+    try {
+      await bounded('the second purge to finish or wait for a lock', (async () => {
+        for (;;) {
+          if (secondDeleted) return;
+          const [waiting] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'");
+          if (Number(waiting!.n) > 0) return;
+          await new Promise(r => setTimeout(r, 25));
+        }
+      })());
+    } finally { release(); }
+    await bounded('the first purge to commit', first);
+    await bounded('the second purge to commit', second);
+    return late;
+  }
+
+  // Known limit: concurrent purges with a reused name can leave a held row; removed by gbrain trust drop; a maintenance sweep will remove these later.
+  // This asserts the end state we want (hold and receipts gone), which does not hold today, so it is marked failing; flip it to `test` when the sweep lands.
+  test.failing('(f) two purges of the pages an unbound hold reaches, run side by side, leave neither the hold nor its receipts', async () => {
+    const sourceId = await source();
+    const late = await purgeReachedPagesSideBySide(sourceId);
+    expect(await holds(sourceId)).toEqual([]);
+    expect(await engine.executeRaw("SELECT 1 FROM write_gate_receipts WHERE target_table='write_gate_holds' AND target_id=$1", [String(late)])).toEqual([]);
+  });
+
+  // The held row the limit above leaves behind is inert: it stays held and unbound, is not marked as ambiguous (so `gbrain doctor` does not list it),
+  // and shows nothing: a page that later takes the name still has the held row hidden, and a page under another name is untouched.
+  test('(f2) the hold left behind by side-by-side purges stays held, delivers nothing and touches no other page', async () => {
+    const sourceId = await source();
+    const late = await purgeReachedPagesSideBySide(sourceId);
+    const [left] = await engine.executeRaw<{ id: number; status: string; page_id: number | null; page_candidates: number[] | null }>(
+      'SELECT id, status, page_id, page_candidates FROM write_gate_holds WHERE source_id=$1', [sourceId]);
+    // Records today's behaviour: if the limit is fixed the hold is gone and this test (and the failing one above) should be revisited.
+    expect(left).toBeDefined();
+    expect([Number(left!.id), left!.status, left!.page_id]).toEqual([late, 'held', null]);
+    // No candidate list, so the `write_gate_hold_ambiguous` doctor check (which lists candidate-marked holds) does not list it.
+    expect(left!.page_candidates).toBeNull();
+    await putPage(sourceId, 'notes/alpha');
+    await expectHeldHidden(engine, sourceId, 'notes/alpha');
+    await putPage(sourceId, 'notes/other');
+    await expectNothingHeld(engine, sourceId, 'notes/other');
+  });
 });
