@@ -16,7 +16,6 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
-import type { PageAccessRow } from '../../engine-sql/page-access-rows.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import { DELETE_BATCH_SIZE } from '../../engine-constants.ts';
 import { assertPurgeAge } from '../../engine-errors.ts';
@@ -36,6 +35,7 @@ import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
+import type { MeetingPageRow } from '../../engine-sql/meeting-pages.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -382,6 +382,14 @@ export const listLivePagesByFileName: StoreMember<[sourceId: string, excludeId: 
   return storeCall({ member: 'listLivePagesByFileName', sourceId }, () => brain.listLivePagesByFileName(sourceId, excludeId, name));
 };
 
+/** The live page of the source holding the meeting, lowest id first, or null (engine-sql/meeting-pages.ts; rust/crates/gbrain-store/src/meeting_pages.rs). */
+export const readMeetingPage: StoreMember<[sourceId: string, meetingId: string], MeetingPageRow | null> = (brain, sourceId, meetingId) =>
+  storeCall({ member: 'readMeetingPage', sourceId }, () => brain.readMeetingPage(sourceId, meetingId)) as Promise<MeetingPageRow | null>;
+
+/** At most two live person pages of the source an attendee name can mean (engine-sql/attendance-pages.ts; meeting_pages.rs). */
+export const listAttendanceMatches: StoreMember<[sourceId: string, slugs: readonly string[], name: string], string[]> = (brain, sourceId, slugs, name) =>
+  storeCall({ member: 'listAttendanceMatches', sourceId }, () => brain.listAttendanceMatches(sourceId, [...slugs], name)) as Promise<string[]>;
+
 export const listLivePagesSharingFrontmatterId: StoreMember<[sourceId: string, pageId: number], string[]> = (brain, sourceId, pageId) => {
   wholeNumber('listLivePagesSharingFrontmatterId', 'a page id', pageId);
   return storeCall({ member: 'listLivePagesSharingFrontmatterId', sourceId }, () => brain.listLivePagesSharingFrontmatterId(sourceId, pageId));
@@ -408,9 +416,3 @@ export const listStaleAtoms: StoreMember<[sourceIds: readonly string[], atomId: 
 /** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. */
 export const listMarkdownPageSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
   await storeCall({ member: 'listMarkdownPageSlugs' }, () => brain.listMarkdownPageSlugs(sourceId)) as string[];
-
-/** who-can-read's page rows of `slug`, with the owner-only test of `form` judged on the store's page records. */
-export const readPageAccessRows: StoreMember<[slug: string, sourceId: string | undefined, form: OwnerOnlyForm], PageAccessRow[]> = async (brain, slug, sourceId, form) => {
-  const rows = await storeCall({ member: 'readPageAccessRows' }, () => brain.readPageAccessRows(slug, sourceId ?? null, form)) as PageAccessRow[];
-  return rows.map(r => ({ slug: r.slug, source_id: r.source_id, type: r.type ?? null, frontmatter: r.frontmatter, folder_rule_ids: r.folder_rule_ids ?? null, owner_only: r.owner_only === true }));
-};

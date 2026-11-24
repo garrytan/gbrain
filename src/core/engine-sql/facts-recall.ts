@@ -62,6 +62,23 @@ export interface NearestFactsQuery {
   hnswIterativeScan?: HnswIterativeScanMode;
 }
 
+/** One fact the facts arm reserves and the live page that holds it (search/facts-arm.ts applyFactSourcePages). */
+export interface FactSourcePageRow { id: number; page_id: number; slug: string; title: string | null; type: string | null }
+
+/**
+ * The facts arm's source-page read: for each of `ids`, the live page of its own source whose slug is the fact's
+ * `source_markdown_slug`, when that slug is not the fact's entity (a fact held on its entity's page names no other
+ * page). Facts of any source; a fact with no such page has no row. The rows come in no set order.
+ */
+export async function listFactSourcePages(raw: EngineRawRead, ids: readonly number[]): Promise<FactSourcePageRow[]> {
+  if (!ids.length) return [];
+  const rows = await raw<{ id: number | string; page_id: number | string; slug: string; title: string | null; type: string | null }>(
+    `SELECT f.id, p.id AS page_id, p.slug, p.title, p.type FROM facts f
+       JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
+       WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`, [[...ids]]);
+  return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), slug: r.slug, title: r.title, type: r.type }));
+}
+
 /**
  * The pool facts nearest `vector.literal` by cosine distance under the pool's read policy, closest first, with `similarity` on rows
  * whose embedding is comparable. With `hnswIterativeScan` the read is wrapped in the iterative-scan settings of

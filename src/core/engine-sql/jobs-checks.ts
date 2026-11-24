@@ -263,20 +263,3 @@ export async function listDeadFactsAbsorbJobsByKeys(tx: Raw, keys: readonly stri
       ORDER BY id`, [keys]);
   return rows.map(factsAbsorbRow);
 }
-
-/** The two statements of fence-repair/hold-fix.ts readFenceAutoRepair (fence switches and maintenance stamp; the last completed maintenance job). */
-export const FENCE_AUTO_REPAIR_SQL = {
-  config: 'SELECT key, value FROM config WHERE key = ANY($1::text[])',
-  lastJob: `SELECT to_char(max(finished_at) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS at
-    FROM minion_jobs WHERE name='autopilot-global-maintenance' AND status='completed'`,
-} as const;
-
-/** The stored config rows of `keys`, and when the last completed brain-wide maintenance job finished (UTC, to the second). */
-export interface FenceAutoRepairRows { config: Array<{ key: string; value: string | null }>; lastJobAt: string | null }
-
-/** The evidence readFenceAutoRepair decides on: the config rows of `keys` (any order) and the last completed maintenance job's finish, or null. */
-export async function readFenceAutoRepairRows(tx: Raw, keys: readonly string[]): Promise<FenceAutoRepairRows> {
-  const config = await tx.executeRaw<{ key: string; value: string | null }>(FENCE_AUTO_REPAIR_SQL.config, [[...keys]]);
-  const [job] = await tx.executeRaw<{ at: string | null }>(FENCE_AUTO_REPAIR_SQL.lastJob);
-  return { config, lastJobAt: job?.at ?? null };
-}

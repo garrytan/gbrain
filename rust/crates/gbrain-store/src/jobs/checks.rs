@@ -270,23 +270,6 @@ impl Store {
         }))
     }
 
-    /// `readFenceAutoRepairRows(keys)`: `{ config, lastJobAt }`, the stored config rows of `keys` and
-    /// the finish of the last completed `autopilot-global-maintenance` job in UTC to the second
-    /// (`YYYY-MM-DDTHH:MM:SSZ`), or null when none completed.
-    pub fn read_fence_auto_repair_rows(&self, keys: &[String]) -> Result<Value> {
-        let config = self.get_config_values(keys)?;
-        let read = self.read()?;
-        let last = rows_with_status(&*read, "completed")?
-            .into_iter()
-            .filter(|r| r.name == "autopilot-global-maintenance")
-            .filter_map(|r| r.finished_at)
-            .max();
-        Ok(json!({
-            "config": config.iter().map(|r| json!({ "key": r.key, "value": r.value })).collect::<Vec<_>>(),
-            "lastJobAt": last.map(|at| format!("{}Z", &iso(at)[..19])),
-        }))
-    }
-
     /// `listFactsAbsorbJobsStillDead`: dead or failed `facts-absorb` jobs inside the window that no
     /// later completed job for the same page and source superseded, newest `limit` and the count.
     pub fn list_facts_absorb_jobs_still_dead(&self, spec: &StillDeadSpec) -> Result<Value> {

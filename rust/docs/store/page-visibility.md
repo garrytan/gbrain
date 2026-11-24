@@ -12,7 +12,7 @@ local writer registration it already keeps; it adds no keys.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readPageHiddenFromCaller(sourceId, slug, policy)` | `true` when the page row of the source (live or soft-deleted) fails `policy`; `false` for a missing page | `readPageHiddenFromCaller` |
-| `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is `false` (no store member is created labelled-only). `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`) or a folder rule of its source is stamped on it. `owner_only_source` and `owner_only_any`: the source, or any source, has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true` | `readWriteVisibilityProbe` |
+| `brain.readWriteVisibilityProbe(sourceId, slug, policy)` | `{ any_labelled, identity_may_open, owner_only_source, owner_only_any }`. `any_labelled` is currently hardcoded `false`, although `setAccessMemberLabelledOnly` can mark a member labelled-only. `identity_may_open` is `null` when the page row (live or soft-deleted) is missing or passes `policy`, else whether it names readers (`readable_by`) or a folder rule of its source is stamped on it. `owner_only_source` is whether this source has `config ->> 'kind'` `imessage` or `config ->> 'owner_only'` `true`. `owner_only_any` is whether any source is owner-only or any owner-only mark was ever set (once one is, it stays on) | `readWriteVisibilityProbe` |
 | `brain.readCallerPageAccess(pages, policy)` | `[{ source_id, slug, readable }]`, one row per distinct `{ sourceId, slug }` of `pages` that names a page row, `readable` when the row is live and passes `policy`. Rows come in pair order; PGLite sets no order | `readCallerPageAccess` |
 
 `policy` is the store `PrivacyPolicy` of `facts/privacy.rs` (`page_hidden`). With `entityPrivacy` false it is the
@@ -51,9 +51,10 @@ member-access part alone (the page's readers, and the origin of a derived page):
   `ANY_OWNER_ONLY_SQL`, `off` when it holds neither (the owner). The store applies the same form in `page_hidden`
   (`owner_only.rs`), so every read that goes through `page_hidden` applies it, not only these three. `closed`: while
   any source is owner-only, every page is hidden. `fn`: a page is hidden when its source is owner-only, or when it is
-  a concept or question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only source. The
-  store keeps no `derivation_inputs` (PGLite writes them only through raw SQL, which a Rust brain refuses), so the
-  function's walk over them finds nothing on either side. `ownerOnly` is always one of the three forms: master's
+  a concept or question with a `concept-provenance` / `synthesized_from` link to a page in an owner-only source, or when
+  its recorded inputs (`derivation_inputs`, transitively) reach a marked row or a row held in an owner-only source, as
+  the function's walk does ([facts.md, "Derivation inputs"](facts.md#derivation-inputs-generationsderivation_inputsrs)).
+  `ownerOnly` is always one of the three forms: master's
   member names the `fn` form `lineage`, which the store reads as `fn`; a policy with no `ownerOnly` is `closed`, and
   any other value (`null` too) is refused before the store reads
   (`tests/owner_only_form_contract.rs`).

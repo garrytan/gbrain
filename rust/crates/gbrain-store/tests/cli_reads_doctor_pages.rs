@@ -150,6 +150,8 @@ fn scraper_junk_candidates_come_newest_first_with_character_heads() {
     assert_eq!(one["body_head"].as_str().unwrap().chars().count(), 2048);
     assert_eq!(one["tl_head"].as_str().unwrap().chars().count(), 1024);
     assert_eq!(one["frontmatter"], json!({ "a": { "b": [1, 2] } }));
+    assert_eq!(one["segmented"], json!(false));
+    assert_eq!(s.count_live_segmented_pages(false).unwrap(), 0);
 }
 
 #[test]

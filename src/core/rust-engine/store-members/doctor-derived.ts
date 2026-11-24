@@ -75,3 +75,6 @@ export const listOrphanGenerationCandidates: Member<'listOrphanGenerationCandida
 /** The 7-day extract rollup: the store keeps no `extract_rollup_7d`, so no kind has a rollup row or a recorded halt reason. */
 export const readExtractRollup7d: Member<'readExtractRollup7d'> = async () => [];
 export const listRecordedHaltReasons7d: Member<'listRecordedHaltReasons7d'> = async () => [];
+/** One kind's rollup aggregate: with no row for the kind, SUM and MAX over nothing are null, as the SQL engines answer. */
+export const readExtractKindRollup7d: Member<'readExtractKindRollup7d'> = async () => ({
+  cost_7d_usd: null, eval_pass_count: null, eval_fail_count: null, halt_count: null, round_completed_count: null, last_updated_at: null });

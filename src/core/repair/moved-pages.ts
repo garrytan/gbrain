@@ -30,7 +30,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { mergeTwinInto, requireTwinMerge } from '../persistence/twin-merge.ts';
+import { mergeTwinInto } from '../persistence/twin-merge.ts';
 import { readMovedPage, type MovedEvidence, type MovedHeldReason, type MovedPageRef } from '../persistence/moved-pages.ts';
 import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { clearGitHold, movedPagesPreviewArgv } from '../persistence/sync-holds.ts';
@@ -196,7 +196,7 @@ async function pairLocked(tx: BrainEngine, pair: MovedPair): Promise<string | nu
 async function applyFold(tx: BrainEngine, pair: MovedPair, incarnation: string): Promise<Record<string, unknown>> {
   const merged = await mergeTwinInto(tx, { sourceId: pair.source_id, incarnation, survivor: { page_id: pair.survivor.page_id, slug: pair.survivor.slug },
     twin: { page_id: pair.old.page_id, slug: pair.old.slug } });
-  const versions = await tx.executeRaw('UPDATE page_versions SET page_id=$2 WHERE page_id=$1 RETURNING id', [pair.old.page_id, pair.survivor.page_id]);
+  const versions = await tx.movePageVersions(pair.old.page_id, pair.survivor.page_id);
   const holdCleared = await clearGitHold(tx, { sourceId: pair.source_id, incarnation, path: pair.old.path, observedAt: pair.observed_at });
   const restore = ['gbrain', 'restore', pair.old.slug, '--source-id', pair.source_id];
   return { status: 'moved_page_folded', source_id: pair.source_id, old_slug: pair.old.slug, old_path: pair.old.path, survivor_slug: pair.survivor.slug, survivor_path: pair.survivor.path,
@@ -208,8 +208,6 @@ async function applyFold(tx: BrainEngine, pair: MovedPair, incarnation: string):
 /** Folds one pair; a managed brain submits it under `requestId()`. Returns the receipt fields on success. */
 export async function foldMovedPage(ctx: OperationContext, pair: MovedPair, owner: GhostOwner | null, requestId: () => Promise<string>): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
-  // The fold runs mergeTwinInto, which still moves rows through raw SQL: an engine without it stops here by name.
-  requireTwinMerge(engine, 'gbrain repair moved-pages fold');
   const moved = await movedPairNow(engine, pair, owner);
   if (moved) return changed(moved);
   if (await managedPersistenceEnabled(engine)) {

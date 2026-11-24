@@ -218,6 +218,25 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
         .collect())
 }
 
+/// The pages of `pages` that `pageReadFilter(alias, scope, params, live)` admits, in their order
+/// (the reads of `list_reads.rs` that take a caller's read policy).
+pub(crate) fn pages_in_read_scope(
+    read: &dyn KvRead,
+    pages: Vec<PageRecord>,
+    scope: &PageReadScope,
+) -> Result<Vec<PageRecord>> {
+    let sources = sources_by_id(read)?;
+    let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+    let mut owner_only = OwnerOnlyCache::default();
+    let mut kept = Vec::with_capacity(pages.len());
+    for page in pages {
+        if passes_read_scope(read, &page, scope, &trust, &sources, &mut owner_only)? {
+            kept.push(page);
+        }
+    }
+    Ok(kept)
+}
+
 /// `pageReadFilter(alias, scope, params, live)`: the source clause, the page policy, the trust
 /// policy and, with `live`, the live filter.
 fn passes_read_scope(
@@ -450,11 +469,17 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 /// (`volunteer_events::scrub_purged_slugs`), and the retrieval logs, ratings and weights
 /// (`retrieval_feedback::scrub_purged_slugs`). The gazetteer, take proposals, open loops,
 /// core-edit notices and write-gate holds do not exist here yet.
-fn scrub_purged_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -> Result<()> {
+fn scrub_purged_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &[String],
+    secret_occurrences: &BTreeSet<u64>,
+) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
     crate::volunteer_events::scrub_purged_slugs(tx, source_id, slugs)?;
     crate::retrieval_feedback::scrub_purged_slugs(tx, source_id, slugs)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
+    crate::secret_store::purge_for_deleted_pages(tx, source_id, slugs, secret_occurrences)?;
     Ok(())
 }
 
@@ -719,47 +744,6 @@ impl Store {
         Ok(slugs.into_iter().collect())
     }
 
-    /// `readPageAccessRows(slug, sourceId, form)`: who-can-read's page rows (commands/access.ts): the pages named `slug`
-    /// (soft-deleted ones too), the one in `source_id` when given, else one per source by byte of source id, each with
-    /// its type, frontmatter, kept folder-rule ids (null when none) and whether it is owner-only under `form`
-    /// (`ownerOnlyPageSql`).
-    pub fn read_page_access_rows(
-        &self,
-        slug: &str,
-        source_id: Option<&str>,
-        form: &str,
-    ) -> Result<Vec<Value>> {
-        // `ownerOnlyForm`: `mode` is the v328 form, which reads the exact lineage here (the store has no logins).
-        let form = match form {
-            "closed" => crate::owner_only::OwnerOnlyForm::Closed,
-            "fn" | "mode" => crate::owner_only::OwnerOnlyForm::Fn,
-            other => {
-                return Err(StoreError::invalid(format!(
-                    "readPageAccessRows: unknown owner-only form {other}"
-                )));
-            }
-        };
-        let read = self.read()?;
-        let mut pages: Vec<PageRecord> = match source_id {
-            Some(source) => read_page(&*read, source, slug)?.into_iter().collect(),
-            None => all_pages(&*read)?
-                .into_iter()
-                .filter(|p| p.slug == slug)
-                .collect(),
-        };
-        pages.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
-        let owner_only = crate::owner_only::OwnerOnlySources::read(&*read)?;
-        let mut rows = Vec::with_capacity(pages.len());
-        for p in &pages {
-            rows.push(json!({
-                "slug": p.slug, "source_id": p.source_id, "type": p.page_type, "frontmatter": p.frontmatter,
-                "folder_rule_ids": crate::access_policy::kept_rule_ids(&*read, &p.source_id, p.id)?,
-                "owner_only": owner_only.page_hidden(&*read, p, form)?,
-            }));
-        }
-        Ok(rows)
-    }
-
     /// `listMarkdownPageSlugs(sourceId)`: the slugs of the source's markdown pages, soft-deleted pages included, by
     /// byte order (`ORDER BY slug COLLATE "C"`).
     pub fn list_markdown_page_slugs(&self, source_id: &str) -> Result<Vec<String>> {
@@ -996,6 +980,12 @@ impl Store {
                 if page.deleted_at_us.is_none() {
                     page.deleted_at_us = Some(now);
                     write_changed(tx, &*self.env, &mut page)?;
+                    // The page enters a fact purge's derivation sweep's scope: the sweep checks it again before it ends.
+                    crate::page_body::derivation_sweep::note_scope_entry(
+                        tx,
+                        &page.source_id,
+                        page.id,
+                    )?;
                     hidden.push(page.slug);
                 }
             }
@@ -1015,11 +1005,13 @@ impl Store {
         }
         self.write(|tx| {
             let mut deleted = Vec::new();
+            let mut secrets = BTreeSet::new();
             for page in pages_by_slugs(&*tx, &source, slugs)? {
+                secrets.extend(crate::secret_store::page_occurrence_ids(&*tx, page.id)?);
                 remove_page(tx, &page)?;
                 deleted.push(page.slug);
             }
-            scrub_purged_slugs(tx, &source, &deleted)?;
+            scrub_purged_slugs(tx, &source, &deleted, &secrets)?;
             Ok(deleted)
         })
     }
@@ -1081,8 +1073,13 @@ impl Store {
             let pages = select(&*tx, self.env.now_micros())?;
             let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
             let mut texts = BTreeSet::new();
+            let mut secrets: BTreeMap<String, BTreeSet<u64>> = BTreeMap::new();
             for page in &pages {
                 texts.extend(crate::page_body::page_text_refs(&*tx, page.id)?);
+                secrets
+                    .entry(page.source_id.clone())
+                    .or_default()
+                    .extend(crate::secret_store::page_occurrence_ids(&*tx, page.id)?);
                 remove_page(tx, page)?;
                 by_source
                     .entry(page.source_id.clone())
@@ -1095,7 +1092,12 @@ impl Store {
             crate::page_body::delete_purged_texts(tx, &texts)?;
             let now = self.env.now_micros();
             for (source, slugs) in &by_source {
-                scrub_purged_slugs(tx, source, slugs)?;
+                scrub_purged_slugs(
+                    tx,
+                    source,
+                    slugs,
+                    &secrets.remove(source).unwrap_or_default(),
+                )?;
                 crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
             }
             Ok(answer(&pages))

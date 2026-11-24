@@ -2,8 +2,10 @@ import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readF
 import { dirname } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { chargeCapabilityRefusal, settleCapabilityRefusal } from './capability-retry.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { inStoredSlugScope } from './legacy-slug-put.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-identity.ts';
@@ -49,7 +51,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, capabilityRefusalDetail, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, capabilityRefusalDetail, type CapabilityRefusalDetail, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -387,11 +389,22 @@ export async function releaseChargedInterruption(engine: BrainEngine, row: Write
 export async function finishUnpublishedFailure(engine: BrainEngine, row: WriteRequest, error: unknown,
   stage: PublicationStage = 'publication'): Promise<WriteRequest> {
   // An engine that cannot yet record a publication step refused before anything published: the write goes back to
-  // queued under its own name, so no claim stays running and a later engine that has the step publishes it. A refusal
-  // in preparation is not a publication step: it ends failed below, typed, in one attempt.
+  // queued under its own name, so no claim stays running and an engine that has the step can publish it. The same
+  // engine refuses again on every claim, so after PUBLICATION_CAPABILITY_ATTEMPTS the write ends failed with the typed
+  // refusal, and the writes queued behind it in its source go on. A refusal in preparation is not a publication step:
+  // it ends failed below, typed, in one attempt.
   if (stage === 'publication' && isEngineCapabilityRefusal(error)) {
-    await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
-    return (await getWriteRequestById(engine, row.id))!;
+    const charge = chargeCapabilityRefusal(row.id);
+    if (charge.release) {
+      await releaseUnpublishedClaim(engine, row, 'engine_capability_missing');
+      return (await getWriteRequestById(engine, row.id))!;
+    }
+    const refused = withAttempt(requestError(error), stage, engine);
+    const done = await completeThroughTypedMembers(engine, row, { ...refused,
+      message: `${refused.message} It was refused at publication on ${charge.attempts} claims, the limit (${charge.limit}); it is not claimed again.`,
+      ...(refused.detail ? { detail: { ...(refused.detail as CapabilityRefusalDetail), attempts: charge.attempts, limit: charge.limit } } : {}) });
+    if (isTerminal(done)) settleCapabilityRefusal(row.id);
+    return done;
   }
   const charged = await releaseChargedInterruption(engine, row, error, stage);
   if (charged) return charged;
@@ -628,7 +641,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await declarePublication(tx);
       const journal = await tx.publicationJournalStore();
       const liveBinding = await guardOwnership(tx, journal, row, hostId);
-      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await journal.lockSource(row.source_id);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.lockSourceForUpdate(row.source_id);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,
@@ -789,6 +802,11 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
 
 export async function recoverPublication(engine: BrainEngine, id: string, hostId = hostIdFor(engine), alreadyLocked = false,
   terminalError?: PublicationFailure, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
+  const request = await getWriteRequestById(engine, id);
+  return inStoredSlugScope(request ?? { operation: '', slug: '' }, () => recoverPublicationRow(engine, id, hostId, alreadyLocked, terminalError, capacityAlreadyHeld, hooks));
+}
+async function recoverPublicationRow(engine: BrainEngine, id: string, hostId: string, alreadyLocked: boolean,
+  terminalError: PublicationFailure | undefined, capacityAlreadyHeld: boolean, hooks: PublicationHooks): Promise<WriteRequest> {
   let row = await getWriteRequestById(engine, id);
   if (!row) throw opError('not_found', 'Write request not found.',
     'The write request is no longer in the journal (it was compacted or never existed), so there is nothing to recover. Inspect the canonical owners for requests that still need recovery.',

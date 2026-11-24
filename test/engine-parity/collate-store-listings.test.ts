@@ -255,7 +255,7 @@ describe('store listings come out by byte', () => {
     expect((await readCandidateRecords(engine, ['census-src'])).map(r => r.key)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('readUncommittedFenceRepairs lists notices by byte of fingerprint', { methods: ['writeOpCheckpointRecord', 'listUncommittedFenceRepairRows'] }, async (engine) => {
+  parityTest('readUncommittedFenceRepairs lists notices by byte of fingerprint', { methods: ['writeOpCheckpointRecord', 'listSourceCheckpointRecords'] }, async (engine) => {
     const root = mkdtempSync(join(tmpdir(), 'collate-uncommitted-'));
     try {
       for (const path of MIXED_SLUGS) {
@@ -310,10 +310,9 @@ describe('store listings come out by byte', () => {
     expect(Object.keys((await readChronicleLedgerStats(engine)).last7d.reasons)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('derivationNeedles lists claim needles by byte', { methods: ['normalizeDerivationClaims'] }, async (engine) => {
-    const out = await derivationNeedles(engine, ['ab', 'a b', 'a c']);
-    expect(out.needles).toEqual([' a b ', ' a c ', ' ab ']);
-    return out;
+  parityTest('derivationNeedles lists claim needles by byte', { methods: ['listDerivationClaimForms'] }, async (engine) => {
+    const { needles } = await derivationNeedles(engine, ['ab', 'a b', 'a c']);
+    expect(needles).toEqual([' a b ', ' a c ', ' ab ']);
   });
 
   parityTest('readMissingTables lists missing tables by byte', { methods: ['transaction', 'executeRaw', 'getConfig'], requires: 'raw_sql' }, async (engine) => {

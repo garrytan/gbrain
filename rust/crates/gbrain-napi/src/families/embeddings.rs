@@ -125,6 +125,22 @@ impl Brain {
         })
     }
 
+    /// `readPageProvenanceComplete(slug, sourceId, model, dims)`: whether every visible chunk of
+    /// the page holds a vector current for `model` at `dims` wide.
+    #[napi]
+    pub fn read_page_provenance_complete<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+        model: String,
+        dims: Option<u32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_provenance_complete(&slug, &source_id, &model, dims)
+        })
+    }
+
     /// `invalidateStaleSignatureEmbeddings({ signature, sourceId?, includeNullSignature? })`:
     /// drops the vectors outside the target space; returns how many.
     #[napi]

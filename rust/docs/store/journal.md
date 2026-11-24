@@ -105,7 +105,7 @@ open item of the capability flip, not served yet:
 | `readManagedSyncCursorHeader`, `readRetiredManagedSyncCursor` | the `managed-sync` checkpoint rows, read as the SQL reads them | The store keeps op checkpoint rows. |
 | `readManagedSyncFailureRows`, `readOrphanedManagedSyncFailureRows` | the unfinished cursors (or cursorless failures) of live source incarnations, with failure row and manifest path; `receipt` is `null` | No managed-sync request is admitted to give a receipt: a managed sync stops on `raw_sql` before it admits one. |
 | `readSyncHeadRequestRow`, `readSyncRecoveryProbeRow` | `null`; `{ n: 0, request_id: null, slug: null, blocked: null }` | No request-recovery writer has landed. A worktree-bound page write now writes a request row, which this read does not see yet: an open item of the capability flip. |
-| `readIdentityDowngradeRows(sourceIds)` | `[]`, or a refusal when a downgrade record exists | A record joins the pages it names, which this member does not serve. Records are written only through `executeRaw`, which this engine refuses, so none exists. |
+| `readIdentityDowngradeRows(sourceIds)` | the open `sync-identity-downgrade` records, oldest first, each with the live slugs at its new path | Served with its page join by the store (persistence.md, "Identity-downgrade read"). |
 
 The request members (`readWriteRequest`, `readWriteRequestById`, `listWriteRequestsByRequestIds`, `readWriteRequestProgress`, `countOutstandingBySource`, `readWorktreeAdmission`, `completeSyncedRefresh`, `hasDeferralRoom`, `readRefreshTiming`, `countHeldBehindImport`, `readCounterRows`, `readAdmissionRate`, `lockPersistenceCounters`,
 `insertWriteRequest`, `stampWriteClaim`, `lockWriteRequest`, `completeWriteRow`, the grouped admission
@@ -117,3 +117,15 @@ rows in [persistence.md](persistence.md). The journal calls most of them inside 
 members (`listHostConsumerRows`, `probeLiveConsumerRows`, `renewConsumerRow`, `deleteConsumerRow`) keep no
 stored state; see "TypeScript members with no stored state" there. `stampWorktreeHeartbeats` stamps the
 worktree rows of "Worktree bindings" there.
+
+Gaps on the take path (`test/engine-parity/take-proposals.test.ts`, 3 equal / 5 refused on Rust). Three raw-SQL
+callers on the journal's take writes still refuse `raw_sql` on this engine, and the parity cases are pinned to that
+refusal until they are typed:
+
+- `takes propose --accept` runs `takes_add` through the persistence coordinator, whose `persistence/takes-prepare.ts`
+  (7 sites) and `page-state/projections.ts` raw SQL refuses, so the write parks as `write_pending` blocked on
+  `engine_capability_missing`.
+- The four propose_takes cycle cases write an extract receipt (typed: `readExtractReceiptSlot`,
+  `readExtractReceiptSeal`, see [extract-bookkeeping.md](extract-bookkeeping.md)), whose page write reaches
+  `page-state/projections.ts` (`planProjectionKeep`, `resealSafeChunks`). The fill-in is lane 3 cut 1 (7f1ee5198e +
+  resealSafeChunks :467), Nov 23; a case that then returns the PGLite answer loses its pin.

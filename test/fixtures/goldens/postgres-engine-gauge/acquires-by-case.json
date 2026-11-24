@@ -38,6 +38,7 @@
     },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeEdgesLeavingChunks#default": {},
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },
@@ -309,6 +310,9 @@
     "listSourcePathPages#default": {
       "raw": 1
     },
+    "listSourcePathRows#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
@@ -352,6 +356,9 @@
     "lockPageKeys#default": {
       "raw": 4,
       "tx": 1
+    },
+    "lockSourceForUpdate#default": {
+      "raw": 1
     },
     "lockSourceRow#default": {
       "raw": 1
@@ -434,6 +441,12 @@
     "readSourceRow#default": {
       "raw": 1
     },
+    "readSourcesNotReadable#default": {
+      "raw": 1
+    },
+    "readSourcesNotReadable#factsFloor": {
+      "raw": 1
+    },
     "refreshPageBody#default": {},
     "removeLink#default": {},
     "removeLink#linkSource": {},
@@ -446,6 +459,7 @@
       "raw": 5,
       "tx": 1
     },
+    "renameSource#default": {},
     "replaceDerivedLinks#default": {
       "raw": 12,
       "tx": 1

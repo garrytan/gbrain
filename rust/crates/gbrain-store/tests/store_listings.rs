@@ -1,23 +1,11 @@
 //! Byte-order listings the store serves for the engine-parity collate cases (lane 17): the shared-skill
-//! member migration rows, the derivation claim needles and the markdown page slugs.
+//! member migration rows and the markdown page slugs.
 
 mod common;
 
 use common::{TempDir, open};
-use gbrain_store::facts::normalize_derivation_claims;
 use gbrain_store::shared_skill_members::SharedSkillMemberEnroll;
 use serde_json::json;
-
-#[test]
-fn derivation_claims_normalize_fold_dedupe_and_sort_by_byte() {
-    let claims = ["ab", "a b", "A  B.", "a c", "", "...", "σς", "i\u{307}x"].map(String::from);
-    // `A  B.` normalizes to `a b` (one space, the ending dot dropped); `...` and the empty claim drop out;
-    // the final sigma folds to `σ`; `i` + combining dot folds to `i`.
-    assert_eq!(
-        normalize_derivation_claims(&claims),
-        vec!["a b", "a c", "ab", "ix", "σσ"]
-    );
-}
 
 #[test]
 fn shared_member_migration_rows_match_object_keys_and_array_elements_by_adapter_bytes() {

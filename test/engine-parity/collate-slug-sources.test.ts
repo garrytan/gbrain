@@ -78,14 +78,14 @@ async function cli(run: () => Promise<void>): Promise<string> {
 const named = (text: string) => MIXED_SOURCES.filter(id => text.includes(id)).sort((a, b) => text.indexOf(`${a}`) - text.indexOf(`${b}`));
 
 describe('a slug held in several sources lists those sources by byte', () => {
-  parityTest('whoCanRead lists the sources by byte', { methods: ['putPage', 'readPageAccessRows'] }, async (engine, backend) => {
+  parityTest('whoCanRead lists the sources by byte', { methods: ['putPage', 'readWhoCanReadRows'] }, async (engine, backend) => {
     await seed(engine, backend);
     const sources = (await whoCanRead(engine, SLUG)).map(e => e.source_id);
     expect(sources).toEqual(BYTE_SOURCES);
     return sources;
   });
 
-  parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'listLiveSlugSourceIds'] }, async (engine, backend) => {
     await seed(engine, backend);
     const e = await errorOf(() => resolvePageRef(engine, { kind: 'page', sourceId: null, slug: SLUG } as never)) as OperationError;
     expect(e.message).toContain(`exists in 3 sources: ${BYTE_SOURCES.join(', ')}.`);
@@ -93,14 +93,14 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return { message: e.message, suggestion: e.suggestion };
   });
 
-  parityTest('quarantine clear names the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('quarantine clear names the sources by byte', { methods: ['putPage', 'listLiveSlugSourceIds'] }, async (engine, backend) => {
     await seed(engine, backend);
     const err = await cli(() => runQuarantine(engine, ['clear', SLUG]));
     expect(err).toContain(`exists in 3 sources: ${BYTE_SOURCES.join(', ')}.`);
     return err;
   });
 
-  parityTest('extract-conversation-facts --grammar names the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('extract-conversation-facts --grammar names the sources by byte', { methods: ['putPage', 'listLiveSlugSourceIds'] }, async (engine, backend) => {
     await seed(engine, backend);
     const err = await cli(() => runExtractConversationFacts(engine, ['--slug', SLUG, '--grammar', 'none', '--dry-run']));
     expect(err).toContain(`is in 3 sources (${BYTE_SOURCES.join(', ')})`);
@@ -115,14 +115,12 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return e.message;
   });
 
-  parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'listAllSources'] }, async (engine, backend) => {
     await seed(engine, backend);
     for (const id of MIXED_SOURCES) {
       await engine.putPage('notes/target', { type: 'note', title: 't', compiled_truth: 't', timeline: '' }, { sourceId: id });
       await engine.addLink(SLUG, 'notes/target', 'ctx', 'mentions', undefined, undefined, undefined, { fromSourceId: id, toSourceId: id });
     }
-    // The hint swallows a failed lookup, so read raw SQL once first: the Rust arm stops here on its refusal.
-    await engine.executeRaw('SELECT 1');
     const warned: string[] = [];
     const ctx = ctxFor(engine, { logger: { info() {}, warn: (m: string) => { warned.push(m); }, error() {} } as never });
     const op = operations.find(o => o.name === 'get_links')!;
@@ -132,9 +130,9 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return hint;
   });
 
-  parityTest('probeTarget and resolveChainAnchors list the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('probeTarget and resolveChainAnchors list the sources by byte', { methods: ['putPage', 'probeTargetRows', 'resolveChainAnchorRows'] }, async (engine, backend) => {
     await seed(engine, backend);
-    const probe = (await probeTarget((sql, params) => engine.executeRaw(sql, params), SLUG, {})).map(r => r.source_id);
+    const probe = (await probeTarget(engine, SLUG, {})).map(r => r.source_id);
     const anchors = (await resolveChainAnchors(engine, SLUG, {})).map(a => a.source_id);
     expect({ probe, anchors }).toEqual({ probe: BYTE_SOURCES, anchors: BYTE_SOURCES });
     return { probe, anchors };

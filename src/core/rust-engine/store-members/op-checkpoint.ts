@@ -7,7 +7,6 @@
 import { MARKDOWN_CHUNKER_VERSION } from '../../chunkers/recursive.ts';
 import type { SyncImportPageQuery, SyncImportPageRow, SyncImportPageWindow } from '../../engine-sql/sync-pass-pages.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import { FENCE_UNCOMMITTED_OP } from '../../fence-repair/uncommitted-op.ts';
 import type { OpCheckpointRecord } from '../../engine-sql/write-misc.ts';
 
 /**
@@ -41,31 +40,6 @@ export const deleteOpCheckpointPaths: StoreMember<[op: string, fingerprint: stri
 export const readOpCheckpointRecords: StoreMember<[op: string, fingerprints: readonly string[]], unknown[]> =
   (brain, op, fingerprints) => storeCall({ member: 'readOpCheckpointRecords' }, () => brain.readOpCheckpointRecords(op, [...fingerprints]));
 
-/**
- * The uncommitted fence-repair notices: every `fence-repair-uncommitted` parent in key order (byte order of fingerprint,
- * as `ORDER BY fingerprint COLLATE "C"`), with its first completed key (null for an empty or non-array value, as
- * `completed_keys->0` reads), kept when `sourceIds` is null or names the record's `source_id` text.
- */
-export const listUncommittedFenceRepairRows: StoreMember<[sourceIds: readonly string[] | null], Array<{ fingerprint: string; record: unknown }>> =
-  async (brain, sourceIds) => {
-    const rows = await storeCall({ member: 'listUncommittedFenceRepairRows' }, () => brain.listOpCheckpointRecords(FENCE_UNCOMMITTED_OP)) as Array<{ fingerprint: string; completed_keys: unknown }>;
-    const wanted = sourceIds === null ? null : new Set(sourceIds);
-    const out: Array<{ fingerprint: string; record: unknown }> = [];
-    for (const row of rows) {
-      const record = Array.isArray(row.completed_keys) ? row.completed_keys[0] ?? null : null;
-      const sourceId = jsonText((record as Record<string, unknown> | null)?.source_id);
-      if (wanted !== null && (sourceId === null || !wanted.has(sourceId))) continue;
-      out.push({ fingerprint: row.fingerprint, record });
-    }
-    return out;
-  };
-
-/** The text `->>` reads from a JSON value: a string as itself, any other non-null value as its JSON, null as null. */
-function jsonText(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  return typeof value === 'string' ? value : JSON.stringify(value);
-}
-
 /** Each row's parent set to `[record]`, stamped now; the child paths stay. A record holding NUL is refused whole. */
 export const writeOpCheckpointRecords: StoreMember<[op: string, rows: ReadonlyArray<{ fingerprint: string; record: unknown }>], void> = async (brain, op, rows) => {
   await storeCall({ member: 'writeOpCheckpointRecords' }, () => brain.writeOpCheckpointRecords(op, rows.map(({ fingerprint, record }) => ({ fingerprint, record }))));
@@ -79,6 +53,30 @@ export const readSyncImportPageRows: StoreMember<[q: SyncImportPageQuery, window
   storeCall({ member: 'readSyncImportPageRows' }, () => brain.readSyncImportPageRows(
     { sourceId: q.sourceId, incarnation: q.incarnation, expected: q.expected, chunkerVersion: MARKDOWN_CHUNKER_VERSION },
     'ids' in window ? { ids: [...window.ids] } : { after: window.after, limit: window.limit }));
+
+/**
+ * The whole-source sync pass cursor (engine-sql/sync-pass-pages.ts `declareSyncImportPageCursor`, `FETCH n`). The store
+ * has no SQL cursor: the declare records the query, and each fetch reads the next keyset page after the last id it
+ * returned (readSyncImportPageRows), so the rows come in page id order, one of the orders the statement allows. One cursor
+ * per open brain (a slot on the store handle), as one named cursor per transaction on SQL; a fetch with none declared refuses as FETCH does.
+ */
+const SYNC_PASS_CURSOR = Symbol('gbrain.syncPassCursor');
+type SyncPassCursor = { q: SyncImportPageQuery; after: number };
+const cursorSlot = (brain: object) => brain as { [SYNC_PASS_CURSOR]?: SyncPassCursor };
+
+export const declareSyncImportPageCursor: StoreMember<[q: SyncImportPageQuery], void> = async (brain, q) => {
+  cursorSlot(brain)[SYNC_PASS_CURSOR] = { q: { ...q }, after: 0 };
+};
+
+export const fetchSyncImportPageCursor: StoreMember<[rows: number], SyncImportPageRow[]> = async (brain, rows) => {
+  if (!Number.isFinite(rows) || !Number.isSafeInteger(rows) || rows < 1) throw new Error(`fetchSyncImportPageCursor: rows must be a positive integer, got ${rows}`);
+  const cursor = cursorSlot(brain)[SYNC_PASS_CURSOR];
+  if (!cursor) throw new Error('fetchSyncImportPageCursor: no sync pass cursor is open (declareSyncImportPageCursor first)');
+  const page = await readSyncImportPageRows(brain, cursor.q, { after: cursor.after, limit: rows });
+  if (page.length) cursor.after = Number(page[page.length - 1]!.id);
+  if (page.length < rows) delete cursorSlot(brain)[SYNC_PASS_CURSOR];
+  return page;
+};
 
 
 /**
@@ -97,3 +95,8 @@ export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: stri
 /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
 export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
   storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));
+/**
+ * `purgeStaleAppliedCaptures`: the store keeps no applied captures (every writer, ingestion/applied-captures.ts, goes
+ * through `executeRaw`, which this engine refuses), so none is stale.
+ */
+export const purgeStaleAppliedCaptures: StoreMember<[ttlDays: number], number> = async () => 0;

@@ -29,6 +29,9 @@ export const listFenceRowGroups: Member<'listFenceRowGroups'> = (brain) =>
 export const readFactSubject: Member<'readFactSubject'> = (brain, id) =>
   storeCall({ member: 'readFactSubject' }, () => brain.readFactSubject(id));
 
+export const factsOrAliasesMayMatch: Member<'factsOrAliasesMayMatch'> = (brain, sourceId, slugTokens, aliasNorms) =>
+  storeCall({ member: 'factsOrAliasesMayMatch' }, () => brain.factsOrAliasesMayMatch({ sourceId, slugTokens: [...slugTokens], aliasNorms: [...aliasNorms] }));
+
 /** `expired_at` comes back from PGLite as a `Date`. */
 export const readFactForForget: Member<'readFactForForget'> = async (brain, id) => {
   const row: Record<string, unknown> | null = await storeCall({ member: 'readFactForForget' }, () => brain.readFactForForget(id));

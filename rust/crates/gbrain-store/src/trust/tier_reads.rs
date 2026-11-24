@@ -9,6 +9,8 @@
 //!   tier of a version, and the type and tier of the write that replaced it.
 //! - [`Store::list_page_refs_by_ids`]: the source, slug and type of each listed page, for the
 //!   reads that quote a third-party page's rows.
+//! - [`Store::list_page_quote_tiers`]: the type and tier of the listed pages, or of the live pages
+//!   with a slug in the listed sources, for the reads that quote a page's tags or event kind.
 //!
 //! They read the tier and write origin fields of the page, fact, take, timeline entry and version records
 //! (`trust::stamp`, `trust::row_trust`); no read needs a key range of its own, so the family adds no
@@ -94,6 +96,20 @@ pub struct VersionIdsQuery {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageIdsQuery {
     pub ids: Vec<i64>,
+}
+
+/// `listPageQuoteTiers(spec)`: `{ ids }`, or `{ slug, sourceIds }`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageQuoteTierQuery {
+    /// The pages by id, deleted or not.
+    #[serde(default)]
+    pub ids: Option<Vec<i64>>,
+    /// The live pages with this slug in `source_ids`.
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
 }
 
 /// A page named by source and slug (`listPageTrustTiersByKey`, `lockLivePagesByKey`).
@@ -460,6 +476,50 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// `listPageQuoteTiers`: the stored type and tier of each page the query names, by id, once
+    /// each: the listed ids (deleted pages included; an unknown or negative id answers nothing), or
+    /// the live pages with the slug in the listed sources. A query that names both forms, or
+    /// neither, is an invalid argument.
+    pub fn list_page_quote_tiers(&self, q: &PageQuoteTierQuery) -> Result<Vec<Value>> {
+        const OP: &str = "listPageQuoteTiers";
+        let read = self.read()?;
+        let mut pages: BTreeMap<u64, PageRecord> = BTreeMap::new();
+        match (&q.ids, &q.slug, &q.source_ids) {
+            (Some(ids), None, None) => {
+                let wanted: BTreeSet<u64> = ids
+                    .iter()
+                    .filter_map(|id| u64::try_from(*id).ok())
+                    .collect();
+                for id in wanted {
+                    if let Some(page) = read_page_by_id(&*read, id)? {
+                        pages.insert(page.id, page);
+                    }
+                }
+            }
+            (None, Some(slug), Some(sources)) => {
+                let wanted: BTreeSet<&str> = sources.iter().map(String::as_str).collect();
+                for source in wanted {
+                    if let Some(page) = read_page(&*read, source, slug)?
+                        && page.deleted_at_us.is_none()
+                    {
+                        pages.insert(page.id, page);
+                    }
+                }
+            }
+            _ => {
+                return Err(StoreError::invalid(format!(
+                    "{OP}: pass either ids, or slug and sourceIds"
+                )));
+            }
+        }
+        Ok(pages
+            .values()
+            .map(|page| {
+                json!({ "id": page.id, "type": page.page_type, "trust_tier": page_tier(page).as_str() })
+            })
+            .collect())
     }
 
     /// `listPageTrustTiersByKey`: the id and stored trust tier of each named page, deleted or not,

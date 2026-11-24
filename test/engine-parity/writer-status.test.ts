@@ -6,8 +6,9 @@
  * The status reads its row sets through typed BrainEngine members (engine-sql/writer-status.ts, and on the Rust engine
  * store-members/writer-status.ts); the stalled catch-ups, the parked groups and the source movement are typed too. So:
  *   - the first case composes the status from every read but those three, and the text must be equal on every arm;
- *   - the second case runs the whole status; the text is equal on every arm apart from the movement list, which a Rust
- *     brain leaves empty (it keeps no persistence binding row) and the SQL arms fill; each arm is checked against its own.
+ *   - the movement case seeds managed-sync requests, a git hold and live sync jobs on the claimed checkout and compares
+ *     readSourceMovementRows, readLiveSyncJobId and the printed movement;
+ *   - the whole-status case runs the whole status, the movement of the claimed checkout included; the text is equal on every arm.
  *
  * The fixture claims a checkout with the internal claimWorktree (the automatic claim of a first write), takes the
  * operator lock, and registers sources `a-c` and `ab`, which sort
@@ -34,6 +35,10 @@ import { listWriterVersions } from '../../src/core/persistence/writer-versions.t
 import { activeWorktreeRefreshes } from '../../src/core/persistence/worktree-refresh.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
+import { readSourceMovement, liveSyncJob } from '../../src/core/persistence/sync-movement.ts';
+import { writeGitHold } from '../../src/core/persistence/sync-holds.ts';
+import { APPLICATION_AUTHORITY } from '../../src/core/minions/submission-authority.ts';
+import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -132,17 +137,71 @@ describe('writer status', () => {
     return answers;
   }));
 
+  parityTest('reads a binding\'s movement rows and the live sync job from seeded requests, a hold and jobs', {
+    methods: ['readSourceMovementRows', 'readLiveSyncJobId', 'listSourceBindingsForMovement', 'insertWriteRequest', 'completeWriteRow',
+      'lockPersistenceCounters', 'admitJob', 'claimNextJob'],
+  }, async (engine, backend) => withClaimedCheckout(engine, backend, async (home) => {
+    const [binding] = await engine.listSourceBindingsForMovement(['work']);
+    const keys = ['principal:local_cli:parity-writer', 'brain'];
+    const admit = async (requestId: string, kind: string) => {
+      await engine.lockPersistenceCounters(keys);
+      return (await engine.insertWriteRequest({ principalKind: 'local_cli', principalId: 'parity-writer', requestId, operation: 'put_page',
+        sourceId: 'work', sourceIncarnation: binding!.source_incarnation, pageId: null, slug: `notes/${kind}`, worktreeId: binding!.worktree_id,
+        topologyGeneration: null, digest: 'd'.repeat(64), intent: { kind }, authority: {}, intentBytes: 10, terminalReservation: 4096,
+        targetKind: 'page', protocolVersion: 1, admitterVersion: 'v-test', admitterHostId: null, counterKeys: keys, clientRequestId: null,
+        state: 'queued', deferredRefreshId: null })).id;
+    };
+    const committed = await admit('b0000000-0000-4000-8000-0000000000c1', 'managed_sync_page');
+    await engine.completeWriteRow({ id: committed, state: 'committed', outcome: null, errorCode: null, errorMessage: null, consumerVersion: 'v',
+      consumerHostId: null, errorDetail: null, resultBytes: 10, counterKeys: keys, intentBytes: 10, retainedBytes: 512, terminalReservation: 4096,
+      probePurges: true });
+    await admit('b0000000-0000-4000-8000-0000000000c2', 'managed_sync_page');
+    await admit('b0000000-0000-4000-8000-0000000000c3', 'put_page');
+    await writeGitHold(engine, { source_id: 'work', incarnation: binding!.source_incarnation, path: 'notes/x.md', source_path: 'notes/x.md',
+      slug: 'notes/x', page_id: null, code: 'invalid_frontmatter', message: 'line 1: bad key', upstream_version: 'v1',
+      observed_at: '2026-01-01T00:00:01.000Z', run_id: 'run-1', mode: 'managed', meta: {} } as Parameters<typeof writeGitHold>[1]);
+    const job = async (data: Record<string, unknown>) => {
+      const values: JobInsertValues = { name: 'sync', queue: 'default', status: 'waiting', priority: 0, data, max_attempts: 3,
+        backoff_type: 'exponential', backoff_delay: 1000, backoff_jitter: 0.2, delay_until: null, parent_job_id: null, on_child_fail: 'fail_parent',
+        max_children: null, timeout_ms: null, lock_duration_ms: null, remove_on_complete: false, remove_on_fail: false, idempotency_key: null,
+        quiet_hours: null, stagger_key: null, private_queue_owner_job_id: null, private_queue_owner_token: null, private_queue_lease_until: null,
+        submission_authority: APPLICATION_AUTHORITY, spend_authorization: null, max_stalled: null };
+      const out = await engine.admitJob({ maxSpawnDepth: 5, insert: values }, { decide: async () => ({ action: 'insert' }) as never, parentAuthorityKind: () => null });
+      await Bun.sleep(2);
+      await engine.claimNextJob({ lockToken: `w:${data.sourceId ?? data.repoPath ?? 'none'}`, lockDurationMs: 60_000, queue: 'default', names: ['sync'],
+        handlerTimeouts: {}, handlerLockDurations: {}, legacySpend: { groupId: '00000000-0000-4000-8000-000000000001', capUsd: 5 } });
+      return Number(out.row.id);
+    };
+    const byRepo = await job({ repoPath: join(home, 'checkout') });
+    const named = await job({ sourceId: 'work' });
+    const unnamed = await job({});
+    const rows = await engine.readSourceMovementRows(binding!);
+    const shape = {
+      watermark: { committed: rows.watermark?.last_commit_at != null, admitted: Number(rows.watermark?.admitted), since: rows.watermark?.admitted_since != null },
+      head: rows.head && { request: rows.head.request_id, state: rows.head.state, lapsed: rows.head.claim_lapsed, started: rows.head.publication_started },
+      hold: rows.hold && { count: Number(rows.hold.count), stalled: rows.hold.stalled, fences: rows.hold.fences, at: rows.hold.updated_at != null },
+      jobs: { work: (await engine.readLiveSyncJobId('work'))! - byRepo, default: (await engine.readLiveSyncJobId('default'))! - byRepo,
+        ab: await engine.readLiveSyncJobId('ab'), viaMovement: (await liveSyncJob(engine, 'work'))! - byRepo },
+      ids: [named - byRepo, unnamed - byRepo],
+      // Job ids are each brain's own; the movement names its draining job relative to the first one.
+      movement: printed((await readSourceMovement(engine, { sourceIds: ['work'] })).map(m => ({ ...m,
+        live: { ...m.live, drain_job_id: m.live.drain_job_id === null ? null : m.live.drain_job_id - byRepo } })), home),
+    };
+    expect(shape.watermark).toEqual({ committed: true, admitted: 1, since: true });
+    expect(shape.head).toEqual({ request: 'b0000000-0000-4000-8000-0000000000c2', state: 'queued', lapsed: false, started: false });
+    expect(shape.hold?.count).toBe(1);
+    expect(shape.jobs).toEqual({ work: 0, default: 2, ab: null, viaMovement: 0 });
+    return shape;
+  }));
+
   parityTest('prints the same whole status on every engine that reads it', {
     methods: ['readWriterDiagnosticRows', 'readWriterStatusRows'],
   }, async (engine, backend) => withClaimedCheckout(engine, backend, async (home) => {
     const status = await runPersistenceAdministration(engine, 'writer_status', {}) as Record<string, unknown>;
     expect(Object.keys(status)).toEqual(expect.arrayContaining(['stalled_catchups', 'parked_groups', 'movement', 'bindings', 'onboarding']));
-    // The catch-up and parked-group reads are typed members the store serves. The movement read lists the managed sources a
-    // persistence binding names; a Rust brain keeps no binding row (listSourceBindingsForMovement answers none), so its
-    // movement is empty where the SQL arms list the registered sources. Each arm is checked against its own answer and the
-    // rest of the status must be equal.
-    const { movement, ...rest } = status;
-    expect({ arm: backend, listed: Array.isArray(movement) ? movement.length : null }).toEqual({ arm: backend, listed: backend === 'rust' ? 0 : 1 });
-    return printed(rest, home);
+    // Every read of the status is a typed member the store serves, the source movement included (its binding, watermark,
+    // head and hold reads), so the whole printed status is equal on every arm.
+    expect(Array.isArray(status.movement) ? (status.movement as unknown[]).length : status.movement).toBe(1);
+    return printed(status, home);
   }));
 });

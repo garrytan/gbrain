@@ -9,7 +9,8 @@
  *    delete forgets one key only, and a null value or a NUL byte is refused. Spend: a request id keeps its first
  *    row, `dailyDecideSpend` adds typesafe spend from `since` on (and the remote part), costs add in insertion
  *    order, slots list in byte order, and a bad row refuses its whole batch.
- *    Receipts: every read is windowed by whole hours (a fraction or a window before the first timestamp is refused),
+ *    Receipts: every read is windowed by whole hours (a fraction or a window before the first timestamp is refused,
+ *    and a window of zero or fewer hours holds nothing, not even a receipt written in the reading transaction),
  *    stats group by slot, mode, outcome and reason in byte order with the reason null last, a mean adds in insertion
  *    order and a percentile interpolates, REAL columns keep their single-precision value, replay orders by decision
  *    id (byte order), then rank (null last), then insertion, and a prune drops old receipts but keeps spend for at
@@ -680,6 +681,47 @@ describe('engine parity: decide receipts', () => {
       return { refused, far };
     },
   );
+  /**
+   * The rows each read below sees in a one-hour window. They are written and read in ONE transaction: on PGLite and
+   * Postgres now() is the transaction's start there, so every row is stamped with the very now() the read uses, and a
+   * `created_at >= now() - 0` filter counts it on every run (outside a transaction it counts only a row written in the
+   * read's clock tick). A zero or negative window must still hold nothing.
+   */
+  const SAME_TRANSACTION_ROWS = [
+    receipt('z1', { model_resolved: 'gpt-x', outcome: 'skipped', error_reason: 'no_entity' }),
+    receipt('z2', { model_resolved: 'gpt-y', outcome: 'error', error_reason: 'mixed_model' }),
+    receipt('z3', { model_resolved: 'gpt-x' }),
+  ];
+  /** The answer with each `last_at` replaced by whether it is a date (the arms' clocks differ) and a list in one order (rows stamped in one transaction tie on time). */
+  const comparableAnswer = (value: unknown): unknown => (!Array.isArray(value) ? value : value
+    .map((row: Row) => ('last_at' in row ? { ...row, last_at: row.last_at instanceof Date } : row))
+    .sort((a, b) => bytes(JSON.stringify(a), JSON.stringify(b))));
+  /** Write SAME_TRANSACTION_ROWS and read them over one hour, zero hours and minus one hour, in one transaction. */
+  async function sameTransactionWindows(engine: BrainEngine, read: (tx: BrainEngine, hours: number) => Promise<unknown>, empty: unknown) {
+    const answer = await engine.transaction(async (tx) => {
+      await tx.insertDecideReceipts(SAME_TRANSACTION_ROWS);
+      return { hour: comparableAnswer(await read(tx, 1)), zero: await read(tx, 0), negative: await read(tx, -1) };
+    });
+    expect(answer.hour).not.toEqual(empty);
+    expect(answer.zero).toEqual(empty);
+    expect(answer.negative).toEqual(empty);
+    return answer;
+  }
+  const SAME_TRANSACTION = 'holds nothing in a zero or negative window, even a receipt written in the same transaction';
+
+  parityTest(`listDecideReceiptStats ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideReceiptStats'] },
+    (engine) => sameTransactionWindows(engine, async (tx, h) =>
+      [...await tx.listDecideReceiptStats({ sinceHours: h }), ...await tx.listDecideReceiptStats({ slot: 'conflict', sinceHours: h })], []));
+  parityTest(`decideSlotUsage ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'decideSlotUsage'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.decideSlotUsage(h), []));
+  parityTest(`decideConflictNoEntityCounts ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'decideConflictNoEntityCounts'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.decideConflictNoEntityCounts(h), { receipts: 0, skipped: 0 }));
+  parityTest(`listDecideReplayReceipts ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideReplayReceipts'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.listDecideReplayReceipts('conflict', h), []));
+  parityTest(`listDecideResolvedModels ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideResolvedModels'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.listDecideResolvedModels(h), []));
+  parityTest(`listDecideMixedModelDecisions ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideMixedModelDecisions'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.listDecideMixedModelDecisions(h), []));
 });
 
 type CalibrationInsert = Parameters<BrainEngine['insertDecideCalibration']>[0];

@@ -229,7 +229,7 @@ describe('jobs checks parity', () => {
 
   // fence-repair/hold-fix.ts readFenceAutoRepair: a refused read once counted as the defaults (repair on, model tier on).
   parityTest('readFenceAutoRepair reads the fence switches, the maintenance stamp and the last completed maintenance job',
-    { methods: ['setConfig', 'admitJob', 'claimNextJob', 'completeJob', 'failJob', 'readFenceAutoRepairRows'] }, async (engine) => {
+    { methods: ['setConfig', 'admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getConfigValues', 'readLastFinishedJobAt'] }, async (engine) => {
       const gm = 'autopilot-global-maintenance';
       const none = await readFenceAutoRepair(engine, new Date());
       await engine.setConfig(FENCE_REPAIR_ENABLED_KEY, 'off');

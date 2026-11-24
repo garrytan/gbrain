@@ -150,20 +150,6 @@ impl Brain {
         })
     }
 
-    /// `readPageAccessRows(slug, sourceId, form)`: who-can-read's page rows.
-    #[napi]
-    pub fn read_page_access_rows<'env>(
-        &self,
-        env: &'env Env,
-        slug: String,
-        source_id: Option<String>,
-        form: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_page_access_rows(&slug, source_id.as_deref(), &form)
-        })
-    }
-
     /// `listMarkdownPageSlugs(sourceId)`: `string[]`.
     #[napi]
     pub fn list_markdown_page_slugs<'env>(

@@ -75,6 +75,21 @@ fn key(parts: &[&str]) -> Vec<u8> {
     key
 }
 
+/// Whether any withdrawal of the source has this subject (`hasFactWithdrawalForSubject`), read from one snapshot.
+pub(crate) fn has_subject_withdrawal(
+    read: &dyn KvRead,
+    source_id: &str,
+    subject: &str,
+) -> Result<bool> {
+    let prefix = source_prefix(source_id);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == subject);
+        !found
+    })?;
+    Ok(found)
+}
+
 /// `t 0x01 source \0`: every withdrawal of a source.
 fn source_prefix(source_id: &str) -> Vec<u8> {
     let mut prefix = key(&[source_id]);
@@ -213,6 +228,33 @@ pub(crate) fn withdrawn_claim(
         }
     }
     Ok(false)
+}
+
+/// The shadow seed (`seed.rs`): stores a withdrawal copied from another engine, with the primary's `fact_hash` and
+/// `withdrawn_at` as they are (the hash is not computed again). `false` when the row is already stored.
+pub(crate) fn seed_withdrawal(
+    tx: &mut dyn KvWrite,
+    parts: [&str; 4],
+    withdrawn_at_us: i64,
+) -> Result<bool> {
+    let [source_id, visibility, subject, fact_hash] = parts;
+    let op = "seed fact_withdrawals";
+    no_nul(
+        op,
+        &[
+            ("source_id", source_id),
+            ("visibility", visibility),
+            ("subject", subject),
+            ("fact_hash", fact_hash),
+        ],
+    )?;
+    check_visibility(op, visibility)?;
+    let k = key(&parts);
+    if tx.get(&k)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &k, &WithdrawalRecord { withdrawn_at_us })?;
+    Ok(true)
 }
 
 /// `EXISTS (SELECT 1 FROM fact_withdrawals WHERE source_id = $source AND visibility = $visibility
@@ -527,13 +569,7 @@ impl Store {
             &[("sourceId", source_id), ("subject", subject)],
         )?;
         let read = self.read()?;
-        let prefix = source_prefix(source_id);
-        let mut found = false;
-        scan_prefix(&*read, &prefix, false, &mut |k, _| {
-            found = split(k, prefix.len()).is_some_and(|(_, s, _)| s == subject);
-            !found
-        })?;
-        Ok(found)
+        has_subject_withdrawal(&*read, source_id, subject)
     }
 
     /// `readSourcePurgeFlags`: whether the source has a fact purge tombstone (the fact purge
@@ -713,6 +749,20 @@ pub(crate) fn move_subject_in(
         }
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the withdrawal `parts` (`source_id`, `visibility`,
+/// `subject`, `fact_hash`). Facts that its seed expired stay expired. `false` when there is none.
+pub(crate) fn remove_withdrawal(tx: &mut dyn KvWrite, parts: [&str; 4]) -> Result<bool> {
+    if parts.iter().any(|p| p.contains('\0')) {
+        return Ok(false);
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&k)?;
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -77,7 +77,7 @@ export function spoolValue(input: { root: string; sourceId: string | null; rule:
 
 /** Mirrors the store's restored values (key id and value MAC, never a value) for publishes without the database. */
 export async function refreshAllowedCache(engine: BrainEngine): Promise<void> {
-  const rows = await engine.executeRaw<{ key_id: string; value_mac: string }>("SELECT key_id,value_mac FROM secret_store WHERE status='allowed' ORDER BY key_id,value_mac");
+  const rows = await engine.listAllowedSecretMacs(null);
   mkdirSync(gbrainPath('secret-store'), { recursive: true, mode: 0o700 });
   const tmp = `${allowedFile()}.${process.pid}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(rows.map(r => ({ key_id: r.key_id, value_mac: r.value_mac })))}\n`, { mode: 0o600 });

@@ -27,6 +27,7 @@
  * keeping the last 5 snapshots. `bootstrap status` + doctor read them.
  */
 
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { managedFilesystemRootFor } from '../persistence/filesystem-guard.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
@@ -242,22 +243,35 @@ async function removeProbes(engine: BrainEngine, ws: string, sourceId: string): 
       /* best effort */
     }
   }
+  warnings.push(...await removeProbeFacts(engine, sourceId, managed));
+  return warnings;
+}
+
+/**
+ * Delete the probe pages' fence facts. Scoped to the EXACT probe page(s) this run wrote (via the v51 fence column
+ * source_markdown_slug), NEVER a `fact LIKE %token%` substring match — a user fact that merely mentions the token
+ * string must survive verify's cleanup [G13]. In one transaction, the fence facts of each probe page
+ * (listFactsForPage: the probe pages' rows, which their `## Facts` fences wrote) are deleted by id
+ * (deletePurgedFacts), the rows the old `source_markdown_slug IN ($2, $3)` statement deleted. Returns a warning when
+ * the engine refuses (the probe facts stay); a pre-migration brain without a facts table returns none (doctor_green
+ * names that).
+ */
+export async function removeProbeFacts(engine: BrainEngine, sourceId: string, managed: boolean): Promise<string[]> {
+  const removeFacts = async (tx: BrainEngine) => {
+    const ids: number[] = [];
+    for (const slug of [VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]) ids.push(...(await tx.listFactsForPage(sourceId, slug)).map(f => Number(f.id)));
+    if (ids.length > 0) await tx.deletePurgedFacts(ids, sourceId);
+  };
   try {
-    // Scope the delete to the EXACT probe page(s) this run wrote (via the
-    // v51 fence column source_markdown_slug), NEVER a `fact LIKE %token%`
-    // substring match — a user fact that merely mentions the token string
-    // must survive verify's cleanup [G13].
-    const sql = `DELETE FROM facts WHERE source_id = $1 AND source_markdown_slug IN ($2, $3)`;
-    const params = [sourceId, VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG];
     if (managed) {
       const attribution = await maintenanceAttribution(engine);
-      await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(sql, params), attribution));
+      await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => removeFacts(tx), attribution));
     }
-    else await engine.executeRaw(sql, params);
-  } catch {
-    /* facts table may not exist on a pre-migration brain — doctor_green names that */
+    else await engine.transaction(removeFacts);
+  } catch (err) {
+    if (isEngineCapabilityRefusal(err)) return [`probe facts: ${(err as Error).message}`];
   }
-  return warnings;
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,6 +1192,19 @@ function persistVerifyRun(gbrainHomeDir: string, payload: { ts: string; ok: bool
 // verifyWorkspace
 // ---------------------------------------------------------------------------
 
+/**
+ * #4328 registration probe: whether a sources row (archived or not) holds `sourceId`. A failed read fails OPEN (the
+ * roundtrip owns surfacing real engine errors); a refused read is rethrown, never reported as registered.
+ */
+export async function verifySourceRegistered(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  try {
+    return (await engine.listAllSources({ includeArchived: true })).some((s) => s.id === sourceId);
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
+    return true;
+  }
+}
+
 export async function verifyWorkspace(
   engine: BrainEngine,
   ws: string,
@@ -1206,12 +1233,7 @@ export async function verifyWorkspace(
     // user can act on. Detect the gap up front so the roundtrip/hooks-smoke
     // report the one command that fixes it instead. Probe failure fails OPEN
     // (the roundtrip owns surfacing real engine errors).
-    try {
-      const rows = await engine.executeRaw<{ one: number }>(`SELECT 1 AS one FROM sources WHERE id = $1`, [sourceId]);
-      sourceRegistered = rows.length > 0;
-    } catch {
-      sourceRegistered = true;
-    }
+    sourceRegistered = await verifySourceRegistered(engine, sourceId);
   }
 
   checks.push(checkTokenSweep(ws));

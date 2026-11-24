@@ -11,10 +11,26 @@ import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { FILE_LIST_LIMIT } from '../engine-sql/files-ops.ts';
+import { legacySpellings } from './slug-params.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
 import { embeddedSettingsRecord, isEmbeddedEngine } from '../embedded-engine.ts';
 
 // --- File Operations ---
+
+/**
+ * The rows of a file list for `slug` and every other stored spelling a read of it may name (`legacySpellings`: files can outlive
+ * their page or be keyed by the caller's spelling). The typed list members take one slug, so each spelling is listed and the
+ * results merge in the members' own order (byte order of the key, then id), at most FILE_LIST_LIMIT. A list over every page
+ * (no slug) is one call.
+ */
+async function listOverSpellings<T>(slug: string | undefined, list: (spelling: string | undefined) => Promise<T[]>, key: (row: T) => [string, number]): Promise<T[]> {
+  if (slug === undefined) return list(undefined);
+  const spellings = legacySpellings(slug);
+  if (spellings.length === 1) return list(spellings[0]);
+  const merged = (await Promise.all(spellings.map(list))).flat();
+  const bytes = new Map(merged.map(row => [row, Buffer.from(key(row)[0])]));
+  return merged.sort((a, b) => Buffer.compare(bytes.get(a)!, bytes.get(b)!) || key(a)[1] - key(b)[1]).slice(0, FILE_LIST_LIMIT);
+}
 
 const file_list: Operation = {
   name: 'file_list',
@@ -29,7 +45,8 @@ const file_list: Operation = {
   localOnly: true,
   handler: async (ctx, p) => {
     const slug = p.slug as string | undefined;
-    const rows = await ctx.engine.listReadableFileRows(slug, await resolveExcludePrivatePages(ctx.engine, ctx.remote));
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    const rows = await listOverSpellings(slug, spelling => ctx.engine.listReadableFileRows(spelling, excludePrivate), row => [String(row.filename), Number(row.id)]);
     // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
     // throws on those, breaking MCP callers. PGLite returns Number already.
     // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
@@ -316,7 +333,7 @@ const file_verify: Operation = {
         size_matches: stored !== null && stored.size === Number(row.size_bytes), hash_matches: stored !== null && stored.sha256 === row.content_hash };
     }
     const slug = p.slug as string | undefined;
-    const rows = await ctx.engine.listReadableFilePaths(slug, excludePrivate);
+    const rows = await listOverSpellings(slug, spelling => ctx.engine.listReadableFilePaths(spelling, excludePrivate), row => [row.storage_path, 0]);
     try { return await Promise.all(rows.map(async row => ({ ...row, present: await storage.exists(row.storage_path) }))); }
     catch (error) { throw storeUnavailable('file_verify', error); }
   },

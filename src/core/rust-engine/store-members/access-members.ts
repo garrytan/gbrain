@@ -18,7 +18,7 @@
  */
 import type { ReadSharedSourceRow } from '../../engine-sql/read-shared-sources.ts';
 import type { AccessGroupRow, AccessMemberLookup, AccessMemberRow, AudiencePrincipalRows, LiveMemberRow, MemberBindingVia } from '../../engine-sql/access-control.ts';
-import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialTarget, LinkedMemberRow } from '../../engine-sql/access-members.ts';
+import type { AccessMemberInsert, AccessMemberKind, AccessMemberLinkRow, CredentialBinding, CredentialBindingRow, CredentialMemberBinding, CredentialTarget, LinkedMemberRow, AccessTokenAttestRow, OauthClientAttestRow } from '../../engine-sql/access-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
@@ -181,10 +181,28 @@ export const readCredentialBindingForUpdate: StoreMember<[target: CredentialTarg
   };
 
 /** The member of a token or client, from the same binding read as readCredentialBindingForUpdate (a revoked token and a deleted client are read too). */
+/** The brain-audience heuristic's binding read (BrainEngine listCredentialMemberBindings): from the store's tokens and clients. */
+export const listCredentialMemberBindings: StoreMember<[names: readonly string[]], CredentialMemberBinding[]> = async (brain, names) => {
+  if (!names.length) return [];
+  return await storeCall({ member: 'listCredentialMemberBindings' }, () => brain.listCredentialMemberBindings([...names])) as CredentialMemberBinding[];
+};
+
 export const readCredentialMemberId: StoreMember<[target: CredentialTarget], string | null> = async (brain, target) => {
   const row = await storeCall({ member: 'readCredentialMemberId' }, () =>
     brain.readCredentialBinding(target.kind, target.id, false)) as { member_id?: string | null } | null;
   return row?.member_id ?? null;
+};
+
+/** A legacy token's attest row, revoked or not, or null (access/actor.ts attestRightOf). */
+export const readAccessTokenAttest: StoreMember<[id: string], AccessTokenAttestRow | null> = async (brain, id) => {
+  const row = await storeCall({ member: 'readAccessTokenAttest' }, () => brain.readCredentialAttest('token', id)) as AccessTokenAttestRow | null;
+  return row ? withDates(row, ['revoked_at']) as AccessTokenAttestRow : null;
+};
+
+/** An OAuth client's attest row, deleted or not, or null. The row lock has nothing to wait for: the store runs one write at a time. */
+export const readOauthClientAttest: StoreMember<[clientId: string, opts?: { lock?: boolean }], OauthClientAttestRow | null> = async (brain, clientId) => {
+  const row = await storeCall({ member: 'readOauthClientAttest' }, () => brain.readCredentialAttest('client', clientId)) as OauthClientAttestRow | null;
+  return row ? withDates(row, ['deleted_at']) as OauthClientAttestRow : null;
 };
 
 export const writeCredentialBinding: StoreMember<[target: CredentialTarget, binding: CredentialBinding], void> = async (brain, target, binding) => {

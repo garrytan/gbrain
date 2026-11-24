@@ -1,5 +1,5 @@
-//! The chronicle ledger: the decision upsert, the judge slot and the rollup members of
-//! `engine-sql/chronicle-ledger.ts` (rust/docs/store/chronicle-ledger.md).
+//! The chronicle ledger: the decision upsert, the judge slot, its pruning and the rollup members of
+//! `engine-sql/collate-store-reads.ts` (rust/docs/store/chronicle-ledger.md).
 
 use gbrain_store::chronicle_ledger::{ChronicleJudgeKey, ChronicleRowInput};
 use napi::Env;
@@ -38,31 +38,15 @@ impl Brain {
         })
     }
 
+    /// `pruneChronicleReservations()`: resolves the number of reservations older than 48 hours it deleted.
+    #[napi]
+    pub fn prune_chronicle_reservations<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.prune_chronicle_reservations())
+    }
+
     /// `readChronicleLedger()`: `{ counts, reasons, calls, principals }` of the automatic rows.
     #[napi]
     pub fn read_chronicle_ledger<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_chronicle_ledger())
-    }
-
-    /// `hasChronicleSkipDecision(decision)`: whether the ledger records that skip decision.
-    #[napi]
-    pub fn has_chronicle_skip_decision<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        page_id: i64,
-        content_hash: String,
-        extractor_version: i32,
-        reason: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.has_chronicle_skip_decision(
-                &source_id,
-                page_id,
-                &content_hash,
-                extractor_version,
-                &reason,
-            )
-        })
     }
 }

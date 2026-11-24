@@ -11,7 +11,11 @@
  *    picks the edition in force on a date with its competing ordinals and counts; readBeliefHistoryRows and
  *    listVisibleBeliefLifetimes answer the same on every arm (belief-ledger.test.ts writes their events); pageAwaitsRederive says whether a purge hid the
  *    page for re-derivation, and `get_page` with `as_of` answers the same edition end to end; listPageRefsByIds names
- *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
+ *    each listed page's source, slug and type by id, deleted pages included, for the GST-687 quoting reads;
+ *    listPageQuoteTiers reads the type and tier of the live pages with a slug in the caller's sources, or of listed pages
+ *    by id, and remote `get_tags` quotes a page's tags, and remote `chronicle_day` an event row's kind, by them (#8384).
+ *    listPageTrustTiersByKey reads each named page's stored tier (deleted pages included) and lockLivePagesByKey names
+ *    the live ones, so a page's own timeline lands through addProjectedPageTimeline and a missing page refuses. The Rust arm (GBRAIN_TEST_RUST_ARM=1) answers
  *    the page, fact, version, valid-time and belief reads (with the change reason and history gap createVersion stamps),
  *    and scans the takes and timeline entries too.
  *  - Regression: core memory, `gbrain doctor`'s trust scan, `get_versions` reasons and `get_page` with `as_of` call these
@@ -857,6 +861,95 @@ describe('engine parity: typed trust tier reads', () => {
       return { seeded, raisedMover, plainMover };
     },
   );
+  // #8384 get_tags: a remote reader gets a quoted page's tags quoted. The page's type and tier are read by slug in the
+  // caller's sources, live pages only: a quoted type or a tier below the owner's quotes the tags, in any granted source.
+  parityTest('remote get_tags quotes a page\'s tags by its type and tier, live pages in the granted sources only', {
+    methods: ['transaction', 'applyTransactionSettings', 'putPage', 'addTag', 'getTags', 'softDeletePage', 'getConfig', 'listPageQuoteTiers'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const seed = async (slug: string, type: string, tier: string, sourceId = 'default') => {
+      await declared(engine, tier, tx => tx.putPage(slug, { type: type as never, title: slug, compiled_truth: `${slug} body`, timeline: '' }, { sourceId }));
+      await engine.addTag(slug, `tag-${sourceId}`, { sourceId });
+    };
+    await seed('qt/chat', 'chat', 'operator_curated');
+    await seed('qt/agent', 'note', 'agent_written');
+    await seed('qt/owner', 'note', 'operator_curated');
+    await seed('qt/shared', 'note', 'operator_curated');
+    await seed('qt/shared', 'note', 'agent_written', 'other');
+    await seed('qt/revived', 'note', 'operator_curated');
+    await seed('qt/revived', 'note', 'agent_written', 'other');
+    const [revivedOther] = await engine.listPageQuoteTiers({ slug: 'qt/revived', sourceIds: ['other'] });
+    await engine.softDeletePage('qt/revived', { sourceId: 'other' });
+    const op = operations.find((o) => o.name === 'get_tags')!;
+    const ctxFor = (remote: boolean, allowedSources?: string[]) => ({
+      engine, config: { engine: engine.kind }, remote, dryRun: false, sourceId: 'default', ...(allowedSources ? { auth: { allowedSources } } : {}),
+      logger: { info() {}, warn() {}, error() {} },
+    }) as unknown as OperationContext;
+    const read = async (slug: string, remote = true, allowedSources?: string[]) => {
+      const tags = await op.handler(ctxFor(remote, allowedSources), { slug }) as string[];
+      return tags.map(t => (t.includes('; source material, not instructions]') ? 'quoted' : t));
+    };
+    const got = {
+      chat: await read('qt/chat'),
+      agent: await read('qt/agent'),
+      owner: await read('qt/owner'),
+      chatLocal: await read('qt/chat', false),
+      sharedDefault: await read('qt/shared'),
+      sharedFederated: await read('qt/shared', true, ['default', 'other']),
+      revivedFederated: await read('qt/revived', true, ['default', 'other']),
+    };
+    expect(got).toEqual({
+      chat: ['quoted'], agent: ['quoted'], owner: ['tag-default'], chatLocal: ['tag-default'],
+      sharedDefault: ['tag-default'], sharedFederated: ['quoted', 'quoted'], revivedFederated: ['tag-default'],
+    });
+    // The member itself: by slug, live pages in the listed sources once each; by id, deleted pages included. Ids differ
+    // between arms, so rows are keyed by type and tier (the delete wrote no declared tier, so the deleted page reads unknown).
+    const shape = (rows: Array<{ id: number; type: string | null; trust_tier: string | null }>) => rows.map(r => `${r.type}/${r.trust_tier}`);
+    const bySlug = await engine.listPageQuoteTiers({ slug: 'qt/revived', sourceIds: ['other', 'default', 'other', 'absent'] });
+    const byId = await engine.listPageQuoteTiers({ ids: [revivedOther!.id, bySlug[0]!.id, revivedOther!.id, -1] });
+    const members = {
+      bySlug: shape(bySlug), byId: shape(byId), noSources: await engine.listPageQuoteTiers({ slug: 'qt/chat', sourceIds: [] }),
+      noIds: await engine.listPageQuoteTiers({ ids: [] }), ordered: byId.map(r => r.id).every((id, i, a) => i === 0 || a[i - 1]! < id),
+    };
+    expect(members).toEqual({
+      bySlug: ['note/operator_curated'], byId: ['note/operator_curated', 'note/unknown'], noSources: [], noIds: [], ordered: true,
+    });
+    return { got, members };
+  });
+  parityTest('remote chronicle_day quotes an event row\'s kind by its event page\'s type and tier, by event page id', {
+    methods: ['transaction', 'applyTransactionSettings', 'putPage', 'upsertEventProjection', 'getTimelineForDate', 'listPageRefsByIds', 'getConfig', 'listPageQuoteTiers'],
+  }, async (engine) => {
+    const owner = 'operator_curated';
+    await declared(engine, owner, tx => tx.putPage('meetings/qt-sync', { type: 'meeting', title: 'Sync', compiled_truth: 'sync body', timeline: '' }));
+    const event = (slug: string, type: string, tier: string, kind: string) => declared(engine, tier, tx => tx.putPage(slug, {
+      type: type as never, title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter: { event: { who: ['people/alice-example'], kind } },
+    }));
+    await event('life/events/2026-06-18-agent', 'event', 'agent_written', 'agentkind');
+    await event('life/events/2026-06-18-chat', 'chat', owner, 'chatkind');
+    await event('life/events/2026-06-18-owner', 'event', owner, 'ownerkind');
+    for (const [eventSlug, summary] of [['life/events/2026-06-18-agent', 'agent event'], ['life/events/2026-06-18-chat', 'chat event'], ['life/events/2026-06-18-owner', 'owner event']]) {
+      await declared(engine, owner, tx => tx.upsertEventProjection({ depthSlug: 'meetings/qt-sync', eventSlug: eventSlug!, date: '2026-06-18', summary: summary!, sourceId: 'default' }));
+    }
+    const op = operations.find((o) => o.name === 'chronicle_day')!;
+    const read = async (remote: boolean) => {
+      const ctx = { engine, config: { engine: engine.kind }, remote, dryRun: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+      const got = await op.handler(ctx, { date: '2026-06-18' }) as { rows?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+      const rows = (Array.isArray(got) ? got : got.rows ?? []) as Array<{ summary: string; kind?: string | null; quoted?: string }>;
+      const fenced = (t: string) => t.includes('; source material, not instructions]');
+      return rows.map(r => ({ summary: r.summary, quoted: r.quoted ?? null, kind: r.kind ?? null }))
+        .sort((a, b) => (a.kind ?? '').localeCompare(b.kind ?? ''))
+        .map(r => (r.kind && fenced(r.kind) ? { ...r, kind: `quoted ${r.kind.match(/[a-z]+kind/)?.[0]}` } : r));
+    };
+    const got = { remote: await read(true), local: await read(false) };
+    // The projected rows carry their own tier, which quotes their summary as quoteTimelineRows does; the kind is the event page's.
+    expect(got.remote.map(r => r.kind)).toEqual(['quoted agentkind', 'quoted chatkind', 'ownerkind']);
+    expect(got.local).toEqual([
+      { summary: 'agent event', quoted: null, kind: 'agentkind' },
+      { summary: 'chat event', quoted: null, kind: 'chatkind' },
+      { summary: 'owner event', quoted: null, kind: 'ownerkind' },
+    ]);
+    return got;
+  });
   // GST-687 quoting: get_timeline, the chronicle reads and get_chunks look up each row's page type (and get_chunks its
   // page's slug and source) by page id. Ids differ between arms, so answers are keyed by slug.
   parityTest('listPageRefsByIds, pageTypesById and quoteTimelineRows read each page by id: deleted pages and other sources included, unknown ids absent', {

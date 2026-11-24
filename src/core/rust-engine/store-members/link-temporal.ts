@@ -15,6 +15,7 @@
  * unexported.
  */
 import { COVERAGE_COUNT_TIMEOUT_MS, type CoverageRelevance, type ProjectionRebuildProgress, type ScopedCount } from '../../search/retrieval-coverage.ts';
+import { coveragePatternWord } from './coverage-pattern.ts';
 import type { ProjectionReadinessRow, ProjectionReadinessScope } from '../../search/projection-readiness.ts';
 import type * as LinkTemporalSql from '../../engine-sql/link-temporal.ts';
 import { DERIVED_TRANSITION_PRODUCERS } from '../../engine-sql/link-temporal.ts';
@@ -209,18 +210,8 @@ export const ensureFactsKeywordIndex: StoreMember<[lang: string, notice?: (line:
 // write-gate receipts), and `requireSafeChunks` changes nothing because these reads count pages, not chunks.
 // ---------------------------------------------------------------------------------------------------------------------
 
-const WORD_PATTERN_HEAD = '(^|[^[:alnum:]])';
-const WORD_PATTERN_TAIL = '([^[:alnum:]]|$)';
-/** The words `coverageRelevance` builds patterns from; none of their characters needs a regex escape. */
-const PATTERN_WORD = /^[\p{L}\p{N}'-]+$/u;
-
 /** The query word of one `coverageRelevance` pattern; any other pattern refuses (the store runs no POSIX regex). */
-function patternWord(member: string, pattern: string): string {
-  const word = pattern.startsWith(WORD_PATTERN_HEAD) && pattern.endsWith(WORD_PATTERN_TAIL)
-    ? pattern.slice(WORD_PATTERN_HEAD.length, pattern.length - WORD_PATTERN_TAIL.length) : '';
-  if (!PATTERN_WORD.test(word)) refuseMember(member, 'a relevance pattern that is not one whole-word match');
-  return word;
-}
+const patternWord = coveragePatternWord;
 
 export const countPendingProjectionPages: StoreMember<[scope: ProjectionReadinessScope, relevance: CoverageRelevance], ScopedCount | null> =
   async (brain, scope, relevance) => {

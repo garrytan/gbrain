@@ -7,7 +7,7 @@
  */
 import type {
   DeadDreamSubmissionSpec, FactsAbsorbJobRow, FactsAbsorbStillDead, GlobalMaintenanceDeaths, LastFailedGlobalMaintenanceJob,
-  LegacyJobAuthorityRead, QueuedSpendRows, FenceAutoRepairRows,
+  LegacyJobAuthorityRead, QueuedSpendRows,
 } from '../../engine-sql/jobs-checks.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -24,9 +24,6 @@ export const readGlobalMaintenanceDeaths: StoreMember<[spec: { deaths: number }]
 
 export const readLastFailedGlobalMaintenanceJob: StoreMember<[since: string | null], LastFailedGlobalMaintenanceJob | null> = (brain, since) =>
   call('readLastFailedGlobalMaintenanceJob', () => brain.readLastFailedGlobalMaintenanceJob(since));
-
-export const readFenceAutoRepairRows: StoreMember<[keys: readonly string[]], FenceAutoRepairRows> = (brain, keys) =>
-  call('readFenceAutoRepairRows', () => brain.readFenceAutoRepairRows([...keys]));
 
 export const listFactsAbsorbJobsStillDead: StoreMember<[spec: { hours: number; limit: number }], FactsAbsorbStillDead> = (brain, spec) =>
   call('listFactsAbsorbJobsStillDead', () => brain.listFactsAbsorbJobsStillDead(spec));

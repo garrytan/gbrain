@@ -21,7 +21,7 @@ import { fenceRepairCommitSubject } from './receipt.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { FENCE_UNCOMMITTED_OP } from './uncommitted-op.ts';
 
-type Exec = Pick<BrainEngine, 'writeOpCheckpointRecord' | 'listUncommittedFenceRepairRows'>;
+type Exec = Pick<BrainEngine, 'writeOpCheckpointRecord' | 'listSourceCheckpointRecords'>;
 
 export { FENCE_UNCOMMITTED_OP };
 
@@ -63,7 +63,7 @@ function committed(root: string, path: string): boolean {
 
 /** Outstanding notices of the scoped sources (all when unscoped); a notice whose path is now committed is dropped on read. */
 export async function readUncommittedFenceRepairs(engine: Exec, sourceIds?: readonly string[]): Promise<UncommittedFenceRepair[]> {
-  const rows = await engine.listUncommittedFenceRepairRows(sourceIds ?? null) as Array<{ fingerprint: string; record: UncommittedFenceRepair }>;
+  const rows = await engine.listSourceCheckpointRecords<UncommittedFenceRepair>(FENCE_UNCOMMITTED_OP, sourceIds ?? null);
   const out: UncommittedFenceRepair[] = [];
   for (const row of rows) {
     if (committed(row.record.root, row.record.path)) {

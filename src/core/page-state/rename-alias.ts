@@ -1,3 +1,4 @@
+import { carryHoldsToPage } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { dropRekeyDuplicates, type RekeyEngine } from '../facts/ontology-rekey.ts';
@@ -8,7 +9,10 @@ import { dropRekeyDuplicates, type RekeyEngine } from '../facts/ontology-rekey.t
  * Aliases that named the old slug are repointed at the new one, and an alias
  * spelled like the new slug is dropped: a live page now owns that slug. A
  * brain whose schema predates slug_aliases (an early migration renaming
- * slugs) skips the alias inside a savepoint.
+ * slugs) skips the alias inside a savepoint. The statements are the typed
+ * member `recordRenameAlias` (engine-sql/rename-alias-rows.ts): the SQL
+ * engines run them in the caller's transaction, the Rust store serves the
+ * same member.
  *
  * GBRA-218: the same move is kept in slug_rename_history (v285), which only the
  * folder-rule lineage test reads: a derivative written against a slug its origin
@@ -17,39 +21,13 @@ import { dropRekeyDuplicates, type RekeyEngine } from '../facts/ontology-rekey.t
  * the page to the new one.
  */
 export async function recordRenameAlias(
-  tx: Pick<BrainEngine, 'transaction'>,
+  tx: Pick<BrainEngine, 'recordRenameAlias'>,
   sourceId: string,
   oldSlug: string,
   newSlug: string,
 ): Promise<void> {
   if (oldSlug === newSlug) return;
-  try {
-    await tx.transaction(async savepoint => {
-      await savepoint.executeRaw(`INSERT INTO slug_rename_history (source_id, old_slug, new_slug)
-        SELECT source_id, alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2
-        ON CONFLICT DO NOTHING`, [sourceId, newSlug]);
-      await savepoint.executeRaw(`DELETE FROM slug_rename_history h WHERE h.source_id = $1 AND h.new_slug = $2
-        AND EXISTS (SELECT 1 FROM slug_rename_history o WHERE o.source_id = $1 AND o.old_slug = h.old_slug AND o.new_slug = $3)`, [sourceId, oldSlug, newSlug]);
-      await savepoint.executeRaw('UPDATE slug_rename_history SET new_slug = $3 WHERE source_id = $1 AND new_slug = $2', [sourceId, oldSlug, newSlug]);
-      await savepoint.executeRaw(`INSERT INTO slug_rename_history (source_id, old_slug, new_slug) VALUES ($1, $2, $3)
-        ON CONFLICT DO NOTHING`, [sourceId, oldSlug, newSlug]);
-    });
-  } catch (error) {
-    if (!isMissingSchemaObject(error, 'table', 'slug_rename_history') && !isMissingSchemaObject(error, 'table', 'slug_aliases')) throw error;
-  }
-  try {
-    await tx.transaction(async savepoint => {
-      await savepoint.executeRaw('DELETE FROM slug_aliases WHERE source_id = $1 AND alias_slug = $2', [sourceId, newSlug]);
-      await savepoint.executeRaw('UPDATE slug_aliases SET canonical_slug = $3 WHERE source_id = $1 AND canonical_slug = $2',
-        [sourceId, oldSlug, newSlug]);
-      await savepoint.executeRaw(`INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug, notes)
-        VALUES ($1, $2, $3, 'rename')
-        ON CONFLICT (source_id, alias_slug) DO UPDATE SET canonical_slug = EXCLUDED.canonical_slug`,
-      [sourceId, oldSlug, newSlug]);
-    });
-  } catch (error) {
-    if (!isMissingSchemaObject(error, 'table', 'slug_aliases')) throw error;
-  }
+  await tx.recordRenameAlias(sourceId, oldSlug, newSlug);
 }
 
 /**
@@ -123,8 +101,9 @@ export async function moveSlugBindings(
  * semantics (#5431) onto the row that materialized at the destination, before
  * the stale row is soft-deleted: edges where it is the source, target or
  * origin, its timeline entries, its version history and its secret store
- * occurrences (the purge cascade finds a page's originals by page id). Rows the surviving
- * page already holds under the same unique key (`links` composite key,
+ * occurrences (the purge cascade finds a page's originals by page id) and its quarantine holds
+ * (`carryHoldsToPage`: a hold that differs from one the surviving page already has is kept and marked, never dropped).
+ * Rows the surviving page already holds under the same unique key (`links` composite key,
  * timeline dedup indexes) are dropped from the stale side, never duplicated.
  * Runs inside the caller's transaction and is idempotent.
  */
@@ -153,4 +132,5 @@ export async function movePageIdReferences(
     [`UPDATE secret_store_occurrence SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
   ];
   for (const [sql, params] of statements) await tx.executeRaw(sql, params);
+  await carryHoldsToPage(tx, fromPageId, toPageId);
 }

@@ -22,7 +22,6 @@ writes_pages: true
 writes_to:
   - people/
   - companies/
-upstream: resolve-before-asking@fc834ee
 ---
 
 # Resolve Before Asking — Exhaust the Brain Before Bothering the User
@@ -229,8 +228,7 @@ This skill guarantees:
   relationship/role fields are filled at write time.
 - Writes land only under the `writes_to:` directories, filed by primary
   subject per `_brain-filing-rules.md`.
-- Privacy contract preserved: no real names, no fork-specific filesystem path
-  literals, no upstream-fork references in examples.
+- Examples use placeholder names and paths.
 
 ## Output Format
 

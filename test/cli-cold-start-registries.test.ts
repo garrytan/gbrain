@@ -50,6 +50,7 @@ const REGISTRATIONS: Record<string, Kind> = {
   'src/core/persistence/sync-ghosts.ts': 'owns-queue',
   'src/core/search/hybrid.ts': 'owns-queue',
   'src/core/search/telemetry.ts': 'owns-queue',
+  'src/shadow/writer-observations.ts': 'owns-queue',
   'src/core/ai/gateway.ts': 'self',
   'src/core/backfill-registry.ts': 'self',
   'src/core/search/decide-stage.ts': 'self',

@@ -11,11 +11,10 @@ writes a policy, so a join on a Rust brain binds a source whose policy allows fo
 `delete_skill` publish revisions after shared publication is activated ([Publication](#publication)). Timestamps leave
 as ISO strings; the TypeScript members turn them into `Date`s.
 
-Keys (tag `x`, `keys::ACCESS_MEMBERS`; `0x01`-`0x03` are the access members, [access-members.md](access-members.md)):
+Keys (tag `x`, `keys::ACCESS_MEMBERS`; `0x01`-`0x03` are the access members and `0x04` the member links, [access-members.md](access-members.md), which lists every sub-tag under `x`):
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
-| `x 0x04` | state record: `token_secret` | `shared_skill_state.token_secret` |
 | `x 0x05 <installation id>` | member record: `installation_id`, `principal_kind`, `principal_id`, `adapter`, `brain_id`, `epoch`, `active`, `follow_policy`, `issued_sequence`, `acknowledged_sequence`, `desired_view`, `acknowledged_view`, `joined_at`, `last_seen_at`, `join_window`, `join_count` | `shared_skill_members` |
 | `x 0x06 <installation id> 0x00 <token>` | batch record: `token`, `installation_id`, `epoch`, `sequence`, `view_token`, `authority_digest`, `revisions`, `issued_at`, `acknowledged_at`, `evidence` | `shared_skill_delivery_batches` |
 | `x 0x07 <source> 0x00 <incarnation>` | policy record: `epoch`, `policy`, `updated_at` | `shared_skill_policies` |
@@ -23,6 +22,7 @@ Keys (tag `x`, `keys::ACCESS_MEMBERS`; `0x01`-`0x03` are the access members, [ac
 | `x 0x09 <source> 0x00 <incarnation> 0x00 <pack> 0x00 <name>` | head record: `revision`, `metadata`, `deleted`, `policy_epoch`, `updated_at` | `shared_skill_heads` |
 | `x 0x0a <source> 0x00 <incarnation> 0x00 <pack> 0x00 <name> 0x00 <revision>` | revision record: `metadata`, `files`, `deleted`, `policy_epoch`, `request_id`, `created_at` | `shared_skill_revisions` |
 | `x 0x0b <kind> 0x00 <lease id> 0x00 <source> 0x00 <incarnation> 0x00 <pack> 0x00 <name> 0x00 <revision>` | lease record: `principal_kind`, `principal_id`, `expires_at` | `shared_skill_revision_leases` |
+| `x 0x0d` | state record: `token_secret`. Store formats 7 and older kept it at `x 0x04`, the member links' prefix, so every link scan started on it; format 8 moved it (`access_key_split.rs`, [format.md](format.md)) | `shared_skill_state.token_secret` |
 
 Installation ids and tokens are stored as Postgres prints a `uuid` (lowercase, 8-4-4-4-12). Input follows Postgres
 `uuid_in`; anything else refuses `invalid_argument` with Postgres' `invalid input syntax for type uuid` message, which

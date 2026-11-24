@@ -352,4 +352,8 @@ export interface LedgerMembers {
   listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
   /** The open loops whose counterparty page is (sourceId, slug), newest activity first, at most `limit` (entity-card.ts). */
   readEntityOpenLoops(slug: string, sourceId: string, limit: number): Promise<OpenLoopsSql.EntityOpenLoopRow[]>;
+  /** The open loops of `loopType` in `sourceId` per counterparty email among `emails`, one row per email with any, in no set order, with no limit (ops/loops.ts withheld noise). */
+  countOpenLoopsByCounterpartyEmail(sourceId: string, emails: readonly string[], loopType: string): Promise<OpenLoopsSql.CounterpartyEmailLoopCount[]>;
+  /** The applied-capture records older than `ttlDays` days deleted; how many (ingestion/applied-captures.ts, the dream cycle's bookkeeping purge). */
+  purgeStaleAppliedCaptures(ttlDays: number): Promise<number>;
 }

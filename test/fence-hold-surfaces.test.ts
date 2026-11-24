@@ -267,9 +267,10 @@ describe('location-only privacy (sentinel)', () => {
 describe('readFenceAutoRepair never takes a failed read for the defaults', () => {
   test('a refused or failed read surfaces, through the typed member and through an executeRaw-only view', async () => {
     const refusal = () => { throw capabilityMissing('raw_sql', 'executeRaw'); };
-    const viaMember = { executeRaw: async () => [], readFenceAutoRepairRows: async () => refusal() };
+    const viaMember = { executeRaw: async () => [], getConfigValues: async () => refusal(), readLastFinishedJobAt: async () => null };
+    const jobRefused = { executeRaw: async () => [], getConfigValues: async () => [], readLastFinishedJobAt: async () => refusal() };
     const viaRaw = { executeRaw: async () => refusal() };
-    for (const engine of [viaMember, viaRaw]) {
+    for (const engine of [viaMember, jobRefused, viaRaw]) {
       const err = await readFenceAutoRepair(engine as never).then(() => null, (e: unknown) => e);
       expect(isCapabilityMissing(err)).toBe(true);
     }

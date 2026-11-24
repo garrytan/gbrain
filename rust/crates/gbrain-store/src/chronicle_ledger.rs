@@ -1,7 +1,8 @@
 //! The chronicle ledger: the `chronicle_page_state` and `chronicle_judge_reservations` tables of the PGLite engine, as
-//! the members of `src/core/engine-sql/chronicle-ledger.ts` run them (rust/docs/store/chronicle-ledger.md).
+//! the members of `src/core/engine-sql/collate-store-reads.ts` run them (rust/docs/store/chronicle-ledger.md).
 //!
-//! Members: upsertChronicleRow, reserveChronicleJudgeSlot, readChronicleLedger.
+//! Members: upsertChronicleRow, reserveChronicleJudgeSlot, pruneChronicleReservations, readChronicleLedger, and the
+//! `chronicleStore()` executor statements (`executor.rs`).
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`):
 //! - `a 0x0E source \0 page_id BE8 hash \0 version BE4 -> LedgerRecord`: one row of `chronicle_page_state`, its
@@ -9,16 +10,18 @@
 //! - `a 0x0F id BE8 -> ReservationRecord`: one judge reservation, its id the `BIGSERIAL`.
 //! - `a 0x10 -> last id` (JSON integer): the reservation id sequence.
 //!
-//! Members also: hasChronicleSkipDecision. A hard page delete drops the page's rows (`chronicle_page_state` cascades
-//! on `pages(id)`); the judge reservations have no foreign key and stay.
-//!
-//! The campaign, retry and pruning writers of the ledger (`campaign.ts`, `execute.ts`, `pruneChronicleReservations`)
-//! stay raw SQL and refuse on a Rust brain; a row written here therefore keeps the default cost, unpriced and attempts
-//! columns, which the rollup still reads.
+//! The campaign, claim, retry and outcome writers of the ledger (`campaign.ts`, `execute.ts`) are the executor
+//! statements of `executor.rs`.
 
 use crate::error::{Result, StoreError};
+
+mod executor;
 use crate::kv::scan_prefix;
 use crate::{Store, get_json, keys, put_json};
+pub use executor::{
+    ChronicleCampaignQueue, ChronicleCandidates, ChronicleDiscovery, ChronicleFinish,
+    ChronicleKeyTuple,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -75,6 +78,30 @@ struct LedgerRecord {
     attempts: i32,
     decided_at: i64,
     updated_at: i64,
+    #[serde(default)]
+    event_slugs: Vec<String>,
+    #[serde(default)]
+    event_hashes: Vec<String>,
+    #[serde(default)]
+    cost_attempts: Vec<i32>,
+    #[serde(default)]
+    judge_input_hash: Option<String>,
+    #[serde(default)]
+    judge_window_chars: Option<i32>,
+    #[serde(default)]
+    judge_window_hash: Option<String>,
+    #[serde(default)]
+    judge_input_failures: i32,
+    #[serde(default)]
+    campaign_id: Option<String>,
+    #[serde(default)]
+    attempt_cap_usd: Option<String>,
+    #[serde(default)]
+    max_attempts: Option<i32>,
+    #[serde(default)]
+    pricing_policy: Option<String>,
+    #[serde(default)]
+    campaign_max_usd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,20 +221,6 @@ impl Store {
         }
         let now = self.env.now_micros();
         self.write(|tx| {
-            // The foreign keys to `sources(id)` and `pages(id)`: the page must exist (in that source).
-            let page = u64::try_from(w.page_id)
-                .ok()
-                .and_then(|id| crate::pages::read_page_by_id(&*tx, id).transpose())
-                .transpose()?;
-            if page.is_none_or(|p| p.source_id != w.source_id) {
-                return Err(StoreError::new(
-                    crate::error::CONSTRAINT_VIOLATION,
-                    format!(
-                        "insert or update on table \"chronicle_page_state\" violates foreign key constraint: Key (page_id)=({}) is not present in table \"pages\".",
-                        w.page_id
-                    ),
-                ));
-            }
             let key = row_key(
                 &w.source_id,
                 w.page_id,
@@ -232,6 +245,18 @@ impl Store {
                     attempts: 0,
                     decided_at: now,
                     updated_at: now,
+                    event_slugs: Vec::new(),
+                    event_hashes: Vec::new(),
+                    cost_attempts: Vec::new(),
+                    judge_input_hash: None,
+                    judge_window_chars: None,
+                    judge_window_hash: None,
+                    judge_input_failures: 0,
+                    campaign_id: None,
+                    attempt_cap_usd: None,
+                    max_attempts: None,
+                    pricing_policy: None,
+                    campaign_max_usd: None,
                 },
                 Some(mut c) => {
                     let guarded = w.trigger == "auto"
@@ -263,6 +288,11 @@ impl Store {
                     c.next_attempt_at = w.next_attempt_at.clone();
                     c.decided_at = now;
                     c.updated_at = now;
+                    c.campaign_id = None;
+                    c.attempt_cap_usd = None;
+                    c.max_attempts = None;
+                    c.pricing_policy = None;
+                    c.campaign_max_usd = None;
                     c
                 }
             };
@@ -311,6 +341,58 @@ impl Store {
             put_json(tx, &sequence_key(), &last)?;
             Ok(true)
         })
+    }
+
+    /// `pruneChronicleReservations()`: deletes the reservations taken more than 48 hours ago (`reserved_at < now() -
+    /// interval '48 hours'`) in one write transaction and answers how many it deleted; the sequence keeps its value.
+    pub fn prune_chronicle_reservations(&self) -> Result<i64> {
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut old: Vec<Vec<u8>> = Vec::new();
+            let mut bad = None;
+            scan_prefix(
+                &*tx,
+                &reservation_prefix(),
+                false,
+                &mut |k, v| match decode::<ReservationRecord>(v, "chronicle reservation") {
+                    Ok(r) => {
+                        if r.reserved_at < now - 2 * DAY_US {
+                            old.push(k.to_vec());
+                        }
+                        true
+                    }
+                    Err(e) => {
+                        bad = Some(e);
+                        false
+                    }
+                },
+            )?;
+            if let Some(e) = bad {
+                return Err(e);
+            }
+            for k in &old {
+                tx.delete(k)?;
+            }
+            Ok(old.len() as i64)
+        })
+    }
+
+    /// `hasChronicleSkipDecision(sourceId, pageId, contentHash, extractorVersion, reason)`: the ledger row of that page
+    /// revision is `skipped` with that reason (`engine-sql/chronicle-events.ts` hasChronicleSkipDecision).
+    pub fn has_chronicle_skip_decision(
+        &self,
+        source_id: &str,
+        page_id: i64,
+        content_hash: &str,
+        extractor_version: i32,
+        reason: &str,
+    ) -> Result<bool> {
+        let read = self.read()?;
+        let row: Option<LedgerRecord> = get_json(
+            &*read,
+            &row_key(source_id, page_id, content_hash, extractor_version),
+        )?;
+        Ok(row.is_some_and(|r| r.state == "skipped" && r.reason.as_deref() == Some(reason)))
     }
 
     /// `readChronicleLedger()`: `{ counts, reasons, calls, principals }` over the automatic rows, as
@@ -444,49 +526,4 @@ fn principal(l: &LedgerRecord) -> String {
             .map(|id| format!(":{id}"))
             .unwrap_or_default()
     )
-}
-
-impl Store {
-    /// `hasChronicleSkipDecision(decision)`: whether the row at the decision's key records state `skipped` with that
-    /// reason (`SKIP_DECISION_SQL`, src/core/engine-sql/chronicle-events.ts).
-    pub fn has_chronicle_skip_decision(
-        &self,
-        source_id: &str,
-        page_id: i64,
-        content_hash: &str,
-        extractor_version: i32,
-        reason: &str,
-    ) -> Result<bool> {
-        let read = self.read()?;
-        let row: Option<LedgerRecord> = get_json(
-            &*read,
-            &row_key(source_id, page_id, content_hash, extractor_version),
-        )?;
-        Ok(row.is_some_and(|r| r.state == "skipped" && r.reason.as_deref() == Some(reason)))
-    }
-}
-
-/// Deletes the ledger rows of a page that is deleted for good (`cascade::remove_page_rows`): `chronicle_page_state`
-/// references `pages(id)` with `ON DELETE CASCADE`.
-pub(crate) fn remove_page_rows(
-    tx: &mut dyn crate::kv::KvWrite,
-    page: &crate::pages::PageRecord,
-) -> Result<()> {
-    let Ok(id) = i64::try_from(page.id) else {
-        return Ok(());
-    };
-    let mut doomed = Vec::new();
-    scan_prefix(
-        &*tx,
-        &page_prefix(&page.source_id, id),
-        false,
-        &mut |k, _| {
-            doomed.push(k.to_vec());
-            true
-        },
-    )?;
-    for k in doomed {
-        tx.delete(&k)?;
-    }
-    Ok(())
 }

@@ -20,18 +20,6 @@ use gbrain_store::facts::{
 
 #[napi]
 impl Brain {
-    /// `normalizeDerivationClaims(claims)`: the claims normalized and folded as derivation needles, distinct, by byte.
-    #[napi]
-    pub fn normalize_derivation_claims<'env>(
-        &self,
-        env: &'env Env,
-        claims: Vec<String>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |_| {
-            Ok(gbrain_store::facts::normalize_derivation_claims(&claims))
-        })
-    }
-
     /// `insertFact(input, ctx)`: resolves `{ id, status }`.
     #[napi]
     pub fn insert_fact<'env>(&self, env: &'env Env, args: Value) -> napi::Result<Object<'env>> {

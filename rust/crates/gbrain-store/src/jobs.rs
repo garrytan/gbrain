@@ -70,6 +70,7 @@ mod attachments;
 mod checks;
 mod client_grants;
 mod credential_binding;
+mod doctor_credentials;
 mod drain_lease;
 mod facts_extraction;
 mod health;
@@ -88,8 +89,8 @@ mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
-mod synthesis_completions;
-mod wake;
+pub(crate) mod synthesis_completions;
+pub(crate) mod wake;
 
 pub(crate) use access_tokens::bind_token_member;
 pub use access_tokens::{TokenGrantColumns, TokenInsert};
@@ -109,6 +110,7 @@ use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
+pub(crate) use oauth_clients::{carry_over_format_5_clients, remove_client, seed_client};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
 pub(crate) use pinned_questions::purge_probe_rows as purge_probe_pin_rows;
@@ -116,7 +118,9 @@ pub use pinned_questions::{PinFilter, PinInsert};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
+pub(crate) use spend::{SeedReservation, remove_reservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
+pub(crate) use spend_log::{SeedLog, remove_log, seed_log};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
 pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
@@ -308,6 +312,24 @@ fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
         .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
     put_json(tx, &k, &next)?;
     Ok(next)
+}
+
+/// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
+/// seed, which copies rows with their ids).
+pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    if get_json::<i64>(tx, &k)?.unwrap_or(0) < id {
+        put_json(tx, &k, &id)?;
+    }
+    Ok(())
+}
+
+/// The last value of the sequence `name` (0 when it has not been used), read only.
+pub(crate) fn read_seq(read: &dyn KvRead, name: &str) -> Result<i64> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    Ok(get_json::<i64>(read, &k)?.unwrap_or(0))
 }
 
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.
@@ -717,6 +739,26 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
         true
     })?;
     Ok(ids)
+}
+
+/// Calls `f` on each row with `status` as it loads, in id order. The row is dropped when `f` returns, so a caller that
+/// filters keeps only what it projects: one row's payload is held at a time, not the whole status.
+fn for_each_row_with_status(
+    read: &dyn KvRead,
+    status: &str,
+    f: &mut dyn FnMut(&JobRecord),
+) -> Result<()> {
+    for id in ids_under(read, &status_prefix(status))? {
+        if let Some(row) = load(read, id)? {
+            f(&row);
+        }
+    }
+    Ok(())
+}
+
+/// The `minion_jobs` rows with `status='active'`.
+pub(crate) fn active_job_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
+    rows_with_status(read, "active")
 }
 
 fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {

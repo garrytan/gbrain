@@ -29,7 +29,6 @@ import { parsePersistenceAdminArgs } from '../src/commands/persistence-admin.ts'
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { OPEN_PASS_WORK_SQL } from '../src/core/persistence/checkpoint-validation.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { currentExitCode, setCliExitVerdict } from '../src/core/cli-force-exit.ts';
 import { createConnectorFixture, withGoogleAccount } from './helpers/connector-fixture.ts';
@@ -240,8 +239,9 @@ function timeoutOnce(engine: BrainEngine): () => void {
   let fired = false;
   engine.transaction = async function<T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
     return transaction.call(this, tx => run(new Proxy(tx, { get(target, property) {
-      if (property === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql !== OPEN_PASS_WORK_SQL || fired) return target.executeRaw(sql, params);
+      if (property === 'readOpenPassWork') return async (spec: Parameters<BrainEngine['readOpenPassWork']>[0]) => {
+        // The own-recovery variant is a different statement and is never failed.
+        if (spec.ownRecovery || fired) return target.readOpenPassWork(spec);
         fired = true;
         if (engine.kind === 'postgres') return target.executeRaw('SELECT pg_sleep(8)::text AS request_id');
         throw Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
