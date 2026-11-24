@@ -110,6 +110,24 @@ describe('gbrain dedupe link-contacts (Google Contacts)', () => {
     expect((await linkOf('people/c-finn', 'gc'))?.entity_id).toBe('manual-finn');
   });
 
+  test('reject by a contact group id records only the person and the contact, never a member another writer linked', async () => {
+    const { linkEntityIdentity } = await import('../src/core/entity-identity.ts');
+    await page('people/jade-example', 'Jade Example', { email: 'jade@example.invalid' });
+    await page('people/jade-example', 'Jade Example', {}, 'people-b');
+    await linkEntityIdentity(engine, { entityId: 'manual-jade', slug: 'people/jade-example', sourceId: 'default', establishedBy: 'manual', canonical: true });
+    await linkEntityIdentity(engine, { entityId: 'manual-jade', slug: 'people/jade-example', sourceId: 'people-b', establishedBy: 'manual' });
+    await contact('c-jade', 'Jade Example', ['jade@example.invalid']);
+    expect(await linkGoogleContacts(engine, 'gc', { apply: true, slugs: ['people/c-jade'] })).toMatchObject({ linked: 1 });
+    expect((await linkOf('people/c-jade', 'gc'))?.entity_id).toBe('manual-jade');
+
+    const out = JSON.parse(await dedupe(['reject', 'manual-jade', '--json']));
+    const members = out.rejected[0].members.map((m: { source_id: string; slug: string }) => `${m.source_id}:${m.slug}`).sort();
+    expect(members).toEqual(['default:people/jade-example', 'gc:people/c-jade']);
+    expect(await linkOf('people/c-jade', 'gc')).toBeNull();
+    expect((await linkOf('people/jade-example', 'people-b'))?.entity_id).toBe('manual-jade');
+    expect((await linkOf('people/jade-example', 'default'))?.entity_id).toBe('manual-jade');
+  });
+
   test('one matching person whose page has another name waits for the owner instead of linking', async () => {
     await page('people/hank-example', 'Hank Example', { email: 'shared@example.invalid' });
     await page('people/ivy-example', 'Ivy B. Example', { email: 'ivy@example.invalid' });

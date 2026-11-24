@@ -372,8 +372,8 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   for (const id of [...new Set(f.ids)]) {
     const confirmed = same.filter(d => d.entity_id === id);
     const linked = confirmed.length || !isEntityId(id) ? [] : await listEntityIdentities(engine, { entityId: id });
-    const auto = linked.some(m => m.established_by === 'dedupe:auto' || CONTACT_LINK_ORIGINS.includes(m.established_by))
-      ? linked.map(m => ({ source_id: m.source_id, slug: m.slug })) : [];
+    const ours = (m: { established_by: string }) => m.established_by === 'dedupe:auto' || CONTACT_LINK_ORIGINS.includes(m.established_by);
+    const auto = linked.some(ours) ? linked.filter(m => m.canonical || ours(m)).map(m => ({ source_id: m.source_id, slug: m.slug })) : [];
     const members = confirmed.length ? confirmed.map(d => ({ members: d.members, group_id: d.group_id ?? id }))
       : [result.groups.find(g => g.id === id)?.members ?? read.decisions.find(d => d.group_id === id)?.members ?? (auto.length > 1 ? auto : undefined)]
         .filter((m): m is IdentityMemberRef[] => !!m).map(m => ({ members: m, group_id: id }));
