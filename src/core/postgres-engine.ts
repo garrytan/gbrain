@@ -308,6 +308,7 @@ import * as trustTierReads from './engine-sql/trust-tier-reads.ts';
 import * as versionReasons from './engine-sql/version-reasons.ts';
 import * as versionPrune from './engine-sql/version-prune.ts';
 import * as segmentedPurgeWrites from './engine-sql/segmented-purge-writes.ts';
+import * as pageViewDigests from './engine-sql/page-view-digests.ts';
 import * as memoryMutationReads from './engine-sql/memory-mutation-reads.ts';
 import * as withdrawalDiscoveryReads from './engine-sql/withdrawal-discovery.ts';
 import * as withdrawalPages from './engine-sql/withdrawal-pages.ts';
@@ -4436,6 +4437,8 @@ export class PostgresEngine implements BrainEngine {
   async lockBodyStagingState(stagingId: string) { return segmentedPurgeWrites.lockBodyStagingState(this, stagingId); }
   async deleteUnstagedSegmentChunks(pageId: number, generation: number, keep: readonly number[]) { return segmentedPurgeWrites.deleteUnstagedSegmentChunks(this, pageId, generation, keep); }
   async deleteRewrittenSegmentDerivations(spec: segmentedPurgeWrites.RewrittenDerivationsDelete) { return segmentedPurgeWrites.deleteRewrittenSegmentDerivations(this, spec); }
+  async readPageViewDigest(key: pageViewDigests.PageViewDigestKey) { return pageViewDigests.readPageViewDigest(this, key); }
+  async writePageViewDigest(key: pageViewDigests.PageViewDigestKey, digest: pageViewDigests.PageViewDigest) { return pageViewDigests.writePageViewDigest(this, key, digest); }
 
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis_evidence

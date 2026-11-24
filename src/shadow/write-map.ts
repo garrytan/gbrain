@@ -202,6 +202,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   'logIngest', 'logEvalCandidate', 'logEvalCaptureFailure', 'deleteEvalCandidatesBefore', 'writeContradictionsRun',
   'putContradictionCacheEntry', 'sweepContradictionCache', 'putDreamVerdict', 'sweepDreamVerdicts', 'putCodeTraversalCache',
   'clearCodeTraversalCache', 'insertLocalWriterRow',
+  // The read-view digest cache of a segmented page (page_view_digests is a seed not-copied cache, rust/docs/store/seed.md).
+  'writePageViewDigest',
   // Segmented-body staging and derivation tables (not copied).
   'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
   'upsertSegmentDerivations', 'retireSegmentDerivations',
@@ -220,6 +222,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
   'normalizeFenceLines', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
+  // The read-view digest cache read (the name carries a read prefix; listed so the class is explicit).
+  'readPageViewDigest',
   // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
   'factsOrAliasesMayMatch', 'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate', 'relationExists', 'sweepJournalChunk', 'takeProposalCached',
   // The trunk's typed reads whose names carry no read prefix (the owner socket's read classes, owner-ipc/typed-member-classes.ts).

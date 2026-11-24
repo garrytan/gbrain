@@ -50,6 +50,8 @@ export const CONTENT_MEMBERS = {
   lockBodyStagingState: 'page_body',
   deleteUnstagedSegmentChunks: 'page_body',
   deleteRewrittenSegmentDerivations: 'page_body',
+  readPageViewDigest: 'page_body',
+  writePageViewDigest: 'page_body',
   // tags
   pruneFrontmatterTags: 'tags',
   addPageTagsById: 'tags',

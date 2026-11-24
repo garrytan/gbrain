@@ -44,6 +44,7 @@ import { isHostAbsolutePath, isPathContained, msysToNativePath } from './path-co
 import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import {
   parseRemoteUrl,
   cloneRepo,
@@ -594,10 +595,11 @@ export async function addSource(
       renameSync(tempDir, finalPath!);
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
-      // Best-effort DB rollback.
-      await engine
-        .executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id])
-        .catch(() => {});
+      // Best-effort DB rollback, through the typed source delete every engine serves. A Rust capability refusal
+      // is not "rolled back": it surfaces rather than leaving the half-added source row behind unnoticed.
+      await deleteSourceRow(engine, opts.id).catch((rollbackError) => {
+        rethrowCapabilityRefusal(rollbackError);
+      });
       throw new SourceOpError(
         'rename_failed',
         `Could not move clone to final path ${finalPath}: ${(e as Error).message}`,

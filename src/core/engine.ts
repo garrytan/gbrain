@@ -152,6 +152,7 @@ import type { ActiveWorktreeRefreshRow, BlockingEffectRow, OnboardingSourceRow, 
 import type * as DoctorJoinSql from './engine-sql/doctor-join.ts';
 import type * as OverwriteSql from './engine-sql/overwrite-reads.ts';
 import type * as SegmentedPurgeWritesSql from './engine-sql/segmented-purge-writes.ts';
+import type * as PageViewDigestsSql from './engine-sql/page-view-digests.ts';
 import type * as SynopsisTierSql from './engine-sql/synopsis-tier.ts';
 import type { AliasTarget } from './engine-sql/alias-orphans.ts';
 import type { AtomFenceCandidate, AtomFenceQuery, ContactRowQuery, RepairPageRef, SplitFactsPages } from './engine-sql/repair-fence-scans.ts';
@@ -3728,6 +3729,11 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   deleteUnstagedSegmentChunks(pageId: number, generation: number, keepChunkIndexes: readonly number[]): Promise<void>;
   /** Deletes the derivation rows a rewritten segment may hold (segment-derive.ts deleteRewrittenDerivations); answers how many. */
   deleteRewrittenSegmentDerivations(spec: SegmentedPurgeWritesSql.RewrittenDerivationsDelete): Promise<number>;
+  // The read-view digest cache of a segmented page (engine-sql/page-view-digests.ts). A miss recomputes; a store with no cache serves a permanent miss.
+  /** The cached digest of one read view of a page, or null when none is stored. */
+  readPageViewDigest(key: PageViewDigestsSql.PageViewDigestKey): Promise<PageViewDigestsSql.PageViewDigest | null>;
+  /** Caches the digest of one read view and drops the page's cached views of other revisions. */
+  writePageViewDigest(key: PageViewDigestsSql.PageViewDigestKey, digest: PageViewDigestsSql.PageViewDigest): Promise<void>;
 
   // Versions
   /**

@@ -352,7 +352,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readOAuthClientMemberGrant', 'readOAuthClientReceiptGrant', 'readOauthAccessTokenRows', 'readOauthClientColumns',
   'readOauthClientForUpdate', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate',
   'readOldestPageCreatedAt', 'readOldestSourceCreatedAt', 'readOntologyRival', 'readPageCompiledTruths',
-  'readPageIdentity', 'readPageReferenceDate', 'readPageTitlesById', 'readPagesRowEstimate',
+  'readPageIdentity', 'readPageReferenceDate', 'readPageTitlesById', 'readPageViewDigest', 'readPagesRowEstimate',
   'readPendingWriteHealth', 'readPersistenceBrainIdText', 'readProjectionBacklog', 'readPublicationRefusals',
   'readRawProvenanceGaps', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readReferrerRecordCandidates',
   'readReferrerRecordPages', 'readReferrerRows', 'readReferrerTargetCounts', 'readReferrerTypes',
@@ -387,6 +387,7 @@ const nothingPurge = 'nothing: the purge deletes only what is past the age cutof
 const nothingRestamp = 'nothing: the restamp sets each page\'s folder rules to what the rules give, so running it again changes no page twice';
 const nothingUpsert = 'nothing: the write is an upsert keyed by its source and content hash, so running it again repeats no write';
 const nothingSecret = 'nothing: the secret is created only when the brain has none and a later call reads the same one, so running it again creates no second secret';
+const nothingDigest = 'nothing: the store keeps no digest cache, so the write stores nothing and running it again repeats no write';
 const nothingLock = 'nothing: the lock is released when the call ends, so running it again repeats no write';
 
 /** Typed writes and the read that confirms each. */
@@ -417,6 +418,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   abortPurgedStagings: 'probePurgeDerivations for that purge',
   blankPurgeCoreEditNotices: 'probePurgeDerivations for that purge',
   deletePageViewDigests: 'probePurgeDerivations for that purge',
+  writePageViewDigest: nothingDigest,
   deleteRewrittenSegmentDerivations: 'readSegmentDerivations for that page',
   deleteUnstagedSegmentChunks: 'getChunks for that page generation',
   deletePurgeDecideProposals: 'probePurgeDerivations for that purge',
