@@ -203,7 +203,7 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     return late;
   }
 
-  // Known limit: concurrent purges with a reused name can leave a held row; removed by gbrain trust drop; a maintenance sweep will remove these later.
+  // Known limit: concurrent purges with a reused name can leave a held row; gbrain trust review lists it and gbrain trust drop removes it; a maintenance sweep will remove these later.
   // This asserts the end state we want (hold and receipts gone), which does not hold today, so it is marked failing; flip it to `test` when the sweep lands.
   test.failing('(f) two purges of the pages an unbound hold reaches, run side by side, leave neither the hold nor its receipts', async () => {
     const sourceId = await source();
@@ -228,5 +228,17 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     await expectHeldHidden(engine, sourceId, 'notes/alpha');
     await putPage(sourceId, 'notes/other');
     await expectNothingHeld(engine, sourceId, 'notes/other');
+    // The owner can find and remove it with the ordinary commands: trust review lists it, trust drop accepts its ref.
+    const { localTrustBackend, runTrustOwnerCommand } = await import('../src/commands/trust.ts');
+    const out: string[] = [];
+    const log = console.log;
+    console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
+    try { await runTrustOwnerCommand(localTrustBackend(engine), 'review', ['--source', sourceId, '--json']); } finally { console.log = log; }
+    const reviewText = out.join('\n') + JSON.stringify(await localTrustBackend(engine).review({ sourceId } as never));
+    expect(reviewText).toContain(`h${late}`);
+    const { runOwnerAction } = await import('../src/commands/trust.ts');
+    await runOwnerAction(localTrustBackend(engine), { action: 'drop', ref: `h${late}`, source: sourceId } as never);
+    const [after] = await engine.executeRaw<{ status: string }>('SELECT status FROM write_gate_holds WHERE id=$1', [late]);
+    expect(after?.status).toBe('dropped');
   });
 });
