@@ -356,7 +356,7 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   if (has('decide_review_proposals')) removed.decide_review_proposals = await tx.deletePurgeReviewProposals(sourceId, refs);
   if (has('decide_proposals')) removed.decide_proposals = await tx.deletePurgeDecideProposals(sourceId, factIds);
   if (has('trust_proposals')) removed.trust_proposals = await tx.deletePurgedPageTrustProposals(sourceId, pageId, factIds, takeIds);
-  const holds = has('write_gate_holds') ? await tx.deletePurgedPageHolds(sourceId, slug) : [];
+  const holds = has('write_gate_holds') ? await tx.deletePurgedPageHolds(sourceId, slug, pageId) : [];
   if (has('write_gate_holds')) removed.write_gate_holds = holds.length;
   if (has('write_gate_receipts')) removed.write_gate_receipts = await tx.deletePurgedPageGateReceipts(pageId, factIds, takeIds, holds);
   const missingCaches: string[] = [];

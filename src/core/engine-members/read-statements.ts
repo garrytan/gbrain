@@ -303,7 +303,7 @@ export interface ReadStatementMembers {
   /** The uncommitted page-level secret store occurrences of these pages (read before their rows go). */
   listPageSecretOccurrences(pageIds: readonly number[]): Promise<Array<{ id: string; page_id: number }>>;
   /** Delete the write-gate holds of purged slugs (up to each page's `deletedAt` when given) and the holds' receipts. */
-  deletePurgedSlugHolds(sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null }>): Promise<{ write_gate_holds: number; write_gate_receipts: number }>;
+  deletePurgedSlugHolds(sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>): Promise<{ write_gate_holds: number; write_gate_receipts: number }>;
   /**
    * The held-concept rebuild's reads and link carry (SQL in engine-sql/concept-rebuild.ts). A held concept is a
    * synthesized concept tombstone whose needs_rederive mark is open at its delete and on which no owner purge is owed.
