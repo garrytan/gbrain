@@ -51,7 +51,7 @@ for (const backend of testBackends()) {
     const parse = (out: { isError?: boolean; content: Array<{ text: string }> }) => {
       const text = out.content.map(c => c.text).join('\n');
       if (out.isError) throw new Error(text);
-      return JSON.parse(text);
+      return JSON.parse(out.content[0]!.text);
     };
     const local = async (): Promise<LearnedView> => parse(await dispatchToolCall(engine, 'learned', { since: '2000-01-01', limit: 100 }, { remote: false }));
     const remote = async (who: string): Promise<LearnedView> => {
