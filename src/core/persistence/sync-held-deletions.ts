@@ -11,7 +11,7 @@
  * - the page's revision is file-backed by the test `repair ghost-pages` applies (#7382, `ghostFileBacked`), so a page
  *   written in the database after its file last held it is never deleted, even with equal content;
  * - the file did not move to another live page by the test `repair ghost-pages` applies (`ghostMoveVeto`); a page whose
- *   file moved stays held as `file_moved`.
+ *   file moved stays held as `file_moved` (`move_unread`, retried, when Git could not read whether it moved).
  *
  * The deletion is an ordinary `managed_sync_delete`: a soft delete with the restore window every sync delete has, under
  * the mass-delete valve and the #7130 caps, leaving a tombstone the automatic purge holds. Its request carries
@@ -45,9 +45,9 @@ const BLOB_MAX_BYTES = 8 * 1024 * 1024;
 
 /** The deleting commit and the blob the page was compared with: the receipt a held deletion's request carries. */
 export interface HeldDeletionProof { commit: string; blob_oid: string }
-/** Why the proof refused a held deletion. `provenance_unknown` and `blob_unreadable` are not recorded, so the next pass tries again. */
-export type HeldDeletionRefusal = 'not_deleted_by_commit' | 'provenance_unknown' | 'blob_unreadable' | 'content_differs' | 'database_ahead_of_file' | 'file_moved' | 'page_changed';
-const TRANSIENT: ReadonlySet<HeldDeletionRefusal> = new Set(['provenance_unknown', 'blob_unreadable']);
+/** Why the proof refused a held deletion. `provenance_unknown`, `blob_unreadable` and `move_unread` are not recorded, so the next pass tries again. */
+export type HeldDeletionRefusal = 'not_deleted_by_commit' | 'provenance_unknown' | 'blob_unreadable' | 'content_differs' | 'database_ahead_of_file' | 'file_moved' | 'move_unread' | 'page_changed';
+const TRANSIENT: ReadonlySet<HeldDeletionRefusal> = new Set(['provenance_unknown', 'blob_unreadable', 'move_unread']);
 
 export interface HeldDeletionState { screened: Set<string>; applied: number; refused: number }
 export const newHeldDeletionState = (): HeldDeletionState => ({ screened: new Set(), applied: 0, refused: 0 });
@@ -127,7 +127,10 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
     backed.push({ entry, ghost, proof: { commit: parent.commit, blob_oid: parent.oid! } });
   }
   await primeGhostMoveVetoes(engine, backed.map(item => item.ghost), owner);
-  for (const { entry, ghost, proof } of backed) verdicts.set(entry.path, await ghostMoveVeto(engine, ghost, owner) ? { refused: 'file_moved' } : proof);
+  for (const { entry, ghost, proof } of backed) {
+    const veto = await ghostMoveVeto(engine, ghost, owner);
+    verdicts.set(entry.path, veto ? { refused: veto.detail.unread ? 'move_unread' : 'file_moved' } : proof);
+  }
   return verdicts;
 }
 

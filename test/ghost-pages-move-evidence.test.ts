@@ -14,7 +14,7 @@
  */
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
@@ -287,13 +287,13 @@ A line added at the move.
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend)));
 
-  test(`${backend}: a ghost whose deleting commit rewrote another, differently named file to its content, edited later, is moved_to, never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
+  test(`${backend}: a ghost whose deleting commit rewrote another, differently named file to its content, edited later, is kept while that file's page lacks the content, never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
     await registerLocalWriter(engine, 'cli');
     expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
     rewriteOlder(root);
     const preview = await runner(engine, 'ghost-pages');
     expect(preview.affected).toBe(0);
-    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'moved_to', detail: expect.stringContaining('gave archive/older.md its content') });
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringMatching(/archive\/older\.md, commit_copy.*survivor_differs/) });
     expect((await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true })).outcomes ?? {}).not.toHaveProperty('soft_deleted');
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend, { 'archive/older.md': OLDER })));
@@ -307,6 +307,18 @@ A line added at the move.
     expect((fold.details as { pairs: unknown[] }).pairs[0]).toMatchObject({ survivor: { slug: 'archive/older' }, evidence: 'same_commit' });
     expect((await runner(engine, 'moved-pages', { slugs: ['notes/alpha'], expect: fold.preview_hash, yes: true })).outcomes).toEqual({ folded: 1 });
   }, opts(backend, { 'archive/older.md': OLDER })));
+
+  test(`${backend}: a ghost whose deleting commit replaced a symlink under another name with its content, edited later, is kept, never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    rmSync(join(root, 'archive/link.md')); writeFileSync(join(root, 'archive/link.md'), ALPHA);
+    git(root, 'add', 'archive/link.md'); git(root, 'rm', '-q', 'notes/alpha.md'); git(root, 'commit', '-qm', 'replace the link with the alpha content, drop alpha');
+    commit(root, { 'archive/link.md': `${ALPHA}\nA line added after the move.\n` }, 'edit the former link');
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('archive/link.md, commit_copy') });
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, { ...opts(backend), setup: ({ root }: { root: string }) => { setupWith({})({ root }); mkdirSync(join(root, 'archive'), { recursive: true }); symlinkSync('../notes/beta.md', join(root, 'archive/link.md')); git(root, 'add', 'archive/link.md'); git(root, 'commit', '-qm', 'link'); } }));
 
   test(`${backend}: a ghost with more same-name files than the history read covers is kept (move_unproven), never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
     await registerLocalWriter(engine, 'cli');

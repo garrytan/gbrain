@@ -357,7 +357,7 @@ export async function primeGhostMoveVetoes(engine: BrainEngine, ghosts: GhostPag
  * Whether the ghost's move keeps it from soft-delete now: the soft-delete's own check (ghost-pages, file-drift --prefer file
  * and the managed preparer), so an approval saved before a move, or before this check, cannot remove it.
  */
-export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<(RepairItemOutcome & { reason: GhostMoveCode; detail: { message: string } }) | null> {
+export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<(RepairItemOutcome & { reason: GhostMoveCode; detail: { message: string; unread?: true } }) | null> {
   const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
   if (!binding?.local_path) return null;
   const root = join(binding.local_path, binding.relative_path);
@@ -366,7 +366,7 @@ export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner
   const move = cached ? runMoves.moves.get(moveKey(ghost))
     : (await readGhostMoves(engine, ghost.source_id, root, [ghost], await readDeletionProvenance(root, [ghost.path]))).get(ghost.page_id);
   const code = moveCode(move);
-  return code ? { applied: false, outcome: 'refused', reason: code, detail: { message: ghostMoveDetail(ghost, move!) } } : null;
+  return code ? { applied: false, outcome: 'refused', reason: code, detail: { message: ghostMoveDetail(ghost, move!), ...(move!.unread ? { unread: true as const } : {}) } } : null;
 }
 
 const candidateList = (move: { candidates: MoveCandidate[] }) => move.candidates.map(candidate => `${candidate.slug ?? 'no page yet'} (${candidate.path}, ${candidate.match})`).join(', ');
@@ -505,9 +505,9 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
     : opError('revision_conflict', 'The ghost page changed since the preview.',
       `Page ${row.slug} in source ${row.source_id} changed after the preview (${outcome.reason}), so request ${row.request_id} removed nothing. Preview the repair again and apply the new preview after the user agrees.`,
       { fix: previewFix(row.source_id) });
+  const head = await ghostCheckoutHead(engine, ghost, owner);
   const skip = await stillApproved(engine, ghost, owner);
   if (skip) throw refuse(skip);
-  const head = await ghostCheckoutHead(engine, ghost, owner);
   await authorizeWrite(engine, row.authority, 'delete_page', row.slug);
   const page = await preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { allowMissingFile: true });
   const target = page.file ? relative(page.file.root, page.file.path).split(sep).join('/') : null;
@@ -520,8 +520,8 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
   return { ...page, file, validate: async tx => {
     await page.validate?.(tx);
     await authorizeWrite(tx, row.authority, 'delete_page', row.slug);
-    // A commit since preparation can show the file moved: the move check runs again before the delete is published.
-    if (await ghostCheckoutHead(tx, ghost, owner) === head) return;
+    // A commit since the preparer's move check can show the file moved: the check runs again before the delete is published.
+    if (head !== null && await ghostCheckoutHead(tx, ghost, owner) === head) return;
     const veto = await ghostMoveVeto(tx, ghost, owner);
     if (veto) throw refuse(veto);
   },

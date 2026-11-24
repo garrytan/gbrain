@@ -10,7 +10,8 @@
  *      content is the first case; later edits to the moved file do not matter;
  *   2. the stale side is untouched: the old page still holds what that blob imports (`fileMatchesSnapshot`, which reads
  *      gbrain's own database-only artefacts as derived: `alignWithStored`). A page edited in the database after the move
- *      is `both_changed`.
+ *      is `both_changed`. A path the deleting commit rewrote (it held other content before) pairs only once its page holds
+ *      every line of the old page, else `survivor_differs`.
  * Exactly one live page of the source may descend from the blob; two or more are `several_candidates`, and a moved page that
  * another old page with the same content also claims is `shared_survivor`. A first commit counts only between the old path's add and its deletion. The file name
  * only explains a result with no candidate (a move can rename the file too), and a frontmatter `id` alone never pairs
@@ -39,7 +40,7 @@ import { privateSnapshotFilterFragment } from '../search/private-visibility.ts';
 export interface MovedPageRef { page_id: number; slug: string; revision: string; path: string }
 export type MovedEvidence = 'same_commit' | 'first_commit' | 'renamed_contained' | 'named_contained';
 export const MOVED_HELD_REASONS = ['not_moved', 'several_candidates', 'shared_survivor', 'both_changed', 'first_blob_differs', 'same_id_body_differs', 'evidence_conflicts',
-  'segmented_versions', 'access_differs', 'history_shallow', 'history_unknown', 'deletion_not_committed'] as const;
+  'segmented_versions', 'access_differs', 'history_shallow', 'history_unknown', 'deletion_not_committed', 'survivor_differs'] as const;
 export type MovedHeldReason = typeof MOVED_HELD_REASONS[number];
 export type MovedPageVerdict =
   | { verdict: 'moved'; survivor: MovedPageRef; old_blob: string; move_commit: string; evidence: MovedEvidence; evidence_commit: string; detail: string }
@@ -77,13 +78,25 @@ function rawLog(root: string, args: string[]): Array<{ commit: string; old: stri
 }
 
 const PATHSPEC_BATCH = 500;
-/** Per path, the oldest commit of HEAD's full history that added it (no merge hides an add): one walk per 500 paths. Null when Git could not read it. */
+/**
+ * Per path, the oldest commit that added it in HEAD's history as one path-limited `git log` reads it (merges simplified).
+ * One full-history walk per 500 paths finds every add; a path added once has that add, and only a path added more than
+ * once is read again on its own, since a merge can hide one of its adds. Null when Git could not read it.
+ */
 function firstAdds(root: string, paths: string[]): Map<string, string> | null {
-  const first = new Map<string, string>();
+  const adds = new Map<string, string[]>();
   for (let at = 0; at < paths.length; at += PATHSPEC_BATCH) {
     const entries = rawLog(root, ['--full-history', '--diff-filter=A', 'HEAD', '--', ...literalPathspecs(paths.slice(at, at + PATHSPEC_BATCH))]);
     if (entries === null) return null;
-    for (const entry of entries) first.set(entry.path, entry.commit);
+    for (const entry of entries) { const list = adds.get(entry.path); if (list) list.push(entry.commit); else adds.set(entry.path, [entry.commit]); }
+  }
+  const first = new Map<string, string>();
+  for (const [path, commits] of adds) {
+    if (commits.length === 1) { first.set(path, commits[0]!); continue; }
+    const own = git(root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', 'HEAD', '--', ...literalPathspecs([path])]);
+    if (own === null) return null;
+    const oldest = own.trim().split('\n').filter(Boolean).pop();
+    if (oldest) first.set(path, oldest);
   }
   return first;
 }
@@ -134,7 +147,7 @@ function commitChanges(root: string, commit: string): { renames: Map<string, str
   const fields = out.split('\0');
   const renames = new Map<string, string>(), blobs = new Map<string, string>(), written = new Map<string, string[]>();
   for (let i = 0; i < fields.length - 1;) {
-    const [, , old, next, status] = fields[i]!.split(' ');
+    const [, mode, old, next, status] = fields[i]!.split(' ');
     const from = fields[i + 1]!;
     if (status?.startsWith('R') || status?.startsWith('C')) {
       if (status.startsWith('R')) { renames.set(from, fields[i + 2]!); blobs.set(from, old!); }
@@ -142,7 +155,7 @@ function commitChanges(root: string, commit: string): { renames: Map<string, str
       continue;
     }
     if (status === 'D') blobs.set(from, old!);
-    if (status === 'M') { const list = written.get(next!); if (list) list.push(from); else written.set(next!, [from]); }
+    if (status === 'M' || (status === 'T' && mode?.startsWith('100'))) { const list = written.get(next!); if (list) list.push(from); else written.set(next!, [from]); }
     i += 2;
   }
   return { renames, blobs, written };
@@ -246,14 +259,15 @@ function inOrder(lines: string[], held: string[]): boolean {
 
 /**
  * Whether `target` holds every line of `old`'s body and of its timeline, each in order in the same region, its type, its
- * tags and every frontmatter key but slug and title. A segmented page (body unread) never matches.
+ * tags and every frontmatter key but slug and title (`bodyOnly`: the lines alone). A segmented page (body unread) never matches.
  */
-async function holdsEveryLine(engine: BrainEngine, sourceId: string, oldSlug: string, targetSlug: string): Promise<boolean> {
+async function holdsEveryLine(engine: BrainEngine, sourceId: string, oldSlug: string, targetSlug: string, opts: { bodyOnly?: boolean } = {}): Promise<boolean> {
   const [old, target] = await Promise.all([engine.readPageSnapshot(oldSlug, { sourceId }), engine.readPageSnapshot(targetSlug, { sourceId })]);
-  if (!old || !target || bodyUnread(old.page) || bodyUnread(target.page) || old.page.type !== target.page.type) return false;
+  if (!old || !target || bodyUnread(old.page) || bodyUnread(target.page) || (!opts.bodyOnly && old.page.type !== target.page.type)) return false;
   const lines = bodyLines(old.page), held = bodyLines(target.page);
   if (!lines.truth.length && !lines.dated.length) return false;
   if (!inOrder(lines.truth, held.truth) || !inOrder(lines.dated, held.dated)) return false;
+  if (opts.bodyOnly) return true;
   const [oldTags, targetTags] = await Promise.all([engine.getTags(oldSlug, { sourceId }), engine.getTags(targetSlug, { sourceId })]);
   if (oldTags.some(tag => !targetTags.includes(tag))) return false;
   const theirs = (target.page.frontmatter ?? {}) as Record<string, unknown>;
@@ -369,6 +383,9 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   const edited = !await fileMatchesSnapshot(engine, old.slug, content, snapshot, old.path).catch(() => false);
   if (edited && !await holdsEveryLine(engine, sourceId, old.slug, row.slug)) {
     return held('both_changed', `${old.path} moved to ${row.source_path} (blob ${short(blob)}), but page ${old.slug} changed in the database after the move, so a fold would drop its edit; decide with the user`, [row.slug]);
+  }
+  if (proof.evidence === 'same_commit' && git(root, ['cat-file', '-e', `${commit}^:./${row.source_path}`]) !== null && !await holdsEveryLine(engine, sourceId, old.slug, row.slug, { bodyOnly: true })) {
+    return held('survivor_differs', `commit ${short(commit)} rewrote ${row.source_path} to ${old.path}'s content (blob ${short(blob)}), but page ${row.slug} does not hold every line of page ${old.slug} (sync has not imported the rewrite), so a fold would put ${old.slug}'s evidence under a page that never held it; sync ${row.source_path}, then preview again`, [row.slug]);
   }
   const conflicts = await twinMergeConflicts(engine, survivor.page_id, old.page_id);
   if (conflicts.length) return held('evidence_conflicts', `${old.path} moved to ${row.source_path}, but page ${old.slug} holds ${conflicts.map(c => c.detail).join('; ')}, which a fold would discard`, [row.slug]);
