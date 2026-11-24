@@ -71,8 +71,8 @@ name) and two concurrent reissues end with one winner and one `reissue_conflict`
 token target goes through the `access_tokens` members ([access-tokens.md](access-tokens.md)). A function that also runs a
 raw statement keeps refusing on a Rust brain at that statement. `gbrain auth register-client` registers through `planManualClient` (`oauth-provider.ts`) and
 `insertOauthClientGrant` when the engine has every grant column (`registerScopedClient` in `src/commands/auth.ts`), then
-`setOauthClientTokenTtl`; a grant that reads a named source still runs the raw scope-source check (`assertScopeSourceGrant`)
-and stops on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
+`setOauthClientTokenTtl`; a grant that reads a named source runs `assertScopeSourceGrant` through the engine's typed
+`readScopeSourceConfigs`, so that check is served on Rust. `auth revoke-client` calls `deleteOAuthClient`, and the Wakeshift drain calls `oauthClientLive`.
 
 ## Constraints
 

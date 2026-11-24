@@ -11,7 +11,7 @@ same members. Only `readLiveAccessToken` (the member-key setup compares it to th
 store never logs one. The member binding columns (`member_id`, `may_act_for`, the four attest columns and
 `reads_unscoped`) are read and written by the credential binding members below. The grant edits of `gbrain auth rescope
 --token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`), `--attest-sources` and `--migrate-legacy` use the grant write and binding members
-below, so `gbrain auth rescope --token` marks the source on a Rust brain as on PGLite and Postgres (the bare-name form still stops on raw SQL in `resolveRescopeTarget`); rotate is still raw SQL and stops on a Rust brain.
+below, so `gbrain auth rescope --token` marks the source on a Rust brain as on PGLite and Postgres (the bare-name form still stops on raw SQL in `resolveRescopeTarget`).
 
 | Member | Returns |
 | --- | --- |
@@ -59,10 +59,10 @@ engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-tra
 `touchAccessTokenLastUsed` stamps `last_used_at` (below). The remote job principal check
 (`assertCurrentRemoteJobPrincipal` in `src/core/minions/submission-authority.ts`) reads a legacy token through
 `readJobPrincipal`, which calls `readAccessToken`. `rescopeInTransaction` (`src/core/grants/legacy-token.ts`, behind
-`gbrain auth rescope`) calls `lockActiveAccessTokens`, then `bindCredential` for `--member` and `--attest-*`, and
-`writeAccessTokenGrant` and `writeAccessTokenPrivateGrant` for the grant flags; the active-source check is
-`listUnarchivedSourceIds` and the scope-source check reads the token's own `attest_sources` through
-`readCredentialBindingForUpdate`. `migrateLegacyTokens` (`auth rescope --migrate-legacy`) calls `lockLegacyAccessTokens`.
+`gbrain auth rescope --token`) calls `lockActiveAccessTokens` and the grant-write members. For binding flags,
+`runRescope` (`src/commands/auth.ts`) awaits `rescopeLegacyToken`, then separately calls `bindCredential` for `--member`
+and `--attest-*`. The active-source check uses `filterUnarchivedSourceIds`; the scope-source check reads the token's own
+`attest_sources` through `readCredentialBindingForUpdate`. `migrateLegacyTokens` (`auth rescope --migrate-legacy`) calls `lockLegacyAccessTokens`.
 
 ## Member binding
 
@@ -80,14 +80,14 @@ write a token's binding are served from these records (gbrain-store `jobs::crede
 | `readAccessTokenAttest(id)`, `readOauthClientAttest(clientId, { lock? })` | `brain.readCredentialAttest(kind, id)`: the attest columns and `member_id` of the token whose id text is exactly `id` with its `revoked_at`, or of the client with its `client_id`, `deleted_at`, `grant_types` and `confidential` (a secret hash is stored); a revoked token and a deleted client are read too, and `null` for no row | `attestRightOf` (access/actor.ts) reads a stored principal's right with them and leaves out a revoked or deleted row itself. The lock has nothing to wait for: the store runs one write at a time. |
 | `readAccessCredentials({ tokenName })`, `readAccessCredentials({ memberId })` | `brain.readAccessCredentials`: the active tokens with that name, oldest first (a tie by id); or the active tokens bound to the member by name in byte order (a tie by id), then the live clients by client id in byte order. The SQL sorts with `COLLATE "C"` and the same tie-break, so an `en_US` Postgres gives the same order |
 | `readAccessTokenWriteGrant(id)` | `brain.readAccessTokenWriteGrant`: the grant columns and `revoked_at` of the token with this id, revoked or not, or null; the write re-check refuses a revoked token with PGLite's text ([journal.md](journal.md)) |
-(`assertScopeSourceGrant`): the sources' share locks go through `lockRegisteredSourceIds` and their marks through
-`getSource`, so that branch works on a Rust brain too. `setMinTrust` and `setTokenMinTrust`
-`authorizeWrite` (`src/core/persistence/authority.ts`) calls `readAccessTokenWriteGrant` through the journal member of
-the same name when it re-checks a write a legacy token owns. `credentialScopeFor` (`src/core/access/requester-scope.ts`)
-calls `readLiveAccessTokenScope` for an agent job's legacy token, so the requester-scope gate compares its real creation
-time with the time the brain began to serve several people.
-`authorizeWrite` (`src/core/persistence/authority.ts`) reads `readAccessTokenWriteGrant` (journal.md): `findActiveAccessTokens`
-answers whether the token is live, and a live token's write stops on `engine_capability_missing`.
+
+`assertScopeSourceGrant` reads marked source configs through `readScopeSourceConfigs` and a token's own `attest_sources`
+through `readCredentialBindingForUpdate`; both reads are served on Rust.
+
+`authorizeWrite` (`src/core/persistence/authority.ts`) calls `readAccessTokenWriteGrant` when it re-checks a write a legacy
+token owns. It rejects a missing or revoked token and checks the current grant; the grant read itself is served on Rust.
+`credentialScopeFor` (`src/core/access/requester-scope.ts`) calls `readLiveAccessTokenScope` for an agent job's legacy token,
+so the requester-scope gate compares its real creation time with the time the brain began to serve several people.
 
 ## Constraints
 
