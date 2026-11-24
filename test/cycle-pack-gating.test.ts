@@ -82,6 +82,15 @@ describe('v0.41 T9 R-GATE: dispatch consults the active pack', () => {
     expect(atoms?.summary).toContain('gbrain dream --phase extract_atoms --drain');
   }, 60_000);
 
+  test('an explicit revision list does not turn on routine pack scheduling', async () => {
+    const options = { brainDir, phases: ['extract_atoms' as const], dryRun: true };
+    const routine = await cycleUnderPack('gbrain-base', options);
+    expect(routine.phases[0]?.details?.reason).toBe('not_in_active_pack');
+    const atomPages = new Map([['notes/selected-example', 'e8dfa889-fa1a-4e92-a77a-adce7b07135a']]);
+    const scoped = await cycleUnderPack('gbrain-base', { ...options, sourceId: 'default', atomPages });
+    expect(scoped.phases[0]?.details).toMatchObject({ pages_total: 0, transcripts_total: 0 });
+  }, 60_000);
+
   test('a pack that declares the phases (gbrain-creator) opens the gate', async () => {
     const report = await cycleUnderPack('gbrain-creator', { brainDir, phases: [...PACK_GATED], dryRun: true });
     for (const phase of PACK_GATED) {

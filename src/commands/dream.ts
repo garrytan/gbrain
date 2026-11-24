@@ -470,6 +470,7 @@ Options:
 
   --atom-pages-file <path>  JSON list of {slug, revision} entries for one
                       explicit --phase extract_atoms --source <id> run.
+                      Explicit operator run, like --drain, without pack scheduling.
                       Only those page revisions are eligible. No transcripts.
   --drain             Bounded backlog drain for --phase extract_atoms
                       (the default phase when --drain is set). Holds the

@@ -2466,7 +2466,7 @@ async function runCycleUnscoped(
     // or borrow_from targets.
     if (phases.includes('extract_atoms')) {
       checkAborted(cycleSignal);
-      const xaSkip = engine ? await packGateSkip(engine, 'extract_atoms', cycleSourceId) : null;
+      const xaSkip = engine && !opts.atomPages ? await packGateSkip(engine, 'extract_atoms', cycleSourceId) : null;
       if (!engine) {
         phaseResults.push({
           phase: 'extract_atoms',
