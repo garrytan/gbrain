@@ -122,7 +122,7 @@ disconnect	lifecycle	yes	2	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
 initSchema	lifecycle	yes	3	yes	yes	yes	serves
 holdSchemaMigrationLock	lifecycle	yes	1	no	n/a:postgres-only	yes	serves
-transaction	lifecycle	yes	355	no	yes	yes	serves
+transaction	lifecycle	yes	356	no	yes	yes	serves
 transactionDirect	lifecycle	yes	21	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
@@ -186,7 +186,7 @@ markSourceSynced	pages	yes	4	no	yes	yes	serves
 advanceSyncCheckpoint	pages	yes	2	no	yes	yes	serves
 countSourcePages	pages	yes	6	no	yes	yes	serves
 insertSource	pages	yes	14	no	yes	yes	serves
-deleteSourceRecord	pages	yes	6	no	yes	yes	serves
+deleteSourceRecord	pages	yes	7	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
 holdPageEmbedding	pages	yes	4	no	yes	yes	serves
@@ -935,7 +935,7 @@ deletePurgedFeedbackRows	page_purge	yes	2	no	yes	yes	serves
 deletePurgedNameStoreRows	page_purge	yes	2	no	yes	yes	serves
 clearQueryCache	page_purge	yes	2	no	yes	yes	serves
 relationExists	page_purge	yes	3	no	yes	yes	serves
-readDerivationPurgeState	page_purge	yes	9	no	yes	yes	serves
+readDerivationPurgeState	page_purge	yes	10	no	yes	yes	serves
 recordDerivationPurgeRow	page_purge	yes	4	no	yes	yes	serves
 continueDerivationSweep	page_purge	yes	2	no	yes	yes	serves
 listDerivationClaimForms	page_purge	yes	10	no	yes	yes	serves
