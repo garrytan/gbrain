@@ -731,7 +731,6 @@ src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/activation.ts	execute_raw	9
-src/core/persistence/admin-intent.ts	execute_raw	1
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/admission-origin.ts	execute_raw	1
