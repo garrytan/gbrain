@@ -156,7 +156,9 @@ describe('engine parity: the mention pass', () => {
       const [low, high] = [idOf('notes/standup'), idOf('notes/retro')].sort((a, b) => Number(a) - Number(b));
       await engine.resetMentionRevisions({ pageIds: [], sourceIds: ['default'], afterPageId: Number(low) });
       const dueAfterTail = sorted((await engine.listMentionDuePages('default', MENTION_EXTRACTOR_VERSION, 0, 200)).map(p => p.slug));
-      expect(dueAfterTail).toEqual([names.get(Number(high))!]);
+      // Pages the case never gave a state are due too; the page after the id is, and the page at it is not.
+      expect(dueAfterTail).toContain(names.get(Number(high))!);
+      expect(dueAfterTail).not.toContain(names.get(Number(low))!);
       await engine.resetSourceMentionIndexRevisions('default');
       const aliasDue = (await engine.listAliasDuePages('default', ['note'], 0, ALIAS_DERIVATION_VERSION, 200)).map(p => p.slug);
       await engine.applyGazetteerEntryChanges('default', [], [

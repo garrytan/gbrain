@@ -141,8 +141,9 @@ describe('engine parity: the fence repair kinds of batch 9', () => {
     try {
       applied = await apply(engine, previewed.preview_hash!);
     } catch (err) {
-      // The one named stop: the page publication refuses at the facts-fence guard, and the settle step reports the queued write.
-      if (backend === 'rust') expect(JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail })).toContain('repair write publication');
+      // The one named stop: the page publication refuses at the facts-fence guard. The write is claimed three times and then ends
+      // failed with the typed raw_sql refusal (coordinator.ts, PUBLICATION_CAPABILITY_ATTEMPTS), or the settle step reports it queued.
+      if (backend === 'rust') expect(JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail })).toMatch(/repair write publication|member=executeRaw capability=raw_sql/);
       throw err;
     }
     expect(applied.applied).toBe(1);

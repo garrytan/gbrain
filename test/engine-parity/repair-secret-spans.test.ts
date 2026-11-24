@@ -222,7 +222,7 @@ describe('engine parity: repair secret-spans', () => {
   });
 
   parityTest('the apply with embedding on re-embeds the rebuilt chunks, stamps the page and leaves no chunk without a vector', {
-    methods: ['putPage', 'upsertChunks', 'getChunksWithEmbeddings', 'getPage', 'readPageSnapshot', 'readLivePageIdBySlug', 'listVectorlessChunkIndexes', 'queuePageProjectionJob', 'readPageRedactionRow'],
+    methods: ['putPage', 'upsertChunks', 'getChunksWithEmbeddings', 'getPage', 'readPageSnapshot', 'readLivePageIdBySlug', 'listUnembeddedChunkIndexes', 'queuePageProjectionJob', 'readPageRedactionRow'],
     timeout: 180_000,
   }, async engine => {
     stubEmbeddings();

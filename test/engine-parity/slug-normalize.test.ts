@@ -144,7 +144,6 @@ describe('engine parity: slug normal form', () => {
         await operationsByName.put_page!.handler(ctx(engine), { slug: stored, content: '---\ntype: note\ntitle: Legacy\n---\nNew.\n', request_id: randomUUID(), ...extra });
         answers.push({ code: null, detail: null, message: 'written' });
       } catch (e) {
-        if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
         answers.push({ code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message });
       }
     }
@@ -308,7 +307,12 @@ describe('engine parity: slug normal form', () => {
         const out = await operationsByName[op]!.handler(ctx(engine), { slug: stored, ...params }) as { slug?: unknown };
         outputs.push({ op, slug: out.slug });
       } catch (e) {
-        if (backend === 'rust') expect((e as Error).message).toBe(RUST_JOURNAL_STOP);
+        // The Rust store serves the journal here (persistence_journal released); the write by the capital-stored spelling then fails in
+        // its publication, because the store finds no page under that exact spelling (PageMissingError). Owner: lane 1 (pages).
+        if (backend === 'rust') {
+          expect((e as Error).message).toMatch(/^Publication failed on an unexpected owner exception\./);
+          throw capabilityMissing('pages', 'write by the exact capital spelling of a stored page (the Rust store finds no page under it)', 'partial');
+        }
         throw e;
       }
     };
@@ -344,7 +348,6 @@ describe('engine parity: slug normal form', () => {
       await operationsByName.put_page!.handler(ctx(engine), { slug: stored, content: '---\ntype: note\ntitle: Legacy\n---\nNew.\n', request_id: randomUUID() });
       answer = { code: null, detail: null, message: 'written' };
     } catch (e) {
-      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
       answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message };
     }
     const result = { answer, unchanged: (await read(stored)).revision === before.stored && (await read(composed)).revision === before.composed };
