@@ -204,6 +204,44 @@ export async function scoreWithReruns(env: RecallEnv, event: ReadEvent, args: un
   } catch { /* an unscored sample is skipped, never counted */ }
 }
 
+/** The result of opening the Rust store: the engine, or why there is none (`unavailable`), and whether the open gave up waiting. */
+interface OpenedStore { engine: ShadowEngine | null; unavailable: Classification | null; openTimedOut: boolean }
+
+/** Opens the Rust store for the child; a failure leaves no engine and names the reason, it never throws. */
+async function openRustStore(
+  shadowDir: string, deps: ShadowChildDeps, load: Awaited<ReturnType<RustEngineAddonLoaderFn>>,
+  deleted: () => boolean, recordRustError: (where: string, error: unknown) => void,
+): Promise<OpenedStore> {
+  if (!load.ok) return { engine: null, unavailable: { outcome: 'addon_unavailable', reason: `${load.code}:${load.reason}` }, openTimedOut: false };
+  if (deleted()) return { engine: null, unavailable: { outcome: 'error', reason: 'shadow_dir_deleted' }, openTimedOut: false };
+  let engine: ShadowEngine | null = null;
+  let openTimedOut = false;
+  try {
+    const open = deps.openEngine ?? ((addon, store) => openRustEngine({ addon, databasePath: store }) as unknown as ShadowEngine);
+    const storePath = join(shadowDir, 'store');
+    engine = open(load.addon, storePath);
+    // A connect that never returns would keep the exit deadline (armed after input ends) from ever starting; a child with a deadline gives up on it.
+    const connecting = engine.connect({ database_path: storePath });
+    if (deps.exit && (await withTimeout(connecting, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS)).timedOut) {
+      // The child gives up on this store: it closes it if the open ever finishes, and goes quiet so the parent's watchdog restarts the child.
+      const abandoned = engine;
+      void connecting.then(() => abandoned.disconnect(), () => undefined).catch(() => undefined);
+      openTimedOut = true;
+      throw Object.assign(new Error('opening the Rust store timed out'), { code: 'open_timeout' });
+    }
+    await connecting;
+    if (deleted()) {
+      await engine.disconnect().catch(() => {});
+      rmSync(shadowDir, { recursive: true, force: true });
+      throw Object.assign(new Error('shadow directory deleted while opening'), { code: 'shadow_dir_deleted' });
+    }
+    return { engine, unavailable: null, openTimedOut };
+  } catch (error) {
+    recordRustError('open', error);
+    return { engine: null, unavailable: { outcome: 'error', reason: `open_failed:${classifyError(error).reason ?? 'unknown'}` }, openTimedOut };
+  }
+}
+
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
 export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): Promise<number> {
   const now = deps.now ?? Date.now;
@@ -256,36 +294,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   };
   const curEpoch = (): string | null => epochNow()?.epoch_id ?? null;
   const recordRustError = internalErrorRecorder(shadowDir, () => epochNow()?.epoch_id ?? null, now);
-  if (!load.ok) {
-    unavailable = { outcome: 'addon_unavailable', reason: `${load.code}:${load.reason}` };
-  } else if (deleted()) {
-    unavailable = { outcome: 'error', reason: 'shadow_dir_deleted' };
-  } else {
-    try {
-      const open = deps.openEngine ?? ((addon, store) => openRustEngine({ addon, databasePath: store }) as unknown as ShadowEngine);
-      const storePath = join(shadowDir, 'store');
-      engine = open(load.addon, storePath);
-      // A connect that never returns would keep the exit deadline (armed after input ends) from ever starting; a child with a deadline gives up on it.
-      const connecting = engine.connect({ database_path: storePath });
-      if (deps.exit && (await withTimeout(connecting, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS)).timedOut) {
-        // The child gives up on this store: it closes it if the open ever finishes, and goes quiet so the parent's watchdog restarts the child.
-        const abandoned = engine;
-        void connecting.then(() => abandoned.disconnect(), () => undefined).catch(() => undefined);
-        openTimedOut = true;
-        throw Object.assign(new Error('opening the Rust store timed out'), { code: 'open_timeout' });
-      }
-      await connecting;
-      if (deleted()) {
-        await engine.disconnect().catch(() => {});
-        rmSync(shadowDir, { recursive: true, force: true });
-        throw Object.assign(new Error('shadow directory deleted while opening'), { code: 'shadow_dir_deleted' });
-      }
-    } catch (error) {
-      recordRustError('open', error);
-      engine = null;
-      unavailable = { outcome: 'error', reason: `open_failed:${classifyError(error).reason ?? 'unknown'}` };
-    }
-  }
+  const opened = await openRustStore(shadowDir, deps, load, deleted, recordRustError);
+  engine = opened.engine;
+  unavailable = opened.unavailable;
+  openTimedOut = opened.openTimedOut;
 
   epochNow(); // the role is known now: an owner (or a child with no engine) opens its epoch before the first row
 

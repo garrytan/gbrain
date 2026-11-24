@@ -16,7 +16,7 @@ import { runShadowChild, type ShadowChildDeps } from '../../src/shadow/child.ts'
 import type { FollowStore } from '../../src/shadow/follow-child.ts';
 import { writeSeedRecord, type SeedRecord } from '../../src/shadow/seed.ts';
 
-export const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
+export const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
 const APPLIED = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, dropped: 0, unmapped_columns: [], losses: {} };
 export const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 export async function until(fn: () => boolean, ms = 10_000): Promise<void> {
