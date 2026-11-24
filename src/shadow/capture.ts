@@ -336,7 +336,7 @@ export class CaptureWriter {
     const lost = this.buffer.length;
     this.buffer = [];
     this.bytes = 0;
-    if (stop === 'budget') { this.dropped += lost; this.dropReason = 'budget'; } else this.dropped = 0;
+    if (stop === 'budget' || stop === 'error') { this.dropped += lost; this.dropReason = stop; } else this.dropped = 0;
   }
 
   /** The segment path to append to now, or null (and the reason) when nothing may be written. */
@@ -388,19 +388,21 @@ export class CaptureWriter {
     if (this.flushing) return this.flushing.then(() => this.flush());
     const run = async () => {
       if (!this.buffer.length && !this.dropped) return;
-      const t = this.target();
+      let t: ReturnType<CaptureWriter['target']>;
+      try { t = this.target(); } catch { t = { stop: 'error' }; } // a capture fault never reaches the brain process
       if ('stop' in t) { this.discard(t.stop); return; }
       const data = this.take(t.epoch);
       try { await appendFile(t.path, data, { mode: 0o600 }); } catch { this.drop('append_error'); }
     };
-    this.flushing = run().finally(() => { this.flushing = null; });
+    this.flushing = run().catch(() => { this.drop('flush_error'); }).finally(() => { this.flushing = null; });
     return this.flushing;
   }
 
   /** Synchronous flush for process exit. */
   flushSync(): void {
     if (!this.buffer.length && !this.dropped) return;
-    const t = this.target();
+    let t: ReturnType<CaptureWriter['target']>;
+    try { t = this.target(); } catch { t = { stop: 'error' }; } // exit hook: a capture fault never fails shutdown
     if ('stop' in t) { this.discard(t.stop); return; }
     try { appendFileSync(t.path, this.take(t.epoch), { mode: 0o600 }); } catch { /* exit: nothing left to do */ }
   }

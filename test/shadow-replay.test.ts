@@ -33,7 +33,8 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-replay-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 /** A small in-memory brain. `dropWrites` returns the right receipt but stores nothing (the negative control). */
-function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean } = {}) {
+function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean; wrongChunks?: boolean } = {}) {
+  const chunks = new Map<string, Array<{ chunk_text: string }>>();
   const timeline = new Map<string, Array<{ summary: string }>>();
   const pages = new Map<string, { slug: string; title: string; compiled_truth: string; frontmatter: Record<string, unknown>; updated_at: string }>();
   const scoped = new Map<string, { slug: string; title: string }>();
@@ -54,6 +55,8 @@ function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFron
     async getLinks() { return []; },
     async getBacklinks() { return []; },
     async getTimeline(slug: string) { return timeline.get(slug) ?? []; },
+    async getChunks(slug: string) { return chunks.get(slug) ?? []; },
+    async upsertChunks(slug: string, rows: Array<{ chunk_text: string }>) { chunks.set(slug, rows.map(r => ({ chunk_text: opts.wrongChunks ? 'other text' : r.chunk_text }))); },
     async addTimelineEntriesBatch(rows: Array<{ slug: string; summary: string }>) {
       for (const r of rows) timeline.set(r.slug, [...(timeline.get(r.slug) ?? []), { summary: opts.wrongTimeline ? 'something else' : r.summary }]);
       return rows.length;
@@ -417,14 +420,14 @@ describe('review fixes (ship pass 1, adversarial)', () => {
     void shadowDir;
   });
 
-  test('a contender with a shorter budget cannot take a live run\'s lock; a dead holder past its deadline can be replaced', () => {
+  test('a contender with a shorter budget cannot take a live run\'s lock, nor a dead one\'s', () => {
     const dir = tmp();
     writeFileSync(join(dir, 'lock'), `${process.pid} ${Date.now() + 3_600_000} tok\n`);
     expect(() => acquireReplayLock(dir, 60_000)).toThrow(/shadow_replay_busy/);
     writeFileSync(join(dir, 'lock'), `${process.pid} ${Date.now() - 1} tok\n`); // past its deadline but alive
     expect(() => acquireReplayLock(dir, 60_000)).toThrow(/shadow_replay_busy/);
     writeFileSync(join(dir, 'lock'), `999999999 ${Date.now() - 1} tok\n`);
-    acquireReplayLock(dir, 60_000)();
+    expect(() => acquireReplayLock(dir, 60_000)).toThrow(/stale lock/);
   });
 
   /** A capture dir whose current epoch is seeded (a fake manifest and empty copies) and capture off. */
@@ -579,15 +582,14 @@ describe('review fixes (ship pass 2)', () => {
     expect(fan.seededIds.has(id)).toBe(true);
   });
 
-  test('a stale lock is reclaimed once; the lock file is never seen empty', () => {
+  test('the lock file is never seen empty', () => {
     const dir = tmp();
-    writeFileSync(join(dir, 'lock'), `999999999 ${Date.now() - 1} old\n`);
     const unlock = acquireReplayLock(dir, 60_000);
     expect(readFileSync(join(dir, 'lock'), 'utf8').trim().split(' ').length).toBe(3);
-    expect(() => acquireReplayLock(dir, 60_000)).toThrow(/shadow_replay_busy/);
     unlock();
     expect(readdirSync(dir).filter(f => f.startsWith('lock'))).toEqual([]);
   });
+
 });
 
 describe('review fixes (ship final review)', () => {
@@ -603,6 +605,32 @@ describe('review fixes (ship final review)', () => {
     await e.getPage('b');
     await writer.flush();
     expect(segmentRecords(cap).some(r => r.kind === 'gap' && r.reason === 'budget' && r.count === 1)).toBe(true);
+  });
+});
+
+describe('review fixes (ship final review, red team)', () => {
+  test('a stale lock is never reclaimed automatically; the error names it', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'lock'), `999999999 ${Date.now() - 1} old\n`);
+    expect(() => acquireReplayLock(dir, 60_000)).toThrow(/stale lock .*remove it/);
+    expect(readFileSync(join(dir, 'lock'), 'utf8')).toContain('old');
+  });
+
+  test('a capture fault in a flush never reaches the brain process', async () => {
+    const { cap, home } = recordingCapture();
+    const writer = new CaptureWriter(cap, home, {});
+    (writer as unknown as { target(): never }).target = () => { throw new Error('EACCES'); };
+    const e = wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer);
+    expect(await e.getPage('a')).toBeNull();
+    expect(() => writer.flushSync()).not.toThrow(); // the exit hook
+    expect(await e.getPage('b')).toBeNull();
+    await expect(writer.flush()).resolves.toBeUndefined(); // the timer flush
+  });
+
+  test('a chunk write is read back with its chunks', async () => {
+    const { run } = await replayOnFakes({ wrongChunks: true }, e => e.upsertChunks('notes/c', [{ chunk_index: 0, chunk_text: 'body', chunk_source: 'compiled_truth' }] as never));
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'sweep:getChunks')).toBe(true);
   });
 });
 

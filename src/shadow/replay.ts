@@ -476,11 +476,12 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     }
     const slugs = new Set<string>();
     const writesNotSwept = writtenSlugs(plan.units, slugs);
-    const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline'] as const;
+    const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline', 'getChunks'] as const;
     for (const entry of [...slugs].sort().slice(0, SWEEP_LIMIT)) {
       const [sourceId, slug] = JSON.parse(entry) as [string | null, string];
       for (const m of sweepMembers) {
-        const rec = { member: m, args: sourceId ? [slug, { sourceId }] : [slug] } as CaptureRecord;
+        const opts = { ...(sourceId ? { sourceId } : {}), ...(m === 'getChunks' ? { includeEmbedding: true } : {}) };
+        const rec = { member: m, args: Object.keys(opts).length ? [slug, opts] : [slug] } as CaptureRecord;
         const outs: Partial<Record<ArmName, Outcome>> = {};
         for (const a of arms) outs[a] = await callOn(engines[a], rec);
         compare(`sweep:${keyedHash(key, entry)}`, `sweep:${m}`, outs);

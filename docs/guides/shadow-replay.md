@@ -62,7 +62,8 @@ difference only shows that PGLite and Rust disagree.
 - Ids (UUIDs) the seed copied, including ones inside JSON and lists, are compared as stored values; only ids and times the replay itself produced are
   matched one to one between arms.
 - The Postgres arm is always the copy the seed made and verified, never a database the variable names later; the
-  replay refuses a database whose owner marker does not name this brain. Two replays of one brain cannot run at once.
+  replay refuses a database whose owner marker does not name this brain. Two replays of one brain cannot run at once; a lock a crashed replay left behind is never taken over
+  automatically, and the error names the file to remove.
 - Calls that finished before the snapshot are skipped (`pre_cut`); calls that overlap it are skipped (`boundary`).
 - Committed transactions replay as one group; rolled-back ones are skipped.
 - Only engine calls are recorded; a record whose call started before the current recording began is dropped, so a
@@ -77,7 +78,7 @@ difference only shows that PGLite and Rust disagree.
   match. The usual cause is a conditional write whose expected revision was created after the snapshot: the replay
   passes the recorded revision as is, so such calls prove nothing either way.
 - Read-back sweeps read each written page in the source the write named. Batch writes are read back for every page their rows
-  name. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
+  name, and chunk writes are read back with their chunks and embeddings. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
   write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.
 - A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
   a second failure retires them. A purge always deletes them.
@@ -127,7 +128,7 @@ Nothing here needs the brain's owner. Run these on the brain's host only.
 
 | Code | Meaning | Fix | Retry |
 |---|---|---|---|
-| `shadow_replay_busy` | another replay is running | wait | safe |
+| `shadow_replay_busy` | another replay is running, or a crashed one left a stale lock | wait; for a stale lock, remove the file the message names | after fix |
 | `shadow_replay_purged` | the purge log changed or cannot be read; the recording was deleted | nothing (an unreadable log: make it readable) | safe |
 | `shadow_replay_seed_failed` | the brain could not be opened for the seed (nothing retired), or seeding failed (partial copies deleted) | on PGLite stop resident processes; else read stderr, fix, rerun | after fix |
 | `shadow_replay_addon_unavailable` | no Rust addon for this release | install it | after fix |

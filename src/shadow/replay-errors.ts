@@ -17,7 +17,7 @@ export const REPLAY_ERRORS = {
   shadow_replay_postgres_privilege: { what: 'The scratch role cannot reset its own database schema or create the vector extension.', fix: 'Give the scratch role ownership of its database and the right to create the vector extension there (not on the brain).', changed: 'nothing on the brain; the scratch database may be empty', retry: 'after_fix' },
   shadow_replay_network_blocked: { what: 'A replayed call tried to open a network connection; the replay child blocks every connection except the local scratch database.', fix: 'Nothing: the call is reported as uncomparable.', changed: 'nothing', retry: 'never' },
   shadow_replay_addon_unavailable: { what: 'The Rust engine addon is not installed or does not match this release.', fix: 'Install the addon for this release (or set GBRAIN_RUST_ENGINE_ADDON to a build), then rerun.', changed: 'nothing', retry: 'after_fix' },
-  shadow_replay_busy: { what: 'Another replay is running for this brain.', fix: 'Wait for it to end; a lock older than its budget is stale and is cleared by the next run.', changed: 'nothing', retry: 'safe' },
+  shadow_replay_busy: { what: 'Another replay holds the lock for this brain, or a crashed replay left its lock behind.', fix: 'Wait for the running replay to end. For a stale lock (the message says so: its process is gone and its deadline passed), remove the lock file it names, then rerun.', changed: 'nothing', retry: 'after_fix' },
   shadow_replay_budget: { what: 'The replay ran past its time budget and was stopped; its work copies were deleted.', fix: 'Raise --budget-minutes or replay on a quieter night.', changed: 'deleted the run\'s work copies', retry: 'safe' },
 } as const satisfies Record<string, ReplayErrorInfo>;
 
