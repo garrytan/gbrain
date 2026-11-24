@@ -443,7 +443,7 @@ export async function countQueuedBackfills(engine: Pick<BrainEngine, 'countJobsB
   try {
     const counts = await engine.countJobsByStatus({ name: 'embed-backfill', statuses: ['waiting', 'active', 'delayed', 'waiting-children'] });
     return counts.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
-  } catch (error) {
+  } catch (error) { // silent-read-ok: the count only words an FYI line of the deferred path, which never blocks
     rethrowCapabilityRefusal(error);
     return 0;
   }

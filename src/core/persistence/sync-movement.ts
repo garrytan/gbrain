@@ -168,7 +168,7 @@ async function activeSyncJobFor(engine: BrainEngine, sourceId: string): Promise<
     }
     candidates.sort((a, b) => a.started - b.started || a.id - b.id);
     return candidates[0] ? { id: candidates[0].id } : null;
-  } catch (error) {
+  } catch (error) { // silent-read-ok: the job table is a fallback for jobs an older gbrain started; the drain lease is read first
     rethrowCapabilityRefusal(error);
     return null;
   }

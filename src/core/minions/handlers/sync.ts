@@ -25,7 +25,7 @@ export async function sourceIdForRepoPath(engine: Pick<BrainEngine, 'listAllSour
   try {
     const rows = await engine.listAllSources({ includeArchived: true, localPathOnly: true });
     return rows.find(row => row.local_path === repoPath)?.id;
-  } catch (error) {
+  } catch (error) { // silent-read-ok: a brain too old to have the sources table falls back to the global sync anchor, as it always did
     rethrowCapabilityRefusal(error);
     return undefined;
   }
@@ -37,7 +37,7 @@ export async function queuedSyncDisabled(engine: Pick<BrainEngine, 'getSource'>,
   try {
     const row = await engine.getSource(sourceId);
     return row !== null && isSyncDisabledConfig(row.config);
-  } catch (error) {
+  } catch (error) { // silent-read-ok: #4399 an unreadable source row lets the queued sync run, where performSync reports the real error
     rethrowCapabilityRefusal(error);
     return false;
   }
@@ -52,6 +52,7 @@ export async function olderLiveSyncDrainer(engine: Pick<BrainEngine, 'executeRaw
         AND queue <> 'gbrain-drain-lease' AND (started_at, id) < (SELECT started_at, id FROM minion_jobs WHERE id = $1)
         AND (COALESCE(data->>'sourceId', data->>'source_id')=$2 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL AND ($4::text IS NULL AND $2='default' OR data->>'repoPath'=$4))) LIMIT 1`,
     [jobId, sourceId, continuationOf, repoPath])
+    // silent-read-ok: the probe only avoids a second drainer; the drain lease is the guard, so a failed probe finds none
     .catch((error: unknown) => { rethrowCapabilityRefusal(error); return []; });
   return live ?? null;
 }
