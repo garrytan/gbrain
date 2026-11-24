@@ -20,6 +20,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -316,4 +317,24 @@ A line added at the move.
     expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('same_file_name') });
     expect(await live(engine, 'notes/alpha')).toBe(true);
   }, opts(backend, Object.fromEntries([1, 2, 3, 4, 5, 6].map(n => [`shelf-${n}/alpha.md`, `---\ntitle: Shelf ${n}\n---\n\nShelf note ${n}.\n`])))));
+
+  test(`${backend}: a move committed after the soft-delete was prepared and before it was published keeps the page`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, {}, 'remove', ['notes/alpha.md']);
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(1);
+    let moved = false;
+    installFaultHook(point => {
+      if (point !== 'consumer:prepared' || moved) return;
+      moved = true;
+      commit(root, { 'archive/alpha.md': ALPHA }, 'the same content lands elsewhere while the soft-delete waits');
+    });
+    try {
+      const applied = await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true });
+      expect(moved).toBe(true);
+      expect(applied.outcomes ?? {}).not.toHaveProperty('soft_deleted');
+    } finally { installFaultHook(undefined); }
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend)));
 }

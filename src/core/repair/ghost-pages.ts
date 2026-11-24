@@ -330,6 +330,11 @@ async function readGhostMoves(engine: BrainEngine, sourceId: string, root: strin
 /** Move reads of one apply run, keyed by checkout root and HEAD: a read depends on Git only once candidates are named, so one HEAD shares it. */
 const runMoves = { checkout: '', moves: new Map<string, GhostMove | undefined>() };
 const headOf = (root: string) => { try { return syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { return null; } };
+/** HEAD of the ghost's checkout under its owner's binding, or null. */
+async function ghostCheckoutHead(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<string | null> {
+  const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
+  return binding?.local_path ? headOf(join(binding.local_path, binding.relative_path)) : null;
+}
 const moveKey = (ghost: GhostPage) => `${ghost.page_id}:${ghost.revision}:${ghost.path}`;
 
 /** Reads the moves of every ghost an apply is about to retire in one pass, so each item's veto reuses it at the same HEAD. */
@@ -495,6 +500,7 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
       { fix: previewFix(row.source_id) });
   const skip = await stillApproved(engine, ghost, owner);
   if (skip) throw refuse(skip);
+  const head = await ghostCheckoutHead(engine, ghost, owner);
   await authorizeWrite(engine, row.authority, 'delete_page', row.slug);
   const page = await preparePageMutation(engine, { ...row, operation: 'delete_page' }, config, undefined, undefined, { allowMissingFile: true });
   const target = page.file ? relative(page.file.root, page.file.path).split(sep).join('/') : null;
@@ -504,7 +510,14 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
   if (!page.file || (target !== ghost.path && !recordedFile)) throw refuse(changed('its canonical file target moved'));
   if (page.file.expectedBeforeHash !== null) throw refuse(restored(ghost));
   const file = recordedFile ? { ...page.file, path: nativeFileTarget(page.file.root, join(page.file.root, ghost.path)) } : page.file;
-  return { ...page, file, validate: async tx => { await page.validate?.(tx); await authorizeWrite(tx, row.authority, 'delete_page', row.slug); },
+  return { ...page, file, validate: async tx => {
+    await page.validate?.(tx);
+    await authorizeWrite(tx, row.authority, 'delete_page', row.slug);
+    // A commit since preparation can show the file moved: the move check runs again before the delete is published.
+    if (await ghostCheckoutHead(tx, ghost, owner) === head) return;
+    const veto = await ghostMoveVeto(tx, ghost, owner);
+    if (veto) throw refuse(veto);
+  },
     // GBRA-133: the soft delete is the decision a held deletion of this file waited for, so its hold clears with it.
     apply: async (tx, preimage) => {
       const outcome = await page.apply(tx, preimage);
