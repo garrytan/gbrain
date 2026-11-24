@@ -24,13 +24,25 @@ is engine-specific.
 `hasMcpLogRowsPastWindow` follows `pruneMcpRequestLogBatch`: the cutoff is `now - days` (the day count read as an `int4`),
 and rows are visited in `created_at` order, so the scan stops at the first row inside the window.
 
+## Credential reads
+
+`listActiveAccessTokenRows`, `listActiveOauthClientRows` and `listAttestCredentialRows` read the store's token and
+client records (`jobs/doctor_credentials.rs`). A token row names every `access_tokens` column, `token_hash` included, so
+it has the same columns and values as the SQL engines' `SELECT *` (the parity case in
+`test/engine-parity/doctor-acc.test.ts` compares every column); oldest first, a tie by id. A client row is
+`ClientRecord::to_row`, every client not deleted, by client id in byte order. The attest rows are the tokens not revoked
+and the clients not deleted with an attest actor: a token's `row` is `to_jsonb(t)` (times as `to_jsonb` text in a UTC
+session), a client's is `to_jsonb(c) - 'client_secret_hash'` (`to_grant_json`), by kind then name in byte order, a tie by id.
+
 ## Answered in TypeScript
+
+`listRawOnlyRules` reads each source's rules (`brain.listAccessRules`) and keeps those with `covers_derived` false, by (source, rule id) in byte order. `listAccessMemberRows` is `brain.readAccessMembers({ includeRemoved })`, by id with groups. `listAudienceMemberIds` and `listLabelledOnlyMemberIds` read the store's member records (`brain.readAccessMembers`): the enabled, unremoved members of kind `audience`, or with the labelled-only grant, by id in byte order.
 
 An answer the store cannot contradict, because it keeps no such state:
 
 | Members | Answer |
 | --- | --- |
-| `listPolicySourceIds`, `listRawOnlyRules`, `listAudienceMemberIds`, `listLabelledOnlyMemberIds`, `listAccessMemberRows`, `listAttestCredentialRows`, `listActiveAccessTokenRows`, `listActiveOauthClientRows`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources`, `listVolunteerChannels` | no rows: no access state, tokens, OAuth clients, coverage events or volunteer events exist |
+| `listPolicySourceIds`, `listOauthClientAuthShapes`, `listDanglingFederatedReads`, `listPrivilegedDcrClients`, `listBeliefCoveredSources`, `listVolunteerChannels` | no rows: no access state, tokens, OAuth clients, coverage events or volunteer events exist |
 | `isAccessStateUnreadable` | false |
 | `readKnowledgeRevisionNotNull` | true: the revision is always set |
 | `readDriftSchema` | `current` |

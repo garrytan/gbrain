@@ -72,9 +72,46 @@ describe('follow child', () => {
     child.handle(apply(9_000));
     await child.close();
     const file = readFollowerFile(dir)!;
-    expect(file).toMatchObject({ epoch_id: 'seed-1', applied_rows: 1, last_seq: 1, watermark: { valid: true, through: new Date(9_000).toISOString() } });
+    expect(file).toMatchObject({ epoch_id: 'seed-1', seed_id: 'seed-1', applied_rows: 1, last_seq: 1, watermark: { valid: true, through: new Date(9_000).toISOString() } });
     expect(file.lag.epoch[lagBucket(1000)]).toBe(1);
     expect(lines[1]).toMatchObject({ t: 'resp', id: 2, ok: true });
+  });
+
+  test('an evidence epoch that differs from the seed id still follows, digests and replaces intervals under the real seed id', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify({
+      version: 1, epoch_id: 'manifest-epoch', seed_id: 'seed-1', epoch_started_at: 't', updated_at: new Date().toISOString(), applied_rows: 3, queue_depth: 0, lag_ms: 0,
+      last_seq: 1, watermark: { valid: true, through: null, invalidated_reason: null }, lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 },
+      probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 }, allocators: { verified: false, checked_at: null },
+    }));
+    const seen: string[] = [];
+    const named = (name: string) => async (id: string) => { seen.push(`${name}:${id}`); return name === 'relationDigest' ? { rows: 0, digest: '' } : RESULT; };
+    const { child, lines } = childOn(dir, {
+      replaceRelationRows: named('replace') as never, relationDigest: named('relationDigest') as never, replaceInterval: named('interval') as never,
+    });
+    child.handle(apply(1));
+    child.handle(rpc(1, 'relationDigest', { relation: 'pages' }));
+    child.handle(rpc(2, 'replaceInterval', { relation: 'pages', generation: 1, rows: [], digests: [] }));
+    await child.close();
+    expect(seen).toEqual(['replace:seed-1', 'relationDigest:seed-1', 'interval:seed-1']);
+    expect(lines.map((l) => l.ok)).toEqual([true, true]);
+    expect(readFollowerFile(dir)).toMatchObject({ applied_rows: 5, seed_id: 'seed-1' }); // the 3 rows it kept, plus the apply and the interval
+    expect(buildFollowStatus(dir, STATE).follower).toMatchObject({ applied_rows: 5 });
+    expect(buildFollowStatus(dir, STATE).follower.state).not.toBe('stopped'); // a new owner session is `invalid` until a pass settles it; `stopped` would mean the file was ignored
+  });
+
+  test('a follower.json from before the seed id was written still counts as the same seed', async () => {
+    const dir = tmp();
+    writeSeedRecord(dir, SEED);
+    writeFileSync(join(dir, 'follower.json'), JSON.stringify({
+      version: 1, epoch_id: 'seed-1', epoch_started_at: 't', updated_at: new Date().toISOString(), applied_rows: 7, queue_depth: 0, lag_ms: 0, last_seq: 1,
+      watermark: { valid: true, through: null, invalidated_reason: null }, lag: { epoch: [], hours: {} }, fingerprints: { checked_rows: 0, mismatches: 0 },
+      probe: { state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0 }, allocators: { verified: false, checked_at: null },
+    }));
+    const { child } = childOn(dir);
+    await child.close();
+    expect(readFollowerFile(dir)).toMatchObject({ applied_rows: 7, seed_id: 'seed-1' });
   });
 
   test('a fingerprint the store computes differently is counted, per row, in the epoch totals', async () => {
@@ -328,7 +365,7 @@ describe('follow status', () => {
     expect(buildFollowStatus(dir, STATE, NOW).follower.state).toBe('behind');
     withFile(dir, { watermark: { valid: false, through: null, invalidated_reason: 'seq_gap' }, queue_depth: 2 });
     expect(buildFollowStatus(dir, STATE, NOW).follower.state).toBe('invalid');
-    withFile(dir, { epoch_id: 'another-seed' });
+    withFile(dir, { epoch_id: 'another-seed', seed_id: 'another-seed' });
     expect(buildFollowStatus(dir, STATE, NOW).follower.applied_rows).toBe(0);
   });
 
@@ -368,7 +405,9 @@ describe('status --json', () => {
       'schema_version', 'brain', 'enabled', 'state', 'directory', 'totals', 'by_op', 'serving', 'child_shed', 'children', 'recent_faults',
       'epoch_id', 'epoch_started_at', 'follower', 'reconcile', 'write_comparisons', 'fingerprints', 'seed', 'allocators', 'primary_refreshes',
     ]));
-    expect(json.epoch_id).toBe('seed-1');
+    expect(json.epoch_id).toBeNull(); // the epoch is the evidence epoch a child opens, not the seed
+    expect(json.epoch_started_at).toBeNull();
+    expect(json.seed).toMatchObject({ seed_id: 'seed-1' });
     expect(json.follower).toEqual({
       state: 'stopped', action: null, lag_ms: null, lag_ms_p99_24h: null, lag_ms_p99_epoch: null, queue_depth: 0, applied_rows: 0,
       coverage_watermark: { valid: false, through: null, invalidated_reason: 'not_started' },

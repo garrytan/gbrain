@@ -157,6 +157,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'embed',
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans
+  'learning_derive',             // nightly learning PR 1 — ledger pointers for what the cycle learned
   'purge',                       // v0.26.5
   'bookkeeping_gc',              // GBRA-438: the GC that used to ride inside purge
 ];

@@ -14,6 +14,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { capabilityRefusal, capabilityUnknownCheck, scanDeadline } from '../budget.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -67,8 +68,9 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     const backfillable = skipped.marked;
     const chunklessMarked = skipped.chunkless;
     // Decision #10: a segmented page's body columns are NULL, so both size scans above pass it by.
-    const [segmented] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.body_storage = 'segmented'`).catch(() => []);
-    const oversizedCheck = (check: Check) => checks.push(withSkippedSegmented(check, Number(segmented?.n ?? 0)));
+    // A typed count (engine-sql/doctor-tallies.ts), so a Rust brain answers it; a failure fails the check below.
+    const segmented = await engine.countLiveSegmentedPages();
+    const oversizedCheck = (check: Check) => checks.push(withSkippedSegmented(check, segmented));
     if (backfillable > 0) {
       oversizedCheck({
         name: 'oversized_pages',
@@ -114,10 +116,8 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     const rows = await engine.listScraperJunkCandidates(scanLimit);
     const hits: Array<{ slug: string; matched: string[] }> = [];
     const scanRows = rows;
-    // Decision #10: a segmented row's body heads are NULL, so only its title was assessed (LIMIT NULL is the full audit).
-    const [segmentedRow] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM (SELECT p.body_storage FROM pages p
-       WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $1) s WHERE s.body_storage = 'segmented'`, [scanLimit]).catch(() => []);
-    const segmentedScanned = Number(segmentedRow?.n ?? 0);
+    // Decision #10: a segmented row's body heads are NULL, so only its title was assessed; the scan rows say which.
+    const segmentedScanned = scanRows.filter(r => r.segmented === true).length;
     for (const r of scanRows) {
       const sanity = assessContentSanity({
         compiled_truth: r.body_head ?? '',
@@ -358,14 +358,11 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
     const dbPageCountForSource = async (sourceId: string): Promise<number | null> => {
       if (Date.now() >= fmDeadline) return null;
       try {
-        const rows = await engine.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
-          [sourceId],
-        );
-        if (rows.length === 0) return null;
-        const parsed = parseInt(rows[0].n, 10);
-        return Number.isFinite(parsed) ? parsed : null;
-      } catch {
+        // The typed count (same predicate), so a Rust brain answers it.
+        const n = await engine.countLivePagesInSource(sourceId);
+        return Number.isFinite(n) ? n : null;
+      } catch (e) {
+        rethrowCapabilityMissing(e);
         return null;
       }
     };
@@ -452,7 +449,8 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
     // OOM, disk full, etc.). Pre-v0.38.2.0 (PR #1287) had an unreachable
     // abort-classifier branch here; removed because timer-based aborts
     // in a sync walker can't surface as a thrown error anyway.
-    checks.push(checkError('frontmatter_integrity', 'scan frontmatter', e));
+    const refusal = capabilityRefusal(e);
+    checks.push(refusal ? capabilityUnknownCheck('frontmatter_integrity', refusal) : checkError('frontmatter_integrity', 'scan frontmatter', e));
   } finally {
     fmHb();
   }

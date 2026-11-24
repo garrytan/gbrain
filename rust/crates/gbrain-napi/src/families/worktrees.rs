@@ -210,19 +210,6 @@ impl Brain {
         self.run(env, move |s| s.list_host_topology_rows(&host_id))
     }
 
-    /// `listSourceBindingsForMovement(sourceIds)`: each live source binding with its worktree's
-    /// owner, by byte source id.
-    #[napi]
-    pub fn list_source_bindings_for_movement<'env>(
-        &self,
-        env: &'env Env,
-        source_ids: Option<Vec<String>>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_source_bindings_for_movement(source_ids.as_deref())
-        })
-    }
-
     /// `listWorktreeMembers(worktreeId)`: the worktree's source bindings by byte source id.
     #[napi]
     pub fn list_worktree_members<'env>(

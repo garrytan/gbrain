@@ -333,39 +333,6 @@ pub(crate) fn host_topology_rows_in(read: &dyn KvRead, host_id: &str) -> Result<
     Ok(out)
 }
 
-/// `listSourceBindingsForMovement(sourceIds)`: each source binding whose source holds the bound
-/// incarnation and whose worktree row exists (of `source_ids` when given), with the worktree's
-/// owner, by byte source id.
-pub(crate) fn source_bindings_for_movement_in(
-    read: &dyn KvRead,
-    source_ids: Option<&[String]>,
-) -> Result<Vec<Value>> {
-    let mut bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
-    bindings.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
-    let mut out = Vec::new();
-    for b in bindings {
-        if source_ids.is_some_and(|ids| !ids.iter().any(|id| id == &b.source_id)) {
-            continue;
-        }
-        let Some(s) = read_source(read, &b.source_id)? else {
-            continue;
-        };
-        if !s.incarnation.eq_ignore_ascii_case(&b.source_incarnation) {
-            continue;
-        }
-        let Some(w) = read_worktree_record(read, &b.worktree_id)? else {
-            continue;
-        };
-        out.push(json!({
-            "source_id": b.source_id,
-            "worktree_id": b.worktree_id,
-            "source_incarnation": b.source_incarnation,
-            "owner_host_id": w.owner_host_id,
-        }));
-    }
-    Ok(out)
-}
-
 /// The source bindings of one worktree (`listWorktreeMembers`): `{ source_id, relative_path }` by
 /// byte source id.
 pub(crate) fn worktree_members_in(read: &dyn KvRead, worktree_id: &str) -> Result<Vec<Value>> {
@@ -965,14 +932,6 @@ impl Store {
     /// `listHostTopologyRows(hostId)`.
     pub fn list_host_topology_rows(&self, host_id: &str) -> Result<Vec<Value>> {
         host_topology_rows_in(&*self.read()?, host_id)
-    }
-
-    /// `listSourceBindingsForMovement(sourceIds)`.
-    pub fn list_source_bindings_for_movement(
-        &self,
-        source_ids: Option<&[String]>,
-    ) -> Result<Vec<Value>> {
-        source_bindings_for_movement_in(&*self.read()?, source_ids)
     }
 
     /// `listWorktreeMembers(worktreeId)`.

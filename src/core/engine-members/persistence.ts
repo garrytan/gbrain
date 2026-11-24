@@ -2,7 +2,7 @@
  * The persistence statements of BrainEngine: the write journal, sync holds, claims, housekeeping, effect worker and connect gate.
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancelResult, WriteCancellation, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancelResult, WriteCancellation, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldHitQuery, HeldHitRow } from '../engine-sql/persistence-journal.ts';
 import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer, ProducerVersionRow } from '../engine-sql/generation-atom-reads.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 import type * as ChronicleEventsSql from '../engine-sql/chronicle-events.ts';
@@ -27,13 +27,13 @@ import type { OverdueHold, OverdueHoldKind } from '../engine-sql/persistence-own
 import type { ProjectionScanCursor } from '../page-state/projection-window.ts';
 import type { RecentWriterVersionRow, WriterVersionRow } from '../engine-sql/writer-versions.ts';
 import type { ReservedConnection } from '../engine.ts';
-import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../engine-sql/applied-watermark-reads.ts';
+import type { SourceCheckoutRoot, SourceMovementBinding, SourceMovementRows, UnembeddedPageSummary, WriteWatermarkRow } from '../engine-sql/applied-watermark-reads.ts';
 import type { WriteContextInput, WriteContextResult } from '../engine-sql/transaction-settings.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import type { CounterColumn } from '../engine-sql/writer-release.ts';
 import type { EmbeddingCandidate } from '../engine-sql/persistence-effect-scans.ts';
 import type { GitHoldListingRow } from '../engine-sql/sync-hold-store.ts';
-import type { IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, MovementHeadRow, MovementHoldRow, MovementWatermarkRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
+import type { IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
 import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../engine-sql/persistence-housekeeping.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
@@ -47,6 +47,8 @@ export interface PersistenceMembers {
   readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
   /** The current-incarnation hold rows (`record`, page `revision`) naming these page ids, in fingerprint order. */
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
+  /** The holds naming a read's hit pages (`record`, page `revision`) in fingerprint order, then one row with how many held files could affect the read (stampHeldHits). */
+  readHeldHitRows<R = Record<string, unknown>>(query: HeldHitQuery): Promise<Array<HeldHitRow<R>>>;
   /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
   /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
@@ -109,12 +111,6 @@ export interface PersistenceMembers {
   readRetiredManagedSyncCursor(sourceId: string, incarnation: string): Promise<{ first_seen: string } | null>;
   /** The unfinished managed-sync cursors of the listed sources (null: every source) with their receipts, failures and paths. */
   readManagedSyncFailureRows<V = Record<string, unknown>, R = Record<string, unknown>, F = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<ManagedSyncFailureRow<V, R, F>>>;
-  /** A worktree's managed-sync movement watermark for one incarnation (`sources writer movement`). */
-  readMovementWatermark(worktreeId: string, incarnation: string): Promise<MovementWatermarkRow | null>;
-  /** The head unfinished request of a worktree with its claim columns, or null. */
-  readMovementHead(worktreeId: string): Promise<MovementHeadRow | null>;
-  /** The Git hold summary of a source incarnation, or null. */
-  readMovementHoldSummary(sourceId: string, incarnation: string): Promise<MovementHoldRow | null>;
   /** The commit targets of a worktree's freshness samples (committed managed-sync imports in the window), newest first, at most `limit`. */
   listFreshnessTargets(worktreeId: string, incarnation: string, windowHours: number, limit: number): Promise<string[]>;
   /** The recorded managed-sync failures of the listed sources (null: every source) whose cursor row is gone. */
@@ -133,6 +129,10 @@ export interface PersistenceMembers {
   readIdentityRemedySide(sourceId: string, by: { pageId: number } | { slug: string }): Promise<IdentityRemedySideRow | null>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
+  /** One source binding's movement rows for readSourceMovement: the managed-sync watermark, the head request and the hold summary. */
+  readSourceMovementRows(binding: SourceMovementBinding): Promise<SourceMovementRows>;
+  /** The id of the active `sync` job with a live lock that drains the source, or null. */
+  readLiveSyncJobId(sourceId: string): Promise<number | null>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */
   readSourceCheckoutRoot(sourceId: string, hostId: string | null): Promise<SourceCheckoutRoot | null>;
   /** The source's pages still waiting for an embedding in `column`: count, oldest edit, budget-held count. */
@@ -195,6 +195,8 @@ export interface PersistenceMembers {
   hasChronicleSkipDecision(decision: ChronicleEventsSql.ChronicleSkipDecision): Promise<boolean>;
   listOrphanedChronicleOwners(sourceId: string, kind: string, limit: number): Promise<string[]>;
   listChronicleEventSlotRows(sourceId: string, slugs: readonly string[]): Promise<ChronicleEventsSql.ChronicleEventSlotRow[]>;
+  /** The chronicle advisor's coverage-gap read: recent chronicle-shaped pages that no event projection covers yet. */
+  listChronicleCoverageGapRows(): Promise<ChronicleEventsSql.ChronicleCoverageGapRow[]>;
   /** The atom adapter's reads (engine-sql/generation-atom-reads.ts): a live page origin's input pin, the stored versions a producer wrote, committed managed atom receipts. */
   readAtomOriginInput(sourceId: string, slug: string): Promise<AtomOriginInputRow | null>;
   listProducerVersionRows(sourceId: string, slugs: readonly string[], producer: GenerationVersionProducer): Promise<ProducerVersionRow[]>;
@@ -263,11 +265,111 @@ export interface PersistenceMembers {
   insertPublicationEffects(spec: PublicationEffectsSpec): Promise<string[]>;
   /** Queues a managed-request withdrawal's three effects for its source; an unknown source queues none, a kind already queued is kept. */
   insertWithdrawalEffects(spec: WithdrawalEffectsSpec): Promise<void>;
+  /** `gbrain repair segmented-mirror`: queues a re-mirror's `withdrawal-mirror` and `git` effects for request row `requestId` (engine-sql/segmented-mirror-effects.ts); run it in the re-mirror's write transaction. */
+  insertRemirrorEffects(requestId: string, sourceId: string, data: Record<string, unknown>): Promise<void>;
+  /** `gbrain repair segmented-mirror`: the effects of request row `requestId` the apply waits on, in kind order. */
+  readRemirrorEffects(requestId: string): Promise<import('../engine-sql/segmented-mirror-effects.ts').RemirrorEffectState[]>;
+  /** The withdrawal overlay's `*` purges: the source's subject-`*` purges of claim fingerprints `hashes` as withdrawals, world rows only when `worldOnly` (page-state/snapshot.ts overlayCanonicalBodiesTyped). */
+  listGlobalPurgeWithdrawals(sourceId: string, hashes: readonly string[], worldOnly: boolean): Promise<import('../page-state/types.ts').PageWithdrawal[]>;
+  /** The first record of each `op` checkpoint naming one of `sourceIds` as `source_id` (all when null), in fingerprint byte order (engine-sql/fence-repair-records.ts). */
+  listSourceCheckpointRecords<R>(op: string, sourceIds: readonly string[] | null): Promise<import('../engine-sql/fence-repair-records.ts').SourceCheckpointRecord<R>[]>;
+  /** Stores the checkpoint parent when none exists; true when this call stored it (the fence repair attempt store's claim). */
+  insertOpCheckpointIfAbsent(op: string, fingerprint: string, completedKeys: readonly unknown[]): Promise<boolean>;
+  /** Replaces the parent's records only while its first record's `v` is `expected`; true when this call replaced them. */
+  replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number): Promise<boolean>;
+  /** Stores the sync run's fence trend row, or rewrites it keeping the `day` of its first write (the sync run's total counts once). */
+  upsertFenceTrendRunRecord(op: string, fingerprint: string, record: unknown): Promise<void>;
+  /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null (the fences and slug-conflicts verification). */
+  readOldestSyncHoldAt(code: string, sourceIds: readonly string[]): Promise<string | null>;
+  /** The daily budget ledger (budget/daily-ledger.ts): releases expired held reservations and settles expired dispatched ones at their estimate (engine-sql/budget-ledger-writes.ts). */
+  reclaimBudgetReservations(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, nowIso: string): Promise<{ released: number; uncertain: number }>;
+  /** Holds a reservation when the day stays within its cap; true when held. */
+  reserveBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, spec: import('../engine-sql/budget-ledger-writes.ts').BudgetReservationSpec): Promise<boolean>;
+  /** Marks a held, unexpired reservation dispatched; true when it was. */
+  dispatchBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, nowIso: string): Promise<boolean>;
+  /** Settles a reservation at `actual` and moves the day's totals; the row the protocol reads, or null. */
+  settleBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string, actual: string): Promise<import('../engine-sql/budget-ledger-writes.ts').BudgetSettleRow | null>;
+  /** Releases a held reservation and frees its estimate; true when released. */
+  releaseBudgetReservation(key: import('../engine-sql/budget-ledger-writes.ts').BudgetLedgerKey, id: string): Promise<boolean>;
+  /** The secret store (GST-2988; engine-sql/secret-store.ts): the entry id that holds this (source, value MAC), or null. */
+  findSecretEntryByMac(sourceId: string, mac: string): Promise<string | null>;
+  /** Whether a secret store entry has this id. */
+  secretEntryExists(id: string): Promise<boolean>;
+  /** Writes one sealed entry (ciphertext and MAC as given); the id when written, null when the conflict clause skipped it. */
+  insertSecretEntry(row: import('../engine-sql/secret-store.ts').SecretEntryInsert, conflict: import('../engine-sql/secret-store.ts').SecretEntryConflict): Promise<string | null>;
+  /** Records where a marker was put. */
+  insertSecretOccurrence(o: import('../engine-sql/secret-store.ts').SecretOccurrenceInsert): Promise<void>;
+  /** One entry as stored (never a value), or null. */
+  readSecretEntry(id: string): Promise<import('../engine-sql/secret-store.ts').SecretEntryRow | null>;
+  /** The recorded places of one entry, in recording order. */
+  listSecretOccurrences(entryId: string): Promise<import('../engine-sql/secret-store.ts').SecretOccurrenceRow[]>;
+  /** Entries with their occurrence counts and slugs, oldest first. */
+  listSecretEntrySummaries(filter: { sourceId: string | null; slug: string | null; limit: number }): Promise<import('../engine-sql/secret-store.ts').SecretEntrySummaryRow[]>;
+  /** Entries and occurrences per rule. */
+  countSecretsByRule(sourceId: string | null): Promise<Array<{ rule: string; entries: number; occurrences: number }>>;
+  /** The key and MAC of every restored (allowed) value: of one source, or of every source in key order. */
+  listAllowedSecretMacs(sourceId: string | null): Promise<import('../engine-sql/secret-store.ts').SecretAllowedMac[]>;
+  /** Key ids entries were sealed with, by host. */
+  listSecretKeysInUse(): Promise<import('../engine-sql/secret-store.ts').SecretKeyInUse[]>;
+  /** Every entry and occurrence row, from one snapshot (an encrypted backup's input). */
+  readSecretStoreSnapshot(): Promise<{ entries: import('../engine-sql/secret-store.ts').SecretBackupEntryRow[]; occurrences: import('../engine-sql/secret-store.ts').SecretBackupOccurrenceRow[] }>;
+  /** Writes a backed-up entry unless its id or (source, value) is held, for a source this brain has; true when written. */
+  insertBackupSecretEntry(row: import('../engine-sql/secret-store.ts').SecretBackupEntryRow): Promise<boolean>;
+  /** Whether the row under `id` holds this (source, value MAC): null when no row has the id. */
+  readBackupEntryHold(id: string, sourceId: string, mac: string): Promise<boolean | null>;
+  /** Writes a backed-up occurrence once, on the page holding `pageId` (or at its slug); true when written. */
+  insertBackupSecretOccurrence(o: import('../engine-sql/secret-store.ts').SecretBackupOccurrenceRow, pageId: number | null): Promise<boolean>;
+  /** Deletes an entry no occurrence references; true when it did. */
+  deleteUnreferencedSecretEntry(id: string): Promise<boolean>;
+  /** The pages of the source at these slugs, each with whether its inline stores hold entry `id`'s marker. */
+  listSecretHoldingPages(sourceId: string, slugs: readonly string[], id: string): Promise<import('../engine-sql/secret-store.ts').SecretHoldingPageRow[]>;
+  /** Entries no occurrence references (doctor). */
+  countUnreferencedSecretEntries(): Promise<number>;
+  /** `gbrain secrets restore` preview: the live page's revision and whether it still holds the marker; null without a live page. */
+  readRestorePageHit(sourceId: string, slug: string, marker: string): Promise<import('../engine-sql/secret-store.ts').RestorePageHit | null>;
+  /** Marks an entry restored (allowed). */
+  markSecretEntryAllowed(id: string): Promise<void>;
+  /** `gbrain repair secret-spans` (engine-sql/secret-spans-rows.ts): the live page at (source, slug) as a redaction reads it, or null. */
+  readPageRedactionRow(sourceId: string, slug: string): Promise<import('../engine-sql/secret-spans-rows.ts').PageRedactionRow | null>;
+  /** The timeline rows, facts, takes, link contexts and raw data of a page, each in id order. */
+  readPageRedactionRows(pageId: number, sourceId: string, slug: string): Promise<import('../engine-sql/secret-spans-rows.ts').PageRedactionRows>;
+  /** Every timeline row of the pages whose rows belong to page `pageId`. */
+  listTimelineDedupRows(pageId: number): Promise<import('../engine-sql/secret-spans-rows.ts').TimelineDedupRow[]>;
+  /** The page's retained versions in id order. */
+  listVersionBodiesForRedaction(pageId: number): Promise<import('../engine-sql/secret-spans-rows.ts').RetainedVersionBody[]>;
+  /** The number of retained versions of a page. */
+  countPageVersionRows(pageId: number): Promise<number>;
+  /** Rewrites a retained version's text and frontmatter. */
+  setRetainedVersionBody(pageId: number, id: number, compiledTruth: string | null, frontmatter: unknown): Promise<void>;
+  /** Every stored chunk row of a page (staged and retired included): ids and texts for a rewrite, texts alone for the residual scan. */
+  listChunkTextsForRedaction(pageId: number, purpose: 'rewrite' | 'scan'): Promise<import('../engine-sql/secret-spans-rows.ts').ChunkTextRow[]>;
+  /** Deletes chunk rows by id. */
+  deleteChunksByIds(pageId: number, ids: readonly number[]): Promise<void>;
+  /** Rewrites the page row's text fields and content hash. */
+  setRedactedPageFields(pageId: number, fields: import('../engine-sql/secret-spans-rows.ts').RedactedPageFields): Promise<void>;
+  /** The data of one raw data row, named by (page, id). */
+  readRawDataValue(pageId: number, id: number): Promise<unknown>;
+  /** Replaces the data of one raw data row. */
+  setRawDataValue(pageId: number, id: number, data: unknown): Promise<void>;
+  /** Rewrites one text column of a timeline, fact, take or link row (a fact or take loses its embedding). */
+  setRedactedRowText(pageId: number, store: import('../engine-sql/secret-spans-rows.ts').RedactedRowStore, id: number, column: string, text: string): Promise<void>;
+  /** The twin merge: drops the twin's colliding derived links and transitions and moves the rest onto the survivor, with the relationship keys before and after (engine-sql/twin-merge-moves.ts). Run it in the merge's transaction. */
+  moveTwinRelationships(ids: import('../engine-sql/twin-merge-moves.ts').TwinMergeIds): Promise<import('../engine-sql/twin-merge-moves.ts').TwinRelationshipMoves>;
+  /** The twin merge: moves the twin's timeline rows and events, raw data, user-added tags, files and free-text aliases to the survivor; the tags moved. */
+  moveTwinPageChildren(move: import('../engine-sql/twin-merge-moves.ts').TwinPageChildrenMove): Promise<string[]>;
+  /** The twin merge: rekeys the facts other pages assert about the twin's slug to the survivor's; the moved fact ids. */
+  moveTwinFacts(sourceId: string, twinSlug: string, survivorSlug: string): Promise<number[]>;
+  /** Records `oldSlug -> newSlug` in the rename history and the slug aliases for a page renamed or merged into another (engine-sql/rename-alias-rows.ts; page-state/rename-alias.ts is the wrapper). Run it in the caller's transaction; the same slug records nothing. */
+  recordRenameAlias(sourceId: string, oldSlug: string, newSlug: string): Promise<void>;
+  /** The moved-pages fold: moves every page version of `fromPageId` to `toPageId`; the moved version ids in id order. */
+  movePageVersions(fromPageId: number, toPageId: number): Promise<number[]>;
   // Write-claim statements (engine-sql/persistence-claims.ts): the text journal.ts, authority.ts and consumer.ts sent through executeRaw.
   /** A source's incarnation and archive flag, or null; `lock` reads it FOR SHARE (`'update'`: FOR UPDATE) until the transaction ends. */
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }): Promise<SourceMembership | null>;
   /** `[{ request_id }]` for the first of `requestIds` a topology change of local writer `principalId` used, or []. */
   findTopologyChanges(principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>>;
+  /** The digest a topology change with this request id recorded for this source, or null (the `sources add` replay). */
+  readTopologyChangeDigest(requestId: string, sourceId: string): Promise<string | null>;
   /** The topology changes with a recovery whose worktree host `hostId` owns, after change id `after`, in id order, at most `limit`. */
   listTopologyRecoveries(hostId: string, after: string | null, limit: number): Promise<TopologyChange[]>;
   readTopologyChange(principalId: string, requestId: string): Promise<TopologyChange | null>;
@@ -360,6 +462,14 @@ export interface PersistenceMembers {
    * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
   readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
+  /** Request row `id` of `sourceId` (`SELECT *`), or null (retryParkedEffects). A non-uuid id refuses. */
+  readSourceRequestById<R = Record<string, unknown>>(sourceId: string, id: string): Promise<R | null>;
+  /** At most two request rows of `sourceId` admitted under client request id `requestId`; two mean it is ambiguous. A non-uuid id refuses. */
+  listSourceRequestsByRequestId<R = Record<string, unknown>>(sourceId: string, requestId: string): Promise<R[]>;
+  /** The effects of request row `requestRowId` that a parked-effect retry tracks, by kind in byte order (`SELECT *`). */
+  listRetryTrackedEffects<R = Record<string, unknown>>(requestRowId: string, parkedOnly: boolean, failedCodes: readonly string[]): Promise<R[]>;
+  /** Effect `id` (`SELECT *`) locked FOR UPDATE until the transaction ends, or null. */
+  lockEffectRow<R = Record<string, unknown>>(id: string | number): Promise<R | null>;
   /**
    * The stale queued and failed embedding effects of committed writes on `sourceIds` (or on a removed or replaced source
    * incarnation), in effect id order, leaving out a failed effect whose code is in `neverRetried`.

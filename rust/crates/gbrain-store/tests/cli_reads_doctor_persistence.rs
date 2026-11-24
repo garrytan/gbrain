@@ -541,18 +541,4 @@ fn freshness_targets_are_the_worktrees_committed_managed_imports_in_the_window()
             .unwrap()
             .is_empty()
     );
-    // The movement marks of the same worktree: the queued import is admitted and is the head.
-    let mark = store.read_movement_watermark(wt, &inc).unwrap();
-    assert!(mark["last_commit_at"].is_string());
-    assert_eq!(mark["admitted"], json!(1));
-    assert!(mark["admitted_since"].is_string());
-    let head = store.read_movement_head(wt).unwrap();
-    assert_eq!(head["state"], json!("queued"));
-    assert_eq!(head["claim_lapsed"], json!(false));
-    let other = "22222222-2222-4222-8222-222222222222";
-    assert_eq!(store.read_movement_head(other).unwrap(), Value::Null);
-    assert_eq!(
-        store.read_movement_watermark(other, &inc).unwrap(),
-        json!({ "last_commit_at": null, "admitted": 0, "admitted_since": null })
-    );
 }

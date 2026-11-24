@@ -21,7 +21,7 @@ import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../
 import { syncLockId } from '../../db-lock.ts';
 import { MANAGED_SYNC_PASS_OP, summaryFingerprint } from '../../engine-sql/sync-hold-store.ts';
 import type {
-  IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, MovementHeadRow, MovementHoldRow, MovementWatermarkRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow,
+  IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow,
 } from '../../engine-sql/sync-status-reads.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
@@ -187,33 +187,6 @@ export const readManagedSyncFailureRows: StoreMember<[sourceIds: readonly string
 export const listFreshnessTargets: StoreMember<[worktreeId: string, incarnation: string, windowHours: number, limit: number], string[]> =
   (brain, worktreeId, incarnation, windowHours, limit) =>
     storeCall({ member: 'listFreshnessTargets' }, () => brain.listFreshnessTargets(worktreeId, incarnation, windowHours, Math.max(1, Math.floor(limit))));
-
-/** A worktree's movement watermark from the store's request records (gbrain-store `cli_reads::doctor_persistence`). */
-export const readMovementWatermark: StoreMember<[worktreeId: string, incarnation: string], MovementWatermarkRow | null> = (brain, worktreeId, incarnation) =>
-  storeCall({ member: 'readMovementWatermark' }, () => brain.readMovementWatermark(worktreeId, incarnation));
-
-/** The head unfinished request of a worktree from the store's request records, or null. */
-export const readMovementHead: StoreMember<[worktreeId: string], MovementHeadRow | null> = (brain, worktreeId) =>
-  storeCall({ member: 'readMovementHead' }, () => brain.readMovementHead(worktreeId));
-
-/** `x::int` over a record's text: an integer, or null; text that is not an integer refuses, as the SQL cast raises. */
-function intText(member: string, value: unknown): number | null {
-  const t = text(value);
-  if (t === null) return null;
-  if (!/^\s*[+-]?\d+\s*$/.test(t)) refuseMember(member, `a hold summary count that is not an integer (${t.slice(0, 40)})`);
-  return Number(t);
-}
-
-/** The Git hold summary row whose record names the source and incarnation, or null (the SQL reads the first match; the store lists rows by byte key). */
-export const readMovementHoldSummary: StoreMember<[sourceId: string, incarnation: string], MovementHoldRow | null> = async (brain, sourceId, incarnation) => {
-  const member = 'readMovementHoldSummary';
-  for (const row of await listRows(brain, member, 'sync-hold-summary')) {
-    const r = first(row);
-    if (!r || text(r.source_id) !== sourceId || text(r.incarnation) !== incarnation) continue;
-    return { count: intText(member, r.count), stalled: intText(member, r.stalled), fences: intText(member, r.fences), concurrent: intText(member, r.concurrent), updated_at: row.updated_at };
-  }
-  return null;
-};
 
 /** The failure rows of live source incarnations whose cursor row is gone. */
 export const readOrphanedManagedSyncFailureRows: StoreMember<[sourceIds: readonly string[] | null], Array<{ failure: never }>> = async (brain, sourceIds) => {

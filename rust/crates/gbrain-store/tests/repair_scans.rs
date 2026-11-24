@@ -360,3 +360,57 @@ fn unreviewed_sync_tombstones_are_the_marked_tombstones_no_live_page_backs() {
     );
     assert!(store.list_unreviewed_sync_tombstones(0).unwrap()[0].expired);
 }
+
+#[test]
+fn origin_claimants_read_the_verdict_inputs() {
+    let dir = TempDir::new("origin-claimants");
+    let store = open(&dir);
+    let a = put(
+        &store,
+        "a",
+        "markdown",
+        Some("x.md"),
+        json!({ "id": "note-1" }),
+    );
+    let b = put(
+        &store,
+        "b",
+        "markdown",
+        Some("X.md"),
+        json!({ "visibility": "private" }),
+    );
+    let c = put(&store, "c", "markdown", Some("y.md"), json!({}));
+    let gone = put(&store, "gone", "markdown", Some("z.md"), json!({}));
+    store.soft_delete_page("gone", None).unwrap();
+    store
+        .insert_fact_withdrawal("default", "private", "a claim", "c", None)
+        .unwrap();
+    let input = |ids: Vec<u64>| {
+        serde_json::from_value(json!({
+            "sourceId": "default", "ids": ids,
+            "policy": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "off" },
+        }))
+        .unwrap()
+    };
+    let rows = store
+        .list_origin_claimants(&input(vec![c, gone, a, b, 9_999]))
+        .unwrap();
+    let got: Vec<(&str, Option<&str>, bool, bool)> = rows
+        .iter()
+        .map(|r| (r.slug.as_str(), r.fm_id.as_deref(), r.private, r.restricted))
+        .collect();
+    // By id; the soft-deleted page and the unknown id are not claimants; the private page is not kept by the policy.
+    assert_eq!(
+        got,
+        vec![
+            ("a", Some("note-1"), true, false),
+            ("b", None, false, false),
+            ("c", None, true, true),
+        ]
+    );
+    // One body, one hash: md5 of the truth, then md5 of the timeline, as Postgres computes it (32 + 32 hex digits).
+    assert_eq!(rows[0].body_hash, rows[2].body_hash);
+    assert_eq!(rows[0].body_hash.as_deref().map(str::len), Some(64));
+    assert_eq!(rows[0].trust_tier, rows[2].trust_tier);
+    assert!(store.list_origin_claimants(&Default::default()).is_err());
+}

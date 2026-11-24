@@ -66,13 +66,15 @@ export async function deletePurgedNameStoreRows(tx: Raw, sourceId: string, slugs
 }
 
 /**
- * Empties the query cache and returns the rows removed, or null when the table does not exist. The existence check runs before
- * the delete because a 42P01 inside a Postgres transaction aborts the whole transaction even when caught (#6911). Writes
- * query_cache; run it in the purge transaction.
+ * Empties the query cache (or, with `sourceId`, the rows of that source) and returns the rows removed, or null when the table
+ * does not exist. The existence check runs before the delete because a 42P01 inside a Postgres transaction aborts the whole
+ * transaction even when caught (#6911). Writes query_cache; run it in the purge transaction. The semantic query cache's
+ * clear (search/query-cache.ts SemanticQueryCache.clear) calls it too, with or without a source.
  */
-export async function clearQueryCache(tx: Raw): Promise<number | null> {
+export async function clearQueryCache(tx: Raw, sourceId?: string): Promise<number | null> {
   const [row] = await tx.executeRaw<{ present: boolean }>('SELECT to_regclass($1) IS NOT NULL AS present', ['query_cache']);
   if (row?.present !== true) return null;
+  if (sourceId) return (await tx.executeRaw('DELETE FROM query_cache WHERE source_id = $1 RETURNING 1', [sourceId])).length;
   return (await tx.executeRaw('DELETE FROM query_cache RETURNING 1')).length;
 }
 
@@ -83,6 +85,6 @@ export function purgeStoreScrubber(tx: Raw): PurgeStoreScrubber {
     executeRaw: tx.executeRaw.bind(tx) as Raw['executeRaw'],
     deletePurgedFeedbackRows: (sourceId, slugs) => deletePurgedFeedbackRows(tx, sourceId, slugs),
     deletePurgedNameStoreRows: (sourceId, slugs) => deletePurgedNameStoreRows(tx, sourceId, slugs),
-    clearQueryCache: () => clearQueryCache(tx),
+    clearQueryCache: sourceId => clearQueryCache(tx, sourceId),
   };
 }

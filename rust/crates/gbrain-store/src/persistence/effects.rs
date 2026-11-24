@@ -420,6 +420,30 @@ pub(crate) fn insert_withdrawal_effects_in(
     env: &dyn Env,
     spec: &WithdrawalEffectsSpec,
 ) -> Result<Vec<String>> {
+    insert_source_effects_in(tx, env, spec, &WITHDRAWAL_EFFECT_KINDS)
+}
+
+/// The kinds a segmented-mirror re-mirror queues, in insert order (`REMIRROR_EFFECTS_SQL`).
+const REMIRROR_EFFECT_KINDS: [&str; 2] = ["withdrawal-mirror", "git"];
+
+/// `insertRemirrorEffects(requestId, sourceId, data)`: the withdrawal insert with the
+/// `withdrawal-mirror` and `git` kinds only (engine-sql/segmented-mirror-effects.ts).
+pub(crate) fn insert_remirror_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &WithdrawalEffectsSpec,
+) -> Result<Vec<String>> {
+    insert_source_effects_in(tx, env, spec, &REMIRROR_EFFECT_KINDS)
+}
+
+/// One row per kind of `kinds` for the request, as `INSERT ... SELECT ... FROM sources s LEFT JOIN
+/// persistence_source_bindings b ... CROSS JOIN (VALUES ...) WHERE s.id=$2 ON CONFLICT DO NOTHING`.
+fn insert_source_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &WithdrawalEffectsSpec,
+    kinds: &[&str],
+) -> Result<Vec<String>> {
     uuid_cast(&spec.request_id)?;
     // The id as Postgres stores a uuid (canonical lowercase), so the mirror gate and the order index find it.
     let request_id = spec.request_id.to_ascii_lowercase();
@@ -432,7 +456,7 @@ pub(crate) fn insert_withdrawal_effects_in(
         return Ok(Vec::new());
     };
     let mut missing = Vec::new();
-    for kind in WITHDRAWAL_EFFECT_KINDS {
+    for &kind in kinds {
         if get_json::<EffectRecord>(&*tx, &effect_key(&request_id, kind))?.is_none() {
             missing.push(kind);
         }
@@ -520,6 +544,34 @@ impl crate::Store {
     /// this write is the withdrawal's own store write.
     pub fn insert_withdrawal_effects(&self, spec: &WithdrawalEffectsSpec) -> Result<Vec<String>> {
         self.write(|tx| insert_withdrawal_effects_in(tx, &*self.env, spec))
+    }
+
+    /// `insertRemirrorEffects(requestId, sourceId, data)`: the kinds inserted, in insert order. Inside
+    /// `transaction` this write is the re-mirror's own store write.
+    pub fn insert_remirror_effects(&self, spec: &WithdrawalEffectsSpec) -> Result<Vec<String>> {
+        self.write(|tx| insert_remirror_effects_in(tx, &*self.env, spec))
+    }
+
+    /// `readRemirrorEffects(requestId)`: `{ kind, state, error_code, recovering, parked, skipped }` for
+    /// each effect of the request in kind order (`data ? 'parked'`, `COALESCE(data->'skipped','[]')`).
+    /// A request id that is not a uuid refuses, as `$1::uuid` does.
+    pub fn read_remirror_effects(&self, request_id: &str) -> Result<Vec<Value>> {
+        uuid_cast(request_id)?;
+        let mut effects = request_effects(&*self.read()?, &request_id.to_ascii_lowercase())?;
+        effects.sort_by(|a, b| a.kind.as_bytes().cmp(b.kind.as_bytes()));
+        Ok(effects
+            .iter()
+            .map(|e| {
+                json!({
+                    "kind": e.kind,
+                    "state": e.state,
+                    "error_code": e.error_code,
+                    "recovering": e.recovery.is_some(),
+                    "parked": e.data.get("parked").is_some(),
+                    "skipped": e.data.get("skipped").cloned().map(crate::jsonb::order).unwrap_or_else(|| json!([])),
+                })
+            })
+            .collect())
     }
 
     /// The effects of one request as `SELECT * FROM persistence_effects WHERE request_id=$1 ORDER BY id`.

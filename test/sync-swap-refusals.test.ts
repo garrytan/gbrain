@@ -82,7 +82,7 @@ describe('a refused sync read surfaces instead of reading as empty', () => {
   });
 
   test('resolveSlugsForRemovedPaths (sync-git.ts): a refused live-page read surfaces instead of deleting on unverified evidence', async () => {
-    const engine = (read: () => Promise<unknown>) => ({ resolveSlugsByPaths: async () => new Map(), readRenameIdentityRows: read, listAllSources: async () => [{ id: 's' }] }) as never;
+    const engine = (read: () => Promise<unknown>) => ({ resolveSlugsByPaths: async () => new Map(), readFirstLiveSlugAtPath: read, listPathTwinSlugs: read, listLiveSlugOrigins: read }) as never;
     expect(await code(() => resolveSlugsForRemovedPaths(engine(async () => refused()), ['notes/a.md'], 's'))).toBe('engine_capability_missing');
     expect(await code(() => resolveSlugsForRemovedPaths(engine(async () => refused()), ['notes/a.md'], undefined))).toBe('engine_capability_missing');
     // Another failure keeps the legacy fallback: the path-derived slug.

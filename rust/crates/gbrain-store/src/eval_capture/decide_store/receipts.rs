@@ -268,6 +268,15 @@ fn whole(value: f64, member: &str, what: &str) -> Result<i64> {
     Ok(value as i64)
 }
 
+/// Whether a whole-hour receipt window holds nothing: zero or fewer hours name no time, so the
+/// read answers empty before it reads the clock or a row (`windowHoldsNothing` in
+/// src/core/engine-sql/decide-store.ts). A receipt stamped in the read's own clock tick would
+/// otherwise be inside `created_at >= now - 0`. Called after the hours and the text arguments are
+/// checked, so a fraction, a window outside `int4` or a NUL byte is still refused.
+fn holds_nothing(hours: i64) -> bool {
+    hours <= 0
+}
+
 /// `now() - (n * interval)`, or the refusal for a time before the first `timestamptz`.
 fn ago(now: i64, n: i64, unit_us: i64, member: &str) -> Result<i64> {
     let at = i128::from(now) - i128::from(n) * i128::from(unit_us);
@@ -400,6 +409,9 @@ impl Store {
         if let Some(slot) = slot {
             no_nul(MEMBER, &[("slot", slot)])?;
         }
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         type Key = (String, String, String, bool, String);
@@ -456,6 +468,9 @@ impl Store {
     pub fn decide_slot_usage(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "decideSlotUsage";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         #[derive(Default)]
@@ -500,6 +515,9 @@ impl Store {
     pub fn decide_conflict_no_entity_counts(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "decideConflictNoEntityCounts";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(json!({ "receipts": 0, "skipped": 0 }));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let (mut receipts, mut skipped) = (0_i64, 0_i64);
@@ -522,6 +540,9 @@ impl Store {
         const MEMBER: &str = "listDecideReplayReceipts";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
         no_nul(MEMBER, &[("slot", slot)])?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let mut rows: Vec<ReceiptRecord> = receipts_since(&*read, since)?
@@ -556,6 +577,9 @@ impl Store {
     pub fn list_decide_resolved_models(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "listDecideResolvedModels";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let mut groups: BTreeMap<(String, String, String), (i64, i64)> = BTreeMap::new();
@@ -592,6 +616,9 @@ impl Store {
     pub fn list_decide_mixed_model_decisions(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "listDecideMixedModelDecisions";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let mut by_slot: BTreeMap<String, i64> = BTreeMap::new();

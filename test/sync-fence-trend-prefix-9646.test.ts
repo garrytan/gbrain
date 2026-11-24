@@ -3,6 +3,7 @@
  * sequences each, so no statement's cost grows with the request history and the stamp's publication reads only what is newer.
  */
 import { expect, test } from 'bun:test';
+import { upsertFenceTrendRunRecord } from '../src/core/engine-sql/fence-repair-records.ts';
 import { FENCE_TREND_PAGE, readFenceTrendPrefix, recordPassFenceTrend } from '../src/core/persistence/sync-prepare.ts';
 
 const NEWEST = FENCE_TREND_PAGE * 3 + 345;
@@ -24,7 +25,8 @@ function history(open: string[] = []) {
     if (upTo === null && typeof params[3] === 'string') for (const s of params[3].slice(1, -1).split(',')) if (fenced(Number(s))) rows.push({ path: `notes/p-${s}.md`, fences: [{ class: 'kind_map' }], sequence: s });
     return rows;
   };
-  return { engine: { executeRaw } as never, ranges, trend };
+  // The trend write is a typed member; this fake runs its statement over its own executeRaw.
+  return { engine: { executeRaw, upsertFenceTrendRunRecord: (op: string, fingerprint: string, record: unknown) => upsertFenceTrendRunRecord({ executeRaw } as never, op, fingerprint, record) } as never, ranges, trend };
 }
 
 test('#9646: with no watermark the prefix reads the whole history in bounded ranges and the publication reads only past it', async () => {

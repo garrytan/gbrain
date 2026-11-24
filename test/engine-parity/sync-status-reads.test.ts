@@ -25,8 +25,8 @@
  *  - Why existing coverage misses it: the sync-status tests run on PGLite and Postgres only, and the pins test checks
  *    statement text, not answers.
  *  - Seam: none. Real engines; the seeded-cursor case writes its rows with writeCheckpointAt (harness SQL on the SQL arms, a
- *    store write on Rust), and the other checkpoint case writes through writeOpCheckpointRecord. The identity-downgrade
- *    records go through the harness fixture `recordIdentityDowngrade`.
+ *    store write on Rust), and the other checkpoint case writes through writeOpCheckpointRecord.
+ *    The identity-downgrade records go through the harness fixture `recordIdentityDowngrade`.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -221,7 +221,7 @@ describe('engine parity: sync status reads', () => {
 
   parityTest('the topology, freshness and movement reads answer a claimed binding the same when called directly', {
     methods: ['worktreeClaimStore', 'writeOpCheckpointRecord', 'listHostTopologyRows', 'listWorktreeMembers', 'listFreshnessTargets',
-      'readMovementWatermark', 'readMovementHead', 'readMovementHoldSummary'],
+      'readSourceMovementRows'],
   }, async (engine, backend) => {
     const host = randomUUID();
     const worktree = await seedWorktree(engine, host);
@@ -234,16 +234,17 @@ describe('engine parity: sync status reads', () => {
     const inc = incarnations['mv-a']!;
     await engine.writeOpCheckpointRecord('sync-hold-summary', `mv-a:${inc}`, [{ source_id: 'mv-a', incarnation: inc, count: 2, stalled: 1, fences: 0, concurrent: 0 }]);
     const topology = (await engine.listHostTopologyRows(host)).map(row => ({ ...row, owner_epoch: String(row.owner_epoch), topology_generation: String(row.topology_generation) }));
-    const mark = await engine.readMovementWatermark(worktree, inc);
-    const hold = await engine.readMovementHoldSummary('mv-a', inc);
+    const moved = await engine.readSourceMovementRows({ source_id: 'mv-a', worktree_id: worktree, source_incarnation: inc } as never);
+    const mark = moved.watermark;
+    const hold = moved.hold;
     const result = {
       topology: topology.map(row => ({ ...row, worktree_id: row.worktree_id === worktree, owner_host_id: row.owner_host_id === host })),
       members: await engine.listWorktreeMembers(worktree),
       targets: await engine.listFreshnessTargets(worktree, inc, 24, 10),
       mark: mark && { last_commit_at: mark.last_commit_at ?? null, admitted: Number(mark.admitted), admitted_since: mark.admitted_since ?? null },
-      head: await engine.readMovementHead(worktree),
+      head: moved.head,
       hold: hold && { count: hold.count, stalled: hold.stalled, fences: hold.fences, concurrent: hold.concurrent, stamped: hold.updated_at !== null },
-      noHold: await engine.readMovementHoldSummary('mv-b', incarnations['mv-b']!),
+      noHold: (await engine.readSourceMovementRows({ source_id: 'mv-b', worktree_id: worktree, source_incarnation: incarnations['mv-b']! } as never)).hold,
     };
     expect(result).toEqual({
       topology: [{ worktree_id: true, owner_host_id: true, owner_epoch: '0', state: 'active', topology_generation: '1', local_path: '/var/tmp/gbrain-parity-movement', coordination_path: '/var/tmp/gbrain-parity-movement.lock' }],

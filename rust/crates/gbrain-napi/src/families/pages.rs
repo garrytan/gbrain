@@ -192,6 +192,21 @@ impl Brain {
         self.run(env, move |s| s.list_live_origin_pages(&source_id, &paths))
     }
 
+    /// `listOriginClaimants({ sourceId, ids, policy })`: resolves the live pages with these ids,
+    /// by id, with the inputs of the origin-twins verdict.
+    #[napi]
+    pub fn list_origin_claimants<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: gbrain_store::repair_scans::OriginClaimantsInput =
+                arg(input, "listOriginClaimants input")?;
+            s.list_origin_claimants(&input)
+        })
+    }
+
     /// `countLiveFileBackedPages(sourceId, nonBlank)`: resolves the number of live pages recording
     /// an origin (`nonBlank`: a non-blank one).
     #[napi]

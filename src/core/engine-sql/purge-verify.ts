@@ -13,6 +13,7 @@
  */
 import { outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { stagingNeedsTextSql } from '../page-body/schema.ts';
+import { holdResidueOfDeletedPageSql } from '../write-gate-binding.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** Stores keyed by the purged page's source and slug. */
@@ -33,7 +34,7 @@ export type PurgeClaimTextStore = 'pages' | 'content_chunks' | 'page_versions' |
  * with the JSON-escaped form beside the plain one where the column holds JSON text); a binary store matches bytes.
  */
 export type PurgeStoreProbe =
-  | { kind: 'slug_key'; store: PurgeSlugKeyStore; sourceId: string; slug: string }
+  | { kind: 'slug_key'; store: PurgeSlugKeyStore; sourceId: string; slug: string; pageId?: number | null }
   | { kind: 'page_rows'; store: PurgePageRowStore; pageId: number }
   | { kind: 'fact_refs'; store: PurgeFactRefStore; sourceId: string; factIds: readonly number[] }
   | { kind: 'trust_proposals'; sourceId: string; pageId: number; factIds: readonly number[] }
@@ -72,7 +73,7 @@ const carriesClaim = (a: keyof typeof CLAIM_ALIASES, claim: string, json: string
   OR strpos(lower(COALESCE(${t}.title,'')),${claim})>0 OR strpos(lower(COALESCE(${t}.frontmatter::text,'')),${json})>0)`;
 };
 
-function slugKeySelect(store: PurgeSlugKeyStore, src: string, slug: string): SqlFragment {
+function slugKeySelect(store: PurgeSlugKeyStore, src: string, slug: string, pageId: number | null = null): SqlFragment {
   switch (store) {
     case 'pages': return sqlFragment`SELECT 1 FROM pages WHERE source_id=${src} AND slug=${slug}`;
     case 'facts': return sqlFragment`SELECT 1 FROM facts WHERE source_id=${src} AND source_markdown_slug=${slug}`;
@@ -93,7 +94,10 @@ function slugKeySelect(store: PurgeSlugKeyStore, src: string, slug: string): Sql
     case 'context_volunteer_events': return sqlFragment`SELECT 1 FROM context_volunteer_events WHERE source_id=${src} AND slug=${slug}`;
     case 'mention_gazetteer_entries': return sqlFragment`SELECT 1 FROM mention_gazetteer_entries WHERE source_id=${src} AND target_slug=${slug}`;
     case 'files': return sqlFragment`SELECT 1 FROM files WHERE page_id IS NULL AND page_slug=${slug} AND (source_id=${src} OR source_id IS NULL)`;
-    case 'write_gate_holds': return sqlFragment`SELECT 1 FROM write_gate_holds WHERE source_id=${src} AND slug=${slug}`;
+    // The purged page's holds: those bound to its id (whatever it was called), the unbound ones at its slug and any candidate-marked
+    // hold still naming it; a hold bound to another page that reused the name is not left behind (write-gate-binding.ts).
+    case 'write_gate_holds': return sqlFragment`WITH d(pid, slug) AS (SELECT ${pageId}::bigint, ${slug}::text)
+      SELECT 1 FROM write_gate_holds h, d WHERE h.source_id=${src} AND ${trustedSql(holdResidueOfDeletedPageSql('h', 'd.pid', 'd.slug'))}`;
   }
 }
 
@@ -131,7 +135,7 @@ function effectPayloadSelect(p: EffectPayloadProbe): SqlFragment {
 /** The rows `probe` selects (no LIMIT). */
 function probeSelect(p: PurgeStoreProbe): SqlFragment {
   switch (p.kind) {
-    case 'slug_key': return slugKeySelect(p.store, p.sourceId, p.slug);
+    case 'slug_key': return slugKeySelect(p.store, p.sourceId, p.slug, p.pageId ?? null);
     case 'page_rows': return sqlFragment`SELECT 1 FROM ${trustedSql(PAGE_ROW_TABLES[p.store])} WHERE page_id=${p.pageId}`;
     case 'fact_refs': return p.store === 'decide_proposals'
       ? sqlFragment`SELECT 1 FROM decide_proposals WHERE source_id=${p.sourceId} AND (new_fact_id=ANY(${[...p.factIds]}::bigint[]) OR old_fact_id=ANY(${[...p.factIds]}::bigint[]))`

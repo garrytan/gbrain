@@ -3,9 +3,11 @@
  * listTwinMergeLosers, the statements of engine-sql/repair-page-scans.ts). The store scans its page records as the
  * SQL filters its rows (rust/crates/gbrain-store/src/repair_scans.rs).
  */
-import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers, UnreviewedSyncTombstone } from '../../engine-sql/repair-page-scans.ts';
+import type { FileTombstone, FileTombstoneQuery, LegacyOriginPair, LiveOriginPage, OriginClaimantRow, OriginTwinGroupRow, RepairScanPage, RepairScanQuery, SafeChunksPendingRow, TwinMergeLosers, UnreviewedSyncTombstone } from '../../engine-sql/repair-page-scans.ts';
 import { CREDENTIAL_RESEAL_PRODUCER } from '../../page-state/credential-reseal-hold.ts';
+import { privatePagesFilterFragment } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { pagePolicyFlags } from './private-provenance.ts';
 
 const cap = (limit: number) => Math.max(1, Math.floor(limit));
 
@@ -20,6 +22,14 @@ export const listLegacyOriginPairs: StoreMember<[sourceId: string, prefix: strin
 
 export const listLiveOriginPages: StoreMember<[sourceId: string, paths: readonly string[]], LiveOriginPage[]> = async (brain, sourceId, paths) =>
   await storeCall({ member: 'listLiveOriginPages', sourceId }, () => brain.listLiveOriginPages(sourceId, [...paths])) as LiveOriginPage[];
+
+/** The store judges the no-caller page policy the SQL statement renders (the same flags the relationship evidence read sends). */
+export const listOriginClaimants: StoreMember<[sourceId: string, ids: readonly number[]], OriginClaimantRow[]> = async (brain, sourceId, ids) => {
+  if (!ids.every(id => Number.isSafeInteger(id) && id > 0)) refuseMember('listOriginClaimants', 'a page id that is not a positive integer');
+  const rows = await storeCall({ member: 'listOriginClaimants', sourceId }, () =>
+    brain.listOriginClaimants({ sourceId, ids: ids.map(Number), policy: pagePolicyFlags(privatePagesFilterFragment('p')) })) as OriginClaimantRow[];
+  return rows.map(row => ({ ...row, id: Number(row.id) }));
+};
 
 export const countLiveFileBackedPages: StoreMember<[sourceId: string, opts?: { nonBlank?: boolean }], number> = async (brain, sourceId, opts = {}) =>
   Number(await storeCall({ member: 'countLiveFileBackedPages', sourceId }, () => brain.countLiveFileBackedPages(sourceId, opts.nonBlank === true)));

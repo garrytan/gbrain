@@ -107,12 +107,12 @@ const newest = (...values: Array<string | null | undefined>): string | null => v
 
 export function writerStatusCommand(sourceId: string): string { return `gbrain sources writer status --source ${sourceId} --json`; }
 
-export { MOVEMENT_WATERMARK_SQL } from '../engine-sql/sync-status-reads.ts';
+export { MOVEMENT_WATERMARK_SQL } from '../engine-sql/applied-watermark-reads.ts';
 
 interface BindingRow { source_id: string; worktree_id: string; source_incarnation: string; owner_host_id: string | null }
 
 /**
- * #6706: the id of the active `sync` Minions job with a live lock that is draining `sourceId`, or null. Rejects only on an engine capability refusal.
+ * #6706: the id of the active `sync` Minions job with a live lock that is draining `sourceId`, or null. Never rejects.
  * #6712 PR 1: a job drains under the source's drain lease, so its holder row names the job first; the job-table read
  * stays for a job an older gbrain started (it takes no lease). #7596: a holder that stopped renewing the lease is not live (a
  * killed job's lock row names it until a takeover); `liveHolder` is the live holder a caller already read that way, or null.
@@ -122,56 +122,7 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
     : await (await import('./sync-lease.ts')).readDrainLease(engine, sourceId).then(lease => lease?.live ? lease.holder : null, () => null);
   if (holder?.kind === 'job' && holder.id && /^\d+$/.test(holder.id)) return Number(holder.id);
   // The lease's beacon row (sync-lease.ts) is for older binaries; this build reads the lease holder above.
-  return (await activeSyncJobFor(engine, sourceId))?.id ?? null;
-}
-
-/** `data->>key`: a string as itself, a missing key or JSON null as null, any other value as its JSON text. */
-const dataText = (data: unknown, key: string): string | null => {
-  const value = data && typeof data === 'object' ? (data as Record<string, unknown>)[key] : undefined;
-  return value === undefined || value === null ? null : typeof value === 'string' ? value : JSON.stringify(value);
-};
-
-/**
- * The oldest active `sync` job (by start, then id) with a live lock, outside the drain-lease queue, that names
- * `sourceId` (or, naming no source, its registered repo path, or no repo path for `default`), through the typed job
- * list and source read. A refused read surfaces; another failed read finds none, as the statement's catch did.
- */
-async function activeSyncJobFor(engine: BrainEngine, sourceId: string): Promise<{ id: number } | null> {
-  const PAGE = 500;
-  try {
-    const jobs: Array<Record<string, unknown>> = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await engine.listJobs({ name: 'sync', status: 'active', limit: PAGE, offset });
-      jobs.push(...page);
-      if (page.length < PAGE) break;
-    }
-    const now = Date.now();
-    let localPath: string | null | undefined;
-    const candidates: Array<{ id: number; started: number }> = [];
-    for (const job of jobs) {
-      const lockUntil = job.lock_until === null || job.lock_until === undefined ? NaN : new Date(job.lock_until as string | Date).getTime();
-      if (!(lockUntil > now) || job.queue === 'gbrain-drain-lease') continue;
-      const data = typeof job.data === 'string' ? safeJson(job.data) : job.data;
-      const named = dataText(data, 'sourceId') ?? dataText(data, 'source_id');
-      let matches = named === sourceId;
-      if (!matches && named === null) {
-        const repoPath = dataText(data, 'repoPath');
-        if (repoPath === null) matches = sourceId === 'default';
-        else {
-          if (localPath === undefined) localPath = (await engine.getSource(sourceId))?.local_path ?? null;
-          matches = localPath !== null && repoPath === localPath;
-        }
-      }
-      if (!matches) continue;
-      const started = job.started_at === null || job.started_at === undefined ? Infinity : new Date(job.started_at as string | Date).getTime();
-      candidates.push({ id: Number(job.id), started });
-    }
-    candidates.sort((a, b) => a.started - b.started || a.id - b.id);
-    return candidates[0] ? { id: candidates[0].id } : null;
-  } catch (error) { // silent-read-ok: the job table is a fallback for jobs an older gbrain started; the drain lease is read first
-    rethrowCapabilityRefusal(error);
-    return null;
-  }
+  return engine.readLiveSyncJobId(sourceId).catch((error: unknown) => { rethrowCapabilityRefusal(error); return null; });
 }
 
 /** The movement of every active managed source (or of `sourceIds`), one bounded read each; sources without a binding are omitted. */
@@ -195,9 +146,7 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
   const liveHeartbeat = () => heartbeat ??= listHostConsumers(engine, host).then(rows => rows.some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live'), () => false);
   const out: SourceMovement[] = [];
   for (const binding of bindings) {
-    const mark = await engine.readMovementWatermark(binding.worktree_id, binding.source_incarnation);
-    const headRow = await engine.readMovementHead(binding.worktree_id);
-    const holdRow = await engine.readMovementHoldSummary(binding.source_id, binding.source_incarnation);
+    const { watermark: mark, head: headRow, hold: holdRow } = await engine.readSourceMovementRows(binding);
     const claim = headRow ? claimStateOf({ state: headRow.state, claim_phase: headRow.claim_phase, execution_token: headRow.execution_token, claim_lapsed: headRow.claim_lapsed, publication_started: headRow.publication_started }, now) : null;
     const stampSince = (() => {
       const raw = typeof headRow?.claim_phase === 'string' ? safeJson(headRow.claim_phase) : headRow?.claim_phase;

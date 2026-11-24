@@ -119,7 +119,7 @@ describe('sync reads answer the same on every engine', () => {
   }));
 
   parityTest('a removed file resolves to its page only on live-page evidence: a derived slug another file owns is refused', {
-    methods: ['putPage', 'readRenameIdentityRows', 'listAllSources'],
+    methods: ['putPage', 'resolveSlugsByPaths', 'readFirstLiveSlugAtPath', 'listPathTwinSlugs', 'listLiveSlugOrigins'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'swap-git');
     const page = (slug: string, source_path: string) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '', source_path }, { sourceId: 'swap-git' });

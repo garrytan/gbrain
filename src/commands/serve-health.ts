@@ -28,6 +28,7 @@
  * pooled statement past the in-flight budget is reported by `/health?deep=1`
  * but never triggers the exit (the variable is named for its one trigger).
  */
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -66,7 +67,12 @@ export async function readServeTransport(engine: BrainEngine): Promise<ServeTran
   const url = (engine as { _savedConfig?: { database_url?: string } })._savedConfig?.database_url;
   const details = ((await sessionTimeoutsCheck(engine)) as { details?: { applied?: unknown; reason?: unknown; role_fix?: unknown } }).details ?? {};
   const notApplied = details.reason === 'session_timeouts_not_applied';
-  const [app] = await engine.executeRaw<{ application_name?: string }>('SHOW application_name').catch(() => []);
+  // Only a Postgres server reports an application name (Supavisor is a Postgres pooler): the route says `not_postgres`
+  // for PGLite and the Rust engine, which have none, so they are asked nothing. A refused read is rethrown, not read as
+  // "no pooler".
+  const [app] = pooler_mode !== 'not_postgres'
+    ? await engine.executeRaw<{ application_name?: string }>('SHOW application_name').catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; })
+    : [];
   return { pooler_mode, prepare: typeof options?.prepare === 'boolean' ? options.prepare : null, max_pipeline: typeof options?.max_pipeline === 'number' ? options.max_pipeline : null,
     max_pipeline_reason: url ? resolveReadPoolPipeline(url).reason : null, statement_timeout: typeof details.applied === 'string' ? details.applied : null,
     session_timeouts_not_applied: notApplied, ...(notApplied && typeof details.role_fix === 'string' ? { fix: details.role_fix } : {}),
