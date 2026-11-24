@@ -61,6 +61,25 @@ async function writeBrain(engine: BrainEngine): Promise<void> {
   await engine.setConfig('example.setting', 'before');
 }
 
+/** The seed copies rows verbatim, timestamps included; two engines written a moment apart differ only there. */
+async function alignTimestamps(primary: BrainEngine, rust: BrainEngine): Promise<void> {
+  for (const p of await primary.executeRaw<{ slug: string; source_id: string; created_at: string; updated_at: string }>(
+    `SELECT slug, source_id, created_at::text AS created_at, updated_at::text AS updated_at FROM pages`)) {
+    await rust.executeRaw('UPDATE pages SET created_at = $1::timestamptz, updated_at = $2::timestamptz WHERE slug = $3 AND source_id = $4', [p.created_at, p.updated_at, p.slug, p.source_id]);
+  }
+  for (const r of await primary.executeRaw<{ slug: string; source: string; fetched_at: string }>(
+    `SELECT p.slug, r.source, r.fetched_at::text AS fetched_at FROM raw_data r JOIN pages p ON p.id = r.page_id`)) {
+    await rust.executeRaw('UPDATE raw_data SET fetched_at = $1::timestamptz WHERE source = $2 AND page_id = (SELECT id FROM pages WHERE slug = $3)', [r.fetched_at, r.source, r.slug]);
+  }
+  for (const f of await primary.executeRaw<{ id: number; created_at: string; valid_from: string | null }>(`SELECT id, created_at::text AS created_at, valid_from::text AS valid_from FROM facts`)) {
+    await rust.executeRaw('UPDATE facts SET created_at = $1::timestamptz, valid_from = $2::timestamptz WHERE id = $3', [f.created_at, f.valid_from, f.id]);
+  }
+  for (const c of await primary.executeRaw<{ key: string; value: string }>(`SELECT key, value FROM config WHERE key LIKE '%_at'`)) await rust.setConfig(c.key, c.value);
+  for (const s of await primary.executeRaw<{ id: string; created_at: string }>(`SELECT id, created_at::text AS created_at FROM sources`)) {
+    await rust.executeRaw('UPDATE sources SET created_at = $1::timestamptz WHERE id = $2', [s.created_at, s.id]);
+  }
+}
+
 /** Writes made on the Rust engine after the swap: an edit, a new page with every dependent row, a delete, a fact, a key. */
 async function writeAfterSwap(rust: BrainEngine): Promise<void> {
   const dims = await embeddingDims(rust);
@@ -78,7 +97,7 @@ async function writeAfterSwap(rust: BrainEngine): Promise<void> {
   const [page] = await rust.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE slug = 'companies/acme-example'`);
   await rust.addTakesBatch([{ page_id: page!.id, row_num: 1, claim: 'It will grow', kind: 'bet', holder: 'brain', weight: 0.6 }]);
   await rust.upsertFile({ page_slug: 'companies/acme-example', page_id: page!.id, filename: 'deck.pdf', storage_path: 'files/deck.pdf', content_hash: 'ab'.repeat(32), mime_type: 'application/pdf', size_bytes: 10 });
-  await rust.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop-1', loopType: 'promise', summary: 'Send the deck', evidence: [], detector: 'test' } as never);
+  await rust.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop-1', loopType: 'commitment_owed_by_me', summary: 'Send the deck', evidence: [], detector: 'manual' });
   await rust.deletePage('notes/old-example');
   await rust.insertFact({ fact: 'Acme was founded after the swap', entity_slug: 'companies/acme-example', source: 'test' }, { source_id: 'default' });
   await rust.setConfig('example.setting', 'after');
@@ -118,6 +137,8 @@ for (const arm of arms) {
       await rust.initSchema();
       await writeBrain(primary);
       await writeBrain(rust);
+      await alignTimestamps(primary, rust);
+      expect((await verifyFailback(rust, primary)).mismatches).toEqual([]);
       // The forward swap's end state: the primary is fenced and its graduation row records cutover for the run.
       await fencePrimary(primary, RUN, { hostId: HOST, config: { engine: arm.previous.engine } as unknown as GBrainConfig });
       await markPrimaryCutover(primary, RUN);

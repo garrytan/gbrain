@@ -44,6 +44,23 @@ export interface SwapRecord {
   probe?: { effective_engine: string | null; database_path: string | null; ok: boolean; at: string };
   /** The last failure: the state it stopped at, its code and a diagnostic id (never a value). */
   error?: { state: SwapState; code: string; reason: string | null; diagnostic_id: string; at: string } | null;
+  /** A failback of this swap (`gbrain engine swap --to <old engine>`); the swap's own state stays `succeeded`. */
+  failback?: FailbackRecord;
+}
+
+export const FAILBACK_STATES = ['planned', 'copied', 'verified', 'switched', 'succeeded'] as const;
+export type FailbackState = typeof FAILBACK_STATES[number];
+
+export interface FailbackRecord {
+  state: FailbackState;
+  plan_hash: string;
+  target: string;
+  started_at: string;
+  updated_at: string;
+  copy?: { pages: number; facts: number; open_loops: number; config: number; sources: number; at: string };
+  verify?: { ok: boolean; mismatches: number; fingerprint: string; at: string };
+  probe?: { effective_engine: string | null; database_path: string | null; ok: boolean; at: string };
+  error?: { state: FailbackState; code: string; reason: string | null; diagnostic_id: string; at: string } | null;
 }
 
 /** The filesystem calls the record makes; tests replace them, production never does. */
