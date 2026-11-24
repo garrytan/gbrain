@@ -301,6 +301,14 @@
       ],
       "pattern": "^:Char\\(c\\) => \\{$",
       "reason": "a match arm, `Token::Char(c) => {`, in a tokenizer: an enum pattern, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "src/core/engine-sql/persistence-journal.ts"
+      ],
+      "pattern": "^\\$2::uuid,claim_expires_at=now\\(\\)\\+\\(\\$3::double precision\\*interval '1 millisecond'\\),$",
+      "reason": "a SQL column assignment, `execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),` in CLAIM_STAMP_SQL (the persistence journal's claim statement): a parameter placeholder and a cast, never a credential value; for the RP2 landing (rust-engine/land-rp2)"
     }
   ]
 }
