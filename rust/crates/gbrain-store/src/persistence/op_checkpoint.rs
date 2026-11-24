@@ -369,6 +369,41 @@ pub(crate) fn insert_op_checkpoint_if_absent_in(
     Ok(true)
 }
 
+/// `upsertFenceTrendRunRecord(op, fingerprint, record)`: `INSERT ... ON CONFLICT (op, fingerprint) DO
+/// UPDATE SET completed_keys = jsonb_build_array((EXCLUDED.completed_keys->0) ||
+/// jsonb_build_object('day', op_checkpoints.completed_keys->0->'day'))`. A new parent stores
+/// `[record]`; an existing one is rewritten as `[record]` carrying the `day` of its first record
+/// (null when it has none), so a sync run's rewrite keeps the day of its first write.
+pub(crate) fn upsert_fence_trend_run_record_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    fingerprint: &str,
+    record: &Value,
+) -> Result<()> {
+    let Some(mut next) = record.as_object().cloned() else {
+        return Err(StoreError::invalid(
+            "a fence trend run record must be a JSON object",
+        ));
+    };
+    if let Some(row) = get_json::<HousekeepingRow>(&*tx, &parent_key(op, fingerprint)?)? {
+        let day = row
+            .completed_keys
+            .get(0)
+            .and_then(|first| first.get("day"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        next.insert("day".to_owned(), day);
+    }
+    write_op_checkpoint_record_in(
+        tx,
+        env,
+        op,
+        fingerprint,
+        Some(&json!([Value::Object(next)])),
+    )
+}
+
 /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: `UPDATE ... WHERE op=$1
 /// AND fingerprint=$2 AND (completed_keys->0->>'v')::int = $4 RETURNING 1`. True when the parent's
 /// first record held `v` = `expected` and this call replaced the records. A `v` that is not an
@@ -669,6 +704,16 @@ impl Store {
         self.write(|tx| {
             insert_op_checkpoint_if_absent_in(tx, &*self.env, op, fingerprint, completed)
         })
+    }
+
+    /// `upsertFenceTrendRunRecord(op, fingerprint, record)`.
+    pub fn upsert_fence_trend_run_record(
+        &self,
+        op: &str,
+        fingerprint: &str,
+        record: &Value,
+    ) -> Result<()> {
+        self.write(|tx| upsert_fence_trend_run_record_in(tx, &*self.env, op, fingerprint, record))
     }
 
     /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`.

@@ -38,6 +38,7 @@
     },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeEdgesLeavingChunks#default": {},
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },

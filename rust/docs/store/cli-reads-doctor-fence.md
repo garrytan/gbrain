@@ -19,10 +19,12 @@ text, same parameters; `test/fence-census-sql.test.ts` pins every text against t
 The census state is `op_checkpoints` rows in the store's housekeeping key space (`d 0x02 <op> 0x00 <fingerprint>`), where
 `completed_keys` is `[record]`. No new key space is used.
 
-## Answered empty (no writer on a Rust brain)
+## Trend and ledger reads
 
-- `readFenceTrendRecords` returns `[]`: the trend rows (`fence-trend`) are written by `recordSyncRunTrend`, `recordWriteTrend` and
-  `recordPublicationFenceTrend`, which stay on `executeRaw` (the managed-sync and write paths, which a Rust brain does not run).
+- `readFenceTrendRecords` lists the `fence-trend` parents and keeps the first record of each whose `source_id` is asked and whose
+  `day` is not before `fromDay` (ISO days compare as text). The rows are written by `recordSyncRunTrend` (`upsertFenceTrendRunRecord`)
+  and `recordWriteTrend` / `recordPublicationFenceTrend` (`insertOpCheckpointIfAbsent`), typed members on every engine
+  (`rust/docs/store/repair-fences.md`), so a brain that wrote none still reads `[]`.
 - `readBudgetLedgerDay` reads the store's daily ledger (`budget_ledger.rs`, `rust/docs/store/repair-fences.md`): the day's reserved, committed and cap amounts as numeric text, or null when the day has no row.
 
 ## Differences from PGLite and Postgres

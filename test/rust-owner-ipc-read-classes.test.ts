@@ -31,7 +31,7 @@
  * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
- * selectClaimableWrite, and the credential, source and shared-skill row-lock reads the batch 10 lanes added (the list below).
+ * selectClaimableWrite, listSecretHoldingPages (the batch 6c secret store), and the credential, source and shared-skill row-lock reads the batch 10 lanes added (the list below).
  *
  * A constant that maps names to statements (`CREDENTIAL_SQL = { token_list: '...', client_token_ttl: '...' }`) is read per
  * statement: a function that names `CREDENTIAL_SQL.token_list` is charged with that statement, not with its siblings.
@@ -55,6 +55,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'readMentionGenerations', 'readMentionPageRevisions', 'readPageRevisionForShare', 'readLiveStoredBody', 'readNoopEmbeddingCandidates', 'readOAuthClientWriteGrant', 'readPairFactRow', 'readReplacementTarget',
   'readSourceMembership', 'readSourceState', 'readWorktreeAdmission', 'readWriterAdminState', 'selectClaimableEffect',
   'selectClaimableWrite',
+  // Added with the batch 6c secret store (it row-locks the pages it reads, FOR SHARE, and changes no row):
+  'listSecretHoldingPages',
   // Added when the batch 10 lanes merged (credential, source and shared-skill reads that lock the row they read):
   'lockActiveAccessTokens', 'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'readAccessTokenMemberGrant', 'readAccessTokenReceiptGrant', 'readCredentialBindingForUpdate', 'readLocalWriterMemberGrant', 'readOAuthClientMemberGrant', 'readOAuthClientReceiptGrant', 'readOauthClientForUpdate', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate', 'readScopeSourceConfigs', 'readSharedSkillDeliveryBatch', 'readSharedSkillMember', 'readSharedSkillPolicyRow', 'readSourceArchivedForShare',
   // Ours (the page purge port):

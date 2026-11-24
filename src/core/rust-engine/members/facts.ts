@@ -233,6 +233,7 @@ export const FACTS_MEMBERS = {
   updatePageBodyForPurge: 'facts',
   setPurgeVersionBody: 'facts',
   listPurgeVersionBodies: 'facts',
+  moveTwinFacts: 'facts',
   redactVersionChangeReasons: 'facts',
   listSegmentedVersionsForPurge: 'facts',
   abortPurgedStagings: 'facts',

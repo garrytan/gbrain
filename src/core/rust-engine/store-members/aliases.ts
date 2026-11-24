@@ -90,6 +90,12 @@ export const resolveAliases: StoreMember<[aliasNorms: string[], opts?: PageReadS
   return new Map(rows);
 };
 
+/** `recordRenameAlias` (engine-sql/rename-alias-rows.ts): `old -> new` in the rename history and the slug aliases, in the engine's transaction. */
+export const recordRenameAlias: StoreMember<[sourceId: string, oldSlug: string, newSlug: string], void> = async (brain, sourceId, oldSlug, newSlug) => {
+  if (oldSlug === newSlug) return;
+  await storeCall({ member: 'recordRenameAlias', sourceId }, () => brain.recordRenameAlias(sourceId, oldSlug, newSlug));
+};
+
 export const setPageAliases: StoreMember<[slug: string, sourceId: string, aliasNorms: string[], opts?: { inline?: boolean }], void> =
   async (brain, slug, sourceId, aliasNorms, opts) => {
     takeOptions('setPageAliases', opts, [], ['inline']);

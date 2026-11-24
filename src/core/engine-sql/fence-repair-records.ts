@@ -38,6 +38,16 @@ export async function replaceOpCheckpointAtVersion(exec: Raw, op: string, finger
   return rows.length === 1;
 }
 
+/**
+ * The fence trend row of one sync run (fence-repair/census-store.ts recordSyncRunTrend): stored as `record` when the
+ * parent is new; a rewrite of the run replaces the record but keeps the `day` of the first write, so a run counts once.
+ */
+export async function upsertFenceTrendRunRecord(exec: Raw, op: string, fingerprint: string, record: unknown): Promise<void> {
+  await exec.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now())
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((EXCLUDED.completed_keys->0)||jsonb_build_object('day',op_checkpoints.completed_keys->0->'day')),updated_at=now()`,
+  [op, fingerprint, JSON.stringify([record])]);
+}
+
 /** The earliest `held_at` of the sources' Git sync holds with hold code `code`, or null. */
 export async function readOldestSyncHoldAt(exec: Raw, code: string, sourceIds: readonly string[]): Promise<string | null> {
   const [row] = await exec.executeRaw<{ held_at: string | null }>(`SELECT min(completed_keys->0->>'held_at') AS held_at FROM op_checkpoints

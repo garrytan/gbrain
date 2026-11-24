@@ -30,6 +30,11 @@ export const replaceOpCheckpointAtVersion: StoreMember<[op: string, fingerprint:
   (brain, op, fingerprint, completedKeys, expected) =>
     storeCall({ member: 'replaceOpCheckpointAtVersion' }, () => brain.replaceOpCheckpointAtVersion(op, fingerprint, [...completedKeys], expected)) as Promise<boolean>;
 
+/** The sync run's trend row: stored as given, or rewritten keeping the first write's `day` (one store write). */
+export const upsertFenceTrendRunRecord: StoreMember<[op: string, fingerprint: string, record: unknown], void> = async (brain, op, fingerprint, record) => {
+  await storeCall({ member: 'upsertFenceTrendRunRecord' }, () => brain.upsertFenceTrendRunRecord(op, fingerprint, record));
+};
+
 /** The earliest `held_at` text of the sources' `sync-hold` records with hold code `code`, by text order as `min(text)` compares it, or null. */
 export const readOldestSyncHoldAt: StoreMember<[code: string, sourceIds: readonly string[]], string | null> = async (brain, code, sourceIds) => {
   const wanted = new Set(sourceIds);

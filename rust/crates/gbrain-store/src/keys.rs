@@ -127,6 +127,11 @@ pub const REASON_TOMBSTONE: u8 = b'1';
 // Tag `2` is free. It held the `embedding_holds` family (a page's hold state and reason), dropped
 // at the main join: a page's embedding hold now lives only in its `page_embedding_budget` ledger
 // record (`page_embedding_budget.rs`). No store holds a record under it, so a new family may take it.
+/// Family `secret_store` (`secret_store.rs`): the `secret_store` entries and the `secret_store_occurrence` rows. The byte
+/// after the tag names the record (`ENTRY`, `BY_MAC`, `BY_ENTRY`, `OCCURRENCE`, `BY_SLUG`, `BY_PAGE` in that module).
+/// The digit `3`: every letter is taken or reserved across the lanes (`x` by `ACCESS_MEMBERS`, `y` by
+/// `SESSION_STATE`), and `0` and `1` are `GUEST_SOURCE` and `REASON_TOMBSTONE`; `2` is left free on purpose.
+pub const SECRET_STORE: u8 = b'3';
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

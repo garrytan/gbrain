@@ -50,6 +50,9 @@ export const PAGES_MEMBERS = {
   readSeedTitleSlugs: 'pages',
   readPageBodySizes: 'pages',
   getPage: 'pages',
+  moveTwinPageChildren: 'pages',
+  movePageVersions: 'pages',
+  recordRenameAlias: 'pages',
   readPageSnapshot: 'pages',
   // the chronicle decision's stored truth lead (engine-sql/chronicle-ledger.ts)
   readPageTruthLead: 'pages',
@@ -263,6 +266,7 @@ export const PAGES_MEMBERS = {
   listOriginTwinGroups: 'pages',
   listLegacyOriginPairs: 'pages',
   listLiveOriginPages: 'pages',
+  listOriginClaimants: 'pages',
   countLiveFileBackedPages: 'pages',
   listRepairScanPages: 'pages',
   listFileTombstones: 'pages',

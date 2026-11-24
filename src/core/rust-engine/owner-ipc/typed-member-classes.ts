@@ -16,6 +16,15 @@
 
 /** Typed members that only read (lookups, counts, listings, probes, and the planning reads of a purge or a relink). */
 export const OWNER_IPC_TYPED_READS: readonly string[] = [
+  // repair-rust batches 6b and 6c: the segmented-write reads, the embed and provenance reads, the secret store reads and the secret-spans page reads
+  // (engine-sql/segmented-writes.ts, page-spend.ts, embedding-provenance.ts, secret-store.ts, secret-spans-rows.ts; the store functions only `self.read`).
+  // readSecretStoreSnapshot reads both tables from one snapshot and writes nothing.
+  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readSegmentedProjectionPage', 'listVectorlessChunkIndexes',
+  'readPageProvenanceComplete', 'findSecretEntryByMac', 'secretEntryExists', 'readSecretEntry', 'listSecretOccurrences',
+  'listSecretEntrySummaries', 'countSecretsByRule', 'listAllowedSecretMacs', 'listSecretKeysInUse', 'readSecretStoreSnapshot',
+  'readBackupEntryHold', 'listSecretHoldingPages', 'countUnreferencedSecretEntries', 'readRestorePageHit', 'readPageRedactionRow',
+  'readPageRedactionRows', 'listTimelineDedupRows', 'listVersionBodiesForRedaction', 'countPageVersionRows', 'listChunkTextsForRedaction',
+  'readRawDataValue',
   // repair-rust batch 9: the segmented-mirror, fence bookkeeping and last-job reads
   'listGlobalPurgeWithdrawals', 'listSourceCheckpointRecords', 'readOldestSyncHoldAt', 'readLastFinishedJobAt', 'readRemirrorEffects',
   // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
@@ -215,7 +224,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listDuplicateFactRows', 'listEmbeddingCandidates', 'listExpiredArchivedSources', 'listFactsHomeCandidates',
   'listFactsOnValidDay', 'listFailedWriteRequests', 'listFenceFactRowNums', 'listFileTombstones',
   'listHeldHomeRows', 'listInlineVersionTexts', 'listLabelFactCandidates', 'listLegacyOriginPairs',
-  'listLiveOriginPages', 'listLivePagesByFileName', 'listLivePagesBySourcePaths', 'listLivePagesSharingFrontmatterId', 'readMeetingPage', 'listAttendanceMatches',
+  'listLiveOriginPages', 'listOriginClaimants', 'listLivePagesByFileName', 'listLivePagesBySourcePaths', 'listLivePagesSharingFrontmatterId', 'readMeetingPage', 'listAttendanceMatches',
   'listLoopSuppressions', 'listManagedSyncFailureKeys', 'listManagedSyncOrphanRows', 'listManualLinkTransitions',
   'listMaterializedMarkerPages', 'listMuteRecheckThreads', 'listNamedVisibilityRows', 'listOriginTwinCounts',
   'listOriginTwinGroups', 'listOrphanBindings', 'listOrphanConnectorCheckpoints', 'listOrphanedFenceRows',
@@ -394,10 +403,31 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  // repair-rust batches 6b and 6c: the twin merge's moves, the rename alias, the segmented chunk retire, the code edge clear, the secret store writes and
+  // the secret-spans page rewrites. Each is one store write (`self.write`).
+  moveTwinRelationships: 'getLinks and getBacklinks for the survivor page (the twin\'s derived links and transitions are on it)',
+  moveTwinPageChildren: 'getTimeline, getRawData, getTags and listFilesForPage for the survivor page',
+  moveTwinFacts: 'listFactsByEntity for the survivor slug',
+  movePageVersions: 'getVersions for the page the versions moved to',
+  recordRenameAlias: 'listSlugAliases for the new slug',
+  retireStaleSegmentChunks: 'hasStaleSegmentChunks for that page generation',
+  clearCodeEdgesLeavingChunks: 'getEdgesByChunk for those chunks',
+  insertSecretEntry: 'readSecretEntry for that id (findSecretEntryByMac for that source and value)',
+  insertSecretOccurrence: 'listSecretOccurrences for that entry',
+  insertBackupSecretEntry: 'readSecretEntry for that id',
+  insertBackupSecretOccurrence: 'listSecretOccurrences for that entry',
+  deleteUnreferencedSecretEntry: 'secretEntryExists for that id',
+  markSecretEntryAllowed: 'readSecretEntry for that id',
+  setRetainedVersionBody: 'listVersionBodiesForRedaction for that page',
+  deleteChunksByIds: 'listChunkTextsForRedaction for that page',
+  setRedactedPageFields: 'readPageRedactionRow for that page',
+  setRawDataValue: 'readRawDataValue for that row',
+  setRedactedRowText: 'readPageRedactionRows for that page',
   // repair-rust batch 9: the re-mirror effect insert, the attempt store's compare-and-swap and the daily budget ledger writes
   insertRemirrorEffects: 'readRemirrorEffects for that request',
   insertOpCheckpointIfAbsent: 'readOpCheckpointRecord for that operation',
   replaceOpCheckpointAtVersion: 'readOpCheckpointRecord for that operation',
+  upsertFenceTrendRunRecord: 'readOpCheckpointRecord for that operation',
   reclaimBudgetReservations: 'readBudgetLedgerDay for that ledger day',
   reserveBudgetReservation: 'readBudgetLedgerDay for that ledger day',
   dispatchBudgetReservation: 'readBudgetLedgerDay for that ledger day',

@@ -24,9 +24,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { FenceSection, FenceKind, FenceTier } from './types.ts';
 
-/** The trend writers run inside the writer's own transaction, so they keep the raw write (the Rust store has no writer of trend rows). */
-type Exec = Pick<BrainEngine, 'executeRaw'>;
-
 export const FENCE_CANDIDATE_OP = 'fence-candidate';
 export const FENCE_SCAN_OP = 'fence-scan';
 export const FENCE_TREND_OP = 'fence-trend';
@@ -121,20 +118,17 @@ export interface TrendEntry { day: string; count: number; by_class: Record<strin
  * One sync run's total, keyed by run id (a rewrite replaces it, so a run is
  * counted once); the row keeps the UTC day of its first write.
  */
-export async function recordSyncRunTrend(engine: Exec, input: { sourceId: string; runId: string; day: string; count: number;
+export async function recordSyncRunTrend(engine: Pick<BrainEngine, 'upsertFenceTrendRunRecord'>, input: { sourceId: string; runId: string; day: string; count: number;
   byClass: Record<string, number>; writers: Record<string, number> }): Promise<void> {
   if (!input.count) return;
   const record = { version: 1, source_id: input.sourceId, day: input.day, count: input.count, by_class: input.byClass, writers: input.writers };
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now())
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((EXCLUDED.completed_keys->0)||jsonb_build_object('day',op_checkpoints.completed_keys->0->'day')),updated_at=now()`,
-  [FENCE_TREND_OP, `${input.sourceId}:run:${input.runId}`, JSON.stringify([record])]);
+  await engine.upsertFenceTrendRunRecord(FENCE_TREND_OP, `${input.sourceId}:run:${input.runId}`, record);
 }
 
 /** One normalized page write (put_page, put_pages, remember, takes and fact writers), written once per request. */
-export async function recordWriteTrend(engine: Exec, input: { sourceId: string; requestKey: string; day: string; byClass: Record<string, number>; writer: string }): Promise<void> {
+export async function recordWriteTrend(engine: Pick<BrainEngine, 'insertOpCheckpointIfAbsent'>, input: { sourceId: string; requestKey: string; day: string; byClass: Record<string, number>; writer: string }): Promise<void> {
   const record = { version: 1, source_id: input.sourceId, day: input.day, count: 1, by_class: input.byClass, writers: { [input.writer]: 1 } };
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now()) ON CONFLICT(op,fingerprint) DO NOTHING`,
-    [FENCE_TREND_OP, `${input.sourceId}:write:${input.requestKey}`, JSON.stringify([record])]);
+  await engine.insertOpCheckpointIfAbsent(FENCE_TREND_OP, `${input.sourceId}:write:${input.requestKey}`, [record]);
 }
 
 /**
@@ -143,7 +137,7 @@ export async function recordWriteTrend(engine: Exec, input: { sourceId: string; 
  * outcomes (a per-file fix list) are skipped: the sync run flushes its own
  * total once per run.
  */
-export async function recordPublicationFenceTrend(tx: Exec, row: { id: string; source_id: string; principal_kind: string }, outcome: Record<string, unknown>,
+export async function recordPublicationFenceTrend(tx: Pick<BrainEngine, 'insertOpCheckpointIfAbsent'>, row: { id: string; source_id: string; principal_kind: string }, outcome: Record<string, unknown>,
   now: Date = new Date()): Promise<void> {
   const report = outcome.fences_normalized as { count?: unknown; by_class?: Record<string, number> } | undefined;
   if (!report || Array.isArray(report) || typeof report !== 'object' || !Number(report.count)) return;

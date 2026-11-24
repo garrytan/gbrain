@@ -175,6 +175,7 @@ Reserved tags:
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | session_state | `y` | `SESSION_STATE` | no |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
+| secret_store (the `secret_store` entries and `secret_store_occurrence` rows; the module owns the sub-tags) | `3` | `SECRET_STORE` | yes (a hard page delete clears the occurrences' `page_id`, the purge then removes the page's occurrences and the entries only they held; a source delete removes the source's entries) |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -1336,6 +1337,18 @@ Cross-source identity groups (migration v137): manual links, lookups, the canoni
 - **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
 - **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
 
+### secret_store
+
+The secret store (GST-2988) and the page-store reads and writes of `gbrain repair secret-spans`. Detail: `rust/docs/store/secret-store.md`.
+
+- **Files:** `gbrain-store/src/secret_store.rs`, `gbrain-store/src/repair_secret_spans.rs`, `gbrain-store/src/timeline_queries/redaction.rs`, `gbrain-napi/src/families/secret_store.rs`, `store-members/secret-store.ts`.
+- **Tag:** `3` (`SECRET_STORE`). Cascade on page delete: yes (see the tag table).
+- **Keys:** `3 0x01 <entry id>` the entry; `3 0x02 <source> 0x00 <value mac>` the entry id; `3 0x03 <entry id> 0x00 <occurrence id BE8>` and `3 0x05 <source> 0x00 <slug> 0x00 <occurrence id BE8>` and `3 0x06 <page id BE8> <occurrence id BE8>` (empty, the occurrence indexes); `3 0x04 <occurrence id BE8>` the occurrence. `M next_secret_occurrence_id`.
+- **Members (31), capability:** `persistence_journal`: `findSecretEntryByMac`, `secretEntryExists`, `insertSecretEntry`, `insertSecretOccurrence`, `readSecretEntry`, `listSecretOccurrences`, `listSecretEntrySummaries`, `countSecretsByRule`, `listAllowedSecretMacs`, `listSecretKeysInUse`, `readSecretStoreSnapshot`, `insertBackupSecretEntry`, `readBackupEntryHold`, `insertBackupSecretOccurrence`, `deleteUnreferencedSecretEntry`, `listSecretHoldingPages`, `countUnreferencedSecretEntries`, `readRestorePageHit`, `markSecretEntryAllowed`, `readPageRedactionRow`, `readPageRedactionRows`, `listTimelineDedupRows`, `listVersionBodiesForRedaction`, `countPageVersionRows`, `setRetainedVersionBody`, `listChunkTextsForRedaction`, `deleteChunksByIds`, `setRedactedPageFields`, `readRawDataValue`, `setRawDataValue`, `setRedactedRowText`; the queue row after a rewrite is main's `queuePageProjectionJob`. `deletePageViewDigests` (capability `facts`) is served with no rows.
+- **Postgres tables:** `secret_store`, `secret_store_occurrence`; SQL in `src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`.
+- **Parity cases:** `test/engine-parity/repair-secret-spans.test.ts`.
+- **Known gaps:** none for the scan, the apply (inline and segmented) and the restore. On a Rust brain `clearCodeEdgesLeavingChunks` has no `edges_backfilled_at` marker to clear (the store keeps none), and a raw data row is named by its position, not a serial id.
+
 ### timeline_queries
 
 Timeline reads by date and event projections.
@@ -1509,7 +1522,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger).
+until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger). `secret_store` takes the digit `3`: every letter is taken or reserved, and tag `2` is free (the `embedding_holds` family was dropped at the main join).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|

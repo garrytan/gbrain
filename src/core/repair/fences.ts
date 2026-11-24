@@ -38,7 +38,6 @@
  * result adds `repaired`, `remaining` by reason, `scan` and `verification`;
  * a run whose every model proposal is rejected reports 0 repaired.
  */
-import { requireRawSql } from '../rust-engine/errors.ts';
 import type { BrainEngine } from '../engine.ts';
 import { nullUnlessCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -180,7 +179,7 @@ async function recordHeld(engine: BrainEngine, src: FenceSource, cand: { path: s
   if (!cand.held || !cand.path || !(held.reason in FENCE_REASONS)) return;
   const reason = held.reason as FenceReason;
   await recordFenceHoldRepair(engine, { sourceId: src.id, incarnation: src.incarnation, path: cand.path, state: { reason, tier: heldTier(reason), at: new Date().toISOString(),
-    next_attempt_after: held.next ?? null, ...(held.gate ? { gate: held.gate } : {}), ...(held.rows?.length ? { rows: held.rows.slice(0, 50) } : {}) } }).catch(() => false);
+    next_attempt_after: held.next ?? null, ...(held.gate ? { gate: held.gate } : {}), ...(held.rows?.length ? { rows: held.rows.slice(0, 50) } : {}) } });
 }
 
 /** Candidates the selection names that the census has not judged yet: a file under a source root, or a stored page. */
@@ -240,10 +239,6 @@ export const fencesRepair: RepairHandler = {
   async plan(engine, scope, _after, opts): Promise<RepairPlan> {
     const selection: Selection = { source_ids: scope.source_ids, only: [...(opts?.only ?? [])].sort(), skip: [...(opts?.skip ?? [])].sort(),
       slugs: [...(opts?.slugs ?? [])].sort(), no_llm: opts?.noLlm === true };
-    // The fence census and the daily budget ledger read through lane 14's typed members (engine-sql/fence-census.ts), not on
-    // this branch yet: an engine without raw SQL (the Rust engine) stops here, before any read.
-    requireRawSql(engine, 'repair fences census');
-
     const preview = previewArgv(scope, selection);
     if (opts?.apply && opts.expect) {
       // #6377: a preview that found nothing saved no set; its hash still binds "nothing to apply" (the content lane passes one hash per kind).
@@ -560,7 +555,7 @@ async function reportFences(ctx: OperationContext, scope: RepairScope, result: R
     // An --expect apply replays the approved set only; re-check the selection for what the preview listed as held.
     if (opts.expect) for (const [reason, count] of Object.entries(await heldInScope(ctx.engine, scope, opts, result))) remaining[reason] = (remaining[reason] ?? 0) + count;
   } else if (result.affected) remaining.pending_repair = result.affected;
-  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('invalid_fence', scope.source_ids).catch(() => null) };
+  const oldest = { held_at: await ctx.engine.readOldestSyncHoldAt('invalid_fence', scope.source_ids) };
   const llmRepairs = repairedByTier.llm;
   const spent = typeof result.cost.llm_usd === 'number' ? result.cost.llm_usd : 0;
   const verification: FenceRepairVerification = { candidates: result.affected + Object.values(result.residuals).reduce((a, b) => a + b, 0) - (result.residuals.already_clean ?? 0),
