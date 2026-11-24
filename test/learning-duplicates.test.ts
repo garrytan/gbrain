@@ -4,10 +4,10 @@
  * records the top five as duplicate_to_confirm items; learned renders each from the current preview.
  *
  * 1. Protects: a group with a person the owner met this week sorts above a group nobody met, which the preview lists
- *    first; without an owner page the preview's own order stands; at most five groups are recorded per pass; a group
+ *    first; without an owner page the preview's own order stands; at most five groups are open at once; a group
  *    confirmed or rejected through gbrain dedupe leaves the next note; a world-scope token never sees a group with a
  *    member page it cannot read, while the owner's token does; a second cycle records nothing twice.
- * 2. Fails when: derive ignores owner contact, records more than five groups, records a group twice, or confirms or
+ * 2. Fails when: derive ignores owner contact, keeps more than five groups open, records a group twice, or confirms or
  *    links anything; learned shows a decided group or a group a remote caller cannot fully read.
  * 3. Real seams: PGLite (and Postgres when DATABASE_URL is set) with no git repository, runCycle, gbrain dedupe's CLI
  *    module, tokens minted by the token service and verified as serve --http does, dispatched through MCP dispatch.
@@ -139,14 +139,31 @@ for (const backend of testBackends()) {
       expect(dupes(await local()).map(i => slugsOf(i))).toEqual([[`people/${first}-example`], [`people/${second}-example`]]);
     });
 
-    test('a pass records at most five groups', async () => {
+    test('at most five groups are open at once, and an answered group frees its slot for the next', async () => {
       for (const name of NAMES) await pair(name);
       expect(await personGroups()).toHaveLength(7);
       expect((await derive()).details.duplicates).toMatchObject({ recorded: 5, groups: 7 });
-      expect(dupes(await local())).toHaveLength(5);
-      // The next pass takes the groups not asked yet instead of the same five again.
-      expect((await derive()).details.duplicates).toMatchObject({ recorded: 2, groups: 7 });
+      const open = dupes(await local());
+      expect(open).toHaveLength(5);
+      // Derive runs every few minutes on autopilot: with five still open it asks nothing new.
       expect((await derive()).details.duplicates).toMatchObject({ recorded: 0, groups: 7 });
+      await cli(['reject', open[0]!.commands!.reject[3]!]);
+      expect((await derive()).details.duplicates).toMatchObject({ recorded: 1 });
+      expect(dupes(await local())).toHaveLength(5);
+      expect((await derive()).details.duplicates).toMatchObject({ recorded: 0 });
+    });
+
+    test('answered groups never push open ones out of a short note, and the best-ranked shows first', async () => {
+      for (const name of NAMES) await pair(name);
+      await derive();
+      const first = dupes(await local());
+      for (const item of first.slice(0, 2)) await cli(['reject', item.commands!.reject[3]!]);
+      expect((await derive()).details.duplicates).toMatchObject({ recorded: 2 });
+      const view = parse(await dispatchToolCall(engine, 'learned', { since: '2000-01-01', limit: 5 }, { remote: false }));
+      const shown = dupes(view);
+      expect(shown).toHaveLength(5);
+      expect(shown.map(i => Number(i.id))).toEqual([...shown.map(i => Number(i.id))].sort((a, b) => a - b));
+      expect(shown.slice(0, 3).map(i => i.id)).toEqual(first.slice(2).map(i => i.id));
     });
 
     test('a group confirmed or rejected through gbrain dedupe leaves the next note', async () => {

@@ -168,13 +168,18 @@ for (const kind of testBackends()) {
       expect(await resolveOwnerContactAnchor(engine)).toEqual({ owner: null, reason: 'owner_conflict' });
       expect(await phaseOrder()).toEqual({ order: 'inbound-links', reason: 'owner_conflict' });
 
-      // An engine that cannot rank owner-contact (no raw SQL, as on the Rust engine) keeps inbound-links by default.
+      // An engine with no raw SQL (the Rust engine) cannot list candidates in any order, so the phase skips before any SQL.
       await engine.unsetConfig('cycle.enrich_thin.order');
       await raw("DELETE FROM pages WHERE slug LIKE 'people/owner-example%'");
       expect(await resolveOwnerContactAnchor(engine)).toEqual({ owner: { slug: 'memory/owner', source_id: 'default' } });
-      const noSql = new Proxy(engine, { get: (t, p) => p === 'capabilities' ? new Set([...t.capabilities].filter(c => c !== 'raw_sql')) : (v => typeof v === 'function' ? v.bind(t) : v)(Reflect.get(t, p)) }) as typeof engine;
-      const noSqlRun = await runPhaseEnrichThin(noSql, { dryRun: true });
-      expect({ order: noSqlRun.details.order, reason: noSqlRun.details.order_reason }).toEqual({ order: 'inbound-links', reason: 'engine_capability_missing' });
+      const noSql = new Proxy(engine, { get: (t, p) => p === 'capabilities' ? new Set([...t.capabilities].filter(c => c !== 'raw_sql'))
+        : p === 'executeRaw' ? () => { throw new Error('no raw SQL on this engine'); }
+        : (v => typeof v === 'function' ? v.bind(t) : v)(Reflect.get(t, p)) }) as typeof engine;
+      for (const set of [null, 'owner-contact']) {
+        if (set) await engine.setConfig('cycle.enrich_thin.order', set); else await engine.unsetConfig('cycle.enrich_thin.order');
+        const noSqlRun = await runPhaseEnrichThin(noSql, { dryRun: true });
+        expect({ status: noSqlRun.status, reason: noSqlRun.details.reason }).toEqual({ status: 'skipped', reason: 'engine_capability_missing' });
+      }
 
       // Explicit owner-contact still wins when the owner does not resolve.
       await engine.setConfig('cycle.enrich_thin.order', 'owner-contact');
@@ -253,6 +258,16 @@ for (const kind of testBackends()) {
       expect(next.status).toBe('ok');
       expect(calls.length).toBe(4);
       expect((next.details.daily as { day: string }).day).toBe('2026-03-11');
+    });
+
+    test('a daily cap set to something that is not a number spends nothing', async () => {
+      for (const [k, v] of Object.entries({ 'cycle.enrich_thin.enabled': 'true', 'cycle.enrich_thin.max_daily_cost_usd': '$5' })) await engine.setConfig(k, v);
+      __setChatTransportForTests(async () => { throw new Error('unused'); });
+      let calls = 0;
+      const enrichCore = async () => { calls++; return emptyResult({ spent_usd: 1 }); };
+      const r = await runPhaseEnrichThin(engine, { enrichCore, now: () => new Date('2026-03-10T12:00:00Z') });
+      expect({ status: r.status, reason: r.details.reason, keys: r.details.keys }).toEqual({ status: 'skipped', reason: 'daily_cap_invalid', keys: ['cycle.enrich_thin.max_daily_cost_usd'] });
+      expect(calls).toBe(0);
     });
 
     test('a source that dies mid-run stays charged its full cap for the day', async () => {

@@ -98,6 +98,8 @@ interface ResolvedConfig {
   order: EnrichOrder | null;
   maxDailyCostUsd: number;     // every run in the owner's day; Infinity = no cap
   maxDailyPages: number;       // every run in the owner's day; Infinity = no cap
+  /** Daily cap keys set to a value that does not parse; the phase spends nothing until they are fixed. */
+  invalidDailyCaps: string[];
   workers: number;
   model?: string;
 }
@@ -166,10 +168,13 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     : (ENRICH_ORDERS as readonly string[]).includes(orderRaw.trim())
       ? (orderRaw.trim() as EnrichOrder)
       : 'inbound-links';
-  const parseDailyPages = (raw: string | null): number => {
+  const invalidDailyCaps: string[] = [];
+  const parseDailyCap = (key: string, raw: string | null, parse: (s: string) => number): number => {
     if (raw == null || ['off', 'unlimited', 'none'].includes(raw.trim().toLowerCase())) return Infinity;
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) && n >= 0 ? n : Infinity;
+    const n = parse(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+    invalidDailyCaps.push(`${CFG_PREFIX}.${key}`);
+    return 0;
   };
 
   return {
@@ -180,8 +185,9 @@ async function loadCfg(engine: BrainEngine): Promise<ResolvedConfig> {
     maxPagesPerTick: parseIntOrDefault(maxPages, 3),
     types,
     order,
-    maxDailyCostUsd: parseCostOrDefault(maxDailyCost, Infinity),
-    maxDailyPages: parseDailyPages(maxDailyPages),
+    maxDailyCostUsd: parseDailyCap('max_daily_cost_usd', maxDailyCost, parseFloat),
+    maxDailyPages: parseDailyCap('max_daily_pages', maxDailyPages, s => parseInt(s, 10)),
+    invalidDailyCaps,
     workers: parseIntOrDefault(workersRaw, 1),
     model: model ?? undefined,
   };
@@ -223,10 +229,9 @@ async function writeDailySpend(engine: BrainEngine, v: EnrichThinDailySpend): Pr
   await engine.setConfig(ENRICH_THIN_DAILY_SPEND_KEY, JSON.stringify(v));
 }
 
-/** The order this run uses, and why: a set order wins, else owner-contact when the owner resolves and the engine can rank it. */
+/** The order this run uses, and why: a set order wins, else owner-contact when the owner resolves. */
 async function resolveOrder(engine: BrainEngine, configured: EnrichOrder | null): Promise<{ order: EnrichOrder; reason: string; owner?: OwnerContactAnchor | null }> {
   if (configured && configured !== 'owner-contact') return { order: configured, reason: 'configured' };
-  if (!configured && !hasCapability(engine, 'raw_sql')) return { order: 'inbound-links', reason: 'engine_capability_missing' };
   const resolved = await resolveOwnerContactAnchor(engine);
   if (configured) return { order: configured, reason: 'configured', owner: resolved.owner };
   if (resolved.owner) return { order: 'owner-contact', reason: 'owner_resolved', owner: resolved.owner };
@@ -281,6 +286,16 @@ export async function runPhaseEnrichThin(
     );
   }
 
+  if (!hasCapability(engine, 'raw_sql')) {
+    return {
+      phase: 'enrich_thin',
+      status: 'skipped',
+      duration_ms: 0,
+      summary: "skipped: this brain's engine cannot list enrich candidates yet",
+      details: { reason: 'engine_capability_missing' },
+    };
+  }
+
   const startedAt = Date.now();
   const { order, reason: orderReason, owner } = await resolveOrder(engine, cfg.order);
 
@@ -303,6 +318,16 @@ export async function runPhaseEnrichThin(
     max_daily_cost_usd: Number.isFinite(cfg.maxDailyCostUsd) ? cfg.maxDailyCostUsd : 'off',
     max_daily_pages: Number.isFinite(cfg.maxDailyPages) ? cfg.maxDailyPages : 'off',
   });
+  if (!opts.dryRun && cfg.invalidDailyCaps.length) {
+    return {
+      phase: 'enrich_thin',
+      status: 'skipped',
+      duration_ms: Date.now() - startedAt,
+      summary: `daily cap set to a value that is not a number (${cfg.invalidDailyCaps.join(', ')}); nothing is spent until it is fixed`,
+      details: { reason: 'daily_cap_invalid', keys: cfg.invalidDailyCaps, order, order_reason: orderReason, daily: dailyDetails(),
+        fix_hint: `gbrain config set ${cfg.invalidDailyCaps[0]} <number>, or gbrain config unset ${cfg.invalidDailyCaps[0]} for no daily cap` },
+    };
+  }
   if (!opts.dryRun && (daily.spent_usd >= cfg.maxDailyCostUsd || daily.pages >= cfg.maxDailyPages)) {
     return {
       phase: 'enrich_thin',

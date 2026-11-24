@@ -102,9 +102,12 @@ function queries(f: CallerFilters): Array<{ kinds: LearningKind[]; sql: string }
        WHERE p.deleted_at IS NULL AND ${f.pages.p}
        ORDER BY li.created_at DESC, li.id DESC LIMIT $4` },
     { kinds: ['duplicate_to_confirm'], sql: `${windowed("'duplicate_to_confirm'", 'pages')} SELECT ${ITEM_COLUMNS}, li.target_id AS anchor_id
-        FROM li ORDER BY li.created_at DESC, li.id ASC LIMIT $4` },
+        FROM li ORDER BY li.id ASC LIMIT GREATEST($4::int, ${DUPLICATE_ROWS_READ})` },
   ];
 }
+
+/** Duplicate rows read before the live check drops answered groups, so answered rows never crowd out open ones under the limit. */
+const DUPLICATE_ROWS_READ = 500;
 
 /**
  * Keeps a duplicate_to_confirm row only while the preview still holds a group anchored at its page and the caller can
@@ -169,8 +172,10 @@ export async function liveItems(engine: BrainEngine, ctx: OperationContext, f: C
       evidence: [{ source_id: r.source_id, fact_id: String(r.fact_id), ...(slug ? { slug, read: read(slug) } : {}) }] };
   });
   const rank = (k: LearningKind) => { const i = KIND_ORDER.indexOf(k); return i < 0 ? KIND_ORDER.length : i; };
-  const byId = (a: Omit<LearnedItem, 'n'>, b: Omit<LearnedItem, 'n'>) => (a.kind === 'duplicate_to_confirm' ? Number(a.id) - Number(b.id) : Number(b.id) - Number(a.id));
-  return items.sort((a, b) => rank(a.kind) - rank(b.kind) || b.created_at.localeCompare(a.created_at) || byId(a, b))
+  const within = (a: Omit<LearnedItem, 'n'>, b: Omit<LearnedItem, 'n'>) => a.kind === 'duplicate_to_confirm'
+    ? Number(a.id) - Number(b.id)
+    : b.created_at.localeCompare(a.created_at) || Number(b.id) - Number(a.id);
+  return items.sort((a, b) => rank(a.kind) - rank(b.kind) || within(a, b))
     .slice(0, window.limit).map((item, i) => ({ ...item, n: i + 1 }));
 }
 

@@ -55,14 +55,22 @@ export async function rankDuplicateGroups(engine: BrainEngine): Promise<{ ranked
   return { ranked_by: 'owner-contact', groups: groups.map(g => ({ g, s: best(g) })).sort((a, b) => b.s - a.s).map(x => x.g) };
 }
 
-/** The learning_derive step: records the best-ranked anchors not already in the ledger, at most five per pass, each once. */
+/**
+ * The learning_derive step: keeps at most five duplicate questions open. A recorded anchor whose group the preview still
+ * lists is open until it is confirmed or rejected; the free slots go to the best-ranked live anchors not asked yet, each once.
+ */
 export async function recordDuplicateQuestions(engine: BrainEngine, opts: { runId: string; dryRun: boolean }):
   Promise<{ recorded: number; groups: number; ranked_by: 'owner-contact' | 'preview'; owner_reason?: string }> {
   const { groups, ...ranking } = await rankDuplicateGroups(engine);
   const anchors = [...new Set(groups.map(g => g.anchor))];
   if (!anchors.length) return { recorded: 0, groups: 0, ...ranking };
-  const fresh = `SELECT u.id, u.ord FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord)
-     WHERE ${notRecordedSql("'duplicate_to_confirm'", 'pages', 'u.id')} ORDER BY u.ord LIMIT ${MAX_DUPLICATE_QUESTIONS}`;
+  const asked = (id: string) => `NOT ${notRecordedSql("'duplicate_to_confirm'", 'pages', id)}`;
+  const fresh = `SELECT f.id, f.ord FROM (
+       SELECT u.id, u.ord, x.asked, row_number() OVER (PARTITION BY x.asked ORDER BY u.ord) AS rn,
+              count(*) FILTER (WHERE x.asked) OVER () AS open
+         FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord) JOIN pages p ON p.id = u.id AND p.deleted_at IS NULL
+        CROSS JOIN LATERAL (SELECT ${asked('u.id')} AS asked) x) f
+     WHERE NOT f.asked AND f.rn <= ${MAX_DUPLICATE_QUESTIONS} - f.open ORDER BY f.ord`;
   const rows = opts.dryRun
     ? await engine.executeRaw(fresh, [anchors])
     : await engine.executeRaw(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, subject_slug, subject_source_id)
