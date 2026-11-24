@@ -213,6 +213,19 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   'purgeStaleAppliedCaptures',
 ]);
 
+/**
+ * The ignored members that do write the brain database (locks, logs, caches, staging). The follower does not copy them,
+ * but a process that only calls them is still a writer, so the writer observer notes it (wrapper.ts mayWrite).
+ */
+export const IGNORED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
+  'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'deleteCycleLock', 'deleteCycleLockIfStale',
+  'logIngest', 'logEvalCandidate', 'logEvalCaptureFailure', 'deleteEvalCandidatesBefore', 'writeContradictionsRun',
+  'putContradictionCacheEntry', 'sweepContradictionCache', 'putDreamVerdict', 'sweepDreamVerdicts', 'putCodeTraversalCache',
+  'clearCodeTraversalCache', 'insertLocalWriterRow',
+  'allocateBodyOccurrenceIds', 'stageSegmentTexts', 'stageManifestRows', 'openBodyStaging', 'setBodyStagingState',
+  'upsertSegmentDerivations', 'retireSegmentDerivations',
+]);
+
 /** Members that run caller SQL; the wrapper parses it (sql-writes.ts). */
 export const RAW_MEMBERS: ReadonlySet<string> = new Set(['executeRaw', 'executeRawDirect']);
 

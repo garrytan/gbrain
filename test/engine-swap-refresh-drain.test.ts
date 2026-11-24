@@ -109,7 +109,7 @@ describe(`engine swap refuses a brain with an unfinished worktree refresh (L7-1,
     expect(run.code).toBe(0);
     const plan = JSON.parse(run.stdout);
     expect(plan.verdict).toBe('NOT READY');
-    expect(plan.reason).toBe('writer_coverage_unknown');
+    expect(plan.reason).toBe('no_shadow');
   });
 
   test('several unfinished refreshes are all named, and a source-less one asks the user', async () => {

@@ -57,7 +57,7 @@ function usage(message: string): ReturnType<typeof opError> {
 export function renderPlanText(p: SwapPlan): string {
   const lines = [
     `Engine swap plan: ${p.from} -> ${p.to}   verdict: ${p.verdict}${p.reason ? ` (${p.reason})` : ''}   plan ${p.plan_hash}`,
-    p.shadow ? '' : 'No shadow runs for this brain, so there is no readiness evidence yet (gbrain engine shadow, S3).',
+    p.shadow ? '' : 'No shadow runs for this brain, so there is no readiness evidence yet. Seed one with `gbrain engine shadow seed`, then start it with `gbrain engine shadow start`.',
     'Worktree refreshes: none unfinished.',
     'Readiness:',
     ...p.criteria.map(c => `  ${String(c.n).padStart(2)}. [${c.state}] ${c.name}: ${c.detail}`),

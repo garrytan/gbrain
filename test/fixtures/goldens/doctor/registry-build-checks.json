@@ -1135,6 +1135,10 @@
       },
       {
         "category": "brain",
+        "name": "write_gate_hold_ambiguous"
+      },
+      {
+        "category": "brain",
         "name": "write_gate_holds_stranded"
       },
       {
