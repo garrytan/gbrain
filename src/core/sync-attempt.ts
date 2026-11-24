@@ -38,7 +38,8 @@ export interface SyncAttempt {
 
 const SUBSTANTIVE = `NOT COALESCE(status IN ('waiting', 'delayed', 'waiting-children', 'paused') OR (status = 'active' AND lock_until > now())
   OR (status = 'completed' AND (result->>'skipped' = 'true' OR (result->>'stopped_on' = 'usage_limit' AND result->>'reason' IN ('writer_pending', 'timeout')))), false)`;
-const LIMITED = `COALESCE(status = 'completed' AND result->>'status' = 'partial' AND result->>'stopped_on' = 'usage_limit' AND result->>'reason' IS NULL, false)`;
+const LIMITED = `COALESCE(status = 'completed' AND result->>'status' = 'partial' AND result->>'stopped_on' = 'usage_limit'
+  AND COALESCE(result->>'reason', '') NOT IN ('writer_pending', 'timeout'), false)`;
 const LANDED = `COALESCE((result->>'added')::numeric, 0) + COALESCE((result->>'modified')::numeric, 0) + COALESCE((result->>'deleted')::numeric, 0) > 0`;
 
 /**

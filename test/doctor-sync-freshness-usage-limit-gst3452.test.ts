@@ -20,6 +20,8 @@ import { cliRenderContext, renderAction, type Action } from '../src/core/agent-o
 import { CODES } from '../src/core/error-registry.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { pendingConnectorResult, type ManagedConnectorSync } from '../src/core/persistence/connector-sync.ts';
+import { withConnectorPartialReason } from '../src/commands/sync/connector.ts';
+import type { SyncResult } from '../src/commands/sync.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => {
@@ -42,8 +44,12 @@ async function addSource(id: string) {
   );
 }
 
-async function addSyncJob(sourceId: string, status: string, result: Record<string, unknown> | null,
+const connectorRun = (result: Record<string, unknown>): SyncResult => withConnectorPartialReason({ fromCommit: null, toCommit: '', added: 0, modified: 0,
+  deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], ...result } as SyncResult);
+
+async function addSyncJob(sourceId: string, status: string, partialOrResult: Record<string, unknown> | null,
   opts: { finishedHoursAgo?: number; lockMinutes?: number } = {}): Promise<number> {
+  const result = partialOrResult?.status === 'partial' ? connectorRun(partialOrResult) : partialOrResult;
   const job = await new MinionQueue(engine).add('sync', { sourceId }, { queue: 'default' }, { allowProtectedSubmit: true });
   const done = ['completed', 'failed', 'dead'].includes(status);
   await engine.executeRaw(
@@ -74,6 +80,18 @@ describe('GST-3452 sync_freshness: a first sync stopped by a usage limit', () =>
     const [entry] = entries(result.details);
     expect(entry).toMatchObject({ source_id: 'mail', code: 'sync_usage_limited', reason: 'usage_limit', result: 'completed (partial)', job_id: jobId });
     expect(next(entry!.fix)).toBe('wait');
+  });
+
+  test('limited runs stored with the reason the connector stamps on them still warn', async () => {
+    await addSource('mail');
+    const landed = await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3, failedFiles: 2 }, { finishedHoursAgo: 3 });
+    const identityStop = await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit' }, { finishedHoursAgo: 1 });
+    const reasons = await engine.executeRaw<{ id: number; reason: string }>(
+      `SELECT id, result->>'reason' AS reason FROM minion_jobs WHERE id IN ($1, $2) ORDER BY id`, [landed, identityStop]);
+    expect(reasons.map((row) => row.reason)).toEqual(['connector_item_failures', 'connector_partial']);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited', job_id: identityStop });
   });
 
   test('a later run that landed nothing before the same limit keeps the warning while a landing run is inside the window', async () => {
