@@ -39,11 +39,10 @@ import { readMissingTables } from '../../src/core/schema-missing-tables.ts';
 import { readBudgetLimited } from '../../src/core/held-embedding.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
 import { inspectSharedMemberMigration } from '../../src/core/shared-skills/migration-members.ts';
-import { addMember, bindCredential } from '../../src/core/access/members.ts';
+import { addMember } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { ownerCredentials } from '../../src/core/guests/owner-credentials.ts';
-import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
-import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import { runGuests } from '../../src/commands/guests.ts';
 import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, byteOrder, MIXED_IDS, MIXED_SLUGS } from '../helpers/byte-order.ts';
@@ -53,11 +52,6 @@ const { parityTest } = parityArms(testBackends());
 /** Source ids (lower case, digits and `-` only): en_US sorts them `a0, ab, a-z`; bytes put `a-z` first. */
 const MIXED_SOURCES = ['ab', 'a0', 'a-z'];
 const BYTE_SOURCES = byteOrder(MIXED_SOURCES);
-
-const provider = (engine: BrainEngine) => new GBrainOAuthProvider({
-  sql: sqlQueryForEngine(engine),
-  transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
-});
 
 /** Rows sorted field by field by UTF-8 bytes (the order `ORDER BY a, b, c COLLATE "C"` gives). */
 const byteRows = (rows: string[][]) => [...rows].sort((x, y) => {
@@ -154,23 +148,56 @@ describe('store listings come out by byte', () => {
     expect((await listPins(engine)).map(p => p.source_id)).toEqual(BYTE_SOURCES);
   });
 
-  parityTest('ownerCredentials lists clients of one kind by byte of name and id', { methods: ['executeRaw', 'getConfig', 'setConfig', 'transaction'], requires: 'raw_sql' }, async (engine) => {
+  // Names that sort one way by UTF-8 byte and another by default JS string order or localeCompare: an upper-case and a lower-case
+  // letter, a non-ASCII letter (C3 A9), and a BMP character (EF BD 9E) against one outside the BMP (F0 9F 98 80), which UTF-16 puts first.
+  const OWNER_NAMES = ['zed', 'Zed', '\u00e9clair', 'apple', '\uFF5Ebar', '\u{1F600}bar'];
+
+  parityTest('ownerCredentials lists the owner\'s clients and tokens by byte of kind, name and id, and never a hash',
+    { methods: ['insertOauthClient', 'insertAccessToken', 'getConfig', 'setConfig'] }, async (engine) => {
+      await addMember(engine, 'owner-example');
+      await addMember(engine, 'other-example');
+      await setOwner(engine, 'owner-example');
+      const secret = 'secret-hash-value';
+      for (const name of OWNER_NAMES) await engine.insertOauthClient({ client_id: `c-${name}`, client_name: name, client_secret_hash: secret, member_id: 'owner-example' });
+      await engine.insertOauthClient({ client_id: 'c-gone', client_name: 'gone', member_id: 'owner-example', deleted_at: new Date('2026-01-02T03:04:05Z') });
+      await engine.insertOauthClient({ client_id: 'c-other', client_name: 'other', member_id: 'other-example' });
+      await engine.insertOauthClient({ client_id: 'c-unbound', client_name: 'unbound' });
+      const grant = { scopes: ['read'], permissions: {}, source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null };
+      for (const name of ['tok-b', 'Tok-c', 'tok-a']) await engine.insertAccessToken({ name, token_hash: `${secret}-${name}`, member_id: 'owner-example', ...grant });
+      await engine.insertAccessToken({ name: 'tok-revoked', token_hash: `${secret}-r`, member_id: 'owner-example', revoked_at: new Date('2026-01-02T03:04:05Z'), ...grant });
+      await engine.insertAccessToken({ name: 'tok-other', token_hash: `${secret}-o`, member_id: 'other-example', ...grant });
+      const { credentials } = await ownerCredentials(engine, 'guest-src');
+      const names = credentials.map(c => `${c.kind}:${c.name}`);
+      const byBytes = byteOrder(OWNER_NAMES);
+      // The list must differ from JS default order, or this case would pass with a plain sort.
+      expect(byBytes).not.toEqual([...OWNER_NAMES].sort());
+      expect(names).toEqual([...byBytes.map(n => `client:${n}`), 'token:Tok-c', 'token:tok-a', 'token:tok-b']);
+      expect(JSON.stringify(credentials)).not.toContain(secret);
+      return names;
+    });
+
+  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['insertOauthClient', 'getConfig', 'setConfig'] }, async (engine) => {
     await addMember(engine, 'owner-example');
     await setOwner(engine, 'owner-example');
-    for (const name of MIXED_SLUGS) {
-      const { clientId } = await provider(engine).registerClientManual(name, ['client_credentials'], 'read write', [], 'default', ['default']);
-      await bindCredential(engine, { kind: 'client', id: clientId }, { member: 'owner-example' });
-    }
-    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.name)).toEqual([...BYTE_SLUGS]);
+    for (const id of MIXED_SLUGS) await engine.insertOauthClient({ client_id: id, client_name: 'same-name', member_id: 'owner-example' });
+    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('ownerCredentials lists clients with one name by byte of id', { methods: ['executeRaw', 'getConfig', 'setConfig'], requires: 'raw_sql' }, async (engine) => {
-    await addMember(engine, 'owner-example');
-    await setOwner(engine, 'owner-example');
-    for (const id of MIXED_SLUGS) {
-      await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, member_id) VALUES ($1, 'same-name', 'owner-example')`, [id]);
-    }
-    expect((await ownerCredentials(engine, 'guest-src')).credentials.map(c => c.id)).toEqual([...BYTE_SLUGS]);
+  // The command checks the guest source with one read before it lists any credential; a source that is not one stops there on every engine.
+  parityTest('guests grant-owner-clients names a source that is not a guest source and exits 2 on every engine', { methods: [] }, async (engine) => {
+    const printed: string[] = [];
+    const [error, exit] = [console.error, process.exit];
+    console.error = (...parts: unknown[]) => { printed.push(parts.join(' ')); };
+    process.exit = ((code?: number) => { throw Object.assign(new Error('EXIT'), { exitCode: code }); }) as typeof process.exit;
+    try {
+      await runGuests(engine, ['grant-owner-clients', '--source', 'not-guest']);
+      return { exitCode: null, printed };
+    } catch (e) {
+      if ((e as { code?: unknown }).code === 'engine_capability_missing') throw e;
+      const out = { exitCode: (e as { exitCode?: number }).exitCode ?? String(e), printed };
+      expect(out).toEqual({ exitCode: 2, printed: ['Source "not-guest" is not a guest source. Set one up with: gbrain guests init --source not-guest'] });
+      return out;
+    } finally { [console.error, process.exit] = [error, exit]; }
   });
 
   parityTest('readCandidateRecords lists candidates by byte of fingerprint', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
