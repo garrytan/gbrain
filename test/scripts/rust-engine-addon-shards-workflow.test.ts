@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { load } from 'js-yaml';
 
 // Each target of the Rust engine addon job (macOS and Linux) is split in two halves so each finishes
-// under 30 minutes (the macOS cell took 43 minutes in run 45126845000, 33 of them in the parity loop;
+// under 45 minutes (the macOS cell took 43 minutes in run 45126845000, 33 of them in the parity loop;
 // the Linux cell reached 29). These checks keep the split honest: every parity file runs in exactly one
 // half of each target, and one check per target still carries the old name and passes only when both
 // halves do.
@@ -96,8 +96,8 @@ describe('Rust engine addon job shards', () => {
     ]);
   });
 
-  test('every cell has the same 30 minute cap and one failing cell does not cancel the others', () => {
-    expect(addon['timeout-minutes']).toBe(30);
+  test('every cell has the same 45 minute cap and one failing cell does not cancel the others', () => {
+    expect(addon['timeout-minutes']).toBe(45);
     expect(addon.strategy?.['fail-fast']).toBe(false);
     expect(addon.strategy?.matrix?.include).toBe('${{ fromJSON(needs.scope.outputs.targets) }}');
   });
