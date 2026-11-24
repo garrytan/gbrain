@@ -1666,6 +1666,16 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 |---|---|---|---|---|---|---|
 | gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
 
+### dedupe_exa_off
+
+<a id="dedupe_exa_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name plus one company or job title to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/duplicate-people.md#web-search-exa](../../docs/guides/duplicate-people.md#web-search-exa)
+
 ### dedupe_group_not_confirmable
 
 <a id="dedupe_group_not_confirmable"></a>
