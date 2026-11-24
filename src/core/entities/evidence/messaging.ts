@@ -2,7 +2,9 @@
  * Dedupe v2 (GST-3609): messaging evidence, read locally from the conversation pages already in the brain and sent
  * nowhere. Zero conversation pages is normal and changes nothing.
  *
- * Pages, read through the conversation parser's body reader (a segmented page's newest window): `type: imessage` day pages (core/imessage/render.ts: `**Speaker** (time):` anchors; a one-to-one chat shows
+ * Pages, read through the conversation parser's body reader, which reads a page stored in segments whole up to 24 MiB;
+ * a larger one, which that reader gives only as its newest window, is set aside and listed (a window can hide speakers,
+ * which would make a group chat read as one-to-one), as is any page it refuses: `type: imessage` day pages (core/imessage/render.ts: `**Speaker** (time):` anchors; a one-to-one chat shows
  * its handle only where the Mac had no name, so the same chat key can show the handle on older days and the name on
  * newer ones) and chat pages under a `conversations/` folder, parsed by core/conversation-parser without any model
  * (iMessage, WhatsApp and the other export layouts it knows). An export page counts as one-to-one only when it has
@@ -23,6 +25,8 @@ import type { BrainEngine } from '../../engine.ts';
 import type { Page } from '../../types.ts';
 import { parseConversation } from '../../conversation-parser/parse.ts';
 import { ConversationBodyTooLargeError, readConversationInput } from '../../conversation-parser/body.ts';
+import { OperationError } from '../../ops/contract.ts';
+import { isSegmentedPage } from '../../page-body/page-shape.ts';
 import { namesAgree } from '../name-variants.ts';
 import { handleOf, type PersonPage } from './people.ts';
 
@@ -43,6 +47,8 @@ export interface MessagingIndex {
   one_to_one: number;
   /** Pages left unread because their transcript file is over the parser's size limit. */
   too_large: number;
+  /** Pages stored in segments: read whole, or set aside (listed) because only a window of them could be read. */
+  segmented: { read: number; set_aside: Array<{ source_id: string; slug: string }> };
   /** Handle → names a one-to-one chat binds it to. */
   direct: Map<string, Set<string>>;
   /** Handle → name → how many small group chats bind them. */
@@ -71,7 +77,7 @@ async function* conversationPages(engine: BrainEngine): AsyncGenerator<Page & { 
     for (const filter of [{ type: 'imessage' }, { slugPrefix: 'conversations/' }] as const) {
       for (let offset = 0; ; offset += PAGE) {
         const rows = await engine.listPages({ ...filter, sourceId: source.id, sort: 'slug', limit: PAGE, offset } as never);
-        for (const row of rows) yield { ...row, source_id: source.id };
+        for (const row of rows) yield Object.assign(row, { source_id: source.id });
         if (rows.length < PAGE) break;
       }
     }
@@ -79,7 +85,7 @@ async function* conversationPages(engine: BrainEngine): AsyncGenerator<Page & { 
 }
 
 export async function readMessagingIndex(engine: BrainEngine, countryCode: string): Promise<MessagingIndex> {
-  const index: MessagingIndex = { pages: 0, chats: 0, one_to_one: 0, too_large: 0, direct: new Map(), grouped: new Map() };
+  const index: MessagingIndex = { pages: 0, chats: 0, one_to_one: 0, too_large: 0, segmented: { read: 0, set_aside: [] }, direct: new Map(), grouped: new Map() };
   const chats = new Map<string, Chat>();
   const seen = new Set<string>();
   for await (const page of conversationPages(engine)) {
@@ -89,12 +95,16 @@ export async function readMessagingIndex(engine: BrainEngine, countryCode: strin
     if (page.frontmatter?.transcript_import || page.slug.startsWith('conversations/days/')) continue;
     let body: string;
     try {
-      body = (await readConversationInput(engine, page)).body;
+      const input = await readConversationInput(engine, page);
+      if (input.window) { index.segmented.set_aside.push({ source_id: page.source_id!, slug: page.slug }); continue; }
+      body = input.body;
     } catch (e) {
+      if (e instanceof OperationError && e.canonicalCode === 'page_body_segmented') { index.segmented.set_aside.push({ source_id: page.source_id!, slug: page.slug }); continue; }
       if (!(e instanceof ConversationBodyTooLargeError)) throw e;
       index.too_large++;
       continue;
     }
+    if (isSegmentedPage(page)) index.segmented.read++;
     const parsed = speakersOf(page, body);
     index.pages++;
     if (!parsed) continue;
