@@ -38,6 +38,7 @@ import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { MANAGED_LINK_SOURCES, maskLinksFence } from '../links-fence.ts';
 import { ensureWellFormed } from '../text-safe.ts';
+import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
 export const FENCE_TRUST_ORIGIN = 'facts-fence';
@@ -240,8 +241,8 @@ const OVERLAY_SQL = (held: boolean, hideHeld = false) => `WITH incoming AS MATER
       ORDER BY f.id DESC LIMIT 1) AS row_flagged,
     EXISTS (SELECT 1 FROM fact_purges fp WHERE fp.source_id=$1 AND fp.visibility=incoming.visibility
       AND fp.fact_hash=gbrain_fact_fingerprint(incoming.claim) AND (fp.subject='*' OR fp.subject=$2)) AS purged,
-    ${held ? `EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind='fact' AND h.source_id=$1 AND h.slug=$2
-      AND h.status='held' AND h.fingerprint=incoming.fp)` : 'false'} AS held,
+    ${held ? `EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind='fact' AND h.source_id=$1
+      AND h.status='held' AND h.fingerprint=incoming.fp AND ${holdAppliesToPageSql('h', '(SELECT p.id FROM pages p WHERE p.source_id=$1 AND p.slug=$2)', '$2')})` : 'false'} AS held,
     ${hideHeld ? heldRowSql('$1', '$2', 'incoming.row_num', 'incoming.claim') : 'false'} AS narrower
   FROM incoming`;
 const OVERLAY_SQL_WITH_HOLDS = OVERLAY_SQL(true);

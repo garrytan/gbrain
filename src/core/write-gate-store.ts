@@ -3,6 +3,11 @@
  * the holding table for quarantined facts and takes (`write_gate_holds`),
  * DDL in `write-gate-schema.ts`.
  *
+ * A hold remembers its page's permanent id (`page_id`), so renaming the page
+ * cannot lift it; a hold recorded before any page took its slug stays unbound
+ * and matches by slug until a page is created there (engine-sql/hold-binding.ts
+ * binds it). The readers and sweeps share `write-gate-binding.ts`.
+ *
  * Writers record inside their publication transaction (pass the `tx`), so a
  * rolled-back write leaves no orphan receipt. Only flag and quarantine
  * verdicts are recorded; `allow` and `reject` write nothing here. Owner
@@ -92,6 +97,13 @@ export interface WriteGateHoldInput {
   sourceId: string;
   /** The page the row would have landed on ('' when not page-bound). */
   slug?: string | null;
+  /**
+   * The permanent id of that page, when the producer already read it before gating. The hold is bound to this page
+   * whatever it is called by the time the hold is written; when the page no longer exists, or the producer holds no
+   * page, the page at (sourceId, slug) is looked up inside the same INSERT, and with no page there the hold stays
+   * unbound and matches by slug until a page is created.
+   */
+  pageId?: number | null;
   /** The row exactly as the writer would have inserted it. */
   payload: Record<string, unknown>;
   /** Gated text fields of the row, for the dedupe fingerprint. */
@@ -101,26 +113,43 @@ export interface WriteGateHoldInput {
   requestId?: string | null;
 }
 
+const HOLD_COLUMNS = 'kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id';
+// $1..$12 are the hold's own values; every variant selects them with the page id (or NULL) as the last column.
+const HOLD_VALUES = '$1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text';
+const HOLD_REOPEN = `DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
+// A reopened hold takes the slug with the payload (the payload names the page by the slug it was gated under, and a release rebases that name
+// to the bound page's current one only while the two agree). The two dedupe keys are disjoint (write-gate-schema.ts): each statement names the index of the kind of hold it writes.
+const BOUND_KEY = 'ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL';
+const UNBOUND_KEY = 'ON CONFLICT (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL';
+
 /**
  * Hold a quarantined fact or take instead of inserting it, plus its receipt.
- * The same content arriving again (same source, slug, fingerprint and
- * detector version) re-opens the existing hold rather than adding a row.
+ * The same content arriving again for the same page (bound hold) or the same
+ * slug (unbound hold), with the same fingerprint and detector version,
+ * re-opens the existing hold rather than adding a row. The page is the id the
+ * producer passed, else the page at (source, slug) found inside the INSERT, so
+ * no page lock is taken.
  */
 export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): Promise<{ holdId: number; receiptId: number | null }> {
   const a = input.assessment;
-  const rows = await tx.executeRaw<{ id: string }>(
-    `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8::text[], $9, $10::text::jsonb, $11::text::jsonb, $12)
-     ON CONFLICT (source_id, slug, fingerprint, detector_version) DO UPDATE
-       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
-           tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
-           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
-     RETURNING id::text AS id`,
-    [input.kind, input.sourceId, input.slug ?? '', holdFingerprint(input.kind, input.texts), a.detectorVersion, a.tier, a.families, reasonList(a),
-      a.detectorError, JSON.stringify(input.payload), input.origin ? JSON.stringify(input.origin) : null, input.requestId ?? null]);
-  const holdId = Number(rows[0]!.id);
   const fingerprint = holdFingerprint(input.kind, input.texts);
-  noteBelief({ kind: 'held', holdKind: input.kind, fingerprint, holdId, slug: input.slug ?? '', tier: a.tier, valueHash: fingerprint });
+  const slug = input.slug ?? '';
+  const values = [input.kind, input.sourceId, slug, fingerprint, a.detectorVersion, a.tier, a.families, reasonList(a),
+    a.detectorError, JSON.stringify(input.payload), input.origin ? JSON.stringify(input.origin) : null, input.requestId ?? null];
+  const bound = (page: string, extra: unknown[]) => tx.executeRaw<{ id: string }>(
+    `INSERT INTO write_gate_holds (${HOLD_COLUMNS}) SELECT ${HOLD_VALUES}, p.id FROM pages p WHERE ${page} ${BOUND_KEY} ${HOLD_REOPEN}`, [...values, ...extra]);
+  let rows: Array<{ id: string }> = [];
+  if (input.pageId != null) rows = await bound('p.id = $13::bigint AND p.source_id = $2', [input.pageId]);
+  if (!rows.length && slug !== '') rows = await bound('p.source_id = $2 AND p.slug = $3', []);
+  if (!rows.length) {
+    rows = await tx.executeRaw<{ id: string }>(`INSERT INTO write_gate_holds (${HOLD_COLUMNS}) VALUES (${HOLD_VALUES}, NULL) ${UNBOUND_KEY} ${HOLD_REOPEN}`, values);
+  }
+  const holdId = Number(rows[0]!.id);
+  noteBelief({ kind: 'held', holdKind: input.kind, fingerprint, holdId, slug, tier: a.tier, valueHash: fingerprint });
   const receiptId = await recordWriteGateReceipt(tx, { targetTable: 'write_gate_holds', targetId: holdId, sourceId: input.sourceId, assessment: { ...a, verdict: 'quarantine' }, requestId: input.requestId });
   return { holdId, receiptId };
 }
@@ -131,6 +160,10 @@ export interface WriteGateHold {
   kind: WriteGateHoldKind;
   source_id: string;
   slug: string;
+  /** The page's permanent id; null for a hold no page was tied to (it matches by slug, or by `page_candidates`). */
+  page_id: number | null;
+  /** Pages an upgrade could not choose between; the hold is held for each. Null for every hold a writer recorded. */
+  page_candidates: number[] | null;
   tier: string;
   detector_version: number;
   detector_error: boolean;
@@ -148,11 +181,12 @@ export interface WriteGateHold {
 }
 
 const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
-const HOLD_SELECT = `SELECT id::text AS id, kind, source_id, slug, tier, detector_version, detector_error, reason_families, reasons, payload, write_origin,
+const HOLD_SELECT = `SELECT id::text AS id, kind, source_id, slug, page_id::text AS page_id, page_candidates::text[] AS page_candidates, tier, detector_version, detector_error, reason_families, reasons, payload, write_origin,
   request_id, status, seen_count, ${ISO('created_at')} AS created_at, ${ISO('last_seen_at')} AS last_seen_at, ${ISO('decided_at')} AS decided_at, decided_by
   FROM write_gate_holds`;
 
-type HoldRow = Omit<WriteGateHold, 'id' | 'ref' | 'payload' | 'write_origin'> & { id: string; payload: unknown; write_origin: unknown };
+type HoldRow = Omit<WriteGateHold, 'id' | 'ref' | 'payload' | 'write_origin' | 'page_id' | 'page_candidates'> & { id: string; payload: unknown; write_origin: unknown;
+  page_id: string | null; page_candidates: string[] | null };
 
 function jsonObject(value: unknown): Record<string, unknown> | null {
   const parsed = typeof value === 'string' ? JSON.parse(value) as unknown : value;
@@ -162,7 +196,7 @@ function jsonObject(value: unknown): Record<string, unknown> | null {
 function toHold(row: HoldRow): WriteGateHold {
   const id = Number(row.id);
   return {
-    ...row, id, ref: `h${id}`, detector_version: Number(row.detector_version), seen_count: Number(row.seen_count),
+    ...row, id, ref: `h${id}`, page_id: row.page_id === null ? null : Number(row.page_id), page_candidates: row.page_candidates?.map(Number) ?? null, detector_version: Number(row.detector_version), seen_count: Number(row.seen_count),
     payload: jsonObject(row.payload) ?? {}, write_origin: jsonObject(row.write_origin) as WriteGateOrigin | null,
   };
 }
@@ -255,6 +289,8 @@ export interface GatedRowDecision {
 export interface GatedRowContext {
   sourceId: string;
   slug?: string | null;
+  /** The permanent id of the page, when the caller already read it (see WriteGateHoldInput.pageId). */
+  pageId?: number | null;
   /** The row exactly as the writer would insert it (kept in the hold). */
   payload: Record<string, unknown>;
   input: WriteGateInput;
@@ -267,7 +303,7 @@ function decide(kind: WriteGateHoldKind, assessment: WriteGateAssessment, texts:
   if (assessment.verdict !== 'quarantine') return { assessment, action: 'insert', hold: null, requestId };
   return {
     assessment, action: 'hold', requestId,
-    hold: { kind, sourceId: ctx.sourceId, slug: ctx.slug ?? '', payload: ctx.payload, texts, assessment, origin: ctx.input.origin ?? null, requestId: ctx.input.requestId ?? null },
+    hold: { kind, sourceId: ctx.sourceId, slug: ctx.slug ?? '', pageId: ctx.pageId ?? null, payload: ctx.payload, texts, assessment, origin: ctx.input.origin ?? null, requestId: ctx.input.requestId ?? null },
   };
 }
 
