@@ -411,6 +411,19 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect(failed.evidence.privacy_checks_unsettled_7d).toBe(1);
     });
 
+    test('a read made under excludePrivate that the Rust adapter refuses (capability_missing) leaves the privacy question open: privacy_checks_unsettled_7d is above 0 and privacy_diverged stays absent', async () => {
+      await privacyFixture(ctx.primary());
+      const rig = await start();
+      rig.rust.getLinks = async () => { throw Object.assign(new Error('refused'), { code: 'engine_capability_missing', reason: 'exclude_private_unsupported' }); };
+      await withCallerAccess(ALICE, () => rig.engine.getLinks('open/a', { excludePrivate: true } as never));
+      const rows = await rig.finish();
+      expect(rows[0]).toMatchObject({ op: 'getLinks', outcome: 'capability_missing', private_read: true });
+      appendLedgerRows(rig.dir, [{ ts: new Date().toISOString(), op: 'getPage', outcome: 'match', epoch_id: readEpoch(rig.dir)!.epoch_id, primary_ms: 1, rust_ms: 1, primary_rows: 1, rust_rows: 1 }]); // an unrelated match: something was compared
+      const status = buildEvidenceStatus({ dir: rig.dir });
+      expect(status.evidence?.privacy_checks_unsettled_7d).toBeGreaterThan(0);
+      expect(status.privacy_diverged).toBeUndefined();
+    });
+
     test('a crash between reruns leaves the sample unsettled for privacy: the first rerun\'s privacy check moved, the child is held in its backoff before the second run, and whatever is on disk then (all a crash would leave) already has an open privacy check', async () => {
       const probe = 'a2_crash_probe';
       await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);

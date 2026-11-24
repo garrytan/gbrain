@@ -22,6 +22,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ShadowOutcome } from './classify.ts';
 import { readEpoch, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, RANKED_PRIVATE_EXCEPTION, SHADOW_KEYWORD_RANKER } from './exactness.ts';
 import { ledgerDir, readAllFaults, readJsonlStrict, type ShadowLedgerRow } from './ledger.ts';
@@ -93,6 +94,9 @@ export interface EvidenceOptions {
   readinessDays?: number;
 }
 
+/** The outcomes that settle the privacy question of a private read (a completed comparison with an outcome; `stale` is the lagged mismatch). Not `order_diff`, `inconclusive`, `capability_missing`, `error`, `timeout`, `addon_unavailable`. */
+export const PRIVACY_SETTLING_OUTCOMES = ['match', 'collation_order', 'diff', 'privacy_diverged', 'stale'] as const satisfies readonly ShadowOutcome[];
+
 const COMPARED = new Set(['match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order']);
 const RUST_ERRORS = new Set(['error', 'timeout', 'addon_unavailable']);
 
@@ -139,10 +143,11 @@ function foldLedger(dir: string, epoch: EpochManifest, now: number): ReadFold | 
     if (accepted) fold.ranking_differences[r.op] = (fold.ranking_differences[r.op] ?? 0) + 1;
     if (COMPARED.has(r.outcome)) fold.compared++;
     if (r.outcome === 'privacy_diverged') fold.privacy_rows++;
-    // The privacy question of a read made under excludePrivate is open by default: only a row that completed a comparison with an outcome settles it
-    // (a match, a diff, a violation, a lagged mismatch, a rerun that matched or differed). Every other row of such a read counts as open, whatever reason it carries or
-    // lacks: a pending row (a crash or restart left it so), a skip, a timeout or error, an inconclusive row with no completed rerun. A reason alone also opens it (older rows).
-    const open = r.private_read === true && !rerunDone && (r.rerun === 'pending' || r.rerun?.startsWith('skipped:') || r.outcome === 'inconclusive' || RUST_ERRORS.has(r.outcome));
+    // The privacy question of a read made under excludePrivate is open by default, and only an ALLOWLIST settles it: a row of such a read settles it when a rerun completed
+    // (matched or differed), or when its outcome is one that completed a comparison (PRIVACY_SETTLING_OUTCOMES) and no rerun is pending or skipped. Everything else is open,
+    // whatever reason it carries or lacks, including an outcome nobody has written yet. A reason alone also opens it (older rows without the private-read marker).
+    const settled = rerunDone || ((PRIVACY_SETTLING_OUTCOMES as readonly string[]).includes(r.outcome) && r.rerun !== 'pending' && !r.rerun?.startsWith('skipped:'));
+    const open = r.private_read === true && !settled;
     if (recent && !rerunDone && (open || (r.outcome === 'inconclusive' && (r.reason?.startsWith('privacy_check_') || r.rerun?.startsWith('skipped:privacy_check_'))))) fold.privacy_unsettled_7d++;
     if (r.outcome === 'match' || r.outcome === 'collation_order') fold.matches.set(r.op, (fold.matches.get(r.op) ?? 0) + 1);
     if (r.outcome === 'collation_order') fold.collation.set(r.op, (fold.collation.get(r.op) ?? 0) + 1);

@@ -19,13 +19,11 @@
 import { canonicalJson } from './codec.ts';
 import type { ShadowReadKind } from './reads.ts';
 
-export type ShadowOutcome =
-  | 'match' | 'order_diff' | 'diff' | 'stale' | 'inconclusive' | 'collation_order' | 'privacy_diverged'
-  | 'capability_missing' | 'error' | 'timeout' | 'addon_unavailable';
-
-export const SHADOW_OUTCOMES: readonly ShadowOutcome[] = [
+/** Every outcome a ledger row can carry. The type is derived from this list, so a new outcome is added here and nowhere else (the evidence fold's settle allowlist and its table test then need a decision for it). */
+export const SHADOW_OUTCOMES = [
   'match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order', 'privacy_diverged', 'capability_missing', 'error', 'timeout', 'addon_unavailable',
-];
+] as const;
+export type ShadowOutcome = typeof SHADOW_OUTCOMES[number];
 
 export interface Classification {
   outcome: ShadowOutcome;

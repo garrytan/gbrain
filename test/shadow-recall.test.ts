@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { evaluateReadiness } from '../src/core/engine-swap/readiness.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildEvidenceStatus, renderEvidenceStatus } from '../src/shadow/evidence.ts';
+import { SHADOW_OUTCOMES, type ShadowOutcome } from '../src/shadow/classify.ts';
 import { appendFault, appendLedgerRows, type ShadowLedgerRow } from '../src/shadow/ledger.ts';
 import { shadowStatusDocument } from '../src/shadow/status-document.ts';
 import { RERUN_ATTEMPTS, RERUN_BACKOFF_JITTER, RERUN_BACKOFF_MS, RERUN_BACKOFF_TOTAL_MS, rerunBackoffMs, scoreWithReruns } from '../src/shadow/child.ts';
@@ -345,10 +346,10 @@ describe('a read made under excludePrivate is unsettled by default', () => {
     }
   });
 
-  test('only a completed check with an outcome settles it: a match, a diff, a reported ranking difference, a violation, a rerun that matched or differed, a lagged mismatch', () => {
+  test('only a completed check with an outcome settles it: a match, a diff, a reported ranking difference, a violation, a rerun that matched or differed, a lagged mismatch (stale)', () => {
     const r = unsettled((e) => [
       priv(e, 'match'), priv(e, 'diff', { mismatch: 'diff', reason: 'extra_rows_cleared', rerun: 'differed' }), priv(e, 'diff', { reason: 'rerun_differs', rerun: 'differed' }),
-      priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'matched' }), priv(e, 'order_diff'), priv(e, 'stale', { mismatch: 'diff' }), priv(e, 'privacy_diverged', { reason: 'row_not_readable_by_caller' }),
+      priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'matched' }), priv(e, 'stale', { mismatch: 'diff' }), priv(e, 'privacy_diverged', { reason: 'row_not_readable_by_caller' }),
       priv(e, 'inconclusive', { mismatch: 'diff', rerun: 'pending', sid: 'done.1' }), priv(e, 'diff', { reason: 'rerun_differs', rerun: 'differed', sid: 'done.1' }), // a pending row replaced by its completion row
     ]);
     expect(r).toEqual({ unsettled: 0, diverged: 1 });
@@ -367,5 +368,34 @@ describe('a read made under excludePrivate is unsettled by default', () => {
     const doc = await shadowStatusDocument({ key: 'k', dir }, NOW);
     expect(doc.privacy_diverged).toBe(0);
     expect(evaluateReadiness(doc as never, NOW).criteria.find((c) => c.n === 6)).toMatchObject({ state: 'pass' });
+  });
+});
+
+describe('the fold settles the privacy question of a private read by an allowlist of outcomes', () => {
+  // The one place each ledger outcome is classified. A value added to SHADOW_OUTCOMES makes this Record fail to compile, and the test below fail, until someone decides.
+  const SETTLES: Record<ShadowOutcome, boolean> = {
+    match: true, collation_order: true, diff: true, privacy_diverged: true, stale: true, // stale is the lagged mismatch
+    order_diff: false, inconclusive: false, capability_missing: false, error: false, timeout: false, addon_unavailable: false,
+  };
+  test('every ledger outcome is classified: the table and the outcome list cannot drift apart', () => {
+    expect(Object.keys(SETTLES).sort()).toEqual([...SHADOW_OUTCOMES].sort());
+  });
+  test('each outcome, with no rerun, a pending one, a skipped one, a matched one and a differed one: only the allowlist settles, and a completed rerun settles whatever the outcome', () => {
+    for (const outcome of SHADOW_OUTCOMES) {
+      for (const rerun of [undefined, 'pending', 'skipped:moved', 'matched', 'differed'] as const) {
+        const { dir, epoch } = epochDir();
+        appendLedgerRows(dir, [row(epoch, 'getPage', 'match'), row(epoch, 'searchVector', outcome, { private_read: true, ...(rerun ? { rerun, sid: 's.1' } : {}) })]);
+        const open = rerun === 'matched' || rerun === 'differed' ? false : rerun === 'pending' || rerun?.startsWith('skipped:') ? true : !SETTLES[outcome];
+        const s = status(dir);
+        expect([outcome, rerun, s.evidence!.privacy_checks_unsettled_7d > 0, s.privacy_diverged === undefined]).toEqual([outcome, rerun, open, open]);
+      }
+    }
+  });
+  test('the same rows without the private-read marker never open the privacy question', () => {
+    for (const outcome of SHADOW_OUTCOMES) {
+      const { dir, epoch } = epochDir();
+      appendLedgerRows(dir, [row(epoch, 'getPage', 'match'), row(epoch, 'getTags', outcome, { rerun: 'skipped:moved' }), row(epoch, 'getTags', outcome, { rerun: 'pending', sid: 'n.1' })]);
+      expect([outcome, status(dir).evidence!.privacy_checks_unsettled_7d]).toEqual([outcome, 0]);
+    }
   });
 });
