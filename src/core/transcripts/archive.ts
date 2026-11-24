@@ -409,13 +409,29 @@ export interface ArchiveRescopeSkip { code: 'archive_rescope_owner_unset' | 'arc
  * Runs the owner-only re-scope for a brain archived while personal that is now shared, whether or not the archive is
  * still on (an unset switch resolves off once the brain is shared). Returns whether one was due.
  */
-export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: string): Promise<boolean> {
+export async function reconcileArchiveAudience(engine: BrainEngine, sourceId?: string, holdsRunLock = false): Promise<boolean> {
   const configured = await configuredSource(engine, sourceId);
   if (await engine.getConfig(`${AUDIENCE_PREFIX}${configured}`) !== 'personal') return false;
   const privacy = await resolvePrivacy(engine);
   if (!privacy.shared) return false;
-  await reconcileAudience(engine, configured, privacy);
+  await (holdsRunLock ? reconcileAudience(engine, configured, privacy) : reconcileWithoutRunLock(engine, configured, privacy));
   return true;
+}
+
+/**
+ * reconcileAudience for a caller that does not hold the source's run lock (an archive run on the <source>-owner twin,
+ * or one that found the archive off): the audience is recorded only under that lock. While another run holds it, that
+ * run may have started on the personal brain and still be writing pages with no readers, so the rules apply and the
+ * audience stays recorded personal, and the next run re-scopes what that run wrote (archive_rescope_pending).
+ */
+async function reconcileWithoutRunLock(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
+  const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
+  try {
+    await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileAudience(engine, sourceId, privacy));
+  } catch (err) {
+    if (!(err instanceof LockUnavailableError)) throw err;
+    await reconcileAudience(engine, sourceId, privacy, false);
+  }
 }
 
 /**
@@ -437,7 +453,7 @@ export async function rescopeArchiveOnShared(engine: BrainEngine): Promise<Array
   for (const { key } of rows) {
     const sourceId = key.slice(AUDIENCE_PREFIX.length);
     try {
-      if (!await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileArchiveAudience(engine, sourceId))) continue;
+      if (!await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, () => reconcileArchiveAudience(engine, sourceId, true))) continue;
     } catch (err) {
       if (!(err instanceof LockUnavailableError)) throw err;
       await reconcileAudience(engine, sourceId, privacy, false);
@@ -703,7 +719,10 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   // A dry run builds no write context, but reports the write path the real run would take with the same options.
   const managed = (dryRun ? !!(opts.context ?? opts.makeContext) : !!context) && await managedPersistenceEnabled(engine);
   const writeMode: ArchiveRunResult['write_mode'] = managed ? 'coordinator' : (!privacy.shared && isGitRepo(source.local_path) ? 'repo' : 'database');
-  if (!dryRun) await reconcileAudience(engine, await configuredSource(engine, opts.sourceId), privacy);
+  if (!dryRun) {
+    const configured = await configuredSource(engine, opts.sourceId);
+    await (configured === sourceId ? reconcileAudience(engine, configured, privacy) : reconcileWithoutRunLock(engine, configured, privacy));
+  }
   const tz = await archiveTimeZone(engine, sourceId);
   if (!tz.pinned && !dryRun) await engine.setConfig(PIN_PREFIX + sourceId, tz.timezone);
   const today = localDay(now.toISOString(), tz.timezone);
