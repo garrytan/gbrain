@@ -14,8 +14,12 @@ import type { StoreBrain } from '../src/core/rust-engine/store.ts';
 
 const brain = { readLinkTargetPages: async () => [] } as unknown as StoreBrain;
 const policy: WriterReadPolicy = { identities: [['member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false };
-const serve = (ambient: { owner?: boolean }) => withCallerAccess({ restricted: true, hidePrivate: true, ...ambient }, () => readLinkTargetPages(brain, 'work', ['notes/a'], policy))
+const serve = (ambient: { owner?: boolean }, writer: WriterReadPolicy = policy) => withCallerAccess({ restricted: true, hidePrivate: true, ...ambient }, () => readLinkTargetPages(brain, 'work', ['notes/a'], writer))
   .then(() => 'served', (e: { code?: string }) => e.code);
 
 test('a one-identity writer policy is served for a plain member', async () => expect(await serve({})).toBe('served'));
 test('a one-identity writer policy is served for the brain owner', async () => expect(await serve({ owner: true })).toBe('served'));
+test('every other writer policy shape is still refused, owner or not', async () => {
+  const two = { ...policy, identities: [['member:alice-example'], ['member:bob-example']] }, labelled = { ...policy, labelledOnly: true }, folder = { ...policy, satisfiedRuleIds: ['work:a'] };
+  for (const writer of [two, labelled, folder]) for (const owner of [false, true]) expect(await serve({ owner }, writer)).toBe('engine_capability_missing');
+});

@@ -60,6 +60,10 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
   // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
   ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
+  // The owner write's reads of the stored page (persistence/page-visibility.ts ownerRewriteOf, authorizePageVisibility's hiddenUnder and probe).
+  ['readPagePrivacyHidden', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'a')],
+  ['readLinkTargetPages', 'AS visible', e => e.readLinkTargetPages('default', ['a'], null)],
+  ['readWriteVisibilityProbe', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'a')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];

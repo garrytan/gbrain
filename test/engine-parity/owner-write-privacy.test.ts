@@ -71,6 +71,16 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     return out;
   });
 
+  parityTest('the owner\'s put_page rewrite of a page naming the owner as a reader, on a brain with an owner-only source, is written', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await createSource(engine, backend, 'vault', { owner_only: true });
+    await addMember(engine, 'bob-example');
+    await engine.putPage('notes/shared', { type: 'note', title: 'Shared', compiled_truth: 'First.', timeline: '', frontmatter: { readable_by: [OWNER, 'bob-example'] } }, { sourceId: SRC });
+    const out = await ownerPut(engine, 'notes/shared', `---\ntitle: Shared\nreadable_by: [${OWNER}, bob-example]\n---\nSecond.`, (await engine.getPage('notes/shared', { sourceId: SRC }))?.knowledge_revision);
+    expect(out).toBe('written');
+    return out;
+  });
+
   // Not a parityTest: on Rust a non-owner member's call also reaches a labelled-only raw read that the dispatch swallows (row 32e-b),
   // and the harness fails a case that caught a refusal. The answers must still be equal on every arm.
   test('a plain member\'s put_page rewrite of an existing page, open or naming its readers, is written on every arm', async () => {
