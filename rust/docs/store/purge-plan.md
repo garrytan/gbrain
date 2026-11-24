@@ -36,8 +36,9 @@ A claim matches as the SQL does: `strpos(lower(text), needle) > 0`, with `lower`
 
 ## Members the JS layer answers
 
-- `listStagingPartEdges` and `listDerivedRows` answer `[]`: the store keeps no staging parts and no derivation
-  edges. `setPurgeProbeTimeout` does nothing: a store read has no statement deadline.
+- `listStagingPartEdges` answers `[]`: the store keeps no staging parts. `listDerivedRows(frontier, limit)` reads the recorded
+  derivation inputs through the `h 0x0B` input index and answers the distinct `{ derived_table, derived_id }` rows in byte order, at most
+  `limit`. `setPurgeProbeTimeout` does nothing: a store read has no statement deadline.
 - The probes (`store-members/purge-plan.ts`): the store probes `links` (context of links from or to the source's
   pages, item `link:<id> <from> -> <to>`), `timeline_entries` (summary and detail, item `timeline:<id> <slug> <date>`),
   `raw_data` (the data's JSON text, item `raw_data:<id> <slug> <source>`; naming a row written before the store kept

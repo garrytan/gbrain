@@ -24,7 +24,7 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.readPageSnapshotsBatch(refs, { maxBytes?, includeDeleted? }?)` | `{ snapshots, covered }`. `snapshots[i]` is `readPageSnapshot` of ref `i` or `null`; `covered` counts the refs whose prior refs' `compiled_truth` + `timeline` bytes stay within `maxBytes` (the first ref always counts). A segmented page (NULL body) comes back with `compiled_truth` and `timeline` `null` and counts as 0 bytes; the TypeScript member decodes it with `toGetPage`, so reading its body throws `page_body_segmented` | `readPageSnapshotsBatch` |
-| `brain.findDuplicatePage(sourceId, { hash, frontmatterId?, excludeSlug? })` | `{ id, slug, content_hash }` or `null`: a live page with frontmatter `id` equal to `frontmatterId`, else one with `content_hash` equal to `hash`; lowest id wins | `findDuplicatePage` |
+| `brain.findDuplicatePage(sourceId, { hash, frontmatterId?, excludeSlug? })` | `{ id, slug }` or `null`: a live page with frontmatter `id` equal to `frontmatterId`, else one with `content_hash` equal to `hash`; lowest id wins | `findDuplicatePage` |
 | `brain.findDuplicatePages(sourceId, queries)` | one `findDuplicatePage` answer per query | `findDuplicatePages` |
 | `brain.softDeletePages(slugs, { sourceId? }?)` | slugs that turned deleted now, once each, in page id order. `updated_at` stays; the knowledge revision changes | `softDeletePages` |
 | `brain.deletePages(slugs, { sourceId? }?)` | slugs removed (live or deleted), in page id order. In the same transaction it drops those slugs from captured eval candidates of the source (`eval_capture::remove_retrieved_slugs`), then their page aliases, the slug aliases that resolve to them and the rename history rows that end at them (`aliases::scrub_purged_slug_stores`, the `scrubPurgedSlugStores` order of `src/core/persistence/purge-slug-stores.ts:6`) | `deletePages` |
@@ -130,11 +130,11 @@ applies the two that read only the page row and `config`, and the other two neve
   `Etc/GMT0`, so a day is 24 hours. Text compares in byte order.
 - Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`, `pages.ts:349`) and
   derived origin park (`derivedOriginPurgeHold`, `src/core/persistence/derived-origin-hold.ts:31`)
-  never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
-  (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
-  called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  store serves the resumable-op checkpoints (persistence.md, "Op checkpoints"), not these rows; the
-  family that serves these writers must add both holds.
+  never match here: `purgeDeletedPages` checks only the derived-retirement and atom-retirement holds above and does not read
+  `sync-identity-downgrade` checkpoints or derived-origin parks. The rows can exist (`recordIdentityDowngrades` and
+  `parkDerivedOrigin` write them through `executeRaw`, which a Rust brain refuses, but the store also writes op-checkpoint
+  documents with `writeOpCheckpointDoc` and parks with `upsertDerivedOriginPark`), so such a row does not protect a page
+  from this purge; a store that serves these writers must add both holds.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

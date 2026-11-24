@@ -22,7 +22,7 @@ Differences from the SQL engines:
 
 - The store keeps no source commit or frontmatter-trust flag. A migrated source gets `last_commit` null and `trust_frontmatter_overrides` false, as a fresh source row has them. Its `archived_at` and `archive_expires_at` come from `listArchivedSourceRows` (null for an active source and for an archive with no times). Its `contextual_retrieval_mode` is the stored override, read through `getSource`. A source with no name takes its id as its name.
 - A mute keeps its id and `created_at`. The store takes a mute id on every add, also one that lands on an existing row, as `nextval` does before `ON CONFLICT`.
-- The store records no belief events and no persistence worktrees, so `held` never names `belief_events` or `persistence_worktrees`.
+- The store records belief events and persistence worktrees, but `readEngineMigrationHistory` probes only `persistence_requests` and `fact_withdrawals`, so `held` never names `belief_events` or `persistence_worktrees`: those histories do not block a migration.
 - A plain `putPage` writes no write request and no page version on the store, so a brain written only through page writes migrates. `createVersion` writes a version, and the migration then refuses with the page-history message, as on PGLite.
 - When a Rust brain holds history the copier would drop, the refusal keeps the brain on the Rust engine and changes nothing (`engineMigrationFix`, `src/core/persistence/maintenance.ts`).
 - `facts` and `open_loops` carry the columns the store keeps. The copier intersects them with the target's columns, so a column the store does not keep takes the target's default.

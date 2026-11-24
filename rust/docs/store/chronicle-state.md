@@ -12,7 +12,7 @@ the same members from `chronicle_state.rs`, over the ledger rows (`a 0x0E`) and 
 | --- | --- |
 | `brain.readChronicleRow(key)` | The ledger row at `(sourceId, pageId, contentHash, extractorVersion)` with every column, or null. `decided_at` and `updated_at` are ISO text; the TS member turns them and `next_attempt_at` into `Date`, as the SQL engines answer them |
 | `brain.hasPendingAutoChronicleRow(sourceId, pageId, extractorVersion)` | Whether a row of the page at that extractor version is `pending`, `auto` and not `no_extract`, at any content hash (the row `add_link` carries to the revision it publishes) |
-| `brain.hasExtractedEvents(sourceId, pageId)` | Whether any row of the page is `extracted` |
+| `brain.hasExtractedEvents(sourceId, pageId)` | Whether a row of the page is `extracted` and lists at least one event hash; an extracted row with no event hashes does not count |
 | `brain.countRecentChronicleReservations()` | The judge reservations taken in the last 24 hours (`chronicleDailyRemaining` subtracts it from the daily limit) |
 | `brain.readPageTruthLead(pageId)` | The page's stored `truth_lead` (a segmented page's body prefix), or null for a page with none or no page |
 | `brain.insertConfigIfAbsent(key, value)` | true when the key had no value and `value` was stored; false when a value stays. The TS member answers nothing, as the SQL `ON CONFLICT DO NOTHING` does |
@@ -27,6 +27,6 @@ bound transaction when the brain is in one, else a transaction the call opens. A
 
 A page delete removes the page's ledger rows and a source delete removes the source's (`cascade.rs`), as the
 `ON DELETE CASCADE` references do. The judge reservations stay after either delete on every engine:
-`chronicle_judge_reservations` has no reference to a page or source. On this engine no writer takes a reservation yet
-(`reserveChronicleSlot` and `pruneChronicleReservations` stay `executeRaw` statements, which a Rust brain refuses), so
-`countRecentChronicleReservations` answers 0 there.
+`chronicle_judge_reservations` has no reference to a page or source. On this engine `reserveChronicleJudgeSlot(limit, key)`
+takes a reservation and `pruneChronicleReservations()` deletes those older than 48 hours (`chronicle_ledger.rs`), so
+`countRecentChronicleReservations` counts the reservations stored in the last 24 hours; it is not fixed at 0.
