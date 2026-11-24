@@ -37,6 +37,7 @@ src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
 src/commands/doctor/checks/access-lineage.ts	execute_raw	2
 src/commands/doctor/checks/access-pages-read-by-nobody.ts	execute_raw	5	GBRA-582 item 9 (handover PR 2): set-based read-by-nobody scan over pages.page_readers and access_group_members; no typed engine method exists yet
+src/commands/doctor/checks/access-reach.ts	execute_raw	6	reads sources, access_member_sources, pages, access_members, access_tokens and oauth_clients for the read-only doctor reach checks (access_shared_source_unread, access_disabled_member_credentials; GST-2994, #9586, open before this ratchet landed); no typed engine method exists yet
 src/commands/doctor/checks/agent-session-facts.ts	execute_raw	1
 src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
 src/commands/doctor/checks/atom-fence-rows.ts	execute_raw	1
@@ -157,6 +158,7 @@ src/commands/doctor/checks/unwithdrawn-facts.ts	execute_raw	1
 src/commands/doctor/checks/vector-coverage.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/checks/wakeshift.ts	execute_raw	3
+src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	3	read-only doctor check: a row-security visibility preflight, one keyset read of held rows and one per-batch page and rename lookup; all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
 src/commands/doctor/checks/writer-version.ts	execute_raw	1
 src/commands/doctor/last-known.ts	execute_raw	2
 src/commands/doctor/registry.ts	execute_raw	1

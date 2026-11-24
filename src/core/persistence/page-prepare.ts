@@ -168,7 +168,7 @@ function canonicalDifference(a: ReturnType<typeof canonical>, b: ReturnType<type
   const fields = (['title', 'type', 'tags', 'compiled_truth', 'timeline'] as const).filter(field => digest(a[field]) !== digest(b[field]));
   return [...keys, ...fields.map(field => field === 'compiled_truth' ? 'body' : field)];
 }
-interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
+interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string | null; }
 /**
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
@@ -193,12 +193,16 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   const via = row.authority.remote ? 'mcp:put_page' : 'put_page';
   // Historical frontmatter was caller-controlled. Only trusted provenance
   // columns may supply a prior channel or timestamp for the first-write record.
+  // #10025: a stored ingested_at the column lacks stays in the frontmatter, and the column stays empty (uncertified).
+  const storedAt = first?.ingested_at ? undefined : first?.frontmatter?.ingested_at;
+  const keepStoredAt = typeof storedAt === 'string' && !Number.isNaN(new Date(storedAt).getTime());
   const stamp: CanonicalProvenance = {
     source_kind: string(first?.source_kind) ?? string(row.intent?.source_kind) ?? via,
     ingested_via: string(first?.ingested_via) ?? string(row.intent?.ingested_via) ?? via,
-    ingested_at: new Date(first?.ingested_at ?? row.created_at).toISOString(),
+    ingested_at: keepStoredAt ? null : new Date(first?.ingested_at ?? row.created_at).toISOString(),
   };
-  Object.assign(parsed.frontmatter, stamp);
+  const { ingested_at, ...channel } = stamp;
+  Object.assign(parsed.frontmatter, ingested_at ? stamp : channel);
   return stamp;
 }
 function serverOwnsProvenance(row: WriteRequest): boolean {

@@ -115,6 +115,7 @@ test/derived-origin-carry-private.test.ts
 test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-access-pages-read-by-nobody.test.ts
+test/doctor-access-reach.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
@@ -128,6 +129,7 @@ test/doctor-session-lane-gbra133.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
 test/doctor-typed-reads-deadline.test.ts
+test/doctor-write-gate-holds-stranded.test.ts
 test/edge-whitespace-twins.test.ts
 test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
@@ -244,6 +246,7 @@ test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
 test/ghost-pages-git-canonical-7967.test.ts
+test/ghost-pages-only-copy-gst3637.test.ts
 test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
@@ -637,6 +640,7 @@ test/persistence-publication-deadline.test.ts
 test/persistence-receipt-git-state.test.ts
 test/persistence-receipt-true-up.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
+test/persistence-recovery-scan-payload-10083.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
