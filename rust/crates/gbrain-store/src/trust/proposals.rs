@@ -104,25 +104,25 @@ pub struct Decider {
 
 /// What is stored for a proposal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ProposalRecord {
-    id: u64,
-    action: String,
-    source_id: String,
-    target_table: String,
-    target_id: i64,
-    related_table: Option<String>,
-    related_id: Option<i64>,
+pub(crate) struct ProposalRecord {
+    pub(crate) id: u64,
+    pub(crate) action: String,
+    pub(crate) source_id: String,
+    pub(crate) target_table: String,
+    pub(crate) target_id: i64,
+    pub(crate) related_table: Option<String>,
+    pub(crate) related_id: Option<i64>,
     #[serde(deserialize_with = "crate::jsonb::de_value")]
-    before_state: Value,
+    pub(crate) before_state: Value,
     #[serde(deserialize_with = "crate::jsonb::de_value")]
-    after_state: Value,
-    proposer: String,
-    status: String,
-    decided_at_us: Option<i64>,
-    decided_principal_kind: Option<String>,
-    decided_principal_id: Option<String>,
-    created_at_us: i64,
-    updated_at_us: i64,
+    pub(crate) after_state: Value,
+    pub(crate) proposer: String,
+    pub(crate) status: String,
+    pub(crate) decided_at_us: Option<i64>,
+    pub(crate) decided_principal_kind: Option<String>,
+    pub(crate) decided_principal_id: Option<String>,
+    pub(crate) created_at_us: i64,
+    pub(crate) updated_at_us: i64,
 }
 
 impl ProposalRecord {
@@ -301,6 +301,49 @@ fn json_no_nul(op: &str, name: &str, value: &Value) -> Result<()> {
 
 fn put_record(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<()> {
     put_json(tx, &by_id(record.id), record)
+}
+
+/// The shadow seed (`seed.rs`): stores `record`, a proposal copied from another engine with its own
+/// id, status, decision and times, with the keys `insert_trust_proposal` writes: the row index
+/// entries, and the pending unique key when the status is `pending`. `false` when the id already
+/// holds a proposal; the pending key held by another id is the pending unique index violation.
+pub(crate) fn seed_proposal(tx: &mut dyn KvWrite, record: &ProposalRecord) -> Result<bool> {
+    const OP: &str = "shadow_seed trust_proposals";
+    if read_record(&*tx, record.id)?.is_some() {
+        return Ok(false);
+    }
+    one_of(OP, "action", &record.action, &ACTIONS)?;
+    one_of(OP, "status", &record.status, &STATUSES)?;
+    trust_table(OP, "target_table", &record.target_table)?;
+    if let Some(table) = &record.related_table {
+        trust_table(OP, "related_table", table)?;
+    }
+    if record.related_table.is_some() != record.related_id.is_some() {
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "new row for relation \"trust_proposals\" violates a check constraint: related_table and related_id are both set or both null",
+        ));
+    }
+    require_source(tx, &record.source_id)?;
+    if record.status == "pending" {
+        let pending = record.pending_key();
+        if get_id(&*tx, &pending)?.is_some() {
+            return Err(StoreError::new(
+                CONSTRAINT_VIOLATION,
+                "duplicate key value violates the pending trust proposal unique index",
+            ));
+        }
+        tx.put(&pending, &record.id.to_be_bytes())?;
+    }
+    tx.put(
+        &row_key(&record.target_table, record.target_id, record.id),
+        &[],
+    )?;
+    if let (Some(table), Some(row)) = (&record.related_table, record.related_id) {
+        tx.put(&row_key(table, row, record.id), &[])?;
+    }
+    put_record(tx, record)?;
+    Ok(true)
 }
 
 /// Removes every proposal of a deleted source and its index entries (`ON DELETE CASCADE`).
@@ -725,6 +768,26 @@ impl Store {
             Ok(true)
         })
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the proposal `id` with its index entries. `false`
+/// when there is none.
+pub(crate) fn remove_proposal(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(record) = read_record(&*tx, id)? else {
+        return Ok(false);
+    };
+    if record.status == "pending" {
+        let key = record.pending_key();
+        if get_id(&*tx, &key)? == Some(record.id) {
+            tx.delete(&key)?;
+        }
+    }
+    tx.delete(&row_key(&record.target_table, record.target_id, record.id))?;
+    if let (Some(table), Some(row)) = (&record.related_table, record.related_id) {
+        tx.delete(&row_key(table, row, record.id))?;
+    }
+    tx.delete(&by_id(record.id))?;
+    Ok(true)
 }
 
 #[cfg(test)]

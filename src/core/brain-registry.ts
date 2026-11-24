@@ -42,7 +42,7 @@ const BRAIN_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
  * cached at startup by libuv on some platforms, so withFakeHome's HOME
  * mutation isn't always picked up). Production callers don't set this.
  */
-function getMountsPath(): string {
+export function getMountsPath(): string {
   const override = process.env.GBRAIN_MOUNTS_PATH;
   if (override) return override;
   return gbrainPath('mounts.json');

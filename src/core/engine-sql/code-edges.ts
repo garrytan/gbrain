@@ -8,7 +8,7 @@
  *
  * Capability `maxBindParamsPerStatement`: PGLite's parameter bridge corrupts
  * the session past 32,767 binds, so bulk inserts split below 30,000 binds
- * there; Postgres (Infinity) keeps master's single statement per shape. The
+ * there; Postgres splits at its driver's 65,533-bind ceiling (#9780). The
  * inserts keep master's direct `unsafe` path (they were raw on master).
  * Reads were unscoped on master (EO4 inventory): `LegacyUnscopedRead`.
  */
@@ -18,7 +18,7 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
-/** Rows per statement for a shape binding `bindsPerRow` params (Infinity = one statement). */
+/** Rows per statement for a shape binding `bindsPerRow` params. */
 function rowsPerStatement(exec: SqlExecutor, bindsPerRow: number): number {
   return Math.floor(exec.capabilities.maxBindParamsPerStatement / bindsPerRow);
 }

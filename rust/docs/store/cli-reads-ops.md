@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are the read-command statements that the ops layer ran through `executeRaw`
-([docs/research/rust-cli-executeraw-map.md](../../../docs/research/rust-cli-executeraw-map.md)):
+(the `executeRaw` map in the Rust engine branch's research notes; it is not on master):
 `search_exact`, `whois`, `rank_entities` and `extraction_pending`, plus the two remote-caller reads around them:
 `rank_entities`' per-source coverage and the chunks `search_exact` reads again to take out held fence rows. PGLite and
 Postgres run the same SQL as before (`src/core/engine-sql/cli-reads-ops.ts`, `exact-identity.ts`, `graph-rank.ts` and

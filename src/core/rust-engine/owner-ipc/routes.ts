@@ -7,8 +7,9 @@
  *   data is forwarded, executeRaw included (one statement, never a transaction).
  * - `refuse`: the member takes a callback that must run against the engine (a transaction body, a reserved
  *   connection, a schema lock). Transactions do not cross the socket, so the member rejects at once with
- *   `engine_capability_missing` and nothing runs. A whole operation that needs a transaction is forwarded instead
- *   (owner-ipc/whole-op.ts) and runs its transaction inside the owner.
+ *   `engine_capability_missing` and nothing runs. owner-ipc/whole-op.ts can send a whole operation that needs a
+ *   transaction to run inside the owner, but no entry point calls it yet: a journaled write from a client (put_page,
+ *   remember) stops at write admission, which opens a transaction, on this refusal with reason `transactions`.
  *
  * Before any of these, a client whose owner is a Rust engine (hello `kind: 'rust'`) checks the member's capability
  * class against the capabilities in the hello. A member the owner lacks (executeRaw without raw_sql, getPage without
@@ -54,18 +55,19 @@ export const OWNER_IPC_CALLBACK_KEYS: ReadonlySet<string> = new Set([
  */
 export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
   'aliasCanonicalRefs', 'batchLoadEmotionalInputs', 'cosinesByChunkIds', 'countChunklessPagesWithContent',
-  'countKeywordPages', 'countOnboardSignal', 'countPagesBy', 'countStaleChunks', 'countStaleFrontmatterKeyPages',
-  'countStalePagesForExtraction', 'countStaleTakes', 'countUnconsolidatedFacts', 'discoverOntologyDimensions',
-  'findAnomalies', 'findByTitleFuzzy', 'findCandidateDuplicates', 'findDuplicatePage', 'findDuplicatePages',
-  'findOntologyConflicts', 'findOrphanPages', 'findPages', 'findTrajectory', 'generatedPagesIn',
-  'getAdjacencyBoosts', 'getAllConfig', 'getAllSlugs', 'getBacklinkCounts', 'getBacklinks', 'getCalibrationCurve',
-  'getCalleesOf', 'getCallersOf', 'getChunkPage', 'getChunkReuseRows', 'getChunkWindows', 'getChunks',
-  'getChunksWithEmbeddings', 'getConfig', 'getConfigValues', 'getContentFlagsByPageIds',
-  'getContradictionCacheEntry', 'getDreamVerdict', 'getEdgesByChunk', 'getEffectiveDates', 'getEmbeddingsByChunkIds',
-  'getFactsHealth', 'getFile', 'getHealth', 'getIngestLog', 'getLastSeen', 'getLinks', 'getOnThisDay', 'getOntology',
-  'getPage', 'getPageSealState', 'getPageTimestamps', 'getRawData', 'getRecentSalience', 'getSalienceScores',
-  'getScorecard', 'getSince', 'getSource', 'getSourceStrictness', 'getStats', 'getTags', 'getTakeEmbeddings',
-  'getTimeline', 'getTimelineForDate', 'getUnverifiedExtractionPageIds', 'getVersions', 'hasSupersedeEdges',
+  'countEmbeddingHeldPages', 'countKeywordPages', 'countOnboardSignal', 'countPagesBy',
+  'countPendingProjectionPages', 'countStaleChunks', 'countStaleFrontmatterKeyPages', 'countStalePagesForExtraction',
+  'countStaleTakes', 'countUnconsolidatedFacts', 'discoverOntologyDimensions', 'findAnomalies', 'findByTitleFuzzy',
+  'findCandidateDuplicates', 'findDuplicatePage', 'findDuplicatePages', 'findOntologyConflicts', 'findOrphanPages',
+  'findPages', 'findPagesByTitles', 'findTrajectory', 'generatedPagesIn', 'getAdjacencyBoosts', 'getAllConfig',
+  'getAllSlugs', 'getBacklinkCounts', 'getBacklinks', 'getCalibrationCurve', 'getCalleesOf', 'getCallersOf',
+  'getChunkPage', 'getChunkReuseRows', 'getChunkWindows', 'getChunks', 'getChunksWithEmbeddings', 'getConfig',
+  'getConfigValues', 'getContentFlagsByPageIds', 'getContradictionCacheEntry', 'getDreamVerdict', 'getEdgesByChunk',
+  'getEffectiveDates', 'getEmbeddingsByChunkIds', 'getFactsHealth', 'getFile', 'getHealth', 'getIngestLog',
+  'getLastSeen', 'getLinks', 'getOnThisDay', 'getOntology', 'getPage', 'getPageSealState', 'getPageTimestamps',
+  'getRawData', 'getRecentSalience', 'getSalienceScores', 'getScorecard', 'getSince', 'getSource',
+  'getSourceStrictness', 'getStats', 'getTags', 'getTakeEmbeddings', 'getTimeline', 'getTimelineForDate',
+  'getUnverifiedExtractionPageIds', 'getVersions', 'hasNotifierCoverage', 'hasSupersedeEdges', 'hasUnsealedPages',
   'isFolderRestricted', 'listActiveTakesForPages', 'listAllPageRefs', 'listAllSources',
   'listChunklessPagesWithContent', 'listConfigKeys', 'listCorpusSample', 'listEmbeddingStateRows',
   'listEnrichCandidates', 'listEntityKeyRows', 'listEvalCandidates', 'listEvalCaptureFailures', 'listFactsByEntity',
@@ -73,13 +75,14 @@ export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
   'listLinkSources', 'listPages', 'listPrefixSampledPages', 'listRestrictedIdentityMembers', 'listSourceLocalPaths',
   'listStaleChunks', 'listStaleFrontmatterKeyPages', 'listStalePagesForExtraction', 'listStaleTakes',
   'listSupersessions', 'listTakes', 'livePageIdsAt', 'loadContradictionsTrend', 'pageCollapseFacts',
-  'pagesLinkingTo', 'readCycleLocks', 'readEmbeddingStateCounts', 'readLedgerSource', 'readLocalWriterRow',
-  'readManagedModeRows', 'readManifest', 'readPageSnapshot', 'readPageSnapshotsBatch', 'readPersistenceBrainId',
-  'readSegmentDerivations', 'readSegmentTexts', 'readTransactionSettings', 'relationalChainHop', 'relationalFanout',
-  'resolveAliases', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveSlugs', 'resolveSlugsByPaths',
-  'searchKeyword', 'searchKeywordChunks', 'searchKeywordPages', 'searchTakes', 'searchTakesVector', 'searchTitles',
-  'searchVector', 'slugsEndingIn', 'sumStaleChunkChars', 'supersedingPageSlugs', 'traverseGraph', 'traversePaths',
-  'traversePathsDetailed',
+  'pagesLinkingTo', 'projectionRebuildProgress', 'readCycleLocks', 'readEmbeddingStateCounts',
+  'readHeldCoverageRows', 'readLedgerSource', 'readLocalWriterRow', 'readManagedModeRows', 'readManifest',
+  'readPageSnapshot', 'readPageSnapshotsBatch', 'readPersistenceBrainId', 'readProjectionReadiness',
+  'readProjectionReadinessGeneration', 'readSegmentDerivations', 'readSegmentTexts', 'readTransactionSettings',
+  'relationalChainHop', 'relationalFanout', 'resolveAliases', 'resolveCaseSensitiveAliases', 'resolveSlugWithAlias',
+  'resolveSlugWithAliasDetailed', 'resolveSlugs', 'resolveSlugsByPaths', 'searchKeyword', 'searchKeywordChunks',
+  'searchKeywordPages', 'searchTakes', 'searchTakesVector', 'searchTitles', 'searchVector', 'slugsEndingIn',
+  'sumStaleChunkChars', 'supersedingPageSlugs', 'traverseGraph', 'traversePaths', 'traversePathsDetailed',
 ]);
 
 /** The capability family a member belongs to, for the refusal's `reason`. */
@@ -95,7 +98,7 @@ export function ownerIpcRefusal(member: string, why: string): OperationError {
     `${member} cannot run from a second process on this brain: ${why}, so nothing ran.`,
     'Run it in the process that owns the brain (for example through gbrain serve tools), or stop the owner process and run it again.',
     { reason: capability, detail: `member=${member} capability=${capability} outcome=none written=nothing via=owner_ipc`,
-      why: 'Another process owns this brain and this process reaches it over the owner socket. Transactions and callbacks do not cross that socket; whole operations that need a transaction (page writes and imports) are sent to the owner as one request instead.' });
+      why: 'Another process owns this brain and this process reaches it over the owner socket. Transactions and callbacks do not cross that socket, and a page write, a memory write or an import opens a transaction, so it cannot run from this process yet.' });
 }
 
 /** True when `member` only reads, so a rerun cannot repeat a write. */
@@ -256,7 +259,8 @@ export type OwnerPeerRefusedReason = 'peer_uid' | 'socket_owner' | 'socket_mode'
 /**
  * The owner socket's other end is not this OS user (`owner_ipc_peer_refused`, not retryable): the owner read another
  * uid from the kernel (`peer_uid`, on either side), or the client found the socket owned by another user
- * (`socket_owner`) or open to group or other users (`socket_mode`). Nothing was sent or run.
+ * (`socket_owner`) or open to group or other users outside a private 0700 directory of this user (`socket_mode`).
+ * Nothing was sent or run.
  */
 export function ownerPeerRefused(reason: OwnerPeerRefusedReason, detail: string): OperationError {
   const messages: Record<OwnerPeerRefusedReason, string> = {

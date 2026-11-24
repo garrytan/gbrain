@@ -313,6 +313,8 @@ async function serveBrain(
   }
   console.error(`[gbrain serve] surface=${surface} (source: ${SURFACE_SOURCE_LABEL[resolved.source]})${advertise ? ` advertise=${advertise}` : ''}`);
   void (await import('../core/serve-behavior-notice.ts')).logServeBehaviorNotice(engine, loadConfig());
+  // brain_ref for `gbrain engine status --probe`, which cannot open a PGLite brain this serve holds (serve-brain-ref.ts).
+  void import('./serve-brain-ref.ts').then(m => m.recordServeBrainRefAtStart(engine)).catch(() => undefined);
   // #6543 (A6): serve's stuck, desync and recovery events go to the pool-recovery audit `doctor --only pool_reap_health` reads.
   if (engine.kind === 'postgres') {
     const { logPoolRecovery } = await import('../core/audit/pool-recovery-audit.ts');
