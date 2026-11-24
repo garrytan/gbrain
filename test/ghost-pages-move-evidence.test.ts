@@ -1,0 +1,150 @@
+/**
+ * Ghost pages whose file moved (data loss): `gbrain repair ghost-pages` approved a page whose file a commit deleted for
+ * soft-delete even when Git shows the file moved to another live page, so the old page's links, facts and timeline were
+ * purged 72 h later instead of carried to the moved page. And `gbrain repair moved-pages` folded only a move that kept
+ * the file byte for byte, so a file renamed and edited in one commit was never folded. Now:
+ *   - ghost-pages lists a ghost a proven move pairs with a live page apart (`moved_to`), names the moved-pages fold
+ *     (preview first, `--apply --expect <hash> --yes`) and never approves it; a ghost Git renamed or copied without a
+ *     proven fold is kept (`move_unproven`);
+ *   - a `database_ahead_of_file` ghost carries move evidence: matched when a moved page holds every line of it, else
+ *     unmatched;
+ *   - moved-pages folds a file renamed and edited in one commit when the moved page holds every line of the old page
+ *     (`renamed_contained`), and keeps one whose lines changed.
+ * Synthetic fixtures only. Real PGLite (and Postgres when DATABASE_URL is set), real managed sync and real Git.
+ */
+import { expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
+import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { resolveRepairScope } from '../src/core/repair/core.ts';
+import { repairRunner } from '../src/core/repair/registry.ts';
+import { managedBrain } from './helpers/managed-brain.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+import { testBackends } from './helpers/test-backends.ts';
+
+const SYNC = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
+const logger = { info() {}, warn() {}, error() {} };
+const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const ALPHA = '---\ntitle: Alpha\n---\n\nThe alpha body, kept word for word through the move.\n\nA second paragraph of the alpha note.\n';
+const BETA = '---\ntitle: Beta\n---\n\nBeta points at [[notes/alpha]].\n';
+const setup = ({ root }: { root: string }) => {
+  git(root, 'init', '-q'); git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid'); git(root, 'config', 'commit.gpgsign', 'false');
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  writeFileSync(join(root, 'notes/alpha.md'), ALPHA); writeFileSync(join(root, 'notes/beta.md'), BETA);
+  git(root, 'add', '-A'); git(root, 'commit', '-qm', 'first');
+};
+const opts = (backend: string) => ({ ...(backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {}), setup });
+const cli = async <T>(engine: BrainEngine, run: () => Promise<T>) => withVerifiedLocalRegistration(engine, await registerLocalWriter(engine, 'cli'), run);
+const runner = async (engine: BrainEngine, kind: 'moved-pages' | 'ghost-pages', options: Record<string, unknown> = {}) => cli(engine, async () =>
+  (await repairRunner(engine, { apply: options.expect !== undefined, logger })).run(kind, await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default', ...options }));
+const raw = (engine: BrainEngine, sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
+const live = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ live: boolean }>("SELECT deleted_at IS NULL AS live FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0]?.live;
+const listed = (plan: { listing?: Array<{ item: string; class: string; detail?: string }> }, slug: string) => plan.listing!.find(entry => entry.item === `default:${slug}`);
+const commit = (root: string, files: Record<string, string>, message: string, remove: string[] = []) => {
+  for (const path of remove) git(root, 'rm', '-q', path);
+  for (const [path, content] of Object.entries(files)) { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content); git(root, 'add', path); }
+  git(root, 'commit', '-qm', message);
+};
+
+/** The managed sync holds the old page's deletion (file_gone) because the database edited it first; with `revert` the edit is taken back. */
+async function movedAway(engine: BrainEngine, move: () => void, revert = true): Promise<void> {
+  await registerLocalWriter(engine, 'cli');
+  expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+  const [before] = await engine.executeRaw<{ timeline: string }>("SELECT timeline FROM pages WHERE source_id='default' AND slug='notes/alpha'");
+  await raw(engine, "UPDATE pages SET timeline='An edit only the database holds.', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/alpha'");
+  move();
+  await performManagedSync(engine, SYNC);
+  if (revert) await raw(engine, "UPDATE pages SET timeline=$1, knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/alpha'", [before!.timeline]);
+}
+const renameEdited = (root: string, content: string) => () => {
+  mkdirSync(join(root, 'notes/archive'), { recursive: true });
+  git(root, 'mv', 'notes/alpha.md', 'notes/archive/alpha.md');
+  writeFileSync(join(root, 'notes/archive/alpha.md'), content); git(root, 'add', 'notes/archive/alpha.md'); git(root, 'commit', '-qm', 'move and edit');
+};
+
+for (const backend of testBackends()) {
+  test(`${backend}: a file renamed and edited in one commit folds when the moved page holds every line of the old page`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, renameEdited(root, `${ALPHA}\nA line added at the move.\n`));
+    const moveCommit = git(root, 'rev-parse', 'HEAD');
+    const preview = await runner(engine, 'moved-pages');
+    expect(preview.affected).toBe(1);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'moved_to', detail: expect.stringContaining(`renamed by commit ${moveCommit.slice(0, 12)}`) });
+    expect((preview.details as { pairs: unknown[] }).pairs[0]).toMatchObject({ survivor: { slug: 'notes/archive/alpha' }, evidence: 'renamed_contained', move_commit: moveCommit });
+    const applied = await runner(engine, 'moved-pages', { expect: preview.preview_hash, yes: true });
+    expect(applied.outcomes).toEqual({ folded: 1 });
+    expect(await live(engine, 'notes/alpha')).toBe(false);
+    expect(await live(engine, 'notes/archive/alpha')).toBe(true);
+    expect(readFileSync(join(root, 'notes/archive/alpha.md'), 'utf8')).toContain('A line added at the move.');
+  }, opts(backend)));
+
+  test(`${backend}: a file renamed with a line changed stays held, because the fold would drop that line`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, renameEdited(root, ALPHA.replace('word for word', 'nearly word for word')));
+    const preview = await runner(engine, 'moved-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:first_blob_differs' });
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend)));
+
+  test(`${backend}: ghost-pages lists a ghost whose file moved to a live page apart (moved_to) with the fold, and never soft-deletes it`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, { 'archive/alpha.md': ALPHA }, 'copy');
+    await performManagedSync(engine, SYNC);
+    expect(await live(engine, 'archive/alpha')).toBe(true);
+    commit(root, {}, 'remove the old copy', ['notes/alpha.md']);
+
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(preview.residuals).toMatchObject({ ghosts: 0, moved_to: 1 });
+    const entry = listed(preview, 'notes/alpha')!;
+    expect(entry.class).toBe('moved_to');
+    expect(entry.detail).toContain('moved to archive/alpha');
+    expect(entry.detail).toContain('gbrain repair moved-pages --source default --slug notes/alpha');
+    expect(preview.warnings!.some(line => line.includes('(moved_to)'))).toBe(true);
+    expect((await runner(engine, 'ghost-pages', { expect: preview.preview_hash, yes: true })).outcomes ?? {}).not.toHaveProperty('soft_deleted');
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+
+    const fold = await runner(engine, 'moved-pages', { slugs: ['notes/alpha'] });
+    expect(fold.affected).toBe(1);
+    expect(listed(fold, 'notes/alpha')).toMatchObject({ class: 'moved_to' });
+  }, opts(backend)));
+
+  test(`${backend}: ghost-pages keeps a ghost whose content two live files took (move_unproven) instead of soft-deleting it`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, { 'archive/alpha.md': ALPHA, 'other/alpha-copy.md': ALPHA }, 'two copies');
+    await performManagedSync(engine, SYNC);
+    commit(root, {}, 'remove the old copy', ['notes/alpha.md']);
+
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(preview.residuals).toMatchObject({ ghosts: 0, move_unproven: 1 });
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('several_candidates') });
+  }, opts(backend)));
+
+  test(`${backend}: a database_ahead_of_file ghost whose moved page holds every line carries move evidence matched, with the fold`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, () => { mkdirSync(join(root, 'notes/archive'), { recursive: true }); git(root, 'mv', 'notes/alpha.md', 'notes/archive/alpha.md'); git(root, 'commit', '-qm', 'move'); });
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(preview.residuals).toMatchObject({ database_ahead: 1, database_ahead_matched: 1, database_ahead_unmatched: 0 });
+    const entry = listed(preview, 'notes/alpha')!;
+    expect(entry.class).toBe('database_ahead_of_file');
+    expect(entry.detail).toContain('Move evidence: matched');
+    expect(entry.detail).toContain('gbrain repair moved-pages --source default --slug notes/alpha');
+  }, opts(backend)));
+
+  test(`${backend}: a database_ahead_of_file ghost whose database edit the moved page lacks carries move evidence unmatched`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, () => { mkdirSync(join(root, 'notes/archive'), { recursive: true }); git(root, 'mv', 'notes/alpha.md', 'notes/archive/alpha.md'); git(root, 'commit', '-qm', 'move'); }, false);
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.residuals).toMatchObject({ database_ahead: 1, database_ahead_matched: 0, database_ahead_unmatched: 1 });
+    const entry = listed(preview, 'notes/alpha')!;
+    expect(entry.class).toBe('database_ahead_of_file');
+    expect(entry.detail).toContain('Move evidence: unmatched');
+    expect(entry.detail).toContain('notes/archive/alpha');
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend)));
+}

@@ -17,8 +17,15 @@
  * two pages. A page stored in segments (over 1 MiB) is `segmented_versions`: its versions name body generations of their
  * own page, so they cannot move to another. Pages whose readers, folder rules or privacy label differ are `access_differs`: a
  * fold would put the old page's database-only evidence under the moved page's access. A history too shallow to read the move, or one Git cannot answer, keeps the page held and says so.
+ *
+ * A move that changed the file is also proven when it loses nothing: the deleting commit renamed the old path (Git's rename
+ * detection) or a single live page has the same file name, and that page holds every line of the old page's body and
+ * timeline, its type and every frontmatter key but slug and title (`contained`). A page edited in the database after a
+ * proven move folds the same way when the moved page holds that edit. Two old pages with the same content still never pair
+ * with an older or later copy: a blob alone proves only the strict move above.
  */
 import { basename } from 'node:path';
+import { bodyUnread } from '../page-body/page-shape.ts';
 import type { BrainEngine } from '../engine.ts';
 import { syncGit } from './sync-discovery.ts';
 import { readDeletionProvenance, type DeletionProvenance } from './sync-origin-evidence.ts';
@@ -28,7 +35,7 @@ import { literalPathspecs } from '../git-env.ts';
 import { privateSnapshotFilterFragment } from '../search/private-visibility.ts';
 
 export interface MovedPageRef { page_id: number; slug: string; revision: string; path: string }
-export type MovedEvidence = 'same_commit' | 'first_commit';
+export type MovedEvidence = 'same_commit' | 'first_commit' | 'renamed_contained' | 'named_contained';
 export const MOVED_HELD_REASONS = ['not_moved', 'several_candidates', 'shared_survivor', 'both_changed', 'first_blob_differs', 'same_id_body_differs', 'evidence_conflicts',
   'segmented_versions', 'access_differs', 'history_shallow', 'history_unknown', 'deletion_not_committed'] as const;
 export type MovedHeldReason = typeof MOVED_HELD_REASONS[number];
@@ -82,6 +89,125 @@ function inHead(root: string, paths: string[]): Set<string> {
   return new Set((out ?? '').split('\0').filter(Boolean));
 }
 
+/** What makes a file in HEAD look like where a ghost's file went (GST-3623 class a). */
+export type MoveMatch = 'git_rename' | 'same_blob' | 'same_file_name';
+export interface MoveCandidate { match: MoveMatch; page_id: number; slug: string; revision: string; path: string }
+
+/** Per deleted path, the path its deleting commit renamed it to and its last committed blob (one diff-tree per commit). */
+function commitChanges(root: string, commit: string): { renames: Map<string, string>; blobs: Map<string, string> } | null {
+  const out = git(root, ['diff-tree', '-r', '-M', '--no-commit-id', '--relative', '-z', `${commit}^`, commit]);
+  if (out === null) return null;
+  const fields = out.split('\0');
+  const renames = new Map<string, string>(), blobs = new Map<string, string>();
+  for (let i = 0; i < fields.length - 1;) {
+    const [, , old, , status] = fields[i]!.split(' ');
+    const from = fields[i + 1]!;
+    if (status?.startsWith('R') || status?.startsWith('C')) {
+      if (status.startsWith('R')) { renames.set(from, fields[i + 2]!); blobs.set(from, old!); }
+      i += 3;
+      continue;
+    }
+    if (status === 'D') blobs.set(from, old!);
+    i += 2;
+  }
+  return { renames, blobs };
+}
+
+/**
+ * For each ghost whose file a commit deleted, the live pages whose file in HEAD looks like where it went: the path the
+ * deleting commit renamed it to, a path holding its last committed blob, or a path with the same file name. Evidence, not
+ * proof: `readMovedPage` decides whether a fold loses nothing. Read once per call: one diff-tree per deleting commit and one
+ * HEAD listing.
+ */
+export async function readMoveCandidates(engine: BrainEngine, input: { sourceId: string; root: string; ghosts: ReadonlyArray<{ page_id: number; path: string; deletion: DeletionProvenance }> }): Promise<Map<number, MoveCandidate[]>> {
+  const result = new Map<number, MoveCandidate[]>();
+  const deleted = input.ghosts.filter((ghost): ghost is typeof ghost & { deletion: { kind: 'deleted_by_commit'; commit: string } } => ghost.deletion.kind === 'deleted_by_commit');
+  if (!deleted.length) return result;
+  const listing = git(input.root, ['ls-tree', '-r', '-z', 'HEAD']);
+  if (listing === null) return result;
+  const byBlob = new Map<string, string[]>(), head = new Set<string>();
+  for (const entry of listing.split('\0')) {
+    const tab = entry.indexOf('\t');
+    if (tab < 0) continue;
+    const path = entry.slice(tab + 1), blob = entry.slice(0, tab).split(' ')[2]!;
+    head.add(path);
+    byBlob.set(blob, [...(byBlob.get(blob) ?? []), path]);
+  }
+  const changes = new Map<string, ReturnType<typeof commitChanges>>();
+  for (const commit of new Set(deleted.map(ghost => ghost.deletion.commit))) changes.set(commit, commitChanges(input.root, commit));
+  const renamedTo = deleted.flatMap(ghost => { const to = changes.get(ghost.deletion.commit)?.renames.get(ghost.path); return to ? [to] : []; });
+  const blobPaths = deleted.flatMap(ghost => byBlob.get(changes.get(ghost.deletion.commit)?.blobs.get(ghost.path) ?? '') ?? []);
+  const pages = await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
+    WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL AND (regexp_replace(source_path, '^.*/', '')=ANY($2::text[]) OR source_path=ANY($3::text[]))`,
+    [input.sourceId, [...new Set(deleted.map(ghost => basename(ghost.path)))], [...new Set([...renamedTo, ...blobPaths])]]);
+  const byPath = new Map<string, { id: number; slug: string; revision: string }>();
+  for (const page of pages) byPath.set(page.source_path, { id: Number(page.id), slug: page.slug, revision: String(page.revision) });
+  for (const ghost of deleted) {
+    const change = changes.get(ghost.deletion.commit);
+    const found: MoveCandidate[] = [];
+    const add = (match: MoveMatch, path: string | undefined) => {
+      const page = path && path !== ghost.path && head.has(path) ? byPath.get(path) : undefined;
+      if (page && page.id !== ghost.page_id && !found.some(candidate => candidate.path === path)) found.push({ match, page_id: page.id, slug: page.slug, revision: page.revision, path: path! });
+    };
+    add('git_rename', change?.renames.get(ghost.path));
+    for (const path of byBlob.get(change?.blobs.get(ghost.path) ?? '') ?? []) add('same_blob', path);
+    for (const [path] of byPath) if (basename(path) === basename(ghost.path)) add('same_file_name', path);
+    if (found.length) result.set(ghost.page_id, found);
+  }
+  return result;
+}
+
+const bodyLines = (page: { compiled_truth: string; timeline?: string | null }) =>
+  new Set(`${page.compiled_truth}\n${page.timeline ?? ''}`.split('\n').map(line => line.trimEnd()).filter(Boolean));
+
+/** Whether `target` holds every line of `old`'s body and timeline, its type and every frontmatter key but slug and title. */
+async function holdsEveryLine(engine: BrainEngine, sourceId: string, oldSlug: string, targetSlug: string): Promise<boolean> {
+  const [old, target] = await Promise.all([engine.readPageSnapshot(oldSlug, { sourceId }), engine.readPageSnapshot(targetSlug, { sourceId })]);
+  if (!old || !target || bodyUnread(old.page) || bodyUnread(target.page) || old.page.type !== target.page.type) return false;
+  const lines = bodyLines(old.page), held = bodyLines(target.page);
+  if (!lines.size || [...lines].some(line => !held.has(line))) return false;
+  const theirs = (target.page.frontmatter ?? {}) as Record<string, unknown>;
+  return Object.entries((old.page.frontmatter ?? {}) as Record<string, unknown>).every(([key, value]) => key === 'slug' || key === 'title' || JSON.stringify(value) === JSON.stringify(theirs[key]));
+}
+
+/** A held verdict when the pair cannot fold whatever the proof: segmented versions, or access that differs. */
+async function pairRefusal(engine: BrainEngine, old: MovedPageRef, row: { id: number; slug: string; source_path: string },
+  held: (reason: MovedHeldReason, detail: string, candidates?: string[]) => MovedPageVerdict): Promise<MovedPageVerdict | null> {
+  const [storage] = await engine.executeRaw<{ segmented: boolean }>(`SELECT EXISTS (SELECT 1 FROM pages WHERE id=$1 AND body_storage<>'inline')
+    OR EXISTS (SELECT 1 FROM page_versions WHERE page_id=$1 AND body_storage<>'inline') AS segmented`, [old.page_id]);
+  if (storage?.segmented) return held('segmented_versions', `${old.path} moved to ${row.source_path}, but page ${old.slug} or one of its saved versions is stored in segments (over 1 MiB), whose body generations belong to ${old.slug} and cannot move to ${row.slug}, so it stays as it is`, [row.slug]);
+  const access = await engine.executeRaw<{ id: number; readers: unknown; folder: unknown; readable_by: unknown; world: boolean }>(`SELECT p.id, p.page_readers AS readers, p.folder_rule_ids AS folder,
+    p.frontmatter->'readable_by' AS readable_by, ${privateSnapshotFilterFragment('p')} AS world FROM pages p WHERE p.id=ANY($1::int[])`, [[old.page_id, Number(row.id)]]);
+  const key = (id: number) => { const page = access.find(entry => Number(entry.id) === id); return page ? JSON.stringify([page.readers, page.folder, page.readable_by, page.world]) : null; };
+  if (key(old.page_id) !== key(Number(row.id))) return held('access_differs', `${old.path} moved to ${row.source_path}, but the two pages differ in who may read them (readers, folder rules or privacy label), so a fold would put ${old.slug}'s database-only evidence under ${row.slug}'s access; decide with the user`, [row.slug]);
+  return null;
+}
+
+/**
+ * The contained move of a ghost the strict proof did not pair: the deleting commit renamed its path, or one live page has
+ * its file name, and that page holds every line of it. Null keeps the strict verdict.
+ */
+async function containedMove(engine: BrainEngine, input: { sourceId: string; root: string; old: MovedPageRef; deletion: DeletionProvenance & { kind: 'deleted_by_commit' }; blob: string },
+  held: (reason: MovedHeldReason, detail: string, candidates?: string[]) => MovedPageVerdict): Promise<MovedPageVerdict | null> {
+  const { sourceId, old, deletion } = input;
+  const candidates = ((await readMoveCandidates(engine, { sourceId, root: input.root, ghosts: [{ page_id: old.page_id, path: old.path, deletion }] })).get(old.page_id) ?? [])
+    .filter(candidate => candidate.match !== 'same_blob');
+  const renamed = candidates.filter(candidate => candidate.match === 'git_rename');
+  const pick = renamed.length ? renamed : candidates;
+  if (pick.length !== 1) return null;
+  const target = pick[0]!;
+  const row = { id: target.page_id, slug: target.slug, source_path: target.path };
+  if (!await holdsEveryLine(engine, sourceId, old.slug, row.slug)) return null;
+  const refused = await pairRefusal(engine, old, row, held);
+  if (refused) return refused;
+  const conflicts = await twinMergeConflicts(engine, Number(row.id), old.page_id);
+  if (conflicts.length) return held('evidence_conflicts', `${old.path} moved to ${row.source_path}, but page ${old.slug} holds ${conflicts.map(c => c.detail).join('; ')}, which a fold would discard`, [row.slug]);
+  const evidence: MovedEvidence = target.match === 'git_rename' ? 'renamed_contained' : 'named_contained';
+  return { verdict: 'moved', survivor: { page_id: row.id, slug: row.slug, revision: target.revision, path: row.source_path }, old_blob: input.blob, move_commit: deletion.commit,
+    evidence, evidence_commit: deletion.commit,
+    detail: `moved to ${row.slug}: ${evidence === 'renamed_contained' ? `commit ${short(deletion.commit)} renamed ${old.path} to ${row.source_path}` : `${row.source_path} is the one live file named ${basename(old.path)}`}, and page ${row.slug} holds every line of page ${old.slug}` };
+}
+
 /**
  * The verdict for one ghost page (`old`: its id, slug, revision and recorded path, relative to the source's canonical
  * root). `provenance` is the path's deletion provenance when the caller already read it (one history walk per window).
@@ -96,7 +222,7 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
     return held('deletion_not_committed', deletion.kind === 'never_committed' ? `no commit ever held ${old.path}, so there is no committed content to follow`
       : `HEAD still holds ${old.path}; only the working tree lost it, so it did not move in Git`);
   }
-  const commit = deletion.commit;
+  const commit = deletion.commit, committed = deletion;
   const blob = git(root, ['rev-parse', '--verify', '--quiet', `${commit}^:./${old.path}`])?.trim();
   if (!blob) return shallow(root) ? held('history_shallow', `the checkout's history is shallow, so ${old.path}'s content before commit ${short(commit)} cannot be read; fetch the full history (git fetch --unshallow) to check whether it moved`)
     : held('history_unknown', `Git could not read ${old.path} before commit ${short(commit)}, which deleted it`);
@@ -104,6 +230,7 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   const first = firstCommitPaths(root, blob);
   const added = git(root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', '-1', `${commit}^`, '--', ...literalPathspecs([old.path])])?.trim();
   if (same === null || first === null || !added) return held('history_unknown', `Git could not read which paths took ${old.path}'s content (blob ${short(blob)})`);
+  const contained = async (verdict: MovedPageVerdict) => await containedMove(engine, { sourceId, root, old, deletion: committed, blob }, held) ?? verdict;
   const evidence = new Map<string, { evidence: MovedEvidence; commit: string }>();
   for (const [path, at] of first.first) {
     if (path === old.path || at === added) continue;
@@ -122,14 +249,14 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
     const name = basename(old.path);
     const named = await engine.executeRaw<{ slug: string; source_path: string }>(`SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2
       AND source_path IS NOT NULL AND (source_path=$3 OR right(source_path, length($3) + 1)='/' || $3) ORDER BY slug LIMIT 5`, [sourceId, old.page_id, name]);
-    if (named.length) return held('first_blob_differs', `${named.map(row => row.source_path).join(', ')} has the same file name, but neither its first committed content nor its content in commit ${short(commit)} is ${old.path}'s last committed content (blob ${short(blob)}), so it is not proven to be the moved file`,
-      named.map(row => row.slug));
+    if (named.length) return contained(held('first_blob_differs', `${named.map(row => row.source_path).join(', ')} has the same file name, but neither its first committed content nor its content in commit ${short(commit)} is ${old.path}'s last committed content (blob ${short(blob)}), so it is not proven to be the moved file`,
+      named.map(row => row.slug)));
     const [own] = await engine.executeRaw<{ id: string | null }>('SELECT frontmatter->>\'id\' AS id FROM pages WHERE id=$1', [old.page_id]);
     const twins = own?.id ? await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND frontmatter->>'id'=$3 ORDER BY slug LIMIT 5`,
       [sourceId, old.page_id, own.id]) : [];
-    if (twins.length) return held('same_id_body_differs', `${twins.map(row => row.slug).join(', ')} has the same frontmatter id, but no page started from ${old.path}'s last committed content (blob ${short(blob)}), so the bodies differ and a fold would drop one side's edits`,
-      twins.map(row => row.slug));
-    return held('not_moved', `no live page of the source started from ${old.path}'s last committed content (blob ${short(blob)}), so commit ${short(commit)} deleted it rather than moving it`);
+    if (twins.length) return contained(held('same_id_body_differs', `${twins.map(row => row.slug).join(', ')} has the same frontmatter id, but no page started from ${old.path}'s last committed content (blob ${short(blob)}), so the bodies differ and a fold would drop one side's edits`,
+      twins.map(row => row.slug)));
+    return contained(held('not_moved', `no live page of the source started from ${old.path}'s last committed content (blob ${short(blob)}), so commit ${short(commit)} deleted it rather than moving it`));
   }
   const row = rows[0]!;
   const gone = [...first.deleted].filter(path => path !== old.path);
@@ -137,24 +264,20 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   const others = gone.length ? await engine.executeRaw<{ source_path: string }>(`SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2
     AND source_path=ANY($3::text[]) ORDER BY source_path`, [sourceId, old.page_id, gone.filter(path => !back.has(path))]) : [];
   if (others.length) return held('shared_survivor', `${[old.path, ...others.map(other => other.source_path)].join(', ')} were deleted holding the same content (blob ${short(blob)}) and each still backs a live page, so which of them moved to ${row.source_path} is a person's decision`, [row.slug]);
-  const [storage] = await engine.executeRaw<{ segmented: boolean }>(`SELECT EXISTS (SELECT 1 FROM pages WHERE id=$1 AND body_storage<>'inline')
-    OR EXISTS (SELECT 1 FROM page_versions WHERE page_id=$1 AND body_storage<>'inline') AS segmented`, [old.page_id]);
-  if (storage?.segmented) return held('segmented_versions', `${old.path} moved to ${row.source_path}, but page ${old.slug} or one of its saved versions is stored in segments (over 1 MiB), whose body generations belong to ${old.slug} and cannot move to ${row.slug}, so it stays as it is`, [row.slug]);
-  const access = await engine.executeRaw<{ id: number; readers: unknown; folder: unknown; readable_by: unknown; world: boolean }>(`SELECT p.id, p.page_readers AS readers, p.folder_rule_ids AS folder,
-    p.frontmatter->'readable_by' AS readable_by, ${privateSnapshotFilterFragment('p')} AS world FROM pages p WHERE p.id=ANY($1::int[])`, [[old.page_id, Number(row.id)]]);
-  const key = (id: number) => { const page = access.find(entry => Number(entry.id) === id); return page ? JSON.stringify([page.readers, page.folder, page.readable_by, page.world]) : null; };
-  if (key(old.page_id) !== key(Number(row.id))) return held('access_differs', `${old.path} moved to ${row.source_path}, but the two pages differ in who may read them (readers, folder rules or privacy label), so a fold would put ${old.slug}'s database-only evidence under ${row.slug}'s access; decide with the user`, [row.slug]);
+  const refused = await pairRefusal(engine, old, row, held);
+  if (refused) return refused;
   const survivor: MovedPageRef = { page_id: Number(row.id), slug: row.slug, revision: String(row.revision), path: row.source_path };
   const proof = evidence.get(row.source_path)!;
   const snapshot = await engine.readPageSnapshot(old.slug, { sourceId });
   const content = git(root, ['cat-file', 'blob', blob]);
   if (!snapshot || content === null) return held('history_unknown', `the page or blob ${short(blob)} could not be read`);
-  if (!await fileMatchesSnapshot(engine, old.slug, content, snapshot, old.path).catch(() => false)) {
+  const edited = !await fileMatchesSnapshot(engine, old.slug, content, snapshot, old.path).catch(() => false);
+  if (edited && !await holdsEveryLine(engine, sourceId, old.slug, row.slug)) {
     return held('both_changed', `${old.path} moved to ${row.source_path} (blob ${short(blob)}), but page ${old.slug} changed in the database after the move, so a fold would drop its edit; decide with the user`, [row.slug]);
   }
   const conflicts = await twinMergeConflicts(engine, survivor.page_id, old.page_id);
   if (conflicts.length) return held('evidence_conflicts', `${old.path} moved to ${row.source_path}, but page ${old.slug} holds ${conflicts.map(c => c.detail).join('; ')}, which a fold would discard`, [row.slug]);
   return { verdict: 'moved', survivor, old_blob: blob, move_commit: commit, evidence: proof.evidence, evidence_commit: proof.commit,
     detail: `moved to ${row.slug}: ${proof.evidence === 'same_commit' ? `commit ${short(commit)} deleted ${old.path} and gave ${row.source_path} its content`
-      : `${row.source_path}'s first commit ${short(proof.commit)} holds ${old.path}'s last committed content`} (blob ${short(blob)}), and page ${old.slug} still holds that content` };
+      : `${row.source_path}'s first commit ${short(proof.commit)} holds ${old.path}'s last committed content`} (blob ${short(blob)}), and ${edited ? `page ${row.slug} holds every line of page ${old.slug}, including its database edit` : `page ${old.slug} still holds that content`}` };
 }

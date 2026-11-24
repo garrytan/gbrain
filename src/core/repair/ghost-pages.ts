@@ -56,6 +56,7 @@ import { nativeFileTarget } from '../persistence/native-file-target.ts';
 import { clearDeletionHold, readSyncImportProvenance } from '../persistence/sync-holds.ts';
 import { readRevisionAttestations } from '../persistence/sync-pass.ts';
 import { blobBeforeDeletion, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
+import { readMoveCandidates, readMovedPage, type MoveCandidate, type MovedPageVerdict } from '../persistence/moved-pages.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
@@ -178,6 +179,17 @@ export const ghostPagesRepair: RepairHandler = {
         const backing = await ghostBacking(engine, ghost, scan.owner!, provenance.get(ghost.path));
         if (backing === 'file_backed') ghosts.push(ghost); else kept.push({ ghost, code: backing });
       }
+      const moves = await readGhostMoves(engine, sourceId, scan.root!, [...ghosts, ...kept.filter(entry => entry.code === DATABASE_AHEAD_CODE).map(entry => entry.ghost)], provenance);
+      const moved: Array<{ ghost: GhostPage; move: GhostMove }> = [];
+      for (const ghost of [...ghosts]) {
+        const move = moves.get(ghost.page_id);
+        if (!move || (move.verdict.verdict !== 'moved' && !move.candidates.some(candidate => candidate.match !== 'same_file_name'))) continue;
+        ghosts.splice(ghosts.indexOf(ghost), 1);
+        moved.push({ ghost, move });
+      }
+      const movedTo = moved.filter(entry => entry.move.verdict.verdict === 'moved').length, unproven = moved.length - movedTo;
+      const aheadMatched = kept.filter(entry => entry.code === DATABASE_AHEAD_CODE && moves.get(entry.ghost.page_id)?.verdict.verdict === 'moved').length;
+      const aheadCount = kept.filter(entry => entry.code === DATABASE_AHEAD_CODE).length;
       const keptCount = (code: GhostKeptCode) => kept.filter(entry => entry.code === code).length;
       const keptResiduals = Object.fromEntries(GHOST_KEPT_CODES.flatMap(code => keptCount(code) ? [[GHOST_KEPT_RESIDUAL[code], keptCount(code)]] : []));
       const hash = previewHash(hashParts(scope, scan.owner, ghosts));
@@ -188,16 +200,23 @@ export const ghostPagesRepair: RepairHandler = {
         ...(scan.truncated ? [`More ghosts may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
         ...(skillPaths ? [`${skillPaths} ghost page(s) on files of the shared skillpack are listed apart (${SKILL_PACK_MEMBER_CODE}) and not applied: ${SKILL_PATH_NOTE}`] : []),
         ...(scan.unresolvable_count ? [`${scan.unresolvable_count} page(s) record a file path that names no file inside the source; they are listed apart (${UNRESOLVABLE_PATH_CODE}) and not applied: ${UNRESOLVABLE_NOTE}`] : []),
+        ...(movedTo ? [`${movedTo} ghost page(s) moved to another page that holds every line of them; they are listed apart (${MOVED_TO_CODE}) and not applied: fold each into its moved page with the gbrain repair moved-pages command its line names, which previews first.`] : []),
+        ...(unproven ? [`${unproven} ghost page(s) have a file in HEAD that Git renamed them to or that holds their last committed content, but the fold is not proven to lose nothing; they are listed apart (${MOVE_UNPROVEN_CODE}) and not applied.`] : []),
         ...GHOST_KEPT_CODES.flatMap(code => keptCount(code) ? [`${keptCount(code)} ghost page(s) ${GHOST_KEPT_WARNING[code]}; they are listed apart (${code}) and not applied.`] : []),
+        ...(aheadCount ? [`Move evidence for ${DATABASE_AHEAD_CODE}: ${aheadMatched} matched (a moved page holds every line, including the database edit), ${aheadCount - aheadMatched} unmatched.`] : []),
         ...(scan.reason === 'mirror_read_only' ? [`Source ${sourceId} is a read-only mirror: its pages publish no file, so none is a ghost.`] : []),
         ...(ghosts.length ? Object.values(GHOST_CONSEQUENCES) : []),
       ];
       return { warnings, items: ghosts.map((ghost, index) => item(ghost, scan.owner!, hash, index === ghosts.length - 1)), preview_hash: hash,
         residuals: { ghosts: ghosts.length, file_backed: scan.file_backed, inspected: scan.inspected, ...(skillPaths ? { skill_paths: skillPaths } : {}), ...keptResiduals,
+          ...(movedTo ? { moved_to: movedTo } : {}), ...(unproven ? { move_unproven: unproven } : {}),
+          ...(aheadCount ? { database_ahead_matched: aheadMatched, database_ahead_unmatched: aheadCount - aheadMatched } : {}),
           ...(scan.unresolvable_count ? { unresolvable: scan.unresolvable_count } : {}) },
         listing: [...ghosts.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: 'canonical_file_missing',
           detail: `file ${ghost.path} is missing; revision ${ghost.revision}` })),
-        ...kept.map(({ ghost, code }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: code, detail: ghostKeptDetail(code, ghost, scan.root) })),
+        ...moved.map(({ ghost, move }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: move.verdict.verdict === 'moved' ? MOVED_TO_CODE : MOVE_UNPROVEN_CODE, detail: ghostMoveDetail(ghost, move) })),
+        ...kept.map(({ ghost, code }) => ({ item: `${ghost.source_id}:${ghost.slug}`, class: code,
+          detail: code === DATABASE_AHEAD_CODE ? `${ghostKeptDetail(code, ghost, scan.root)}. ${moveEvidence(ghost, moves.get(ghost.page_id))}` : ghostKeptDetail(code, ghost, scan.root) })),
         ...scan.skill_paths.map(ghost => ({ item: `${ghost.source_id}:${ghost.slug}`, class: SKILL_PACK_MEMBER_CODE,
           detail: `shared skillpack file ${ghost.path} is missing; not applied. Restore it: ${skillPathRestore(scan.root, ghost)}` })),
         ...scan.unresolvable.map(page => ({ item: `${page.source_id}:${page.slug}`, class: UNRESOLVABLE_PATH_CODE,
@@ -251,6 +270,10 @@ export const NEVER_COMMITTED_CODE = 'ghost_never_committed';
 export const WORKTREE_ONLY_CODE = 'ghost_worktree_only';
 /** GST-3637: a ghost whose deletion Git cannot place (no Git checkout, a shallow history, a failed history read). */
 export const HISTORY_UNKNOWN_CODE = 'ghost_history_unknown';
+/** A ghost a proven move pairs with a live page that holds every line of it: folded by repair moved-pages, never soft-deleted here. */
+export const MOVED_TO_CODE = 'moved_to';
+/** A ghost Git renamed, or whose last committed content a file in HEAD holds, without a fold proven to lose nothing: kept. */
+export const MOVE_UNPROVEN_CODE = 'move_unproven';
 export const GHOST_KEPT_CODES = [DATABASE_AHEAD_CODE, NEVER_COMMITTED_CODE, WORKTREE_ONLY_CODE, HISTORY_UNKNOWN_CODE] as const;
 export type GhostKeptCode = typeof GHOST_KEPT_CODES[number];
 const GHOST_KEPT_RESIDUAL: Record<GhostKeptCode, string> = { database_ahead_of_file: 'database_ahead', ghost_never_committed: 'never_committed', ghost_worktree_only: 'worktree_only', ghost_history_unknown: 'history_unknown' };
@@ -264,6 +287,36 @@ const recreateFile = (ghost: GhostPage) => `gbrain repair file-drift --source ${
 export const databaseAheadDetail = (ghost: GhostPage) => `file ${ghost.path} is gone, but page ${ghost.slug} was written in the database after the file last held it, so it holds the only copy of that content; not soft-deleted. Recreate the file from the page with ${recreateFile(ghost)}, or keep the page as it is`;
 
 /** Why a ghost is kept, and the route that resolves it; every reader of a kept ghost prints this. */
+interface GhostMove { candidates: MoveCandidate[]; verdict: MovedPageVerdict }
+
+export const movedPagesCommand = (ghost: GhostPage) => `gbrain repair moved-pages --source ${ghost.source_id} --slug ${ghost.slug}`;
+
+/** The move read for each ghost with a candidate file in HEAD: the candidates and the moved-pages verdict, one history walk per call. */
+async function readGhostMoves(engine: BrainEngine, sourceId: string, root: string, ghosts: GhostPage[], provenance: Map<string, DeletionProvenance>): Promise<Map<number, GhostMove>> {
+  const candidates = await readMoveCandidates(engine, { sourceId, root, ghosts: ghosts.map(ghost => ({ page_id: ghost.page_id, path: ghost.path, deletion: provenance.get(ghost.path) ?? { kind: 'unknown' } })) });
+  const moves = new Map<number, GhostMove>();
+  for (const ghost of ghosts) {
+    const found = candidates.get(ghost.page_id);
+    if (!found) continue;
+    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path) });
+    moves.set(ghost.page_id, { candidates: found, verdict });
+  }
+  return moves;
+}
+
+const candidateList = (move: GhostMove) => move.candidates.map(candidate => `${candidate.slug} (${candidate.path}, ${candidate.match})`).join(', ');
+
+function ghostMoveDetail(ghost: GhostPage, move: GhostMove): string {
+  if (move.verdict.verdict === 'moved') return `file ${ghost.path} is gone and page ${ghost.slug} ${move.verdict.detail}; not soft-deleted. Fold it into ${move.verdict.survivor.slug}, preview first: ${movedPagesCommand(ghost)}`;
+  return `file ${ghost.path} is gone, and ${candidateList(move)} looks like where it went, but the fold is held (${move.verdict.reason}: ${move.verdict.detail}); not soft-deleted. Decide with the user`;
+}
+
+/** Move evidence for a database_ahead_of_file ghost: matched when a moved page holds every line of it, edit included. */
+function moveEvidence(ghost: GhostPage, move: GhostMove | undefined): string {
+  if (move?.verdict.verdict === 'moved') return `Move evidence: matched; page ${ghost.slug} ${move.verdict.detail}. Fold it, preview first: ${movedPagesCommand(ghost)}`;
+  return move ? `Move evidence: unmatched; ${candidateList(move)} looks like where it went, but ${move.verdict.verdict === 'held' ? move.verdict.detail : 'no fold is proven'}` : 'Move evidence: unmatched; no file in HEAD looks like where it went';
+}
+
 export function ghostKeptDetail(code: GhostKeptCode, ghost: GhostPage, root?: string): string {
   if (code === DATABASE_AHEAD_CODE) return databaseAheadDetail(ghost);
   if (code === NEVER_COMMITTED_CODE) return `file ${ghost.path} is gone and no commit ever held it, so page ${ghost.slug} holds the only copy of its content; not soft-deleted. `

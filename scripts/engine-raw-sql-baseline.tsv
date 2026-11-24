@@ -842,7 +842,7 @@ src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened
 src/core/persistence/memory-prepare.ts	execute_raw	4
 src/core/persistence/memory-proposals.ts	execute_raw	16
 src/core/persistence/mirror-read-only.ts	execute_raw	4
-src/core/persistence/moved-pages.ts	execute_raw	7
+src/core/persistence/moved-pages.ts	execute_raw	8	GST-3623: readMoveCandidates reads the live pages a ghost may have moved to (by file name, renamed path or blob path) in one query; the moved-pages area is still raw SQL and converts with it
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/onboarding.ts	execute_raw	1
 src/core/persistence/origin-guard.ts	execute_raw	9
