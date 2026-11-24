@@ -423,10 +423,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
    * (`skipped:moved`), which counts as unexplained.
    */
   const rerunOne = async ({ event, args, c, rustMs, rows }: RerunTask): Promise<void> => {
-    const skip = (why: string): void => record(event, c, rustMs, rows, `skipped:${why}`); let moves = c.reason === 'privacy_check_moved' ? 1 : 0; // checks of this sample whose position moved so far: each wait is longer than the last
+    // The privacy reason found by any rerun of this sample (the first check may have named none) rides on every unsuccessful settlement after it, until a later completed check resolves the sample.
+    let unsettled: string | undefined;
+    const carried = (): Classification => (unsettled === undefined ? c : { ...c, reason: unsettled });
+    const skip = (why: string): void => record(event, carried(), rustMs, rows, `skipped:${why}`); let moves = c.reason === 'privacy_check_moved' ? 1 : 0; // checks of this sample whose position moved so far: each wait is longer than the last
     try {
       for (let attempt = 1; attempt <= RERUN_ATTEMPTS; attempt++) {
-        const retry = (privacy = false): boolean => { const more = attempt < RERUN_ATTEMPTS; moves++; if (!more) { if (privacy) record(event, { ...c, reason: 'privacy_check_moved' }, rustMs, rows, 'skipped:moved'); else skip('moved'); } return more; }; // runs used up on a privacy check that kept moving: the privacy question stays unsettled on the row
+        const retry = (): boolean => { const more = attempt < RERUN_ATTEMPTS; moves++; if (!more) skip('moved'); return more; };
         if (moves > 0) { await waiter.pause(rerunBackoffMs(moves, deps.random)); if (waiter.closed()) return skip('child_closing'); } const deadline = now() + RERUN_DEADLINE_MS; let answer: { digest: string; members?: string; stamp: number; epoch_id: string; attempt?: string };
         try { answer = await ask({ kind: 'rerun', sid: event.sid, epoch_id: curEpoch() }, RERUN_DEADLINE_MS) as typeof answer; } catch (error) {
           if (!MOVED_CODES.has(safeCode((error as { code?: unknown })?.code))) throw error;
@@ -438,10 +441,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         if (out?.timedOut) trackStall(call);
         if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
         const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, attempt: answer.attempt, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
-        if (c2.outcome === 'inconclusive' && c2.reason === 'privacy_check_moved') { if (retry(true)) continue; return; }
-        // A rerun whose own privacy check could not be settled keeps that reason on the row it closes (the first check may have named none), so the evidence counts it as unsettled.
-        const kept = c2.outcome === 'inconclusive' && c2.reason?.startsWith('privacy_check_') ? { ...c, reason: c2.reason } : c;
-        settleRerun((why) => record(event, kept, rustMs, rows, why), (row, why) => record(event, row, rustMs, rows, why), event.op, c, c2);
+        if (c2.outcome === 'inconclusive' && c2.reason?.startsWith('privacy_check_')) unsettled = c2.reason; // this rerun's own privacy check could not be settled
+        if (c2.outcome === 'inconclusive' && c2.reason === 'privacy_check_moved') { if (retry()) continue; return; }
+        settleRerun((why) => record(event, carried(), rustMs, rows, why), (row, why) => record(event, row, rustMs, rows, why), event.op, c, c2);
         return;
       }
     } catch (error) {

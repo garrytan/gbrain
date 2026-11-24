@@ -270,7 +270,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
   describe('ranked vector search under excludePrivate', () => {
     type Rows = Array<Record<string, unknown>>;
     /** One ranked searchVector read as ALICE under excludePrivate; Rust answers `answer(primary's rows, a real spare row, page ids)`. Returns criterion 3, the counts and the ledger rows. */
-    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void>; child?: Partial<ShadowChildDeps>; noRecall?: boolean; opts?: Record<string, unknown> } = {}) {
+    async function ranked(answer: (theirs: Rows, spare: Record<string, unknown>, ids: Record<string, number>) => Rows, o: { settle?: boolean; onPrivacyAsk?: (n: number) => Promise<void>; child?: Partial<ShadowChildDeps>; noRecall?: boolean; opts?: Record<string, unknown>; onRerunAsk?: (n: number, rig: Rig) => Promise<void> } = {}) {
       const primary = ctx.primary();
       const ids = await privacyFixture(primary);
       await vectorFixture(primary);
@@ -288,6 +288,12 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const real = sup.onAsk;
         let asks = 0;
         sup.onAsk = async (ask) => { if (ask.kind === 'privacy') await o.onPrivacyAsk!(++asks); return real(ask); };
+      }
+      if (o.onRerunAsk) { // the n-th stable rerun the child asks for: the hook may fail it (a thrown allowlisted code) or stop the shadow
+        const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
+        const real = sup.onAsk;
+        let reruns = 0;
+        sup.onAsk = async (ask) => { if (ask.kind === 'rerun') await o.onRerunAsk!(++reruns, rig); return real(ask); };
       }
       if (o.settle) await rig.settled(); // a rerun needs the child started and its watermark valid
       rig.rust.searchVector = async () => answer(theirs, spare, ids);
@@ -403,6 +409,31 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const failed = await ranked(unidentified, { settle: true, noRecall: true, onPrivacyAsk: async () => { throw new Error('privacy ask failed'); } });
       expect(failed.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:privacy_check_unavailable', reason: 'privacy_check_unavailable' });
       expect(failed.evidence.privacy_checks_unsettled_7d).toBe(1);
+    });
+
+    describe('an unsettled privacy reason found in a middle rerun', () => {
+      const coded = (code: string): Error => Object.assign(new Error(code), { code });
+      // The first check holds but is not complete (a row with no identity); the first rerun's privacy check moves; a LATER rerun then fails before its own check.
+      const later: Array<[string, (n: number, rig: Rig) => Promise<void>]> = [
+        ['a write after the barrier on every later run (the three runs used up)', async (n) => { if (n >= 2) throw coded('write_after_barrier'); }],
+        ['a later run that times out', async (n) => { if (n >= 2) throw coded('timeout'); }],
+        ['a later run whose watermark is not valid', async (n) => { if (n >= 2) throw coded('watermark_invalid'); }],
+        ['the child stopped while a later run is asked for', async (n, rig) => { if (n >= 2) { rig.attached.supervisor.stop(); throw coded('timeout'); } }],
+      ];
+      for (const [name, onRerunAsk] of later) {
+        test(`${name} keeps the privacy_check_moved reason on the row: privacy_checks_unsettled_7d stays above 0`, async () => {
+          const probe = 'a2_carry_probe';
+          await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
+          await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
+          try {
+            const mixed = (theirs: Rows, spare: Record<string, unknown>): Rows => [...theirs, spare, { ...spare, page_id: undefined, slug: undefined, source_id: undefined }];
+            const r = await ranked(mixed, { settle: true, noRecall: true, child: { random: () => 0.5, sleep: async () => undefined }, onRerunAsk,
+              onPrivacyAsk: async (n) => { if (n >= 2) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } }); // the first rerun's privacy check moves
+            expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', reason: 'privacy_check_moved', rerun: expect.stringMatching(/^skipped:/) });
+            expect(r.evidence.privacy_checks_unsettled_7d).toBeGreaterThan(0);
+          } finally { await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`); }
+        });
+      }
     });
 
     test('a rerun whose privacy check moves every time (the three reruns used up) stays unsettled for privacy, not just unresolved', async () => {
