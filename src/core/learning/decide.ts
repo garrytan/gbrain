@@ -131,7 +131,8 @@ async function undoOne(engine: BrainEngine, ctx: OperationContext, item: Learned
   }
   let result: unknown;
   if (item.kind === 'fact_added') {
-    result = await asCaller(ctx, async () => (await import('../verbs.ts')).verbOperations, 'forget', { id: evidence(item, 'fact_id'), reason: note });
+    result = await asCaller(ctx.remote === false ? { ...ctx, sourceId: item.source_id } : ctx, async () => (await import('../verbs.ts')).verbOperations, 'forget',
+      { id: evidence(item, 'fact_id'), reason: note });
   } else if (item.kind === 'promise_found') {
     result = await asCaller(ctx, async () => (await import('../ops/loops.ts')).loopsOperations, 'loops_close',
       { id: Number(evidence(item, 'loop_id')), status: 'dropped', note, ...(ctx.remote === false ? { source_id: item.source_id } : {}) });
@@ -140,13 +141,13 @@ async function undoOne(engine: BrainEngine, ctx: OperationContext, item: Learned
   } else {
     const versionId = String(evidence(item, 'version_id'));
     const slug = String(item.subject);
+    const snapshot = await engine.readPageSnapshot(slug, { sourceId: item.source_id });
+    if (!snapshot) return { ...base, status: 'not_found' };
     const newer = await versionsAfter(engine, versionId);
     if (newer.length) {
       return { ...base, status: 'refused', reason: `the page changed after it was filled in (version${newer.length === 1 ? '' : 's'} ${newer.join(', ')}); undo would overwrite that edit`,
         commands: [['gbrain', 'history', slug], ['gbrain', 'revert', slug, versionId]] };
     }
-    const snapshot = await engine.readPageSnapshot(slug, { sourceId: item.source_id });
-    if (!snapshot) return { ...base, status: 'not_found' };
     result = await asCaller(ctx, async () => (await import('../ops/admin.ts')).adminOperations, 'revert_version',
       { slug, version_id: Number(versionId), source_id: item.source_id, expected_revision: snapshot.revision, reason: note });
   }

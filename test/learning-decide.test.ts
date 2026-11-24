@@ -41,6 +41,7 @@ import { confirmable } from '../src/commands/dedupe.ts';
 import type { DuplicateGroup } from '../src/core/entities/duplicates.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { operationScopesAllowed } from '../src/core/scope.ts';
+import { ALL_SOURCES } from '../src/core/source-id.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
@@ -129,8 +130,9 @@ for (const backend of testBackends()) {
     };
     const enrich = async (slug: string, title: string, body: string) => {
       const before = await engine.readPageSnapshot(slug, { sourceId: SRC });
-      await local('put_page', { slug, expected_revision: before!.revision,
-        content: page('person', title, body, [`enriched_at: ${new Date().toISOString()}`, 'enriched_by: cli:enrich']) });
+      const at = new Date().toISOString();
+      await local('put_page', { slug, expected_revision: before!.revision, content: page('person', title, body, [`enriched_at: ${at}`, 'enriched_by: cli:enrich']) });
+      return at;
     };
     const body = async (slug: string) => (await engine.readPageSnapshot(slug, { sourceId: SRC }))!.page.compiled_truth;
     const counts = async () => (await engine.executeRaw<{ pages: number; versions: number; facts: string }>(`SELECT (SELECT count(*)::int FROM pages) AS pages,
@@ -186,6 +188,34 @@ for (const backend of testBackends()) {
       expect(await keep('999999')).toEqual([{ id: '999999', status: 'not_found' }]);
       const stats = (await local('learned', { stats: true })).stats;
       expect(stats.nights[0]).toMatchObject({ kept: 2, counted: 2 });
+    });
+
+    test('keep on a promise and a filled-in page marks them kept and changes neither', async () => {
+      await engine.executeRaw(`INSERT INTO open_loops (source_id, dedup_key, loop_type, counterparty_slug, summary, detector)
+        VALUES ($1, 'promise-keep', 'commitment_owed_to_me', $2, 'Bob will call back', 'llm_extract')`, [SRC, ENTITY]);
+      await importFromContent(engine, 'people/hal-example', page('person', 'Hal Example', 'Hal is a stub.'), { sourceId: SRC });
+      await enrich('people/hal-example', 'Hal Example', 'Hal repairs bicycles.');
+      await derive();
+      const [promise, filled] = [await itemOf('promise_found'), await itemOf('page_filled')];
+      const before = await counts();
+      const loops = async () => engine.executeRaw<{ status: string }>("SELECT status FROM open_loops WHERE dedup_key = 'promise-keep'");
+      expect(await keep(`${promise.id} ${filled.id}`)).toEqual([
+        { id: promise.id, kind: 'promise_found', status: 'kept' },
+        { id: filled.id, kind: 'page_filled', status: 'kept' },
+      ]);
+      expect(await counts()).toEqual(before);
+      expect(await loops()).toEqual([{ status: 'open' }]);
+      expect(await body('people/hal-example')).toContain('Hal repairs bicycles.');
+    });
+
+    test('a local caller reading every source undoes a fact in the source it was learned in', async () => {
+      const id = await insertFact('Bob keeps bees');
+      await derive();
+      const item = await itemOf('fact_added');
+      const out = parse(await dispatchToolCall(engine, 'learned_undo', { ids: item.id }, { remote: false, sourceId: ALL_SOURCES }));
+      expect(out.results[0]).toMatchObject({ id: item.id, status: 'undone' });
+      const [fact] = await engine.executeRaw<{ expired_at: string | null }>('SELECT expired_at FROM facts WHERE id = $1', [id]);
+      expect(fact!.expired_at).not.toBeNull();
     });
 
     test('undo forgets a new fact: the fact is withdrawn, the item is undone, and it leaves the note', async () => {
@@ -252,6 +282,15 @@ for (const backend of testBackends()) {
       expect(await engine.executeRaw("SELECT count(*)::int AS n FROM learning_items WHERE kind = 'page_filled'")).toEqual([{ n: 1 }]);
     });
 
+    test('a fill edited before the nightly run, frontmatter kept, is still recorded', async () => {
+      await importFromContent(engine, 'people/ivy-example', page('person', 'Ivy Example', 'Ivy is a stub.'), { sourceId: SRC });
+      const at = await enrich('people/ivy-example', 'Ivy Example', 'Ivy builds kites.');
+      const snap = await engine.readPageSnapshot('people/ivy-example', { sourceId: SRC });
+      await local('put_page', { slug: 'people/ivy-example', expected_revision: snap!.revision,
+        content: page('person', 'Ivy Example', 'Ivy builds kites and flies them.', [`enriched_at: ${at}`, 'enriched_by: cli:enrich']) });
+      expect((await derive()).details.recorded).toMatchObject({ page_filled: 1 });
+    });
+
     test('a claim conflict: a remote caller gets the owner command, a local undo rejects the newer fact, and an answer through decide marks it answered', async () => {
       const conflict = async (metric: string) => {
         await insertFact(`Acme ${metric} is 40000`, { entity: 'companies/acme-example', visibility: 'world', source: 'fixture', ageDays: 1, claim: [metric, 40000] });
@@ -273,6 +312,8 @@ for (const backend of testBackends()) {
       const remote = parse(await remoteRaw('owner-writer', 'learned_undo', { ids: first!.id }));
       expect(remote.results).toEqual([{ id: first!.id, kind: 'conflict_found', status: 'owner_command', reason: 'proposal review runs on the brain host',
         command: ['gbrain', 'decide', 'proposals', 'reject', proposalOf(first)] }]);
+      expect(await state(first!.id)).toBe('pending');
+      expect(await keep(first!.id)).toEqual([{ id: first!.id, kind: 'conflict_found', status: 'refused', reason: 'a question: answer it (learned-undo, or the commands the note shows)' }]);
       expect(await state(first!.id)).toBe('pending');
 
       expect((await undo(first!.id))[0]).toMatchObject({ status: 'answered' });

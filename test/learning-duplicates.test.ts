@@ -159,6 +159,8 @@ for (const backend of testBackends()) {
       const [item] = dupes(await local());
       const undo = parse(await dispatchToolCall(engine, 'learned_undo', { ids: item!.id }, { remote: false }));
       expect(undo.results).toEqual([{ id: item!.id, kind: 'duplicate_to_confirm', status: 'owner_command', reason: 'dedupe answers run on the brain host', command: item!.commands!.reject }]);
+      const kept = parse(await dispatchToolCall(engine, 'learned_keep', { ids: item!.id }, { remote: false }));
+      expect(kept.results).toEqual([{ id: item!.id, kind: 'duplicate_to_confirm', status: 'refused', reason: 'a question: answer it (learned-undo, or the commands the note shows)' }]);
       const state = async () => (await engine.executeRaw<{ state: string; decided_by: string | null }>('SELECT state, decided_by FROM learning_items WHERE id = $1', [item!.id]))[0];
       expect(await state()).toEqual({ state: 'pending', decided_by: null });
       await cli(['reject', item!.commands!.reject[3]!]);

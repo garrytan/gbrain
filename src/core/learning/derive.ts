@@ -77,7 +77,7 @@ const PRODUCERS: Array<{ kinds: LearningKind[]; select: string }> = [
                      ORDER BY pv.id DESC LIMIT 1) v ON TRUE
      WHERE p.updated_at >= $1::timestamptz AND p.deleted_at IS NULL AND p.frontmatter->>'enriched_by' = '${ENRICHED_BY}'
        AND ${ENRICHED_AT_SQL} >= $1::timestamptz
-       AND NOT EXISTS (SELECT 1 FROM page_versions o WHERE o.page_id = p.id AND o.frontmatter->>'enriched_at' = p.frontmatter->>'enriched_at')
+       AND NOT EXISTS (SELECT 1 FROM page_versions o WHERE o.page_id = p.id AND o.id < v.id AND o.frontmatter->>'enriched_at' = p.frontmatter->>'enriched_at')
        AND ${notRecordedSql("'page_filled'", 'page_versions', 'v.id')}
      ORDER BY v.id LIMIT $2` },
   { kinds: ['promise_found'], select: `
