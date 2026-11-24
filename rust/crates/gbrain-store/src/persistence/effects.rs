@@ -20,7 +20,8 @@ use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::{get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -181,30 +182,60 @@ pub(crate) fn request_effects(read: &dyn KvRead, request_id: &str) -> Result<Vec
     Ok(out)
 }
 
-/// Every stored effect, in id order (the claim-order index).
-pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
-    let mut entries = Vec::new();
-    scan_prefix(
+/// Index entries read per scan by `for_each_effect`.
+const EFFECT_PAGE: usize = 8;
+
+/// Calls `f` with each stored effect in id order (the claim-order index) until it returns false. The index is read
+/// `EFFECT_PAGE` entries at a time and a record when its turn comes, so a stop leaves the later pages and records unread.
+pub(crate) fn for_each_effect(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(EffectRecord) -> Result<bool>,
+) -> Result<()> {
+    for_each_prefix_paged(
         read,
         &[keys::PERSISTENCE, EFFECT_ORDER],
-        false,
+        EFFECT_PAGE,
         &mut |_, value| {
-            entries.push(serde_json::from_slice::<OrderEntry>(value));
-            true
+            let entry = serde_json::from_slice::<OrderEntry>(value).map_err(|e| {
+                StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
+            })?;
+            match get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))? {
+                Some(record) => f(record),
+                None => Ok(true),
+            }
         },
-    )?;
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
-        })?;
-        if let Some(record) =
-            get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))?
-        {
-            out.push(record);
-        }
-    }
+    )
+}
+
+/// Every stored effect, in id order (the claim-order index).
+pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
+    let mut out = Vec::new();
+    for_each_effect(read, &mut |record| {
+        out.push(record);
+        Ok(true)
+    })?;
     Ok(out)
+}
+
+/// The keys and values a store holds for `effects` (test seeding of a read-only fake).
+#[cfg(test)]
+pub(crate) fn effect_entries_for_test(effects: &[EffectRecord]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in effects {
+        out.push((
+            effect_key(&e.request_id, &e.kind),
+            serde_json::to_vec(e).unwrap(),
+        ));
+        out.push((
+            order_key(e.id),
+            serde_json::to_vec(&OrderEntry {
+                request_id: e.request_id.clone(),
+                kind: e.kind.clone(),
+            })
+            .unwrap(),
+        ));
+    }
+    out
 }
 
 /// Effect `id`, or none.
@@ -522,6 +553,26 @@ impl crate::Store {
             })
             .collect())
     }
+}
+
+/// The `persistence_effects` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), in id order. The
+/// index is read a page at a time, so a stop leaves the later pages and records unread.
+pub(crate) fn probe_effects(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    for_each_effect(read, &mut |e| {
+        f(ProbeRow {
+            source_id: e.source_id.clone(),
+            cells: vec![
+                ("kind", ProbeCell::text(&e.kind)),
+                ("data", ProbeCell::jsonb(&e.data)),
+                ("state", ProbeCell::text(&e.state)),
+                ("source_id", ProbeCell::opt_text(e.source_id.as_deref())),
+                ("error_code", ProbeCell::opt_text(e.error_code.as_deref())),
+                ("outcome", ProbeCell::opt_jsonb(e.outcome.as_ref())),
+                ("recovery", ProbeCell::opt_jsonb(e.recovery.as_ref())),
+                ("claim_owner", ProbeCell::opt_jsonb(e.claim_owner.as_ref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

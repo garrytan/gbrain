@@ -326,6 +326,18 @@
           }
         ]
       },
+      "lockSourceForUpdate": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id FROM sources WHERE id=$1 FOR UPDATE",
+            "textSha256": "91493e544465e91a2b5d1836ca3e2134fcff8a19c04745459fead7d6ed36e908"
+          }
+        ]
+      },
       "lockSourceRow": {
         "default": [
           {
@@ -504,6 +516,19 @@
             ],
             "sql": "SELECT id, local_path, config, archived FROM sources WHERE id=$1",
             "textSha256": "38c9109affe2faf67e65aa6c6874018bf3b040173ea8d5836ccab976354a368d"
+          }
+        ]
+      },
+      "renameSource": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string"
+            ],
+            "sql": "UPDATE sources SET name = $1 WHERE id = $2",
+            "textSha256": "67b41777daeecbbdac63ef611282bde4d53b20c1481c1b835372ab61a4c83496"
           }
         ]
       },

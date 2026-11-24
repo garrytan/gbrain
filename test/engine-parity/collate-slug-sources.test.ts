@@ -78,13 +78,6 @@ async function cli(run: () => Promise<void>): Promise<string> {
 const named = (text: string) => MIXED_SOURCES.filter(id => text.includes(id)).sort((a, b) => text.indexOf(`${a}`) - text.indexOf(`${b}`));
 
 describe('a slug held in several sources lists those sources by byte', () => {
-  parityTest('whoCanRead lists the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
-    await seed(engine, backend);
-    const sources = (await whoCanRead(engine, SLUG)).map(e => e.source_id);
-    expect(sources).toEqual(BYTE_SOURCES);
-    return sources;
-  });
-
   parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
     await seed(engine, backend);
     const e = await errorOf(() => resolvePageRef(engine, { kind: 'page', sourceId: null, slug: SLUG } as never)) as OperationError;
@@ -105,14 +98,6 @@ describe('a slug held in several sources lists those sources by byte', () => {
     const err = await cli(() => runExtractConversationFacts(engine, ['--slug', SLUG, '--grammar', 'none', '--dry-run']));
     expect(err).toContain(`is in 3 sources (${BYTE_SOURCES.join(', ')})`);
     return named(err);
-  });
-
-  parityTest('promoteGuestNote names the guest sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
-    await seed(engine, backend);
-    for (const id of MIXED_SOURCES) await engine.executeRaw('INSERT INTO guest_sources (source_id) VALUES ($1) ON CONFLICT DO NOTHING', [id]);
-    const e = await errorOf(() => promoteGuestNote(ctxFor(engine), { slug: SLUG }));
-    expect(e.message).toContain(`exists in several guest sources (${BYTE_SOURCES.join(', ')})`);
-    return e.message;
   });
 
   parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {

@@ -34,7 +34,6 @@
 //!   (`facts/loops/mutes.rs`). Store formats 6 and older kept them at `F 0x10` beside the take
 //!   purges; `facts/key_split.rs` moves them when such a brain opens. `0x0E` is retired (the
 //!   v0.60.766.0 addon's inline generation ledger, `seed/format_5.rs`); never reuse it.
-//! - `F 0x12 kind source day`: the `extract_rollup_7d` table (`facts/extract_rollup.rs`).
 //!
 //! No two record kinds may share an `F` sub-tag: `tests/key_registry.rs` fails when they do.
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
@@ -59,7 +58,6 @@ pub mod cycle_fence;
 pub mod doctor;
 pub mod doctor_pages;
 mod embedding;
-pub mod extract_rollup;
 /// Postgres `md5(text)`, for the timeline retraction check's version digests.
 pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
@@ -75,18 +73,22 @@ pub(crate) mod key_split;
 pub mod label_repair;
 pub mod loops;
 pub mod ontology_repair;
+pub(crate) mod page_purge_journal;
+pub(crate) mod page_purge_reads;
+pub(crate) mod page_purge_sweep;
 pub mod page_purges;
 pub(crate) use page_purges::{remove_purge, seed_purge};
-pub mod derivation_probe;
 pub mod phantom;
 pub(crate) mod privacy;
 pub mod provenance;
 pub mod purge;
+mod purge_claim_probe;
 pub mod purge_journal;
 pub mod purge_ledger;
 pub mod purge_plan;
 pub(crate) mod purge_probe;
 pub mod purge_receipt;
+pub mod purge_store_probe;
 pub mod purge_tx;
 pub mod purge_writes;
 pub mod quote;
@@ -118,16 +120,16 @@ pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub(crate) use fence::jsonb_time;
 pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
-pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput, FenceRowKey};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use page_purges::PagePurgeUpsert;
 pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows, stamped_rules,
-    successor_withholds_reason, version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, chronicle_depth, concept_inputs,
+    declared_slugs, hidden_by_provenance_page, names_no_readers_or_rules, page_hidden,
+    page_hidden_with, privacy_allows, stamped_rules, successor_withholds_reason, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
@@ -140,7 +142,7 @@ use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::keyword::{
     or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
 };
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
@@ -822,6 +824,41 @@ pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
 
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
+}
+
+/// Calls `f` with each fact of the source, in index order, until it returns false: the rows are read a page of ids at a time, so
+/// a stop leaves the later ones unread (the purge receipt's bounded probes stop at their cap).
+pub(crate) fn for_each_source_fact(
+    read: &dyn KvRead,
+    source_id: &str,
+    f: &mut dyn FnMut(&FactRecord) -> bool,
+) -> Result<()> {
+    for_each_prefix_paged(read, &text_key(BY_SOURCE, &[source_id]), 8, &mut |k, _| {
+        let id = k.get(k.len().saturating_sub(8)..).and_then(keys::be8);
+        match id.map(|id| read_fact(read, id)).transpose()?.flatten() {
+            Some(row) => Ok(f(&row)),
+            None => Ok(true),
+        }
+    })
+}
+
+/// Whether some fact of the source is keyed under an entity slug `pred` accepts (the `BY_ENTITY` index).
+pub(crate) fn any_entity_slug(
+    read: &dyn KvRead,
+    source_id: &str,
+    pred: &dyn Fn(&str) -> bool,
+) -> Result<bool> {
+    let prefix = text_key(BY_ENTITY, &[source_id]);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // `prefix entity_slug \0 id`: the id is the last 8 bytes.
+        let entity = k
+            .get(prefix.len()..k.len().saturating_sub(9))
+            .unwrap_or_default();
+        found = pred(&String::from_utf8_lossy(entity));
+        !found
+    })?;
+    Ok(found)
 }
 
 pub(crate) fn entity_rows(
@@ -2606,6 +2643,13 @@ mod tests {
     use super::*;
     use crate::kv::KvRead;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn lower_and_the_space_class_match_pglite_on_every_code_point() {
+        use crate::fingerprint_fixture::{lower_mismatches, space_mismatches};
+        assert_eq!(lower_mismatches(pg_lower_char), Vec::<String>::new());
+        assert_eq!(space_mismatches(pg_space), Vec::<String>::new());
+    }
 
     #[test]
     fn a_day_text_is_utc_midnight_and_an_iso_time_is_kept() {

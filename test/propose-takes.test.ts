@@ -15,7 +15,6 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { upsertExtractRollup as rollupStatement } from '../src/core/engine-sql/extract-bookkeeping.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   runPhaseProposeTakes,
@@ -38,6 +37,7 @@ import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
 import { CYCLE_DEADLINE_RESERVE_MS } from '../src/core/cycle/base-phase.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTakeProposalMembers } from './helpers/take-proposal-members.ts';
 import type { Page } from '../src/core/types.ts';
 
 // ─── Mock engine ────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ function buildMockEngine(opts: {
   const captured: CapturedSql[] = [];
   const existing = opts.existingProposals ?? new Set<string>();
 
-  const engine = {
+  const engine = withTakeProposalMembers({
     kind: 'pglite',
     async listPages() {
       return opts.pages;
@@ -90,11 +90,7 @@ function buildMockEngine(opts: {
       // Other writes — return nothing.
       return [];
     },
-    // The rollup is an engine member; run its statement through executeRaw above, so the test reads its text and binds.
-    async upsertExtractRollup(row: Parameters<typeof rollupStatement>[1], form?: 'pre_v141') {
-      return rollupStatement(this as unknown as Parameters<typeof rollupStatement>[0], row, form);
-    },
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
 
   return { engine, captured };
 }
@@ -1188,11 +1184,11 @@ describe('cycle.propose_takes.enabled gate (#4102)', () => {
 describe('runPhaseProposeTakes — dry-run (#4823)', () => {
   function armedEngine(): { engine: BrainEngine; calls: () => number } {
     let calls = 0;
-    const engine = {
+    const engine = withTakeProposalMembers({
       kind: 'pglite',
       async executeRaw() { calls++; throw new Error('executeRaw must not run under dry-run'); },
       async listPages() { calls++; throw new Error('listPages must not run under dry-run'); },
-    } as unknown as BrainEngine;
+    } as unknown as BrainEngine);
     return { engine, calls: () => calls };
   }
   const meter = () => new BudgetMeter({ budgetUsd: 1, phase: 'propose_takes' });

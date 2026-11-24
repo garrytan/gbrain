@@ -8,6 +8,7 @@ export const CONTENT_MEMBERS = {
   getConfig: 'config',
   readStoredConfigValue: 'config',
   setConfig: 'config',
+  insertConfigIfAbsent: 'config',
   unsetConfig: 'config',
   listConfigKeys: 'config',
   getAllConfig: 'config',
@@ -49,6 +50,8 @@ export const CONTENT_MEMBERS = {
   lockBodyStagingState: 'page_body',
   deleteUnstagedSegmentChunks: 'page_body',
   deleteRewrittenSegmentDerivations: 'page_body',
+  readPageViewDigest: 'page_body',
+  writePageViewDigest: 'page_body',
   // tags
   pruneFrontmatterTags: 'tags',
   addPageTagsById: 'tags',

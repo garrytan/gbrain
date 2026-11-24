@@ -10,38 +10,10 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::purge_journal::{
-    DeletePageRequestQuery, PageChangeReasonsQuery, PurgeEffectsQuery, SourceSlugArgs,
-};
+use gbrain_store::facts::purge_journal::{DeletePageRequestQuery, PurgeEffectsQuery};
 
 #[napi]
 impl Brain {
-    /// `listPageChangeReasons(sourceId, slug, pageId)`: resolves `{ reason }` rows.
-    #[napi]
-    pub fn list_page_change_reasons<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PageChangeReasonsQuery = required(args, "listPageChangeReasons args")?;
-            s.list_page_change_reasons(&a)
-        })
-    }
-
-    /// `listRequestsRecordingReasons(sourceId, slug)`: resolves `{ id, principal_kind, principal_id }` rows.
-    #[napi]
-    pub fn list_requests_recording_reasons<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: SourceSlugArgs = required(args, "listRequestsRecordingReasons args")?;
-            s.list_requests_recording_reasons(&a)
-        })
-    }
-
     /// `readDeletePageRequest(sourceId, requestId)`: resolves `{ id, request_id, state, source_id, outcome }` or null.
     #[napi]
     pub fn read_delete_page_request<'env>(

@@ -25,17 +25,12 @@ use crate::error::{Result, StoreError};
 use crate::journal::RequestRecord;
 use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
-use crate::pages::versions_of;
 use crate::persistence::{all_effects, request_effects};
 use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, keys};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
-
-/// The byte after `keys::FACT` that marks a change-reason tombstone.
-/// `LIMIT 10000` of the requests that record a reason.
-const REQUEST_LIMIT: usize = 10_000;
 
 /// `listGitEffectsCarryingReason`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -47,30 +42,12 @@ pub struct GitEffectsReasonQuery {
     pub folded_json: String,
 }
 
-/// The `(sourceId, slug)` of `listPageGitEffectsForStrip`, `listRequestsRecordingReasons` and
-/// `countPagePurgeTombstones`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct SourceSlugArgs {
-    pub source_id: String,
-    pub slug: String,
-}
-
 /// `setPurgeEffectData`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectDataUpdate {
     pub effect_id: String,
     pub data: Value,
-}
-
-/// `listPageChangeReasons`.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct PageChangeReasonsQuery {
-    pub source_id: String,
-    pub slug: String,
-    pub page_id: i64,
 }
 
 /// `readDeletePageRequest`.
@@ -125,69 +102,7 @@ fn field<'a>(data: &'a Value, key: &str) -> Option<&'a Value> {
     data.as_object().and_then(|o| o.get(key))
 }
 
-/// `intent->>'reason'`.
-fn intent_reason(r: &RequestRecord) -> Option<String> {
-    field(&r.intent, "reason").and_then(jsonb_field_text)
-}
-
-/// `outcome->'reason_recorded'`.
-fn reason_recorded(r: &RequestRecord) -> Option<&Value> {
-    r.outcome.as_ref().and_then(|o| field(o, "reason_recorded"))
-}
-
 impl Store {
-    /// `listPageChangeReasons(sourceId, slug, pageId)`.
-    pub fn list_page_change_reasons(&self, q: &PageChangeReasonsQuery) -> Result<Vec<Value>> {
-        no_nul(
-            "listPageChangeReasons",
-            &[("sourceId", &q.source_id), ("slug", &q.slug)],
-        )?;
-        let read = self.read()?;
-        let mut reasons: BTreeSet<Option<String>> = BTreeSet::new();
-        if let Ok(page_id) = u64::try_from(q.page_id) {
-            for v in versions_of(&*read, page_id)? {
-                reasons.insert(v.change_reason);
-            }
-        }
-        for r in all_requests(&*read)? {
-            if r.source_id == q.source_id && r.slug == q.slug {
-                reasons.insert(intent_reason(&r));
-                reasons.insert(
-                    reason_recorded(&r)
-                        .and_then(|v| field(v, "reason"))
-                        .and_then(jsonb_field_text),
-                );
-            }
-        }
-        Ok(reasons
-            .into_iter()
-            .map(|reason| json!({ "reason": reason }))
-            .collect())
-    }
-
-    /// `listRequestsRecordingReasons(sourceId, slug)`.
-    pub fn list_requests_recording_reasons(&self, q: &SourceSlugArgs) -> Result<Vec<Value>> {
-        no_nul(
-            "listRequestsRecordingReasons",
-            &[("sourceId", &q.source_id), ("slug", &q.slug)],
-        )?;
-        let read = self.read()?;
-        let mut rows: Vec<RequestRecord> = all_requests(&*read)?
-            .into_iter()
-            .filter(|r| {
-                r.source_id == q.source_id
-                    && r.slug == q.slug
-                    && (intent_reason(r).is_some() || reason_recorded(r).is_some())
-            })
-            .collect();
-        rows.sort_by_key(|r| r.sequence);
-        Ok(rows
-            .into_iter()
-            .take(REQUEST_LIMIT)
-            .map(|r| json!({ "id": r.id, "principal_kind": r.principal_kind, "principal_id": r.principal_id }))
-            .collect())
-    }
-
     /// `readDeletePageRequest(sourceId, requestId)`.
     pub fn read_delete_page_request(&self, q: &DeletePageRequestQuery) -> Result<Value> {
         let op = "readDeletePageRequest";

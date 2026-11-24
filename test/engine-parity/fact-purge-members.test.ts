@@ -60,11 +60,10 @@ async function admit(engine: BrainEngine, requestId: string, over: { operation?:
   } as never)).id;
 }
 
-/** The four tables the purge clears that only an `executeRaw` insert writes, and the files of those inserts. */
+/** The three tables the purge clears that only an `executeRaw` insert writes, and the files of those inserts. */
 const RAW_ONLY_WRITERS: Record<string, string[]> = {
   page_body_staging_parts: ['src/core/persistence/page-upload.ts'],
-  page_view_digests: ['src/core/page-window/segmented.ts'],
-  take_proposals: ['src/core/cycle/propose-takes-failures.ts', 'src/core/cycle/propose-takes.ts'],
+  page_view_digests: ['src/core/engine-sql/page-view-digests.ts'],
   core_edit_notices: ['src/core/persistence/core-guard.ts'],
 };
 
@@ -411,8 +410,8 @@ describe('engine parity: the fact purge transaction members', () => {
       queued: [['embedding', 'queued', null, false], ['git', 'queued', null, false], ['withdrawal-mirror', 'queued', null, false]] });
     return answers;
   });
-  parityTest('deletePurgedStagingParts, deletePageViewDigests, deletePurgeTakeProposals and blankPurgeCoreEditNotices find no rows, and each table keeps its raw-only writer', {
-    methods: ['transaction', 'deletePurgedStagingParts', 'deletePageViewDigests', 'deletePurgeTakeProposals', 'blankPurgeCoreEditNotices'],
+  parityTest('deletePurgedStagingParts, deletePageViewDigests and blankPurgeCoreEditNotices find no rows, and each table keeps its raw-only writer', {
+    methods: ['transaction', 'deletePurgedStagingParts', 'deletePageViewDigests', 'blankPurgeCoreEditNotices'],
   }, async (engine) => {
     // A Rust brain refuses every executeRaw (raw-sql.test.ts), so these tables stay empty there and the Rust members
     // answer without a store call. A typed writer of one of them (an engine-sql module or a Rust store module) fails
@@ -420,14 +419,37 @@ describe('engine parity: the fact purge transaction members', () => {
     const answers = await engine.transaction(async tx => ({
       parts: await tx.deletePurgedStagingParts(['a0000000-0000-4000-8000-0000000000a1']),
       digests: (await tx.deletePageViewDigests([1, 2])) ?? null,
-      takeProposals: await tx.deletePurgeTakeProposals(SRC, 'hash-a'),
       notices: await tx.blankPurgeCoreEditNotices(SRC, 'alice likes tea'),
       none: [await tx.deletePurgedStagingParts([]), (await tx.deletePageViewDigests([])) ?? null],
     }));
     const writers = rawOnlyWriters();
-    expect(answers).toEqual({ parts: 0, digests: null, takeProposals: 0, notices: 0, none: [0, null] });
+    expect(answers).toEqual({ parts: 0, digests: null, notices: 0, none: [0, null] });
     expect(writers).toEqual(Object.fromEntries(Object.entries(RAW_ONLY_WRITERS).map(([table, files]) => [table, files.map(file => ({ file, executeRaw: true }))])));
     return { answers, writers };
+  });
+
+  // take_proposals has a typed writer (engine-sql/take-proposals.ts insertTakeProposal; on Rust the store's
+  // takes/proposals.rs), so a Rust brain holds proposals and a fact purge must delete the ones that state the claim.
+  parityTest('deletePurgeTakeProposals deletes the source\'s take proposals whose claim has the purged fingerprint, and no other', {
+    methods: ['insertFact', 'loadPurgeTarget', 'insertTakeProposal', 'transaction', 'deletePurgeTakeProposals', 'listPendingTakeProposals'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const claim = 'The harbor will reopen in spring';
+    const seeded = await engine.insertFact({ fact: claim, entity_slug: null, source: 'chat' } as NewFact, { source_id: SRC });
+    const hash = (await engine.loadPurgeTarget(seeded.id, SRC))!.fact_hash;
+    const proposal = (sourceId: string, pageSlug: string, claimText: string) => engine.insertTakeProposal({ sourceId, pageSlug,
+      contentHash: 'hash-1', promptVersion: 'parity-v1', proposalRunId: 'run-1', claimText, kind: 'bet', holder: 'brain', weight: 0.6,
+      domain: null, dedupAgainst: [], modelId: 'parity-model' });
+    await proposal(SRC, 'notes/a', claim);
+    await proposal(SRC, 'notes/b', 'The  Harbor will reopen in   SPRING');
+    await proposal(SRC, 'notes/b', 'Something else');
+    await proposal('other', 'notes/a', claim);
+    const left = async (sourceId: string) => (await engine.listPendingTakeProposals({ sourceId, limit: 50 })).map(p => `${p.page_slug}|${p.claim_text}`).sort();
+    const deleted = await engine.transaction(tx => tx.deletePurgeTakeProposals(SRC, hash));
+    const again = await engine.transaction(tx => tx.deletePurgeTakeProposals(SRC, hash));
+    const out = { deleted, again, left: await left(SRC), other: await left('other') };
+    expect(out).toEqual({ deleted: 2, again: 0, left: ['notes/b|Something else'], other: [`notes/a|${claim}`] });
+    return out;
   });
 
   parityTest('the raw-only purge tables are reachable only through executeRaw, which the Rust arm refuses', {
@@ -437,7 +459,7 @@ describe('engine parity: the fact purge transaction members', () => {
     for (const table of Object.keys(RAW_ONLY_WRITERS)) {
       counts[table] = Number((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`))[0]!.n);
     }
-    expect(counts).toEqual({ page_body_staging_parts: 0, page_view_digests: 0, take_proposals: 0, core_edit_notices: 0 });
+    expect(counts).toEqual({ page_body_staging_parts: 0, page_view_digests: 0, core_edit_notices: 0 });
     return counts;
   });
   parityTest('hideDerivedRows marks each derived row of a purged input in needs_rederive, and the reads that apply rederiveHiddenSql hide a marked row', {

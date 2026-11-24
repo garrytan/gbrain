@@ -35,3 +35,11 @@ transaction after the pages are gone. It touches candidates whose `source_ids` c
 each slug in `slugs` unless a page by that name lives in another source the candidate covers, keeps the
 order of the rest, and returns the number of candidates changed. A candidate with empty `source_ids` is
 never touched, as in PGLite.
+
+The page purge's retrieval, name and cache scrubs: `brain.scrubEvalCandidateSlugs(sourceId, slugs) -> number` runs
+`remove_retrieved_slugs` in its own write transaction (`Store::scrub_eval_candidate_slugs`) and serves the eval candidate count of the
+`deletePurgedFeedbackRows` member (`src/core/engine-sql/purge-stores.ts`). The rest of what that purge scrubs is answered in
+TypeScript without a store call, because the store keeps no such rows: `deletePurgedFeedbackRows` reports 0 for the retrieval event,
+link event, rating and weight stores (reserved keyspaces that hold no record); `deletePurgedNameStoreRows` reports 0 for the volunteer
+log and the gazetteer; `clearQueryCache` reports 0 rows removed (the cache is present and empty, so the purge receipt names no missing
+cache, as on PGLite). A candidate scrub in a purge transaction runs after the pages are gone, as `remove_retrieved_slugs` requires.

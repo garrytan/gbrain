@@ -11,9 +11,9 @@
  *    no SQL, so every read and write on the path has to be a typed member.
  *  - Why existing coverage misses it: the reads ran through `executeRaw` inside cycle/extract-takes.ts and
  *    trust/fence-guard.ts, which the parity cases cannot call (D18); test/extract-takes*.test.ts run PGLite only.
- *  - Rust: the write publishes a take-fence generation (generations/fence.ts `publishFenceGeneration`) through typed
- *    members the store serves (the derived-generation ledger), so both cases run to the end and compare equal on the
- *    Rust arm too.
+ *  - Rust: the write publishes a take-fence generation (generations/publish.ts `publishFenceGeneration`) and records
+ *    each upserted take's taint edge (trust/taint.ts `recordTaintEdges`, the `recordDerivationEdges` member), both
+ *    served by the store, so both cases are equal on the Rust arm.
  *  - Seam: `withWriteTrustSettings` stamps the operator-curated take (the transaction-local `gbrain.write_trust_tier`
  *    every arm sets with `applyTransactionSettings`). The FS path reads a markdown checkout in a temp directory.
  */
@@ -70,6 +70,7 @@ async function takeProposals(engine: BrainEngine, claimOf: Map<number, string>) 
       change: (p.before_state as { change?: string }).change ?? null }))
     .sort((a, b) => a.target.localeCompare(b.target));
 }
+
 
 const summary = (r: Awaited<ReturnType<typeof extractTakesFromDb>>) => ({ scanned: r.pagesScanned, withTakes: r.pagesWithTakes, upserted: r.takesUpserted,
   warnings: r.warnings, failed: r.failedFiles, gate: r.writeGate ?? null });

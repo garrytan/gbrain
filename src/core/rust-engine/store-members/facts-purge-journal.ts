@@ -10,14 +10,6 @@ import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-export const listPageChangeReasons: Member<'listPageChangeReasons'> = (brain, sourceId, slug, pageId) => {
-  if (!Number.isInteger(pageId)) refuseMember('listPageChangeReasons', 'a page id that is not an integer');
-  return storeCall({ member: 'listPageChangeReasons' }, () => brain.listPageChangeReasons({ sourceId, slug, pageId }));
-};
-
-export const listRequestsRecordingReasons: Member<'listRequestsRecordingReasons'> = (brain, sourceId, slug) =>
-  storeCall({ member: 'listRequestsRecordingReasons' }, () => brain.listRequestsRecordingReasons({ sourceId, slug }));
-
 export const readDeletePageRequest: Member<'readDeletePageRequest'> = (brain, sourceId, requestId) =>
   storeCall({ member: 'readDeletePageRequest' }, () => brain.readDeletePageRequest({ sourceId, requestId }));
 

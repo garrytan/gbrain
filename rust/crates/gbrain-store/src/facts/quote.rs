@@ -2,19 +2,14 @@
 //! and `listOwnerTierFacts`. search/transcript-quote.ts fences the facts these name before a model
 //! reads them.
 //!
-//! A fact is from a quoted page through the page that holds it (`source_markdown_slug`), a page a
-//! `derivation_inputs` edge of the fact names ([`derivation_page_id`]: input table `pages`, an id
-//! of 1 to 18 digits, in any source, as the SQL join on `p.id` does), or the page a backstop fact's
-//! `source_session` names (the first `(source, prefix)` pair whose source is the fact's and whose
-//! prefix starts the session, as the SQL `CASE` tries them). Each page may be soft-deleted: the
-//! SQL reads every `pages` row.
+//! A fact is from a quoted page through the page that holds it (`source_markdown_slug`), the page a
+//! backstop fact's `source_session` names, or one of its recorded input pages (`derivation_inputs.rs`).
+//! Each page may be soft-deleted: the SQL reads every `pages` row.
 
 use super::{FactRecord, read_fact};
 use crate::Store;
 use crate::error::{Result, StoreError};
-use crate::generations::inputs_of;
 use crate::kv::KvRead;
-use crate::links::no_nul;
 use crate::pages::{read_page, read_page_by_id};
 use crate::trust::TrustTier;
 use serde::Deserialize;
@@ -53,31 +48,18 @@ fn page_of_type(read: &dyn KvRead, source_id: &str, slug: &str, types: &[String]
     Ok(read_page(read, source_id, slug)?.is_some_and(|p| types.contains(&p.page_type)))
 }
 
-/// The slug a backstop fact's `source_session` names: after the prefix of the first `backstop`
-/// pair whose source is the fact's and whose prefix starts the session.
-fn backstop_slug<'a>(row: &'a FactRecord, backstop: &[(String, String)]) -> Option<&'a str> {
-    let session = row.source_session.as_deref()?;
-    backstop
-        .iter()
-        .filter(|(source, _)| *source == row.source)
-        .find_map(|(_, prefix)| session.strip_prefix(prefix.as_str()))
-}
-
-/// The page id a `derivation_inputs` edge names, as the SQL reads it: input table `pages` and an
-/// `input_id` that matches `^[0-9]{1,18}$`, cast to `bigint` (leading zeros allowed). Any other
-/// edge names no page.
-fn derivation_page_id(table: &str, id: &str) -> Option<u64> {
-    let digits = (1..=18).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit());
-    if table != "pages" || !digits {
-        return None;
-    }
-    id.parse().ok()
-}
-
-/// A page a `derivation_inputs` edge of fact `id` names has a type in `types`.
-fn derived_from_page_of_type(read: &dyn KvRead, id: u64, types: &[String]) -> Result<bool> {
-    for (table, input) in inputs_of(read, "facts", &id.to_string())? {
-        if let Some(page_id) = derivation_page_id(&table, &input)
+/// Whether one of fact `id`'s recorded input pages has a type in `types` (an input id that is not a page id matches
+/// nothing, as the SQL's `CASE WHEN input_id ~ '^[0-9]{1,18}$'` gives NULL).
+fn derived_from_quoted_page(read: &dyn KvRead, id: u64, types: &[String]) -> Result<bool> {
+    for (table, input_id) in crate::generations::inputs_of(read, "facts", &id.to_string())? {
+        if table != "pages"
+            || input_id.is_empty()
+            || input_id.len() > 18
+            || !input_id.bytes().all(|b| b.is_ascii_digit())
+        {
+            continue;
+        }
+        if let Ok(page_id) = input_id.parse::<u64>()
             && read_page_by_id(read, page_id)?.is_some_and(|p| types.contains(&p.page_type))
         {
             return Ok(true);
@@ -86,29 +68,35 @@ fn derived_from_page_of_type(read: &dyn KvRead, id: u64, types: &[String]) -> Re
     Ok(false)
 }
 
+/// The slug a backstop fact's `source_session` names, when its source is one of `backstop`'s.
+fn backstop_slug<'a>(row: &'a FactRecord, backstop: &[(String, String)]) -> Option<&'a str> {
+    let session = row.source_session.as_deref()?;
+    backstop
+        .iter()
+        .find(|(source, _)| *source == row.source)
+        .and_then(|(_, prefix)| session.strip_prefix(prefix.as_str()))
+}
+
 impl Store {
-    /// `listFactsFromQuotedPages`: the ids of `ids` whose holding page, a derivation input page,
-    /// or the page a backstop session names, has a type in `pageTypes`; ascending. A NUL in a page
-    /// type is refused as a text parameter refuses it.
+    /// `listFactsFromQuotedPages`: the ids of `ids` whose holding page, or the page a backstop
+    /// session names, has a type in `pageTypes`; ascending.
     pub fn list_facts_from_quoted_pages(&self, q: &QuotedPagesQuery) -> Result<Vec<u64>> {
-        for t in &q.page_types {
-            no_nul("listFactsFromQuotedPages", &[("pageTypes", t)])?;
-        }
         let read = self.read()?;
-        let types = &q.page_types;
         let mut out = Vec::new();
         for row in fact_rows(&*read, &q.ids)? {
             let held = match row.source_markdown_slug.as_deref() {
-                Some(slug) => page_of_type(&*read, &row.source_id, slug, types)?,
+                Some(slug) => page_of_type(&*read, &row.source_id, slug, &q.page_types)?,
                 None => false,
             };
-            let quoted = held
-                || derived_from_page_of_type(&*read, row.id, types)?
-                || match backstop_slug(&row, &q.backstop) {
-                    Some(slug) => page_of_type(&*read, &row.source_id, slug, types)?,
-                    None => false,
-                };
-            if quoted {
+            let named = match backstop_slug(&row, &q.backstop) {
+                Some(slug) if !held => page_of_type(&*read, &row.source_id, slug, &q.page_types)?,
+                _ => false,
+            };
+            // A recorded input page of the fact (`derivation_inputs`, `input_table = 'pages'`) of a quoted type; any
+            // source, deleted too, as the SQL joins `pages` by id alone.
+            let derived =
+                !held && !named && derived_from_quoted_page(&*read, row.id, &q.page_types)?;
+            if held || named || derived {
                 out.push(row.id);
             }
         }
@@ -116,8 +104,7 @@ impl Store {
     }
 
     /// `listOwnerTierFacts`: the ids of `ids` whose stored tier ranks at or above `floor`;
-    /// ascending. An empty id list reads nothing; a floor that names no tier is refused, as
-    /// engine-sql/facts-trust.ts `assertOwnerTierFloor` refuses it.
+    /// ascending. A floor that names no tier matches nothing (the SQL compares with NULL).
     pub fn list_owner_tier_facts(&self, q: &OwnerTierQuery) -> Result<Vec<u64>> {
         if q.ids.is_empty() {
             return Ok(Vec::new());

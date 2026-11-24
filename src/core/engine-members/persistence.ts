@@ -17,7 +17,7 @@ import type { GenerationFenceBlockRow, GenerationOwnedItemRow } from '../engine-
 import type { GenerationPageRow, GenerationPageRowsQuery } from '../engine-sql/generation-page-rows.ts';
 import type { GenerationRepairFilter, GenerationRepairItemRow, HeldGenerationListRow, HeldGenerationProposalRow, RestorableGenerationRow, SourceIncarnationListRow, UnmatchedGenerationRow } from '../engine-sql/generation-repair.ts';
 import type { GitHoldRecordsQuery, GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
-import type { GitHoldSummaryWeights, SyncPassRowRead, SyncPassRowWrite } from '../engine-sql/sync-hold-store.ts';
+import type { GitHoldSummaryWeights, SyncConversion, SyncPassRowRead, SyncPassRowWrite } from '../engine-sql/sync-hold-store.ts';
 import type { GraduationGateRow, ManagedRootBindingRow, PersistenceTable, RetiredDeactivationRow } from '../engine-sql/connect-gate.ts';
 import type { IdleProbeRow, IdleProbeSpec } from '../engine-sql/persistence-idle-probe.ts';
 import type { LedgerScrubCounts } from '../engine-sql/generation-ledger.ts';
@@ -38,6 +38,8 @@ import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../eng
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
 import type { TerminalIntentCompaction, WriteRequestGroupInsert } from '../engine-sql/persistence-journal.ts';
+import type { HeadBlockerReadOpts, HeadBlockerRow, RecoveringHeadRow } from '../engine-sql/head-blocker.ts';
+import type { IncompleteSyncReceiptRow, IncompleteSyncReceiptSpec, OpenPassWorkSpec } from '../engine-sql/checkpoint-validation.ts';
 
 export interface PersistenceMembers {
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
@@ -89,6 +91,8 @@ export interface PersistenceMembers {
   readGitImageHoldCountRows(sourceIds: readonly string[]): Promise<Array<{ source_id: string; images: number }>>;
   /** The stored conversion log of each listed source's current incarnation, in no set order. */
   readSyncConversionRows<C = Record<string, unknown>>(sourceIds: readonly string[]): Promise<Array<{ source_id: string; conversions: C[] | null }>>;
+  /** Puts the conversion first in the source incarnation's log, keeping the newest SYNC_CONVERSION_KEEP (SQL in engine-sql/sync-hold-store.ts). */
+  recordSyncConversion(sourceId: string, incarnation: string, conversion: SyncConversion): Promise<void>;
   /** The managed sync pass row of one source incarnation, or null (SQL in engine-sql/sync-hold-store.ts). */
   readSyncPassRow<V = Record<string, unknown>>(sourceId: string, incarnation: string): Promise<SyncPassRowRead<V> | null>;
   /** The managed sync pass rows of the sources' live incarnations (null: every source), in no set order. */
@@ -262,6 +266,16 @@ export interface PersistenceMembers {
   expireStaleWriteClaims(expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<void>;
   /** Whether a claim would find a row now; `priority` overrides the foreground-priority config row when set. */
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }): Promise<boolean>;
+  /** Head-blocker probe rows (engine-sql/head-blocker.ts): for each queued request in `ids`, whether a consumer on `hostId` may claim it and the facts naming why not. */
+  readHeadBlockerRows(ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts): Promise<HeadBlockerRow[]>;
+  /** A recovering head's recovery record and its worktree's owner host, or null when it has no recovery record or no worktree. */
+  readRecoveringHeadRow(id: string, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<RecoveringHeadRow | null>;
+  /** The request id of a receipt that blocks a managed sync run's checkpoint on a worktree, or null (engine-sql/checkpoint-validation.ts); the 57014 timeout stays with the caller. */
+  readIncompleteSyncReceipt(spec: IncompleteSyncReceiptSpec): Promise<string | null>;
+  /** The request id of the work that blocks a pass stamp on a worktree (a recovery row, or another open managed-sync request), or null. */
+  readOpenPassWork(spec: OpenPassWorkSpec): Promise<string | null>;
+  /** Every receipt (up to 20, in sequence order) that would block the run's checkpoint now, with what `sync status` shows. */
+  readIncompleteSyncReceiptRows(spec: IncompleteSyncReceiptSpec): Promise<IncompleteSyncReceiptRow[]>;
   /** The request a FIFO claim takes next, locked FOR UPDATE SKIP LOCKED until the transaction ends, or null (journal.ts `claimNextWrite`). */
   selectClaimableWrite<R = Record<string, unknown>>(spec: ClaimHeadSpec): Promise<R | null>;
   /** Consumer rows (persistence/consumer-heartbeat.ts): the host's rows oldest first, and its live full rows other than the caller's. `direct`: the Postgres direct pool. */

@@ -21,7 +21,6 @@ pub mod doctor_sources;
 pub mod doctor_terminal;
 pub mod entities;
 pub mod export;
-pub mod extract_receipt;
 pub mod import;
 pub mod mention_reads;
 mod pg_case;

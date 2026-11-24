@@ -19,8 +19,9 @@ import { cliRenderContext, renderAction, type Action, type RenderedAction } from
 import { claimStateOf } from './claim-phase.ts';
 import { isTerminal, type RequestState } from './model.ts';
 import { sha256 } from './digest.ts';
-import { claimableWriteSql, EARLIER_DEFERRED, EARLIER_HEAD, foregroundPrioritySql, SYNC_KIND } from './journal.ts';
-import { BACKOFF_ELAPSED } from './transient-retry.ts';
+import { foregroundPriorityOverride } from './journal.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import type { HeadBlockerEffectRecovery, HeadBlockerRequestRecovery } from '../engine-sql/head-blocker.ts';
 import { recoveryUpgradeFix, recoveryVersionKnown, type RecoveryTable } from './recovery-version.ts';
 
 export type HeadBlockerPredicate = 'worktree_owner' | 'refresh_fence' | 'effect_recovery' | 'withdrawal_mirror' | 'request_recovery'
@@ -42,19 +43,8 @@ export interface HeadBlocker {
 export interface HeadBlockerCancel { request_id: string; principal_kind: string; principal_id: string }
 export type HeadBlockerRead = { status: 'claimable' } | { status: 'blocked'; blocker: HeadBlocker; cancel: HeadBlockerCancel | null } | { status: 'unknown' };
 
-interface RowRef { request_id: string; state: string; claim_phase: unknown; execution_token: string | null; claim_lapsed: boolean;
-  publication_started: boolean; recovery: boolean; principal_kind: string; principal_id: string }
-interface ProbeRow { id: string; worktree_id: string | null; owner_host_id: string | null; worktree_state: string | null; claimable: boolean;
-  fence: { id: string; state: string } | null; effect_recovery: EffectRecoveryRef[] | null; mirrors: string[] | null; request_recovery: RequestRecoveryRef[] | null;
-  request_id: string; backoff_until: string | Date | null; earlier: RowRef[] | null; ahead: RowRef[] | null }
-interface EffectRecoveryRef { id: string; request_id: string | null; error_code: string | null; slug: string | null; path: string | null; before: string | null; after: string | null; version: unknown }
-interface RequestRecoveryRef { request_id: string; state: RequestState; blocked_reason: string | null; slug: string; version: string | null; path: string | null;
-  before: string | null; after: string | null; files: Array<{ path: string | null; before: string | null; after: string | null }> | null }
-const REQUEST_RECOVERY = (alias: string) => `jsonb_build_object('request_id',${alias}.request_id::text,'state',${alias}.state,'blocked_reason',${alias}.blocked_reason,
-  'slug',${alias}.slug,'version',${alias}.recovery->>'version','path',${alias}.recovery->>'path','before',${alias}.recovery->>'beforeHash','after',${alias}.recovery->>'afterHash',
-  'files',(SELECT jsonb_agg(jsonb_build_object('path',f->>'path','before',f->>'beforeHash','after',f->>'afterHash'))
-    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${alias}.recovery->'files')='array' THEN ${alias}.recovery->'files' ELSE '[]'::jsonb END) f))`;
-
+type EffectRecoveryRef = HeadBlockerEffectRecovery;
+type RequestRecoveryRef = HeadBlockerRequestRecovery & { state: RequestState };
 /**
  * Whether a recovery's last attempt refused `unexpected_file_bytes` and its file still matches neither recorded hash (the check
  * recovery itself refuses on), so only the user clears it. A file put back on a recorded version is live again before the next
@@ -85,36 +75,16 @@ const requestRecoveryBlocker = (refs: RequestRecoveryRef[]): HeadBlocker => {
     ...(stuck ? { file: { slug: stuck.ref.slug, path: stuck.path! } } : {}) };
 };
 
-const REF = (alias: string) => `jsonb_build_object('request_id',${alias}.request_id::text,'state',${alias}.state,'claim_phase',${alias}.claim_phase,
-  'execution_token',${alias}.execution_token::text,'claim_lapsed',COALESCE(${alias}.claim_expires_at<now(),false),'publication_started',COALESCE(${alias}.publication_started,false),
-  'recovery',${alias}.recovery IS NOT NULL,'principal_kind',${alias}.principal_kind,'principal_id',${alias}.principal_id)`;
-
 /**
- * One read for queued requests (internal ids): each comes back `claimable` for a consumer on `hostId`, `blocked` with the first
- * predicate that fails in `claimableWriteSql` order, or `unknown` when none matched. Rejects when the read fails; callers print `unknown`.
+ * One read for queued requests (internal ids; the probe rows are engine-sql/head-blocker.ts): each comes back `claimable` for a consumer
+ * on `hostId`, `blocked` with the first predicate that fails in `claimableWriteSql` order, or `unknown` when none matched. Rejects when
+ * the read fails; callers print `unknown`, except for an `engine_capability_missing` refusal, which they surface.
  */
 export async function readHeadBlockers(engine: BrainEngine, ids: string[], hostId: string | null,
   opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<Map<string, HeadBlockerRead>> {
   const out = new Map<string, HeadBlockerRead>();
   if (!ids.length) return out;
-  const priority = foregroundPrioritySql();
-  const rows = await engine.executeRaw<ProbeRow>(`SELECT r.id::text AS id, r.request_id::text AS request_id, r.worktree_id::text AS worktree_id, w.owner_host_id::text AS owner_host_id, w.state AS worktree_state,
-      CASE WHEN NOT ${BACKOFF_ELAPSED('r')} THEN r.next_attempt_at END AS backoff_until,
-      (${claimableWriteSql(priority)}) AS claimable,
-      (SELECT jsonb_build_object('id',f.id::text,'state',f.state) FROM persistence_worktree_refreshes f
-        WHERE f.worktree_id=r.worktree_id AND f.state IN ('fenced','merged','recovery_required') LIMIT 1) AS fence,
-      (SELECT jsonb_agg(jsonb_build_object('id',e.id::text,'request_id',(SELECT q.request_id::text FROM persistence_requests q WHERE q.id=e.request_id),'error_code',e.error_code,'slug',e.recovery->>'slug','path',e.recovery->>'path',
-        'before',e.recovery->>'beforeHash','after',e.recovery->>'afterHash','version',e.recovery->'version') ORDER BY e.id) FROM persistence_effects e WHERE e.worktree_id=r.worktree_id AND e.recovery IS NOT NULL) AS effect_recovery,
-      (SELECT array_agg(m.id::text) FROM persistence_effects m WHERE m.worktree_id=r.worktree_id AND m.kind='withdrawal-mirror' AND m.state IN ('queued','running')
-        AND (NOT (m.data ? 'targets') OR m.data->'targets' @> jsonb_build_array(jsonb_build_object('slug',r.slug)))) AS mirrors,
-      (SELECT jsonb_agg(${REQUEST_RECOVERY('b')} ORDER BY b.sequence) FROM persistence_requests b WHERE b.worktree_id=r.worktree_id AND b.recovery IS NOT NULL) AS request_recovery,
-      (SELECT jsonb_agg(${REF('e')} ORDER BY e.sequence) FROM persistence_requests e
-        WHERE ((r.worktree_id IS NOT NULL AND e.worktree_id=r.worktree_id) OR (r.worktree_id IS NULL AND e.worktree_id IS NULL AND e.source_incarnation=r.source_incarnation))
-        AND (${EARLIER_HEAD('e', 'r', priority, "'{}'::text[]")} OR ${EARLIER_DEFERRED('e', 'r')})) AS earlier,
-      (SELECT jsonb_agg(${REF('a')} ORDER BY a.sequence) FROM persistence_requests a WHERE (${priority}) AND ${SYNC_KIND('r')}
-        AND a.worktree_id=r.worktree_id AND a.sequence>r.sequence AND a.state IN ('running','recovering') AND NOT ${SYNC_KIND('a')}) AS ahead
-    FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-    WHERE r.id=ANY($3::uuid[]) AND r.state='queued'`, [hostId, [], ids], opts);
+  const rows = await engine.readHeadBlockerRows(ids, hostId, { ...opts, priority: foregroundPriorityOverride() });
   let consumers: Awaited<ReturnType<typeof import('./consumer-heartbeat.ts').listHostConsumers>> | null = null;
   for (const row of rows) {
     if (row.claimable) { out.set(row.id, { status: 'claimable' }); continue; }
@@ -140,7 +110,7 @@ export async function readHeadBlockers(engine: BrainEngine, ids: string[], hostI
       continue;
     }
     if (row.mirrors?.length) { blocked({ predicate: 'withdrawal_mirror', ids: row.mirrors, state: null, owner: null, intervention: false }); continue; }
-    if (row.request_recovery?.length) { blocked(requestRecoveryBlocker(row.request_recovery)); continue; }
+    if (row.request_recovery?.length) { blocked(requestRecoveryBlocker(row.request_recovery as RequestRecoveryRef[])); continue; }
     // v261: the head itself waits out a transient interruption's backoff (transient-retry.ts); it is claimed again when it ends.
     if (row.backoff_until) { blocked({ predicate: 'transient_backoff', ids: [row.request_id], state: new Date(row.backoff_until).toISOString(), owner: null, intervention: false }); continue; }
     const ref = row.earlier?.[0] ?? row.ahead?.[0];
@@ -166,10 +136,10 @@ export async function readHeadBlockers(engine: BrainEngine, ids: string[], hostI
  * and this host owns its worktree, so the recorded path is this host's file; null otherwise, the recovery being live work.
  */
 async function recoveringHeadBlocker(engine: BrainEngine, id: string, hostId: string | null, opts: { timeoutMs?: number; signal?: AbortSignal }): Promise<HeadBlocker | null> {
-  const [row] = await engine.executeRaw<{ ref: RequestRecoveryRef; owner_host_id: string | null }>(`SELECT ${REQUEST_RECOVERY('r')} AS ref, w.owner_host_id::text AS owner_host_id
-    FROM persistence_requests r JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE r.id=$1::uuid AND r.recovery IS NOT NULL`, [id], opts);
-  if (!row || !hostId || row.owner_host_id !== hostId || (!requestRecoveryStuckFile(row.ref) && !newerRecord('persistence_requests', row.ref.version))) return null;
-  return requestRecoveryBlocker([row.ref]);
+  const row = await engine.readRecoveringHeadRow(id, opts);
+  const ref = row?.ref as RequestRecoveryRef | undefined;
+  if (!row || !ref || !hostId || row.owner_host_id !== hostId || (!requestRecoveryStuckFile(ref) && !newerRecord('persistence_requests', ref.version))) return null;
+  return requestRecoveryBlocker([ref]);
 }
 
 /** Whether a refresh process holds the worktree's refresh lock: true held, false free, null when the lock cannot be probed here. */
@@ -273,16 +243,19 @@ export async function describeHostConsumer(engine: BrainEngine, opts: { signal?:
 }
 
 /**
- * `claimable_here` and `blocked_by` for a head: a queued head is probed (a failed read is `null`, printed `unknown`); any other head is not
+ * `claimable_here` and `blocked_by` for a head: a queued head is probed (a failed read is `null`, printed `unknown`; an engine that cannot
+ * serve the probe refuses with `engine_capability_missing` instead of a silent `null`); any other head is not
  * claimable, and a recovering head names itself as its blocker only when its recovery is stuck on the user.
  */
 export async function headClaimability(engine: BrainEngine, head: { id: string | null; state: string | null }, hostId: string | null,
   opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<{ claimable_here: boolean | null; blocked_by: HeadBlocker | null }> {
   if (head.id && head.state === 'recovering') {
-    return recoveringHeadBlocker(engine, head.id, hostId, opts).then(blocker => ({ claimable_here: false, blocked_by: blocker }), () => ({ claimable_here: false, blocked_by: null }));
+    return recoveringHeadBlocker(engine, head.id, hostId, opts).then(blocker => ({ claimable_here: false, blocked_by: blocker }),
+      (error: unknown) => { rethrowCapabilityMissing(error); return { claimable_here: false, blocked_by: null }; });
   }
   if (!head.id || head.state !== 'queued') return { claimable_here: false, blocked_by: null };
-  const read = await readHeadBlockers(engine, [head.id], hostId, opts).then(found => found.get(head.id!) ?? { status: 'unknown' as const }, () => ({ status: 'unknown' as const }));
+  const read = await readHeadBlockers(engine, [head.id], hostId, opts).then(found => found.get(head.id!) ?? { status: 'unknown' as const },
+    (error: unknown) => { rethrowCapabilityMissing(error); return { status: 'unknown' as const }; });
   return read.status === 'claimable' ? { claimable_here: true, blocked_by: null } : read.status === 'blocked' ? { claimable_here: false, blocked_by: read.blocker } : { claimable_here: null, blocked_by: null };
 }
 
@@ -296,7 +269,7 @@ export async function readQueuedHeadBlockers(engine: BrainEngine, rows: Array<{ 
   for (const row of rows) if (row.state === 'queued' && !heads.has(row.worktree_id ?? `db:${row.source_id}`)) heads.set(row.worktree_id ?? `db:${row.source_id}`, { id: row.id, source: row.source_id });
   const out = new Map<string, { fields: { claimable_here: boolean | null; blocked_by?: HeadBlocker; cancel_command?: string }; advice: string | null }>();
   if (!heads.size) return out;
-  const reads = await readHeadBlockers(engine, [...heads.values()].map(head => head.id), hostId).catch(() => null);
+  const reads = await readHeadBlockers(engine, [...heads.values()].map(head => head.id), hostId).catch((error: unknown) => { rethrowCapabilityMissing(error); return null; });
   let principal: { kind: string; id: string } | null | undefined;
   for (const { id, source } of heads.values()) {
     const read = reads?.get(id) ?? { status: 'unknown' as const };

@@ -9,7 +9,6 @@ import type { AccessTokenGrantWrite, AccessTokenListRow, AccessTokenPrivateAxis,
 import type * as BeliefLedgerSql from '../engine-sql/belief-ledger.ts';
 import type { DeltaSessionRow, SessionCursorRow, SessionStateWrite } from '../engine-sql/session-state.ts';
 import type { FactsFencePagesQuery, SweepDeferredPageRow, SweepDeferredPagesQuery, SweepPageRefRow, SweepStalePageRow, SweepStalePagesQuery } from '../engine-sql/sweep-reads.ts';
-import type { ExtractReceiptPriorRow, ExtractRollupRow } from '../engine-sql/extract-bookkeeping.ts';
 import type { OauthClientGrantPersist, OauthGrantAuditRow } from '../engine-sql/client-grants.ts';
 import type { OauthClientRow } from '../engine-sql/oauth-clients.ts';
 import type { OauthGrantAuditInsert } from '../engine-sql/oauth-revocation.ts';
@@ -173,12 +172,6 @@ export interface LedgerMembers {
   listSweepDeferredPages(q: SweepDeferredPagesQuery): Promise<SweepDeferredPageRow[]>;
   /** The live pages of any source whose slug is in `slugs` (the links pass's refs), in no set order. */
   listPageRefsForSlugs(slugs: readonly string[]): Promise<SweepPageRefRow[]>;
-  /** Adds one event to its extract_rollup_7d row (engine-sql/extract-bookkeeping.ts); `pre_v141` for a schema behind v141. */
-  upsertExtractRollup(row: ExtractRollupRow, form?: 'pre_v141'): Promise<void>;
-  /** The page row an extract receipt write checks first, deleted or not; undefined when there is none. */
-  readExtractReceiptPrior(sourceId: string, slug: string): Promise<ExtractReceiptPriorRow | undefined>;
-  /** Whether the page is sealed at the safe-chunk fence (the SQL value as read); undefined when there is none. */
-  readExtractReceiptSealed(sourceId: string, slug: string): Promise<{ sealed: boolean | null } | undefined>;
   /**
    * The open pages of `sources` less each excluded prefix (access/open-pages.ts): live pages the empty-identity
    * member-access floor admits, grouped by source, top-level folder, type and whether the privacy part admits them.
@@ -314,4 +307,8 @@ export interface LedgerMembers {
   listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
   /** The open loops whose counterparty page is (sourceId, slug), newest activity first, at most `limit` (entity-card.ts). */
   readEntityOpenLoops(slug: string, sourceId: string, limit: number): Promise<OpenLoopsSql.EntityOpenLoopRow[]>;
+  /** The open loops of `loopType` in `sourceId` per counterparty email among `emails`, one row per email with any, in no set order, with no limit (ops/loops.ts withheld noise). */
+  countOpenLoopsByCounterpartyEmail(sourceId: string, emails: readonly string[], loopType: string): Promise<OpenLoopsSql.CounterpartyEmailLoopCount[]>;
+  /** The applied-capture records older than `ttlDays` days deleted; how many (ingestion/applied-captures.ts, the dream cycle's bookkeeping purge). */
+  purgeStaleAppliedCaptures(ttlDays: number): Promise<number>;
 }

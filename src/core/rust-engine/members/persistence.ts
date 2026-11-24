@@ -68,6 +68,7 @@ export const PERSISTENCE_MEMBERS = {
   readGitHoldCodeCountRows: 'persistence_journal',
   readGitImageHoldCountRows: 'persistence_journal',
   readSyncConversionRows: 'persistence_journal',
+  recordSyncConversion: 'persistence_journal',
   readSyncPassRow: 'persistence_journal',
   readLiveSyncPassRows: 'persistence_journal',
   writeSyncPassRow: 'persistence_journal',

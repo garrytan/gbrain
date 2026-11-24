@@ -37,6 +37,7 @@ import {
 import { classifyGlobalLlmError } from '../src/core/ai/errors.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withTakeProposalMembers } from './helpers/take-proposal-members.ts';
 
 beforeEach(() => {
   resetGateway();
@@ -245,7 +246,7 @@ interface CapturedSql { sql: string; params: unknown[] }
 
 function buildMockEngine(pageCount: number): { engine: BrainEngine; captured: CapturedSql[] } {
   const captured: CapturedSql[] = [];
-  const engine = {
+  const engine = withTakeProposalMembers({
     kind: 'pglite',
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
@@ -261,7 +262,7 @@ function buildMockEngine(pageCount: number): { engine: BrainEngine; captured: Ca
       if (sql.includes('INSERT INTO take_proposals')) return [{ id: captured.length } as unknown as T];
       return [];
     },
-  } as unknown as BrainEngine;
+  } as unknown as BrainEngine);
   return { engine, captured };
 }
 

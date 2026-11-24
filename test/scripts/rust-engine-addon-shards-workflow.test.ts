@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { load } from 'js-yaml';
 
 // Each target of the Rust engine addon job (macOS and Linux) is split in two halves so each finishes
-// under 30 minutes (the macOS cell took 43 minutes in run 45126845000, 33 of them in the parity loop;
+// under 45 minutes (the macOS cell took 43 minutes in run 45126845000, 33 of them in the parity loop;
 // the Linux cell reached 29). These checks keep the split honest: every parity file runs in exactly one
 // half of each target, and one check per target still carries the old name and passes only when both
 // halves do.
@@ -96,8 +96,8 @@ describe('Rust engine addon job shards', () => {
     ]);
   });
 
-  test('every cell has the same 30 minute cap and one failing cell does not cancel the others', () => {
-    expect(addon['timeout-minutes']).toBe(30);
+  test('every cell has the same 45 minute cap and one failing cell does not cancel the others', () => {
+    expect(addon['timeout-minutes']).toBe(45);
     expect(addon.strategy?.['fail-fast']).toBe(false);
     expect(addon.strategy?.matrix?.include).toBe('${{ fromJSON(needs.scope.outputs.targets) }}');
   });
@@ -170,6 +170,7 @@ echo "$JOBS" | jq -r "$prog"
           JOBS: JSON.stringify({ jobs }),
           REPO: 'o/r', RUN_ID: '1', TARGET: target,
           TARGETS: JSON.stringify([{ target }, { target }, { target: 'other-target' }]),
+          GATE_POLL_SECS: '0', GATE_POLL_INTERVAL: '0',
         },
       });
       return run.exitCode;
@@ -177,6 +178,59 @@ echo "$JOBS" | jq -r "$prog"
       rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  // A stand-in for gh that answers by URL (filter=latest or filter=all) and, for one URL, by call number:
+  // answers[url][n] is the job list for the n-th call (the last one repeats).
+  type Job = { name: string; conclusion: string | null; run_attempt?: number };
+  function gateRunSeq(target: keyof typeof gates, latest: Job[][], all: Job[][]): number {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-seq-'));
+    try {
+      writeFileSync(join(dir, 'latest.json'), JSON.stringify(latest.map((jobs) => ({ jobs }))));
+      writeFileSync(join(dir, 'all.json'), JSON.stringify(all.map((jobs) => ({ jobs }))));
+      writeFileSync(join(dir, 'gh'), `#!/bin/bash
+url=""; prog=""; while [ $# -gt 0 ]; do case "$1" in --jq) prog=$2; shift;; repos/*) url=$1;; esac; shift; done
+case "$url" in *filter=all*) kind=all;; *) kind=latest;; esac
+n=$(cat "${dir}/$kind.count" 2>/dev/null || echo 0); echo $((n + 1)) > "${dir}/$kind.count"
+jq -c --argjson n "$n" '.[ [$n, length - 1] | min ]' "${dir}/$kind.json" | jq -r "$prog"
+`);
+      chmodSync(join(dir, 'gh'), 0o755);
+      const run = Bun.spawnSync(['bash', '-c', gates[target].steps![0]!.run!], {
+        env: {
+          PATH: `${dir}:${process.env.PATH ?? ''}`,
+          REPO: 'o/r', RUN_ID: '1', TARGET: target,
+          TARGETS: JSON.stringify([{ target }, { target }]),
+          GATE_POLL_SECS: '5', GATE_POLL_INTERVAL: '0',
+        },
+      });
+      return run.exitCode;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test('a half the jobs API has not yet marked finished is waited for, not counted as failed', () => {
+    for (const target of ['linux-x64-glibc', 'darwin-arm64'] as const) {
+      const h = (n: number, conclusion: string | null): Job => ({ name: `Addon and Bun smoke / ${target} (${n} of 2)`, conclusion, run_attempt: 1 });
+      const lagging = [[h(1, 'success'), h(2, null)], [h(1, 'success'), h(2, 'success')]];
+      expect(gateRunSeq(target, lagging, lagging)).toBe(0);
+      const thenRed = [[h(1, 'success'), h(2, null)], [h(1, 'success'), h(2, 'failure')]];
+      expect(gateRunSeq(target, thenRed, thenRed)).toBe(1);
+    }
+  });
+
+  test('re-running only the check reads the halves from their newest attempt', () => {
+    for (const target of ['linux-x64-glibc', 'darwin-arm64'] as const) {
+      const h = (n: number, conclusion: string, run_attempt: number): Job => ({ name: `Addon and Bun smoke / ${target} (${n} of 2)`, conclusion, run_attempt });
+      const gate: Job = { name: `Addon and Bun smoke / ${target}`, conclusion: null, run_attempt: 2 };
+      // Attempt 2 re-ran only the check: filter=latest lists no half at all.
+      expect(gateRunSeq(target, [[gate]], [[h(1, 'success', 1), h(2, 'success', 1), gate]])).toBe(0);
+      // A half that failed in attempt 1 and passed when re-run counts as passed, and the reverse as failed.
+      const fixed = [h(1, 'failure', 1), h(2, 'success', 1), h(1, 'success', 2), gate];
+      expect(gateRunSeq(target, [[h(1, 'success', 2), gate]], [fixed])).toBe(0);
+      const broke = [h(1, 'success', 1), h(2, 'success', 1), h(2, 'failure', 2), gate];
+      expect(gateRunSeq(target, [[h(2, 'failure', 2), gate]], [broke])).toBe(1);
+    }
+  });
 
   test('the gate script passes on two green halves and fails on a red, running or missing half, whatever the other target did', () => {
     for (const target of ['linux-x64-glibc', 'darwin-arm64'] as const) {

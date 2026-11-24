@@ -2,8 +2,10 @@
 //!
 //! Members: addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
 //! getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, the reads of
-//! `takes/reads.rs`, the fence guard's held takes (`takes/held.rs`), and the reads and the delete of
-//! `takes/extract.rs`.
+//! `takes/reads.rs`, the fence guard's held takes (`takes/held.rs`), the reads and the delete of
+//! `takes/extract.rs`, the grade_takes verdict cache of `takes/grades.rs`, the take horizons of
+//! `takes/horizons.rs`, the nudge log of `takes/nudges.rs` and the take proposal queue of
+//! `takes/proposals.rs`.
 //!
 //! Keys (every record starts with `keys::TAKE`, `A`; ids and page ids are u64 BE, a `row_num` is
 //! its i32 with the sign bit flipped, BE, so keys sort by row number):
@@ -11,6 +13,16 @@
 //! - `A 0x02 <page id> <row_num>` -> the take id (u64 BE): the `UNIQUE (page_id, row_num)` index.
 //! - `A 0x03 <synthesis page id> <take page id> <take row_num>` -> `EvidenceRecord` (JSON).
 //! - `A 0x04 <take page id> <take row_num> <synthesis page id>` -> empty: the reverse index.
+//! - `A 0x05 <take id> <prompt> 0x00 <judge> 0x00 <signature>` -> a `take_grade_cache` row
+//!   (`takes/grades.rs`).
+//! - `A 0x06 <take id>` -> a `take_horizons` row (`takes/horizons.rs`), deleted with its take.
+//! - `A 0x07 <nudge id>` -> a `take_nudge_log` row (`takes/nudges.rs`); counter `M next_take_nudge_id`.
+//! - `A 0x08 <proposal id>` -> a `take_proposals` row (`takes/proposals.rs`); counter
+//!   `M next_take_proposal_id`.
+//! - `A 0x09 <source> 0x00 <slug> 0x00 <content hash> 0x00 <prompt> 0x00 <claim sha256>` -> the
+//!   proposal id: the table's idempotency index (`takes/proposals.rs`).
+//! - `A 0x0A <kind> 0x00 <source> 0x00 <day>` -> an `extract_rollup_7d` row (`extract_bookkeeping.rs`): not a
+//!   takes table; it shares the tag so every `A` sub-key is listed here.
 //! - Id counter: `M next_take_id`. Every row an `addTakesBatch` call reads takes an id, as the
 //!   Postgres sequence default does, inserted or not.
 //!
@@ -28,7 +40,7 @@ use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::facts::PrivacyPolicy;
 use crate::facts::take_purges::refuse_purged_take;
 use crate::keyword::{TRGM_WORD_SIMILARITY_THRESHOLD, trgm_word_similarity};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page_by_id};
 use crate::trust::{RowTrust, TrustPolicy, TrustTable, check_insert, stamp_row};
@@ -40,13 +52,24 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
+mod grades;
 mod held;
+mod horizons;
+pub(crate) mod nudges;
+pub(crate) mod proposals;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
+pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};
 pub use held::HeldTakeSpec;
+pub use horizons::TakeHorizonInput;
+pub use nudges::{TakeNudgeFilter, TakeNudgeInput, WaveSpec};
+pub use proposals::{
+    ProposeTakesCandidateScope, TakeProposalInput, TakeProposalListSpec, TakeProposalPageKey,
+};
 pub use reads::{
-    HeldFenceTakeSpec, IncomingTakeRow, McpResolvedInput, PurgeTakesInput, TakePreimageInput,
+    HeldFenceTakeSpec, IncomingTakeRow, LiveTakeAt, McpResolvedInput, PurgeTakesInput,
+    RevertResolutionsSpec, TakePreimageInput,
 };
 
 pub(crate) const NEXT_TAKE_ID: &str = "next_take_id";
@@ -584,6 +607,17 @@ pub(crate) fn all_takes(read: &dyn KvRead) -> Result<Vec<TakeRecord>> {
         .collect()
 }
 
+/// Calls `f` with each take of every page, in id order, until it returns false or fails: the rows are read a page at a time, so
+/// `f` may read the store and a stop leaves the later rows unread.
+pub(crate) fn for_each_take(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(&TakeRecord) -> Result<bool>,
+) -> Result<()> {
+    for_each_prefix_paged(read, &[keys::TAKE, TAKE], 8, &mut |_, v| {
+        f(&serde_json::from_slice::<TakeRecord>(v).map_err(StoreError::from)?)
+    })
+}
+
 /// Writes a take's record (its row index never changes: `page_id` and `row_num` are fixed),
 /// stamped with the open write's receipt as the PGLite attribution trigger stamps it
 /// (`write_receipt.rs`): an insert when no record is stored under its id, else an update. The
@@ -674,8 +708,8 @@ pub(crate) fn seed_evidence(
     Ok(true)
 }
 
-/// Deletes a take with its evidence rows.
-pub(crate) fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
+/// Deletes a take with its evidence rows and its horizon.
+fn delete_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     delete_take_evidence(tx, take)?;
     delete_take_record(tx, take)
 }
@@ -704,6 +738,8 @@ fn delete_take_evidence(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
 /// The take's own records: its row, its vector and its id key. Evidence that cites it stays.
 fn delete_take_record(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     tx.delete(&row_key(take.page_id, take.row_num))?;
+    // take_horizons_take_id_fkey ... ON DELETE CASCADE.
+    tx.delete(&horizons::horizon_key(take.id))?;
     crate::embeddings::remove_take_vector(tx, take.id)?;
     tx.delete(&take_key(take.id))
 }

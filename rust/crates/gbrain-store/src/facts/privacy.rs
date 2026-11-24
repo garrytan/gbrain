@@ -38,8 +38,7 @@
 //! is while the brain holds an owner-only source or has held owner-only data (`OwnerOnlyForm::Closed`). `owner_only_marks` (`owner_only_marks.rs`) keeps a
 //! page hidden after its owner-only input is deleted for good, as SQL's delete trigger does. A fact read applies the rule
 //! to the provenance page, the entity and holding pages, and the fact row itself (`ownerOnlyFactSql`: a fact of an
-//! owner-only source). The store keeps no `derivation_inputs`, so a row derived from an owner-only row by that table alone
-//! is not hidden here.
+//! owner-only source, marked, or derived from an owner-only row through `derivation_inputs`, `owner_only.rs`).
 //!
 //! The owner-only sources are read once per read, on the first page it judges ([`OwnerOnlyCache`]): the page reads
 //! (`searchVector`, the link, alias, salience and page-read members) each keep one, so a read of many pages does not
@@ -127,6 +126,12 @@ pub struct PrivacyPolicy {
     /// list (`gbrain_access_origin_restricted`).
     #[serde(default)]
     pub owner_read: bool,
+    /// The fact policy of a local owner reading with privacy off (`hidePrivate` false): its text
+    /// judges the provenance page by the member-access part only, with no privacy part. Only the
+    /// TypeScript member's exact owner-record match sets it; every other policy judges the
+    /// provenance page by the privacy part too.
+    #[serde(default)]
+    pub provenance_privacy_off: bool,
 }
 
 /// One entry of [`PrivacyPolicy::folder_coverage`]: `''` covers the whole source.
@@ -216,9 +221,9 @@ pub(crate) fn hidden_by_private_provenance(
 ) -> Result<bool> {
     let owner_only = &OwnerOnlySources::read(read)?;
     // `ownerOnlyFactSql(facts, form)` for a caller that is not the owner: a fact of an owner-only
-    // source (`Fn`; the store marks no fact rows), or any fact while the brain holds an
+    // source, marked, or derived from an owner-only row (`Fn`), or any fact while the brain holds an
     // owner-only source (`Closed`).
-    if owner_only.fact_hidden(policy.owner_only, &row.source_id) {
+    if owner_only.fact_hidden(read, policy.owner_only, row.id, &row.source_id)? {
         return Ok(true);
     }
     // The remote floor (`provenance_only`) of a caller that renders the short member-access form
@@ -328,7 +333,8 @@ fn hidden_by_provenance_page_with(
             && stamped_rules(read, &page)?.is_empty()
             && !owner_only.page_hidden(read, &page, policy.owner_only)?
     };
-    Ok(!(access && privacy_allows(read, &page, policy.honor_aliases)?))
+    Ok(!(access
+        && (policy.provenance_privacy_off || privacy_allows(read, &page, policy.honor_aliases)?)))
 }
 
 /// The identity the provenance page at `slug` is judged by: the caller's on its own member page,
@@ -503,7 +509,7 @@ pub(crate) fn concept_inputs(read: &dyn KvRead, page: &PageRecord) -> Result<Vec
 
 /// The slugs a page names in `derived_from` (a list, or one string), each without a trailing
 /// `.md`; `None` when the field is neither.
-fn declared_slugs(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
+pub(crate) fn declared_slugs(frontmatter: &Map<String, Value>) -> Option<Vec<String>> {
     let items: Vec<&Value> = match frontmatter.get("derived_from")? {
         Value::Array(items) => items.iter().collect(),
         one @ Value::String(_) => vec![one],
@@ -586,6 +592,12 @@ pub(crate) fn stamped_rules(read: &dyn KvRead, page: &PageRecord) -> Result<Vec<
         return Ok(Vec::new());
     }
     folder_rules(read, &page.source_id, &page.slug)
+}
+
+/// The short member-access form `page_readers IS NULL AND folder_rule_ids IS NULL`: the page names no readers and no
+/// folder rule is stamped on it.
+pub(crate) fn names_no_readers_or_rules(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(!names_readers(page) && stamped_rules(read, page)?.is_empty())
 }
 
 /// v305's restricted origin: it names readers, a stamped rule that covers derived pages
@@ -770,7 +782,7 @@ fn life_chronicle(page: &PageRecord) -> bool {
 }
 
 /// `frontmatter -> 'event' ->> 'depth'`.
-fn chronicle_depth(page: &PageRecord) -> Option<String> {
+pub(crate) fn chronicle_depth(page: &PageRecord) -> Option<String> {
     page.frontmatter
         .get("event")
         .and_then(Value::as_object)

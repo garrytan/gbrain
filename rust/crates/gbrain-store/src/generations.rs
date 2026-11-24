@@ -55,6 +55,7 @@ use crate::cli_reads::pg_jsonb;
 use crate::cli_reads::pg_text::{jsonb_text as jsonb_text_of, pg_lower};
 use crate::dream::{int4, jsonb_check};
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, STORE_CORRUPT, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, collect_prefix, scan_prefix};
 use crate::links::no_nul;
@@ -79,7 +80,9 @@ pub use chronicle_events::{
     RetiredItemKeysSpec,
 };
 pub use derivation_inputs::DerivationInputsArgs;
-pub(crate) use derivation_inputs::{derived_from, hop_limit, inputs_of};
+pub(crate) use derivation_inputs::{
+    derived_closure, derived_from, has_inputs, hop_limit, inputs_of, lineage_reaches,
+};
 pub use page_rows::GenerationPageRowsQuery;
 pub use repair::RepairFilter;
 
@@ -1568,6 +1571,58 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
         tx.delete(&k)?;
     }
     Ok(())
+}
+
+/// The `derived_generations` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`): the ledger's
+/// own columns, the jsonb ones as Postgres prints them.
+pub(crate) fn probe_generations(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<GenerationRecord>(read, &[keys::DERIVED_GENERATION, RECORD], &mut |_, g| {
+        let jsonb = |text: &Option<String>, value: &Option<Value>| match text {
+            Some(_) => ProbeCell::opt_jsonb_text(text.as_deref()),
+            None => ProbeCell::opt_jsonb(value.as_ref()),
+        };
+        let cells = vec![
+            ("source_id", ProbeCell::text(&g.source_id)),
+            ("kind", ProbeCell::text(&g.kind)),
+            ("owner_key", ProbeCell::text(&g.owner_key)),
+            ("state", ProbeCell::text(&g.state)),
+            ("run_id", ProbeCell::opt_text(g.run_id.as_deref())),
+            ("operation_id", ProbeCell::text(&g.operation_id)),
+            ("hold_id", ProbeCell::opt_text(g.hold_id.as_deref())),
+            ("input_pin", ProbeCell::opt_text(g.input_pin.as_deref())),
+            ("completeness", ProbeCell::jsonb(&g.completeness)),
+            ("item_set_hash", ProbeCell::text(&g.item_set_hash)),
+            ("held_reason", ProbeCell::opt_text(g.held_reason.as_deref())),
+            ("held_context", jsonb(&g.held_context_text, &g.held_context)),
+            ("proposal", jsonb(&g.proposal_text, &g.proposal)),
+            ("locator", ProbeCell::opt_text(g.locator.as_deref())),
+            (
+                "activation_id",
+                ProbeCell::opt_text(g.activation_id.as_deref()),
+            ),
+        ];
+        f(ProbeRow {
+            source_id: Some(g.source_id),
+            cells,
+        })
+    })
+}
+
+/// The `derived_generation_items` rows as the table probe reads them: the table has no `source_id`, so the probe is brain-wide.
+pub(crate) fn probe_items(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<ItemRecord>(read, &[keys::DERIVED_GENERATION, ITEM], &mut |k, item| {
+        // The key is `h 0x03 id(8) item_key`.
+        let item_key = String::from_utf8_lossy(k.get(10..).unwrap_or_default()).into_owned();
+        f(ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("item_key", ProbeCell::text(&item_key)),
+                ("identity_hash", ProbeCell::text(&item.identity_hash)),
+                ("action", ProbeCell::text(&item.action)),
+                ("preimage", ProbeCell::opt_jsonb(item.preimage.as_ref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import type { ExtractRollupDelta } from '../engine-sql/extract-bookkeeping.ts';
 
 /**
  * #5495: why a round halted, as a closed vocabulary stored per reason in
@@ -195,13 +196,13 @@ export async function upsertExtractRollup(
   // cast to jsonb (the #2339 class), and only vocabulary words reach the table.
   const reason = halts > 0 && input.halt_reason && (HALT_REASONS as readonly string[]).includes(input.halt_reason) ? input.halt_reason : null;
 
-  const row = {
-    kind: input.kind, sourceId: input.source_id, day, cost, halts, evalFails, evalPasses, completed, expectedLimits, failures, reason,
+  const delta: ExtractRollupDelta = {
+    kind: input.kind, source_id: input.source_id, day, cost_usd: cost, halt_count: halts, eval_fail_count: evalFails,
+    eval_pass_count: evalPasses, round_completed_count: completed, expected_limit_count: expectedLimits,
+    rollup_write_failures: failures, halt_reason: reason,
   };
-
   try {
-    // The statement lives in engine-sql/extract-bookkeeping.ts.
-    await engine.upsertExtractRollup(row);
+    await engine.upsertExtractRollupDay(delta);
     return { ok: true };
   } catch (err) {
     const msg = (err as Error).message || String(err);
@@ -219,7 +220,7 @@ export async function upsertExtractRollup(
     // migration runs.
     if (isMissingSchemaObject(err, 'column', 'expected_limit_count')) {
       try {
-        await engine.upsertExtractRollup(row, 'pre_v141');
+        await engine.upsertExtractRollupDay(delta, { preV141: true });
         return { ok: true };
       } catch { /* fall through to the normal failure record */ }
     }

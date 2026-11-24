@@ -77,9 +77,10 @@ a page named in `owner_only_marks` is hidden too, and under either form a mark k
 owner-only source is gone. `remove_page` writes the marks the SQL delete trigger writes (v322): when the page being
 deleted is itself owner-only lineage (strict form), it marks that page and each concept or question that names it as a
 `concept-provenance` `synthesized_from` input, so a derivative stays hidden after its owner-only input is deleted for
-good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
-only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
-store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
+good, even when the source is later flipped off. The marks live under `M owner_only_mark/<table>/<row id>`; a page delete
+also marks the page's takes and timeline rows and every row derived from them through `derivation_inputs`. Removing
+only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. A page
+whose recorded inputs reach an owner-only row, transitively, is hidden too ([facts.md, "Derivation inputs"](facts.md#derivation-inputs-generationsderivation_inputsrs)). The
 engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
 
 `ownerOnlyMarkTriggers` (doctor's `owner_only_marks_triggers`, `owner_only_marks.rs` `owner_only_mark_state`) reads the
@@ -350,6 +351,10 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 - `searchKeywordArm(match, rank, options)`: chunks matching `websearch_to_tsquery(match)`, scored with
   `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
   `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
+  `websearch_to_tsquery` separates words on ASCII whitespace and on the non-ASCII characters of PGLite's
+  `[[:space:]]` class (U+0085, U+2000-U+200A except U+2007, U+2028, U+2029, U+205F, U+3000), as the repository's
+  PGLite (0.4.3) does; PostgreSQL 18 reads only ASCII whitespace there, so the goldens taken from PGLite 0.5.16
+  (PostgreSQL 18.6) hold none of these characters.
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
 
@@ -425,7 +430,7 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `searchKeywordChunks` lets image chunks match, as both SQL engines do; the paging members keep text chunks only.
 - `where` compares a JSON number with a number through f64, where Postgres compares `numeric` exactly; numbers past
   2^53 can match differently.
-- `message_id` is blank when it is only ASCII `[[:space:]]`, as the SQL trims it; other Unicode spaces count as text.
+- `message_id` is blank when it is only `[[:space:]]` as PGLite reads it (U+0085, U+2003 and U+3000 count; U+00A0 does not), as the SQL trims it.
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead

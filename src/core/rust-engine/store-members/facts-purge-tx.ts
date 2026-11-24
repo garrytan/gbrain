@@ -81,11 +81,12 @@ export const insertPurgeEffects: Member<'insertPurgeEffects'> = async (brain, re
 /** page_body_staging_parts: written only by persistence/page-upload.ts appendPart (an executeRaw insert). */
 export const deletePurgedStagingParts: Member<'deletePurgedStagingParts'> = async () => 0;
 
-/** page_view_digests: written only by page-window/segmented.ts writeDigest (an executeRaw insert). */
+/** page_view_digests: written only by engine-sql/page-view-digests.ts writePageViewDigest (SQL engines; the store keeps no digests, store-members/page-view-digests.ts). */
 export const deletePageViewDigests: Member<'deletePageViewDigests'> = async () => {};
 
-/** take_proposals: written only by cycle/propose-takes.ts and cycle/propose-takes-failures.ts (executeRaw inserts). */
-export const deletePurgeTakeProposals: Member<'deletePurgeTakeProposals'> = async () => 0;
+/** take_proposals: the store keeps the queue (takes/proposals.rs), so the purge deletes the proposals that state the claim. */
+export const deletePurgeTakeProposals: Member<'deletePurgeTakeProposals'> = (brain, sourceId, factHash) =>
+  storeCall({ member: 'deletePurgeTakeProposals', sourceId }, () => brain.deletePurgeTakeProposals(sourceId, factHash));
 
 /** The re-derive queue (generations/needs_rederive.rs); an empty id list writes nothing, as the SQL inserts no row. */
 export const markNeedsRederive: Member<'markNeedsRederive'> = async (brain, table, ids, sourceId, requestId, reason, hiddenNow) => {

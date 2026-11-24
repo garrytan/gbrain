@@ -2,8 +2,7 @@
 //! of a derived row (`src/core/facts/derivation-inputs.ts`).
 //!
 //! Members: recordDerivationInputs (`engine-sql/facts-purge.ts`), and the store side of
-//! listDerivedRows (`facts/purge.rs`), the walk hop of `derivedRowsFrom`. `listFactsFromQuotedPages`
-//! (`facts/quoted.rs`) reads a fact's inputs.
+//! listDerivedRows (`facts/purge.rs`), the walk hop of `derivedRowsFrom`.
 //!
 //! Keys, under `keys::DERIVED_GENERATION` (`h`) with the generation rows (store format 6,
 //! rust/docs/store/format.md):
@@ -28,7 +27,7 @@ use crate::links::no_nul;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 /// The sub-byte of a `derivation_inputs` row, keyed by its derived row.
 pub(super) const BY_DERIVED: u8 = 0x0A;
@@ -125,6 +124,60 @@ pub(crate) fn derived_from(
     Ok(found.into_iter().take(limit).collect())
 }
 
+/// Whether a row with recorded inputs reaches, through them at any depth, a row `counts` accepts:
+/// `gbrain_owner_only_lineage_strict`'s walk (v322). Each (table, id) is visited once, so a cycle
+/// ends. A row with no recorded inputs costs one prefix read.
+pub(crate) fn lineage_reaches(
+    read: &dyn KvRead,
+    table: &str,
+    id: &str,
+    counts: &mut dyn FnMut(&str, &str) -> Result<bool>,
+) -> Result<bool> {
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut queue: VecDeque<(String, String)> = inputs_of(read, table, id)?.into();
+    while let Some(row) = queue.pop_front() {
+        if !seen.insert(row.clone()) {
+            continue;
+        }
+        if counts(&row.0, &row.1)? {
+            return Ok(true);
+        }
+        for next in inputs_of(read, &row.0, &row.1)? {
+            if !seen.contains(&next) {
+                queue.push_back(next);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `(table, id)` has a recorded input.
+pub(crate) fn has_inputs(read: &dyn KvRead, table: &str, id: &str) -> Result<bool> {
+    Ok(!collect_prefix(read, &pair_prefix(BY_DERIVED_HEAD, table, id), false, 1)?.is_empty())
+}
+
+/// Every row derived, at any depth, from one of `seed` (the `down` walk of
+/// `gbrain_owner_only_mark_derived`, v322), through the input index. Each row is visited once, so
+/// a cycle ends.
+pub(crate) fn derived_closure(
+    read: &dyn KvRead,
+    seed: &[(String, String)],
+) -> Result<BTreeSet<(String, String)>> {
+    let mut found: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut queue: VecDeque<(String, String)> = seed.iter().cloned().collect();
+    while let Some((table, id)) = queue.pop_front() {
+        if table.contains('\0') || id.contains('\0') {
+            continue;
+        }
+        for next in pairs_under(read, BY_INPUT_HEAD, &table, &id)? {
+            if found.insert(next.clone()) {
+                queue.push_back(next);
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// A source delete: every row whose `source_id` is the source goes, with its index entry.
 pub(super) fn remove_source_edges(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     let prefix = BY_DERIVED_HEAD;
@@ -168,16 +221,6 @@ fn split_parts(body: &[u8]) -> Result<Vec<String>> {
 }
 
 impl Store {
-    /// `EXISTS (SELECT 1 FROM derivation_inputs d WHERE d.derived_table = table AND d.derived_id =
-    /// id)`: whether any edge explains the derived row. Associated, so a reader outside
-    /// `generations` asks it inside its own read.
-    pub(crate) fn derived_has_inputs(read: &dyn KvRead, table: &str, id: &str) -> Result<bool> {
-        if table.contains('\0') || id.contains('\0') {
-            return Ok(false);
-        }
-        Ok(!collect_prefix(read, &pair_prefix(BY_DERIVED_HEAD, table, id), false, 1)?.is_empty())
-    }
-
     /// `recordDerivationInputs(derived, sourceId, inputs)`: one `derivation_inputs` row per input,
     /// with `source_id` and the transaction's time, keeping a row that exists. A NUL in a table or
     /// id is `invalid_argument`, as a text column refuses it; a `sourceId` that names no source is

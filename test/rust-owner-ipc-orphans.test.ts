@@ -27,6 +27,9 @@ import type { OperationError } from '../src/core/ops/contract.ts';
 import { encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { OWNER_IPC_VERSION } from '../src/core/rust-engine/owner-ipc/protocol.ts';
 import { rawSession } from './helpers/owner-ipc-raw.ts';
+import { readFileSync } from 'node:fs';
+import { OWNER_IPC_CONFIRMING_READS } from '../src/core/rust-engine/owner-ipc/confirming-reads.ts';
+import { confirmingReadAdvice } from '../src/core/rust-engine/owner-ipc/routes.ts';
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const clean of cleanups.splice(0).reverse()) await clean(); });
@@ -196,12 +199,141 @@ describe('a write whose caller stopped waiting while the owner still runs it', (
   });
 });
 
+type Nudge = { sourceId: string; takeId: number; nudgePattern: string; waveVersion: string };
+type NudgeRow = { id: number; source_id: string; take_id: number; nudge_pattern: string; wave_version: string };
+type NudgeClient = { insertTakeNudge(n: Nudge): Promise<number>; listTakeNudges(f: { sourceId: string; takeId?: number; nudgePattern?: string; waveVersion?: string }): Promise<NudgeRow[]> };
+
+/** An owner whose insertTakeNudge ignores its abort and logs the nudge only after `open()`; listTakeNudges answers at once. */
+async function gatedNudgeOwner() {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-nudges-'));
+  const rows: NudgeRow[] = [];
+  let open!: () => void;
+  const gate = new Promise<void>(resolve => { open = resolve; });
+  const owner = {
+    kind: 'pglite', capabilities: new Set<string>(),
+    insertTakeNudge: async (n: Nudge) => { await gate; rows.push({ id: rows.length + 1, source_id: n.sourceId, take_id: n.takeId, nudge_pattern: n.nudgePattern, wave_version: n.waveVersion }); return rows.length; },
+    listTakeNudges: async (f: { sourceId: string; takeId?: number }) => rows.filter(r => r.source_id === f.sourceId && (f.takeId === undefined || r.take_id === f.takeId)),
+  } as unknown as BrainEngine;
+  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: 4 });
+  if (!server) throw new Error('no socket');
+  cleanups.push(async () => { open(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
+  return { server, rows, open };
+}
+
+describe('a nudge write whose reply was lost, then replayed by a caller that follows the advice', () => {
+  // Value: protects=a take nudge whose insertTakeNudge forward timed out or was cancelled is logged once when the caller reads
+  // the nudges the advice names and replays it only when its row is missing; fails_when=insertTakeNudge has no confirming read
+  // entry, so the owner answers the (unnamed) read at once while the orphaned insert is still running, the caller sees no row,
+  // replays, and the log holds the nudge twice; why_new=insertTakeNudge was one of the four members the port left unclassed;
+  // seam=none; no_claim=how the Rust store orders commits
+  for (const how of ['timeout', 'cancel'] as const) {
+    test(`after a ${how}, the nudge is logged once`, async () => {
+      const owner = await gatedNudgeOwner();
+      const connection = await connectOwner(owner.server.socketPath);
+      const engine = { kind: 'rust', capabilities: new Set<string>() } as unknown as NudgeClient;
+      cleanups.push(installOwnerClient(engine as unknown as BrainEngine, connection));
+      const nudge: Nudge = { sourceId: 'default', takeId: 7, nudgePattern: 'stale-take', waveVersion: 'v9.9.9.0' };
+      const controller = new AbortController();
+      const first = how === 'timeout'
+        ? withReadDeadline(Date.now() + 100, () => engine.insertTakeNudge(nudge)).then(() => null, e => e as OperationError)
+        : withRequestSignal(controller.signal, () => engine.insertTakeNudge(nudge)).then(() => null, e => e as OperationError);
+      await until(() => owner.server.stats().active === 1);
+      if (how === 'cancel') controller.abort();
+      const error = await first;
+      expect(error).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown', retryable: false });
+      // Follow the advice: read the source's nudges for that take, replay only when the pattern and wave are not there. The
+      // gate opens 150 ms later, as the orphaned write finishes; a read the owner does not hold back finds nothing before that.
+      setTimeout(owner.open, 150);
+      const followed = engine.listTakeNudges({ sourceId: nudge.sourceId, takeId: nudge.takeId }).then(async rows => {
+        if (!rows.some(r => r.nudge_pattern === nudge.nudgePattern && r.wave_version === nudge.waveVersion)) await engine.insertTakeNudge(nudge);
+        return rows;
+      });
+      const seen = await followed;
+      await until(() => owner.server.stats().active === 0);
+      expect(owner.rows.map(r => [r.source_id, r.take_id, r.nudge_pattern, r.wave_version])).toEqual([['default', 7, 'stale-take', 'v9.9.9.0']]);
+      expect(seen).toHaveLength(1);
+      expect(error!.suggestion).toContain('run listTakeNudges for that source and the take or proposal the call named (look for that pattern and wave, fired since the call began)');
+      expect(error!.suggestion).toContain('only after the earlier insertTakeNudge call has ended');
+    });
+  }
+});
+
+type RollupDelta = { kind: string; source_id: string; day: string; cost_usd: number };
+type RollupClient = { upsertExtractRollupDay(d: RollupDelta): Promise<void> };
+
+/** An owner whose upsertExtractRollupDay ignores its abort and adds the delta only after `open()`; `calls` counts every call it received. */
+async function gatedRollupOwner() {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-owner-rollup-'));
+  const added: RollupDelta[] = [];
+  const calls: RollupDelta[] = [];
+  let open!: () => void;
+  const gate = new Promise<void>(resolve => { open = resolve; });
+  const owner = {
+    kind: 'pglite', capabilities: new Set<string>(),
+    upsertExtractRollupDay: async (d: RollupDelta) => { calls.push(d); await gate; added.push(d); },
+  } as unknown as BrainEngine;
+  const server = await serveOwnerEngine(owner, join(dir, 'owner.sock'), { permits: 4 });
+  if (!server) throw new Error('no socket');
+  cleanups.push(async () => { open(); await server.close(); rmSync(dir, { recursive: true, force: true }); });
+  return { server, added, calls, open };
+}
+
+describe('an extract rollup add whose reply was lost (Ember ruling B, option 2)', () => {
+  // Value: protects=upsertExtractRollupDay is classed on the owner socket with a read of the day's row and the note that this
+  // read cannot confirm one delta, in the advice and in docs/designs/RUST_ENGINE.md, and the socket never resends the call by
+  // itself after a deadline or a cancel (one owner call, error retryable false, nothing sent again while the caller waits);
+  // fails_when=the entry or its note is dropped, the advice says the call is safe to rerun, or the client replays a lost-reply
+  // write (the owner then holds two calls and the day is counted twice); why_new=the member was the one the port left
+  // unclassed; seam=none; no_claim=the generic no-resend of every write (rust-owner-ipc.test.ts covers insertFact's cancel and
+  // deadline, and this file the insertFact and insertTakeNudge replays by a caller that follows the advice)
+  test('the classing and its note are pinned', () => {
+    expect(OWNER_IPC_CONFIRMING_READS.upsertExtractRollupDay).toContain('extract_rollup_7d row for that kind and source');
+    const advice = confirmingReadAdvice('upsertExtractRollupDay');
+    expect(advice).toContain('rerun it only if it did not');
+    expect(advice).toContain('Parallel extractions add to the same row, so that read cannot confirm this one delta, and a rerun can double-count the day');
+    expect(advice).toContain('report-only cache that the JSONL audit can rebuild');
+    expect(advice).toContain('never reruns a call whose reply was lost');
+    const design = readFileSync(join(import.meta.dir, '..', 'docs', 'designs', 'RUST_ENGINE.md'), 'utf8');
+    expect(design).toContain('parallel extractions share that row, so the read cannot confirm one delta and a rerun can double-count a report-only cache that the JSONL audit can rebuild');
+    const todos = readFileSync(join(import.meta.dir, '..', 'TODOS.md'), 'utf8');
+    expect(todos).toContain('extract-rollup-confirming-read');
+  });
+
+  for (const how of ['timeout', 'cancel'] as const) {
+    test(`after a ${how} the owner is not called again by the client, and the error says a rerun is not safe`, async () => {
+      const owner = await gatedRollupOwner();
+      const connection = await connectOwner(owner.server.socketPath);
+      const engine = { kind: 'rust', capabilities: new Set<string>() } as unknown as RollupClient;
+      cleanups.push(installOwnerClient(engine as unknown as BrainEngine, connection));
+      const delta: RollupDelta = { kind: 'facts', source_id: 'default', day: '2026-11-22', cost_usd: 0.5 };
+      const controller = new AbortController();
+      const first = how === 'timeout'
+        ? withReadDeadline(Date.now() + 100, () => engine.upsertExtractRollupDay(delta)).then(() => null, e => e as OperationError)
+        : withRequestSignal(controller.signal, () => engine.upsertExtractRollupDay(delta)).then(() => null, e => e as OperationError);
+      await until(() => owner.server.stats().active === 1);
+      if (how === 'cancel') controller.abort();
+      const error = await first;
+      expect(error).toMatchObject({ code: 'owner_unavailable', reason: 'outcome_unknown', retryable: false });
+      expect(error!.suggestion).toContain('Before you rerun upsertExtractRollupDay');
+      expect(error!.suggestion).toContain('cannot confirm this one delta');
+      // The client sends nothing more: wait past any retry timer, then let the orphaned call finish. One call reached the owner and one add landed.
+      await Bun.sleep(300);
+      expect(owner.calls).toEqual([delta]);
+      owner.open();
+      await until(() => owner.server.stats().active === 0);
+      expect(owner.calls).toEqual([delta]);
+      expect(owner.added).toEqual([delta]);
+    });
+  }
+});
+
 describe('which members an orphan holds back', () => {
   // Value: protects=the hold follows the confirming read each write names; fails_when=executeRaw (whose read is a
   // SELECT through executeRaw) holds nothing, or a write whose rerun repeats nothing holds anything; why_new=new;
   // seam=none; no_claim=key-level precision (the hold is by member)
   test('the confirming read members, the write itself for executeRaw, and nothing for a no-op rerun', () => {
     expect([...membersWaitingFor('insertFact')]).toEqual(['listFactsByEntity']);
+    expect([...membersWaitingFor('insertTakeNudge')]).toEqual(['listTakeNudges']);
     expect([...membersWaitingFor('executeRaw')]).toEqual(['executeRaw']);
     expect([...membersWaitingFor('importFromContent')]).toEqual(['getPage']);
     expect([...membersWaitingFor('importManagedFiles')]).toEqual(['getPage']);
