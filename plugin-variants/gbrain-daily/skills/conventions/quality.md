@@ -37,4 +37,4 @@ Before creating a new brain page, check notability:
 - **Companies:** Relevant to work/investments/interests?
 - **Concepts:** Reusable mental model? Worth referencing again?
 
-When in doubt, DON'T create. A 400-follower person who tweeted once is not notable.
+When in doubt, DON'T create. Someone who appears once, with no tie to the user's work or life, is not notable.

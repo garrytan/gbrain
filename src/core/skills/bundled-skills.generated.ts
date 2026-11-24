@@ -103,6 +103,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -114,6 +116,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -125,6 +129,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -132,7 +138,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "ask-user",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -143,6 +151,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
@@ -157,6 +167,7 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -168,6 +179,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md"
     ]
@@ -180,6 +193,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/subagent-routing.md"
     ]
   },
@@ -189,6 +204,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -200,6 +217,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -207,7 +226,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "brain-taxonomist",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -217,7 +238,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -230,6 +253,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/page-privacy.md",
       "conventions/quality.md",
       "conventions/subagent-routing.md",
@@ -241,7 +266,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "capture",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -252,6 +279,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
     ]
@@ -262,6 +291,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "_output-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md"
     ]
@@ -272,6 +303,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
@@ -282,7 +315,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -295,6 +330,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/regex-discipline.md",
       "conventions/subagent-routing.md",
       "conventions/test-before-bulk.md"
@@ -308,6 +345,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md"
     ]
@@ -318,6 +357,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -329,6 +370,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
     ]
@@ -340,7 +383,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -349,6 +394,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/subagent-routing.md",
       "conventions/test-before-bulk.md"
     ]
@@ -367,14 +414,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "daily-task-manager",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "daily-task-prep",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -385,6 +436,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md"
     ]
   },
@@ -393,6 +446,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -400,7 +455,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "db-repair",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -411,6 +468,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -421,7 +480,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -431,6 +492,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -440,6 +503,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/untrusted-content.md"
     ]
@@ -449,6 +514,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "owner",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/page-privacy.md",
       "conventions/quality.md"
     ]
@@ -457,7 +524,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "functional-area-resolver",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -465,21 +534,27 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "gbrain-upgrade",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "google-loops",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -489,6 +564,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -497,6 +574,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -507,6 +586,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -516,14 +597,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "mcp-access",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -532,6 +617,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/test-before-bulk.md"
     ]
   },
@@ -542,6 +629,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -553,6 +642,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -563,6 +654,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
       "conventions/brain-routing.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/untrusted-content.md"
     ]
@@ -573,7 +666,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/cron-via-minions.md",
+      "conventions/cross-modal.yaml",
       "conventions/exec-output.md",
+      "conventions/model-routing.md",
       "conventions/subagent-routing.md"
     ]
   },
@@ -585,6 +680,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -592,14 +689,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "postgres-adopt",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "publish",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -607,14 +708,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "remote-mcp",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -624,6 +729,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -632,7 +739,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "_output-rules.md",
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -643,6 +752,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "conventions/test-before-bulk.md",
       "conventions/untrusted-content.md"
@@ -655,7 +766,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.json",
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -664,6 +777,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "assets": [
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/schema-evolution.md"
     ]
   },
@@ -671,14 +786,18 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "schema-unify",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "setup",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -686,6 +805,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -693,7 +814,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "skill-creator",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -701,6 +824,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "owner",
     "assets": [
       "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md",
       "skill-optimizer/skillopt-benchmark.jsonl"
     ]
@@ -709,21 +834,27 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "skillpack-check",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "smoke-test",
     "audience": "owner",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
     "name": "soul-audit",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -731,7 +862,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "audience": "downstream",
     "assets": [
       "conventions/agent-operator-protocol.md",
-      "conventions/brain-first.md"
+      "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   },
   {
@@ -742,6 +875,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -768,6 +903,8 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
       "_brain-filing-rules.md",
       "conventions/agent-operator-protocol.md",
       "conventions/brain-first.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md",
       "conventions/quality.md"
     ]
   },
@@ -775,7 +912,9 @@ export const BUNDLED_SKILLS: readonly BundledSkillMeta[] = [
     "name": "webhook-transforms",
     "audience": "downstream",
     "assets": [
-      "conventions/agent-operator-protocol.md"
+      "conventions/agent-operator-protocol.md",
+      "conventions/cross-modal.yaml",
+      "conventions/model-routing.md"
     ]
   }
 ];

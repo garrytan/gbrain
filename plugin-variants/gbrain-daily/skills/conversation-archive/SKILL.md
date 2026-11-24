@@ -254,11 +254,10 @@ backlinks, and deeper enrichment route through the existing
 [ingest](../ingest/SKILL.md) / [enrich](../enrich/SKILL.md) skills — do not
 re-implement them here.
 
-## Three Invariants (root-caused upstream — do not reintroduce)
+## Three Invariants (do not reintroduce)
 
-An upstream deployment of this pipeline silently lost days of transcripts.
-The root cause was three stacked bugs; the fixes are structural. Preserve
-them in any archiver you build with this skill:
+Breaking any of these silently loses transcripts; the fixes are structural.
+Preserve them in any archiver you build with this skill:
 
 1. **Capture cadence must outrun store eviction.** Session stores rotate
    content out of their retained window. Content written early in a long
