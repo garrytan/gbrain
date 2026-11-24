@@ -54,7 +54,6 @@ src/commands/bootstrap.ts#runRender<anon@1>	catch_empty	1
 src/commands/bootstrap.ts#runUninstall<anon@1>>body	catch_empty	1
 src/commands/check-update.ts#recordFailedCheck	catch_empty	1
 src/commands/claw-test.ts#mergeChildFriction	catch_empty	1
-src/commands/code-scope.ts#sourceExists	capability_refusal_swallowed	1
 src/commands/config.ts#hostBrainSelected	catch_empty	1
 src/commands/config.ts#restampVisibilityPosture	catch_empty	1
 src/commands/config.ts#runConfig	catch_empty	1
@@ -216,7 +215,6 @@ src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>getConfig	catch_empt
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>listPopulatedSourceIds	catch_empty	1
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>listSourceIds	catch_empty	1
 src/commands/doctor/skill-checks.ts#skillsManifestIntegrityCheck	catch_empty	1
-src/commands/edges-backfill.ts#runEdgesBackfill	capability_refusal_swallowed	1
 src/commands/embed.ts#embedAllStale	catch_empty	2
 src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
@@ -228,7 +226,6 @@ src/commands/eval-cross-modal.ts#substituteUnavailableDefaultSlots	catch_empty	1
 src/commands/eval-longmemeval.ts#resolvePins	catch_empty	1
 src/commands/eval-replay.ts#runEvalReplay	catch_empty	1
 src/commands/eval-whoknows.ts#loadReplayRows	catch_empty	1
-src/commands/extract-explain.ts#runExtractExplain	capability_refusal_swallowed	1
 src/commands/extract-explain.ts#runExtractExplain	catch_empty	2
 src/commands/extract-mentions-explain.ts#pageNames	promise_catch_empty	1
 src/commands/extract-status.ts#runExtractStatus	capability_refusal_swallowed	1
@@ -342,7 +339,6 @@ src/commands/schema.ts#runLintCmd>lint	catch_empty	1
 src/commands/search-diagnose.ts#runSearchDiagnose	catch_empty	1
 src/commands/self-upgrade.ts#runSelfUpgrade	catch_empty	1
 src/commands/serve-health.ts#readSelfExits	catch_empty	1
-src/commands/serve-health.ts#readServeTransport	capability_refusal_swallowed	1
 src/commands/serve-health.ts#readServeTransport	promise_catch_empty	1
 src/commands/serve-health.ts#recordServeTransport	catch_empty	1
 src/commands/serve-http-clients.ts#mountAdminClients<anon@1>	capability_refusal_swallowed	1
@@ -426,9 +422,7 @@ src/commands/upgrade.ts#bunGlobalExactTagPin	catch_empty	1
 src/commands/upgrade.ts#detectBunLink	catch_empty	2
 src/commands/upgrade.ts#postUpgradeReferenceSweep	catch_empty	1
 src/commands/upgrade.ts#printSearchModeUpgradeBanner	catch_empty	1
-src/commands/upgrade.ts#runPostUpgrade	capability_refusal_swallowed	3
 src/commands/upgrade.ts#runPostUpgrade	catch_empty	4
-src/commands/upgrade.ts#runPostUpgrade	promise_catch_empty	1
 src/commands/upgrade.ts#saveUpgradeState	catch_empty	1
 src/commands/wakeshift.ts#disable	catch_empty	1
 src/commands/wakeshift.ts#watchCounts	catch_empty	1
@@ -563,11 +557,8 @@ src/core/bootstrap/verify.ts#checkHookCarrierOverlap<anon@1>	catch_empty	1
 src/core/bootstrap/verify.ts#checkHooksSmoke	catch_empty	1
 src/core/bootstrap/verify.ts#checkInertSkills<anon@1>	catch_empty	1
 src/core/bootstrap/verify.ts#persistVerifyRun	catch_empty	1
-src/core/bootstrap/verify.ts#removeProbes	capability_refusal_swallowed	1
-src/core/bootstrap/verify.ts#removeProbes	catch_empty	1
 src/core/bootstrap/verify.ts#resolveSourceIdCollision	capability_refusal_swallowed	1
 src/core/bootstrap/verify.ts#runRoundtrip	capability_refusal_swallowed	1
-src/core/bootstrap/verify.ts#verifyWorkspace	capability_refusal_swallowed	1
 src/core/brain-repo-durability.ts#appendPushLog	catch_empty	1
 src/core/brain-repo-durability.ts#durabilityJobStatus	catch_empty	1
 src/core/brain-repo-durability.ts#ensureExcluded	catch_empty	1
@@ -602,7 +593,6 @@ src/core/cli-preflight.ts#bunfigDeclaresTopLevelPreload	catch_empty	1
 src/core/cli-preflight.ts#resolveRuntimePath	catch_empty	1
 src/core/cli-socket/refusals.ts#readRefusals	catch_empty	1
 src/core/code-intel/recursive-walk.ts#runRecursiveWalk	catch_empty	1
-src/core/code-intel/recursive-walk.ts#symbolLanguages	capability_refusal_swallowed	1
 src/core/code-intel/recursive-walk.ts#symbolLanguages	catch_empty	1
 src/core/code-intel/traversal-cache.ts#getCachedTraversal	catch_empty	1
 src/core/code-intel/traversal-cache.ts#getClusterGeneration	catch_empty	1
@@ -727,20 +717,13 @@ src/core/cycle/derived-write-through.ts#restoreDerived	capability_refusal_swallo
 src/core/cycle/derived-write-through.ts#writeDreamFile	catch_empty	1
 src/core/cycle/extract-atoms-cost-gate.ts#readExtractAtomsNoPricing	catch_empty	1
 src/core/cycle/extract-atoms-cost-gate.ts#resolveEmbedModelForCostGate	catch_empty	1
-src/core/cycle/extract-atoms-input.ts#releasePartialDispositions	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms-input.ts#resolveExtractAtomsInputCap	catch_empty	1
-src/core/cycle/extract-atoms-input.ts#stampTranscriptTombstone	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms-input.ts#stampTranscriptTombstone	catch_empty	1
-src/core/cycle/extract-atoms-stamp.ts#sourcesWithStaleExtractAtomsRun	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms-stamp.ts#sourcesWithStaleExtractAtomsRun	catch_empty	1
-src/core/cycle/extract-atoms.ts#atomsExistingForHashes	capability_refusal_swallowed	1
-src/core/cycle/extract-atoms.ts#discoverExtractablePages	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms.ts#resolveExtractAtomsModelWithSource	catch_empty	1
 src/core/cycle/extract-atoms.ts#resolveExtractableTypes	catch_empty	1
 src/core/cycle/extract-atoms.ts#resolvePageDiscoveryLimit	catch_empty	1
 src/core/cycle/extract-atoms.ts#runPhaseExtractAtoms	catch_empty	2
-src/core/cycle/extract-atoms.ts#runPhaseExtractAtoms>recordItemFailureCount	capability_refusal_swallowed	1
-src/core/cycle/extract-atoms.ts#tombstonedTranscriptsForHashes	capability_refusal_swallowed	1
 src/core/cycle/filing-rules.ts#loadFromCandidates	catch_empty	1
 src/core/cycle/filing-rules.ts#resolveBrainRepoPath	catch_empty	1
 src/core/cycle/grade-takes.ts#GradeTakesPhase.process	promise_catch_empty	1
@@ -982,7 +965,6 @@ src/core/mentions/pass.ts#writeDerivedAliases	promise_catch_empty	1
 src/core/mentions/policy.ts#readPolicyKeys	catch_empty	1
 src/core/mentions/referrers.ts#targetPages	catch_empty	1
 src/core/mentions/siblings.ts#factEntitySlugs	promise_catch_empty	1
-src/core/mentions/siblings.ts#siblingCanonical	capability_refusal_swallowed	1
 src/core/mentions/siblings.ts#siblingCanonical	catch_empty	1
 src/core/migrate.ts#getIdleBlockers	catch_empty	1
 src/core/migrate.ts#runMigrationSQL<anon@1>	catch_empty	1
@@ -1051,8 +1033,6 @@ src/core/onboard/checks.ts#checkPackUpgradeAvailable	catch_empty	1
 src/core/onboard/checks.ts#checkPackUpgradeAvailable	promise_catch_empty	1
 src/core/onboard/checks.ts#checkTakesCount	catch_empty	2	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master (the takes.bootstrap_enabled config read falls back to false; the countTakes catch rethrows the refusal first)
 src/core/onboard/checks.ts#checkTimelineCoverage	promise_catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master
-src/core/onboard/impact-capture.ts#captureMetric	capability_refusal_swallowed	1
-src/core/onboard/impact-capture.ts#writeImpactLogRow	capability_refusal_swallowed	1
 src/core/onboard/mcp-onboarding.ts#cachePath	catch_empty	1
 src/core/onboard/mcp-onboarding.ts#readPersisted	catch_empty	1
 src/core/onboard/writeback-nudge.ts#writebackAskApplies	catch_empty	2
@@ -1349,7 +1329,6 @@ src/core/questions/refresh.ts#resolveMaxOutputTokens	promise_catch_empty	1
 src/core/questions/refresh.ts#retrieveEvidence	promise_catch_empty	1
 src/core/raw-file-upload.ts#rawUploadRefusedFor	promise_catch_empty	1
 src/core/readiness.ts#stdioRegistration<anon@2>	catch_empty	1
-src/core/reindex-consent.ts#estimateReindexSpend	capability_refusal_swallowed	1
 src/core/remediation-checkpoint.ts#listRemediationCheckpoints	catch_empty	1
 src/core/remediation/context.ts#firstSourceLocalPath	catch_empty	1
 src/core/remediation/context.ts#loadRecommendationContext	catch_empty	1
@@ -1761,7 +1740,6 @@ src/mcp/server.ts#deferredBoot	promise_catch_empty	1
 src/mcp/server.ts#startMcpServer<anon@4>	catch_empty	1
 src/mcp/server.ts#startMcpServer>bootEngineDependents	catch_empty	1
 src/mcp/server.ts#stdioVisibleTools	catch_empty	1
-src/mcp/source-preflight.ts#assertStdioSourceBindable	capability_refusal_swallowed	1
 src/mcp/surface.ts#resolveAdvertisedSurface	catch_empty	1
 src/mcp/surface.ts#resolveDefaultClientSurface	catch_empty	1
 src/mcp/surface.ts#sessionWidenAllowed	catch_empty	1

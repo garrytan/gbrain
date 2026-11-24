@@ -20,7 +20,6 @@ src/commands/autopilot-dispatch.ts	execute_raw	4
 src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
-src/commands/code-scope.ts	execute_raw	1
 src/commands/core.ts	execute_raw	6
 src/commands/db-repair.ts	execute_raw	5
 src/commands/decide/claims-sweep.ts	execute_raw	1
@@ -67,10 +66,8 @@ src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/report-remote.ts	execute_raw	1
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2
 src/commands/edge-proposals.ts	execute_raw	6
-src/commands/edges-backfill.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
 src/commands/extract-conversation-facts.ts	execute_raw	1
-src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
@@ -138,7 +135,6 @@ src/commands/sync/rename-collision.ts	execute_raw	2
 src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
 src/commands/trust.ts	execute_raw	1
-src/commands/upgrade.ts	execute_raw	1
 src/core/access/actor.ts	execute_raw	2
 src/core/access/attest-sources.ts	sql_template	7
 src/core/access/handover.ts	execute_raw	14	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
@@ -181,7 +177,7 @@ src/core/belief/purge.ts	execute_raw	14
 src/core/belief/retier.ts	execute_raw	3
 src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1
-src/core/bootstrap/verify.ts	execute_raw	6
+src/core/bootstrap/verify.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
 src/core/by-mention.ts	execute_raw	2
 src/core/calibration/domain-aggregators.ts	execute_raw	4
@@ -215,7 +211,6 @@ src/core/cycle/drift.ts	execute_raw	2
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
 src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
-src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	5
 src/core/cycle/extract-takes.ts	execute_raw	3
 src/core/cycle/inline-drain.ts	execute_raw	3
@@ -306,7 +301,6 @@ src/core/link-source-check-repair.ts	execute_raw	3
 src/core/links-fence-projection.ts	execute_raw	8
 src/core/loops/loops-store.ts	execute_raw	2
 src/core/maintenance/run.ts	execute_raw	1
-src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
@@ -332,7 +326,7 @@ src/core/minions/worker.ts	execute_raw	3
 src/core/multi-source-drift.ts	execute_raw	1
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
-src/core/onboard/impact-capture.ts	execute_raw	2
+src/core/onboard/impact-capture.ts	execute_raw	1
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
 src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	3
@@ -703,7 +697,6 @@ src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	1
-src/mcp/source-preflight.ts	execute_raw	1
 src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
 src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold

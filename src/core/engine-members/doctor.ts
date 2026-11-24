@@ -71,6 +71,8 @@ export interface DoctorMembers {
   readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
   /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
   readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
+  /** `extract --explain <kind>`: that kind's 7-day extract rollup aggregate (null columns when it has none). */
+  readExtractKindRollup7d(kind: string): Promise<DoctorDerivedSql.ExtractKindRollupRow | null>;
   /** The recorded halt reasons of the 7-day extract rollup, per kind and reason. */
   listRecordedHaltReasons7d(): Promise<DoctorDerivedSql.RecordedHaltReasonRow[]>;
   // Doctor persistence reads (engine-sql/doctor-persistence.ts): the statements the persistence checks ran through executeRaw.

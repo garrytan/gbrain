@@ -346,6 +346,7 @@ export const PAGES_MEMBERS = {
   recountMentionIndexStatus: 'pages',
   countPagesDueForMentions: 'pages',
   readIdentitySiblingCandidates: 'pages',
+  readSiblingGroupRows: 'pages',
   findExactSlug: 'pages',
   readLiveSlugs: 'pages',
   readLivePageTypes: 'pages',

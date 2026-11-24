@@ -10,6 +10,7 @@
 //   - D7 per-step recheck (re-compute plan from fresh health)
 //   - Hooks for caller observability (no console.* in the library)
 
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import crypto from 'crypto';
 import type { BrainEngine } from '../engine.ts';
 import { queueWorkerAlive } from '../minions/no-worker.ts';
@@ -135,6 +136,17 @@ async function runJobInline(
     worker.stop();
     await running;
   }
+}
+
+/**
+ * Write a step's impact row. The job already ran, so an engine that refuses the write (a Rust brain keeps no
+ * migration_impact_log) marks the step `impact_log` instead of turning its terminal status into an error.
+ */
+async function closeImpactOrMark(close: () => Promise<void>, result: StepResult): Promise<void> {
+  await close().catch((err: unknown) => {
+    if (!isEngineCapabilityRefusal(err)) throw err;
+    result.impact_log = 'not_recorded: engine_capability_missing';
+  });
 }
 
 export async function runRemediation(
@@ -459,7 +471,7 @@ export async function runRemediation(
 
         const terminal = await waitStep(job.id, { pollMs: isPGLite ? 250 : 1000, timeoutMs: (step.est_seconds + 60) * 1000 });
         submittedResult.status = terminal.status;
-        if (impact) await closeStepImpact(engine, impact, step, { jobId: job.id, status: terminal.status, doctorRunId });
+        if (impact) await closeImpactOrMark(() => closeStepImpact(engine, impact, step, { jobId: job.id, status: terminal.status, doctorRunId }), submittedResult);
         if (terminal.status !== 'completed') abortedIds.add(step.id);
         hooks.onStepEnd?.(submittedResult);
       } catch (e) {
