@@ -44,6 +44,7 @@ import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
+import { holdPage, releaseEntitySlug } from './hold-page.ts';
 import {
   addTrustAllowRule, getTrustAllowRule, normalizeTrustAllowRule, parseAllowRuleRef, principalLabel, removeTrustAllowRule, type TrustAllowRule,
 } from './allow-rules.ts';
@@ -107,8 +108,8 @@ const hash8 = (value: string): string => createHash('sha256').update(value).dige
 const bindingOf = (value: unknown): string => createHash('sha256')
   .update(JSON.stringify(value, (_key, v: unknown) => typeof v === 'bigint' ? v.toString() : v)).digest('hex');
 /** A hold's approved state; #7656: plus the fence cell fields an index-existing release raises (`releaseCellOf`). */
-const holdBinding = (hold: Pick<HoldRow, 'id' | 'status' | 'last_seen_at'>, cellFields: Record<string, unknown> | null = null): string =>
-  bindingOf({ id: hold.id, status: hold.status, last_seen_at: hold.last_seen_at, ...(cellFields ? { cell: cellFields } : {}) });
+const holdBinding = (hold: Pick<HoldRow, 'id' | 'status' | 'last_seen_at' | 'page_id'>, cellFields: Record<string, unknown> | null = null): string =>
+  bindingOf({ id: hold.id, status: hold.status, last_seen_at: hold.last_seen_at, ...(hold.page_id != null ? { page_id: hold.page_id } : {}), ...(cellFields ? { cell: cellFields } : {}) });
 /**
  * One printable line: control, format and default-ignorable characters (terminal escapes, bidi overrides, Hangul fillers,
  * the combining grapheme joiner) and the braille blank become one space, and runs of whitespace collapse to one.
@@ -152,7 +153,7 @@ async function readTakeTarget(engine: BrainEngine, id: number): Promise<RowTarge
 }
 
 // Held writes (write-gate-store.ts). Release publishes the held row at user_confirmed in the same transaction (CEO-9).
-export interface HoldRow { id: number; kind: 'fact' | 'take'; source_id: string; slug: string; status: string; tier: TrustTier; reason_families: string[]; payload: Record<string, unknown>; last_seen_at: string }
+export interface HoldRow { id: number; kind: 'fact' | 'take'; source_id: string; slug: string; page_id?: number | null; page_candidates?: number[] | null; status: string; tier: TrustTier; reason_families: string[]; payload: Record<string, unknown>; last_seen_at: string }
 export interface HoldStoreAdapter {
   get(engine: BrainEngine, id: number): Promise<HoldRow | null>;
   list(engine: BrainEngine, opts: { sourceId?: string; since?: Date }): Promise<HoldRow[]>;
@@ -169,10 +170,11 @@ async function holdTableExists(engine: BrainEngine): Promise<boolean> {
   const [row] = await engine.executeRaw<{ t: string | null }>(`SELECT to_regclass('write_gate_holds')::text AS t`);
   return !!row?.t;
 }
-const holdColumns = `id, kind, source_id, slug, status, tier, reason_families, payload, last_seen_at`;
+const holdColumns = `id, kind, source_id, slug, page_id::text AS page_id, page_candidates::text[] AS page_candidates, status, tier, reason_families, payload, last_seen_at`;
 function holdRow(r: Record<string, unknown>): HoldRow {
   const payload = typeof r.payload === 'string' ? JSON.parse(r.payload) as Record<string, unknown> : (r.payload as Record<string, unknown> | null) ?? {};
-  return { id: Number(r.id), kind: r.kind as HoldRow['kind'], source_id: String(r.source_id), slug: String(r.slug ?? ''), status: String(r.status),
+  return { id: Number(r.id), kind: r.kind as HoldRow['kind'], source_id: String(r.source_id), slug: String(r.slug ?? ''), page_id: r.page_id == null ? null : Number(r.page_id),
+    page_candidates: Array.isArray(r.page_candidates) ? (r.page_candidates as unknown[]).map(Number) : null, status: String(r.status),
     tier: storedTrustTier(r.tier), reason_families: (r.reason_families as string[] | null) ?? [], payload, last_seen_at: new Date(r.last_seen_at as string).toISOString() };
 }
 const decideHoldSql = (status: 'released' | 'dropped') =>
@@ -201,9 +203,11 @@ const defaultHoldStore: HoldStoreAdapter = {
       throw opError('preview_changed', `h${id} changed after you approved it; nothing was changed.`,
         'Run the command again: it shows the current state and asks for a new confirmation.');
     }
+    // A bound hold publishes for its page (by its current name) or is refused; never for whatever page took the old name.
+    const bound = held?.status === 'held' ? await holdPage(tx, held) : null;
     const hold = await releaseWriteGateHold(tx, id, by);
     if (!hold) return false;
-    await publishReleasedFact(tx, hold);
+    await publishReleasedFact(tx, hold, bound);
     return true;
   },
   async drop(tx, id, by) { return (await tx.executeRaw(decideHoldSql('dropped'), [id, by])).length === 1; },
@@ -243,14 +247,15 @@ function releasedFields(hold: HoldRow, cell: ParsedFact | null): string {
  * for a hold with no entity slug or whose page is missing; every other managed fact release publishes its fence row
  * through the door (`submitTrustRelease`, trust/release-publish.ts).
  */
-async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold): Promise<void> {
+async function publishReleasedFact(tx: BrainEngine, hold: WriteGateHold, bound: { slug: string } | null): Promise<void> {
   const p = hold.payload;
+  const entity = releaseEntitySlug(hold, bound);
   const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
   const trust = { tier: 'user_confirmed' as const, origin: { channel: 'trust_release', request_id: hold.request_id ?? undefined } };
   // W1 #6783 §5.1: the released fact is recorded in its subject's stream, under that slug's page key.
   const write = () => withTrustPromotion(tx, 'user_confirmed', () => withWriteTrust(tx, trust, () => lockedBeliefBatch(tx, { sourceId: hold.source_id,
-    slugs: str(p.entity_slug) ? [String(p.entity_slug)] : [], op: 'trust_release', remote: false, cause: { hold: `wh${hold.id}` } }, () => tx.insertFact({ // gbrain-allow-direct-insert: owner release of a held fact (CEO-9), inside the owner's coordinated transaction
-    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as never, entity_slug: str(p.entity_slug), visibility: (p.visibility === 'world' ? 'world' : 'private'),
+    slugs: entity ? [entity] : [], op: 'trust_release', remote: false, cause: { hold: `wh${hold.id}` } }, () => tx.insertFact({ // gbrain-allow-direct-insert: owner release of a held fact (CEO-9), inside the owner's coordinated transaction
+    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as never, entity_slug: entity, visibility: (p.visibility === 'world' ? 'world' : 'private'),
     source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context), source_session: str(p.source_session), confidence: 1,
     valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(), valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null,
     embedding: null, embedding_model: null, ...claimColumns(p as never),
