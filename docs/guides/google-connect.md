@@ -140,7 +140,8 @@ the Apple Contacts source uses:
 - A contact whose email or phone matches two or more people, or one person
   whose page has another name (a shared or reused address), stays unlinked
   and waits for you: `gbrain sync status --source <id>` lists it, and
-  `gbrain dedupe confirm` or `reject` on those people settles it.
+  `gbrain dedupe confirm` or `reject` on those people, or
+  `gbrain dedupe decide` ([below](#decide-the-contacts-that-wait)), settles it.
 - `gbrain dedupe reject` on a contact and person pair removes that link,
   and the pair is never linked again.
 - A contact already in an identity group you made is left as it is.
