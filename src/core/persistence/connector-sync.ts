@@ -432,12 +432,14 @@ interface PendingWrite { entry: ConnectorPendingEntry; row: WriteRequest; bytes:
 
 /**
  * A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`.
- * A `stopped_on` it carries stays: doctor reads such a run as neither landing pages nor breaking a usage-limit chain (GST-3452).
+ * A `stopped_on` it carries stays while its writes are only pending (doctor reads that run as neither landing pages nor
+ * breaking a usage-limit chain, GST-3452) and goes when a write failed terminally, so that run reads as the failure it is.
  */
 export function pendingConnectorResult(result: SyncResult | null, session: ManagedConnectorSync): SyncResult {
-  const base: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created, modified: session.counts.updated,
-    deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
-  return { ...base, status: 'partial', reason: session.stoppedAtDeadline ? 'timeout' : 'writer_pending' };
+  const { stopped_on, ...base }: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created,
+    modified: session.counts.updated, deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
+  return { ...base, ...(stopped_on && session.failedWriteCount === 0 ? { stopped_on } : {}), status: 'partial',
+    reason: session.stoppedAtDeadline ? 'timeout' : 'writer_pending' };
 }
 
 export class ManagedConnectorSync {
@@ -480,6 +482,8 @@ export class ManagedConnectorSync {
   private lastFailedItem: { slug: string; requestId: string } | null = null;
   /** True when this run ended with accepted writes pending, so its checkpoint did not advance. */
   deferred = false;
+  /** Admitted writes of this run that failed terminally (not purge refusals). */
+  get failedWriteCount(): number { return this.failedPending.length; }
   /** #9968: the caller's deadline stopped this sweep; the run ended partial with its state recorded. */
   stoppedAtDeadline = false;
   /** #9968: the caller's deadline (epoch ms); waiting on a retained publication never runs past it. */

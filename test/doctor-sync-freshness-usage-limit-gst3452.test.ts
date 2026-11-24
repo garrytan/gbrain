@@ -140,7 +140,8 @@ describe('GST-3452 sync_freshness: a first sync still running in a job', () => {
     await addSyncJob('mail', 'active', null, { lockMinutes: -10 });
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
-    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', reason: 'attempt_queued' });
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', reason: 'last_attempt_unsuccessful' });
+    expect(next(entries(result.details)[0]!.fix)).not.toBe('wait');
   });
 });
 
@@ -188,17 +189,43 @@ describe('GST-3452 follow-ups: the usage-limit chain', () => {
     expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited' });
   });
 
-  test('a pending connector result keeps the usage-limit marker beside its pending reason', () => {
-    const pending = pendingConnectorResult({ status: 'partial', fromCommit: null, toCommit: '', added: 1, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0,
-      embedded: 0, pagesAffected: [], stopped_on: 'usage_limit' }, { stoppedAtDeadline: false } as unknown as ManagedConnectorSync);
-    expect(pending).toMatchObject({ status: 'partial', reason: 'writer_pending', stopped_on: 'usage_limit' });
+  test('a run that hit the limit and stopped on its wait budget passes like a skipped run too', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 3 });
+    await addSyncJob('mail', 'completed', { status: 'partial', reason: 'timeout', stopped_on: 'usage_limit', added: 1 }, { finishedHoursAgo: 2 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited' });
+  });
+
+  const limitedResult = { status: 'partial' as const, fromCommit: null, toCommit: '', added: 1, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0,
+    embedded: 0, pagesAffected: [], stopped_on: 'usage_limit' as const };
+  const session = (s: { stoppedAtDeadline: boolean; failedWriteCount: number }) => s as unknown as ManagedConnectorSync;
+
+  test('a pending connector result keeps the usage-limit marker beside its pending reason while its writes are only pending', () => {
+    expect(pendingConnectorResult(limitedResult, session({ stoppedAtDeadline: false, failedWriteCount: 0 })))
+      .toMatchObject({ status: 'partial', reason: 'writer_pending', stopped_on: 'usage_limit' });
+    expect(pendingConnectorResult(limitedResult, session({ stoppedAtDeadline: true, failedWriteCount: 0 })))
+      .toMatchObject({ status: 'partial', reason: 'timeout', stopped_on: 'usage_limit' });
+  });
+
+  test('a write that failed terminally drops the usage-limit marker, so the run breaks the chain and reads fail', async () => {
+    const failed = pendingConnectorResult(limitedResult, session({ stoppedAtDeadline: false, failedWriteCount: 1 }));
+    expect(failed.reason).toBe('writer_pending');
+    expect(failed.stopped_on).toBeUndefined();
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 3 });
+    await addSyncJob('mail', 'completed', JSON.parse(JSON.stringify(failed)), { finishedHoursAgo: 2 });
+    expect((await checkSyncFreshness(engine)).status).toBe('fail');
   });
 
   test('an orphaned active job (its lock expired) after a landing limited run stays fail', async () => {
     await addSource('mail');
     await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 2 });
     await addSyncJob('mail', 'active', null, { lockMinutes: -10 });
-    expect((await checkSyncFreshness(engine)).status).toBe('fail');
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(next(entries(result.details)[0]!.fix)).not.toBe('wait');
   });
 });
 

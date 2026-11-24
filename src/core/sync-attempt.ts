@@ -75,7 +75,7 @@ async function lastSyncJob(engine: BrainEngine, sourceId: string, freshSince: st
   }
   const row = rows?.[0];
   if (!row || row.job_id === null || row.job_id === undefined || typeof row.status !== 'string') return null;
-  const queued = ['waiting', 'delayed', 'active', 'waiting-children', 'paused'].includes(row.status);
+  const queued = ['waiting', 'delayed', 'active', 'waiting-children', 'paused'].includes(row.status) && !(row.status === 'active' && row.live !== true);
   const failed = Number(row.failed_files ?? 0);
   const since = iso(row.usage_limited_since);
   const started = row.live === true ? iso(row.started_at) : null;
