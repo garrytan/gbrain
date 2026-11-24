@@ -100,9 +100,9 @@ function verdictOf(row: KeyColumns & { request_id?: string; slug?: string; error
     error_message: row.routed_message, build: row.build, intent_kind: row.intent_kind ?? null, schema_behind: schemaBehind })!;
 }
 
-async function bounded<T>(engine: BrainEngine, sql: string, params: unknown[]): Promise<T[] | 'unknown'> {
+async function bounded<T>(engine: BrainEngine, sql: string, params: unknown[], timeoutMs = TERMINAL_STATEMENT_MS): Promise<T[] | 'unknown'> {
   try {
-    return await engine.executeRaw<T>(sql, params, { timeoutMs: TERMINAL_STATEMENT_MS, signal: AbortSignal.timeout(TERMINAL_STATEMENT_MS + TERMINAL_ACQUIRE_MS) } as never);
+    return await engine.executeRaw<T>(sql, params, { timeoutMs, signal: AbortSignal.timeout(timeoutMs + TERMINAL_ACQUIRE_MS) });
   } catch (error) {
     const name = (error as { name?: string } | null)?.name;
     if (isStatementTimeout(error) || name === 'AbortError' || name === 'TimeoutError' || (error as { code?: string })?.code === 'pool_capacity') return 'unknown';
@@ -274,6 +274,8 @@ export function isSpike(last24h: number, daily: number[], t: Pick<TerminalThresh
 
 export interface TerminalFailureQuery {
   sourceId: string;
+  /** Per-statement budget for an explicitly requested listing, in milliseconds. */
+  timeoutMs?: number;
   /** `unresolved` (default): rows that neither block, nor are resolved or historical. `all`: every terminal row in the window. */
   state?: 'unresolved' | 'all';
   groupBy?: 'category' | null;
@@ -311,7 +313,8 @@ export const NO_ORIGIN = 'none';
 export function terminalFailuresArgv(q: TerminalFailureQuery, extra: Record<string, string | null | undefined> = {}): string[] {
   const argv = ['gbrain', 'sources', 'writer', 'failures', q.sourceId];
   const flags: Record<string, string | null | undefined> = { state: q.state === 'all' ? 'all' : null, 'group-by': q.groupBy ?? null, since: q.sinceDays ? `${q.sinceDays}d` : null,
-    category: q.category, code: q.code, origin: q.origin, operation: q.operation, limit: q.limit && q.limit !== 20 ? String(q.limit) : null, ...extra };
+    category: q.category, code: q.code, origin: q.origin, operation: q.operation, limit: q.limit && q.limit !== 20 ? String(q.limit) : null,
+    'timeout-ms': q.timeoutMs === undefined ? null : String(q.timeoutMs), ...extra };
   for (const [flag, value] of Object.entries(flags)) if (value) argv.push(`--${flag}`, value);
   return [...argv, '--json'];
 }
@@ -321,6 +324,7 @@ export function terminalFailuresArgv(q: TerminalFailureQuery, extra: Record<stri
  * exactly as a group names them) are applied after the read, and one call scans at most `MAX_SCAN` receipts.
  */
 export async function readTerminalFailures(engine: BrainEngine, q: TerminalFailureQuery): Promise<TerminalFailureListing> {
+  const timeoutMs = q.timeoutMs ?? TERMINAL_STATEMENT_MS;
   const t = await readTerminalThresholds(engine, q.sinceDays);
   const schemaBehind = await readSchemaBehind(engine);
   const limit = Math.min(100, Math.max(1, q.limit ?? 20));
@@ -343,8 +347,8 @@ export async function readTerminalFailures(engine: BrainEngine, q: TerminalFailu
           ORDER BY p.sequence DESC LIMIT $4) r
         LEFT JOIN LATERAL (SELECT c.state, c.digest=r.digest AS same_intent FROM persistence_requests c WHERE ${supersessionSql('r', 'c', 'r.intent_kind')}
           ORDER BY ${supersessionOrderSql('r', 'c')} LIMIT 1) later ON r.recovery IS NULL
-        ORDER BY r.sequence DESC`, [q.sourceId, t.windowDays, cursor, BATCH]);
-    if (batch === 'unknown') return { status: 'unknown', source_id: q.sourceId, reason: `the read did not finish within ${TERMINAL_STATEMENT_MS} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
+        ORDER BY r.sequence DESC`, [q.sourceId, t.windowDays, cursor, BATCH], timeoutMs);
+    if (batch === 'unknown') return { status: 'unknown', source_id: q.sourceId, reason: `the read did not finish within ${timeoutMs} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
     if (batch.length < BATCH) exhausted = true;
     for (const row of batch) {
       scanned++;
@@ -383,7 +387,8 @@ export async function readTerminalFailures(engine: BrainEngine, q: TerminalFailu
       const filter = { code: row.code, origin: row.origin, category: row.category, ...(operation ?? q.operation ? { operation: operation ?? q.operation } : {}) };
       groups.set(key, g = { code: row.code, origin: row.origin, category: row.category, ...(operation === undefined ? {} : { operation }), public_category: row.public_category, rows: 0, class: row.class, needs_human: row.needs_human,
         ...(row.human_reason ? { human_reason: row.human_reason } : {}), filter, fix: row.fix, samples: [],
-        drill_down: terminalFailuresArgv({ sourceId: q.sourceId, state: q.state, sinceDays: q.sinceDays, category: row.category, code: row.code, origin: row.origin ?? NO_ORIGIN, operation: operation ?? q.operation }) });
+        drill_down: terminalFailuresArgv({ sourceId: q.sourceId, state: q.state, sinceDays: q.sinceDays, timeoutMs: q.timeoutMs,
+          category: row.category, code: row.code, origin: row.origin ?? NO_ORIGIN, operation: operation ?? q.operation }) });
     }
     g.rows++;
     if (g.samples.length < 3) g.samples.push({ request_id: row.request_id, slug: row.slug, state: row.state, ended_at: row.ended_at, inspect: row.inspect });

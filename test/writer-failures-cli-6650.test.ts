@@ -34,17 +34,58 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await engine.disconnect(); });
 
-async function seed(slug: string, code: string, detail: unknown, hoursAgo = 1): Promise<string> {
+async function seed(slug: string, code: string, detail: unknown, hoursAgo = 1, sourceId = SOURCE): Promise<string> {
   const requestId = randomUUID();
   await engine.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,intent_bytes,terminal_reservation,
       state,error_code,error_message,error_detail,intent,completed_at,updated_at,admitter_version)
     VALUES('local_cli','fixture',$1::uuid,'put_page',$2,(SELECT incarnation FROM sources WHERE id=$2),$3,$4,'{}'::jsonb,0,0,'failed',$5,'x',$6::text::jsonb,'{"content":"x"}'::jsonb,
       now()-($7::double precision*interval '1 hour'),now()-($7::double precision*interval '1 hour'),'0.60.216.0')`,
-  [requestId, SOURCE, slug, randomUUID(), code, JSON.stringify(detail), hoursAgo]);
+  [requestId, sourceId, slug, randomUUID(), code, JSON.stringify(detail), hoursAgo]);
   return requestId;
 }
 
 describe('sources writer failures', () => {
+  test('an explicit read timeout reaches the engine and survives pagination and drill-down', async () => {
+    const sourceId = 'wf-timeout';
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    for (let i = 0; i < 2; i++) await seed(`notes/timeout-${i}`, 'storage_error', { origin: 'owner_exception' }, 1, sourceId);
+    const budgets: number[] = [];
+    const slow = new Proxy(engine, { get(target, key) {
+      if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: { timeoutMs?: number; signal?: AbortSignal }) => {
+        if (sql.includes('LEFT JOIN LATERAL')) {
+          budgets.push(opts?.timeoutMs ?? 0);
+          expect(opts?.signal).toBeInstanceOf(AbortSignal);
+          if ((opts?.timeoutMs ?? 0) < 10_000) throw Object.assign(new Error('statement timeout'), { code: '57014' });
+        }
+        return target.executeRaw(sql, params, opts as never);
+      };
+      return Reflect.get(target, key);
+    } });
+    const run = (params: Record<string, unknown>) => runPersistenceAdministration(slow, 'writer_failures', params) as Promise<TerminalFailureListing>;
+    expect(await run({ source_id: sourceId })).toMatchObject({ status: 'unknown', reason: expect.stringContaining('5000 ms') });
+    const parsed = parsePersistenceAdminArgs('writer', ['failures', sourceId, '--timeout-ms=15000', '--limit', '1']);
+    expect(parsed.params.timeout_ms).toBe(15_000);
+    const page = await run(parsed.params);
+    if (page.status !== 'ok') throw new Error(page.reason);
+    expect(page.rows!.map(row => row.slug)).toEqual(['notes/timeout-1']);
+    expect(page.next).toContain('--timeout-ms');
+    const next = parsePersistenceAdminArgs('writer', page.next!.slice(3));
+    expect(next.params.timeout_ms).toBe(15_000);
+    expect(await run(next.params)).toMatchObject({ status: 'ok', rows: [{ slug: 'notes/timeout-0' }] });
+    const grouped = await run({ ...parsed.params, group_by: 'category' });
+    if (grouped.status !== 'ok') throw new Error(grouped.reason);
+    expect(grouped.groups).toHaveLength(1);
+    const drillDown = parsePersistenceAdminArgs('writer', grouped.groups![0].drill_down.slice(3));
+    expect(drillDown.params.timeout_ms).toBe(15_000);
+    expect(await run(drillDown.params)).toMatchObject({ status: 'ok', rows: [{ slug: 'notes/timeout-1' }, { slug: 'notes/timeout-0' }] });
+    expect(await run({ ...parsed.params, timeout_ms: 100 })).toMatchObject({ status: 'unknown', reason: expect.stringContaining('100 ms') });
+    expect(budgets).toContain(5_000);
+    expect(budgets).toContain(15_000);
+    for (const timeout_ms of [0, -1, 1.5, NaN, Infinity, 120_001, '15000']) {
+      await expect(run({ source_id: sourceId, timeout_ms })).rejects.toMatchObject({ code: 'invalid_params', message: 'Invalid --timeout-ms value.' });
+    }
+  });
+
   test('parses the verb, its source and its options', () => {
     expect(parsePersistenceAdminArgs('writer', ['failures', SOURCE, '--group-by', 'category', '--limit', '5', '--json'])).toEqual({
       operation: 'writer_failures', params: { source_id: SOURCE, group_by: 'category', limit: 5 }, json: true });
