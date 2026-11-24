@@ -1036,7 +1036,7 @@ accessTokenLive	minion_queue	yes	2	no	yes	yes	serves
 oauthClientLive	minion_queue	yes	10	no	yes	yes	serves
 readOauthClientColumns	minion_queue	yes	3	no	yes	yes	serves
 setOauthClientTokenTtl	minion_queue	yes	4	no	yes	yes	serves
-insertOauthClientGrant	minion_queue	yes	4	no	yes	yes	serves
+insertOauthClientGrant	minion_queue	yes	5	no	yes	yes	serves
 readTokenLifetimeClampedClients	minion_queue	yes	1	no	yes	yes	serves
 readScopeSourceConfigs	minion_queue	yes	6	no	yes	yes	serves
 readOauthClientForUpdate	minion_queue	yes	19	no	yes	yes	serves
@@ -1050,7 +1050,7 @@ readSourceAttestState	minion_queue	yes	3	no	yes	yes	serves
 replaceSourceConfig	minion_queue	yes	4	no	yes	yes	serves
 persistOauthClientGrant	minion_queue	yes	7	no	yes	yes	serves
 readLatestCatalogProvenanceAudit	minion_queue	yes	1	no	yes	yes	serves
-listOauthGrantAudit	minion_queue	yes	10	no	yes	yes	serves
+listOauthGrantAudit	minion_queue	yes	11	no	yes	yes	serves
 deleteOauthTokenByHash	minion_queue	yes	2	no	yes	yes	serves
 softDeleteOauthClient	minion_queue	yes	5	no	yes	yes	serves
 deleteOauthClientTokens	minion_queue	yes	8	no	yes	yes	serves
@@ -1158,7 +1158,7 @@ readClientBudgetUsd	minion_queue	yes	1	no	yes	yes	serves
 insertOauthClient	minion_queue	yes	72	no	yes	yes	serves
 updateOauthClientBudget	minion_queue	yes	2	no	yes	yes	serves
 readAgentClientSpend	minion_queue	yes	2	no	yes	yes	serves
-readOauthClient	minion_queue	yes	28	no	yes	yes	serves
+readOauthClient	minion_queue	yes	29	no	yes	yes	serves
 listOauthClients	minion_queue	yes	7	no	yes	yes	serves
 patchOauthClient	minion_queue	yes	4	no	yes	yes	serves
 insertAccessToken	minion_queue	yes	49	no	yes	yes	serves

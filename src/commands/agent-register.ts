@@ -30,6 +30,7 @@ import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
+import { lacksRawSql } from '../core/engine-capabilities.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
 import { assertValidSourceId, ALL_SOURCES, SOURCE_ID_RE } from '../core/source-id.ts';
@@ -452,10 +453,7 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
     const validateSourceIds = async (ids: string[]): Promise<void> => {
       const unique = [...new Set(ids)];
       if (unique.length === 0) return;
-      const rows = await engine.executeRaw<{ id: string; archived: boolean | null }>(
-        `SELECT id, archived FROM sources WHERE id = ANY($1::text[])`,
-        [unique],
-      );
+      const rows = (await loadAllSources(engine, { includeArchived: true })).filter(r => unique.includes(r.id));
       const found = new Map(rows.map(r => [r.id, r]));
       for (const id of unique) {
         const row = found.get(id);
@@ -545,11 +543,9 @@ export async function runAgentRegister(engine: BrainEngine | null, args: string[
       // Name-scoped advisory lock: no unique index exists on client_name, so
       // two concurrent registers of the same name would both pass the
       // pre-check. xact-scoped — released at COMMIT/ROLLBACK.
-      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
+      if (!lacksRawSql(engine)) await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [registerClientNameLockKey(name)]);
 
-      const dupRows = columns.has('deleted_at')
-        ? await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name} AND deleted_at IS NULL`
-        : await txSql`SELECT client_id FROM oauth_clients WHERE client_name = ${name}`;
+      const dupRows = (await tx.listOauthClients()).filter(c => c.client_name === name && c.deleted_at == null);
       if (dupRows.length > 0) {
         throw new RegisterError('duplicate_name',
           `an OAuth client named "${name}" already exists (${String(dupRows[0].client_id)}). Revoke it first (gbrain auth revoke-client "${String(dupRows[0].client_id)}") or rotate its secret with --reissue.`);
@@ -626,7 +622,7 @@ export async function ensureWorkspaceSource(
   txSql: SqlQuery,
   id: string,
 ): Promise<boolean> {
-  const existing = await txSql`SELECT id, local_path, archived FROM sources WHERE id = ${id}`;
+  const existing = (await loadAllSources(tx, { includeArchived: true })).filter(r => r.id === id);
   if (existing.length > 0) {
     if (existing[0].archived === true) {
       throw new RegisterError('archived_source',
@@ -679,7 +675,8 @@ async function mintAndProbe(
   // The tx-scoped sql is dead after COMMIT — the exchange runs on the OUTER engine.
   const provider = new GBrainOAuthProvider({
     sql: sqlQueryForEngine(engine),
-    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
+    engine,
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx), tx)),
   });
 
   let accessToken: string | undefined;
