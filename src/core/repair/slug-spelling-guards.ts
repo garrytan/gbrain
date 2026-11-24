@@ -20,7 +20,8 @@
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 /**
- * The brain's tables (the current schema) that row-level security applies to for the running role, in name order. The move
+ * The tables of every schema on the search path (where the move's unqualified names resolve, whichever schema comes first)
+ * that row-level security applies to for the running role, in name order. The move
  * reads and re-keys many tables through `updateSlug` and the belief batch it runs in (pages, facts, withdrawals, aliases,
  * the rename history, attachments, purge tombstones, the page lifetime), so the check covers every table rather than a
  * list that a new re-key could outgrow.
@@ -31,7 +32,7 @@ const MOVE_TABLES = new Set(['belief_events', 'belief_page_lifetimes', 'fact_pur
 
 async function rowSecurityBrainTables(db: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
   return (await db.executeRaw<{ t: string }>(`SELECT c.relname::text AS t FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-    WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') AND pg_catalog.row_security_active(c.oid) ORDER BY 1`)).map(row => row.t);
+    WHERE n.nspname = ANY(pg_catalog.current_schemas(false)) AND c.relkind IN ('r', 'p') AND pg_catalog.row_security_active(c.oid) ORDER BY 1`)).map(row => row.t);
 }
 
 /**
