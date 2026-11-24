@@ -11,8 +11,9 @@ name: Rust engine
 #              macOS arm64, then runs the engine tests against the built addon (the store tests and
 #              the Rust arm of the engine parity suite), then the CLI parity test
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to PGLite,
-#              refused with a typed refusal, or has no Rust engine; only a diverged command fails), then
-#              uploads the .node file.
+#              refused with a typed refusal, or has no Rust engine; only a diverged command fails), checks
+#              that the built addon, installed as a release asset, loads with no override, then uploads the
+#              .node file. Releases build and publish the addon in release.yml, not here.
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   keyword-goldens  proves the generated and golden keyword-search files are what PostgreSQL 18.6
 #              says: parser/actions.rs and parser/charclass.rs are regenerated and compared, and the
@@ -301,6 +302,13 @@ jobs:
           for file in test/engine-parity/*.test.ts; do
             bun test --timeout=60000 "$file"
           done
+      # `gbrain engine install rust` with the addon just built served as the release asset: the install checks it and
+      # the real loader then opens it from the gbrain home with no GBRAIN_RUST_ENGINE_ADDON. A missing build fails here.
+      - name: The installed release addon loads with no override
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/rust-engine-addon-install.test.ts
       # A withdrawn world claim stays out of a large page's lead on a Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON
       # makes a missing addon an error instead of a skip, and the next step fails the lane when no test ran.
       # This job owns the file, so the stress gate does not stress it where no addon exists.

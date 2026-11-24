@@ -1753,9 +1753,30 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   rust:build`; it skips only the release checksum pin) first, then an addon cached at
   `<gbrain home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this gbrain
   version. It never reaches the network and writes nothing: with no cached addon it refuses with reason
-  `not_installed`, and a cached file that fails a check stays as it was. Fetching the release's addon into that cache
-  arrives with the capability gate. Only the Rust engine's open path may import the loader, lazily, so a PGLite or
+  `not_installed`, and a cached file that fails a check stays as it was. `gbrain engine install rust` fills that
+  cache (below). Only the Rust engine's open path may import the loader, lazily, so a PGLite or
   Postgres brain never loads the addon or creates `<gbrain home>/engines/`.
+- **Installing the addon.** Each release publishes the addon for linux-x64-glibc (glibc 2.35 or newer) and
+  darwin-arm64, with `gbrain-engine-rust.sha256.json`, a manifest that pins each addon's SHA-256. The release workflow
+  attests all three files. `gbrain engine install rust [--json]` (`src/core/rust-engine/addon-install.ts`) downloads
+  the manifest and this machine's addon from the release of the running version and checks the addon's SHA-256 against
+  the manifest. It then checks both files' build attestations from this repository's release workflow on master, as
+  `gbrain self-upgrade` does for the executable. Only then does it write `<engine_build>/<target>.node` and, last,
+  `manifest-<version>.json`. It is idempotent: an installed addon that still matches makes no network call.
+  `--from <file>` installs a copy of the release addon you already have (the manifest is still read online). Every
+  refusal leaves the installed addon as it was: `unsupported_target` (no network call), `not_published` (that release
+  has no addon), `fetch_failed` (network, or the attestation could not be read) and `verification_failed` (a checksum or
+  attestation mismatch; the file is deleted and there is no bypass). `gbrain post-upgrade` runs the same install for a
+  brain on the Rust engine or with shadow mode on, and an upgrade never fails because of it.
+  `gbrain engine status --json` shows the result in `rust_addon` (target, `preview_target`, `override`, `installed`,
+  `path`, `sha256`, `pinned_sha256`, `engine_build`), read from disk, for those brains only.
+
+  **Say to your agent:** *"Install the Rust engine addon for this gbrain version."*
+
+  ```bash
+  gbrain engine install rust          # download, check and install the addon this release names
+  gbrain engine status --json         # rust_addon.installed is true on a Rust or shadow brain
+  ```
 - **Shared memory.** The addon refuses a typed array whose buffer the runtime (`napi_is_arraybuffer`) does not call a
   plain `ArrayBuffer`, so a `SharedArrayBuffer` view is refused with `InvalidArg` however JavaScript globals or
   prototypes have been changed (`rust/README.md`).
@@ -1903,6 +1924,7 @@ config table or the brain repo, and all other shadow state lives in
 ```bash
 gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
 gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing to the shadow directory or the brain's tables (also reports whether the brain can swap)
+gbrain engine install rust                         # once per gbrain version: download and check the Rust addon
 gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
 gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
 gbrain engine shadow status [--json]
@@ -1959,8 +1981,9 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
-- **No network in the background.** gbrain downloads no addon. `start --yes`, the child
-  and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
+- **No network in the background.** Only `gbrain engine install rust` and `gbrain post-upgrade` download the addon. `start --yes`, the child
+  and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses, names `gbrain engine install rust`
+  and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through

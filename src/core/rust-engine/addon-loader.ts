@@ -7,8 +7,8 @@
  *   1. GBRAIN_RUST_ENGINE_ADDON (an absolute path to a build you made with `bun run rust:build`) is the development
  *      override. It skips only the release checksum pin; engine_abi and target are still checked.
  *   2. An addon at `<home>/engines/rust/<engine_build>/<target>.node` whose SHA-256 equals the cached manifest of this
- *      gbrain version (`<home>/engines/rust/manifest-<version>.json`) loads. Nothing in gbrain writes that cache yet:
- *      fetching the release addon into it comes later, with content-addressed paths.
+ *      gbrain version (`<home>/engines/rust/manifest-<version>.json`) loads. `gbrain engine install rust`
+ *      (addon-install.ts) writes both, after it checks them against the release's checksums and build attestations.
  *   3. Otherwise it refuses with rust_engine_addon_missing (not_installed). It never reaches the network.
  *
  * Every failure is `rust_engine_addon_missing` or `rust_engine_addon_mismatch`, raised before the brain is touched.
@@ -64,17 +64,17 @@ export function defaultRustAddonLoaderDeps(): RustAddonLoaderDeps {
 }
 
 /** `<home>/engines/rust/manifest-<version>.json`: the release manifest that names the cached addon. */
-function cachedManifestPath(rustDir: string, version: string): string {
+export function cachedManifestPath(rustDir: string, version: string): string {
   return join(rustDir, `manifest-${version}.json`);
 }
 
 /** `<home>/engines/rust/<engine_build>/<target>.node` */
-function addonPath(rustDir: string, engineBuild: string, target: string): string {
+export function addonPath(rustDir: string, engineBuild: string, target: string): string {
   return join(rustDir, engineBuild, `${target}.node`);
 }
 
 /** Reads the cached manifest, or null when it is absent, unreadable or for another version. */
-function readCachedManifest(rustDir: string, version: string): RustAddonManifest | null {
+export function readCachedManifest(rustDir: string, version: string): RustAddonManifest | null {
   try {
     const manifest = parseRustAddonManifest(readFileSync(cachedManifestPath(rustDir, version), 'utf8'));
     return manifest && manifest.gbrain_version === version ? manifest : null;
@@ -134,7 +134,7 @@ export async function loadRustAddon(overrides: Partial<RustAddonLoaderDeps> = {}
   const entry = cached?.targets[target];
   const path = cached && entry ? addonPath(deps.rustDir, cached.engine_build, target) : null;
   if (!cached || !entry || !path || !existsSync(path)) {
-    throw addonMissing('not_installed', `No Rust engine addon for gbrain v${deps.version} on ${target} is installed in ${deps.rustDir}. Set GBRAIN_RUST_ENGINE_ADDON to a build from bun run rust:build.`);
+    throw addonMissing('not_installed', `No Rust engine addon for gbrain v${deps.version} on ${target} is installed in ${deps.rustDir}. Run gbrain engine install rust to download and check it, or set GBRAIN_RUST_ENGINE_ADDON to a build from bun run rust:build.`);
   }
   let digest: string;
   try {
