@@ -68,6 +68,35 @@ describe('file_upload during a rename', () => {
     expect({ listed: listed.map(f => [f.page_slug, f.filename]), rows: rows.map(r => r.page_slug) })
       .toEqual({ listed: [['people/new-name', 'card.txt']], rows: ['people/new-name'] });
   }), 60_000);
+
+  test('a re-upload of an existing attachment with new bytes, waiting on storage while its page is renamed, moves the row to the new slug', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    await engine.putPage('people/re-old', { type: 'person', title: 'Old name', compiled_truth: 'body', timeline: '' });
+    const fixture = join(fixtureDir, 're-card.txt');
+    const ctx = { engine, config: { engine: 'pglite', storage: { backend: 'local', bucket: 'b', localPath: storageDir } }, remote: false, sourceId: 'default' } as never;
+    writeFileSync(fixture, 'first bytes\n');
+    expect(await operationsByName.file_upload!.handler(ctx, { path: fixture, page_slug: 'people/re-old' })).toMatchObject({ status: 'uploaded' });
+    writeFileSync(fixture, 'second bytes\n');
+
+    let release!: () => void, waiting!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const reached = new Promise<void>(resolve => { waiting = resolve; });
+    const original = LocalStorage.prototype.uploadFile;
+    LocalStorage.prototype.uploadFile = async function (this: LocalStorage, ...args: Parameters<typeof original>) {
+      waiting(); await gate; return original.apply(this, args);
+    };
+    try {
+      const upload = operationsByName.file_upload!.handler(ctx, { path: fixture, page_slug: 'people/re-old' });
+      upload.catch(() => undefined);
+      await reached;
+      expect(await engine.updateSlug('people/re-old', 'people/re-new', { sourceId: 'default' })).toBe(1);
+      release();
+      expect(await upload).toMatchObject({ status: 'uploaded' });
+    } finally {
+      LocalStorage.prototype.uploadFile = original;
+    }
+    const rows = await engine.executeRaw<{ page_slug: string }>("SELECT page_slug FROM files WHERE filename = 're-card.txt'");
+    expect(rows.map(r => r.page_slug)).toEqual(['people/re-new']);
+  }), 60_000);
 });
 
 const pg = testBackends().includes('postgres') ? describe : describe.skip;
