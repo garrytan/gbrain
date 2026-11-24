@@ -675,7 +675,6 @@ src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	3
 src/core/source-default-search.ts	execute_raw	1
-src/core/sources-not-readable.ts	execute_raw	1
 src/core/sources-ops.ts	execute_raw	2	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4

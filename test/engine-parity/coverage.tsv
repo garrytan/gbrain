@@ -6,9 +6,9 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2139/2154
+# covered: 2150/2165
 # lifecycle: 12/12
-# pages: 88/89
+# pages: 98/99
 # search: 7/7
 # search_reads: 9/9
 # link_reads: 15/15
@@ -76,7 +76,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 102/105
+# write_misc: 103/106
 # repair_bookkeeping: 55/55
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -133,13 +133,13 @@ getPage	pages	yes	220	yes	yes	yes	serves
 readPageSnapshot	pages	yes	65	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
-putPage	pages	yes	1178	yes	yes	yes	serves
+putPage	pages	yes	1182	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
 deletePages	pages	yes	2	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
-softDeletePage	pages	yes	310	yes	yes	yes	serves
+softDeletePage	pages	yes	312	yes	yes	yes	serves
 softDeletePages	pages	yes	3	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	7	no	yes	yes	serves
@@ -213,11 +213,21 @@ writeConnectorDbCursor	pages	yes	2	no	yes	yes	serves
 readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	5	no	yes	yes	serves
-refreshPageOrigin	pages	yes	6	no	yes	yes	serves
+refreshPageOrigin	pages	yes	8	no	yes	yes	serves
 readLivePageIdBySlug	pages	yes	7	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
+countLivePagesAtPathPrefix	pages	yes	1	no	yes	yes	serves
+probeUntypedPathPrefix	pages	yes	1	no	yes	yes	serves
+invalidateQueryCacheRows	pages	yes	1	no	yes	yes	serves
+readUnscopedReadRefusal	pages	yes	1	no	yes	yes	serves
+insertAccessReadLogRows	pages	yes	1	no	yes	yes	serves
+pruneAccessReadLog	pages	yes	1	no	yes	yes	serves
+readAccessReadLog	pages	yes	1	no	yes	yes	serves
+listAccessReadPageRefs	pages	yes	1	no	yes	yes	serves
+readAccessReadsOfPages	pages	yes	1	no	yes	yes	serves
+tallyAccessReadsOfPages	pages	yes	1	no	yes	yes	serves
 searchKeyword	search	yes	46	yes	yes	yes	serves
 countKeywordPages	search	yes	13	no	yes	yes	serves
 searchKeywordPages	search	yes	17	no	yes	yes	serves
@@ -574,7 +584,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	178	yes	yes	yes	serves
-insertFacts	facts	yes	240	no	yes	yes	serves
+insertFacts	facts	yes	241	no	yes	yes	serves
 deleteFactsForPage	facts	yes	7	no	yes	yes	serves
 expireFact	facts	yes	88	no	yes	yes	serves
 listFactsByEntity	facts	yes	55	yes	yes	yes	serves
@@ -652,7 +662,7 @@ refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
 getConfig	config	yes	53	no	yes	yes	serves
-setConfig	config	yes	79	no	yes	yes	serves
+setConfig	config	yes	80	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
 getAllConfig	config	yes	2	no	yes	yes	serves
@@ -1843,6 +1853,7 @@ listAudienceAccessMembers	write_misc	yes	6	no	yes	yes	serves
 readAccessGroups	write_misc	yes	4	no	yes	yes	serves
 listPagesNamingReader	write_misc	yes	5	no	yes	yes	serves
 purgeStaleAppliedCaptures	write_misc	yes	1	no	yes	yes	serves
+hasLabelledOnlyMemberAmong	write_misc	yes	1	no	yes	yes	serves
 listSourceIncarnations	repair_bookkeeping	yes	14	no	yes	yes	serves
 listOrphanBindings	repair_bookkeeping	yes	4	no	yes	yes	serves
 deleteOrphanBinding	repair_bookkeeping	yes	3	no	yes	yes	serves
@@ -2047,11 +2058,11 @@ readOAuthClientMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readAccessTokenMemberGrant	access_grants	yes	1	no	yes	yes	serves
 readLocalWriterMemberGrant	access_grants	yes	6	no	yes	yes	serves
 readSharedSkillServingEpoch	access_grants	yes	5	no	yes	yes	serves
-insertAccessMember	access_members	yes	33	no	yes	yes	serves
+insertAccessMember	access_members	yes	34	no	yes	yes	serves
 setAccessMemberDisabled	access_members	yes	15	no	yes	yes	serves
 setAccessMemberEmail	access_members	yes	2	no	yes	yes	serves
 setAccessMemberKind	access_members	yes	2	no	yes	yes	serves
-setAccessMemberLabelledOnly	access_members	yes	2	no	yes	yes	serves
+setAccessMemberLabelledOnly	access_members	yes	3	no	yes	yes	serves
 tombstoneAccessMember	access_members	yes	14	no	yes	yes	serves
 addAccessGroupMembers	access_members	yes	3	no	yes	yes	serves
 removeAccessGroupMembers	access_members	yes	1	no	yes	yes	serves
