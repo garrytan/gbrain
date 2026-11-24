@@ -14,7 +14,7 @@ use gbrain_store::sources::SourceInput;
 use serde_json::{Value, json};
 
 const SLUG: &str = "notes/a";
-const KEY: &str = "principal:local_cli:u";
+const PRINCIPAL: &str = "principal:local_cli:u";
 const CLAIM: &str = "harbor ledger fact";
 
 fn args<T: serde::de::DeserializeOwned>(v: Value) -> T {
@@ -42,7 +42,7 @@ fn admit(
     intent: Value,
     outcome: Option<Value>,
 ) -> String {
-    let keys = vec!["brain".to_string(), KEY.to_string()];
+    let keys = vec!["brain".to_string(), PRINCIPAL.to_string()];
     store.lock_persistence_counters(&keys).unwrap();
     let incarnation = store.read_source_membership(source).unwrap().unwrap()["incarnation"]
         .as_str()
@@ -270,17 +270,17 @@ fn the_lock_answers_each_request_once_by_id_and_the_release_never_goes_below_zer
         Some(json!({ "ok": true })),
     );
     assert_eq!(store.read_effect_bytes(&a).unwrap(), 0);
-    let before = terminal(&store, KEY);
+    let before = terminal(&store, PRINCIPAL);
     assert!(before > 0);
-    store.release_terminal_bytes(KEY, 0).unwrap();
+    store.release_terminal_bytes(PRINCIPAL, 0).unwrap();
     store
         .release_terminal_bytes("principal:nobody:nothing", 500)
         .unwrap();
-    assert_eq!(terminal(&store, KEY), before);
-    store.release_terminal_bytes(KEY, 7).unwrap();
-    assert_eq!(terminal(&store, KEY), before - 7);
+    assert_eq!(terminal(&store, PRINCIPAL), before);
+    store.release_terminal_bytes(PRINCIPAL, 7).unwrap();
+    assert_eq!(terminal(&store, PRINCIPAL), before - 7);
     store
-        .release_terminal_bytes(KEY, 1_000_000_000_000)
+        .release_terminal_bytes(PRINCIPAL, 1_000_000_000_000)
         .unwrap();
-    assert_eq!(terminal(&store, KEY), 0);
+    assert_eq!(terminal(&store, PRINCIPAL), 0);
 }
