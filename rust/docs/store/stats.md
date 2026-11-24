@@ -63,6 +63,8 @@ two engines share that code instead of copying it:
   `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
 - `listEnrichCandidates` clamps `limit` and `thinThreshold` and turns `reenrichAfterMs` into the
   `enrichedAfter` text. An unknown `order` reads as `inbound-links`, as PGLite's lookup does.
+  `order: 'owner-contact'` refuses with `engine_capability_missing`: the store has no owner-contact
+  ranking yet, and a silent inbound-links answer would mislead.
 
 ## Differences and costs
 
