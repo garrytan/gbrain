@@ -1618,6 +1618,7 @@ export function formatResult(
       return tags.length > 0 ? tags.join(', ') + '\n' : 'No tags.\n';
     }
     case 'find_pages': return formatFindPages(result);
+    case 'learned': return (result as { stats?: unknown }).stats ? require('../core/learning/stats.ts').formatLearnedStats((result as { stats: unknown }).stats) : require('../core/learning/read.ts').formatLearned(result);
     case 'get_stats': {
       const s = result as any;
       if (Array.isArray(s?.groups)) return formatStatsBy(s);

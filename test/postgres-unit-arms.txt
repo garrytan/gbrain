@@ -425,6 +425,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/learning-ledger.test.ts
 test/link-context-world-rows-2957.test.ts
 test/link-cross-source.test.ts
 test/link-dates-per-row-gst2228.test.ts
