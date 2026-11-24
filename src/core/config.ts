@@ -160,11 +160,11 @@ export interface GBrainConfig {
   chat_model?: string;
   /**
    * Optional chat fallback chain for `chatWithFallback()` (v0.27+): tried in
-   * order when a chat call fails or refuses. Each entry is a "provider:modelId"
+   * order when a chat call fails (or refuses, with chat_fallback_on_refusal true). Each entry is a "provider:modelId"
    * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
-  /** `false`: the chain still covers errors but never forwards a refused request. Default true (env, file, DB). */
+  /** `true`: the chain also forwards a refused request to the next model. Default false (env, file, DB): errors only. */
   chat_fallback_on_refusal?: boolean;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;

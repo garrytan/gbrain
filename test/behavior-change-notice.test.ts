@@ -179,7 +179,7 @@ for (const backend of testBackends()) {
         expect(plain.why).toContain('not a request for consent');
         expect(plain.fix?.argv).toEqual(['gbrain', 'doctor', '--only', 'behavior_changes', '--json']);
       });
-      await withEnv({ GBRAIN_HOME: freshHome(), GBRAIN_CHAT_FALLBACK_CHAIN: 'openai:gpt-5.6-luna', GBRAIN_CHAT_FALLBACK_ON_REFUSAL: undefined, OPENAI_API_KEY: 'fake-openai' }, async () => {
+      await withEnv({ GBRAIN_HOME: freshHome(), GBRAIN_CHAT_FALLBACK_CHAIN: 'openai:gpt-5.6-luna', GBRAIN_CHAT_FALLBACK_ON_REFUSAL: 'true', OPENAI_API_KEY: 'fake-openai' }, async () => {
         const chained = (await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'chain' }))!;
         expect(chained.why).toContain('chat_fallback_chain is live');
         expect(chained.why).toContain('openai:gpt-5.6-luna');
@@ -190,6 +190,11 @@ for (const backend of testBackends()) {
       });
       await withEnv({ GBRAIN_HOME: freshHome(), GBRAIN_CHAT_FALLBACK_CHAIN: 'openai:gpt-5.6-luna', GBRAIN_CHAT_FALLBACK_ON_REFUSAL: 'false', OPENAI_API_KEY: 'fake-openai' }, async () => {
         expect((await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'chain-no-refusal' }))!.why).toContain('falls back on errors only');
+      });
+      await withEnv({ GBRAIN_HOME: freshHome(), GBRAIN_CHAT_FALLBACK_CHAIN: 'openai:gpt-5.6-luna', GBRAIN_CHAT_FALLBACK_ON_REFUSAL: undefined, OPENAI_API_KEY: 'fake-openai' }, async () => {
+        const unset = (await takeLocalBehaviorNotice(engine, 'cli', { cfg: null, brainKey: 'chain-refusal-unset' }))!.why;
+        expect(unset).toContain('falls back on errors only');
+        expect(unset).not.toContain('on refusals as well as errors');
       });
     });
 
