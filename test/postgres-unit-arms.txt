@@ -509,6 +509,7 @@ test/engine-parity/sync-restored-file-holds.test.ts
 test/engine-parity/sync-route.test.ts
 test/engine-parity/sync-run-reads.test.ts
 test/engine-parity/sync-run.test.ts
+test/engine-parity/sync-stamp.test.ts
 test/engine-parity/sync-status-reads.test.ts
 test/engine-parity/take-held-rows.test.ts
 test/engine-parity/take-proposals.test.ts

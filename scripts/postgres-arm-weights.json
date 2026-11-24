@@ -448,6 +448,7 @@
   "test/engine-parity/sync-route.test.ts": 9000,
   "test/engine-parity/sync-run-reads.test.ts": 8200,
   "test/engine-parity/sync-run.test.ts": 8700,
+  "test/engine-parity/sync-stamp.test.ts": 5000,
   "test/engine-parity/sync-status-reads.test.ts": 8300,
   "test/engine-parity/take-held-rows.test.ts": 7300,
   "test/engine-parity/take-proposals.test.ts": 10376,
