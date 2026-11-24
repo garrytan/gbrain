@@ -14,12 +14,12 @@ import { SPELLING_KEY_INDEX, SPELLING_KEY_INDEX_SQL } from '../slug-spelling-key
 // interrupted build; PGLite builds it inline. schema.sql leaves it out: it replays on every boot, where a plain CREATE
 // INDEX would block page writes. An older gbrain runs against the new index unchanged and just does not use it.
 async function buildSpellingIndex(engine: BrainEngine): Promise<void> {
-  const built = await buildIndexOnline(engine, 332, { name: SPELLING_KEY_INDEX, table: 'pages', sql: SPELLING_KEY_INDEX_SQL }, { notice: migrationNotice });
+  const built = await buildIndexOnline(engine, 334, { name: SPELLING_KEY_INDEX, table: 'pages', sql: SPELLING_KEY_INDEX_SQL }, { notice: migrationNotice });
   if (built === 'building') throw new Error(`${SPELLING_KEY_INDEX} is being built by another session; rerun the migration once it finishes`);
 }
 
-export const v332: Migration = {
-  version: 332,
+export const v334: Migration = {
+  version: 334,
   name: 'pages_spelling_key_index',
   idempotent: true,
   transaction: false,
