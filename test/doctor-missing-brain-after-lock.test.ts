@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { guardMissingBrainAtLock, isMissingBrainRefusal } from '../src/commands/doctor/missing-brain.ts';
 import { run as runDoctorCommand } from '../src/cli/commands/doctor.ts';
 import { installPgliteCreateGuard, runPgliteCreateGuard } from '../src/core/pglite-create-guard.ts';
@@ -159,11 +159,12 @@ describe('doctor.ts keeps the guard installed while a connect it abandoned at th
       } finally {
         console.log = out; console.error = err; process.stdout.write = wrote; process.exitCode = exitCode;
       }
+      const lockedDir = dirname(pgliteLockDirFor(store)); // the canonical (realpath) form acquireLock hands the guard
       try {
-        expect(() => runPgliteCreateGuard(store)).toThrow(/brain_missing|not at/); // still installed: a late lock holder cannot build an empty brain
+        expect(() => runPgliteCreateGuard(lockedDir)).toThrow(/brain_missing|not at/); // still installed: a late lock holder cannot build an empty brain
         settle(new Error('connect gave up'));
         await new Promise((r) => setTimeout(r, 20));
-        expect(() => runPgliteCreateGuard(store)).not.toThrow(); // settled: the guard is gone
+        expect(() => runPgliteCreateGuard(lockedDir)).not.toThrow(); // settled: the guard is gone
       } finally {
         if (existsSync(moved)) renameSync(moved, store);
       }
