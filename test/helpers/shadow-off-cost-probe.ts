@@ -116,16 +116,20 @@ recording = false;
 Date.now = realNow;
 
 /**
- * The postgres driver names each prepared statement with a random prefix; rename them stmt#1, stmt#2 ... in order of
- * first use so two runs of the same writes compare equal. Nothing else is rewritten.
+ * The postgres driver names each prepared statement with a random prefix, and PGLite's statement cache numbers its
+ * statements per process (gbrain_s1, gbrain_s2 ...) and closes a retired one at the next prepare. Rename every name a
+ * Parse (P:) or a Close (C:S) carries to stmt#1, stmt#2 ... in order of first use, so two runs of the same writes compare
+ * equal even when load changed which earlier statements the cache had retired. Longer names are replaced first, so
+ * gbrain_s3 never rewrites part of gbrain_s34. Nothing else is rewritten.
  */
 function canonicalStatementNames(entries: Wire[]): Wire[] {
   const names: string[] = [];
   for (const entry of entries) {
-    const name = entry.startsWith('P:') ? entry.slice(2).split('|')[0]! : '';
+    const name = entry.startsWith('P:') ? entry.slice(2).split('|')[0]! : entry.startsWith('C:S') ? entry.slice(3).split('|')[0]! : '';
     if (name && !names.includes(name)) names.push(name);
   }
-  return entries.map((entry) => names.reduce((text, name, i) => text.split(name).join(`stmt#${i + 1}`), entry));
+  const order = names.map((name, i) => [name, `stmt#${i + 1}`] as const).sort((a, b) => b[0].length - a[0].length);
+  return entries.map((entry) => order.reduce((text, [name, canonical]) => text.split(name).join(canonical), entry));
 }
 
 const chain: string[] = [];

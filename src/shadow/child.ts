@@ -8,8 +8,9 @@
  * serving process. When the addon is missing or mismatched, every event is recorded `addon_unavailable` with the
  * loader's code, so the evidence shows why nothing was compared. Stdin closing ends the child.
  *
- * The store is not seeded yet (seed and reconcile are plan PR S3), so once Rust implements a read, its answers
- * describe an empty store and mostly `diff`; the provisional report says so.
+ * The store is the one `gbrain engine shadow seed` filled from the brain, and the follower (follow-child.ts) keeps it level
+ * with the brain's writes, so a read's answer comes from the brain's own data. A brain that was never seeded, or whose
+ * seed is not followed, has an empty or stale store; reads against it mostly `diff`, and `status` says the brain needs a seed or a reseed.
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
@@ -41,6 +42,8 @@ import { shadowStatePath } from './state.ts';
 export const SHADOW_CHILD_CALL_TIMEOUT_MS = 10_000;
 export const SHADOW_CHILD_QUEUE_BOUND = 1024;
 export const SHADOW_HEARTBEAT_MS = 5_000;
+/** After input ends the child drains, writes its evidence and exits; past this it flushes what it has and exits anyway (the parent's own kill timer dies with the parent). */
+export const SHADOW_CHILD_EXIT_DEADLINE_MS = 30_000;
 /** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
 export const SHADOW_CHILD_STALL_LIMIT = 4;
 /** Runs of one sample (the first check, then reruns from a new WAL position) before one that keeps moving stays unresolved. */
@@ -65,6 +68,10 @@ export interface ShadowChildDeps {
   openEngine?: (addon: RustEngineAddonHandle, storePath: string) => ShadowEngine;
   timeoutMs?: number;
   heartbeatMs?: number;
+  /** Set by the process entry: called with 0 at the exit deadline. In-process callers leave it unset and get no deadline. */
+  exit?: (code: number) => void;
+  exitDeadlineMs?: number;
+  flushMs?: number;
   childId?: string;
   now?: () => number;
   /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default `policyHash(READINESS_POLICY)` (engine-swap/policy.ts): the approved policy's hash, not an in-force one. */
@@ -121,6 +128,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<{ timedOut: tr
     promise.then((value) => { clearTimeout(timer); resolve({ timedOut: false, value }); },
       (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+/** The control writer for a child process's stdout. A short-lived parent (a CLI call, a cron job) closes its end before the first heartbeat; that must not kill the child before it writes evidence. */
+export function pipeControlWriter(out: NodeJS.WriteStream): (line: string) => void {
+  let closed = false;
+  // cli.ts exits on SIGPIPE and on an EPIPE from stdout (a pipeline's `| head`); this child has no pipeline, so it takes both over.
+  process.removeAllListeners('SIGPIPE');
+  process.on('SIGPIPE', () => {});
+  out.removeAllListeners('error');
+  out.on('error', () => { closed = true; }); // EPIPE: the parent is gone, so no more heartbeats
+  return (line) => { if (!closed) out.write(line); };
 }
 
 /**
@@ -198,6 +216,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   let engine: ShadowEngine | null = null;
   let unavailable: Classification | null = null;
+  let openTimedOut = false;
   let load: Awaited<ReturnType<RustEngineAddonLoaderFn>>;
   try {
     load = await (deps.loadAddon ?? loadRustEngineAddonOffline)();
@@ -246,7 +265,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       const open = deps.openEngine ?? ((addon, store) => openRustEngine({ addon, databasePath: store }) as unknown as ShadowEngine);
       const storePath = join(shadowDir, 'store');
       engine = open(load.addon, storePath);
-      await engine.connect({ database_path: storePath });
+      // A connect that never returns would keep the exit deadline (armed after input ends) from ever starting; a child with a deadline gives up on it.
+      const connecting = engine.connect({ database_path: storePath });
+      if (deps.exit && (await withTimeout(connecting, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS)).timedOut) {
+        // The child gives up on this store: it closes it if the open ever finishes, and goes quiet so the parent's watchdog restarts the child.
+        const abandoned = engine;
+        void connecting.then(() => abandoned.disconnect(), () => undefined).catch(() => undefined);
+        openTimedOut = true;
+        throw Object.assign(new Error('opening the Rust store timed out'), { code: 'open_timeout' });
+      }
+      await connecting;
       if (deleted()) {
         await engine.disconnect().catch(() => {});
         rmSync(shadowDir, { recursive: true, force: true });
@@ -272,11 +300,11 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   });
   const stalled = new Set<Promise<unknown>>();
   const heartbeat = setInterval(() => {
-    if (stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
+    if (openTimedOut || stalled.size >= SHADOW_CHILD_STALL_LIMIT) return; // wedged in native work: go quiet so the watchdog restarts this child
     follow.tick();
     try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
   }, deps.heartbeatMs ?? SHADOW_HEARTBEAT_MS);
-  try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
+  if (!openTimedOut) try { deps.writeControl('{"t":"hb"}\n'); } catch { /* parent gone */ }
 
   const pending: ReadEvent[] = [];
   const rows: ShadowLedgerRow[] = [];
@@ -293,6 +321,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
       writeSummaryFile(shadowDir, summary);
     } catch { /* a full disk loses evidence, never the child */ }
   };
+
+  // Finished comparisons reach disk within a couple of seconds even when no more reads arrive (a kill loses at most that window).
+  const flusher = setInterval(() => { if (rows.length) flush(true); }, deps.flushMs ?? 2_000);
+  (flusher as { unref?: () => void }).unref?.();
 
   const record = (event: ReadEvent, c: Classification, rustMs: number | null, rustRows: number | null, rerun?: string): void => {
     const ts = new Date(event.at || now()).toISOString();
@@ -475,6 +507,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     pending.push(event as ReadEvent);
     void drain();
   }
+  if (deps.exit) {
+    const timer = setTimeout(() => { summary.child_shed += pending.length; flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
+    (timer as { unref?: () => void }).unref?.();
+  }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
@@ -483,6 +519,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   await recalling;
   await follow.close();
   clearInterval(heartbeat);
+  clearInterval(flusher);
   flush(true);
   if (engine) { try { await engine.disconnect(); } catch { /* exiting anyway */ } }
   return handled;

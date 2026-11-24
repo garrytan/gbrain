@@ -29,6 +29,7 @@
 import type { BrainEngine } from './engine.ts';
 import { lockTableForAnalyze } from './analyze-lock.ts';
 import { PLANNER_STATS_TABLES, type PlannerStatsTable } from './planner-stats-schema.ts';
+import { lacksRawSql } from './engine-capabilities.ts';
 
 export const PLANNER_STATS_MIN_PENDING = 500;
 export const PLANNER_STATS_PENDING_RATIO = 0.1;
@@ -102,6 +103,7 @@ export const plannerStatsThreshold = (reltuples: number) =>
 
 /** Per hot table: rows modified since its watermark, planner row estimate and whether pg_stats has rows. Null before the migration. */
 export async function readPlannerStatsState(engine: BrainEngine): Promise<PlannerTableState[] | null> {
+  if (lacksRawSql(engine)) return null; // no query planner (Rust, D18): the same answer as before the migration
   const [present] = await engine.executeRaw<{ ok: boolean }>(
     "SELECT to_regclass('planner_stats_deltas') IS NOT NULL AND to_regclass('planner_stats_state') IS NOT NULL AS ok");
   if (!present?.ok) return null;
@@ -273,6 +275,7 @@ async function publishWatermark(engine: BrainEngine, table: PlannerStatsTable, w
 export async function analyzePlannerTables(engine: BrainEngine, tables: readonly PlannerStatsTable[], reason: PlannerRefreshReason,
   pending: ReadonlyMap<PlannerStatsTable, number> = new Map()): Promise<PlannerRefreshResult['analyzed']> {
   const analyzed: PlannerRefreshResult['analyzed'] = [];
+  if (lacksRawSql(engine)) return analyzed; // no query planner (Rust, D18): nothing to analyze
   for (const table of tables) {
     if (!PLANNER_STATS_TABLES.includes(table)) throw new Error(`Not a planner statistics table: ${table}`);
     const watermark = (await readWatermarks(engine, [table])).get(table) ?? 0;
@@ -299,7 +302,7 @@ export async function analyzePlannerTables(engine: BrainEngine, tables: readonly
  */
 export async function beginFullAnalyze(engine: BrainEngine): Promise<() => Promise<void>> {
   const noop = async () => {};
-  if (engine.kind !== 'pglite') return noop;
+  if (engine.kind !== 'pglite' || lacksRawSql(engine)) return noop;
   const [present] = await engine.executeRaw<{ ok: boolean }>("SELECT to_regclass('planner_stats_state') IS NOT NULL AS ok");
   if (!present?.ok) return noop;
   const marks = await readWatermarks(engine, PLANNER_STATS_TABLES);

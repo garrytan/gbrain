@@ -25,11 +25,11 @@ when_to_use: "Use when the user asks: \"second opinion\", \"cross-modal review\"
 # Cross-Modal Review
 
 > **Convention:** see [conventions/cross-modal.yaml](../conventions/cross-modal.yaml)
-> for the review pairs and refusal routing.
+> for the review pairs and how a refusal is reported.
 
 > **Relationship to `gbrain eval cross-modal`:** This skill is the manual
-> mid-flow gate (one model reviews work product before commit, with refusal
-> routing). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
+> mid-flow gate (one model reviews work product before commit; a refusal is
+> reported and stops the review). The `gbrain eval cross-modal` command (v0.27.x) is a sibling
 > surface: 3 different-provider frontier models score-and-iterate on a
 > documented dimension list *before* tests cement behavior. Use this skill
 > for ad-hoc second opinions; use `gbrain eval cross-modal` for the
@@ -44,7 +44,7 @@ This skill guarantees:
   (what was promised), not vibes.
 - Agreement and disagreement are reported transparently.
 - A refusal from the review model is reported to the user as a provider
-  refusal, and another model reviews only as Refusal routing below allows.
+  refusal, and the review stops there (see Refusals below).
 - The user always makes the final decision (user sovereignty).
 
 ## When to invoke (v0.25.1 gating)
@@ -127,16 +127,15 @@ auth bypasses, data leaks, privilege escalation paths.
 Output adds an exploitability rating (CRITICAL / HIGH / MEDIUM / LOW)
 and recommended mitigations.
 
-## Refusal routing
+## Refusals
 
 A refusal is a result, not something to hide. If the review model refuses:
 
 1. Tell the user, naming the model: its provider refused the review. Call it
    a provider refusal, not a model failure, and never report the review as
    passed.
-2. Another model reviews only when the user chooses one. The review output
-   then names the model that refused and the model that reviewed instead.
-   If `refusal_routing.behavior` in `conventions/cross-modal.yaml` still says the
+2. Stop the review there. Don't rerun it on another model. If
+   `refusal_routing.behavior` in `conventions/cross-modal.yaml` still says the
    removed `next_in_chain`, treat it as `report` and tell the user once that
    the automatic retry option was removed.
 3. Don't reword the request to get around the refusal.
@@ -183,7 +182,7 @@ decision.
 
 Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
 
-- A review model refuses: report it to the user as a provider refusal, naming the model; switch models only as Refusal routing says, and show the switch in the output.
+- A review model refuses: report it to the user as a provider refusal, naming the model, and stop the review (see Refusals).
 - `gbrain eval cross-modal` fails on a missing provider key or `no_pricing`: name the missing provider and run with the models that are configured; never report a review that did not run as passed.
 
 ## Anti-Patterns
@@ -202,9 +201,9 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
   /codex knows HOW.
 - `skills/testing/SKILL.md` — runs the project test suite; complementary
   signal for "is this commit safe to land"
-- `skills/conventions/cross-modal.yaml` — review pairs + refusal routing
+- `skills/conventions/cross-modal.yaml` — review pairs + how a refusal is reported
 
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).

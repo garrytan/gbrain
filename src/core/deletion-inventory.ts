@@ -83,6 +83,9 @@ const ROWS: readonly Row[] = [
   ['dream_synthesis_completions', 'out_of_scope', 'no_memory_text', 'source_id idempotency_key'],
   ['dream_verdicts', 'out_of_scope', 'probed_reported', 'file_path content_hash reasons content_type segments entities model', 'segments entities reasons'],
   ['drift_decisions', 'out_of_scope', 'probed_reported', 'reasoning applied_by', 'reasoning'],
+  ['engine_writer_coverage_gaps', 'out_of_scope', 'no_memory_text', 'code'],
+  ['engine_writer_observations', 'out_of_scope', 'no_memory_text', 'host_id application_name process_kind gbrain_version'],
+  ['engine_writer_sessions', 'out_of_scope', 'no_memory_text', 'application_name client_addr'],
   ['entity_identities', 'out_of_scope', 'no_memory_text', 'entity_id source_id established_by'],
   ['entity_identity_reviews', 'out_of_scope', 'no_memory_text', 'decision_id verdict members group_id entity_id canonical_source_id canonical_slug decided_by origin home_source_id git_blob evidence'],
   ['eval_candidates', 'out_of_scope', 'probed_reported', 'tool_name query retrieved_slugs source_ids detail detail_resolved salience_param recency_param salience_resolved recency_resolved salience_source recency_source embedding_column schema_pack_per_source', 'query'],
@@ -104,6 +107,7 @@ const ROWS: readonly Row[] = [
   ['guest_sources', 'out_of_scope', 'no_memory_text', 'source_id writers trust_ceiling'],
   ['ingest_applied_captures', 'out_of_scope', 'no_memory_text', 'idempotency_key source_id slug result'],
   ['ingest_log', 'out_of_scope', 'probed_reported', 'source_id source_type source_ref pages_updated summary writer_version', 'summary pages_updated'],
+  ['learning_items', 'out_of_scope', 'probed_reported', 'source_id kind target_table state subject_slug subject_source_id prior_revision member_id decided_by', 'subject_slug'],
   ['link_edge_proposals', 'out_of_scope', 'probed_reported', 'source_id link_type evidence_hash status model generated_line detail', 'generated_line detail'],
   ['link_relationships', 'out_of_scope', 'no_memory_text', 'link_type scope source_id semantics status_now evidence_hash'],
   ['link_transitions', 'out_of_scope', 'no_memory_text', 'source_id link_type kind date_precision producer line_hash link_source'],
@@ -216,7 +220,7 @@ const ROWS: readonly Row[] = [
   ['wake_subscriptions', 'out_of_scope', 'no_memory_text', 'event target target_ref principal_kind principal_id member_id wake_user ws_subscription_id state delivered_marker last_error'],
   ['wake_terms_acceptances', 'out_of_scope', 'no_memory_text', 'principal_key terms_version'],
   ['wanted_links', 'out_of_scope', 'probed_reported', 'source_id producer ref_kind target_source_id target_ref link_type context', 'context'],
-  ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
+  ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug page_id page_candidates fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
   ['write_gate_receipts', 'out_of_scope', 'text_free_ledger', 'target_table target_id source_id content_hash tier verdict reason_families reasons request_id'],
 ];
 

@@ -210,7 +210,7 @@ export class ShadowSupervisor implements MirrorTransport {
       try { msg = JSON.parse(line); } catch { continue; }
       if (msg.t === 'hb') this.lastHeartbeat = this.o.now();
       else if (msg.t === 'resp' && typeof msg.id === 'number') {
-        this.settleRequest(msg.id, msg.value, msg.ok ? undefined : Object.assign(new Error(msg.error?.message ?? 'rpc failed'), { code: msg.error?.code ?? 'rpc_failed' }));
+        const err = msg.ok ? undefined : new Error(msg.error?.message ?? 'rpc failed') as Error & { code?: string }; if (err) err.code = msg.error?.code ?? 'rpc_failed'; this.settleRequest(msg.id, msg.value, err);
       }
       else if (msg.t === 'ask' && typeof msg.id === 'number' && msg.session === this.session) void this.answerAsk(msg as { id: number; kind: string }, from, this.session);
       else if (msg.t === 'dirty' && msg.relation) { try { this.o.onDirty?.(msg.relation); } catch { /* best effort */ } }

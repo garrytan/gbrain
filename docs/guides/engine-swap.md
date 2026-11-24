@@ -100,9 +100,9 @@ readiness criterion. Fix: `gbrain sources refresh <source> --resume` for each li
 ### `no_shadow`
 
 No shadow runs for this brain, so there is no readiness evidence: `gbrain engine shadow status` has no shadow
-directory for it. Needs the user's decision to start one: `gbrain engine shadow start` (it shows a plan and needs
-`--yes --expect <hash>`), then `gbrain engine shadow seed`. Read the plan again after the shadow has run for the
-readiness window. There is no override.
+directory for it. Needs the user's decision to run one: `gbrain engine shadow seed` first (it copies the brain into
+the Rust store and refuses while shadow mode is on), then `gbrain engine shadow start` (it shows a plan and needs
+`--yes --expect <hash>`). Read the plan again after the shadow has run for the readiness window. There is no override.
 
 <a id="not_ready"></a>
 ### `not_ready`

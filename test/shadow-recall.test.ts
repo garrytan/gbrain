@@ -156,11 +156,11 @@ describe('recall fields', () => {
 });
 
 describe('the status document', () => {
-  test('carries privacy_diverged and both recall fields from shadowStatusDocument, and the evaluator reads them', () => {
+  test('carries privacy_diverged and both recall fields from shadowStatusDocument, and the evaluator reads them', async () => {
     const { dir, epoch } = epochDir();
     appendLedgerRows(dir, [row(epoch, 'findByTitleFuzzy', 'match'), row(epoch, 'searchKeyword', 'match')]);
     for (let i = 0; i < 30; i++) appendRecall(dir, { ts, epoch_id: epoch, vector: 1, primary: 1, overlap: 1, ref_size: 10 });
-    const doc = shadowStatusDocument({ key: 'k', dir }, NOW);
+    const doc = await shadowStatusDocument({ key: 'k', dir }, NOW);
     expect([doc.privacy_diverged, doc.search?.vector_recall_at_10, doc.search?.primary_recall_at_10]).toEqual([0, 1, 1]);
     const verdict = evaluateReadiness(doc as never, NOW);
     expect(verdict.criteria.filter((c) => [4, 6].includes(c.n)).map((c) => c.state)).toEqual(['pass', 'pass']);

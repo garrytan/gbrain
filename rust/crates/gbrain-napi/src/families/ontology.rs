@@ -62,4 +62,49 @@ impl Brain {
             s.find_ontology_conflicts(&q)
         })
     }
+
+    /// `listOntologyStreamSlugs(sourceId, entitySlug, dimension)`: resolves the open stints'
+    /// provenance slugs.
+    #[napi]
+    pub fn list_ontology_stream_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        entity_slug: String,
+        dimension: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_ontology_stream_slugs(&source_id, &entity_slug, &dimension)
+        })
+    }
+
+    /// `listBeliefStreamSlugs(table, ids)`: resolves each found row's stream slug (or null).
+    #[napi]
+    pub fn list_belief_stream_slugs<'env>(
+        &self,
+        env: &'env Env,
+        table: String,
+        ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<i64> = required(ids, "listBeliefStreamSlugs ids")?;
+            s.list_belief_stream_slugs(&table, &ids)
+        })
+    }
+
+    /// `readOntologyRival(sourceId, entitySlug, dimension, excludeId)`: resolves `{ id, trust_tier }`
+    /// or null.
+    #[napi]
+    pub fn read_ontology_rival<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        entity_slug: String,
+        dimension: String,
+        exclude_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_ontology_rival(&source_id, &entity_slug, &dimension, exclude_id)
+        })
+    }
 }

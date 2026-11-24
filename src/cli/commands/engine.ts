@@ -21,7 +21,8 @@ export async function run(args: string[]): Promise<void> {
     const { readConfiguredShadowStatus } = await import('../../shadow/status-document.ts');
     const { loadConfig } = await import('../../core/config.ts');
     setCliExitVerdict(await runEngineSwap(args.slice(1), {
-      readShadowStatus: async () => (await readConfiguredShadowStatus(() => loadConfig())) as ShadowStatus | null,
+      // The swap passes the primary it already holds open, so eligibility's one read-only SELECT needs no new connection.
+      readShadowStatus: async (engine) => (await readConfiguredShadowStatus(() => loadConfig(), new Date(), engine)) as ShadowStatus | null,
     }));
     return;
   }

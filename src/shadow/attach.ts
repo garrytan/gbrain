@@ -18,10 +18,15 @@ import { epochWatch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 import { MirrorQueue, zeroUsage } from './mirror.ts';
 import { SampleRegistry } from './samples.ts';
-import type { ShadowState } from './state.ts';
+import { readShadowState, type ShadowState } from './state.ts';
 import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
 import { appendUsage } from './usage.ts';
 import { wrapShadowEngine } from './wrapper.ts';
+import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
+import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
+import { claimOwner } from '../core/persistence/claim-phase.ts';
+import { hostIdFor } from '../core/persistence/identity.ts';
+import { VERSION } from '../version.ts';
 
 /** How often a long-running process appends its per-operation counts (and once more when its engine disconnects). */
 export const USAGE_FLUSH_MS = 60_000;
@@ -46,6 +51,8 @@ export interface AttachedShadow<E extends BrainEngine> {
   /** Set when the brain is seeded and `follow` was left out. */
   follower?: ShadowFollower;
   reconciler?: Reconciler;
+  /** Notes this process's committed writes for swap eligibility (writer-observations.ts). */
+  observer: WriterObserver;
   /** The WAL position every sample is captured with (checks.ts `createLsnWatch`). */
   lsnWatch: LsnWatch;
 }
@@ -87,7 +94,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   };
   const usageTimer = setInterval(flushUsage, USAGE_FLUSH_MS);
   usageTimer.unref();
-  const seeded = deps.follow === undefined && readSeedRecord(dir) !== null;
+  const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;
   const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
   const reads = seeded ? openReadSource(engine) : undefined;
   // The child's questions (checks.ts) read the primary through a source of their own, opened on first use, on a brain that was never seeded.
@@ -104,7 +111,14 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   generation = () => follower?.published;
   const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
   reconciler?.startNightly();
+  const observer = new WriterObserver({
+    primary: engine, dir, identity: () => writerIdentity(engine),
+    // A process opened while shadow mode was on outlives `stop`: it notes and repairs hooks only while state.json still says on.
+    enabled: () => readShadowState(dir)?.enabled === true,
+    ...(primaryTakesWriterHooks(state.primary_engine) ? { beforeFirstNote: () => ensureWriterHooks(engine, dir) } : {}),
+  });
   engine.registerBeforeDisconnect(async () => {
+    observer.stop();
     try {
       queue.stop(); // delivers the reads still queued, so the child sees them and the counters add up
       if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
@@ -120,7 +134,16 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
     }
   });
   const follow = follower ? { sink: follower } : deps.follow;
-  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow }), queue, supervisor, follower, reconciler, lsnWatch: watch };
+  const onCommittedWrite = () => observer.note();
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
+}
+
+/** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */
+export function writerIdentity(engine: BrainEngine): WriterIdentity {
+  const owner = claimOwner();
+  // The same text db.ts gbrainApplicationName() gives the pools (pinned by a test), without loading the driver here.
+  const applicationName = `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
+  return { hostId: hostIdFor(engine), applicationName, processKind: owner.kind, gbrainVersion: VERSION };
 }
 
 /** The engine factory's entry point: the wrapped engine. */

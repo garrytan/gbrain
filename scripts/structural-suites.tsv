@@ -457,6 +457,9 @@ test/spec-refresh-barrier.test.ts	spec/tla/README.md documents the refresh-barri
 test/spec-refresh-barrier.test.ts	the TLA+ workflow runs when anything a refresh-barrier mutant names changes	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
 test/spring-skill-index.test.ts	spring-loaded skill index	10	readFileSync
+test/st-write-move-parity.test.ts	moved writes before and after (${kind})	10	readFileSync
+test/st-write-move-parity.test.ts	the Postgres write members send master\'s statement text (no database)	3	readFileSync
+test/st-write-move-parity.test.ts	the strict call sites keep master\'s scope and order	3	readFileSync
 test/strict-source-unmanaged-import.test.ts	(file-level)	2	readFileSync
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	source-surface-helper
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	doctor-source-helper,source-surface-helper
@@ -464,7 +467,7 @@ test/sync-failures.test.ts	Bug 9 — doctor surfaces sync failures	2	doctor-sour
 test/sync-failures.test.ts	Bug 9 — sync.ts CLI flag wiring	6	bun-file,doctor-source-helper,source-surface-helper
 test/sync-flag-table-6712.test.ts	(file-level)	5	readFileSync
 test/sync-include-hidden.test.ts	sync.ts delta path threads includeHidden (#4027 merge guard)	1	source-surface-helper
-test/sync-legacy-slug-adoption-6727.test.ts	(file-level)	8	readFileSync
+test/sync-legacy-slug-adoption-6727.test.ts	(file-level)	9	readFileSync
 test/sync.test.ts	buildSyncManifest	9	source-surface-helper
 test/sync.test.ts	isSyncable	8	source-surface-helper
 test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	source-surface-helper

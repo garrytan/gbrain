@@ -19,7 +19,6 @@ tools:
   - put_page
   - search
 mutating: true
-upstream: report-quality-gate@fc834ee
 ---
 
 # Reports Skill

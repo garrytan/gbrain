@@ -13,7 +13,7 @@
  * (GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes a missing addon an error). Postgres: test/e2e/shadow-seed.test.ts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -24,7 +24,7 @@ import { openRustStore, type SeedPlan, type SeedRow } from '../src/core/rust-eng
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import {
-  readSeedRecord, runSeed, SeedBudgetError, seedSwapCheck, writeSeedRecord, type SeedRecord, type SeedTarget,
+  readSeedRecord, runSeed, SeedBudgetError, seedRecordPath, seedSwapCheck, writeSeedRecord, type SeedRecord, type SeedTarget,
 } from '../src/shadow/seed.ts';
 import { countSeedGaps } from '../src/shadow/seed-gaps.ts';
 import { shadowBrainKey, shadowDirFor, writeShadowState, SHADOW_STATE_VERSION } from '../src/shadow/state.ts';
@@ -150,6 +150,33 @@ describe('shadow seed reads', () => {
       .catch(e => e);
     expect(err).toBeInstanceOf(SeedBudgetError);
   });
+
+  // Value: protects=the seed record adds up what every batch reports; fails_when=a later batch overwrites or drops an earlier batch's counts;
+  // why_new=the other tests send one batch or a target that reports no loss; seam=none; no_claim=native decoding (the target is a recorder).
+  test('seed.json adds up the losses, skips, drops and unmapped columns of every batch', async () => {
+    await fill();
+    let n = 0;
+    const target: SeedTarget = {
+      ...fakeTarget(PAGES_ONLY),
+      async importRelation(_seedId, _relation, rows) {
+        n += 1;
+        return { imported: rows.length, skipped: 1, dropped: 2, unmapped_columns: n === 1 ? ['generation'] : ['generation', 'extra'], losses: (n === 1 ? { a: 1 } : { a: 2, b: 5 }) as Record<string, number> };
+      },
+    };
+    const record = await runSeed(primary, target, { primaryEngine: 'pglite', batchRows: 1 });
+    expect(n).toBe(2);
+    expect(record.relations.pages).toEqual({ rows_read: 2, imported: 2, skipped: 2, dropped: 4, unmapped_columns: ['extra', 'generation'] });
+    expect(record.losses.values).toEqual({ a: 3, b: 5 });
+  });
+
+  // Value: protects=seed.json names how many pages were left as shells; fails_when=the count is dropped or always 0;
+  // why_new=every seed fixture has zero segmented pages and the report test types the count by hand; seam=none; no_claim=segmented text reconstruction (not copied by design).
+  test('seed.json counts a segmented page', async () => {
+    await fill();
+    await primary.executeRaw(`UPDATE pages SET body_storage = 'segmented', compiled_truth = NULL, timeline = NULL, body_bytes = 0 WHERE slug = 'people/alice-example'`);
+    const record = await runSeed(primary, fakeTarget(PAGES_ONLY), { primaryEngine: 'pglite' });
+    expect(record.segmented_pages).toBe(1);
+  });
 });
 
 describe('seedSwapCheck', () => {
@@ -199,7 +226,8 @@ describe('gbrain engine shadow seed', () => {
       expect(first.out.join('\n')).toContain('links 1');
       const st = capture();
       expect(await runEngineShadow(['status', '--json'], { ...deps, ...st.deps })).toBe(0);
-      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: rec.seed_id, finished_at: rec.finished_at, unseeded_gap_rows_total: rec.unseeded_gap_rows_total });
+      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: rec.seed_id, finished_at: rec.finished_at, unseeded_gap_rows_total: rec.unseeded_gap_rows_total,
+        storage: { managed: false, checked_at: rec.storage!.checked_at, note: null } });
       for (const args of [['seed'], ['seed', '--reseed']]) {
         const again = capture();
         expect(await runEngineShadow(args, { ...deps, ...again.deps, openPrimary: async () => keep })).toBe(1);
@@ -227,7 +255,7 @@ describe('gbrain engine shadow seed', () => {
     await inHome(async (_dir, deps) => {
       const st = capture();
       expect(await runEngineShadow(['status', '--json'], { ...deps, ...st.deps })).toBe(0);
-      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: null, finished_at: null, unseeded_gap_rows_total: null });
+      expect(JSON.parse(st.out.join('\n')).seed).toEqual({ seed_id: null, finished_at: null, unseeded_gap_rows_total: null, storage: null });
     });
   });
 
@@ -243,7 +271,7 @@ describe('gbrain engine shadow seed', () => {
     const after = buildProvisionalReport(dir, 'b', null, new Date('2026-11-21T00:00:00Z'));
     expect(after.verdict).toBe('NOT READY');
     expect(after.seed).toEqual({ seed_id: 'seed-x', finished_at: '2026-11-20T12:00:00.000Z', age_hours: 12, segmented_pages: 5,
-      non_terminal_jobs: 2, unseeded_gap_rows_total: 3, unseeded_gap_rows: { access_rules: 3 } });
+      non_terminal_jobs: 2, storage: null, unseeded_gap_rows_total: 3, unseeded_gap_rows: { access_rules: 3 } });
     expect(after.why_not_ready.join(' ')).toContain('3 rows of the brain have no Rust home yet');
     expect(renderProvisionalMarkdown(after)).toContain('Seed: seed-x, finished 2026-11-20T12:00:00.000Z (12 hours ago). Segmented pages read as shells: 5. Unfinished jobs not copied: 2. Unseeded gap rows: 3 (access_rules 3).');
   });
@@ -254,5 +282,23 @@ describe('gbrain engine shadow seed', () => {
     const rec = { version: 1, seed_id: 's', started_at: 'a', finished_at: 'b', primary_engine: 'pglite', relations: {}, losses: { values: {}, not_copied: [], gaps: {} }, unseeded_gap_rows: {}, unseeded_gap_rows_total: 0, non_terminal_jobs: 0, segmented_pages: 0 } as SeedRecord;
     writeSeedRecord(dir, rec);
     expect(readSeedRecord(dir)).toEqual(rec);
+  });
+
+  // Value: protects=seed.json is owner-only (0600) and a damaged or newer file reads as no seed; fails_when=the mode is dropped or widened, or a bad file throws or is accepted;
+  // why_new=the round-trip test checks content only; seam=none; no_claim=crash-time atomicity of the rename.
+  test('seed.json is written owner-only and a damaged or newer file reads as unseeded', () => {
+    const dir = tempDir();
+    const rec = { version: 1, seed_id: 's', started_at: 'a', finished_at: 'b', primary_engine: 'pglite', relations: {}, losses: { values: {}, not_copied: [], gaps: {} }, unseeded_gap_rows: {}, unseeded_gap_rows_total: 0, non_terminal_jobs: 0, segmented_pages: 0 } as SeedRecord;
+    const old = process.umask(0o000);
+    try { writeSeedRecord(dir, rec); } finally { process.umask(old); }
+    expect(statSync(seedRecordPath(dir)).mode & 0o777).toBe(0o600);
+    writeFileSync(seedRecordPath(dir), '{ not json');
+    expect(readSeedRecord(dir)).toBeNull();
+    writeFileSync(seedRecordPath(dir), JSON.stringify({ ...rec, version: 2 }));
+    expect(readSeedRecord(dir)).toBeNull();
+    writeFileSync(seedRecordPath(dir), JSON.stringify({ ...rec, seed_id: 7 }));
+    expect(readSeedRecord(dir)).toBeNull();
+    const unseeded = buildProvisionalReport(dir, 'b', null, new Date('2026-11-21T00:00:00Z'));
+    expect(unseeded.seed).toBeNull();
   });
 });
