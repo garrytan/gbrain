@@ -33,9 +33,9 @@ async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> 
 }
 
 /** The outcome of the owner's own put_page: 'written', or the error code it was refused with. */
-async function ownerPut(engine: BrainEngine, slug: string, content: string, expected_revision?: string): Promise<string> {
+async function ownerPut(engine: BrainEngine, slug: string, content: string, expected_revision?: string, member = OWNER): Promise<string> {
   const minted = await mintLegacyToken(engine, { name: `k-${slug}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
-  await bindCredential(engine, { kind: 'token', id: minted.id }, { member: OWNER });
+  await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
   const auth = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).verifyAccessToken(minted.token) as unknown as AuthInfo;
   const params = { slug, content, ...(expected_revision ? { expected_revision } : {}) };
   return dispatchToolCall(engine, 'put_page', params, { remote: true, transport: 'http', auth, sourceId: SRC, takesHoldersAllowList: ['world'] })
@@ -49,6 +49,18 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     const out = await ownerPut(engine, 'notes/by-owner', '---\ntitle: Note\n---\nHarbor notes.');
     const result = { out, hidden: await engine.readPagePrivacyHidden(SRC, 'notes/by-owner'), missing: await engine.readPagePrivacyHidden(SRC, 'notes/none') };
     expect(result).toEqual({ out: 'written', hidden: false, missing: null });
+    return result;
+  });
+
+  parityTest('a plain member\'s put_page rewrite of an existing page, open or naming its readers, is written', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await addMember(engine, 'bob-example');
+    const input = (frontmatter: Record<string, unknown>) => ({ type: 'note' as const, title: 'Note', compiled_truth: 'First.', timeline: '', frontmatter });
+    await engine.putPage('notes/open', input({}), { sourceId: SRC });
+    await engine.putPage('notes/shared', input({ readable_by: ['bob-example'] }), { sourceId: SRC });
+    const rewrite = async (slug: string, readers = '') => ownerPut(engine, slug, `---\ntitle: Note\n${readers}---\nSecond.`, (await engine.getPage(slug, { sourceId: SRC }))?.knowledge_revision, 'bob-example');
+    const result = { open: await rewrite('notes/open'), shared: await rewrite('notes/shared', 'readable_by: [bob-example]\n') };
+    expect(result).toEqual({ open: 'written', shared: 'written' });
     return result;
   });
 });
