@@ -388,7 +388,7 @@
           "deletePurgedPageGateReceipts: (pageId: number, factIds: number[], takeIds: number[], holdIds: string[]) => Promise<number>",
           "deletePurgedPageHolds: (sourceId: string, slug: string, pageId?: number | null) => Promise<string[]>",
           "deletePurgedPageTrustProposals: (sourceId: string, pageId: number, factIds: number[], takeIds: number[]) => Promise<number>",
-          "deletePurgedSlugHolds: (sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null; }>) => Promise<{ write_gate_holds: number; write_gate_receipts: number; }>",
+          "deletePurgedSlugHolds: (sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null; }>) => Promise<{ write_gate_holds: number; write_gate_receipts: number; }>",
           "deletePurgedSlugStoreRows: (sourceId: string, slugs: readonly string[], opts?: { ifPresent?: boolean; }) => Promise<PurgedSlugStoreRows>",
           "deletePurgedStagingParts: (stagingIds: string[]) => Promise<number>",
           "deletePurgedTakes: (takeIds: number[]) => Promise<number>",
@@ -2657,7 +2657,7 @@
         "kind": "variable",
         "name": "ENRICH_ORDER_SQL",
         "signature": [
-          "Record<\"salience\" | \"inbound-links\" | \"updated\", string>"
+          "Record<\"salience\" | \"inbound-links\" | \"updated\" | \"owner-contact\", string>"
         ]
       },
       {
@@ -2711,6 +2711,7 @@
         "kind": "interface",
         "members": [
           "body_len: number",
+          "contact_score?: number | undefined",
           "inbound_count: number",
           "slug: string",
           "source_id: string",
@@ -2723,7 +2724,9 @@
         "kind": "interface",
         "members": [
           "limit: number",
-          "order: \"salience\" | \"inbound-links\" | \"updated\"",
+          "order: \"salience\" | \"inbound-links\" | \"updated\" | \"owner-contact\"",
+          "ownerSlug?: string | undefined",
+          "ownerSourceId?: string | undefined",
           "reenrichAfterMs?: number | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
@@ -8188,7 +8191,7 @@
           "deletePurgedPageGateReceipts: (pageId: number, factIds: number[], takeIds: number[], holdIds: string[]) => Promise<number>",
           "deletePurgedPageHolds: (sourceId: string, slug: string, pageId?: number | null) => Promise<string[]>",
           "deletePurgedPageTrustProposals: (sourceId: string, pageId: number, factIds: number[], takeIds: number[]) => Promise<number>",
-          "deletePurgedSlugHolds: (sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null; }>) => Promise<{ write_gate_holds: number; write_gate_receipts: number; }>",
+          "deletePurgedSlugHolds: (sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null; }>) => Promise<{ write_gate_holds: number; write_gate_receipts: number; }>",
           "deletePurgedSlugStoreRows: (sourceId: string, slugs: readonly string[], opts?: { ifPresent?: boolean; }) => Promise<PurgedSlugStoreRows>",
           "deletePurgedStagingParts: (stagingIds: string[]) => Promise<number>",
           "deletePurgedTakes: (takeIds: number[]) => Promise<number>",
@@ -18392,7 +18395,7 @@
         "kind": "variable",
         "name": "ENRICH_ORDER_SQL",
         "signature": [
-          "Record<\"salience\" | \"inbound-links\" | \"updated\", string>"
+          "Record<\"salience\" | \"inbound-links\" | \"updated\" | \"owner-contact\", string>"
         ]
       },
       {
@@ -18446,6 +18449,7 @@
         "kind": "interface",
         "members": [
           "body_len: number",
+          "contact_score?: number | undefined",
           "inbound_count: number",
           "slug: string",
           "source_id: string",
@@ -18458,7 +18462,9 @@
         "kind": "interface",
         "members": [
           "limit: number",
-          "order: \"salience\" | \"inbound-links\" | \"updated\"",
+          "order: \"salience\" | \"inbound-links\" | \"updated\" | \"owner-contact\"",
+          "ownerSlug?: string | undefined",
+          "ownerSourceId?: string | undefined",
           "reenrichAfterMs?: number | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
