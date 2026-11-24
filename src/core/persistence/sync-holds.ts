@@ -62,7 +62,7 @@ import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
 import * as holdStore from '../engine-sql/sync-hold-store.ts';
-import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights } from '../engine-sql/sync-hold-store.ts';
+import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights, type SyncConversion } from '../engine-sql/sync-hold-store.ts';
 export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
 import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/git-holds.ts';
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
@@ -70,9 +70,8 @@ export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
 export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
-export { SYNC_CONVERSION_OP };
+export { SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, type SyncConversion };
 /** How many conversions the log keeps per source. */
-export const SYNC_CONVERSION_KEEP = 20;
 /** Default for `GBRAIN_SYNC_HOLD_CAP`: how many holds a result lists in detail. Storage is never capped. */
 export const GIT_HOLD_CAP = 500;
 export const GIT_HOLD_ESCALATE_COUNT = 50;
@@ -380,9 +379,6 @@ function deleteRow(tx: HoldStore, input: { sourceId: string; incarnation: string
   return tx.deleteGitHoldRow ? tx.deleteGitHoldRow(input.sourceId, input.incarnation, input.path) : holdStore.deleteGitHoldRow(tx, input.sourceId, input.incarnation, input.path);
 }
 
-/** GBRA-542: the hold record as readers return it, marked when its source is a read-only mirror (`s`: the sources row). */
-const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
-
 /**
  * Records or replaces a hold. Call it inside the transaction that advances the
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
@@ -539,11 +535,8 @@ export async function heldGitPaths(tx: Exec, sourceId: string, incarnation: stri
  * #6188: records on a fence hold why the last repair left it held (the repair kind and the maintenance phase call it),
  * without touching its observation time or counts. False when the hold is gone or is not a fence hold.
  */
-export async function recordFenceHoldRepair(engine: Exec, input: { sourceId: string; incarnation: string; path: string; state: FenceHoldRepairState }): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,fence_repair}',$3::text::jsonb),updated_at=now()
-    WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'='invalid_fence' RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify(input.state)]);
-  return rows.length === 1;
+export async function recordFenceHoldRepair(engine: HoldStore, input: { sourceId: string; incarnation: string; path: string; state: FenceHoldRepairState }): Promise<boolean> {
+  return setHoldMeta(engine, input, record => record.code === 'invalid_fence', 'fence_repair', input.state);
 }
 
 /**
@@ -551,17 +544,32 @@ export async function recordFenceHoldRepair(engine: Exec, input: { sourceId: str
  * bytes it judged (`upstreamVersion`, the hold's `upstream_version`): a hold re-written for changed bytes is left alone.
  * Observation time and counts are untouched. False when the hold is gone, holds other bytes or has another code.
  */
-export async function recordContentHoldRepair(engine: Exec, input: { sourceId: string; incarnation: string; path: string; upstreamVersion: string | null; state: ContentHoldRepairState }): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,content_repair}',$3::text::jsonb),updated_at=now()
-    WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'='frontmatter_slug_conflict' AND completed_keys->0->>'upstream_version' IS NOT DISTINCT FROM $4 RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify(input.state), input.upstreamVersion]);
-  return rows.length === 1;
+export async function recordContentHoldRepair(engine: HoldStore, input: { sourceId: string; incarnation: string; path: string; upstreamVersion: string | null; state: ContentHoldRepairState }): Promise<boolean> {
+  return setHoldMeta(engine, input, record => record.code === 'frontmatter_slug_conflict' && (record.upstream_version ?? null) === input.upstreamVersion,
+    'content_repair', input.state);
 }
 
-export async function readGitHold(engine: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h LEFT JOIN sources s ON s.id=$3
-    WHERE h.op=$1 AND h.fingerprint=$2`, [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path), sourceId]);
-  return row?.record ?? null;
+/**
+ * Sets one key of a hold's `meta` while `matches` holds, through the typed hold row (read, then a replace only while the
+ * row is still what was read; a row that moved meanwhile is read again). The row's observation time and counts are kept.
+ */
+async function setHoldMeta(engine: HoldStore, input: { sourceId: string; incarnation: string; path: string }, matches: (record: GitHoldRecord) => boolean,
+  key: 'fence_repair' | 'content_repair', value: object): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const record = await readRow(engine, input.sourceId, input.incarnation, input.path);
+    if (!record || !matches(record)) return false;
+    const next = { ...record, meta: { ...(record.meta ?? {}), [key]: value } } as GitHoldRecord;
+    if (await replaceRow(engine, input, record, next)) return true;
+  }
+  return false;
+}
+
+export async function readGitHold(engine: HoldStore & Partial<Pick<BrainEngine, 'readGitHoldReportInputs'>>, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
+  const record = await readRow(engine, sourceId, incarnation, path);
+  if (!record) return null;
+  // The record marks a read-only mirror (GBRA-542); the source's mirror flag is the typed report input's, read only for a hold that exists.
+  const { mirror } = await readGitHoldReportInputsFor(engine, sourceId, summaryFingerprint(sourceId, incarnation));
+  return mirror === 'true' ? { ...record, read_only_checkout: true } : record;
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
@@ -1068,7 +1076,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           : slugs.length > 1
           ? `${record.path} belongs to one of the pages ${slugs.map(slug => JSON.stringify(slug)).join(', ')}, which an older gbrain imported without recording their file, so sync held it rather than guess or create another page. `
             + `Pick the page that is this file's and remove each other one with gbrain delete --source ${source} -- '<slug>' (recoverable for 72 h), or rename the file if none of them is its page, then run gbrain sync --source ${source} --no-pull.`
-          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under a slug with capitals that sync cannot write and no gbrain command can address yet, so sync held the file rather than create a second page. `
+          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under an older slug spelling that sync cannot write (capitals, or a decomposed Unicode accent) and no gbrain command can change yet, so sync held the file rather than create a second page. `
             + `Keep the file held (the rest of the source syncs), or rename it to a name that folds to another slug, which imports it as a new page beside the old one (the old page keeps its links), then run gbrain sync --source ${source} --no-pull.`,
         why: 'Which page a file is cannot be decided from the slugs alone, and sync never writes a slug it would have to change. Once one writable page is left, the next sync imports the file into it (same page id, links and history) and records the file as its origin; until then the rest of the source keeps syncing.',
         then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
@@ -1152,17 +1160,9 @@ export async function fenceAutoRepairFor(engine: Exec, records: ReadonlyArray<Pi
 }
 
 /** A blocked sync request a run converted in place: held (the file is refused) or re-frozen (the file now imports). */
-export interface SyncConversion { request_id: string; path: string | null; slug: string | null; run_id: string; outcome: 'held' | 'refrozen'; converted_at: string }
-
 /** Appends a conversion to the source's log (newest first, bounded); call it in the transaction that saves the converted cursor. */
-export async function recordSyncConversion(tx: Exec, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
-  const entry = JSON.stringify([{ ...conversion, converted_at: new Date().toISOString() }]);
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
-      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
-        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`,
-  [SYNC_CONVERSION_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation, entry, SYNC_CONVERSION_KEEP]);
+export async function recordSyncConversion(tx: Pick<BrainEngine, 'recordSyncConversion'>, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
+  await tx.recordSyncConversion(sourceId, incarnation, { ...conversion, converted_at: new Date().toISOString() });
 }
 
 /** The conversion log of each listed source's current incarnation, newest first (sources with none are absent). */

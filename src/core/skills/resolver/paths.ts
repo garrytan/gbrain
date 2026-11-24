@@ -59,6 +59,6 @@ export function catalogDir(home: string, name: string): string {
   return dir;
 }
 
-export const catalogFile = (home: string, name: string, file: 'index.bin' | 'receipt.json' | 'source.json' | 'fingerprint.json' | 'lock' | 'stale.stamp' | 'stat-check' | 'build.log') => join(catalogDir(home, name), file);
+export const catalogFile = (home: string, name: string, file: 'index.bin' | 'receipt.json' | 'source.json' | 'fingerprint.json' | 'lock' | 'stale.stamp' | 'stat-check' | 'build.log' | 'picker.json') => join(catalogDir(home, name), file);
 export const sessionsDir = (home: string) => join(skillIndexRoot(home), 'sessions');
 export const logsDir = (home: string) => join(skillIndexRoot(home), 'logs');

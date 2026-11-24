@@ -8,8 +8,8 @@
  *    same rows on PGLite and Postgres (DATABASE_URL); the Rust engine (GBRAIN_TEST_RUST_ARM=1) gives the same preview and
  *    then refuses the apply as `engine_capability_missing` (raw_sql) with the step's name ("repair <kind> fact write" or
  *    "repair <kind> page write") before its first write. rename-identity's listing of a seeded source with no downgrade
- *    record is equal on every arm; with one record the SQL arms list the pair and the Rust engine stops at
- *    readIdentityDowngradeRows (lane 9's member; rust-engine/identity-restore-rust lifts the stop). unwithdrawn-facts
+ *    record is equal on every arm; with one record every arm lists the pair (the Rust engine serves
+ *    readIdentityDowngradeRows since identity-restore-rust). unwithdrawn-facts
  *    lists a retired fact on the SQL arms; its seed (a facts-fence generation, lane 7's writer) stops on the Rust engine.
  *  - Named stops proven on a SQL engine without raw_sql: unwithdrawn-facts stops at "repair unwithdrawn-facts fence
  *    evidence" (preview) and "repair unwithdrawn-facts fact write" (apply).
@@ -26,7 +26,7 @@ import { describe, expect } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parityArms } from './harness.ts';
+import { parityArms, recordIdentityDowngrade } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { publishSegmentedPage, segmentText } from '../helpers/page-body-fixtures.ts';
@@ -34,7 +34,6 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { classifyUnwithdrawnFacts, unwithdrawnFactsRepair } from '../../src/core/repair/unwithdrawn-facts.ts';
-import { IDENTITY_DOWNGRADE_OP, recordIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import { publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND } from '../../src/core/generations/fence.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../../src/core/generations/adapters/fact-rows.ts';
 
@@ -235,28 +234,18 @@ describe('engine parity: repair fact applies, rename-identity and unwithdrawn-fa
     return withHome(async () => shape(await runKind(engine, 'rename-identity', false, { sourceFlag: 'default' }, 'default')));
   });
 
-  parityTest('rename-identity lists an open pair on the SQL arms; the Rust engine stops at readIdentityDowngradeRows (lane 9)', {
+  parityTest('rename-identity lists an open pair on every arm (identity-restore-rust serves readIdentityDowngradeRows)', {
     methods: ['putPage', 'softDeletePage', 'readIdentityDowngradeRows'], timeout: 60_000,
   }, async (engine, backend) => {
     await engine.putPage('people/old-example', note('Old Example', 'person'), { sourceId: 'default' });
     await engine.putPage('people/new-example', note('New Example', 'person'), { sourceId: 'default' });
     await engine.softDeletePage('people/old-example', { sourceId: 'default' });
     const pair = { from: 'people/old-example.md', to: 'people/new-example.md', similarity: 0.5, reason: 'no_identity_signal' as const };
-    if (backend === 'rust') {
-      // The record writer is raw SQL (lane 1 types it); the typed checkpoint writer stores the record, which is all the refusal needs.
-      const origin = await engine.readPageOrigin({ sourceId: 'default', slug: 'people/old-example' });
-      await engine.writeOpCheckpointRecord(IDENTITY_DOWNGRADE_OP, String(origin!.id), [{ source_id: 'default', old_slug: 'people/old-example', old_page_id: Number(origin!.id), ...pair }]);
-    } else {
-      expect((await recordIdentityDowngrades(engine, 'default', [pair])).length).toBe(1);
-    }
-    try {
-      const result = await withHome(() => runKind(engine, 'rename-identity', false, { sourceFlag: 'default' }, 'default'));
-      expect(result.residuals).toEqual({ open_pairs: 1 });
-      return shape(result);
-    } catch (err) {
-      if (backend === 'rust') expect(refusalText(err)).toContain('readIdentityDowngradeRows');
-      throw err;
-    }
+    // The record writer is the harness's (raw SQL on the SQL arms, the store's typed checkpoint row on Rust): both store the open record.
+    await recordIdentityDowngrade(engine, backend, 'default', 'people/old-example', { ...pair, source_id: 'default' });
+    const result = await withHome(() => runKind(engine, 'rename-identity', false, { sourceFlag: 'default' }, 'default'));
+    expect(result.residuals).toEqual({ open_pairs: 1 });
+    return shape(result);
   });
 
   parityTest('unwithdrawn-facts lists a fact a facts-fence generation retired; the seed stops on the Rust engine (lane 7 writer)', {

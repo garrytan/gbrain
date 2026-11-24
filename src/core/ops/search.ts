@@ -581,9 +581,9 @@ function parseExplainTarget(raw: string): { slug: string; sourceId?: string } {
  * explain_target, before the search: resolve the target among the pages this
  * caller can read (one probe under the same scope and visibility the search
  * uses). Returns the trace to thread into the search, or an early diagnosis
- * (not visible / ambiguous) that needs no trace.
+ * (not visible / ambiguous) that needs no trace. Exported for tests.
  */
-async function prepareExplainTarget(
+export async function prepareExplainTarget(
   ctx: OperationContext, p: Record<string, unknown>, scope: SourceScope, excludePrivate: boolean, tool: 'search' | 'query',
 ): Promise<{ trace?: TargetTrace; early?: ExplainTargetDiagnosis } | null> {
   if (typeof p.explain_target !== 'string' || p.explain_target.trim() === '') return null;
@@ -591,9 +591,11 @@ async function prepareExplainTarget(
   const retry = { tool, arguments: explainRetryArgs(p) };
   let probe;
   try {
-    probe = await probeTarget((sql, params) => ctx.engine.executeRaw(sql, params), slug,
+    probe = await probeTarget(ctx.engine, slug,
       { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false }, await chunkManifestReads(ctx.engine));
-  } catch {
+  } catch (e) {
+    // explain_target was asked for: an engine that cannot run the probe refuses instead of explaining nothing.
+    rethrowCapabilityRefusal(e);
     return { trace: new TargetTrace({ slug, sourceId }) };
   }
   const early = diagnoseProbe({ slug, sourceId }, probe, { requireSafeChunks: ctx.remote !== false, retry });

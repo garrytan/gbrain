@@ -20,15 +20,23 @@ mod core;
 mod decide;
 mod decode;
 mod follow;
+mod format_5;
 mod history;
 mod not_copied;
 mod privacy;
 mod spend;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod v0_60_766_tests;
 mod wake;
 
 pub use decode::SeedRow;
+pub(crate) use format_5::carry_over as carry_over_format_5;
+
+/// What a person runs to replace a shadow store this build will not open (`src/shadow/seed.ts`
+/// `RESEED_STEPS`).
+pub const RESEED_STEPS: &str = "gbrain engine shadow stop --delete (deletes the store, ledger and reports), then gbrain engine shadow seed, then gbrain engine shadow start --plan, then gbrain engine shadow start --yes --expect <plan_hash> to turn shadow mode on again";
 pub use follow::{
     AllocatorCheck, DigestInput, EntryInfo, FactFingerprints, FollowResult, IntervalDigest,
     KeyInput, MAX_ENTRIES, UNSUPPORTED, fact_fingerprints,
@@ -295,6 +303,8 @@ fn claim(tx: &mut dyn KvWrite, seed_id: &str) -> Result<SeedManifest> {
         // The keyword index state: a new store starts with the index on.
         keys::keyword_index_state(),
         crate::shared_skill_members::state_key(),
+        // The open-time repair of the derivation sweep records' source index leaves its done marker.
+        crate::page_body::purge_record::repair_done_key(),
         source_key(crate::sources::DEFAULT_SOURCE),
     ];
     // The config rows a new store's open writes: the schema version, the trust and write-gate marks (migrations v226 and

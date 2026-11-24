@@ -14,7 +14,8 @@ model.
   Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
-  network, no model, no clock, no randomness on the turn path.
+  network, no model, no clock, no randomness on the turn path, unless you turn
+  on the [model picker](#model-picker-opt-in).
 - **No brain needed.** It works on a keyless, repo-less or brainless install,
   on a thin client, and while `gbrain serve` holds the PGLite lock. It never
   reads or writes the brain.
@@ -142,8 +143,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   cold machine can take most of 50 ms just to load it (measured: up to about
   50 ms on an idle 4-core machine with an empty file cache, and up to about
   105 ms with the CPU oversubscribed), so the turn's own clock starts once it
-  is ready. At either limit the process prints nothing, exits and commits no
-  session state.
+  is ready. With the [model picker](#model-picker-opt-in) on, the turn also
+  gets the picker's wait (`router_timeout_ms`) plus 100 ms. At either limit
+  the process prints nothing, exits and commits no session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
   default every match), `skills.resolver.top_gate` (0.6 unless set, 0 turns it off; see
@@ -204,7 +206,8 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
 Each turn appends one line (outcome, error code, duration, the worker's load
-time as `worker_ms`, catalogs; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+time as `worker_ms`, catalogs, and with the model picker on, `router`: who
+answered, the fallback code and the picker's wait; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from
@@ -409,6 +412,151 @@ off keeps them; an OpenClaw agent uses a change from its next turn, and Claude
 Code and Codex (`claude-code-user`, `codex-user`) from their next session
 start, through the [hook lane](#hook-lane-claude-code-and-codex).
 
+## Model picker (opt-in)
+
+The word matcher finds a skill when the message uses the skill's own words
+("look up", "tell me about") and misses when the user just says what they
+want. The model picker fixes that: a small, fast model reads your skill list
+(each skill's id and description) and picks the skills the message needs, or
+none. It is off by default, and nothing changes until you turn it on:
+
+```bash
+gbrain config set skills.resolver.router true
+```
+
+`gbrain setup claude-code --skill-loading resolve` (and `codex`) prints this
+line when a model key is configured.
+
+What it does on each turn:
+
+- **Where it runs.** Only `gbrain skills resolve` and the Claude Code and Codex
+  hook lanes can call it. The OpenClaw plugin, the Pi extension and Hermes never
+  do, whatever the config says; a library caller does only when it passes
+  `router: true`.
+- **What it reads.** Every skill while the catalogs hold up to 150, else the top
+  40 of the word ranking; when no skill shares a word with the message there,
+  it makes no call and the word matcher answers, with no fallback code.
+  Descriptions come from `picker.json`, which each build writes beside the
+  index (cut at 400 characters). A project catalog's skills are sent by id
+  only, as their hints are never shown.
+- **What it shows.** Its picks, best first, with `match_strength: "picked"`,
+  under the same rules as any suggestion: `exclude`, the `min_match_strength`
+  floor, the session's no-repeat rule, pacing and the token budget. `top_gate`
+  does not apply to them. When it says the message needs no skill, the block is
+  empty (`no_skill_reason: "no_match"`), except for a skill the turn names.
+- **When it can't answer.** The turn is the word matcher's, byte for byte, and
+  `router.fallback.code` says why (the codes are below). `gbrain doctor` shows
+  the last 24 hours of picker turns, fallbacks by code and today's spend.
+
+| Setting | Default | |
+|---|---|---|
+| `skills.resolver.router` | `false` | turns the picker on |
+| `skills.resolver.router_model` | Claude Haiku 5.5 with an Anthropic key, else `openai:gpt-6-luna`, else `google:gemini-3.5-flash-lite` | an `anthropic:`, `openai:` or `google:` model id, or `compat:` (below) |
+| `skills.resolver.router_timeout_ms` | 1500 in Claude Code, 2000 elsewhere | the longest a turn waits (200-2500); Claude Code waits at most 2000, inside its 3-second hook limit |
+| `skills.resolver.router_max_usd_per_day` | 0.50 | the daily spend cap in USD (0-100; 0 stops every call) |
+
+A larger model picks better but slower. Claude Opus 5.5 and Fable 5.x
+can't turn thinking off, so they pick with adaptive thinking at low effort,
+and GPT-6.1 Sol and later and the GPT-6.x Astra models reason at low effort:
+Opus took about 1.2 seconds at the median, close to Claude Code's 1.5-second
+wait, and Fable 5.2 took about 3 seconds in one check, past it. The picker only calls a model
+it has a price for (the daily cap needs one); others report `no_pricing`.
+For a model OpenAI hosts, use its `openai:` id rather than `compat:`.
+
+**Your own model.** Any model behind an OpenAI-compatible Chat Completions
+endpoint can be the picker, a self-hosted or fine-tuned one included: set
+`router_model` to `compat:<model id>` and three more settings.
+
+| Setting | |
+|---|---|
+| `skills.resolver.router_base_url` | the endpoint's base URL up to `/v1`, like `https://models.example.com/v1` (https, or http to localhost only); required |
+| `skills.resolver.router_api_key_env` | the name of the environment variable holding its key, like `MY_MODEL_API_KEY`; unset sends no key |
+| `skills.resolver.router_usd_per_mtok` | `[input, output]` or `[input, output, cached input]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one). Without the third value, cached input is charged at the input rate |
+
+```bash
+gbrain config set skills.resolver.router_model compat:acme/skill-picker-1
+gbrain config set skills.resolver.router_base_url https://models.example.com/v1
+gbrain config set skills.resolver.router_api_key_env MY_MODEL_API_KEY
+gbrain config set skills.resolver.router_usd_per_mtok 0.1,0.5
+```
+
+**Cost and wait.** A turn sends the skill list and the message, about 9,000
+tokens for 75 skills, and gets back under 40 tokens. With Haiku 5.5 that is
+about $0.0001 a turn once the list is cached and $0.001 the first time; a
+typical wait is under a second. Each call is charged to
+`skill-index/router-spend.json` at its largest possible cost before it is
+made and settled to its real cost after, so a call cut off mid-way still
+counts, and a reply that reports no token counts stays at the largest cost.
+The cap resets at 00:00 UTC.
+
+**Privacy.** With the picker on, each message and your skills' ids and
+descriptions go to the model's provider (Anthropic, OpenAI or Google), over
+HTTPS, with your key (with a `compat:` model, to the endpoint you set). A
+redirect from that address is refused, so the request goes nowhere else. Keys come from the environment (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `GEMINI_API_KEY`) or from
+`anthropic_api_key`, `openai_api_key` or `google_api_key` in
+`~/.gbrain/config.json`; `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and
+`GOOGLE_GENERATIVE_AI_BASE_URL` point it at a proxy. The message is sent as
+text to route: only skill ids from your catalog are kept from the reply. A
+refused request (an HTTP 4xx) from the provider itself is not charged to the
+daily cap; through a proxy or a `compat:` endpoint it is, since that endpoint
+may bill it.
+
+### router_fallback: timeout
+
+The picker did not answer within `router_timeout_ms`. Occasional timeouts are
+normal; many mean a slow provider or network. Raise the wait (at most 2500, or 2000 in Claude Code)
+with `gbrain config set skills.resolver.router_timeout_ms 2000`, or pick a
+faster model with `skills.resolver.router_model`.
+
+### router_fallback: provider_error
+
+The provider answered with an error, refused, or could not be reached. Check
+the key and the provider's status; the turn used the word matcher.
+
+### router_fallback: missing_key
+
+No key for the picker's model. Set the provider's key (see Privacy above), or
+set `skills.resolver.router_model` to a model whose key you have. For a
+`compat:` model, the variable `router_api_key_env` names is unset.
+
+### router_fallback: daily_cap
+
+Today's spend (UTC) reached `router_max_usd_per_day`; the word matcher answers
+until 00:00 UTC. `gbrain doctor` shows the spend and the cap. To raise it:
+`gbrain config set skills.resolver.router_max_usd_per_day 1`. A cap below one
+call's largest cost refuses every call, even with nothing spent; raising the
+cap is the fix.
+
+### router_fallback: parse_failed
+
+The reply was not the JSON the picker asks for. One-off failures are harmless;
+if it repeats, the model may not suit the prompt: try the default model.
+
+### router_fallback: no_known_ids
+
+The reply named no skill in your catalog. One-off failures are harmless; if it
+repeats, rebuild the catalog (`gbrain skills index build`) so the picker sees
+current ids.
+
+### router_fallback: config_invalid
+
+A `skills.resolver.router_*` value is out of range. The turn is not refused:
+the picker stays off until the value is fixed or unset
+(`gbrain config unset skills.resolver.router_timeout_ms`).
+
+### router_fallback: no_pricing
+
+gbrain has no price for `router_model`, so the daily cap could not be
+enforced and no call was made. Use a model gbrain prices (the defaults are),
+or for a `compat:` model set `skills.resolver.router_usd_per_mtok`.
+
+### router_fallback: ledger_unavailable
+
+The spend ledger (`skill-index/router-spend.json`) could not be locked or
+written, so no call was made. Check that the directory is writable; a lock
+left by a crashed process clears itself after 2 seconds.
+
 ## The contract (schema_version 1)
 
 The JSON Schemas are checked in under `docs/schemas/`:
@@ -418,7 +566,8 @@ The JSON Schemas are checked in under `docs/schemas/`:
   min_match_strength?, top_gate?, shadow?, expected_catalog_hash?, reset_session?}` for
   `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
-  `meta` is byte-identical for the same index, input and session state.
+  `meta` is byte-identical for the same index, input and session state, except
+  on a turn the model picker answered or was asked, which also carries `router`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
   eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
@@ -433,8 +582,8 @@ Within v1, changes are additive only.
 (`no_skill_reason: "ack"`) or when no word of the turn is in the catalog
 (`"no_match"`). The ranker has no score threshold of its own; `top_gate`
 (below) empties the block when the best match is weak. Each suggestion's `match_strength` says how it matched
-(`named` in the turn, else the first of `name`, `triggers`, `routing`,
-`description`, `body`). `min_match_strength` (`--min-match`) filters
+(`named` in the turn, `picked` by the model picker, else the first of `name`,
+`triggers`, `routing`, `description`, `body`). `min_match_strength` (`--min-match`) filters
 candidates: weaker matches are dropped before the cut to `top_k` and the
 stronger ones still fill the block, so `description` drops body-only matches.
 It is not a gate: in a large catalog some skill almost always matches a
@@ -515,7 +664,7 @@ With `--session <id>` the resolver remembers which skills it suggested:
   trigger or routing match at least 10 turns after it was last suggested;
   whenever the turn names it;
 - the session's blocks share a budget, `skills.resolver.session_token_budget`
-  in `config.json` (default 2,000 tokens; 0 silences the resolver, otherwise
+  in `config.json` (default 8,000 tokens; 0 silences the resolver, otherwise
   100-50,000). k drops to 3 once half is spent and to 1 at 80%; after half,
   only a turn whose top result matched on name, triggers or routing spends
   any. When it is spent, `budget_exhausted` is true on every turn (an
@@ -563,13 +712,16 @@ wins: nothing is published.
 
 ## Privacy and data flow
 
-Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
+With the model picker off (the default) nothing leaves the machine; see
+[Model picker](#model-picker-opt-in) for what it sends when on. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
 (`~/.gbrain/skill-index/` by default):
 
 | Path | Holds |
 |---|---|
 | `<catalog>/index.bin`, `receipt.json` | the index and its receipt (receipt written last) |
 | `<catalog>/source.json` | the `--from-json` snapshot |
+| `<catalog>/picker.json` | each skill's id and description (up to 400 characters), read only by the model picker |
+| `router-spend.json`, `router-spend.json.lock` | the model picker's spend today (UTC), in USD; no turn text |
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
 | `logs/lane-<date>.jsonl`, `logs/resolver-<date>.log` | one line per lane turn, and scrubbed stack traces of unexpected failures; never turn text; one file per day, kept 14 days |

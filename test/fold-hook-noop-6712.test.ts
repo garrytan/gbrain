@@ -38,6 +38,9 @@
  * aggregate and the withdrawal and purge aggregates), the source-path collision read (`ORDER BY slug`) and the config
  * read (`ORDER BY key`); same statements, same order. The PGLite entries were re-captured; the Postgres entries carry the
  * same insertions by hand and have not been re-captured on Postgres.
+ * The managed sync checkpoint moved from sync-prepare.ts's raw UPDATE to the typed advanceSyncCheckpoint member
+ * (engine-sql/sources.ts; rust-engine/sync-checkpoint-callers): the pass stamp's one statement changes text (the member's
+ * parameter order and spacing), same statement, same place; that one entry was re-captured on PGLite and on Postgres.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

@@ -38,6 +38,58 @@ export interface MirrorCounters {
   encode_error: number;
 }
 
+/** `offered` is every call of the class the wrapper saw while mirroring was active (not mirror.ts's queue counter). */
+export interface OpUsage { offered: number; sampled_out: number; shed: number; skipped_in_transaction: number; unmirrorable: number }
+export type UsageField = keyof OpUsage;
+
+export const zeroUsage = (): OpUsage => ({ offered: 0, sampled_out: 0, shed: 0, skipped_in_transaction: 0, unmirrorable: 0 });
+
+/** Counts noted under one evidence epoch (null: no epoch was current). */
+export interface UsageBucket { epoch_id: string | null; ops: Record<string, OpUsage> }
+
+/**
+ * Per-operation call counts, bucketed by the evidence epoch current when each call was noted. The first call of a class
+ * under an epoch is also handed to `register` at once (before sampling decides anything), so the class is on disk even
+ * if the process dies before its next flush.
+ */
+export class UsageMeter {
+  private buckets = new Map<string | null, Record<string, OpUsage>>();
+  private readonly registered = new Set<string>();
+  private hooks: { epoch?: () => string | null; register?: (epoch: string | null, op: string) => void } = {};
+
+  /** Sets where the current epoch comes from and where a first use is written. */
+  bind(hooks: { epoch?: () => string | null; register?: (epoch: string | null, op: string) => void }): void { this.hooks = hooks; }
+
+  note(op: string, field: UsageField): void {
+    const epoch = this.hooks.epoch?.() ?? null;
+    const ops = this.buckets.get(epoch) ?? this.buckets.set(epoch, {}).get(epoch)!;
+    (ops[op] ??= zeroUsage())[field]++;
+    const key = `${epoch}\0${op}`;
+    if (this.registered.has(key)) return;
+    this.registered.add(key);
+    try { this.hooks.register?.(epoch, op); } catch { /* the counts stay in memory for the next flush */ }
+  }
+
+  /** The counts since the last take, one bucket per epoch, or null when there are none. */
+  take(): UsageBucket[] | null {
+    if (this.buckets.size === 0) return null;
+    const out = [...this.buckets].map(([epoch_id, ops]) => ({ epoch_id, ops }));
+    this.buckets = new Map();
+    return out;
+  }
+
+  /** Puts counts back after a take whose write failed, so a full disk delays them and never drops a class. */
+  restore(taken: UsageBucket[]): void {
+    for (const { epoch_id, ops: back } of taken) {
+      const ops = this.buckets.get(epoch_id) ?? this.buckets.set(epoch_id, {}).get(epoch_id)!;
+      for (const [op, u] of Object.entries(back)) {
+        const into = (ops[op] ??= zeroUsage());
+        for (const key of Object.keys(u) as UsageField[]) into[key] += u[key];
+      }
+    }
+  }
+}
+
 /** Where encoded lines go. `send` returns false when the line was not accepted (no child, pipe backed up). */
 export interface MirrorTransport {
   send(line: string): boolean;
@@ -67,6 +119,8 @@ let nextId = 1;
 
 export class MirrorQueue {
   readonly counters: MirrorCounters = newMirrorCounters();
+  /** Per-operation call counts; the serving process flushes them to the usage files (usage.ts). */
+  readonly meter = new UsageMeter();
   private readonly items: CapturedRead[] = [];
   private scheduled = false;
   private sinceStats = 0;
@@ -92,18 +146,21 @@ export class MirrorQueue {
    * Accepts a read or sheds it. `capture` runs synchronously, only when the queue has room, and must return the read
    * already encoded; a throw counts as `encode_error`. Never throws, never awaits.
    */
-  offer(capture: () => CapturedRead): void {
+  offer(capture: () => CapturedRead, op?: string): void {
     if (this.stopped) return;
     this.counters.offered++;
     if (this.items.length >= this.bound) {
       this.counters.shed_queue_full++;
+      if (op) this.meter.note(op, 'shed');
       return;
     }
     let read: CapturedRead;
     try {
       read = capture();
     } catch (error) {
-      this.counters[error instanceof CaptureTooLargeError ? 'shed_too_large' : 'encode_error']++;
+      const tooLarge = error instanceof CaptureTooLargeError;
+      this.counters[tooLarge ? 'shed_too_large' : 'encode_error']++;
+      if (op) this.meter.note(op, tooLarge ? 'shed' : 'unmirrorable');
       return;
     }
     this.items.push(read);
@@ -144,16 +201,18 @@ export class MirrorQueue {
         }) + '\n';
       } catch {
         this.counters.encode_error++;
+        this.meter.note(read.op, 'unmirrorable');
         continue;
       }
       if (Buffer.byteLength(line) > this.maxLineBytes) {
         this.counters.shed_too_large++;
+        this.meter.note(read.op, 'shed');
         continue;
       }
       let accepted = false;
       try { accepted = this.transport.send(line); } catch { accepted = false; }
       if (accepted) this.counters.sent++;
-      else this.counters.shed_transport++;
+      else { this.counters.shed_transport++; this.meter.note(read.op, 'shed'); }
       if (++this.sinceStats >= this.statsEvery) this.flushStats();
     }
     if (this.items.length > 0) this.kick();

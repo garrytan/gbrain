@@ -1,12 +1,12 @@
 /**
  * The scans of `gbrain repair private-labels` (src/core/repair/private-labels.ts) that ran through `executeRaw`: the
  * labelled pages (listLabelledPages), the live rows a restore rereads (listLiveLabelRows) and the pages a window of clears
- * exposes (listClearDependents, over dependentsSql('clear'), whose text lives in repair/label-dependents-sql.ts; origin-carry.ts
+ * exposes (listClearDependents, over dependentsSql('clear'), whose text lives in repair/dependents-sql.ts; origin-carry.ts
  * still runs dependentsSql('remove') itself). Each runs the statement its caller ran, with the
  * same text, parameters and options; only its home moved.
  */
 import { privacyAliasSql } from '../search/private-visibility.ts';
-import { dependentsSql } from '../repair/label-dependents-sql.ts';
+import { dependentsSql } from '../repair/dependents-sql.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import type { EngineRawRead } from './cli-reads-ops.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';

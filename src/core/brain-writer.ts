@@ -38,6 +38,7 @@ import {
 import { DEFAULT_METAFILE_PAGES_MODE, isMarkdownFilePath, isSyncable, pruneDir, readMetafilePagesMode, slugifyPath, type MetafilePagesMode } from './sync.ts';
 import { diskMetafileHeads, metafilePagePredicate } from './sync-metafile-pages.ts';
 import { relativeEscapesRoot } from './path-confine.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 export type { ParseValidationCode };
 
@@ -758,8 +759,9 @@ export async function scanBrainSources(
         } else {
           dbPageCount = await opts.dbPageCountForSource(src.id);
         }
-      } catch {
-        // A throwing COUNT is a failed count, not a deadline verdict.
+      } catch (e) {
+        // A throwing COUNT is a failed count, not a deadline verdict; an engine that cannot count refuses.
+        rethrowCapabilityMissing(e);
         dbPageCount = null;
       }
     }

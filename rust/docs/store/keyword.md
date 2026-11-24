@@ -77,9 +77,10 @@ a page named in `owner_only_marks` is hidden too, and under either form a mark k
 owner-only source is gone. `remove_page` writes the marks the SQL delete trigger writes (v322): when the page being
 deleted is itself owner-only lineage (strict form), it marks that page and each concept or question that names it as a
 `concept-provenance` `synthesized_from` input, so a derivative stays hidden after its owner-only input is deleted for
-good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
-only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
-store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it. The
+good, even when the source is later flipped off. The marks live under `M owner_only_mark/<table>/<row id>`; a page delete
+also marks the page's takes and timeline rows and every row derived from them through `derivation_inputs`. Removing
+only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. A page
+whose recorded inputs reach an owner-only row, transitively, is hidden too ([facts.md, "Derivation inputs"](facts.md#derivation-inputs-generationsderivation_inputsrs)). The
 engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
 
 `ownerOnlyMarkTriggers` (doctor's `owner_only_marks_triggers`, `owner_only_marks.rs` `owner_only_mark_state`) reads the
@@ -180,7 +181,7 @@ that must not change the store they check. It opens the record file through redb
 (`redb_kv.rs` `RedbReadOnlyKv`), which takes no write lock, runs no recovery and commits nothing on close: a plain
 open commits redb's allocator state when it closes, so it changes bytes of `records.redb` even when nothing was
 written. The builder does not run. Every write is refused with `read_only_transaction`, and so is an open that
-would have to write: no records yet, a format before 4 (the upgrade) or an index state to reset. `store_io` names
+would have to write: no records yet, a format before 5 (the upgrade) or an index state to reset. `store_io` names
 a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
 writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
 across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.
@@ -350,8 +351,18 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 - `searchKeywordArm(match, rank, options)`: chunks matching `websearch_to_tsquery(match)`, scored with
   `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
   `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
+  `websearch_to_tsquery` separates words on ASCII whitespace and on the non-ASCII characters of PGLite's
+  `[[:space:]]` class (U+0085, U+2000-U+200A except U+2007, U+2028, U+2029, U+205F, U+3000), as the repository's
+  PGLite (0.4.3) does; PostgreSQL 18 reads only ASCII whitespace there, so the goldens taken from PGLite 0.5.16
+  (PostgreSQL 18.6) hold none of these characters.
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
+
+The search and query ops check the `where` filter once more on their finished rows (`keepFrontmatterMatches`), since
+some arms add pages outside the filtered statements. `filterPageIdsByFrontmatter(ids, where)` (`keyword/frontmatter_ids.rs`)
+answers that check: the ids, ascending, whose page frontmatter holds every key, by the same `frontmatter_holds` rule as
+the keyword and vector filters. Like the SQL (`SELECT p.id FROM pages p WHERE p.id = ANY($1)` plus the containment
+clauses), it reads every page row, a soft-deleted one included.
 
 The core BM25 member (`store-members/search.ts`) is gone; its napi method and `Store::search_keyword` stay, unused.
 
@@ -425,7 +436,7 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `searchKeywordChunks` lets image chunks match, as both SQL engines do; the paging members keep text chunks only.
 - `where` compares a JSON number with a number through f64, where Postgres compares `numeric` exactly; numbers past
   2^53 can match differently.
-- `message_id` is blank when it is only ASCII `[[:space:]]`, as the SQL trims it; other Unicode spaces count as text.
+- `message_id` is blank when it is only `[[:space:]]` as PGLite reads it (U+0085, U+2003 and U+3000 count; U+00A0 does not), as the SQL trims it.
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead

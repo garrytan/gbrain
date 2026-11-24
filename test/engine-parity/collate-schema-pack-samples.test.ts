@@ -12,8 +12,8 @@
  *    Postgres runs in C.UTF-8. Every case here uses keys that differ by byte and by en_US; run it against an en_US
  *    Postgres to see it fail.
  *  - Seam: pages are written with putPage; the orphan case blanks their type with harness-only SQL. No schema pack is
- *    active, so the cores take their pack-less path. The retype, orphan and alias cores read raw SQL, so the Rust arm
- *    stops on its raw_sql refusal there; the link core reads the typed listTypePageBodies, so it runs on every arm.
+ *    active, so the cores take their pack-less path. Every core reads raw SQL, so the Rust arm stops on its raw_sql
+ *    refusal.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -46,30 +46,33 @@ async function pages(engine: BrainEngine, sourceId = 'default') {
 }
 
 describe('schema-pack previews list pages by byte', () => {
-  parityTest('runRetypeCore samples slugs by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('runRetypeCore samples slugs by byte', { methods: ['putPage', 'probeRetypeRows'] }, async (engine) => {
     await pages(engine);
     const result = await runRetypeCore(ctxFor(engine), { rules: [{ from_type: TYPE, to_type: 'note' }], sourceId: 'default' });
     expect(result.per_rule[0]!.sample_slugs).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('findTypeOrphans lists sources, then slugs, by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('findTypeOrphans lists sources, then slugs, by byte', { methods: ['putPage', 'countLivePagesByType', 'listTypeOrphanRows'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       await pages(engine, id);
+      // The same pages written again with no type (an empty frontmatter type).
+      for (const slug of MIXED_SLUGS) {
+        await engine.putPage(slug, { type: '' as never, title: slug, compiled_truth: `${slug} body`, timeline: '', frontmatter: { canonical: TARGET } }, { sourceId: id });
+      }
     }
-    await engine.executeRaw(`UPDATE pages SET type = '' WHERE type = $1`, [TYPE]);
     const result = await findTypeOrphans(engine, null, { sourceIds: MIXED_SOURCES }, 100);
     expect(result.orphans.map(o => [o.source_id, o.slug])).toEqual(byteOrder(MIXED_SOURCES).flatMap(id => BYTE_SLUGS.map(slug => [id, slug])));
   });
 
-  parityTest('runPageToAliasCore samples slugs by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('runPageToAliasCore samples slugs by byte', { methods: ['putPage', 'listAliasCandidatePages'] }, async (engine) => {
     await pages(engine);
     const result = await runPageToAliasCore(ctxFor(engine), {
       rules: [{ from_type: TYPE, canonical_from: { frontmatter_field: 'canonical' }, alias_slug_from: 'slug' }] });
     expect(result.per_rule[0]!.sample_slugs).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('runPageToLinkCore samples slugs by byte', { methods: ['putPage', 'listTypePageBodies'] }, async (engine) => {
+  parityTest('runPageToLinkCore samples slugs by byte', { methods: ['putPage', 'listLinkCandidatePages'] }, async (engine) => {
     await pages(engine);
     const result = await runPageToLinkCore(ctxFor(engine), { rules: [{ from_type: TYPE, link_type: 'mentions',
       source_slug_from: 'slug', target_slug_from: { frontmatter_field: 'canonical' } }], sourceId: 'default' });

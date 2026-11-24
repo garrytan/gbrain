@@ -83,14 +83,5 @@ export const detachFenceRowFacts: Member<'detachFenceRowFacts'> = (brain, source
 export const hasDatabaseOnlyClaim: Member<'hasDatabaseOnlyClaim'> = (brain, sourceId, entitySlug, fact) =>
   storeCall({ member: 'hasDatabaseOnlyClaim' }, () => brain.hasDatabaseOnlyClaim({ sourceId, entitySlug, fact }));
 
-export const listCheckoutFilePages: Member<'listCheckoutFilePages'> = (brain, pageIds) =>
-  storeCall({ member: 'listCheckoutFilePages' }, () => brain.listCheckoutFilePages(wholeIds('listCheckoutFilePages', pageIds)));
-
-export const listTypePageBodies: Member<'listTypePageBodies'> = (brain, opts) => {
-  if (!Number.isSafeInteger(opts.limit) || opts.limit < 1) refuseMember('listTypePageBodies', 'a limit that is not a whole number of at least 1');
-  return storeCall({ member: 'listTypePageBodies' }, () =>
-    brain.listTypePageBodies({ type: opts.type, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), limit: opts.limit }));
-};
-
 export const readSourceCloneRow: Member<'readSourceCloneRow'> = (brain, sourceId) =>
   storeCall({ member: 'readSourceCloneRow' }, () => brain.readSourceCloneRow(sourceId));

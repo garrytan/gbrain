@@ -394,3 +394,89 @@ fn busy_rows_read_cursor_text_and_held_paths() {
     assert!(rows.pending.is_empty());
     assert!(busy("a-src", "stale").cursors.is_empty());
 }
+
+#[test]
+fn a_fence_trend_run_row_is_stored_then_rewritten_keeping_the_day_of_its_first_write() {
+    let dir = TempDir::new("fence-trend-run");
+    let store = open(&dir);
+    let op = "fence-trend";
+    let read =
+        |fp: &str| store.read_op_checkpoint_record(op, fp, None).unwrap()["completed_keys"].clone();
+    store
+        .upsert_fence_trend_run_record(op, "s:run:r1", &json!({ "day": "2026-10-05", "count": 3 }))
+        .unwrap();
+    assert_eq!(
+        read("s:run:r1"),
+        json!([{ "day": "2026-10-05", "count": 3 }])
+    );
+    store
+        .upsert_fence_trend_run_record(op, "s:run:r1", &json!({ "day": "2026-10-06", "count": 5 }))
+        .unwrap();
+    assert_eq!(
+        read("s:run:r1"),
+        json!([{ "day": "2026-10-05", "count": 5 }])
+    );
+    // A parent whose first record has no day takes a null day, as the statement's missing key does.
+    store
+        .write_op_checkpoint_record(op, "s:run:r2", Some(&json!([{ "count": 1 }])))
+        .unwrap();
+    store
+        .upsert_fence_trend_run_record(op, "s:run:r2", &json!({ "day": "2026-10-06", "count": 2 }))
+        .unwrap();
+    assert_eq!(read("s:run:r2"), json!([{ "day": null, "count": 2 }]));
+    assert!(
+        store
+            .upsert_fence_trend_run_record(op, "s:run:r3", &json!([1]))
+            .is_err()
+    );
+}
+
+#[test]
+fn an_op_checkpoint_inserts_once_and_replaces_only_at_its_version() {
+    let dir = TempDir::new("op-checkpoint-cas");
+    let store = open(&dir);
+    let op = "fence-repair-attempt";
+    assert!(
+        store
+            .insert_op_checkpoint_if_absent(op, "fp", &json!([{ "v": 1 }]))
+            .unwrap()
+    );
+    assert!(
+        !store
+            .insert_op_checkpoint_if_absent(op, "fp", &json!([{ "v": 9 }]))
+            .unwrap()
+    );
+    assert!(
+        !store
+            .replace_op_checkpoint_at_version(op, "fp", &json!([{ "v": 2 }]), 7)
+            .unwrap()
+    );
+    assert!(
+        store
+            .replace_op_checkpoint_at_version(op, "fp", &json!([{ "v": 2 }]), 1)
+            .unwrap()
+    );
+    assert!(
+        !store
+            .replace_op_checkpoint_at_version(op, "missing", &json!([{ "v": 1 }]), 0)
+            .unwrap()
+    );
+    store
+        .write_op_checkpoint_record(op, "nov", Some(&json!([{ "state": "x" }])))
+        .unwrap();
+    assert!(
+        !store
+            .replace_op_checkpoint_at_version(op, "nov", &json!([{ "v": 1 }]), 0)
+            .unwrap()
+    );
+    store
+        .write_op_checkpoint_record(op, "bad", Some(&json!([{ "v": "x1" }])))
+        .unwrap();
+    assert!(
+        store
+            .replace_op_checkpoint_at_version(op, "bad", &json!([{ "v": 1 }]), 0)
+            .is_err()
+    );
+    let kept = store.read_op_checkpoint_record(op, "fp", None).unwrap();
+    assert_eq!(kept["completed_keys"], json!([{ "v": 2 }]));
+}

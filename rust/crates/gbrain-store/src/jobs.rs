@@ -70,6 +70,7 @@ mod attachments;
 mod checks;
 mod client_grants;
 mod credential_binding;
+mod doctor_credentials;
 mod drain_lease;
 mod facts_extraction;
 mod health;
@@ -108,7 +109,7 @@ use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
-pub(crate) use oauth_clients::{remove_client, seed_client};
+pub(crate) use oauth_clients::{carry_over_format_5_clients, remove_client, seed_client};
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;
 pub use private_queues::PrivateQueueState;
@@ -735,6 +736,26 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
         true
     })?;
     Ok(ids)
+}
+
+/// Calls `f` on each row with `status` as it loads, in id order. The row is dropped when `f` returns, so a caller that
+/// filters keeps only what it projects: one row's payload is held at a time, not the whole status.
+fn for_each_row_with_status(
+    read: &dyn KvRead,
+    status: &str,
+    f: &mut dyn FnMut(&JobRecord),
+) -> Result<()> {
+    for id in ids_under(read, &status_prefix(status))? {
+        if let Some(row) = load(read, id)? {
+            f(&row);
+        }
+    }
+    Ok(())
+}
+
+/// The `minion_jobs` rows with `status='active'`.
+pub(crate) fn active_job_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
+    rows_with_status(read, "active")
 }
 
 fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {

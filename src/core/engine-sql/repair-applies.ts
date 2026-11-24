@@ -161,17 +161,6 @@ export async function listPageAccessKeys(raw: EngineRawRead, pageIds: readonly n
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The label writes' checkout probe (src/core/repair/label-write.ts filesInCheckout)
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** The named pages with a recorded file (`source_path`), with their source's checkout path (null without one). */
-export async function listCheckoutFilePages(raw: EngineRawRead, pageIds: readonly number[], timeoutMs: number):
-  Promise<Array<{ id: number; source_id: string; source_path: string; local_path: string | null }>> {
-  return raw<{ id: number; source_id: string; source_path: string; local_path: string | null }>(`SELECT p.id, p.source_id, p.source_path, s.local_path
-    FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($1::integer[]) AND p.source_path IS NOT NULL`, [[...pageIds]], { timeoutMs });
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
 // url-clone-fences (src/core/repair/url-clone-fences.ts keepRowsDatabaseOnly)
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -196,22 +185,4 @@ export async function hasDatabaseOnlyClaim(raw: EngineRawRead, sourceId: string,
 export async function readSourceCloneRow(raw: EngineRawRead, sourceId: string): Promise<{ local_path: string | null; config: unknown } | null> {
   const [row] = await raw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1', [sourceId]);
   return row ?? null;
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
-// The page-to-link conversion's page read (src/core/schema-pack/page-to-link.ts runPageToLinkCore)
-// ---------------------------------------------------------------------------------------------------------------------
-
-/** A live page of one type with the fields the conversion resolves its slugs from. `compiled_truth` is null for a segmented page. */
-export interface TypePageBody { slug: string; compiled_truth: string | null; frontmatter: Record<string, unknown> | string | null }
-
-/** The live pages of `type` (in `sourceId` when given), by slug then id in byte order, up to `limit` (1 to 50000). */
-export async function listTypePageBodies(raw: EngineRawRead, opts: { type: string; sourceId?: string; limit: number }): Promise<TypePageBody[]> {
-  const limit = opts.limit;
-  if (!Number.isFinite(limit) || !Number.isSafeInteger(limit) || limit < 1) throw new Error(`listTypePageBodies: limit must be a whole number of at least 1, got ${limit}`);
-  const where = opts.sourceId
-    ? sqlFragment`WHERE deleted_at IS NULL AND type = ${opts.type} AND source_id = ${opts.sourceId}`
-    : sqlFragment`WHERE deleted_at IS NULL AND type = ${opts.type}`;
-  const { text, params } = renderFragment(sqlFragment`SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C", id LIMIT ${trustedSql(`${limit}`)}`);
-  return raw<TypePageBody>(text, params);
 }

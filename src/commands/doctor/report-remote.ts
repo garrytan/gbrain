@@ -69,11 +69,38 @@ import { managedPersistenceEnabled } from '../../core/persistence/ownership.ts';
 import { checkSynopsisTierCoverage } from './checks/synopsis-coverage.ts';
 import { brainScorePlanFix, checkError } from './check-fix.ts';
 import type { RenderContext } from '../../core/agent-output.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from './budget.ts';
 
 // Same alias the local doctor keeps for its own freshness checks; the alias
 // is a private one-liner in doctor.ts's check-fn library, so this module
 // carries its own copy rather than widening that surface.
 const _resolveSyncFreshnessHours = resolveHoursEnv;
+
+/**
+ * v0.42.x Life Chronicle (#2390): orphaned event projections. Reads already hide projections whose event page is
+ * soft-deleted (read-time correctness); this always-run probe surfaces the cleanup backlog, from the typed count, so a
+ * Rust brain answers it. A scoped caller counts only its own sources' projections.
+ */
+export async function chronicleProjectionHealthCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
+  try {
+    // Source isolation: a scoped caller counts only its own sources' projections.
+    // The typed count (engine-sql/doctor-tallies.ts), so a Rust brain answers it.
+    const n = await engine.countOrphanEventProjections(sourceIds ?? null);
+    return n === 0
+      ? { name: 'chronicle_projection_health', status: 'ok', message: 'No orphaned event projections' }
+      : {
+          name: 'chronicle_projection_health',
+          status: 'warn',
+          message:
+            `${n} timeline projection(s) point to soft-deleted event pages ` +
+            '(hidden at read time; clean up with `gbrain integrity auto`).',
+        };
+  } catch (e) {
+    const refusal = capabilityRefusal(e);
+    return refusal ? capabilityUnknownCheck('chronicle_projection_health', refusal)
+      : { name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' };
+  }
+}
 
 export async function doctorReportRemote(
   engine: BrainEngine,
@@ -177,30 +204,7 @@ export async function doctorReportRemote(
   // this always-run probe surfaces the cleanup backlog. Keyed off the real
   // schema (event_page_id), NOT a migration verify-hook, per
   // migration-verify-hook-never-runs-on-stamped-brains.
-  try {
-    // Source isolation: a scoped caller counts only its own sources' projections.
-    const orphans = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM timeline_entries te
-       JOIN pages ep ON ep.id = te.event_page_id
-       WHERE te.event_page_id IS NOT NULL AND ep.deleted_at IS NOT NULL
-         ${opts.sourceIds ? 'AND ep.source_id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
-    const n = Number(orphans[0]?.n ?? 0);
-    checks.push(
-      n === 0
-        ? { name: 'chronicle_projection_health', status: 'ok', message: 'No orphaned event projections' }
-        : {
-            name: 'chronicle_projection_health',
-            status: 'warn',
-            message:
-              `${n} timeline projection(s) point to soft-deleted event pages ` +
-              '(hidden at read time; clean up with `gbrain integrity auto`).',
-          },
-    );
-  } catch {
-    checks.push({ name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' });
-  }
+  checks.push(await chronicleProjectionHealthCheck(engine, opts.sourceIds));
 
   // 3. Brain score (#4592: same scope as the connection count above)
   try {

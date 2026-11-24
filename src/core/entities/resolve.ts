@@ -30,7 +30,7 @@ import { slugifySegment } from '../sync.ts';
 /** Lazy: the mentions graph stays out of the OpenClaw plugin's static import graph. */
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
-import { isMissingSchemaObject } from '../utils.ts';
+import { isMissingSchemaObject, normalizeSlug } from '../utils.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { BASENAME_DIRS, PREFIX_EXPANSION_DIRS } from './basename-dirs.ts';
 
@@ -68,8 +68,9 @@ export async function resolveEntitySlug(
 
   // 1. Exact match on slug. If raw already looks like a slug (or matches
   //    a row exactly), use it.
-  if (looksLikeSlug(trimmed)) {
-    const exact = await tryExactSlug(engine, source_id, trimmed);
+  const slugForm = exactSlugForm(trimmed);
+  if (looksLikeSlug(slugForm)) {
+    const exact = await tryExactSlug(engine, source_id, slugForm);
     if (exact) return exact.retired ? (await followRetirement(engine, source_id, exact.slug))?.slug ?? fallbackSlugify(trimmed) : exact.slug;
   }
 
@@ -111,7 +112,23 @@ export async function resolveEntitySlug(
   }
 
   // 4. Fallback: deterministic slugify.
-  return fallbackSlugify(trimmed);
+  return await accentedSlugFallback(engine, source_id, trimmed) ?? fallbackSlugify(trimmed);
+}
+
+/**
+ * C1 (memory-07): a path-shaped reference with letters beyond ASCII that is a
+ * well-formed slug once normalized (`people/ünal-example`) names the slug
+ * put_page stores for it, accents kept, so facts saved before the page exists
+ * land where the page will be. The accent-folded form fallbackSlugify mints
+ * (`people/unal-example`) still wins when a live page already holds it (a page
+ * imported from a file, whose slug sync folds). Null for any other reference.
+ */
+async function accentedSlugFallback(engine: BrainEngine, source_id: string, trimmed: string): Promise<string | null> {
+  const slugForm = storedSlugForm(trimmed);
+  if (!trimmed.includes('/') || !/[^\x00-\x7f]/.test(slugForm) || !looksLikeSlug(slugForm)) return null;
+  const folded = fallbackSlugify(trimmed);
+  if (folded && folded !== slugForm && (await tryExactSlug(engine, source_id, folded))?.retired === false) return folded;
+  return slugForm;
 }
 
 /**
@@ -392,8 +409,9 @@ export async function resolveEntitySlugWithSource(
   if (!trimmed) return null;
 
   // Mirror resolveEntitySlug's resolution chain but tag each branch.
-  if (looksLikeSlug(trimmed)) {
-    const exact = await tryExactSlug(engine, source_id, trimmed);
+  const slugForm = exactSlugForm(trimmed);
+  if (looksLikeSlug(slugForm)) {
+    const exact = await tryExactSlug(engine, source_id, slugForm);
     if (exact) {
       const canonical = exact.retired ? (await followRetirement(engine, source_id, exact.slug))?.slug : exact.slug;
       return canonical ? { slug: canonical, source: 'exact_page' } : fallbackResult(trimmed);
@@ -422,7 +440,8 @@ export async function resolveEntitySlugWithSource(
     if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };
   }
 
-  return fallbackResult(trimmed);
+  const accented = await accentedSlugFallback(engine, source_id, trimmed);
+  return accented ? { slug: accented, source: 'fallback_slugify' } : fallbackResult(trimmed);
 }
 
 function fallbackResult(trimmed: string): ResolveResult | null {
@@ -487,8 +506,8 @@ export async function resolveStrictEntityReference(
     return await isEntity(rows[0]) ? { slug: rows[0].slug, arm } : { slug: null, miss: 'not_entity' };
   };
 
-  if (looksLikeSlug(trimmed)) {
-    const exact = await pick(await live([trimmed]), 'exact_page');
+  if (looksLikeSlug(exactSlugForm(trimmed))) {
+    const exact = await pick(await live([exactSlugForm(trimmed)]), 'exact_page');
     if (exact) return exact;
   }
   const token = slugify(trimmed);
@@ -744,6 +763,21 @@ async function tryPrefixExpansion(
     }
   }
   return null;
+}
+
+/**
+ * The form an exact slug lookup uses: a path-shaped reference with its accents
+ * composed (a decomposed `people/zoe\u0308-example` → NFC, the form writes store);
+ * any other reference unchanged. Case is kept, so mixed-case input still skips the
+ * exact-match path (#5421) and reaches the fallback, which lowercases it.
+ */
+function exactSlugForm(trimmed: string): string {
+  return trimmed.includes('/') ? trimmed.normalize('NFC') : trimmed;
+}
+
+/** The slug put_page would store for a path-shaped reference (normalizeSlug: lowercase + NFC). */
+function storedSlugForm(trimmed: string): string {
+  return trimmed.includes('/') ? normalizeSlug(trimmed) : trimmed;
 }
 
 export function looksLikeSlug(s: string): boolean {

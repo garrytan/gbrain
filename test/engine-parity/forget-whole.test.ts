@@ -130,8 +130,9 @@ describe('a whole forget', () => {
 
   // Known gap until rust-engine/segment-embed reaches main: on a segmented page the forget's withdrawal rewrites the
   // live fence through rewriteLiveSegmentedFences (page-body/segment-rewrite.ts:174, called from facts/withdrawal.ts),
-  // which reads the page with raw SQL. On Rust the write is accepted and stays queued, so the operation answers
-  // write_pending and the claim is not expired. The case then runs that one rewrite, so it ends on the raw_sql refusal
+  // which reads the page with raw SQL. On Rust the write is accepted and its publication is refused; it stays queued
+  // (write_pending) or, once the capability retry limit is spent (persistence/capability-retry.ts), ends failed with
+  // writeError engine_capability_missing, and the claim is not expired. The case then runs that one rewrite, so it ends on the raw_sql refusal
   // the queued write is held on and counts as stopped in rust-tally.tsv. Once Rust commits, the case compares equal and
   // the tally row changes, so the flip cannot be missed.
   parityTest('the forget operation on a segmented page commits and expires the claim (Rust: write_pending, pinned)',
@@ -153,7 +154,8 @@ describe('a whole forget', () => {
       try {
         state = (await operationsByName.forget.handler(ctx, { id: String(target!.id), request_id: randomUUID(), wait_ms: 30_000 }) as Record<string, unknown>).state;
       } catch (e) {
-        if ((e as { writeError?: string }).writeError !== 'write_pending' || engine.kind !== 'rust') throw e;
+        const writeError = (e as { writeError?: string }).writeError;
+        if ((writeError !== 'write_pending' && writeError !== 'engine_capability_missing') || engine.kind !== 'rust') throw e;
         expect(await facts()).toEqual([{ fact: CLAIMS[0], expired: false }, { fact: CLAIMS[1], expired: false }]);
         await rewriteLiveSegmentedFences(engine, pageId, async fence => fence);
         throw new Error('rewriteLiveSegmentedFences ran on Rust; the queued forget should commit now, so remove this branch');

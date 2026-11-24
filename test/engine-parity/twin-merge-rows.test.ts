@@ -1,7 +1,7 @@
 /**
  * BrainEngine parity — the row moves of the twin merge (`mergeTwinInto`, src/core/persistence/twin-merge.ts) over the
- * typed members of src/core/engine-sql/twin-merge.ts: listPageRelationshipKeys, moveTwinRelations, moveTwinPageRows,
- * moveTwinFacts and recordSlugRename.
+ * typed members of src/core/engine-sql/twin-merge-moves.ts (moveTwinRelationships, moveTwinPageChildren, moveTwinFacts)
+ * and the rename alias the merge records (recordRenameAlias).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on PGLite, Postgres (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1), merging a twin that
@@ -11,7 +11,8 @@
  *    the twin's evidence moves to the survivor, repeats stay on the twin (read after a restore), the twin is
  *    soft-deleted and its slug resolves to the survivor through slug_aliases.
  *  - Regression: these statements ran through `executeRaw` in twin-merge.ts and rename-alias.ts, so a Rust brain
- *    refused `gbrain repair legacy-twins`, `origin-twins` and `moved-pages` merges by name.
+ *    refused `gbrain repair legacy-twins`, `origin-twins` and `moved-pages` merges by name. The rename alias case also
+ *    shows the slug rename the merge records (slug_aliases) reads the same on every arm.
  *  - Why existing coverage misses it: test/origin-twins*.test.ts and test/repair-legacy-twins-6885.test.ts run on
  *    PGLite only, and the legacy-twins parity case merges a pair that holds no relationship rows.
  *  - A move onto a page that does not exist is refused on every arm and leaves the twin's rows in place (the foreign
@@ -49,7 +50,7 @@ async function rowsOf(engine: BrainEngine, slug: string) {
 describe('engine parity: the twin merge row moves', () => {
   parityTest('mergeTwinInto moves the twin\'s evidence to the survivor and keeps repeats on the twin', {
     methods: ['putPage', 'addLink', 'writeManualLinkTransitions', 'addTimelineEntry', 'putRawData', 'upsertFile', 'setPageAliases', 'addTag',
-      'insertFacts', 'listPageRelationshipKeys', 'moveTwinRelations', 'moveTwinPageRows', 'moveTwinFacts', 'recordSlugRename', 'listSlugAliases',
+      'insertFacts', 'moveTwinRelationships', 'moveTwinPageChildren', 'moveTwinFacts', 'recordRenameAlias', 'listSlugAliases',
       'resolveAliases', 'listActiveFactsForEntity', 'restorePage'],
     timeout: 60_000,
   }, async (engine) => {
@@ -108,8 +109,8 @@ describe('engine parity: the twin merge row moves', () => {
     };
   });
   parityTest('each row-move member answers alike when called on its own', {
-    methods: ['putPage', 'addLink', 'addTimelineEntry', 'insertFacts', 'listPageRelationshipKeys', 'moveTwinRelations', 'moveTwinPageRows',
-      'moveTwinFacts', 'recordSlugRename', 'listSlugAliases', 'getTimeline'],
+    methods: ['putPage', 'addLink', 'addTimelineEntry', 'insertFacts', 'moveTwinRelationships', 'moveTwinPageChildren',
+      'moveTwinFacts', 'recordRenameAlias', 'listSlugAliases', 'getTimeline'],
     timeout: 60_000,
   }, async (engine) => {
     for (const slug of ['people/cy', 'people/cy-twin', 'companies/acme']) await engine.putPage(slug, page(slug), { sourceId: S });
@@ -122,21 +123,22 @@ describe('engine parity: the twin merge row moves', () => {
       .map(k => `${k.from_page_id === survivorId ? 'survivor' : k.from_page_id === twinId ? 'twin' : k.from_page_id === acmeId ? 'acme' : '?'}>`
         + `${k.to_page_id === acmeId ? 'acme' : '?'}:${k.link_type}`).sort();
     return engine.transaction(async (tx) => {
-      const before = named(await tx.listPageRelationshipKeys([twinId]));
-      const relations = await tx.moveTwinRelations(twinId, survivorId);
-      const tags = await tx.moveTwinPageRows({ sourceId: S, twinId, survivorId, twinSlug: 'people/cy-twin', survivorSlug: 'people/cy' });
+      const relations = await tx.moveTwinRelationships({ twinId, survivorId });
+      const before = named(relations.before);
+      const tags = await tx.moveTwinPageChildren({ sourceId: S, twinId, survivorId, twinSlug: 'people/cy-twin', survivorSlug: 'people/cy' });
       const facts = (await tx.moveTwinFacts(S, 'people/cy-twin', 'people/cy')).length;
-      await tx.recordSlugRename(S, 'people/cy-twin', 'people/cy');
-      const after = named(await tx.listPageRelationshipKeys([survivorId]));
+      await tx.recordRenameAlias(S, 'people/cy-twin', 'people/cy');
+      const after = named(relations.after);
       const aliases = (await tx.listSlugAliases(S)).map(a => `${a.alias_slug}>${a.canonical_slug}`).sort();
       expect({ before, after, facts, aliases }).toEqual({ before: ['twin>acme:works_at'], after: ['survivor>acme:works_at'], facts: 1,
         aliases: ['people/cy-twin>people/cy'] });
-      return { before, relations: { ...relations, links_moved: relations.links_moved.length }, tags, facts, after, aliases,
+      return { before, relations: { links_moved: relations.linksMoved.length, transitions_moved: relations.transitionsMoved, deduplicated: relations.deduplicated },
+        tags, facts, after, aliases,
         timeline: (await tx.getTimeline('people/cy', { sourceId: S })).map(t => t.summary) };
     });
   });
   parityTest('a move onto a page that does not exist is refused and changes nothing', {
-    methods: ['putPage', 'addLink', 'addTimelineEntry', 'moveTwinRelations', 'moveTwinPageRows', 'getLinks', 'getTimeline'],
+    methods: ['putPage', 'addLink', 'addTimelineEntry', 'moveTwinRelationships', 'moveTwinPageChildren', 'getLinks', 'getTimeline'],
     timeout: 60_000,
   }, async (engine) => {
     for (const slug of ['people/dee-twin', 'companies/acme']) await engine.putPage(slug, page(slug), { sourceId: S });
@@ -145,8 +147,8 @@ describe('engine parity: the twin merge row moves', () => {
     const twinId = await idOf(engine, 'people/dee-twin');
     const missing = 999_999;
     const refused = async (run: () => Promise<unknown>) => run().then(() => false, () => true);
-    const relations = await refused(() => engine.moveTwinRelations(twinId, missing));
-    const rows = await refused(() => engine.moveTwinPageRows({ sourceId: S, twinId, survivorId: missing, twinSlug: 'people/dee-twin', survivorSlug: 'people/nobody' }));
+    const relations = await refused(() => engine.moveTwinRelationships({ twinId, survivorId: missing }));
+    const rows = await refused(() => engine.moveTwinPageChildren({ sourceId: S, twinId, survivorId: missing, twinSlug: 'people/dee-twin', survivorSlug: 'people/nobody' }));
     const links = (await engine.getLinks('people/dee-twin', { sourceId: S })).map(l => `${l.from_slug}>${l.to_slug}`);
     const timeline = (await engine.getTimeline('people/dee-twin', { sourceId: S })).map(t => t.summary);
     expect({ relations, rows, links, timeline }).toEqual({ relations: true, rows: true, links: ['people/dee-twin>companies/acme'], timeline: ['Joined'] });

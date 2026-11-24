@@ -62,8 +62,10 @@ import { digest } from '../persistence/digest.ts';
 import { modeRequiresSynopsis } from '../embedding-context.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { PRIVACY_ALIASES, readHonorAliases } from '../search/private-visibility.ts';
+import { PRIVACY_ALIASES, privacyAliasSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { asciiLower } from '../edge-whitespace.ts';
+import { dependentsSql } from './dependents-sql.ts';
+export { dependentsSql };
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement } from './core.ts';
 import { requireRawSql } from '../rust-engine/errors.ts';
 
@@ -219,9 +221,6 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
   entries.sort((a, b) => a.page_id - b.page_id);
   return { counts: counts as Record<string, number>, entries, unreadable };
 }
-
-/** The dependents statement and its naming helper moved to engine-sql/private-label-scans.ts; re-exported for their callers. */
-export { dependentsSql } from './label-dependents-sql.ts';
 
 type Dependents = { derived_from: number; atom: number; concept: number; life_chronicle: number };
 

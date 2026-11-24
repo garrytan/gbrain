@@ -144,7 +144,7 @@ async function strictBrain<T>(engine: BrainEngine, body: (root: string) => Promi
 describe('engine parity: repair kind previews of batch 4.3a', () => {
   parityTest('the visibility, open-facts, open-twins and label-write members answer the same rows on every arm', {
     methods: ['putPage', 'insertFacts', 'insertSource', 'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages',
-      'listOpenTwinRows', 'listCheckoutFilePages', 'listPageAccessKeys', 'tightenDatabaseFactVisibility', 'listTypePageBodies', 'listOpenFactsWindow',
+      'listOpenTwinRows', 'listCheckoutFiles', 'listPageAccessKeys', 'tightenDatabaseFactVisibility', 'listLinkCandidatePages', 'listOpenFactsWindow',
       'countOpenFactReasons', 'listContextualRetrievalModes', 'listUnembeddedChunkPages'], timeout: 60_000,
   }, async (engine) => {
     const origin = await engine.putPage('notes/origin', note('Origin', { visibility: 'private' }), { sourceId: 'default' });
@@ -164,9 +164,9 @@ describe('engine parity: repair kind previews of batch 4.3a', () => {
       events: drop(await engine.listChronicleEventVisibilityRows(['default'], null, 60_000)),
       aliases: drop(await engine.listAliasOnlyPrivatePages(['default'], null, 60_000)),
       twins: await engine.listOpenTwinRows([{ source_id: 'default', slug: 'notes/origin' }], [{ identity: [], satisfied: [] }]),
-      checkout: await engine.listCheckoutFilePages([origin.id, atom.id], 60_000),
+      checkout: await engine.listCheckoutFiles([origin.id, atom.id]),
       access: (await engine.listPageAccessKeys([origin.id, atom.id])).map(r => ({ ...r, id: r.id === origin.id ? 'origin' : 'atom' })),
-      typePages: (await engine.listTypePageBodies({ type: 'atom', limit: 10 })).map(r => r.slug),
+      typePages: (await engine.listLinkCandidatePages('atom', undefined, 10)).map(r => r.slug),
       modes: await engine.listContextualRetrievalModes([origin.id, atom.id], 60_000),
       unembedded: (await engine.listUnembeddedChunkPages([origin.id, atom.id], 60_000)).map(id => (id === origin.id ? 'origin' : 'atom')),
     };

@@ -404,7 +404,14 @@ gbrain stats | grep -E 'links|timeline'
 
 # 8. JSONB integrity (Postgres only, PGLite always 0)
 gbrain repair-jsonb --dry-run --json
+
+# 9. A brain several people use: every shared source, labelled page and live key still reaches someone
+gbrain doctor --only access_shared_source_unread,access_pages_read_by_nobody,access_disabled_member_credentials --json
 ```
 
-If all eight return successfully, the installation is healthy. For the full
+If all eight return successfully (and, on a brain several people use, step 9
+reports ok), the installation is healthy. On a brain keyless on purpose
+(`--no-embedding`), step 4's search is keyword-only and carries no
+`[gbrain degraded: …]` stamp; an empty result there means no page you can read holds
+those words ([troubleshooting](guides/troubleshooting.md#keyless-by-choice-search)). For the full
 end-to-end sync test (4c), push a real change and verify it appears in search.

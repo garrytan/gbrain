@@ -96,17 +96,6 @@ pub struct AccessKeyArgs {
     pub honor_aliases: bool,
 }
 
-/// `listTypePageBodies({ type, sourceId, limit })`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TypePageQuery {
-    #[serde(rename = "type")]
-    pub page_type: String,
-    #[serde(default)]
-    pub source_id: Option<String>,
-    pub limit: i64,
-}
-
 /// One row of `moveFactClaimDates`: the fact, the `valid_from` the preview read and the claim's day.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -526,60 +515,6 @@ impl Store {
             }));
         }
         Ok(out)
-    }
-
-    /// `listCheckoutFilePages(ids)`: the named pages with a recorded `source_path`, as `{ id, source_id, source_path,
-    /// local_path }` (the source's checkout path, null without one), by id.
-    pub fn list_checkout_file_pages(&self, ids: &[f64]) -> Result<Vec<Value>> {
-        let ids = id_set("listCheckoutFilePages", ids)?;
-        let read = self.read()?;
-        let mut out = Vec::new();
-        for id in ids {
-            let Some(page) = crate::pages::read_page_by_id(&*read, id)? else {
-                continue;
-            };
-            let (Some(path), Some(source)) = (
-                page.source_path.as_ref(),
-                read_source(&*read, &page.source_id)?,
-            ) else {
-                continue;
-            };
-            out.push(json!({ "id": page.id, "source_id": page.source_id, "source_path": path, "local_path": source.local_path }));
-        }
-        Ok(out)
-    }
-
-    /// `listTypePageBodies({ type, sourceId, limit })`: `{ slug, compiled_truth, frontmatter }` of the live pages of
-    /// one type (in one source when given), by slug then id in byte order, up to `limit` (the body null for a segmented
-    /// page).
-    pub fn list_type_page_bodies(&self, q: &TypePageQuery) -> Result<Vec<Value>> {
-        const OP: &str = "listTypePageBodies";
-        let mut parts = vec![("type", q.page_type.as_str())];
-        if let Some(id) = &q.source_id {
-            parts.push(("sourceId", id.as_str()));
-        }
-        no_nul(OP, &parts)?;
-        let limit = usize::try_from(q.limit)
-            .map_err(|_| StoreError::invalid(format!("{OP}: limit must not be negative")))?;
-        let source = q.source_id.as_deref().filter(|s| !s.is_empty());
-        let read = self.read()?;
-        let mut rows: Vec<crate::pages::PageRecord> = crate::pages::all_pages(&*read)?
-            .into_iter()
-            .filter(|p| {
-                p.deleted_at_us.is_none()
-                    && p.page_type == q.page_type
-                    && source.is_none_or(|id| p.source_id == id)
-            })
-            .collect();
-        rows.sort_by(|a, b| a.slug.cmp(&b.slug).then(a.id.cmp(&b.id)));
-        Ok(rows
-            .iter()
-            .take(limit)
-            .map(|p| {
-                json!({ "slug": p.slug, "compiled_truth": p.compiled_truth.as_deref(),
-                "frontmatter": crate::jsonb::order_map(p.frontmatter.clone()) })
-            })
-            .collect())
     }
 
     /// `readSourceCloneRow(sourceId)`: the source's `{ local_path, config }`, archived or not, or null.

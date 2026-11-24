@@ -38,6 +38,7 @@ import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
 import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, receiptContentDirectory, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
 import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -486,9 +487,7 @@ async function countExtractAtomsBacklogBySource(
     // unscoped local/host path.
     const sources = sourceIds
       ? [...sourceIds].sort().map((source_id) => ({ source_id }))
-      : await engine.executeRaw<{ source_id: string }>(
-        `SELECT source_id FROM pages WHERE deleted_at IS NULL GROUP BY source_id ORDER BY source_id COLLATE "C"`,
-      );
+      : await engine.listAtomBacklogSourceIds();
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);
@@ -496,7 +495,8 @@ async function countExtractAtomsBacklogBySource(
       if (backlog > 0) rows.push({ source_id: src.source_id, backlog });
     }
     return rows;
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     return null;
   }
 }
@@ -1224,9 +1224,9 @@ export async function checkSyncFreshness(
       const stopped = stoppedConnectors.get(source.id);
       if (stopped) { issues.push(stopped.issue); stale_count++; hasFailures ||= stopped.fail; hasWarnings ||= !stopped.fail; continue; }
       if (!source.last_sync_at) {
-        const never = contentDirectory ? receiptContentDirectory(contentDirectory, display) : await noSuccessfulSync(engine, source.id, display, managed);
+        const never = contentDirectory ? receiptContentDirectory(contentDirectory, display) : await noSuccessfulSync(engine, source.id, display, managed, now - failMs);
         issues.push(never.issue); outcomes.push(never.entry);
-        hasFailures = true;
+        if (never.entry.code === 'sync_first_run_in_progress' || never.entry.code === 'sync_usage_limited') hasWarnings = true; else hasFailures = true;
         stale_count++;
         continue;
       }

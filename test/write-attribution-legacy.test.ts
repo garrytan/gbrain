@@ -167,7 +167,7 @@ describe('write attribution inventory', () => {
    * it too.
    */
   const WRITER_METHODS = 'putPage|refreshPageBody|softDeletePage|softDeletePages|restorePage|createVersion|revertToVersion|addTag|removeTag|updateSlug|'
-    + 'addTimelineEntry|addTimelineEntriesBatch|addTakesBatch|updateTake|supersedeTake|resolveTake|insertFact|insertFacts|expireFact|consolidateFact|migrateFactsToCanonical|placeRelinkedFact|linkConversationFact|stampVersionChangeReason'
+    + 'addTimelineEntry|addTimelineEntriesBatch|addTakesBatch|updateTake|supersedeTake|resolveTake|insertFact|insertFacts|expireFact|consolidateFact|migrateFactsToCanonical|placeRelinkedFact|linkConversationFact|stampVersionChangeReason|retireSupersededFact'
     // Typed fact writes of the repair applies (engine-sql/repair-applies.ts): the callers keep their attributed count.
     + '|restoreConsolidationTie|supersedeDuplicateFacts|linkStruckDuplicateFacts|restoreExtractorFact|moveFactClaimDates|expireApprovedFacts|detachFenceRowFacts|tightenDatabaseFactVisibility';
   const WRITER = new RegExp(`\\.(?:${WRITER_METHODS})\\s*(?:\\?\\.)?\\s*\\(`

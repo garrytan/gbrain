@@ -970,17 +970,21 @@ impl Store {
     }
 
     /// `resetMentionRevisions(by)`: clear `mention_revision` of every state row of `source_ids`, or of
-    /// the rows of `page_ids`.
+    /// the rows of `page_ids`. With `after_page_id` the source rows are only those after that page
+    /// id (the tail a deadline-stopped scan did not read), plus the `page_ids` rows.
     pub fn reset_mention_revisions(
         &self,
         source_ids: Option<&[String]>,
         page_ids: Option<&[i64]>,
+        after_page_id: Option<i64>,
     ) -> Result<()> {
         let ids = page_ids.map(ids_of);
         self.write(|tx| {
             for (id, mut state) in all_page_states(&*tx)? {
-                let hit = source_ids.is_some_and(|s| s.contains(&state.source_id))
-                    || ids.as_ref().is_some_and(|i| i.contains(&id));
+                let hit = source_ids.is_some_and(|s| {
+                    s.contains(&state.source_id)
+                        && after_page_id.is_none_or(|after| after < 0 || id > after as u64)
+                }) || ids.as_ref().is_some_and(|i| i.contains(&id));
                 if hit {
                     state.mention_revision = None;
                     put_json(tx, &page_key(id), &state)?;

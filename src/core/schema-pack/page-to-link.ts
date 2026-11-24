@@ -133,7 +133,7 @@ export async function runPageToLinkCore(
   for (let i = 0; i < opts.rules.length; i++) {
     const rule = opts.rules[i];
     // Load pages with body+frontmatter for the resolver.
-    const rows = await ctx.engine.listTypePageBodies({ type: rule.from_type, ...(sourceId ? { sourceId } : {}), limit });
+    const rows = await ctx.engine.listLinkCandidatePages(rule.from_type, sourceId, limit);
     const would_convert = rows.length;
     const sample_slugs = rows.slice(0, 10).map((r) => r.slug);
     const unresolved: PerPageToLinkResult['unresolved'] = [];
@@ -187,7 +187,7 @@ export async function runPageToLinkCore(
           from_slug: sourceSlug,
           to_slug: targetSlug,
           link_type: rule.link_type,
-          context: rule.preserve_notes ? stripTakesFence(stripFactsFence(r.compiled_truth ?? '')).slice(0, 240) : undefined,
+          context: rule.preserve_notes ? stripTakesFence(stripFactsFence(r.compiled_truth)).slice(0, 240) : undefined,
           link_source: 'manual',
           from_source_id: sourceId ?? 'default',
           to_source_id: sourceId ?? 'default',

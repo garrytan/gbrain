@@ -35,7 +35,7 @@ import { refusalEnvelope, retryParkedEffects } from './effect-retry.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 import { findResolverFile } from '../resolver-filenames.ts';
-import { capabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
+import { requireRawSql, servesRawSql } from '../rust-engine/errors.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
@@ -312,7 +312,7 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   if (token && checkout) {
     // The parked-push retry below reads raw SQL. On an engine without it (the Rust engine) refuse before the credential
     // store and the repo's git config change, so the refusal's "nothing ran" holds.
-    if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', 'writer git-durability --pat-file (its parked-push retry)');
+    requireRawSql(engine, 'writer git-durability --pat-file (its parked-push retry)');
     report.credential = await wireDurabilityCredential(root, checkout.remote, token, input.dryRun);
     // Only after the credential write succeeded: one more attempt per parked push of this worktree.
     const parked = await retryParkedPushes(engine, binding.worktree_id, input.dryRun);

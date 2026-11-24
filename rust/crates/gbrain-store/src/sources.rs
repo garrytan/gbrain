@@ -133,7 +133,7 @@ impl From<SourceRecord> for SourceDetailRow {
 pub struct SyncCheckpointAdvance {
     pub source_id: String,
     pub incarnation: String,
-    pub commit: String,
+    pub commit: Option<String>,
     pub from: Option<String>,
     pub accept_at_commit: bool,
     pub slug_mode: String,
@@ -360,6 +360,19 @@ impl Store {
         })
     }
 
+    /// `renameSource(id, name)`: sets the source's display name. Returns whether the source exists;
+    /// an unknown id changes nothing.
+    pub fn rename_source(&self, id: &str, name: &str) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            record.name = Some(name.to_string());
+            put_json(tx, &source_key(id), &record)?;
+            Ok(true)
+        })
+    }
+
     /// `advanceSourceCommit`: records that the source's git sync reached `commit` and stamps
     /// `last_sync_at` with the store clock. `newest_content_at` is left alone when `None`, cleared
     /// when `Some(None)` and set when `Some(Some(iso))`. An unknown id changes nothing, as the
@@ -497,8 +510,10 @@ impl Store {
             }
             let pinned = config_text(&record.config, "slug_root_mode");
             let at_from = record.last_commit == input.from;
+            // `last_commit = $commit` is never true for a NULL commit (SQL equality), so only a commit accepts.
             let at_commit = input.accept_at_commit
-                && record.last_commit.as_deref() == Some(input.commit.as_str());
+                && input.commit.is_some()
+                && record.last_commit == input.commit;
             let mode_ok = input.keep_pinned_slug_mode
                 || pinned.is_none()
                 || pinned.as_deref() == Some(input.slug_mode.as_str());
@@ -518,7 +533,7 @@ impl Store {
             record
                 .config
                 .insert("slug_root_mode".into(), Value::String(mode));
-            record.last_commit = Some(input.commit.clone());
+            record.last_commit = input.commit.clone();
             record.last_sync_at_us = Some(self.env.now_micros());
             record.newest_content_at_us = newest_live_page_us(&*tx, &input.source_id)?;
             put_json(tx, &source_key(&input.source_id), &record)?;

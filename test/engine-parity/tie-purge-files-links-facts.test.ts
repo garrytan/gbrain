@@ -106,7 +106,7 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return { all: all.map(r => r.storage_path), one: one.map(r => r.storage_path) };
   });
 
-  parityTest('runPageToLinkCore reads the lowest page id when one slug sits in two sources', { methods: ['putPage', 'listTypePageBodies'] }, async (engine, backend) => {
+  parityTest('runPageToLinkCore reads the lowest page id when one slug sits in two sources', { methods: ['putPage', 'listLinkCandidatePages'] }, async (engine, backend) => {
     for (const id of ['src-b', 'src-c']) await createSource(engine, backend, id);
     const page = (body: string, canonical?: string) => ({ type: 'legacy-note', title: 'tie/x', compiled_truth: body, timeline: '', frontmatter: canonical ? { canonical } : {} });
     await engine.putPage('notes/target', { type: 'note', title: 'target', compiled_truth: 'target', timeline: '' });
