@@ -109,6 +109,7 @@ const MOVED_CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listOpenLoops: (e) => e.listOpenLoops(),
   countOpenLoopsByCounterpartyEmail: (e) => e.countOpenLoopsByCounterpartyEmail('default', ['a@example.com'], 'waiting_on_me'),
   readEntityOpenLoops: (e) => e.readEntityOpenLoops('people/a', 'default', 10),
+  countOpenLoopsByCounterpartyEmail: (e) => e.countOpenLoopsByCounterpartyEmail('default', ['a@example.com'], 'unanswered_inbound'),
 };
 
 test('every moved member that routes through the abort check has a case', () => {

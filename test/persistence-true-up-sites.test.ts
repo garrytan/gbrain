@@ -18,6 +18,7 @@ const SRC = join(ROOT, 'src');
 
 /** Settling file -> the file whose code calls trueUpRequests for it (itself when it calls it directly). */
 const SITES: Record<string, string> = {
+  'src/core/engine-sql/persistence-effect-worker.ts': 'src/core/persistence/effects.ts',
   // completeEffect / parkEffect / failEffect run only under the effect runner, which trues up every request it claimed.
   'src/core/persistence/effect-journal.ts': 'src/core/persistence/effects.ts',
   'src/core/persistence/effects.ts': 'src/core/persistence/effects.ts',
@@ -56,8 +57,9 @@ test('the effect-journal settle helpers are called only under the effect runner'
 
 /** The statements that complete a request: file -> how many. Each sizes terminal_reservation down when no effect is unfinished. */
 const COMPLETIONS: Record<string, number> = {
-  'src/core/persistence/journal.ts': 1, // completeWrite: committed, conflict, failed, cancelled
   'src/core/persistence/group-publish.ts': 1, // completeGroup: committed
+  // The held copies of completeWrite (committed, conflict, failed, cancelled): the plain completion and the one that also probes purges.
+  'src/core/engine-sql/persistence-journal.ts': 2,
 };
 /** An UPDATE of persistence_requests assigning `state` in its SET list, with the statement text up to the closing backtick. */
 const REQUEST_STATE = /UPDATE\s+persistence_requests\b(?:(?!\bWHERE\b)[^`;])*?\bSET\b(?:(?!\bWHERE\b)[^`;])*?(?<![.\w])state\s*=\s*([^,\n]+)[^`]*/g;
