@@ -6144,16 +6144,6 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
 
-### slug_spelling_held_writes
-
-<a id="slug_spelling_held_writes"></a>
-
-| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
-|---|---|---|---|---|---|---|
-| gbrain repair slug-spelling did not move a page because it has a held write (an active quarantine hold of a fact or take) under one of its spellings; nothing was written. | A held write is kept out of delivered text only while it names the page's exact slug, and its writer takes no page lock, so the repair never re-keys or merges one. The preview lists the page as needs_human with the held writes; a hold that appears after the preview refuses the move as changed_since_preview. | List the held writes with gbrain trust review, release or drop each with gbrain trust release h<id> / gbrain trust drop h<id>, then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
-
-More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
-
 ### source_binding_required
 
 <a id="source_binding_required"></a>
