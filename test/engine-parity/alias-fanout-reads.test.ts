@@ -318,9 +318,10 @@ describe('engine parity: alias fan-out reads of derived alias rows', () => {
       const both = await engine.resolveCaseSensitiveAliases(['alice', 'ae'], ['other', 'default']);
       expect(both).toEqual([
         { slug: 'people/a-founder', alias_norm: 'ae', alias_text: 'aE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        // By slug, alias, then alias text in byte order (master's R2 contract: the rows carry no source).
         { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'A.E.' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
       ]);
       // Not case-sensitive: the derived `alice` row and the frontmatter `ae` row never answer.
       const notCase = await engine.resolveCaseSensitiveAliases(['alice'], ['default']);

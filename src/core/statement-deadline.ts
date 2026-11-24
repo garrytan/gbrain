@@ -20,8 +20,9 @@
  *     the refusal before each statement, and a statement already running
  *     finishes;
  *   - on Postgres a typed read in BOUNDED_TYPED_READS (a member that replaced a
- *     statement the doctor bounded through `executeRaw`: the decide-store reads) runs
- *     under `withReadDeadline`, so the engine ends it at the deadline like a raw statement.
+ *     statement the doctor bounded through `executeRaw`: the decide-store, timeline,
+ *     notifier-coverage and writer-binding reads) runs under `withReadDeadline`, so the
+ *     engine ends it at the deadline like a raw statement.
  *
  * Without a scope (or with `deadlineAt: null`) the wrapper passes every call
  * through. Other engine methods with their own SQL (e.g. `getStats`) get only the
@@ -118,7 +119,8 @@ const DOCTOR_PATH_TYPED_READS: readonly string[] = [
   'readBrainMaturity', 'readOpCheckpointKeys', 'readGitHoldRecords', 'readLiveSyncPassRows',
 ];
 /** The typed reads (engine-sql/decide-store.ts) that replaced statements this wrapper bounded through executeRaw: decide_health. */
-export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations']);
+export const BOUNDED_TYPED_READS: ReadonlySet<string> = new Set(['readDecideState', 'decideSlotUsage', 'dailyDecideSpend', 'listDecideResolvedModels', 'listDecideMixedModelDecisions', 'listDecideReceiptStats', 'listDecideCalibrations',
+  'countSegmentedTimelinePages', 'listCoveredSources', 'listExportWithdrawals', 'listPrivateQueueHealth', 'listQueueWedgeCounts', 'listStuckActiveJobsByName', 'listWaitingByQueue', 'hasNotifierCoverage', 'readExportWithdrawalLedgerBytes', 'readMaxTimelineEntryId', 'readOldestWaitingAge', 'readQueueDivergence', 'readQueueHealthSignals', 'readWedgeSignals', 'storedTimelineRowsByPageIds', 'getWorktreeBinding']);
 /** The write-journal reads, the writer-binding read (engine-sql/write-misc.ts `getWorktreeBinding`), the liveness round trip (engine-sql/health.ts `pingStore`) and the doctor reads (engine-sql/doctor-*.ts), which also replaced bounded statements. */
 const DOCTOR_BOUNDED_READS: ReadonlySet<string> = new Set([
   ...JOURNAL_TYPED_READS, 'getWorktreeBinding', 'pingStore', ...DOCTOR_READ_MEMBERS, ...DOCTOR_DERIVED_MEMBERS, ...DOCTOR_PERSISTENCE_MEMBERS, ...DOCTOR_PAGES_MEMBERS, ...DOCTOR_SEARCH_MEMBERS, ...DOCTOR_ACC_MEMBERS, ...DOCTOR_JOIN_MEMBERS,

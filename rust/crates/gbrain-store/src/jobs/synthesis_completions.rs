@@ -110,6 +110,25 @@ pub(super) fn archive_pruned(tx: &mut dyn KvWrite, row: &JobRecord, now: i64) ->
     Ok(true)
 }
 
+/// The shadow seed (`seed.rs`): stores an archive row copied from another engine with its own
+/// `completed_at`. `false` when `(source_id, idempotency_key)` already holds a row.
+pub(crate) fn seed_completion(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    idempotency_key: &str,
+    completed_at_us: i64,
+) -> Result<bool> {
+    let key = completion_key(source_id, idempotency_key);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    let record = CompletionRecord {
+        completed_at: completed_at_us,
+    };
+    put_json(tx, &key, &record)?;
+    Ok(true)
+}
+
 impl Store {
     /// `listSynthesisCompletionKeys(sourceId, keyPrefix)`: the keys starting with `keyPrefix` of
     /// the source's completed `subagent` jobs and of its archive rows, each once (`UNION`). The
@@ -164,4 +183,19 @@ impl Store {
         }
         Ok(out)
     }
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the archive row `(source_id, idempotency_key)`.
+/// `false` when there is none.
+pub(crate) fn remove_completion(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    idempotency_key: &str,
+) -> Result<bool> {
+    let key = completion_key(source_id, idempotency_key);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
 }

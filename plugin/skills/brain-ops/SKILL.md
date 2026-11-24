@@ -1,7 +1,6 @@
 ---
 name: brain-ops
 version: 1.2.0
-upstream: brain-ops@fc834ee
 description: |
   Brain knowledge base operations. The core read/write cycle: brain-first lookup,
   read-enrich-write loop, source attribution, ambient enrichment, back-linking.

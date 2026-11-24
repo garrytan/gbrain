@@ -20,8 +20,11 @@
  * <claude dir>/settings.json), each install path read as a --dir root whose
  * skills are namespaced `<plugin>:<skill>` (readClaudePluginSources).
  *
- * Directories: only real paths are read. A symlink whose target leaves the
- * root is skipped (symlink_outside_root); loops are cut by real path. Skills
+ * Directories: a symlink whose target leaves the root is followed only when
+ * it points at a skill folder (a directory holding SKILL.md, which is then
+ * read under the link's path) or is itself a SKILL.md file, the way gstack
+ * and other installers link skills from a checkout; any other such symlink
+ * is skipped (symlink_outside_root). Loops are cut by real path. Skills
  * are visited breadth-first (shallower first, then path order) and the --dir
  * order is precedence: the first skill with an id wins and later ones are
  * skipped as duplicate_id with the path that won. An id is the skill's
@@ -129,6 +132,8 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
       throw unreadable(given, (e as NodeJS.ErrnoException).code ?? 'unreadable');
     }
     const visitedReal = new Set<string>([root]);
+    const readable = [root];
+    const inside = (p: string) => readable.some(r => p === r || p.startsWith(r + sep));
     let level: string[] = [root];
     for (let depth = 0; level.length && depth <= MAX_DEPTH; depth++) {
       const next: string[] = [];
@@ -144,17 +149,20 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
         for (const name of entries) {
           const full = join(dir, name);
           let real = full;
+          let at = full;
           let st;
           try {
             const l = lstatSync(full);
             if (l.isSymbolicLink()) {
               real = realpathSync(full);
-              if (real !== root && !real.startsWith(root + sep)) { skipped.push({ reason: 'symlink_outside_root', path: full }); continue; }
               st = statSync(real);
+              if (inside(real)) at = real;
+              else if (st.isDirectory() && existsSync(join(real, 'SKILL.md'))) readable.push(real);
+              else if (!(st.isFile() && name === 'SKILL.md' && basename(real) === 'SKILL.md')) { skipped.push({ reason: 'symlink_outside_root', path: full }); continue; }
             } else st = l;
           } catch { skipped.push({ reason: 'unreadable', path: full }); continue; }
           if (st.isDirectory()) {
-            if (!visitedReal.has(real)) { visitedReal.add(real); next.push(real); }
+            if (!visitedReal.has(real)) { visitedReal.add(real); next.push(at); }
             continue;
           }
           if (!st.isFile() || name !== 'SKILL.md') continue;
@@ -163,7 +171,7 @@ export function readDirSources(dirs: readonly string[], rootNamespaces: readonly
           try { text = readHead(real, SKILL_FILE_CAP_BYTES).bytes.toString('utf8'); } catch { skipped.push({ reason: 'unreadable', path: real }); continue; }
           fp.files.push([real, st.size, st.mtimeMs]);
           const doc = parseSkillDoc(text);
-          const skillDir = dirname(real);
+          const skillDir = dirname(at);
           const name0 = cut(doc.name ?? basename(skillDir), MAX_NAME);
           const ns = pluginNamespace(skillDir, root, nsCache) ?? rootNamespaces[di];
           const id = cut(ns ? `${ns}:${name0}` : name0, MAX_ID);

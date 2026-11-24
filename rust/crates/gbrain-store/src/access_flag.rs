@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 pub(crate) const RESTRICTIONS_PRESENT_KEY: &str = "access.restrictions_present";
 
 /// The meta record the open-time scan writes when it is done (`keys::meta`).
-const SCAN_DONE: &str = "access_flag_scan";
+pub(crate) const SCAN_DONE: &str = "access_flag_scan";
 
 /// Sets the flag when `record` carries a top-level `readable_by` frontmatter key and the flag is
 /// not already `'1'`.
@@ -425,7 +425,8 @@ mod tests {
 
         // Both arms of `Store::write` hand the closure to `write_chain`, which wraps it.
         let lib = code("lib.rs");
-        let write = &lib[lib.find("pub(crate) fn write<T>").unwrap()..];
+        // `write` and `write_as` both run through `write_under`, which owns the two arms.
+        let write = &lib[lib.find("fn write_under<T>").unwrap()..];
         let write = &write[..write.find("\n    }\n").unwrap()];
         assert_eq!(write.matches("write_chain(").count(), 2);
         let chain = &lib[lib.find("fn write_chain<T>").unwrap()..];

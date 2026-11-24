@@ -3810,9 +3810,10 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     } catch (err) {
       if (!output || isAIInvocationPolicyError(err) || !isStructuredOutputRejection(err)) throw err;
       gw().structuredOutputRejected.add(recipe.id);
+      // Failure class only: a provider's error text can echo the request URL or a key.
       console.warn(
         `[ai.gateway] ${recipe.id} rejected response_format json_schema; retrying without a schema ` +
-        `and skipping it for the rest of this process: ${(err as Error)?.message ?? String(err)}`,
+        `and skipping it for the rest of this process: structured_output_rejected`,
       );
       result = await generate(undefined);
     }

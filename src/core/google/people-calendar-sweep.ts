@@ -280,9 +280,9 @@ export async function contactPageRelPathByContactId(
     );
     return rows[0]?.source_path ?? null;
   } catch (error) {
-    if (deps.managed) throw error;
     // An engine that cannot run the lookup refuses: a null here would write the item as a new page beside the old one.
     rethrowCapabilityRefusal(error);
+    if (deps.managed) throw error;
     return null;
   }
 }
@@ -302,9 +302,9 @@ export async function calendarPageRelPathByEventId(
     );
     return rows[0]?.source_path ?? null;
   } catch (error) {
-    if (deps.managed) throw error;
     // An engine that cannot run the lookup refuses: a null here would write the item as a new page beside the old one.
     rethrowCapabilityRefusal(error);
+    if (deps.managed) throw error;
     return null;
   }
 }
