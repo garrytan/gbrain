@@ -1121,6 +1121,45 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('configured owner addresses keep forwarded self mail out of the reply queue and close answered threads', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-owner-addresses-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18c2f4a9b3d21e03', T_B, daysAgoMs(3), {
+        headers: { From: 'Dana Example <dana@example.com>', To: 'a@example.com', Subject: 'Contract question' },
+        body: 'Could you confirm the contract terms?',
+      }),
+      gmsg('18c2f4a9b3d21e04', T_A, daysAgoMs(3), {
+        headers: { From: 'other@example.net', To: 'a@example.com', Subject: 'Notes for myself' },
+        body: 'Could you check the project notes?',
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      await engine.setConfig('loops.owner_addresses', ' ALIAS@example.com , Other@Example.Net ');
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        const inbound = () => engine.executeRaw<{ thread_id: string; status: string; closed_by: string | null }>(
+          "SELECT thread_id, status, closed_by FROM open_loops WHERE source_id = 'gsrc' AND loop_type = 'unanswered_inbound' ORDER BY thread_id",
+        );
+        expect(await inbound()).toEqual([{ thread_id: T_B, status: 'open', closed_by: null }]);
+
+        fx.messages.push(gmsg('18c2f4a9b3d21e07', T_B, hoursAgoMs(2), {
+          headers: { From: 'other@example.net', To: 'dana@example.com', Subject: 'Re: Contract question' },
+          body: 'Confirmed, terms attached.',
+        }));
+        fx.history = [[T_B]];
+        fx.historyResponseId = '1010';
+        await sweep(dir, fx, vault, {}, 'gmail');
+        expect(await inbound()).toEqual([{ thread_id: T_B, status: 'done', closed_by: 'reply_detected' }]);
+      });
+    } finally {
+      await engine.unsetConfig('loops.owner_addresses');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('command-mode access: sweep succeeds with NO vault entry; threads import and loop detection runs on the account-only identity', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cmdaccess-'));
     const fx = emptyFx();

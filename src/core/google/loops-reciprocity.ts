@@ -26,14 +26,15 @@ export function validateLoopsReciprocityConfigValue(key: string, value: string):
     : `${key} must be true or false (default false: Gmail Updates mail opens reply-owed loops like any other mail; got "${value}"). Nothing was written.`;
 }
 
-const cache = new WeakMap<BrainEngine, Map<string, { set: ReadonlySet<string> | null; loadedAt: number }>>();
+const cache = new WeakMap<BrainEngine, Map<string, { set: ReadonlySet<string> | null; loadedAt: number; ownerAddresses: string }>>();
 
 /** The addresses the owner has written to in this source, or null when the rule is off (the default). */
 export async function ownerWroteToFor(engine: BrainEngine, sourceId: string, myAddresses: ReadonlySet<string>): Promise<ReadonlySet<string> | null> {
   let perEngine = cache.get(engine);
   if (!perEngine) cache.set(engine, perEngine = new Map());
   const hit = perEngine.get(sourceId);
-  if (hit && Date.now() - hit.loadedAt < REBUILD_MS) return hit.set;
+  const ownerAddresses = [...myAddresses].sort().join('\n');
+  if (hit && hit.ownerAddresses === ownerAddresses && Date.now() - hit.loadedAt < REBUILD_MS) return hit.set;
   let enabled = false;
   try {
     enabled = ON.has(String(await engine.getConfig(LOOPS_UPDATES_RECIPROCITY_KEY) ?? '').trim().toLowerCase());
@@ -49,11 +50,11 @@ export async function ownerWroteToFor(engine: BrainEngine, sourceId: string, myA
           AND jsonb_typeof(p.frontmatter->'senders') = 'array'
           AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(p.frontmatter->'senders') AS s(addr)
                        WHERE lower(s.addr) = ANY(string_to_array($2, E'\\n')))`,
-      [sourceId, [...myAddresses].join('\n')],
+      [sourceId, ownerAddresses],
     );
     set = new Set(rows.map((r) => r.addr).filter((a) => !myAddresses.has(a)));
   }
-  perEngine.set(sourceId, { set, loadedAt: Date.now() });
+  perEngine.set(sourceId, { set, loadedAt: Date.now(), ownerAddresses });
   return set;
 }
 

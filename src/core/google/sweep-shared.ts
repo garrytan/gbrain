@@ -73,6 +73,7 @@ export interface GoogleSyncDeps {
   cfg: GoogleSourceConfig;
   opts: SyncOpts;
   entry: CredentialEntry;
+  loopOwnerAddresses: Set<string>;
   log: (msg: string) => void;
   /**
    * #5349: one forward-progress note per imported item. The progress-aware

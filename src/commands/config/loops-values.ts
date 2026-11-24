@@ -5,8 +5,12 @@
 import { exitCliError, usageError } from '../../cli/cli-error.ts';
 import { LOOPS_EXTRACT_MAX_USD_PER_DAY_KEY, validateLoopsSpendConfigValue } from '../../core/google/loops-spend.ts';
 import { LOOPS_UPDATES_RECIPROCITY_KEY, validateLoopsReciprocityConfigValue } from '../../core/google/loops-reciprocity.ts';
+import { LOOPS_OWNER_ADDRESSES_KEY, parseLoopOwnerAddresses } from '../../core/google/loops-owner-addresses.ts';
 
 export function refuseInvalidLoopsConfigValue(key: string, value: string): void {
+  if (key === LOOPS_OWNER_ADDRESSES_KEY && parseLoopOwnerAddresses(value) === null) {
+    exitCliError(usageError('Invalid loops.owner_addresses value.', 'Pass a comma-separated list of plain email addresses.'), 'config');
+  }
   const reciprocity = validateLoopsReciprocityConfigValue(key, value);
   if (reciprocity) {
     exitCliError(usageError(reciprocity, `Re-run with true or false, e.g. gbrain config set ${LOOPS_UPDATES_RECIPROCITY_KEY} true (false, the default, turns the rule off).`, {

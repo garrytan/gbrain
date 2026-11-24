@@ -44,6 +44,7 @@ import { getCliOptions, cliOptsToProgressOptions } from '../cli-options.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { atomicWriteFileSync, mkdirPrivate } from '../atomic-write.ts';
 import { importRendered, myAddressSet, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { LOOPS_OWNER_ADDRESSES_KEY, parseLoopOwnerAddresses } from './loops-owner-addresses.ts';
 import { connectorSpeakerOwnerStamp } from '../identity/speaker-owner.ts';
 export { myAddressSet } from './sweep-shared.ts';
 import { sweepCalendar, sweepContacts } from './people-calendar-sweep.ts';
@@ -253,7 +254,7 @@ async function processThread(
   }
   deps.processedThreads.add(thread.threadId);
   const verdict = await applyLoopDetection(deps, thread, slug);
-  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, myAddressSet(deps.entry), deps.log, deps.exclusion);
+  if (verdict && deps.loopState) recordGraceVerdict(deps.loopState, thread, verdict, slug, deps.loopOwnerAddresses, deps.log, deps.exclusion);
   if (verdict && deps.loopState) recordWithheldVerdict(deps.loopState, verdict);
   if (verdict?.withheld) summary.loopsWithheld[verdict.withheld.reason] = (summary.loopsWithheld[verdict.withheld.reason] ?? 0) + 1;
   // LLM extraction candidates: trickle + the bounded recent window only —
@@ -264,7 +265,7 @@ async function processThread(
     // Structural eligibility, not "everything recent": bulk mail the owner
     // never joined would otherwise both pay for model calls AND crowd real
     // threads out of the sweep.
-    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry), deps.exclusion);
+    const verdict = loopExtractionEligibility(thread, deps.loopOwnerAddresses, deps.exclusion);
     summary.extractEligibility[verdict.reason] =
       (summary.extractEligibility[verdict.reason] ?? 0) + 1;
     if (verdict.eligible) {
@@ -990,8 +991,13 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const tick = (note: string): void => progress.tick(1, note);
   // A configured private-senders list that cannot be read stops the run here, before any page is written.
   const privateSenders = cfg.privateSendersFile ? loadPrivateSenders(cfg.privateSendersFile) : null;
+  const loopOwnerAddresses = myAddressSet(entry);
+  if (cfg.services.includes('gmail')) {
+    const extra = parseLoopOwnerAddresses(await engine.getConfig(LOOPS_OWNER_ADDRESSES_KEY));
+    for (const address of extra ?? []) loopOwnerAddresses.add(address);
+  }
   const deps: GoogleSyncDeps = { engine, sourceId, cfg, opts, entry, log, tick, exclusion: NO_EXCLUSION, extractCandidates: [], managed, processedThreads: new Set(),
-    privateSenders };
+    privateSenders, loopOwnerAddresses };
 
   const summary: GoogleSyncSummary = {
     status: 'synced',
@@ -1158,7 +1164,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       if (deps.graceBackfillSeeded) state.loop_grace_backfill_done = true;
       if (managed) {
         try {
-          catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: myAddressSet(entry),
+          catchup = await runLoopsCatchup({ engine, sourceId, state, log, signal: opts.signal, myAddresses: loopOwnerAddresses,
             exclusion: deps.exclusion, inFlight: new Set(deps.extractCandidates.map(c => c.slug)),
             fetchThread: async (tid) => {
               try { return await gmail.getThread(tid, cfg.account, opts.signal ? { signal: opts.signal } : {}); }

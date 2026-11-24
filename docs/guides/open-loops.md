@@ -138,6 +138,12 @@ calls nor crowds real correspondence out of the sweep:
 | `List-Unsubscribe` bulk | no, unless the owner joined in |
 | `CATEGORY_UPDATES` | **yes** — invoices, contracts and document requests live there |
 | a label you excluded (`g_loops_exclude_labels` on the source, else the brain-wide `loops.extraction_exclude_labels`) | no — even when you joined in (`excluded_label`) |
+
+If another mailbox forwards into your connected Gmail account, add its address
+with `gbrain config set loops.owner_addresses "me@example.net,me@example.org"`.
+GBrain adds those addresses to the connected account and its Gmail send-as aliases
+when deciding who owes a reply. The setting applies to this brain's Gmail sources
+on their next sync and does not reopen or rewrite old threads by itself.
 | ordinary human correspondence | yes |
 
 The owner-participated rule is the load-bearing one: your own outbound
