@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2006/2022
+# covered: 2007/2023
 # lifecycle: 9/9
 # pages: 81/82
 # search: 7/7
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 7/7
 # import_guards: 13/13
-# persistence_journal: 211/215
+# persistence_journal: 212/216
 # mention_pass: 40/40
 # entity_reads: 28/28
 # cycle_locks: 10/10
@@ -128,7 +128,7 @@ getPage	pages	yes	205	yes	yes	yes	serves
 readPageSnapshot	pages	yes	61	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	14	no	yes	yes	serves
-putPage	pages	yes	1091	yes	yes	yes	serves
+putPage	pages	yes	1094	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	37	yes	yes	yes	serves
@@ -655,6 +655,7 @@ readDrainLeaseBeacon	persistence_journal	yes	2	no	yes	yes	serves
 writeDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
 refreshDrainLeaseHolder	persistence_journal	no	0	no	-	-	-
 releaseDrainLeaseHolder	persistence_journal	yes	2	no	yes	yes	serves
+readChronicleBackfillBatch	persistence_journal	yes	3	no	yes	yes	serves
 declarePersistence	persistence_journal	yes	32	no	yes	yes	serves
 requireSynchronousCommit	persistence_journal	yes	1	no	yes	yes	serves
 readJournalLimitRows	persistence_journal	yes	1	no	yes	yes	serves

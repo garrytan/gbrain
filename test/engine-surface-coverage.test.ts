@@ -464,6 +464,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince',
   'getOnThisDay', 'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails', 'insertCanonicalTimelineRows',
   'readNewestTimelineEntryId',
+  // The chronicle-backfill page batch (engine-sql/chronicle-reads.ts; covered by test/engine-parity/chronicle-backfill.test.ts)
+  'readChronicleBackfillBatch',
   // Ontology
   'mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
   // Raw data + files

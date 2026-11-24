@@ -207,7 +207,6 @@ src/core/by-mention.ts	execute_raw	2
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
 src/core/calibration/undo-wave.ts	execute_raw	7
-src/core/chronicle/backfill.ts	execute_raw	1
 src/core/chronicle/campaign.ts	execute_raw	3
 src/core/chronicle/execute.ts	execute_raw	9
 src/core/chronicle/ledger.ts	execute_raw	10	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet

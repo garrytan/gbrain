@@ -19,6 +19,7 @@ test/engine-parity/bench-save-repro.test.ts	1	2
 test/engine-parity/bound-write.test.ts	1	2
 test/engine-parity/brief-reads.test.ts	6	0
 test/engine-parity/calibration-profiles.test.ts	5	0
+test/engine-parity/chronicle-backfill.test.ts	2	1
 test/engine-parity/chronicle-publish-parity.test.ts	2	1
 test/engine-parity/chunk-page-segmented.test.ts	8	0
 test/engine-parity/chunk-reads.test.ts	14	0

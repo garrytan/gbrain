@@ -148,7 +148,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readAccessCredentials', 'readAccessMembers', 'readAccessTokenWriteGrant', 'readAdmissionRate',
   'readAdmissionSource', 'readAgentClientSpend', 'readAudiencePrincipals', 'readBeliefHistoryRows',
   'readBodyManifestMeta', 'readBodyManifestOutline', 'readBodyManifestRows', 'readCallerPageAccess',
-  'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions',
+  'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions', 'readChronicleBackfillBatch',
   'readChunkVectorColumn', 'readClientBudgetUsd', 'readClientOpUsage', 'readConsolidationTakesMaxRowNum',
   'readConversationSlotValueHash', 'readCounterRows', 'readCurrentWriteTrust', 'readCursorEdition',
   'readDatabaseClock', 'readDeletePageRequest', 'readDeletedPageBody', 'readDreamDeferralReceipt',

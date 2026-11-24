@@ -77,7 +77,7 @@ src/core/brainstorm/domain-bank.ts	fetchFar	field	LEAD
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	field	LEAD	
 src/core/by-mention.ts	scanStaleMentions	sql	STREAM	
 src/core/chronicle/backfill.ts	runChronicleBackfill	field	STREAM	
-src/core/chronicle/backfill.ts	runChronicleBackfill	sql	STREAM	
+src/core/engine-sql/chronicle-reads.ts	CHRONICLE_BACKFILL_BATCH_SQL	sql	STREAM	moved from chronicle/backfill.ts runChronicleBackfill unchanged: coalesce(compiled_truth, truth_lead) reads an inline body, else the segmented page's stored lead
 src/core/chronicle/execute.ts	executeChronicleRow	field	LEAD	
 src/core/chronicle/extract-events.ts	chronicleJudgeContext	field	LEAD	
 src/core/chronicle/ledger.ts	decideChronicle	field	LEAD	
