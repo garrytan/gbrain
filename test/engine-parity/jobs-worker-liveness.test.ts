@@ -130,15 +130,17 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
         }
         return await done();
       };
+      // Count only the periodic health probes: the probes before 'ready' (Postgres's readiness ping) do not count.
       let ready = false;
-      worker.on('ready', () => { ready = true; });
+      let probesAtReady = 0;
+      worker.on('ready', () => { ready = true; probesAtReady = completedProbes; });
       const { value } = await quietly(async () => {
         const run = worker.start();
         try {
           const isReady = await until(() => ready || unhealthy.length > 0, 10_000);
           // Three failed probes end a worker; more than three completed ones show the probe keeps answering.
-          const probed = await until(() => completedProbes >= 4 || unhealthy.length > 0, 10_000);
-          const afterProbes = completedProbes;
+          const probed = await until(() => completedProbes - probesAtReady >= 4 || unhealthy.length > 0, 10_000);
+          const afterProbes = completedProbes - probesAtReady;
           const id = await add(engine, 'noop');
           const finished = await until(async () => String((await engine.getJob(id))?.status) === 'completed' || unhealthy.length > 0, 10_000);
           const status = String((await engine.getJob(id))?.status);
