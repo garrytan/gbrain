@@ -29,7 +29,7 @@ import { identityIdsForPages, isEntityId, listEntityIdentities, validateEntityId
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { parseSourceConfig } from '../core/sources-load.ts';
 import { APPLE_CONTACTS_LINK_ORIGIN, unlinkContact } from '../core/apple-contacts/identity-match.ts';
-import { GOOGLE_CONTACTS_LINK_ORIGIN, IDENTITY_LINKS_CONFIG_KEY, linkGoogleContacts, unlinkGoogleContacts } from '../core/google/contact-identity.ts';
+import { GOOGLE_CONTACTS_LINK_ORIGIN, IDENTITY_LINKS_CONFIG_KEY, identityLinksOn, linkGoogleContacts, unlinkGoogleContacts } from '../core/google/contact-identity.ts';
 import { decideContacts } from './dedupe-decide.ts';
 import { classifyPairs, samplePairs, type ClassesReport, type ClassifyOptions } from '../core/entities/evidence/classes.ts';
 import { PAIR_CLASSES, parsePairClass } from '../core/entities/evidence/combine.ts';
@@ -561,14 +561,21 @@ async function runDecide(engine: BrainEngine, args: string[]): Promise<void> {
     for (const u of l.undo ?? []) console.log(`  undo: ${u}`);
   }
   console.log(r.mode === 'dry_run' ? 'Dry run: nothing was written.' : rec ? storedText(rec) : 'Nothing was recorded.');
-  if (r.refused) console.log(`${r.refused} line(s) were set aside; fix them and run the file again (lines already recorded are recorded again unchanged).`);
+  if (r.refused) console.log(`${r.refused} line(s) were set aside; fix them and run a file holding only those lines (the others are recorded).`);
 }
 
 async function runUndo(engine: BrainEngine, args: string[]): Promise<void> {
   const f = parseFlags('undo', args, new Set());
   if (!f) return;
   if (!f.ids.length) { console.error(`gbrain dedupe undo: pass the decision ids to remove.\n\n${HELP}`); setCliExitVerdict(2); return; }
+  const before = (await engine.listIdentityDecisions()).decisions.filter(d => f.ids.includes(d.decision_id));
   const r = await forgetDecisions(engine, f.ids, `dedupe: undo ${f.ids.length} duplicate decision(s)`);
+  if (await identityLinksOn(engine)) {
+    const google = new Set((await engine.listAllSources()).filter(s => parseSourceConfig(s.config).kind === 'google').map(s => s.id));
+    const bySource = new Map<string, string[]>();
+    for (const m of before.flatMap(d => d.members)) if (google.has(m.source_id)) bySource.set(m.source_id, [...bySource.get(m.source_id) ?? [], m.slug]);
+    for (const [sourceId, slugs] of bySource) await linkGoogleContacts(engine, sourceId, { apply: true, slugs });
+  }
   if (f.json) {
     console.log(JSON.stringify({ removed: r.removed, store: r.store, ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}) }, null, 2));
     return;

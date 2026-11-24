@@ -190,7 +190,7 @@ export interface DecisionCommitReceipt { outcome: string; commit: string | null;
  * Writes the decision files (text) and removes others (null) under the checkout's commit lock and commits them through the
  * door; a failed commit restores them.
  */
-function commitDecisionFiles(root: string, files: Array<{ path: string; text: string | null }>, message: string): DecisionCommitReceipt {
+function commitDecisionFiles(root: string, files: Array<{ path: string; text: string | null; create?: true }>, message: string): DecisionCommitReceipt {
   const attempt = (): DecisionCommitReceipt => {
     const lock = acquireCommitLock(checkoutRoot(root));
     const prior = process.env[COMMIT_LOCK_ENV];
@@ -204,12 +204,17 @@ function commitDecisionFiles(root: string, files: Array<{ path: string; text: st
             'Replace it with a regular file or folder in the checkout, then run the command again.');
         }
       }
+      const taken = files.find(f => f.create && lstatSync(join(root, f.path), { throwIfNoEntry: false }));
+      if (taken) {
+        throw opError('commit_paths_invalid', `gbrain dedupe: ${taken.path} already exists in ${root}, so the new page is not written over it; nothing was written.`,
+          'Run the command again: it picks the next free name.');
+      }
       for (const dir of new Set([IDENTITY_DIR, ...files.map(f => dirname(f.path))])) mkdirSync(join(root, dir), { recursive: true });
       for (const f of files) {
         const abs = join(root, f.path);
         before.set(abs, existsSync(abs) ? readFileSync(abs, 'utf8') : null);
         if (f.text === null) { rmSync(abs, { force: true }); continue; }
-        const fd = openSync(abs, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
+        const fd = openSync(abs, constants.O_WRONLY | constants.O_CREAT | (f.create ? constants.O_EXCL : constants.O_TRUNC) | constants.O_NOFOLLOW, 0o644);
         try { writeSync(fd, f.text); } finally { closeSync(fd); }
       }
       try {
@@ -250,7 +255,7 @@ function committedAll(root: string, files: Array<{ path: string; text: string | 
   return true;
 }
 
-function storeMismatch(rows: IdentityDecision[]): OperationError {
+export function storeMismatch(rows: IdentityDecision[]): OperationError {
   const sourceId = rows.find(d => d.origin === 'git')?.home_source_id ?? 'default';
   return opError('dedupe_decision_store_mismatch',
     `This brain's duplicate decisions are kept in git in source ${sourceId}, but this host sees no git work tree for it, so nothing was written.`,
@@ -287,7 +292,7 @@ export interface RecordResult { store: 'git' | 'database'; home: IdentityHome | 
 
 /**
  * Records decisions: on a brain with a home repository, the files first and then their projection; otherwise the rows.
- * pageFiles: on a brain with a home repository, page files (repository-relative, new) written and committed in the same
+ * pageFiles: on a brain with a home repository, new page files (repository-relative; refused if one exists) written and committed in the same
  * commit as the decisions, such as a person page a decision links; ignored on a brain without one.
  */
 export async function recordDecisions(engine: BrainEngine, decisions: DecisionInput[], message: string, pageFiles: Array<{ path: string; text: string }> = []): Promise<RecordResult> {
@@ -309,7 +314,7 @@ export async function recordDecisions(engine: BrainEngine, decisions: DecisionIn
       'Leave such a group undecided on a brain whose default source has a repository.',
       { reason, fix: { argv: ['gbrain', 'dedupe', 'confirm'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Prints the confirm list with a hint line per entry; changes nothing.' } });
   }
-  const receipt = commitDecisionFiles(home.root, [...pageFiles, ...full.map(d => ({ path: decisionPath(decisionId(d.members)), text: serializeDecision(d) }))], message);
+  const receipt = commitDecisionFiles(home.root, [...pageFiles.map(f => ({ ...f, create: true as const })), ...full.map(d => ({ path: decisionPath(decisionId(d.members)), text: serializeDecision(d) }))], message);
   const projection = await projectIdentityDecisions(engine, home);
   return { store: 'git', home, receipt, projection };
 }

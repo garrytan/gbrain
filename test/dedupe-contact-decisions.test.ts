@@ -17,6 +17,7 @@ import { connectTemplateBrain } from './helpers/brain-template.ts';
 import { hasPendingMigrations } from '../src/core/migrate-pending.ts';
 import { listEntityIdentities } from '../src/core/entity-identity.ts';
 import { readIdentityReviews } from '../src/core/apple-contacts/identity-match.ts';
+import { linkGoogleContacts, unlinkGoogleContactPage } from '../src/core/google/contact-identity.ts';
 import { runDedupe } from '../src/commands/dedupe.ts';
 import { performSync } from '../src/commands/sync.ts';
 import { decisionId, IDENTITY_DIR } from '../src/core/entities/identity-decisions.ts';
@@ -243,6 +244,50 @@ describe('one person mirrored into other sources', () => {
     const entity = (await ids('people/c-jo'))[0]!.entity_id;
     expect((await ids('people/jo-example')).map(r => [r.source_id, r.entity_id, r.canonical])).toEqual([['default', entity, true], ['mirror-b', entity, false]]);
     expect(await ids('people/jo-other')).toEqual([]);
+  });
+
+  test('unlinking a contact of one Google source keeps the link another Google source made to the same person', async () => {
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('gc2','gc2','{"kind":"google"}'::jsonb) ON CONFLICT DO NOTHING`);
+    await h.page('people/kim-example', 'Kim Example', { email: 'kim@example.invalid' });
+    await h.contact('c-kim', 'Kim Example', ['kim@example.invalid']);
+    await h.page('people/c-kim2', 'Kim Example', { google_contact_id: 'people/c-kim2', emails: ['kim@example.invalid'] }, 'gc2');
+    await linkGoogleContacts(engine, 'gc', { apply: true, slugs: ['people/c-kim'] });
+    await linkGoogleContacts(engine, 'gc2', { apply: true, slugs: ['people/c-kim2'] });
+    const entity = (await ids('people/kim-example'))[0]!.entity_id;
+    expect((await ids('people/c-kim2'))[0]?.entity_id).toBe(entity);
+    await unlinkGoogleContactPage(engine, 'gc', 'people/c-kim');
+    expect(await ids('people/c-kim')).toEqual([]);
+    expect((await ids('people/c-kim2'))[0]?.entity_id).toBe(entity);
+    expect((await ids('people/kim-example'))[0]?.entity_id).toBe(entity);
+  });
+
+  test('copies the owner recorded as different people are two candidates, never collapsed into one group', async () => {
+    await h.page('people/lee-example', 'Lee Example', { email: 'lee@example.invalid' });
+    await h.page('people/lee-example', 'Lee Example', { email: 'lee@example.invalid' }, 'mirror-b');
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId([ref('default', 'people/lee-example'), ref('mirror-b', 'people/lee-example')]), verdict: 'different',
+      members: [ref('default', 'people/lee-example'), ref('mirror-b', 'people/lee-example')], group_id: null, entity_id: null, canonical: null, decided_by: 'owner',
+      origin: 'database', home_source_id: null, git_blob: null }] });
+    await h.contact('c-lee', 'Lee Example', ['lee@example.invalid']);
+    await h.dedupe(['link-contacts', '--source', 'gc', '--apply']);
+    expect(await ids('people/c-lee')).toEqual([]);
+    expect(await ids('people/lee-example')).toEqual([]);
+    expect((await readIdentityReviews(engine, 'gc')).find(r => r.slug === 'people/c-lee')).toEqual(expect.objectContaining({
+      candidates: [ref('default', 'people/lee-example'), ref('mirror-b', 'people/lee-example')], decided: 'different' }));
+  });
+
+  test('a contact left with one candidate after a pairwise reject keeps waiting, even when that candidate is in another decision', async () => {
+    await h.page('people/max-a', 'Max Example', { email: 'max@example.invalid' });
+    await h.page('people/max-b', 'Max Example', { email: 'max@example.invalid' }, 'mirror-b');
+    await h.page('people/max-c', 'Max Other', { email: 'max.c@example.invalid' }, 'mirror-c');
+    await h.contact('c-max', 'Max Example', ['max@example.invalid']);
+    await h.json(['decide', '--source', 'gc', '--file', h.choices([{ contact_slug: 'people/c-max', action: 'reject', candidate: 'default:people/max-a' }])]);
+    await engine.applyIdentityDecisions({ upsert: [{ decision_id: decisionId([ref('mirror-b', 'people/max-b'), ref('mirror-c', 'people/max-c')]), verdict: 'different',
+      members: [ref('mirror-b', 'people/max-b'), ref('mirror-c', 'people/max-c')], group_id: null, entity_id: null, canonical: null, decided_by: 'owner',
+      origin: 'database', home_source_id: null, git_blob: null }] });
+    await h.dedupe(['link-contacts', '--source', 'gc', '--apply']);
+    expect((await readIdentityReviews(engine, 'gc')).find(r => r.slug === 'people/c-max')).toEqual(expect.objectContaining({ candidates: [ref('mirror-b', 'people/max-b')] }));
+    expect((await readIdentityReviews(engine, 'gc')).find(r => r.slug === 'people/c-max')?.decided).toBeUndefined();
+    expect(await h.waiting()).toContainEqual(['people/c-max', 'several_people', [['mirror-b:people/max-b', ['email']]]]);
   });
 });
 

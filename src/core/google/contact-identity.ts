@@ -114,7 +114,7 @@ export async function linkGoogleContacts(engine: BrainEngine, sourceId: string, 
     } else if (link.outcome === 'many' && !link.otherWriter) {
       const review: IdentityReview = { contact_id: row.id, slug: row.slug, candidates: link.candidates! };
       const keys = review.candidates.map(refKey);
-      if (apart.some(set => { const s = new Set(set.map(refKey)); return keys.every(k => s.has(k)); })) review.decided = 'different';
+      if (keys.length > 1 && apart.some(set => { const s = new Set(set.map(refKey)); return keys.every(k => s.has(k)); })) review.decided = 'different';
       else { counts.waiting++; waits('several_people'); }
       reviews.set(row.id, review);
     } else reviews.delete(row.id);

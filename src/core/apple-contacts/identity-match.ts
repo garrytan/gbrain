@@ -32,7 +32,7 @@ import { canonicalPhone, phoneProbeDigits } from '../phone-key.ts';
 import { linkEntityIdentity, listEntityIdentities, unlinkEntityIdentity } from '../entity-identity.ts';
 import { decidedSets } from '../entities/identity-decisions.ts';
 import { namesAgree } from '../entities/name-variants.ts';
-import { CONNECTOR_KINDS_SQL } from '../persistence/connector-kinds.ts';
+import { CONNECTOR_KINDS_SQL, isConnectorSourceKind } from '../persistence/connector-kinds.ts';
 import { DEFAULT_SOURCE_ID } from '../sync-failure-ledger.ts';
 import type { IdentityMemberRef } from '../engine-sql/identity-decisions.ts';
 
@@ -107,9 +107,10 @@ export async function exactPersonMatches(engine: BrainEngine, sourceId: string, 
 /**
  * Copies of one page: candidates with the same slug in several sources that carry exactly the same matched keys under
  * names that agree, as when a person page is mirrored into read-only copies of other sources. Each set lists the
- * default source's copy first; every other candidate is a set of one. Copies that disagree on a key stay apart.
+ * default source's copy first; every other candidate is a set of one. Copies that disagree on a key, or that the owner
+ * recorded as different people (apart), stay apart.
  */
-export function mirrorSets(pages: IdentityMemberRef[], m: Pick<ExactPersonMatches, 'keys' | 'titles'>): IdentityMemberRef[][] {
+export function mirrorSets(pages: IdentityMemberRef[], m: Pick<ExactPersonMatches, 'keys' | 'titles'>, apart: IdentityMemberRef[][] = []): IdentityMemberRef[][] {
   const bySlug = new Map<string, IdentityMemberRef[]>();
   for (const page of pages) bySlug.set(page.slug, [...bySlug.get(page.slug) ?? [], page]);
   const sig = (page: IdentityMemberRef) => (m.keys.get(refKey(page)) ?? []).join('\n');
@@ -117,10 +118,11 @@ export function mirrorSets(pages: IdentityMemberRef[], m: Pick<ExactPersonMatche
   for (const copies of bySlug.values()) {
     const first = copies[0]!;
     const name = m.titles.get(refKey(first));
+    const keys = copies.map(refKey);
     const one = copies.length > 1 && !!sig(first) && !!name && copies.every(c => {
       const t = m.titles.get(refKey(c));
       return sig(c) === sig(first) && !!t && (t === name || namesAgree(name, t) === true);
-    });
+    }) && !apart.some(set => set.filter(x => keys.includes(refKey(x))).length > 1);
     if (!one) { for (const c of copies) out.push([c]); continue; }
     out.push([...copies].sort((a, b) => Number(b.source_id === DEFAULT_SOURCE_ID) - Number(a.source_id === DEFAULT_SOURCE_ID) || (a.source_id < b.source_id ? -1 : 1)));
   }
@@ -129,16 +131,16 @@ export function mirrorSets(pages: IdentityMemberRef[], m: Pick<ExactPersonMatche
 
 /**
  * Matched pages counted as people: pages in one identity group are one person, and so are the copies of one page
- * (mirrorSets) when at most one identity group holds any of them.
+ * (mirrorSets) when all of them sit in the same identity group or none does, so collapsing never grows a group.
  */
-async function outcomeOf(engine: BrainEngine, pages: IdentityMemberRef[], truncated: boolean, m: Pick<ExactPersonMatches, 'keys' | 'titles'> | null): Promise<MatchOutcome> {
+async function outcomeOf(engine: BrainEngine, pages: IdentityMemberRef[], truncated: boolean, m: Pick<ExactPersonMatches, 'keys' | 'titles'> | null, apart: IdentityMemberRef[][]): Promise<MatchOutcome> {
   if (!pages.length) return { kind: 'none' };
   const entityOf = new Map(await Promise.all(pages.map(async page => [refKey(page), (await listEntityIdentities(engine, { slug: page.slug, slugSourceId: page.source_id }))
     .find(x => x.slug === page.slug && x.source_id === page.source_id)?.entity_id ?? null] as const)));
   const groups = new Map<string, IdentityMemberRef[]>();
-  for (const set of m ? mirrorSets(pages, m) : pages.map(p => [p])) {
-    const entities = [...new Set(set.map(p => entityOf.get(refKey(p))).filter((e): e is string => !!e))];
-    for (const unit of entities.length > 1 ? set.map(p => [p]) : [set]) {
+  for (const set of m ? mirrorSets(pages, m, apart) : pages.map(p => [p])) {
+    const entities = new Set(set.map(p => entityOf.get(refKey(p)) ?? null));
+    for (const unit of entities.size > 1 ? set.map(p => [p]) : [set]) {
       const entity = unit.map(p => entityOf.get(refKey(p))).find(e => !!e);
       const key = entity ? `entity:${entity}` : `page:${refKey(unit[0]!)}`;
       groups.set(key, [...groups.get(key) ?? [], ...unit]);
@@ -189,7 +191,7 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
       }
       kept.push(page);
     }
-    outcome = pages.length && !kept.length ? { kind: 'different', candidates: pages } : await outcomeOf(engine, kept, truncated, opts.collapseMirrors ? found : null);
+    outcome = pages.length && !kept.length ? { kind: 'different', candidates: pages } : await outcomeOf(engine, kept, truncated, opts.collapseMirrors ? found : null, apart);
     if (outcome.kind === 'one' && kept.length < pages.length) outcome = { kind: 'many', candidates: kept };
     else if (outcome.kind === 'one' && opts.contactName) {
       const verdicts = kept.map(p => titles.get(refKey(p))).filter((t): t is string => !!t).map(t => namesAgree(opts.contactName!, t));
@@ -216,17 +218,19 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
     return { outcome: 'one', linked: true, unlinked: !!current };
   }
   if (current && !opts.dryRun) await unlinkContact(engine, current.entity_id, slug, sourceId, origin);
-  return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' || outcome.kind === 'name_disagrees' ? { candidates: outcome.candidates, matched, titles, ...(opts.collapseMirrors ? { sets: mirrorSets(outcome.candidates, found) } : {}) } : {}) };
+  return { outcome: outcome.kind, linked: false, unlinked: !!current, ...(outcome.kind === 'many' || outcome.kind === 'name_disagrees' ? { candidates: outcome.candidates, matched, titles, ...(opts.collapseMirrors ? { sets: mirrorSets(outcome.candidates, found, apart) } : {}) } : {}) };
 }
 
 /**
- * Remove this source's link of a contact page, and the person page rows this source made (the page and its copies in
- * other sources) when no other contact of the source and no other writer's row is left in the group.
+ * Remove this source's link of a contact page, and the person page rows this linker made (the page and its copies in
+ * other sources) when no contact page of any connector source and no other writer's row is left in the group.
  */
 export async function unlinkContact(engine: BrainEngine, entityId: string, slug: string, sourceId: string, origin = APPLE_CONTACTS_LINK_ORIGIN): Promise<void> {
   await unlinkEntityIdentity(engine, { entityId, slug, sourceId });
   const rest = await listEntityIdentities(engine, { entityId });
-  if (rest.length && rest.every(r => r.established_by === origin && r.source_id !== sourceId)) {
+  if (!rest.length || rest.some(r => r.established_by !== origin)) return;
+  const kinds = new Map(await Promise.all([...new Set(rest.map(r => r.source_id))].map(async id => [id, (await engine.getSource(id))?.config?.kind] as const)));
+  if (rest.every(r => !isConnectorSourceKind(kinds.get(r.source_id)))) {
     for (const r of rest) await unlinkEntityIdentity(engine, { entityId, slug: r.slug, sourceId: r.source_id });
   }
 }
@@ -236,6 +240,7 @@ export async function decidedDifferent(engine: BrainEngine, candidates: Identity
   const read = await engine.listIdentityDecisions().catch(() => null);
   if (!read) return false;
   const wanted = candidates.map(refKey);
+  if (wanted.length < 2) return false;
   return decidedSets(read).apart.some(set => { const keys = new Set(set.map(refKey)); return wanted.every(k => keys.has(k)); });
 }
 

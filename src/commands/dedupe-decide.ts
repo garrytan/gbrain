@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { dump } from 'js-yaml';
 import type { BrainEngine } from '../core/engine.ts';
 import type { IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
-import { decidedSets, decisionId, identityHome, memberKey, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
+import { decidedSets, decisionId, identityHome, memberKey, recordDecisions, storeMismatch, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import { listEntityIdentities } from '../core/entity-identity.ts';
 import { exactPersonMatches, mirrorSets } from '../core/apple-contacts/identity-match.ts';
 import { parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../core/phone-key.ts';
@@ -104,7 +104,7 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
     const otherGroup = current && current.established_by !== GOOGLE_CONTACTS_LINK_ORIGIN ? current.entity_id : null;
     const p: Planned = { line, decisions: [], contact, unlinkFirst: false };
     const found = await exactPersonMatches(engine, sourceId, row.emails, row.phones, countryCode);
-    const sets = mirrorSets(found.pages, found);
+    const sets = mirrorSets(found.pages, found, apart);
     const setOf = (m: IdentityMemberRef) => sets.find(set => set.some(x => memberKey(x) === memberKey(m))) ?? [m];
 
     if (line.action === 'ignore') {
@@ -178,6 +178,10 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
   const result = (recorded?: RecordResult): DecideResult => ({ source_id: sourceId, mode: opts.dryRun ? 'dry_run' : 'apply', lines,
     refused: lines.filter(l => l.status === 'refused').length, ...(recorded ? { recorded } : {}) });
   if (opts.dryRun || !planned.length) return result();
+  if (!home) {
+    const read = await engine.listIdentityDecisions();
+    if (read.decisions.some(d => d.origin === 'git')) throw storeMismatch(read.decisions);
+  }
 
   const ready: Planned[] = [];
   for (const p of planned) {
@@ -190,13 +194,12 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
     ready.push(p);
   }
   if (!ready.length) return result();
-  for (const p of ready) if (p.unlinkFirst) await unlinkGoogleContactPage(engine, sourceId, p.contact.slug);
   const pages = home ? ready.flatMap(p => p.newPage ? [{ path: `${p.newPage.ref.slug}.md`, text: personPage(p.newPage.title) }] : []) : [];
   const recorded = await recordDecisions(engine, ready.flatMap(p => p.decisions), `dedupe: decide ${ready.length} contact(s) of ${sourceId}`, pages);
-  if (home && pages.length) {
-    for (const f of pages) await importFromFile(engine, join(home.root, f.path), f.path, { sourceId: home.sourceId, noEmbed: true });
-    await engine.applyIdentityDecisions({});
-  }
+  if (home) for (const f of pages) await importFromFile(engine, join(home.root, f.path), f.path, { sourceId: home.sourceId, noEmbed: true });
+  const unlink = ready.filter(p => p.unlinkFirst);
+  for (const p of unlink) await unlinkGoogleContactPage(engine, sourceId, p.contact.slug);
+  if (pages.length || unlink.length) await engine.applyIdentityDecisions({});
   for (const p of ready) p.line.status = 'recorded';
   if (await identityLinksOn(engine)) await linkGoogleContacts(engine, sourceId, { apply: true, slugs: ready.map(p => p.contact.slug) });
   return result(recorded);
