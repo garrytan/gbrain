@@ -540,12 +540,12 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   const bootEngineDependents = async (): Promise<void> => {
     // Retrieval Reflex (#1981, D9=C): the resolve/turn_context/context_pack (+ delegated sync/sweep) IPC listener. Wiring
     // shared with `serve --http` via bindResolveIpcForServe (#4474) — best-effort; failure to bind never blocks the MCP server.
-    const [{ createPersistenceIpcProvider, residentPersistenceConfig }, { bindResolveIpcForServe }] = await Promise.all([import('../core/persistence/provider.ts'), import('./resolve-ipc-binding.ts')]);
+    const [{ servePersistenceIpcProvider, residentPersistenceConfig }, { bindResolveIpcForServe }] = await Promise.all([import('../core/persistence/provider.ts'), import('./resolve-ipc-binding.ts')]);
     bootPhase('source_scope');
     const { sourceId: ipcSourceId } = await resolveMcpStdioSourceScope(engine);
     bootPhase('persistence_consumer');
     const lean = readOnlyServeSkipsResidentDuties(!!session.readOnly, engine.kind);
-    const persistence = lean ? undefined : await createPersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
+    const persistence = lean ? undefined : await servePersistenceIpcProvider(engine, residentPersistenceConfig(config) ?? { engine: engine.kind });
     bootPhase('resolve_ipc_bind');
     ipcBinding = await bindResolveIpcForServe(engine, ipcSourceId, persistence, { rememberCallable: () => !session.allowedOps || session.allowedOps.has('remember'), lean });
     import('../core/onboard/mcp-onboarding.ts').then(m => m.startOnboardingRefresher(engine, { idle: () => _stdioRpcsInFlight === 0 })).catch(() => { /* coaching is best-effort */ });
