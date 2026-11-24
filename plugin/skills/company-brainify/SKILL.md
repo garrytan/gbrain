@@ -213,7 +213,15 @@ and deletes fact rows. Two rules govern it.
 - **Re-auditing an EXISTING shared brain:** the shared brain IS the target, so
   edits are in place on the SHARED repo (cd into the shared repo, never the
   personal `sync.repo_path`). Fact-row removal + re-sync applies to the shared
-  source's DB.
+  source's DB. Write the export list the history purge checks against before
+  you start, from the same scope (every file in it gets the full read):
+
+  ```bash
+  STAGING="$HOME/.gbrain/backups/brainify-reaudit-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$STAGING" && chmod 700 "$STAGING"
+  grep -E '^(people|meetings|daily|companies|projects|analysis)/' /tmp/brainify-scope.txt \
+    | LC_ALL=C sort -u > "$STAGING.export-list"
+  ```
 
 **Fire the [data-loss-gate](../data-loss-gate/SKILL.md) confirmation card
 BEFORE the bulk destructive edits begin.** Both targets are destructive (the
