@@ -151,7 +151,9 @@ The plan shows, before anything is written:
   takes and files keep theirs);
 - the closed list of what failback does not carry: every table of the old primary no Rust read call returns (its
   rows stay as they were at the swap) and every column of a carried table no read call returns;
-- the known limits: the shadow digests above, and files with no page, which no Rust read call lists;
+- the known limits: the shadow digests above; files with no page, which no Rust read call lists; and a fact's fence
+  row, event type, dimension and attribution columns, which no read call returns, so a fact added on Rust after the
+  swap makes failback refuse by name (`failback_unavailable`) instead of losing them;
 - the [fingerprint rule](#fingerprint-rule).
 
 A run checks the plan hash (`preview_changed`), that no other process owns the Rust store or uses the old primary
@@ -336,7 +338,9 @@ the swap again.
 
 There is no finished swap to undo: no run record, a run that never switched, a config that does not name the Rust
 engine, or an old primary that does not record the run at cutover. It also refuses when a read call cannot return
-every row (a source removed on Rust, or 1000 or more open loops of one status in a source). Nothing was written. Read
+every row (a source removed on Rust, or 1000 or more open loops of one status in a source), when a page that changed
+keeps its body in segments, or when a fact was added on Rust after the swap (its fence row, event type, dimension
+and attribution columns have no read call). Nothing was written. Read
 `gbrain engine swap --status` and report what it shows.
 
 <a id="failback_mismatch"></a>

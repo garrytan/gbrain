@@ -96,8 +96,9 @@ for (const arm of arms) {
       expect((await w.primary.getTimeline('companies/acme-example')).map(t => t.summary)).toEqual(['Founded']);
       expect((await w.primary.getChunksWithEmbeddings('companies/acme-example', { includeUnsealed: true }))[0]!.chunk_text).toBe('Made after the swap.');
       expect((await w.primary.getRawData('companies/acme-example')).map(r => r.data)).toEqual([{ b: 2 }]);
-      expect((await w.primary.listFactsKeyset('default', null, { activeOnly: false })).map(f => f.fact).sort())
-        .toEqual(['Acme was founded after the swap', 'Alice prefers mornings']);
+      const facts = await w.primary.listFactsKeyset('default', null, { activeOnly: false });
+      expect(facts.map(f => f.fact)).toEqual(['Alice prefers mornings']);
+      expect(facts[0]!.expired_at).not.toBeNull();
       expect(await w.primary.getConfig('example.setting')).toBe('after');
       expect((await w.primary.listOpenLoops()).map(l => l.summary)).toEqual(['Send the deck']);
       // Authority is back on the old engine, the fence is gone, and the graduation row closed the run.
@@ -125,6 +126,24 @@ for (const arm of arms) {
       expect(record.failback!.state).toBe('copied');
       expect(record.failback!.error!.code).toBe('failback_mismatch');
     }, 180_000);
+
+    scenario('a fact added on Rust after the swap refuses failback by name, before any write', undefined, async w => {
+      await writeAfterSwap(w.rust);
+      await w.rust.insertFact({ fact: 'Acme was founded after the swap', entity_slug: 'companies/acme-example', source: 'test' }, { source_id: 'default' });
+      const error = await expectRefused(inHome(w, () => planFailback(w.deps)), 'failback_unavailable');
+      expect(error.message).toContain('1 fact(s) were added on the Rust engine');
+      expect(error.message).toContain('facts.event_type');
+      expect((await w.primary.getPage('people/alice-example'))!.compiled_truth).toBe('Alice runs widget-co.');
+      expect(configEngine(w)).toBe('rust');
+    }, 120_000);
+
+    scenario('a changed page with an image chunk refuses failback by name, before any write', undefined, async w => {
+      await w.rust.upsertChunks('companies/widget-co', [{ chunk_index: 0, chunk_text: 'A company logo.', chunk_source: 'compiled_truth', modality: 'image' }]);
+      const error = await expectRefused(inHome(w, () => planFailback(w.deps)), 'failback_unavailable');
+      expect(error.message).toContain('companies/widget-co');
+      expect(error.message).toContain('embedding_image');
+      expect(configEngine(w)).toBe('rust');
+    }, 120_000);
 
     scenario('failback refuses while a writer is active, before any write', () => ({ writers: async () => 'gbrain serve (pid 4242) holds the Rust store' }), async w => {
       await writeAfterSwap(w.rust);

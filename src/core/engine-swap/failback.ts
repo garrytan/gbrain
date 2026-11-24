@@ -28,7 +28,7 @@ import { readSwapRecord, REAL_FS, writeSwapRecord, type FailbackState, type Swap
 import { swapRefusal, type SwapRefusalReason } from './refusals.ts';
 import { restoreAuthority, switchAuthority, type RouteProber, type RouteProbe } from './route.ts';
 import { copyBack, diffBrains, mismatchesOf, type FailbackDiff, type Mismatch } from './failback-copy.ts';
-import { failbackLosses, hashOf, isSegmented, refKey, UnboundedReadError, type FailbackLosses } from './failback-read.ts';
+import { FACT_COLUMNS_WITHOUT_READ, failbackLosses, hashOf, isSegmented, refKey, UnboundedReadError, type FailbackLosses } from './failback-read.ts';
 
 /** The losses failback accepts and shows with counts before it writes; every other loss is named in `losses`. */
 export const FAILBACK_ACCEPTED_LOSSES = ['page_version_collapse', 'new_row_ids'] as const;
@@ -37,6 +37,7 @@ export const FAILBACK_ACCEPTED_LOSSES = ['page_version_collapse', 'new_row_ids']
 export const FAILBACK_KNOWN_LIMITS = [
   'The Rust store\'s shadow digests are written only by the seed and the follower; writes made after the swap do not update them, so failback never reads them.',
   'Files with no page are not listed by any Rust read call (listFiles is not served); their rows keep the state they had at the swap.',
+  'No read call returns a fact\'s fence row, event type, dimension or attribution (facts.row_num, source_markdown_slug, event_type, dimension, value, value_hash, dim_status, attributed_to), so a fact added on Rust after the swap makes failback refuse by name.',
 ] as const;
 
 /** The fingerprint guard's rule, in plain words, for the swap and failback plans and the guide. */
@@ -117,6 +118,14 @@ async function readDiff(deps: FailbackDeps): Promise<FailbackDiff> {
 function planOf(record: SwapRecord, diff: FailbackDiff, losses: FailbackLosses): FailbackPlan {
   const segmented = diff.pages.filter(d => d.parts.includes('page') && (isSegmented(d.primary) || isSegmented(d.rust))).map(d => refKey(d.ref));
   if (segmented.length) throw unavailable(`page(s) ${segmented.slice(0, 5).join(', ')}${segmented.length > 5 ? ', ...' : ''} keep their body in segments and changed on Rust; failback cannot rewrite a segmented body yet.`);
+  const imaged = diff.pages.filter(d => d.parts.includes('chunks') && (d.rust?.parts.chunks as Array<{ modality?: unknown }> | undefined)
+    ?.some(c => c.modality != null && c.modality !== 'text')).map(d => refKey(d.ref));
+  if (imaged.length) {
+    throw unavailable(`page(s) ${imaged.slice(0, 5).join(', ')}${imaged.length > 5 ? ', ...' : ''} changed on Rust and hold image chunks; no Rust read call returns content_chunks.embedding_image or embedding_multimodal, so failback refuses rather than drop them.`);
+  }
+  if (diff.facts.add.length) {
+    throw unavailable(`${diff.facts.add.length} fact(s) were added on the Rust engine after the swap, and no Rust read call returns ${FACT_COLUMNS_WITHOUT_READ.map(c => `facts.${c}`).join(', ')}; failback would lose those values, so it refuses until the Rust fact read returns them.`);
+  }
   if (diff.sources.remove.length) throw unavailable(`source(s) ${diff.sources.remove.join(', ')} exist on the old primary but not on the Rust engine; failback never deletes a source.`);
   return {
     run_id: record.run_id,

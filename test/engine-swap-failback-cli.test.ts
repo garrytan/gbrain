@@ -63,7 +63,7 @@ describe('engine swap --to pglite (failback) CLI', () => {
     expect(text).toMatch(/Pages: 1 changed, 0 added, 0 removed/);
     expect(text).toMatch(/Accepted loss page_version_collapse: 1/);
     expect(text).toMatch(/Accepted loss new_row_ids: 0/);
-    expect(text).toContain('Not carried (no Rust read call)');
+    expect(text).toContain('Not carried by failback (no Rust read call returns it, or failback does not write it back)');
     expect(text).toContain('shadow digests');
     expect(text).toContain('Fingerprint rule');
     expect(text).toContain('Nothing was written.');

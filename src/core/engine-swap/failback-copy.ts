@@ -178,7 +178,8 @@ async function writePage(tx: BrainEngine, d: PageDiff): Promise<void> {
     const takes = img.parts.takes as Array<Record<string, unknown>>;
     const keep = takes.map(t => Number(t.id));
     await tx.executeRaw('DELETE FROM takes WHERE page_id = $1 AND NOT (id = ANY($2::bigint[]))', [pageId, keep]);
-    const cols = ['page_id', ...TAKE_FIELDS];
+    // created_at / updated_at travel when the read returned them for every row; otherwise the primary's defaults apply.
+    const cols = ['page_id', ...TAKE_FIELDS].filter(c => !(c === 'created_at' || c === 'updated_at') || takes.every(t => t[c] != null));
     await upsertById(tx, 'takes', cols, takes.map(t => cols.map(c => (c === 'page_id' ? pageId : c === 'superseded_by' ? null : t[c] ?? null))));
     for (const t of takes) if (t.superseded_by != null) await tx.executeRaw('UPDATE takes SET superseded_by = $1 WHERE id = $2', [t.superseded_by, t.id]);
   }

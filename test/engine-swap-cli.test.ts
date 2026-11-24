@@ -96,11 +96,11 @@ describe('engine swap --plan', () => {
     expect(r.stdout).toContain('Way back: After a swap, the old engine is not kept current; failback');
     expect(r.stdout).toContain('Known limit: The Rust store\'s shadow digests are written only by the seed and the follower');
     expect(r.stdout).toContain('Failback accepted losses (counted by its plan): page_version_collapse, new_row_ids');
-    expect(r.stdout).toMatch(/Failback does not carry \(no Rust read call\), \d+ table\(s\): .*page_versions/);
+    expect(r.stdout).toMatch(/Failback does not carry \(no Rust read call returns it, or failback does not write it back\), \d+ table\(s\): .*page_versions/);
     expect(r.stdout).toContain('Fingerprint rule (the probe\'s own rule, both directions)');
     const json = JSON.parse((await run(['--to', 'rust', '--plan', '--json'])).stdout);
     expect(json.way_back.losses.not_carried_tables).toContain('page_versions');
-    expect(json.way_back.known_limits.length).toBe(2);
+    expect(json.way_back.known_limits.length).toBe(3);
   });
 
   test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {

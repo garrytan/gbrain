@@ -56,11 +56,11 @@ const CHUNK_FIELDS = ['chunk_index', 'chunk_text', 'chunk_source', 'model', 'tok
   'start_line', 'end_line', 'parent_symbol_path', 'doc_comment', 'symbol_name_qualified', 'modality'] as const;
 const LINK_FIELDS = ['to_slug', 'to_source_id', 'link_type', 'context', 'link_source', 'origin_slug', 'origin_source_id', 'origin_field'] as const;
 export const TAKE_FIELDS = ['id', 'row_num', 'claim', 'kind', 'holder', 'weight', 'since_date', 'until_date', 'source', 'superseded_by', 'active',
-  'resolved_at', 'resolved_outcome', 'resolved_quality', 'resolved_value', 'resolved_unit', 'resolved_source', 'resolved_by'] as const;
+  'resolved_at', 'resolved_outcome', 'resolved_quality', 'resolved_value', 'resolved_unit', 'resolved_source', 'resolved_by', 'created_at', 'updated_at'] as const;
 export const FILE_FIELDS = ['id', 'source_id', 'page_slug', 'filename', 'storage_path', 'mime_type', 'size_bytes', 'content_hash', 'metadata', 'created_at'] as const;
 export const FACT_FIELDS = ['id', 'source_id', 'entity_slug', 'fact', 'kind', 'visibility', 'notability', 'context', 'valid_from', 'valid_until',
   'expired_at', 'superseded_by', 'consolidated_at', 'consolidated_into', 'source', 'source_session', 'confidence', 'embedded_at', 'created_at',
-  'embedding_model', 'embedded_text_hash', 'claim_metric', 'attributed_to', 'trust_tier', 'write_origin'] as const;
+  'embedding_model', 'embedded_text_hash', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'trust_tier', 'write_origin'] as const;
 export const SOURCE_FIELDS = ['id', 'name', 'local_path', 'last_commit', 'last_sync_at', 'config', 'created_at', 'contextual_retrieval_mode', 'trust_frontmatter_overrides'] as const;
 
 /**
@@ -70,38 +70,34 @@ export const SOURCE_FIELDS = ['id', 'name', 'local_path', 'last_commit', 'last_s
  */
 export const FAILBACK_CARRIED: Readonly<Record<string, { read: string; columns: readonly string[]; derived: readonly string[] }>> = {
   pages: { read: 'listAllPageRefs + getPage', columns: [...PAGE_FIELDS, 'slug', 'source_id', 'deleted_at'],
-    derived: ['id', 'page_kind', 'emotional_weight', 'emotional_weight_recomputed_at', 'search_vector', 'knowledge_revision', 'text_projection_revision',
-      'generation', 'corpus_generation', 'contextual_retrieval_mode', 'chunker_version', 'embedding_signature', 'body_storage', 'body_bytes', 'truth_bytes',
-      'body_lines', 'body_generation', 'segment_count', 'segmenter_version', 'body_flags', 'truth_lead', 'timeline_lead', 'revision_write_request_id',
-      'revision_principal_kind', 'revision_principal_id', 'trust_tier', 'write_origin', 'salience_touched_at', 'last_retrieved_at', 'links_extracted_at',
-      'links_attendance_blocked_revision', 'links_attendance_blocked_at', 'links_extract_failure', 'database_only_reason', 'withheld_source_path',
-      'page_readers', 'folder_rule_ids', 'version_history_gap_at'] },
-  tags: { read: 'getTags', columns: ['page_id', 'tag'], derived: ['id', 'tag_source'] },
-  links: { read: 'getLinks', columns: ['from_page_id', 'to_page_id', 'link_type', 'context', 'link_source', 'origin_page_id', 'origin_field'],
-    derived: ['id', 'link_kind', 'resolution_type', 'created_at', 'assertion_tense'] },
-  timeline_entries: { read: 'getTimeline', columns: ['page_id', 'date', 'source', 'summary', 'detail'],
-    derived: ['id', 'event_page_id', 'created_at', 'write_request_id', 'write_principal_kind', 'write_principal_id', 'last_write_request_id',
-      'last_write_principal_kind', 'last_write_principal_id', 'last_written_at', 'trust_tier', 'write_origin'] },
+    // Recomputed by the old primary when it writes the page (ids, revisions, body storage, search vector, chunk seal).
+    derived: ['id', 'search_vector', 'knowledge_revision', 'text_projection_revision', 'generation', 'corpus_generation', 'contextual_retrieval_mode',
+      'chunker_version', 'embedding_signature', 'body_storage', 'body_bytes', 'truth_bytes', 'body_lines', 'body_generation', 'segment_count',
+      'segmenter_version', 'body_flags', 'truth_lead', 'timeline_lead'] },
+  tags: { read: 'getTags', columns: ['page_id', 'tag'], derived: ['id'] },
+  links: { read: 'getLinks', columns: ['from_page_id', 'to_page_id', 'link_type', 'context', 'link_source', 'origin_page_id', 'origin_field'], derived: ['id'] },
+  timeline_entries: { read: 'getTimeline', columns: ['page_id', 'date', 'source', 'summary', 'detail'], derived: ['id'] },
   content_chunks: { read: 'getChunksWithEmbeddings', columns: ['page_id', ...CHUNK_FIELDS, 'embedding'],
-    derived: ['id', 'embedded_at', 'embedded_text_hash', 'embedding_input_hash', 'created_at', 'search_vector', 'edges_backfilled_at', 'embedding_pending_since',
-      'projected_byte_start', 'projected_byte_end', 'occurrence_id', 'local_ordinal', 'raw_byte_start', 'raw_byte_end', 'body_generation', 'retired_generation'] },
+    // The chunk projection's own bookkeeping, rebuilt when the old primary seals the page.
+    derived: ['id', 'search_vector', 'embedded_at', 'edges_backfilled_at', 'embedding_pending_since', 'projected_byte_start', 'projected_byte_end',
+      'occurrence_id', 'local_ordinal', 'raw_byte_start', 'raw_byte_end', 'body_generation', 'retired_generation', 'created_at'] },
   raw_data: { read: 'getRawData', columns: ['page_id', 'source', 'data', 'fetched_at'], derived: ['id'] },
-  takes: { read: 'listTakes', columns: ['page_id', ...TAKE_FIELDS],
-    derived: ['created_at', 'updated_at', 'embedded_at', 'embedding', 'embedding_model', 'embedded_text_hash', 'write_request_id', 'write_principal_kind',
-      'write_principal_id', 'last_write_request_id', 'last_write_principal_kind', 'last_write_principal_id', 'last_written_at', 'trust_tier', 'write_origin'] },
+  takes: { read: 'listTakes', columns: ['page_id', ...TAKE_FIELDS], derived: [] },
   files: { read: 'listFilesForPage', columns: ['page_id', ...FILE_FIELDS], derived: [] },
-  facts: { read: 'listFactsKeyset', columns: [...FACT_FIELDS, 'embedding'],
-    derived: ['row_num', 'source_markdown_slug', 'claim_value', 'claim_unit', 'claim_period', 'event_type', 'dimension', 'value', 'value_hash', 'dim_status',
-      'write_request_id', 'write_principal_kind', 'write_principal_id', 'last_write_request_id', 'last_write_principal_kind', 'last_write_principal_id',
-      'last_written_at', 'source_window'] },
+  facts: { read: 'listFactsKeyset', columns: [...FACT_FIELDS, 'embedding'], derived: [] },
   open_loops: { read: 'listOpenLoops', columns: ['*'], derived: [] },
   config: { read: 'getAllConfig', columns: ['key', 'value'], derived: [] },
-  sources: { read: 'listAllSources + getSource', columns: [...SOURCE_FIELDS, 'archived'],
-    derived: ['chunker_version', 'archived_at', 'archive_expires_at', 'newest_content_at', 'incarnation', 'upstream_checked_at', 'upstream_commit',
-      'upstream_behind', 'purge_epoch'] },
+  sources: { read: 'listAllSources + getSource', columns: [...SOURCE_FIELDS, 'archived'], derived: [] },
   /** Re-derived from each written page's frontmatter (`setPageAliases`). */
   page_aliases: { read: 'getPage (frontmatter aliases)', columns: ['*'], derived: [] },
 };
+
+/**
+ * Fact columns the Rust engine stores but no read call returns (on any engine: they are not in FactRow). A fact
+ * changed on Rust keeps the old primary's values for them (the Rust engine never rewrites them in place; fence
+ * re-extraction deletes and inserts); a fact added on Rust after the swap could hold them, so failback refuses by name.
+ */
+export const FACT_COLUMNS_WITHOUT_READ = ['row_num', 'source_markdown_slug', 'event_type', 'dimension', 'value', 'value_hash', 'dim_status', 'attributed_to'] as const;
 
 function plain(value: unknown): Plain {
   if (value === undefined || value === null) return null;
@@ -321,9 +317,9 @@ export async function readConfig(engine: BrainEngine): Promise<Map<string, strin
 }
 
 export interface FailbackLosses {
-  /** Tables of the primary no Rust read call returns: their rows keep the state they had at the swap. */
+  /** Tables of the primary failback does not carry (no Rust read call returns them): rows keep their state at the swap. */
   not_carried_tables: string[];
-  /** Columns of carried tables no Rust read call returns (pre-swap value kept; the column default for new rows). */
+  /** Columns of carried tables failback does not write back (no read call returns them, or no write call takes them). */
   not_carried_fields: Record<string, string[]>;
 }
 

@@ -83,7 +83,9 @@ export async function writeAfterSwap(rust: BrainEngine): Promise<void> {
   await rust.upsertFile({ page_slug: 'companies/acme-example', page_id: page!.id, filename: 'deck.pdf', storage_path: 'files/deck.pdf', content_hash: 'ab'.repeat(32), mime_type: 'application/pdf', size_bytes: 10 });
   await rust.upsertOpenLoop({ sourceId: 'default', dedupKey: 'loop-1', loopType: 'commitment_owed_by_me', summary: 'Send the deck', evidence: [], detector: 'manual' });
   await rust.deletePage('notes/old-example');
-  await rust.insertFact({ fact: 'Acme was founded after the swap', entity_slug: 'companies/acme-example', source: 'test' }, { source_id: 'default' });
+  // A fact changed on Rust (expired): failback copies the change. A fact added on Rust refuses failback (its own test).
+  const [fact] = await rust.listFactsKeyset('default', null, { activeOnly: false });
+  await rust.expireFact(Number(fact!.id), { at: new Date('2026-11-25T00:00:00Z') });
   await rust.setConfig('example.setting', 'after');
 }
 
