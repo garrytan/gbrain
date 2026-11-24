@@ -45,6 +45,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { hasCapability } from '../engine-capabilities.ts';
+import { utcDate } from './cycle-date.ts';
 import { resolveOwnerContactAnchor, type OwnerContactAnchor } from '../enrich/owner-contact.ts';
 import { DEFAULT_THIN_THRESHOLD } from '../enrich/thin.ts';
 import { isAvailable } from '../ai/gateway.ts';
@@ -205,7 +206,7 @@ async function ownerDay(engine: BrainEngine, at: Date): Promise<{ day: string; t
       // invalid zone: fall through to UTC
     }
   }
-  return { day: at.toISOString().slice(0, 10), timezone: 'UTC' };
+  return { day: utcDate(at), timezone: 'UTC' };
 }
 
 /**
