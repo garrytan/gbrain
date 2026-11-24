@@ -5,6 +5,7 @@
  *
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 
@@ -69,9 +70,9 @@ export async function deletePurgedSlugHolds(
   tx: Raw, sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>,
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   if (!pages.length) return { write_gate_holds: 0, write_gate_receipts: 0 };
-  const holds: string[] = (await tx.executeRaw<{ id: string }>(`DELETE FROM write_gate_holds h USING unnest($2::text[], $3::bigint[], $4::timestamptz[]) AS d(slug, id, upto)
-    WHERE h.source_id = $1 AND ${holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug')} AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`,
-  [sourceId, pages.map(p => p.slug), pages.map(p => p.id ?? null), pages.map(p => p.deletedAt ?? null)])).map(h => h.id);
+  const { text, params } = renderFragment(sqlFragment`DELETE FROM write_gate_holds h USING unnest(${pages.map(p => p.slug)}::text[], ${pages.map(p => p.id ?? null)}::bigint[], ${pages.map(p => p.deletedAt ?? null)}::timestamptz[]) AS d(slug, id, upto)
+    WHERE h.source_id = ${sourceId} AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug'))} AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`);
+  const holds: string[] = (await tx.executeRaw<{ id: string }>(text, params)).map(h => h.id);
   holds.push(...await dropPurgedCandidates(tx, sourceId, pages));
   const receipts = holds.length
     ? (await tx.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = ANY($1::text[]) RETURNING 1", [holds])).length

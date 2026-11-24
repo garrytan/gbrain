@@ -154,18 +154,25 @@ export async function deleteStaleWriteGateReceipts(exec: SqlExecutor, olderThanD
   return rows.length;
 }
 
-const HOLD_COLUMNS = 'kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id';
-// $1..$12 are the hold's own values; every variant selects them with the page id (or NULL) as the last column.
-const HOLD_VALUES = '$1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text';
-const HOLD_REOPEN = `DO UPDATE
+// A reopened hold takes the slug with the payload (the payload names the page by the slug it was gated under). The two dedupe keys are
+// disjoint (write-gate-schema.ts): each statement names the index of the kind of hold it writes. $1..$12 are the hold's own values; the
+// bound statements select them with the page id as the last column, the unbound one with NULL. Each statement is one whole literal
+// (the check-engine-sql-dynamic guard).
+const HOLD_BY_PAGE_ID_SQL = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) SELECT $1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, p.id FROM pages p WHERE p.id = $13::bigint AND p.source_id = $2 ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL DO UPDATE
        SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
            slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
            write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
      RETURNING id::text AS id`;
-// A reopened hold takes the slug with the payload (the payload names the page by the slug it was gated under). The two dedupe keys are
-// disjoint (write-gate-schema.ts): each statement names the index of the kind of hold it writes.
-const BOUND_KEY = 'ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL';
-const UNBOUND_KEY = 'ON CONFLICT (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL';
+const HOLD_BY_SLUG_PAGE_SQL = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) SELECT $1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, p.id FROM pages p WHERE p.source_id = $2 AND p.slug = $3 ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
+const HOLD_UNBOUND_SQL = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) VALUES ($1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, NULL) ON CONFLICT (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
 
 /**
  * Records a held write for its page: bound to the page id the producer passed, else to the page at (source, slug) found inside the
@@ -175,14 +182,10 @@ const UNBOUND_KEY = 'ON CONFLICT (source_id, slug, fingerprint, detector_version
 export async function upsertWriteGateHold(exec: SqlExecutor, input: WriteGateHoldRowInput): Promise<number> {
   const values = [input.kind, input.source_id, input.slug, input.fingerprint, input.detector_version, input.tier, [...input.reason_families], [...input.reasons],
     input.detector_error, JSON.stringify(input.payload), input.write_origin ? JSON.stringify(input.write_origin) : null, input.request_id];
-  const bound = (page: string, extra: unknown[]) => exec.executeRaw<{ id: string }>(
-    `INSERT INTO write_gate_holds (${HOLD_COLUMNS}) SELECT ${HOLD_VALUES}, p.id FROM pages p WHERE ${page} ${BOUND_KEY} ${HOLD_REOPEN}`, [...values, ...extra]);
   let rows: Array<{ id: string }> = [];
-  if (input.page_id != null) rows = await bound('p.id = $13::bigint AND p.source_id = $2', [input.page_id]);
-  if (!rows.length && input.slug !== '') rows = await bound('p.source_id = $2 AND p.slug = $3', []);
-  if (!rows.length) {
-    rows = await exec.executeRaw<{ id: string }>(`INSERT INTO write_gate_holds (${HOLD_COLUMNS}) VALUES (${HOLD_VALUES}, NULL) ${UNBOUND_KEY} ${HOLD_REOPEN}`, values);
-  }
+  if (input.page_id != null) rows = await exec.executeRaw<{ id: string }>(HOLD_BY_PAGE_ID_SQL, [...values, input.page_id]);
+  if (!rows.length && input.slug !== '') rows = await exec.executeRaw<{ id: string }>(HOLD_BY_SLUG_PAGE_SQL, values);
+  if (!rows.length) rows = await exec.executeRaw<{ id: string }>(HOLD_UNBOUND_SQL, values);
   return Number(rows[0]!.id);
 }
 
