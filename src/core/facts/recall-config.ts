@@ -5,13 +5,15 @@
  *   recall.confidence_weighting  on | off (default off): question ranking weighs facts by recallConfidence (facts/decay.ts)
  *   recall.group_by_entity       on | off (default off): a question with no entity returns its facts grouped by entity
  *   recall.question_admission    reserve (default) | facts_arm
+ *   recall.require_fact_selector_with_query  on | off (default off)
  */
 import type { BrainEngine } from '../engine.ts';
 import { QUESTION_ADMISSION_RULES } from '../search/fact-relevance.ts';
 
 export const CONFIDENCE_WEIGHTING_KEY = 'recall.confidence_weighting';
 export const GROUP_BY_ENTITY_KEY = 'recall.group_by_entity';
-const SWITCH_KEYS: readonly string[] = [CONFIDENCE_WEIGHTING_KEY, GROUP_BY_ENTITY_KEY];
+export const REQUIRE_FACT_SELECTOR_KEY = 'recall.require_fact_selector_with_query';
+const SWITCH_KEYS: readonly string[] = [CONFIDENCE_WEIGHTING_KEY, GROUP_BY_ENTITY_KEY, REQUIRE_FACT_SELECTOR_KEY];
 const ON = ['on', 'true', '1', 'yes'];
 const OFF = ['off', 'false', '0', 'no'];
 

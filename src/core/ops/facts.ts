@@ -58,7 +58,8 @@ import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { parseSinceParam } from '../facts/since-parse.ts';
 import { callerSessionKey } from '../access/member-facts.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
-import { groupFactsByEntity, parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, namesakesOrMerge, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
+import { groupFactsByEntity, missingRecallFactSelector, parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, namesakesOrMerge, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
+import { REQUIRE_FACT_SELECTOR_KEY, recallSwitchOn } from '../facts/recall-config.ts';
 
 // ============================================================
 // v0.31 — Hot memory ops: extract_facts / recall / forget_fact
@@ -419,6 +420,11 @@ const recall: Operation = {
     const question = parseQuestionParam(p);
     const entityParam = typeof p.entity === 'string' && p.entity.length > 0 ? (p.entity as string) : null;
     const sessionParam = typeof p.session_id === 'string' && p.session_id.length > 0 ? (p.session_id as string) : null;
+    const queryText = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query.trim() : null;
+    const queryWithoutFactSelector = queryText !== null && question === null && !entityParam && !sessionParam && !since && p.supersessions !== true;
+    if (queryWithoutFactSelector && !grep?.trim() && recallSwitchOn(await ctx.engine.getConfig(REQUIRE_FACT_SELECTOR_KEY).catch(() => null))) {
+      throw missingRecallFactSelector(p, queryText);
+    }
     let ranking: QuestionRecall | null = null;
     // Shared per-source opts for the fact-list arms (visibility, grep and the
     // audit exclusion all filter at the ENGINE level, before each source's
@@ -527,13 +533,12 @@ const recall: Operation = {
     // ── MEMORY_VERBS v1 — query arm (G1B superset). Hybrid search over pages
     // when `query` is present; degrades to keyword-only with a note (never an
     // error) when no embedding provider is configured [F-B].
-    const queryText = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query.trim() : null;
     const budgetTokens =
       typeof p.budget_tokens === 'number' && Number.isFinite(p.budget_tokens) && p.budget_tokens > 0
         ? Math.floor(p.budget_tokens)
         : null;
 
-    if (queryText && question === null && !entityParam && !sessionParam && !since && p.supersessions !== true) ctx.emitNotice?.(recallHintNotice(p, queryText));
+    if (queryWithoutFactSelector) ctx.emitNotice?.(recallHintNotice(p, queryText));
     let searchResults: SearchResult[] = [];
     let searchDegraded: string | undefined;
     let delivery: DeliveryMeta | undefined;

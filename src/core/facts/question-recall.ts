@@ -371,6 +371,18 @@ export function recallHintNotice(p: Record<string, unknown>, queryText: string):
   };
 }
 
+/** #10225: an operator can require an explicit facts selector beside a page query. */
+export function missingRecallFactSelector(p: Record<string, unknown>, query: string) {
+  const question = query.slice(0, QUESTION_MAX_CHARS);
+  return invalidQuestionCall(
+    'This brain requires an explicit fact selector when recall searches pages with query.',
+    'Pass question to rank saved facts by relevance, or pass entity, since, session_id, grep, or supersessions to select facts explicitly.',
+    { ...callArgs(p), question },
+    'Search pages with the original query and rank saved facts with question.',
+    { reason: 'recall_fact_selector_required' },
+  );
+}
+
 const FACT_FLOORS_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'fact_admission_floors', '--json'] };
 
 /**

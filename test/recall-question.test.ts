@@ -417,5 +417,29 @@ for (const kind of testBackends()) {
         expect(notices.some(n => n.code === 'recall_hint')).toBe(false);
       }
     });
+
+    test('strict query recall refuses unfiltered facts and provides an executable ranked retry', async () => {
+      const key = 'recall.require_fact_selector_with_query';
+      await engine.setConfig(key, 'on');
+      try {
+        const params = { query: COFFEE, limit: 3 };
+        const error = await recall(local(), params).catch((err: OperationError) => err);
+        if (!(error instanceof OperationError)) throw new Error('Expected query-only recall to be refused');
+        expect(error).toMatchObject({
+          code: 'invalid_params',
+          fix: { mcp: { tool: 'recall', arguments: { ...params, question: COFFEE } } },
+        });
+        const ranked = await recall(local(), error.fix!.mcp!.arguments);
+        expect(ranked.facts_order).toBe('relevance');
+        expect(markers(ranked.facts)).not.toContain('OFFSITE');
+        expect(markers((await recall(local(), {})).facts)[0]).toBe('OFFSITE');
+        expect(markers((await recall(local(), { query: COFFEE, grep: 'offsite' })).facts)).toEqual(['OFFSITE']);
+        for (const selector of [{ entity: ENTITY }, { since: '30d' }, { session_id: SESSION }, { supersessions: true }]) {
+          expect((await recall(local(), { query: COFFEE, ...selector })).facts_order).toBe('newest');
+        }
+      } finally {
+        await engine.unsetConfig(key);
+      }
+    });
   });
 }

@@ -2282,6 +2282,7 @@
     "recall.confidence_weighting",
     "recall.group_by_entity",
     "recall.question_admission",
+    "recall.require_fact_selector_with_query",
     "remote_mcp",
     "schema.type_warnings",
     "schema_pack",

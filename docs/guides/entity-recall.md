@@ -112,7 +112,7 @@ brain recognizes in your source:
 |---|---|---|
 | `complete` | Every page is scanned at its current content. | Nothing. |
 | `pending` | Pages were written since the last pass, or no pass ran yet. | `gbrain extract --stale --catch-up` (free). |
-| `failed` | The last pass could not build the name index, or stopped on an error (the status error names the step). | Read `gbrain doctor --only links_extraction_lag --json`, fix, rerun. |
+| `failed` | The last pass could not build the name index. | Read `gbrain doctor --only links_extraction_lag --json`, fix, rerun. |
 | `disabled` | `auto_link` or `mentions.auto_link` is `false`. | The user's choice; `gbrain config set mentions.auto_link true` reverses it. |
 | `type_not_linkable` | Nothing links to this page type by name. | `gbrain config set mentions.entity_types +<type>`. |
 
@@ -194,6 +194,11 @@ the page derives with its origin and declaring line, each rejected candidate
 with its reason, and the identity-sibling decision.
 
 ## Questions that name no entity
+
+`gbrain config set recall.require_fact_selector_with_query on` makes the
+brain refuse a page query sent to `recall` without a fact selector. The
+refusal offers a retry with `question` set so agents get facts ranked by
+relevance. Set it to `off` to return to the default hint.
 
 `recall` with a `question` and no `entity` ranks facts across every entity, so
 two clients' figures can come back side by side. To have them grouped:
