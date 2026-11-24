@@ -11,6 +11,9 @@ export const CHANGE_KINDS: readonly LearningKind[] = ['fact_added', 'promise_fou
 /** Things the brain asks about: answered, never kept, never counted. */
 export const QUESTION_KINDS: readonly LearningKind[] = ['conflict_found', 'duplicate_to_confirm'];
 
+/** Keyless brains: the thin close contacts the last learning_derive pass counted ({count, cost_usd, cost_basis, recorded_at}); learned reads it. */
+export const KEYLESS_THIN_CONTACTS_KEY = 'learning.keyless_thin_contacts';
+
 export const CLAIM_CONFLICT_SWEEP_SQL = "d.sweep_id LIKE 'claim_conflicts:%'";
 
 /** NOT EXISTS over learning_items for one target: whether a pointer of one of `kinds` (a quoted SQL list) already names it. */
