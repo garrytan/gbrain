@@ -430,10 +430,13 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
 
 interface PendingWrite { entry: ConnectorPendingEntry; row: WriteRequest; bytes: number; counted?: 'created' | 'updated' | 'deleted' }
 
-/** A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`. */
+/**
+ * A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`;
+ * it never says it stopped only at a usage limit (GST-3452), since its pending writes have not landed.
+ */
 export function pendingConnectorResult(result: SyncResult | null, session: ManagedConnectorSync): SyncResult {
-  const base: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created, modified: session.counts.updated,
-    deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
+  const { stopped_on: _quotaOnly, ...base }: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created,
+    modified: session.counts.updated, deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
   return { ...base, status: 'partial', reason: session.stoppedAtDeadline ? 'timeout' : 'writer_pending' };
 }
 

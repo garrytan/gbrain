@@ -19,6 +19,7 @@ import { chunkerStamp } from '../src/core/chunkers/code.ts';
 import { cliRenderContext, renderAction, type Action } from '../src/core/agent-output.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
+import { pendingConnectorResult, type ManagedConnectorSync } from '../src/core/persistence/connector-sync.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => {
@@ -140,5 +141,58 @@ describe('GST-3452 sync_freshness: a first sync still running in a job', () => {
     const result = await checkSyncFreshness(engine);
     expect(result.status).toBe('fail');
     expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', reason: 'attempt_queued' });
+  });
+});
+
+describe('GST-3452 follow-ups: the usage-limit chain', () => {
+  test('a newer skipped run at the head does not hide a landing limited run', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 2 });
+    await addSyncJob('mail', 'completed', { skipped: true, reason: 'sync_in_progress' }, { finishedHoursAgo: 1 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited' });
+  });
+
+  test('a queued next run at the head does not hide a landing limited run', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 2 });
+    await addSyncJob('mail', 'waiting', null);
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited' });
+  });
+
+  test('many reruns that hit the spent limit keep the warning while the landing run is inside the window', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 3 }, { finishedHoursAgo: 6 });
+    for (let i = 0; i < 60; i++) await addSyncJob('mail', 'completed', { status: 'partial', stopped_on: 'usage_limit', added: 0 }, { finishedHoursAgo: 5 - i / 15 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('warn');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_usage_limited' });
+  }, 60_000);
+
+  test('a run whose writes are still pending is not a landing run', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', reason: 'writer_pending', stopped_on: 'usage_limit', added: 2 }, { finishedHoursAgo: 1 });
+    expect((await checkSyncFreshness(engine)).status).toBe('fail');
+  });
+
+  test('a pending connector result drops the usage-limit marker', () => {
+    const pending = pendingConnectorResult({ status: 'partial', fromCommit: null, toCommit: '', added: 1, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0,
+      embedded: 0, pagesAffected: [], stopped_on: 'usage_limit' }, { stoppedAtDeadline: false } as unknown as ManagedConnectorSync);
+    expect(pending.reason).toBe('writer_pending');
+    expect(pending.stopped_on).toBeUndefined();
+  });
+});
+
+describe('GST-3452 follow-ups: a running job', () => {
+  test('a job running past the staleness ceiling is not "first sync running"', async () => {
+    await addSource('mail');
+    const jobId = await addSyncJob('mail', 'active', null, { lockMinutes: 5, finishedHoursAgo: 24 * 7 });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(result.message).toContain(`sync job #${jobId} has run for`);
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', job_id: jobId });
   });
 });
