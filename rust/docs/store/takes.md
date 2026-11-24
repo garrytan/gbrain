@@ -117,8 +117,11 @@ statement the projection sent through `executeRaw`. The writes join the engine's
   TimeZone UTC; `takes/resolved_at.rs`): numeric and month-name dates in Postgres's orders, `YYYYMMDD`, times with
   `am`/`pm`, an ISO `T` and `24:00`, `Z`/`UTC`/`GMT` and numeric offsets, and `epoch`/`now`/`today`/`tomorrow`/
   `yesterday`. An input Postgres refuses gets its error (`date/time field value out of range`, `invalid input syntax`,
-  `time zone displacement out of range`). Any other form (a zone abbreviation such as `PST` or a zone name, BC dates,
-  infinities, Julian or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
+  `time zone displacement out of range`). Zones: `Z`/`UTC`/`GMT`, numeric offsets, and the 145 fixed-offset
+  abbreviations of Postgres's `Default` abbreviation set (`PST`, `EST`, `CET`, `CEST`, `BST`, `IST`, `JST`, ...;
+  `takes/zone_abbreviations.rs`, generated from `share/timezonesets/Default`). Any other form (a zone name, one of the
+  50 date-dependent abbreviations that set defines by a zone name such as `MSK` or `SGT`, BC dates, infinities, Julian
+  or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
   naming the member and the text, before anything is written. `takes_resolution_consistency` and then
   `takes_resolved_quality_values` refuse a bad pair or quality.
 

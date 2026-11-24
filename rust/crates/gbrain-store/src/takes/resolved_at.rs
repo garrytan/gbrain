@@ -12,14 +12,17 @@
 //!   `March 1, 2026`, `1 March 2026`, `2026 March 1`, `01-Mar-2026`, `2026-Mar-01`, `mar-01-26`.
 //! - Weekday names, `at` and `on`, and commas, which Postgres skips.
 //! - A time `h:m[:s[.fraction]]`, with `am`/`pm`, an ISO `T` before it, and `24:00`.
-//! - A zone `Z`, `zulu`, `UTC`, `GMT`, `UT`, or a numeric offset `+hh`, `+hhmm`, `+hh:mm`.
+//! - A zone `Z`, `zulu`, `UTC`, `GMT`, `UT`, one of the 145 fixed-offset abbreviations of Postgres's
+//!   `Default` abbreviation set (`PST`, `EST`, `CET`, `CEST`, `BST`, `IST`, `JST`, ...; `zone_abbreviations.rs`),
+//!   or a numeric offset `+hh`, `+hhmm`, `+hh:mm`.
 //! - `epoch`, `now`, `today`, `tomorrow` and `yesterday` on their own.
 //!
 //! Two-digit years are 2000-2069 and 1970-1999, as Postgres reads them. A field out of range is
 //! Postgres's `date/time field value out of range`; text with no digit and no special word is its
-//! `invalid input syntax`. Zone names and abbreviations other than the ones above, BC dates,
+//! `invalid input syntax`. Zone names, the 50 date-dependent abbreviations of that set (`MSK`, `SGT`, ...), BC dates,
 //! infinities, Julian and ISO week dates are not read.
 
+use super::zone_abbreviations::fixed_abbreviation;
 use crate::env::{days_from_civil, days_in_month};
 
 const DAY_US: i64 = 86_400_000_000;
@@ -360,6 +363,9 @@ pub(crate) fn parse(text: &str, now_us: i64) -> Parsed {
                 "at" | "on" => {}
                 "am" | "pm" if pm.is_none() => pm = Some(w == "pm"),
                 "z" | "zulu" | "utc" | "gmt" | "ut" if zone.is_none() => zone = Some(0),
+                w if zone.is_none() && fixed_abbreviation(w).is_some() => {
+                    zone = fixed_abbreviation(w)
+                }
                 w if WEEKDAYS.contains(&w) => {}
                 w => match month(w) {
                     Some(m) if named_month.is_none() && date.is_none() && time.is_none() => {
@@ -471,6 +477,13 @@ mod tests {
             ("2026-03-01 10:00:00.1234565", "2026-03-01T10:00:00.123456Z"),
             ("2026-03-01 10:00:00.", "2026-03-01T10:00:00.000000Z"),
             ("0026-03-01", "0026-03-01T00:00:00.000000Z"),
+            ("2026-03-01 10:00 PST", "2026-03-01T18:00:00.000000Z"),
+            ("2026-03-01 10:00 pst", "2026-03-01T18:00:00.000000Z"),
+            ("2026-03-01 10:00 CEST", "2026-03-01T08:00:00.000000Z"),
+            ("PST 2026-03-01 10:00", "2026-03-01T18:00:00.000000Z"),
+            ("2026-03-01 PST", "2026-03-01T08:00:00.000000Z"),
+            ("2026-03-01 10:00 IST", "2026-03-01T08:00:00.000000Z"),
+            ("March 1 2026 10:00 BST", "2026-03-01T09:00:00.000000Z"),
         ] {
             assert_eq!(at(text), want, "{text}");
         }
@@ -491,7 +504,9 @@ mod tests {
             ("2026-03", "Syntax"),
             ("03/01", "Syntax"),
             ("soon", "Syntax"),
-            ("2026-03-01 10:00 PST", "Unmodeled"),
+            ("2026-03-01 10:00 MSK", "Unmodeled"),
+            ("2026-03-01 10:00 PST+1", "Unmodeled"),
+            ("2026-03-01 10:00 EST5EDT", "Unmodeled"),
             ("2026-03-01 10:00 America/New_York", "Unmodeled"),
             ("1 Mar 2026 10pm", "Unmodeled"),
             ("March 1", "Unmodeled"),

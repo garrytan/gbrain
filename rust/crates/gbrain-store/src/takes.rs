@@ -60,6 +60,7 @@ pub(crate) mod nudges;
 pub(crate) mod proposals;
 mod reads;
 mod resolved_at;
+mod zone_abbreviations;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};
 pub use grades::{TakeGradeFilter, TakeGradeInput, TakeGradeKey};

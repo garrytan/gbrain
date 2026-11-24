@@ -9,7 +9,7 @@
  *    projection runs answers and writes the same rows on every arm when called directly. A Takes fence row resolved on a
  *    date written the ways Postgres reads `text::timestamptz` stores the same instant on every arm, and the dates
  *    Postgres refuses fail the save on every arm.
- *  - Named stop: a resolved date with a zone abbreviation (`PST`) or zone name stores Postgres's instant on the SQL arms;
+ *  - Named stop: a resolved date with a date-dependent zone abbreviation (`MSK`) or a zone name stores Postgres's instant on the SQL arms;
  *    the Rust engine refuses it by name ("a resolved date the store does not read") before it writes.
  *  - Regression: the projection read and wrote the page's fact and take rows through executeRaw, so on the Rust engine
  *    any put_page that updated a page with a facts or takes fence stopped on the raw SQL refusal.
@@ -110,29 +110,29 @@ describe('engine parity: put_page with a facts and a takes fence', () => {
     const out: Record<string, unknown> = {};
     for (const resolved of ['March 1, 2026', '2026/03/01', '03/01/2026', '3/1/26', '1 March 2026', 'Sunday, March 1, 2026', '01-Mar-2026',
       '2026-Mar-01', '2026.03.01', '20260301', 'Mar 1 2026 10:30', '2026-03-01 10:00:00+02', '2026-03-01T10:00Z', '2026-03-01 10:00 UTC',
-      '2026-03-01 10:00:00.25 pm', '2026-03-01 24:00', '2026-02-30', '2026/13/01', '2026-03-01 25:00', '2026-03-01 10:00 +16:00', '2026-03', 'soon']) {
+      '2026-03-01 10:00:00.25 pm', '2026-03-01 24:00', '2026-03-01 10:00 PST', '2026-03-01 10:00 CEST', 'March 1 2026 10:00 BST', '2026-02-30', '2026/13/01', '2026-03-01 25:00', '2026-03-01 10:00 +16:00', '2026-03', 'soon']) {
       out[resolved] = await resolvedAtOf(engine, resolved);
     }
     return out;
   });
 
-  parityTest('a Takes fence resolved on a date with a zone abbreviation stores it on the SQL arms; the Rust engine refuses the date by name', {
+  parityTest('a Takes fence resolved on a date with a date-dependent zone abbreviation stores it on the SQL arms; the Rust engine refuses the date by name', {
     methods: ['writeFenceTakeResolutions'],
     timeout: 60_000,
   }, async (engine, backend) => {
-    const out = await resolvedAtOf(engine, '2026-03-01 10:00 PST');
+    const out = await resolvedAtOf(engine, '2026-03-01 10:00 MSK');
     if (backend !== 'rust') {
-      expect(out).toEqual({ resolved_at: '2026-03-01T18:00:00.000Z' });
+      expect(out).toEqual({ resolved_at: '2026-03-01T07:00:00.000Z' });
       return out;
     }
-    // The store reads no zone abbreviations: the publication stops on the typed refusal (the request waits, blocked on
+    // The store reads no date-dependent zone abbreviation (MSK, SGT, ...; Postgres defines them by a zone name): the publication stops on the typed refusal (the request waits, blocked on
     // it), and the case stops on it.
     expect(out).toMatchObject({ blocked: 'engine_capability_missing' });
     const pageId = Number((await engine.getPage(SLUG, { sourceId: 'default' }))!.id);
-    const direct = await engine.writeFenceTakeResolutions(pageId, JSON.stringify([{ row_num: 1, resolved_at: '2026-03-01 10:00 PST', resolved_quality: 'correct',
+    const direct = await engine.writeFenceTakeResolutions(pageId, JSON.stringify([{ row_num: 1, resolved_at: '2026-03-01 10:00 MSK', resolved_quality: 'correct',
       resolved_outcome: true, resolved_source: null, resolved_value: null, resolved_unit: null, resolved_by: null }])).then(() => 'no stop', (e: Error) => e.message);
-    expect(direct).toContain('writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 PST")');
-    throw capabilityMissing('takes', 'writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 PST")');
+    expect(direct).toContain('writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 MSK")');
+    throw capabilityMissing('takes', 'writeFenceTakeResolutions (a resolved date the store does not read: "2026-03-01 10:00 MSK")');
   });
 
   parityTest('the fence projection fact members answer and write the same rows on every arm', {
