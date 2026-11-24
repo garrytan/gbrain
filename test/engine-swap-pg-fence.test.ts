@@ -22,6 +22,8 @@ import { checkFingerprints, primaryRelationDigest, SwapVerifyError } from '../sr
 import { GRADUATION_FENCE_TRIGGER, readGraduationRow, withGraduationRun } from '../src/core/persistence/graduation-schema.ts';
 import { openReadSource, type ReadSource } from '../src/shadow/read-pool.ts';
 import type { ProbeRecord } from '../src/shadow/follow-status.ts';
+import { PROBE_CORPUS, probeRecord } from '../src/shadow/fingerprints.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const URL_ = process.env.DATABASE_URL;
@@ -146,4 +148,56 @@ d('the fingerprint guard on a Postgres primary', () => {
     expect(e).toBeInstanceOf(SwapVerifyError);
     expect((e as SwapVerifyError).reason).toBe('verification_incomplete');
   }, 60_000);
+});
+
+/**
+ * The guard's rule on stock Postgres (the probe's own rule, probeState): a server whose lower() or [[:space:]] differs
+ * from the Rust engine on some code points refuses only when a stored fact holds one of them. Stock PG17 differs on
+ * dozens (libc and ICU alike), so its probe corpus always reports mismatches; a brain with no affected fact still swaps.
+ * The probe RPC computes the record as the shadow child does (probeRecord), with the Rust side's corpus answers taken
+ * from PGLite, which the Rust fixture is pinned to (rust/crates/gbrain-store/tests/fixtures/fact_fingerprints.json).
+ */
+d('the fingerprint guard on stock Postgres', () => {
+  let reference: Array<{ fingerprint: string; fingerprint_v1: string }>;
+  beforeAll(async () => {
+    const pglite = new PGLiteEngine();
+    await pglite.connect({});
+    await pglite.initSchema();
+    reference = (await pglite.executeRaw<{ a: string; b: string }>(
+      `SELECT gbrain_fact_fingerprint(s) AS a, gbrain_fact_fingerprint_v1(s) AS b FROM unnest($1::text[]) WITH ORDINALITY AS u(s, n) ORDER BY n`,
+      [[...PROBE_CORPUS]])).map(r => ({ fingerprint: r.a, fingerprint_v1: r.b }));
+    await pglite.disconnect();
+  }, 120_000);
+
+  const childRpc = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+    if (method !== 'probe') throw new Error(`unexpected rpc ${method}`);
+    const { sql, ...meta } = args as { sql: Array<[string, string]> } & Record<string, unknown>;
+    return probeRecord(sql, reference, meta as never, new Date('2026-11-24T00:00:00Z')) as unknown as T;
+  };
+
+  for (const collation of [undefined, 'icu-en-US'] as const) {
+    test(`a stock PG17 ${collation ?? 'libc'} brain with no facts passes, although its probe corpus reports mismatches`, async () => {
+      const db = await isolatedPersistencePostgres(URL_!, 'instance', 2, collation ? { collation } : {});
+      const reads = openReadSource(db.engine);
+      try {
+        const sample = await reads.read(async tx => (await import('../src/shadow/fingerprints.ts')).probeOnPrimary(tx));
+        expect(sample.differing_code_points_total).toBeGreaterThan(0);
+        expect(sample.corpus_mismatches).toBeGreaterThan(0);
+        expect(await checkFingerprints(reads, childRpc)).toBe('pass');
+      } finally { await reads.close(); await db.close(); }
+    }, 120_000);
+  }
+
+  test('one stored fact holding a differing code point refuses', async () => {
+    const db = await isolatedPersistencePostgres(URL_!, 'instance', 2);
+    const reads = openReadSource(db.engine);
+    try {
+      // U+0085 (next line) is whitespace to the Rust engine and not to stock Postgres [[:space:]].
+      await db.engine.insertFact({ fact: 'Alice\u0085prefers mornings', entity_slug: 'people/alice-example', source: 'test' }, { source_id: 'default' });
+      const e = await checkFingerprints(reads, childRpc).catch(x => x);
+      expect(e).toBeInstanceOf(SwapVerifyError);
+      expect((e as SwapVerifyError).reason).toBe('fingerprint_semantics_differ');
+      expect(String((e as Error).message)).toContain('1 stored fact(s)');
+    } finally { await reads.close(); await db.close(); }
+  }, 120_000);
 });
