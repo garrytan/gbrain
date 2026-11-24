@@ -14,7 +14,7 @@
 use super::{int4, prune_spend_before};
 use crate::error::{Result, StoreError};
 use crate::eval_capture::not_null;
-use crate::kv::{KvRead, prefix_end};
+use crate::kv::{KvRead, KvWrite, prefix_end};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::{Store, keys, put_json};
@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, HashSet};
 
 const RECEIPT: u8 = 0x13;
 const RECEIPT_BY_TIME: u8 = 0x14;
-const RECEIPT_ID: &str = "decide_receipt_id";
+pub(crate) const RECEIPT_ID: &str = "decide_receipt_id";
 const HOUR_US: i64 = 3_600_000_000;
 const DAY_US: i64 = 24 * HOUR_US;
 /// `timestamptz` starts at 4713 BC; a window that reaches before it (or past the end) is
@@ -60,39 +60,39 @@ fn time_key(created_at_us: i64, id: u64) -> Vec<u8> {
 
 /// One `decision_receipts` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReceiptRecord {
-    id: u64,
-    created_at_us: i64,
-    decision_id: String,
-    source_id: Option<String>,
-    slot: String,
-    mode: String,
-    provider: String,
-    model_alias: Option<String>,
-    model_resolved: Option<String>,
-    question_kind: Option<String>,
-    state_hash: Option<String>,
-    question_hash: Option<String>,
+pub(crate) struct ReceiptRecord {
+    pub id: u64,
+    pub created_at_us: i64,
+    pub decision_id: String,
+    pub source_id: Option<String>,
+    pub slot: String,
+    pub mode: String,
+    pub provider: String,
+    pub model_alias: Option<String>,
+    pub model_resolved: Option<String>,
+    pub question_kind: Option<String>,
+    pub state_hash: Option<String>,
+    pub question_hash: Option<String>,
     /// `REAL`, as `f32::to_bits`.
-    answer_value: Option<u32>,
-    answer_choice: Option<String>,
-    confidence: Option<u32>,
-    threshold: Option<u32>,
-    outcome: String,
-    subject_ref: Option<String>,
-    call_site: String,
-    lane: String,
-    policy_fingerprint: Option<String>,
-    calibration_ref: Option<String>,
-    latency_ms: Option<i32>,
-    input_tokens: Option<i32>,
-    error_reason: Option<String>,
-    protected: bool,
-    min_keep: Option<i32>,
-    rank: Option<i32>,
-    k_used: Option<i32>,
-    remote: bool,
-    run_meta: Option<String>,
+    pub answer_value: Option<u32>,
+    pub answer_choice: Option<String>,
+    pub confidence: Option<u32>,
+    pub threshold: Option<u32>,
+    pub outcome: String,
+    pub subject_ref: Option<String>,
+    pub call_site: String,
+    pub lane: String,
+    pub policy_fingerprint: Option<String>,
+    pub calibration_ref: Option<String>,
+    pub latency_ms: Option<i32>,
+    pub input_tokens: Option<i32>,
+    pub error_reason: Option<String>,
+    pub protected: bool,
+    pub min_keep: Option<i32>,
+    pub rank: Option<i32>,
+    pub k_used: Option<i32>,
+    pub remote: bool,
+    pub run_meta: Option<String>,
 }
 
 /// A `REAL` value as Postgres prints it, which is what a caller reads.
@@ -325,6 +325,18 @@ fn percentile_cont(sorted: &[f64], p: f64) -> Option<f64> {
     }
     let proportion = row - first as f64;
     Some(sorted[first] + proportion * (sorted[second] - sorted[first]))
+}
+
+/// The shadow seed (`seed.rs`): stores a `decision_receipts` row copied from another engine with
+/// its own id and `created_at`, and its time-index entry as [`Store::insert_decide_receipts`]
+/// writes it. `false` when the id already holds a row.
+pub(crate) fn seed_receipt(tx: &mut dyn KvWrite, record: &ReceiptRecord) -> Result<bool> {
+    if tx.get(&receipt_key(record.id))?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &receipt_key(record.id), record)?;
+    tx.put(&time_key(record.created_at_us, record.id), &[])?;
+    Ok(true)
 }
 
 impl Store {
@@ -595,4 +607,30 @@ impl Store {
                 .collect(),
         ))
     }
+}
+
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(receipts_since(read, 0)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![("run_meta", ProbeCell::opt_text(r.run_meta.as_deref()))],
+            source_id: r.source_id,
+        })
+        .collect())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the receipt `id` with its time-index entry.
+/// `false` when there is none.
+pub(crate) fn remove_receipt(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(bytes) = tx.get(&receipt_key(id))? else {
+        return Ok(false);
+    };
+    let record: ReceiptRecord = serde_json::from_slice(&bytes)?;
+    tx.delete(&time_key(record.created_at_us, id))?;
+    tx.delete(&receipt_key(id))?;
+    Ok(true)
 }

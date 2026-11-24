@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are the reads that the CLI import and extract paths ran through `executeRaw`
-([docs/research/rust-cli-executeraw-map.md](../../../docs/research/rust-cli-executeraw-map.md)).
+(the `executeRaw` map in the Rust engine branch's research notes; it is not on master).
 PGLite and Postgres run the same SQL as before, now in `src/core/engine-sql/cli-reads-import.ts`.
 The store answers from its source, page and timeline records (`crates/gbrain-store/src/cli_reads/import.rs`)
 and has no keys of its own.
@@ -27,7 +27,6 @@ and has no keys of its own.
 
 Each answer below is what Postgres gives for a brain that never wrote the missing data.
 
-- **Commit columns.** A source has no `last_commit` and no `newest_content_at`. Both read `null`.
 - **Ingestion receipts.** The store keeps no `source_ingestion_receipts`, so `hasCompanyBrainReceipt` is `false`.
   The company-brain profile then reads the source as one that has not finished an ingestion.
 - **Guest sources.** The store has no `guest_sources` table and no row-level security. A guest source is a source
@@ -49,9 +48,17 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   the same activation test as a page, on the row's own receipts. A fact or take is `contested` when a pending
   `supersede_fact` or `supersede_take` proposal names it (`trust::proposals::contested_ref`, the lowest id first):
   `tp<id>:challenger` when it is the proposal's related row, `tp<id>:challenged` otherwise. A timeline row is never
-  contested.
+  contested. Each row's `write_origin` reads in jsonb key order (`pg_text::jsonb_value`), as the column
+  returns it.
 - **Knowledge revision.** Every stored page has a UUID `knowledge_revision`; it is never `null`. The extract stamp's
   "no revision" sentinel therefore never matches a store page, as it never matches a Postgres page written since the
   column became `NOT NULL`.
 - **Timeline detail.** `detail` is always a string; an entry written without one reads `''`, as the Postgres column
   default gives.
+- **Sync routing row.** `readSyncDispatchRow` has no store method of its own: the shim
+  (`src/core/rust-engine/store-members/cli-reads-import.ts`) builds it from `readSourceState` and
+  `hasCompanyBrainReceipt`, and reads `claimed` from `isSourceClaimed`: true when a writer binding names the source at
+  its current incarnation (persistence.md, "Worktree bindings"). The row answers `modes: [false]` for every source,
+  which is true to the store: it keeps one unmanaged brain, as `readManagedModeRows` answers. An unknown id
+  reads one row with null source columns, as the SQL's `LEFT JOIN` gives. PGLite and Postgres run the statement in
+  `src/core/engine-sql/sync-dispatch.ts`.

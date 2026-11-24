@@ -14,7 +14,10 @@
  * and removal keep the keys' engine boundary; doctor stays silent until the
  * resolver is configured, and warns on an install that predates the
  * SessionStart compaction entry; a hand-edited per_harness entry that is not
- * an object reads as unset and is replaced on set or unset.
+ * an object reads as unset and is replaced on set or unset;
+ * per_harness.<claude-code|codex>.session_start round-trips on a brainless
+ * install and refuses empty, over-cap or control-character text and other
+ * harnesses.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -402,3 +405,55 @@ describe('per_harness entries that are not objects', () => {
     });
   }
 });
+
+describe('per_harness.<claude-code|codex>.session_start: text the lane prints at SessionStart', () => {
+  const run = (b: Box, ...args: string[]) => runCli(['config', ...args], { env: b.env, cwd: b.project });
+  test('set, get and unset round-trip on the file plane of a brainless install', async () => {
+    const b = box();
+    const text = 'Read the team notes before you start.';
+    const set = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', text);
+    expect(set.exitCode, set.stderr).toBe(0);
+    expect(JSON.parse(read(configPath(b))!)).toEqual({ skills: { resolver: { per_harness: { codex: { session_start: text } } } } });
+    expect(readdirSync(gb(b))).toEqual(['config.json']);
+    const get = await run(b, 'get', 'skills.resolver.per_harness.codex.session_start');
+    expect(get.stdout.trim()).toBe(text);
+    expect((await run(b, 'unset', 'skills.resolver.per_harness.codex.session_start')).exitCode).toBe(0);
+    expect(read(configPath(b))).toBeNull();
+    const bullet = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '- Run the tests first');
+    expect(bullet.exitCode, bullet.stderr).toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('- Run the tests first');
+    const flagOnly = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--dry-run');
+    expect(flagOnly.exitCode).not.toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('- Run the tests first');
+    const flagFirst = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--yes', 'Read the notes.');
+    expect(flagFirst.exitCode, flagFirst.stderr).toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('Read the notes.');
+    const separated = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--', '--no-verify is banned');
+    expect(separated.exitCode, separated.stderr).toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('--no-verify is banned');
+    const bare = await run(b, 'set', 'skills.resolver.per_harness.codex.session_start', '--');
+    expect(bare.exitCode).not.toBe(0);
+    expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness.codex.session_start).toBe('--no-verify is banned');
+  });
+
+  test('refused: empty text, over the cap, control characters, and a harness other than claude-code or codex', async () => {
+    const b = box();
+    for (const [key, value, needle] of [
+      ['skills.resolver.per_harness.claude-code.session_start', ' ', 'must be plain text'],
+      ['skills.resolver.per_harness.claude-code.session_start', 'x'.repeat(2401), 'at most 600 tokens'],
+      ['skills.resolver.per_harness.codex.session_start', 'ring \u0007 the bell', 'no control characters'],
+      ['skills.resolver.per_harness.hermes.session_start', 'Read the notes.', 'applies only to claude-code and codex'],
+    ]) {
+      const r = await run(b, 'set', key!, value!);
+      expect({ key, code: r.exitCode === 0, has: r.stderr.includes(needle!) }).toEqual({ key, code: false, has: true });
+    }
+    expect(read(configPath(b))).toBeNull();
+  });
+
+  test('laneTurnSettings validates session_start for every harness and leaves it out of the turn', () => {
+    expect(laneTurnSettings({ per_harness: { 'claude-code': { top_k: 2, session_start: 'Read the notes.' } } }, 'claude-code')).toEqual({ top_k: 2 });
+    expect(() => laneTurnSettings({ per_harness: { codex: { session_start: 7 } } }, 'claude-code')).toThrow('skills.resolver.per_harness.codex.session_start');
+    expect(() => laneTurnSettings({ per_harness: { pi: { session_start: 'x' } } }, 'pi')).toThrow('applies only to claude-code and codex');
+  });
+});
+

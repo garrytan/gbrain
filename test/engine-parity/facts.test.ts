@@ -25,6 +25,8 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { OPEN_ENTITY, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
+import { computeTrajectoryStats } from '../../src/core/trajectory.ts';
+import { computeFounderScorecard } from '../../src/commands/founder-scorecard.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -827,6 +829,47 @@ describe('engine parity: facts', () => {
         local: pts(local), remoteDefault: remoteDefault.map((p) => p.text), mrr: pts(mrr), metrics: metrics.map((p) => p.text),
         events: pts(events), window: window.map((p) => p.text), capped: capped.map((p) => p.text), otherSource, arraySource: arraySource.length,
       };
+    },
+  );
+
+  // The trajectory math (regressions, red flags, growth) is pure TS above the engine, so the Rust arm serves the
+  // same output from its findTrajectory points; this holds every arm to it: a falling lower-is-better metric (churn)
+  // is no regression, a rising one (burn) is, and a falling ordinary metric (arr) still is, and a rising savings or recovery metric (cost_savings, revenue_loss_recovered) is not.
+  parityTest(
+    'trajectory regressions and scorecard red flags read the metric direction: churn down is fine, burn up and arr down regress',
+    { methods: ['insertFact', 'findTrajectory'] },
+    async (engine) => {
+      const ent = 'companies/acme-example';
+      const row = (fact: string, metric: string, value: number, unit: string, from: string) =>
+        ({ fact, claim_metric: metric, claim_value: value, claim_unit: unit, claim_period: 'monthly', valid_from: at(from), visibility: 'world' as const });
+      await remember(engine, ent, [
+        row('churn 5', 'churn', 5, 'pct', '2026-01-01T00:00:00Z'),
+        row('churn 3', 'churn', 3, 'pct', '2026-02-01T00:00:00Z'),
+        row('burn 150k', 'burn', 150000, 'USD', '2026-01-01T00:00:00Z'),
+        row('burn 200k', 'burn', 200000, 'USD', '2026-02-01T00:00:00Z'),
+        row('arr 200k', 'arr', 200000, 'USD', '2026-01-01T00:00:00Z'),
+        row('arr 150k', 'arr', 150000, 'USD', '2026-02-01T00:00:00Z'),
+        row('savings 100k', 'cost_savings', 100000, 'USD', '2026-01-01T00:00:00Z'),
+        row('savings 150k', 'cost_savings', 150000, 'USD', '2026-02-01T00:00:00Z'),
+        row('recovered 40k', 'revenue_loss_recovered', 40000, 'USD', '2026-01-01T00:00:00Z'),
+        row('recovered 60k', 'revenue_loss_recovered', 60000, 'USD', '2026-02-01T00:00:00Z'),
+      ]);
+      const points = await engine.findTrajectory({ entitySlug: ent, remote: false });
+      const { regressions } = computeTrajectoryStats(points);
+      const card = computeFounderScorecard({ entitySlug: ent, windowSince: null, windowUntil: null, points, takes: [] });
+      const regs = regressions
+        .map((r) => ({ metric: r.metric, from: r.from_value, to: r.to_value, delta: r.delta_pct, direction: r.direction }))
+        .sort((x, y) => x.metric.localeCompare(y.metric));
+      const redFlags = card.red_flags.map((f) => f.text).sort();
+      expect(regs).toEqual([
+        { metric: 'arr', from: 200000, to: 150000, delta: -0.25, direction: 'down' },
+        { metric: 'burn', from: 150000, to: 200000, delta: 1 / 3, direction: 'up' },
+      ]);
+      expect(redFlags).toEqual([
+        'arr fell 25.0% (2026-01-01 → 2026-02-01)',
+        'burn rose 33.3% (2026-01-01 → 2026-02-01)',
+      ]);
+      return { regs, red_flags: redFlags };
     },
   );
 

@@ -1,10 +1,12 @@
 //! The wire contract of `ownerOnly` in a store privacy policy (`OwnerOnlyForm` in owner_only.rs,
 //! `StoreOwnerOnlyForm` in src/core/rust-engine/store-members/private-provenance.ts).
 //!
-//! The field is one of three names, never optional: `off` (the rendered text holds no owner-only
+//! The field is one of three forms, never optional: `off` (the rendered text holds no owner-only
 //! test), `fn` (the v320 lineage function) or `closed` (any owner-only source hides every row).
-//! A policy that leaves the field out takes `closed`, so a caller that forgets it hides more,
-//! never less. Any other value, `null` included, is refused before the store reads.
+//! Master's member (`StoreOwnerOnly` in its private-provenance.ts) names the function form
+//! `lineage`, so `lineage` reads as `fn`. A policy that leaves the field out takes `closed`, so a
+//! caller that forgets it hides more, never less. Any other value, `null` included, is refused
+//! before the store reads.
 //!
 //! The policies here are built from JSON only, as the TypeScript member sends them, so the test
 //! pins what reaches the store and not how the Rust type spells it.
@@ -115,6 +117,11 @@ fn each_named_form_reads_as_its_own_test() {
         ]
     );
     assert_eq!(named("fn"), ["default:a/thread", "default:c/open"]);
+    assert_eq!(
+        named("lineage"),
+        named("fn"),
+        "master's name for the fn form"
+    );
     assert_eq!(named("closed"), Vec::<String>::new());
 }
 
@@ -122,7 +129,8 @@ fn each_named_form_reads_as_its_own_test() {
 fn any_other_owner_only_value_is_refused() {
     for value in [
         json!(null),
-        json!("lineage"),
+        json!("Lineage"),
+        json!("mode"),
         json!("Closed"),
         json!(""),
         json!(true),

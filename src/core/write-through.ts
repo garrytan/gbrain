@@ -310,7 +310,7 @@ export async function scannerSlugRootMode(engine: BrainEngine, sourceId: string,
  */
 export async function otherSourceOwning(engine: BrainEngine, sourceId: string, path: string, relativeOwns = true): Promise<string | null> {
   const rows = await engine.executeRaw<{ id: string; local_path: string; archived: boolean }>(
-    `SELECT id, local_path, archived IS TRUE AS archived FROM sources WHERE id <> $1 AND local_path IS NOT NULL AND local_path <> '' ORDER BY id`,
+    `SELECT id, local_path, archived IS TRUE AS archived FROM sources WHERE id <> $1 AND local_path IS NOT NULL AND local_path <> '' ORDER BY id COLLATE "C"`,
     [sourceId],
   );
   const identity = (spelling: string) => { try { return canonicalFilesystemPath(msysToNativePath(spelling)); } catch { return null; } };
@@ -386,12 +386,9 @@ export async function resolvePageWriteTarget(
   const rawLocalPath = srcRow?.local_path ?? null;
   const sourceLocalPath = rawLocalPath ? msysToNativePath(rawLocalPath) : null;
 
-  const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-    `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2${opts.includeDeleted ? '' : ' AND deleted_at IS NULL'} LIMIT 1`,
-    [sourceId, slug],
-  );
-  const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
-  const recordedUri = pathRows[0]?.source_uri ?? null;
+  const origin = await engine.readPageFileOrigin(sourceId, slug, { includeDeleted: opts.includeDeleted });
+  const recordedPath = sanitizeRecordedSourcePath(origin?.source_path);
+  const recordedUri = origin?.source_uri ?? null;
 
   if (sourceLocalPath) {
     // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from, never the source's tree.

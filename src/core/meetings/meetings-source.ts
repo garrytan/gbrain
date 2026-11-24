@@ -247,7 +247,7 @@ async function runMeetingsSyncInner(engine: BrainEngine, sourceId: string, cfg: 
     await holds.complete();
     // A finished run, partial included, sets the schedule's clock; held items wait for their own retry time, not the next tick.
     if (!managed) {
-      await engine.executeRaw('UPDATE sources SET last_sync_at=now(), newest_content_at=COALESCE($1::timestamptz, newest_content_at) WHERE id=$2', [state.committed_to, sourceId]).catch(() => undefined);
+      await engine.markSourceSynced(sourceId, { newestContentAt: state.committed_to }).catch(() => undefined);
     }
   } catch (error) {
     if (error instanceof ConnectorRateLimitedError && error.retryAt) await recordRateLimit(engine, sourceId, error.retryAt);

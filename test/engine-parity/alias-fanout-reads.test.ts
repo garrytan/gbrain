@@ -318,9 +318,10 @@ describe('engine parity: alias fan-out reads of derived alias rows', () => {
       const both = await engine.resolveCaseSensitiveAliases(['alice', 'ae'], ['other', 'default']);
       expect(both).toEqual([
         { slug: 'people/a-founder', alias_norm: 'ae', alias_text: 'aE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        // By slug, alias, then alias text in byte order (master's R2 contract: the rows carry no source).
         { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'A.E.' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
       ]);
       // Not case-sensitive: the derived `alice` row and the frontmatter `ae` row never answer.
       const notCase = await engine.resolveCaseSensitiveAliases(['alice'], ['default']);
@@ -384,7 +385,7 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], lineage: true, hidePrivate: true,
     }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));

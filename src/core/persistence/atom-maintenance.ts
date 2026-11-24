@@ -623,6 +623,7 @@ export async function publishManagedAtoms(engine: BrainEngine, session: ManagedA
   const originKey = origin.kind === 'page' ? 'source_slug' : 'source_path';
   // #6503: a partial extraction read only the head, so it retires nothing an earlier extraction produced.
   // #7013: retirement needs a replacement generation; a zero-yield extraction (or its retry) retires nothing.
+  // The slug order never reaches output: it only sets the order the retirement writes are admitted in, and each request id comes from its slug.
   const retirements = failure || origin.partialInputChars || !atoms.length ? [] : reviewedRetirements ?? await engine.executeRaw<ManagedAtomRetirement>(
     `SELECT slug,id AS "pageId",knowledge_revision::text AS revision FROM pages
       WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL
@@ -854,35 +855,8 @@ async function replacementPublished(db: BrainEngine, row: WriteRequest, p: AtomI
     { fix: receiptFix(row.request_id) });
 }
 
-/**
- * A `managed-atoms` checkpoint `ac` for one page at its current content hash, completed or failed. Keyed on the page id, not
- * the slug it was recorded under (#7462): a rename keeps the row and its content, so it is not a new extraction input.
- */
-function managedAtomIdentitySql(page: { sourceId: string; pageId: string; contentHash: string }): string {
-  return `ac.op='managed-atoms' AND ac.completed_keys->0->>'sourceId'=${page.sourceId}
-    AND ac.completed_keys->0->>'incarnation'=(SELECT incarnation::text FROM sources WHERE id=${page.sourceId})
-    AND ac.completed_keys->0->>'kind'='page'
-    AND ac.completed_keys->0->>'pageId'=${page.pageId}::text AND ac.completed_keys->0->>'contentHash'=${page.contentHash}`;
-}
-
-/** The completed, failure-free `managed-atoms` checkpoint `ac` for one page at its current content hash. */
-export function managedAtomCompletedSql(page: { sourceId: string; pageId: string; contentHash: string }): string {
-  return `${managedAtomIdentitySql(page)}
-    AND ac.completed_keys->0->>'failure' IS NULL`;
-}
-
-/**
- * #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures.
- * #7391: given the current input cap, a partial checkpoint recorded below it (one `releasePartialDispositions` clears) is not skipped.
- */
-export function managedAtomDiscoverySql(maxInputChars?: string): string {
-  return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
-  WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', pageId: 'p.id', contentHash: 'p.content_hash' })}
-    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
-    AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
-}
-
-export const MANAGED_ATOM_DISCOVERY_SQL = managedAtomDiscoverySql();
+// The managed-atoms checkpoint predicates live in managed-atom-sql.ts (no imports), so engine-sql readers can use them.
+export { managedAtomCompletedSql, managedAtomDiscoverySql, MANAGED_ATOM_DISCOVERY_SQL } from './managed-atom-sql.ts';
 
 export interface HeldManagedAtom {
   source_id: string;
@@ -900,23 +874,8 @@ export interface HeldManagedAtom {
  * changed since is back in the backlog and not listed.
  */
 export async function listHeldManagedAtoms(engine: BrainEngine, sourceIds?: string[]): Promise<HeldManagedAtom[]> {
-  const rows = await engine.executeRaw<HeldManagedAtom & { attempts: string | number; held_at: string | Date }>(
-    `SELECT DISTINCT ON (h.completed_keys->0->>'requestId')
-        h.completed_keys->0->>'sourceId' AS source_id, h.completed_keys->0->>'kind' AS kind,
-        h.completed_keys->0->>'locator' AS locator, h.completed_keys->0->>'requestId' AS request_id,
-        h.completed_keys->0->>'failure' AS failure, h.completed_keys->0->>'attempts' AS attempts, h.updated_at AS held_at
-       FROM op_checkpoints h JOIN sources s ON s.id=h.completed_keys->0->>'sourceId' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-      WHERE h.op='managed-atoms' AND h.completed_keys->0->>'held'='true'
-        AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) AND s.config->>'role' IS DISTINCT FROM $2
-        AND (h.completed_keys->0->>'kind'<>'page' OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id=s.id
-          AND p.id::text=h.completed_keys->0->>'pageId' AND p.content_hash=h.completed_keys->0->>'contentHash' AND p.deleted_at IS NULL))
-        AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac WHERE ac.op='managed-atoms' AND ac.completed_keys->0->>'failure' IS NULL
-          AND ac.completed_keys->0->>'sourceId'=s.id AND ac.completed_keys->0->>'incarnation'=s.incarnation::text
-          AND ac.completed_keys->0->>'kind'=h.completed_keys->0->>'kind'
-          AND (CASE WHEN h.completed_keys->0->>'kind'='page' THEN ac.completed_keys->0->>'pageId'=h.completed_keys->0->>'pageId'
-            ELSE ac.completed_keys->0->>'locator'=h.completed_keys->0->>'locator' END)
-          AND ac.completed_keys->0->>'contentHash'=h.completed_keys->0->>'contentHash')
-      ORDER BY h.completed_keys->0->>'requestId', h.updated_at`, [sourceIds ?? null, STORAGE_ROLE]);
+  // The SQL order never reaches output: DISTINCT ON keeps one row per requestId, which no collation can change, and the rows are re-sorted in JS below.
+  const rows = await engine.listHeldManagedAtomRows(sourceIds, STORAGE_ROLE);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), held_at: new Date(row.held_at).toISOString() }))
     .sort((a, b) => a.source_id.localeCompare(b.source_id) || a.locator.localeCompare(b.locator));
 }

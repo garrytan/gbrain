@@ -11,18 +11,16 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { fenceName, fenceSlugOf, readFenceBlocks, type FenceBlocks, type FenceGenerationKind } from './fence.ts';
+import { fenceName, fenceSlugOf, readFenceBlocks, type FenceGenerationKind } from './fence.ts';
 import type { GenerationKey } from './contract.ts';
 
 export interface FenceRestorePlan { revive: string[]; retire: string[]; refused: string[]; content: string | null; revision: string | null }
 
 /** What transplanting generation `prevId`'s fence block over the live generation `liveId`'s would do, read now. */
 export async function planFenceRestore(db: BrainEngine, key: GenerationKey, liveId: number, prevId: number): Promise<FenceRestorePlan> {
-  const generations = await db.executeRaw<{ id: number; fence: FenceBlocks | null }>(
-    `SELECT id, completeness->'fence' AS fence FROM derived_generations WHERE id = ANY($1::bigint[])`, [[liveId, prevId]]);
+  const generations = await db.readGenerationFenceBlocks([liveId, prevId]);
   const blocks = new Map(generations.map(row => [Number(row.id), row.fence && typeof row.fence === 'object' ? row.fence : null]));
-  const items = await db.executeRaw<{ generation_id: number; item_key: string }>(
-    `SELECT generation_id, item_key FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) AND action <> 'retired'`, [[liveId, prevId]]);
+  const items = await db.listOwnedGenerationItems([liveId, prevId]);
   const owned = (id: number) => new Set(items.filter(item => Number(item.generation_id) === id).map(item => item.item_key));
   const [target, current] = [owned(prevId), owned(liveId)];
   const revive = [...target].filter(itemKey => !current.has(itemKey)).sort();
@@ -51,8 +49,7 @@ export async function planFenceRestore(db: BrainEngine, key: GenerationKey, live
 /** Applies an approved fence restore: re-plans under the page's current revision and writes the page with only its fence block changed. */
 export async function applyFenceRestore(ctx: OperationContext, key: GenerationKey, approved: { id: number; restore_to_id: number; revive: string[]; retire: string[]; refused: string[] }):
   Promise<'changed' | string[] | { written: boolean }> {
-  const [live] = await ctx.engine.executeRaw<{ id: number }>(`SELECT id FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
-    [key.sourceId, key.kind, key.ownerKey]);
+  const live = await ctx.engine.readLiveGenerationId(key);
   if (Number(live?.id) !== approved.id) return 'changed';
   const plan = await planFenceRestore(ctx.engine, key, approved.id, approved.restore_to_id);
   if (JSON.stringify([plan.revive, plan.retire, plan.refused]) !== JSON.stringify([approved.revive, approved.retire, approved.refused])) return 'changed';

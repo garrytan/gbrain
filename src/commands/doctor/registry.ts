@@ -43,6 +43,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { rustEngineAddonEntry } from './checks/rust-engine-addon.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
@@ -186,6 +187,7 @@ import { commitNotifierEntry } from './checks/commit-notifier.ts';
 import { managedSyncConvergenceEntry } from './checks/managed-sync-convergence.ts';
 import { managedSyncBlockedEntry } from './checks/managed-sync-blocked.ts';
 import { syncAdmissionEntry } from './checks/sync-admission.ts';
+import { topologyRecoveryStoppedEntry } from './checks/topology-recovery-stopped.ts';
 import { atomHeldFailedEntry } from './checks/atom-holds.ts';
 import { extractionInputTruncatedEntry } from './checks/extraction-input.ts';
 import { derivationUnpricedModelEntry } from './checks/derivation-pricing.ts'; // PR 4 (Wave B incremental derivation, transcripts)
@@ -230,6 +232,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   harnessWiringDoctorEntry,
   agentContractEntry,
   pgliteDataDirEntry,
+  rustEngineAddonEntry,
   ipcSocketPathEntry,
   projectionResidentEntry,
   offlineConnectionEntry,
@@ -242,6 +245,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   managedSyncMovementEntry,
   managedSyncBlockedEntry,
   syncAdmissionEntry,
+  topologyRecoveryStoppedEntry,
   persistenceCompactionEntry,
   soakCountersEntry,
   serveBuildDriftEntry,

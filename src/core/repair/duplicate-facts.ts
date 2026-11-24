@@ -44,6 +44,7 @@ import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface DuplicateRow {
   id: number;
@@ -70,18 +71,7 @@ export interface DuplicateGroup {
 
 /** Every same-fingerprint group of active facts in these sources, in (source, visibility, fingerprint) order. Read-only. */
 export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[]): Promise<DuplicateGroup[]> {
-  const rows = await engine.executeRaw<{ id: number | string; source_id: string; visibility: string; fp: string; fact: string; entity_slug: string | null;
-    fenced: boolean; row_num: number | string | null; source_markdown_slug: string | null; speaker: string }>(`
-    SELECT * FROM (
-      SELECT f.id, f.source_id, f.visibility, gbrain_fact_fingerprint(f.fact) AS fp, f.fact, f.entity_slug, f.row_num, f.source_markdown_slug, f.created_at,
-             COALESCE(f.attributed_to, '') AS speaker,
-             (f.row_num IS NOT NULL AND f.source_markdown_slug IS NOT NULL AND COALESCE(f.source, '') NOT LIKE 'cli:%') AS fenced,
-             count(*) OVER (PARTITION BY f.source_id, f.visibility, COALESCE(f.attributed_to, ''), gbrain_fact_fingerprint(f.fact)) AS n
-        FROM facts f
-       WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-         AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
-    ) d WHERE d.n > 1
-    ORDER BY d.source_id, d.visibility, d.fp, d.speaker, d.fenced DESC, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
+  const rows = await engine.listDuplicateFactRows(sourceIds, [...AUDIT_ROW_SOURCES]);
   const groups: DuplicateGroup[] = [];
   let key = '';
   for (const row of rows) {
@@ -100,9 +90,12 @@ export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[
   }
   const fenced = groups.flatMap(g => g.retire.flatMap(r => r.fence_page ? [[g.source_id, r.fence_page]] : []));
   if (!fenced.length) return groups;
-  const segmented = new Set((await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id, p.slug FROM pages p
-    JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
-    WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL`, [fenced.map(f => f[0]), fenced.map(f => f[1])])).map(r => JSON.stringify([r.source_id, r.slug])));
+  // A page counts only when it is live and segmented: `listSegmentedPageSlugs` is exactly that, one source at a time.
+  const segmented = new Set<string>();
+  for (const sourceId of new Set(fenced.map(f => f[0]!))) {
+    const slugs = new Set(await engine.listSegmentedPageSlugs(sourceId));
+    for (const [source, slug] of fenced) if (source === sourceId && slugs.has(slug!)) segmented.add(JSON.stringify([source, slug]));
+  }
   for (const g of groups) {
     g.segmented = g.retire.filter(r => r.fence_page && segmented.has(JSON.stringify([g.source_id, r.fence_page])));
     g.retire = g.retire.filter(r => !g.segmented.includes(r));
@@ -117,8 +110,7 @@ function previewCommand(scope: RepairScope, includeCrossEntity: boolean): string
   return `gbrain repair duplicate-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${includeCrossEntity ? ' --include-cross-entity' : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, includeCrossEntity: boolean, sources: unknown, groups: DuplicateGroup[]) =>
   previewHash({ kind: 'duplicate-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_cross_entity: includeCrossEntity },
@@ -177,6 +169,8 @@ export const duplicateFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { group, hash, last } = entry as GroupItem;
+    // The live recheck, the supersede and the page strike (the page write door) run through raw SQL, so a Rust brain stops here by name, before its first write.
+    requireRawSql(ctx.engine, 'repair duplicate-facts page write');
     const { retired, segmented } = await retireGroup(ctx, entry, group);
     if (last) await clearApprovedSet(ctx.engine, { command: 'duplicate-facts', hash });
     const changed = group.retire.filter(r => !retired.includes(r.id) && !segmented.includes(r.id)).map(r => r.id);

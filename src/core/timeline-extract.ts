@@ -372,7 +372,8 @@ export const versionTimelineScan = (): VersionTimelineScan => ({ done: false, pr
  * row locked and only while the page is still at that revision; a page that moved deletes nothing and returns no rows.
  */
 export async function retractRemovedTimelineEntries(
-  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'readSegmentedPageHead' | 'readSegmentedVersionBodyBytes' | 'listStoredTimelineRows'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readManifest' | 'readSegmentTexts' | 'readSegmentedPageHead' | 'readSegmentedVersionBodyBytes' | 'listStoredTimelineRows'
+    | 'listTimelineVersionWitnesses' | 'readTimelineVersionBody' | 'readPageTrustRows'>,
   slug: string,
   sourceId: string,
   current: string | TimelineTextKeys,
@@ -401,16 +402,13 @@ export async function retractRemovedTimelineEntries(
       }
       return { produced: [...found.produced], superseded: [...found.superseded] };
     };
-    const versions = await engine.executeRaw<{ id: number; body_storage: string; page_id: number; generation: number | null; content_hash: string | null }>(
-      `SELECT v.id, v.body_storage, v.page_id, v.body_generation AS generation, v.content_hash FROM page_versions v JOIN pages p ON p.id = v.page_id
-        WHERE p.source_id = $1 AND p.slug = $2 ORDER BY v.id DESC`, [sourceId, slug]);
+    const versions = await engine.listTimelineVersionWitnesses(sourceId, slug);
     for (const version of versions) {
       let witness: VersionWitness;
       let found: { produced: string[]; superseded: string[] };
       if (version.body_storage !== 'segmented') {
         if (opts.stop?.()) throw new BodyReadStopped(slug);
-        const [body] = await engine.executeRaw<{ compiled_truth: string; timeline: string | null; head: string; tail: string }>(
-          `SELECT compiled_truth, timeline, md5(compiled_truth) AS head, md5(coalesce(timeline, '')) AS tail FROM page_versions WHERE id = $1`, [version.id]);
+        const body = await engine.readTimelineVersionBody(Number(version.page_id), Number(version.id));
         if (!body) continue;
         witness = { id: Number(version.id), storage: 'inline', digests: [body.head, body.tail] };
         const cached = `inline:${body.head}:${body.tail}`;
@@ -466,7 +464,7 @@ export async function retractRemovedTimelineEntries(
   // W1 #6783 §12 (a): a row more trusted than the page's restatement, or held by an open contest, stays; the owner decides.
   const [{ contestHeldRows, heldRows }, { derivedWriteTrust }, { storedTrustTier }] = await Promise.all([
     import('./trust/fence-guard.ts'), import('./trust/taint.ts'), import('./trust/tier.ts')]);
-  const [page] = await engine.executeRaw<{ id: number; trust_tier: string | null }>('SELECT id, trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  const [page] = await engine.readPageTrustRows({ keys: [{ source_id: sourceId, slug }], includeDeleted: true });
   const writer = derivedWriteTrust({ channel: 'derive:timeline', inputs: page ? [{ table: 'pages', id: Number(page.id), tier: storedTrustTier(page.trust_tier) }] : [], projection: true }).tier;
   const held = page ? await heldRows(engine as BrainEngine, 'timeline_entries', Number(page.id), found.map(row => Number(row.id)), { writer, pending: true }) : new Map();
   const orphans = found.filter(row => !held.has(Number(row.id)));

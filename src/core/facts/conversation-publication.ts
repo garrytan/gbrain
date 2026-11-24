@@ -74,11 +74,11 @@ import { maintenanceCallerPreflight, maintenancePreflight, submitDatabaseMainten
 import { loadConfig } from '../config.ts';
 import { waitForWrite } from '../persistence/service.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import { AUDIT_ROW_SOURCES, CONVERSATION_EXTRACTOR_VERSION, CONVERSATION_FACTS_SOURCE_PREFIX, NON_EXTRACTABLE_AUDIT_SOURCE, outcomeMarkerSql, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
+import { CONVERSATION_EXTRACTOR_VERSION, CONVERSATION_FACTS_SOURCE_PREFIX, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
 import { withWriteTrust } from '../persistence/context.ts';
 import { conversationDerivation } from '../persistence/derived-facts.ts';
-import { RELINKED_DERIVED_ROW, inheritRelinkedEntities } from './conversation-relink-carry.ts';
+import { inheritRelinkedEntities } from './conversation-relink-carry.ts';
 import { recordReextractMemo } from './conversation-memo.ts';
 import { tightenToStoredPage } from './visibility.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
@@ -87,12 +87,14 @@ import { decideFactWrite, recordFlaggedRow } from '../write-gate-store.ts';
 import { sourceWindowKey, type SourceWindow } from '../page-body/derivations.ts';
 import { findCaptureDuplicate } from './capture-dedup.ts';
 import { normalizeSlot } from './slots.ts';
-import { unbackedEntitySql } from './withdrawal-schema.ts';
-import { CONVERSATION_SLOT_SQL, valueHash } from '../chronicle/ontology.ts';
+import { valueHash } from '../chronicle/ontology.ts';
+import { LABEL_RETIRED_MARKER } from '../engine-sql/facts-conversation.ts';
 
 export const CONVERSATION_FACTS_INTENT = 'managed_maintenance_conversation_facts';
 export const CONVERSATION_FACTS_PROTOCOL = 1;
 export { CONVERSATION_FACTS_SOURCE_PREFIX };
+/** Context marker `gbrain repair conversation-labels` appends to the rows it retires (defined with the clear statement, engine-sql/facts-conversation.ts). */
+export { LABEL_RETIRED_MARKER };
 /** The request slug of every conversation-facts batch: a dot-led segment, which no page slug may have. */
 export const ANCHOR_SLUG = '.maintenance/conversation-facts';
 export const MAX_GENERATION_ATTEMPTS = 3;
@@ -133,8 +135,12 @@ export type ConversationFactRow = NewFact & { row_num: number; source_markdown_s
  */
 export type ConversationScope = 'full' | 'window' | 'partial';
 const SCOPES: ReadonlySet<string> = new Set<ConversationScope>(['full', 'window', 'partial']);
-/** A frozen row: no source, page or row number (the request pins them) and no visibility (one per entry). */
-export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'>;
+/**
+ * A frozen row: no source, page or row number (the request pins them). Visibility is one per entry; a row carries
+ * `visibility: 'private'` only when it is narrower than its world entry (a claim the speaker asked to keep quiet), and
+ * no other value. A binary that predates the key publishes such a row at the entry's visibility, as before.
+ */
+export type FrozenConversationFact = Omit<FrozenExtractedFact, 'visibility' | 'entity_inferred'> & { visibility?: 'private' };
 
 /** One page's frozen batch inside a batch request. */
 export interface ConversationPageEntry {
@@ -192,12 +198,10 @@ export async function conversationGeneration(engine: BrainEngine, authority: Mai
     throw opError('revision_conflict', 'The conversation page changed before extraction started; nothing was submitted.',
       `Page ${input.slug} in source ${sourceId} changed or was replaced after it was read, so no model work ran for it. The next run extracts the current page.`);
   }
-  const [base] = await engine.executeRaw<{ id: number | string | null }>(
-    `SELECT max(id) AS id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'`,
-    [sourceId, input.slug]);
+  const base = await engine.readNewestConversationFactId(sourceId, input.slug);
   const key = digest(['conversation-facts', CONVERSATION_FACTS_PROTOCOL, authority.writer.sourceIncarnation, snapshot.page.id,
     snapshot.revision, input.versionToken, CONVERSATION_EXTRACTOR_VERSION, input.since, input.segmentLimit,
-    base?.id == null ? null : Number(base.id)]);
+    base == null ? null : Number(base)]);
   return { key, revision: snapshot.revision, pageId: snapshot.page.id };
 }
 
@@ -219,9 +223,8 @@ async function unspentBatch(engine: BrainEngine, authority: MaintenanceAuthority
     const members = pages.map(entry => ({ ...entry, attempt: entry.attempt + raise }));
     const intent: ConversationFactsIntent = { kind: CONVERSATION_FACTS_INTENT, protocol: CONVERSATION_FACTS_PROTOCOL, expected_revision: null, pages: members };
     const requestId = batchRequestId(sourceIncarnation, members);
-    const [spent] = await engine.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests
-      WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid AND (digest<>$4 OR (compacted AND state<>'committed'))`,
-    [principal.kind, principal.id, requestId, intentDigest({ operation: 'submit_job', sourceId, slug: ANCHOR_SLUG, callerIntent: intent })]);
+    const spent = await engine.findSpentConversationRequest(principal.kind, principal.id, requestId,
+      intentDigest({ operation: 'submit_job', sourceId, slug: ANCHOR_SLUG, callerIntent: intent }));
     if (!spent) return { intent, requestId };
     log(`batch request ${spent.request_id} already belongs to another or a compacted write; publishing the batch at its members' next attempt`);
   }
@@ -245,14 +248,7 @@ interface GenerationHistory {
  * members' keys leave the database.
  */
 export async function loadGenerationIndex(engine: BrainEngine, authority: MaintenanceAuthority): Promise<Map<string, GenerationHistory>> {
-  const rows = await engine.executeRaw<{ id: string; request_id: string; state: string; error_code: string | null; members: Array<{ generation: string; attempt: number }> | null }>(
-    `SELECT r.id::text AS id, r.request_id::text AS request_id, r.state, r.error_code,
-            (SELECT jsonb_agg(jsonb_build_object('generation', p->>'generation', 'attempt', (p->>'attempt')::int)) FROM jsonb_array_elements(r.intent->'pages') p) AS members
-       FROM persistence_requests r
-      WHERE r.principal_kind=$1 AND r.principal_id=$2 AND r.source_id=$3 AND r.slug=$4 AND r.operation='submit_job'
-        AND r.state<>'committed' AND NOT r.compacted
-      ORDER BY r.sequence`,
-  [authority.writer.principal.kind, authority.writer.principal.id, authority.writer.sourceId, ANCHOR_SLUG]);
+  const rows = await engine.listConversationBatchRequests(authority.writer.principal.kind, authority.writer.principal.id, authority.writer.sourceId, ANCHOR_SLUG);
   const index = new Map<string, GenerationHistory>();
   for (const row of rows) {
     // One history entry per DISTINCT request (#6500): an envelope that listed a
@@ -272,9 +268,8 @@ export async function loadGenerationIndex(engine: BrainEngine, authority: Mainte
 
 /** The stored entry of `generation` in the failed batch `id`, for a resubmission without model work. */
 async function storedEntry(engine: BrainEngine, id: string, generation: string): Promise<ConversationPageEntry | null> {
-  const [row] = await engine.executeRaw<{ entry: ConversationPageEntry | null }>(`SELECT p AS entry FROM persistence_requests r, jsonb_array_elements(r.intent->'pages') p
-    WHERE r.id=$1::uuid AND NOT r.compacted AND p->>'generation'=$2 LIMIT 1`, [id, generation]);
-  return row?.entry && Array.isArray(row.entry.rows) ? row.entry : null;
+  const entry = await engine.readStoredConversationEntry(id, generation);
+  return entry && Array.isArray(entry.rows) ? entry : null;
 }
 /** The largest frozen batch `segments` segments can produce, in intent bytes. */
 export function estimateConversationIntentBytes(segments: number, embedding: FactEmbeddingSignature | null): number {
@@ -300,8 +295,7 @@ export async function conversationIntentByteLimit(engine: BrainEngine): Promise<
  */
 export async function assertConversationAdmissionHeadroom(engine: BrainEngine, authority: MaintenanceAuthority, needed = 1): Promise<void> {
   const limits = await readJournalLimits(engine);
-  const [counter] = await engine.executeRaw<{ outstanding_count: number | string; terminal_bytes: number | string; lifetime_ids: number | string }>(
-    'SELECT outstanding_count, terminal_bytes, lifetime_ids FROM persistence_counters WHERE key=$1', [principalKey(authority.writer.principal)]);
+  const counter = await engine.readPrincipalCounters(principalKey(authority.writer.principal));
   const sourceId = authority.writer.sourceId;
   const outstanding = Number(counter?.outstanding_count ?? 0);
   if (outstanding >= Math.max(1, Math.floor(limits.principalOutstanding * OUTSTANDING_ADMISSION_SHARE))) {
@@ -339,17 +333,13 @@ async function plannedAdmissions(engine: BrainEngine, sourceId: string,
   const requests = (pages: number) => Math.max(1, Math.ceil(pages / batchCaps.factPages));
   if (opts.slugs) return requests(opts.slugs.length);
   if (opts.slug) return 1;
-  const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM pages p
-    WHERE p.source_id=$1 AND p.deleted_at IS NULL AND p.type=ANY($2::text[])
-      AND ($3::boolean OR NOT EXISTS (SELECT 1 FROM facts f WHERE f.source_id=p.source_id AND f.source_markdown_slug=p.slug
-        AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.source IN ($4,$5) AND f.expired_at IS NULL))`,
-  [sourceId, pageTypesForAllowed(opts.types ?? ALLOWED_TYPES), opts.force === true, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
-  const backlog = Number(row?.n ?? 0);
+  const backlog = await engine.countConversationPagesToExtract(sourceId, pageTypesForAllowed(opts.types ?? ALLOWED_TYPES), opts.force === true);
   return requests(opts.limit ? Math.min(opts.limit, backlog) : backlog);
 }
 
-function freezeRow(row: ConversationFactRow): FrozenConversationFact {
+function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world'): FrozenConversationFact {
   return {
+    ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
     valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
@@ -376,7 +366,7 @@ export async function buildConversationPage(engine: BrainEngine, config: GBrainC
     extractor_version: CONVERSATION_EXTRACTOR_VERSION, generation: input.generation.key, attempt: input.attempt,
     selectors: { since: input.since, segment_limit: input.segmentLimit }, complete: rows.some(row => OUTCOME_SOURCES.has(row.source)), scope: input.scope,
     newest_end: opts.newestEnd, visibility: opts.visibility, embedding: signature,
-    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null })),
+    rows: rows.map(row => freezeRow(keep(row) ? { ...row, embedding_model: signature!.model } : { ...row, embedding: null }, opts.visibility)),
   };
 }
 
@@ -429,6 +419,7 @@ function entryProblem(entry: ConversationPageEntry): string | null {
     }
     if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
     if ((fact.dimension != null && typeof fact.dimension !== 'string') || (fact.value != null && typeof fact.value !== 'string')) return 'a row carries a malformed slot';
+    if (Object.hasOwn(fact, 'visibility') && fact.visibility !== 'private') return 'a row names a fact visibility other than private';
     if (fact.embedding && (!entry.embedding || fact.embedding.length !== entry.embedding.dimensions || !fact.embedding.every(Number.isFinite))) {
       return 'a vector does not match its embedding signature';
     }
@@ -438,10 +429,7 @@ function entryProblem(entry: ConversationPageEntry): string | null {
 /** Canonical slugs for entity slugs that became aliases of a live page since extraction. */
 async function mergedEntities(tx: BrainEngine, sourceId: string, slugs: string[]): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
-  const rows = await tx.executeRaw<{ alias_slug: string; canonical_slug: string }>(`SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
-    WHERE a.source_id=$1 AND a.alias_slug=ANY($2::text[])
-      AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
-      AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`, [sourceId, [...new Set(slugs)]]);
+  const rows = await tx.listMergedEntityAliases(sourceId, slugs);
   return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
 }
 
@@ -463,7 +451,6 @@ export interface ConversationSegmentsPublication {
 }
 
 const STAMP_BATCH_ROWS = 1000;
-const WINDOW_KEY_SQL = `(f.source_window->>'occurrence_id') || ':' || (f.source_window->>'window_ordinal') || ':' || (f.source_window->>'window_text_sha')`;
 
 /**
  * Re-anchors the page's extractor facts of each `from` window key to its `to` window (ids unchanged) in one statement, so
@@ -475,9 +462,7 @@ async function moveSourceWindows(tx: BrainEngine, sourceId: string, slug: string
   const sources = new Set(moves.map(m => m.from));
   const displaced = moves.map(m => sourceWindowKey(m.to)).filter(key => !sources.has(key));
   const cleared = displaced.length ? await clearConversationFacts(tx, sourceId, slug, { keys: displaced, keep: false, unanchored: false }) : 0;
-  await tx.executeRaw(`UPDATE facts f SET source_window = r.w FROM jsonb_to_recordset($3::text::jsonb) AS r(k text, w jsonb)
-    WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND ${WINDOW_KEY_SQL} = r.k`,
-  [sourceId, slug, JSON.stringify(moves.map(m => ({ k: m.from, w: m.to })))]);
+  await tx.moveConversationSourceWindows(sourceId, slug, moves);
   return cleared;
 }
 
@@ -485,8 +470,7 @@ async function moveSourceWindows(tx: BrainEngine, sourceId: string, slug: string
 async function stampSourceWindows(tx: BrainEngine, ids: readonly number[], windows: ReadonlyArray<SourceWindow | null>): Promise<void> {
   const pairs = ids.flatMap((id, i) => windows[i] ? [{ id, w: windows[i] }] : []);
   for (let i = 0; i < pairs.length; i += STAMP_BATCH_ROWS) {
-    await tx.executeRaw(`UPDATE facts f SET source_window = r.w FROM jsonb_to_recordset($1::text::jsonb) AS r(id bigint, w jsonb) WHERE f.id = r.id`,
-      [JSON.stringify(pairs.slice(i, i + STAMP_BATCH_ROWS))]);
+    await tx.stampConversationSourceWindows(pairs.slice(i, i + STAMP_BATCH_ROWS));
   }
 }
 
@@ -514,19 +498,17 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
     { sourceId, slug, payload: { ...row, embedding: null }, input: derivedGateInput(derivation.trust, opts.requestId), cfg }) }));
   for (const { decision } of gated) if (decision && decision.action !== 'insert') await applyGateDecision(tx, decision, { table: 'facts', sourceId }, async () => null);
   const kept = gated.filter(({ decision }) => decision?.action !== 'hold' && decision?.action !== 'reject');
-  const [active] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
-    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
+  const active = await tx.countActiveConversationFacts(sourceId, slug);
   const segments = opts.segments;
-  const retire = !segments && (!Number(active?.n ?? 0) || (opts.scope === 'full' && kept.length === rows.length && kept.some(({ row }) => !OUTCOME_SOURCES.has(row.source))));
+  const retire = !segments && (!active || (opts.scope === 'full' && kept.length === rows.length && kept.some(({ row }) => !OUTCOME_SOURCES.has(row.source))));
   // A segmented page's windowed publication clears or keeps its own rows window by window, so the page's own rows never count as duplicates.
   const scope = { engine: tx, sourceId, lane: CONVERSATION_FACTS_SOURCE_PREFIX, sessionId: null, anchor: null, ...(retire || segments ? { replacingPage: slug } : {}) };
   const published: typeof kept = [];
   let duplicates = 0;
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
-    const [prior] = row.dimension && row.value && row.entity_slug && row.valid_from != null ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
-      WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${CONVERSATION_SLOT_SQL}
-        AND valid_from <= $4::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`, [sourceId, row.entity_slug, row.dimension, new Date(row.valid_from).toISOString()]) : [];
+    const prior = row.dimension && row.value && row.entity_slug && row.valid_from != null
+      ? await tx.readConversationSlotValueHash(sourceId, row.entity_slug, row.dimension, row.valid_from) : null;
     if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
     else duplicates++;
@@ -539,8 +521,7 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
       if (segments.replace.length) retiredWindows += await clearConversationFacts(tx, sourceId, slug, { keys: segments.replace, keep: false, unanchored: false });
       if (segments.live) retiredWindows += await clearConversationFacts(tx, sourceId, slug, { keys: segments.live, keep: true, unanchored: true });
     }
-    const outcomes = published.some(({ row }) => OUTCOME_SOURCES.has(row.source)) ? await tx.executeRaw<{ id: number }>(`DELETE FROM facts
-      WHERE source_id=$1 AND source_markdown_slug=$2 AND source = ANY($3::text[]) RETURNING id`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]) : [];
+    const outcomes = published.some(({ row }) => OUTCOME_SOURCES.has(row.source)) ? await tx.deleteConversationOutcomeRows(sourceId, slug) : [];
     return { deleted: retiredWindows + outcomes.length, ...await insertConversationFacts(tx, sourceId, slug, published.map(({ row }) => row)) };
   });
   const stored = published.filter((_, i) => !purged.has(i));
@@ -576,16 +557,13 @@ export async function replaceConversationFacts(tx: BrainEngine, sourceId: string
 async function insertConversationFacts(tx: BrainEngine, sourceId: string, slug: string, rows: UnnumberedFact[]): Promise<{ inserted: number; ids: number[]; purged: Set<number> }> {
   if (!rows.length) return { inserted: 0, ids: [], purged: new Set() };
   rows = await inheritRelinkedEntities(tx, sourceId, slug, rows);
-  const matches = await tx.executeRaw<{ ord: number | string }>(`SELECT n.ord FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS n(fact, visibility, entity_slug, source, ord)
-    WHERE NOT ${outcomeMarkerSql('n')} AND EXISTS (SELECT 1 FROM fact_purges p WHERE p.source_id=$1 AND p.visibility=n.visibility
-      AND (p.subject IN ('*', n.entity_slug) OR ${unbackedEntitySql('n', '$1')}) AND p.fact_hash=gbrain_fact_fingerprint(n.fact))`,
-  [sourceId, rows.map(row => ensureWellFormed(row.fact)), rows.map(row => row.visibility ?? 'private'), rows.map(row => row.entity_slug ? ensureWellFormed(row.entity_slug) : null), rows.map(row => row.source ?? null)]);
+  const matches = await tx.listPurgeTombstoneMatches(sourceId, { facts: rows.map(row => ensureWellFormed(row.fact)), visibilities: rows.map(row => row.visibility ?? 'private'),
+    entitySlugs: rows.map(row => row.entity_slug ? ensureWellFormed(row.entity_slug) : null), sources: rows.map(row => row.source ?? null) });
   const purged = new Set(matches.map(match => Number(match.ord) - 1));
   rows = await insertableSlots(tx, sourceId, slug, rows.filter((_, i) => !purged.has(i)));
   if (!rows.length) return { inserted: 0, ids: [], purged };
-  const [top] = await tx.executeRaw<{ n: number | string | null }>(
-    'SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [sourceId, slug]);
-  const start = top?.n == null ? 0 : Number(top.n) + 1;
+  const top = await tx.maxConversationRowNum(sourceId, slug);
+  const start = top == null ? 0 : Number(top) + 1;
   const { inserted, ids } = await tx.insertFacts(rows.map((fact, i) => ({ ...fact, row_num: start + i, source_markdown_slug: slug })), { source_id: sourceId }); // gbrain-allow-direct-insert: a conversation page's derived fact batch replaced under its page lock (inside the receipted publication on a managed brain)
   if (inserted !== rows.length) {
     throw opError('storage_error', 'A conversation fact insert was lost; the page\'s prior facts were kept.',
@@ -604,8 +582,7 @@ async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, 
   if (!rows.some(row => row.dimension)) return rows;
   const key = (entity: string, dimension: string, hash: string, validFrom: Date | string | null | undefined) =>
     [entity, dimension, hash, validFrom == null ? 'now' : new Date(validFrom).getTime()].join('\u0000');
-  const held = await tx.executeRaw<{ entity_slug: string; dimension: string; value_hash: string; valid_from: Date | string }>(
-    'SELECT entity_slug, dimension, value_hash, valid_from FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND dimension IS NOT NULL', [sourceId, slug]);
+  const held = await tx.listHeldFactSlots(sourceId, slug);
   const taken = new Set(held.map(h => key(h.entity_slug, h.dimension, h.value_hash, h.valid_from)));
   return rows.map(({ dimension, value, ...row }) => {
     const slot = normalizeSlot(dimension, value, row.entity_slug);
@@ -617,8 +594,6 @@ async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, 
   });
 }
 
-/** Context marker `gbrain repair conversation-labels` appends to the rows it retires. */
-export const LABEL_RETIRED_MARKER = 'retired: conversation-labels';
 
 /**
  * Clears a page's prior extractor batch before a replacement, keeping the
@@ -632,24 +607,17 @@ export const LABEL_RETIRED_MARKER = 'retired: conversation-labels';
  */
 /** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
 export async function countConversationFacts(db: BrainEngine, sourceId: string, slug: string): Promise<number> {
-  const [row] = await db.executeRaw<{ count: string }>(`SELECT count(*)::text AS count FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
-    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
-  return Number(row?.count ?? 0);
+  return db.countPageConversationFacts(sourceId, slug);
 }
 
 /** The page's active conversation facts anchored to window `key`. */
 export async function countWindowFacts(db: BrainEngine, sourceId: string, slug: string, key: string): Promise<number> {
-  const [row] = await db.executeRaw<{ count: string }>(`SELECT count(*)::text AS count FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
-    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.expired_at IS NULL AND f.source_window IS NOT NULL AND ${WINDOW_KEY_SQL} = $3`, [sourceId, slug, key]);
-  return Number(row?.count ?? 0);
+  return db.countConversationWindowFacts(sourceId, slug, key);
 }
 
 /** The page's active conversation facts a settled collection keeping window `keys` removes: anchored to another window, or unanchored. */
 export async function countConversationFactsOutside(db: BrainEngine, sourceId: string, slug: string, keys: readonly string[]): Promise<number> {
-  const [row] = await db.executeRaw<{ count: string }>(`SELECT count(*)::text AS count FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
-    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND NOT (f.source = ANY($3::text[])) AND f.expired_at IS NULL
-    AND (f.source_window IS NULL OR NOT (${WINDOW_KEY_SQL} = ANY($4::text[])))`, [sourceId, slug, [...AUDIT_ROW_SOURCES], [...keys]]);
-  return Number(row?.count ?? 0);
+  return db.countConversationFactsOutsideWindows(sourceId, slug, keys);
 }
 
 /**
@@ -658,22 +626,7 @@ export async function countConversationFactsOutside(db: BrainEngine, sourceId: s
  */
 export async function clearConversationFacts(db: BrainEngine, sourceId: string, slug: string,
   windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number> {
-  const page = `f.source_id=$1 AND f.source_markdown_slug=$2 AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'` + (windows
-    ? ` AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE (${WINDOW_KEY_SQL} = ANY($5::text[])) <> $6::boolean END)` : '');
-  const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug];
-  const referenced = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
-  // GBRA-574 B2: a row kept expired gives up its slot, so the replacement can hold the same slot key.
-  const unslot = 'dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL';
-  await db.executeRaw(`DELETE FROM facts f WHERE ${page} AND f.expired_at IS NOT NULL AND ${RELINKED_DERIVED_ROW} AND NOT (${referenced})`, params);
-  await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
-  const [relinked] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
-    WHERE ${page} AND f.expired_at IS NULL AND ${RELINKED_DERIVED_ROW} RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
-    WHERE ${page} AND f.expired_at IS NULL AND (${referenced}) RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [deleted] = await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f
-    WHERE ${page} AND NOT (${referenced}) AND COALESCE(f.context,'') NOT LIKE '%${LABEL_RETIRED_MARKER}%' AND NOT (${RELINKED_DERIVED_ROW}) RETURNING 1)
-    SELECT COUNT(*)::text AS count FROM del`, params);
-  return Number(relinked?.count ?? 0) + Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
+  return db.clearConversationPageFacts(sourceId, slug, windows);
 }
 
 
@@ -694,11 +647,11 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   if (page.knowledge_revision !== entry.expected_revision || token !== entry.version_token) return { ...base, status: 'skipped', reason: 'revision_conflict' };
   const problem = entryProblem(entry);
   if (problem) {
-    const [top] = await tx.executeRaw<{ n: number | string | null }>('SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [row.source_id, entry.slug]);
+    const top = await tx.maxConversationRowNum(row.source_id, entry.slug);
     const blocked: ConversationFactRow = { fact: 'EXTRACTION_NOT_APPLICABLE', kind: 'fact', entity_slug: null, source: NON_EXTRACTABLE_AUDIT_SOURCE,
       source_session: `${NON_EXTRACTABLE_AUDIT_SOURCE}:${entry.slug}:${token}`, confidence: 1.0, notability: 'low',
       context: stampExtractorVersion(`scanned, not extractable: blocked: ${problem} (request ${row.request_id})`),
-      row_num: top?.n == null ? 0 : Number(top.n) + 1, source_markdown_slug: entry.slug };
+      row_num: top == null ? 0 : Number(top) + 1, source_markdown_slug: entry.slug };
     const { inserted } = await tx.insertFacts([blocked], { source_id: row.source_id }); // gbrain-allow-direct-insert: the durable blocked outcome of a conversation page whose frozen rows failed validation, inside its receipted batch publication
     if (inserted !== 1) throw opError('storage_error', 'A blocked conversation outcome was not written; the batch rolled back.',
       `Request ${row.request_id} could not record that ${entry.slug} in source ${row.source_id} is blocked, so none of its pages changed. Run the extraction again; report this if it repeats.`,
@@ -708,7 +661,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const vectors = !!signature && !!entry.embedding && signature.model === entry.embedding.model && signature.dimensions === entry.embedding.dimensions;
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
-    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
+    ...fact, visibility: OUTCOME_SOURCES.has(fact.source) || fact.visibility === 'private' ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
     valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,

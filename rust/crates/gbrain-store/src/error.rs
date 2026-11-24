@@ -55,6 +55,10 @@ pub const INVALID_STATE: &str = "invalid_state";
 /// it committed. `Store::write` runs the transaction again; callers do not see this code unless
 /// a write keeps losing until its retry budget is spent.
 pub const WRITE_CONFLICT: &str = "write_conflict";
+/// The brain is a shadow store the v0.60.766.0 Rust addon wrote (store format 5) and holds a record this
+/// build cannot carry over to its own shape (`seed/format_5.rs`); nothing was changed. The message names the
+/// record and the re-seed steps.
+pub const SHADOW_RESEED_REQUIRED: &str = "shadow_reseed_required";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 
@@ -78,6 +82,13 @@ impl StoreError {
 
     pub fn io(message: impl Into<String>) -> Self {
         Self::new(STORE_IO, message)
+    }
+
+    /// Whether the file system or the storage engine failed (`store_io`, `store_corrupt`), as
+    /// against a record the caller's data does not fit. A failure like this says nothing about
+    /// any one record, so a step that turns a bad record into a refusal must pass it on as it is.
+    pub fn is_storage_failure(&self) -> bool {
+        matches!(self.code, STORE_IO | STORE_CORRUPT)
     }
 }
 

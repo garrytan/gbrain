@@ -7,9 +7,6 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { TEXT_REBUILD_PAGES_PER_SECOND } from './rebuild-estimate.ts';
-import { quoteIdentifier } from '../search/embedding-column.ts';
-import { chunkGenerationFilter, chunkGenerationProbe, movableChunkSql } from '../search/safe-chunks.ts';
-import { sealableImageSql } from './projection-class.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { acceptedEmbeddingInputHashes } from '../embedding-input-hash.ts';
 import { embeddingInputContext, embeddingWriteTarget } from './projections.ts';
@@ -69,41 +66,21 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
   let after: [string, string] = ['00000000-0000-0000-0000-000000000000', ''];
   let budget = opts.limit ?? Infinity;
   const target = await embeddingWriteTarget(engine);
-  const col = quoteIdentifier(target.column.name);
   while (budget > 0) {
     // A primary-key window of queue rows, each probed by its page's unique key only: without planner statistics
     // (a fresh PGLite) a deleted_at filter here lets the planner pick pages_dedup_idx and scan the source per row.
-    const params: unknown[] = [after[0], after[1], IMAGE_SEAL_GROUP];
-    const notAfter = opts.notAfter === undefined ? '' : `AND j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`;
-    const window = await engine.executeRaw<Candidate & { sealable: boolean }>(`SELECT s.id AS source_id,j.source_incarnation::text AS source_incarnation,
-        j.slug,j.revision::text AS revision,p.sealable IS TRUE AS sealable
-      FROM (SELECT source_incarnation,slug,revision FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > ($1::uuid,$2 COLLATE "C") ${notAfter}
-        ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT $3) j
-      LEFT JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s ON true
-      LEFT JOIN LATERAL (SELECT p.deleted_at IS NULL AND p.knowledge_revision=j.revision AND ${sealableImageSql('p')} AS sealable
-        FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug OFFSET 0) p ON true
-      ORDER BY j.source_incarnation,j.slug COLLATE "C"`, params);
+    const window = await engine.listImageSealWindow({ sourceIncarnation: after[0], slug: after[1] }, IMAGE_SEAL_GROUP, opts.notAfter);
     if (!window.length) break;
-    const group = window.filter(row => row.sealable).slice(0, budget);
+    const group = window.filter((row): row is Candidate & { sealable: true } => row.sealable && row.source_id !== null).slice(0, budget);
     const last = group.length === budget ? group[group.length - 1]! : window[window.length - 1]!;
     after = [last.source_incarnation, last.slug];
     if (!group.length) continue;
     budget -= group.length;
     const sealed = await engine.transaction(async tx => {
       await tx.lockPageKeys(group.map(row => ({ sourceId: row.source_id, slug: row.slug })));
-      const pages = await tx.executeRaw<{ id: number; revision: string; title: string; mode: string | null;
-        corpus_generation: string | null }>(`SELECT p.id,p.knowledge_revision::text AS revision,p.title,
-          p.contextual_retrieval_mode AS mode,p.corpus_generation
-        FROM jsonb_to_recordset($1::text::jsonb) AS v(source_id text, slug text, revision uuid)
-        JOIN sources s ON s.id=v.source_id AND NOT s.archived
-        CROSS JOIN LATERAL (SELECT p.id FROM pages p WHERE p.source_id=v.source_id AND p.slug=v.slug OFFSET 0) k
-        JOIN pages p ON p.id=k.id
-        WHERE p.deleted_at IS NULL AND p.knowledge_revision=v.revision AND ${sealableImageSql('p')}`, [JSON.stringify(group.map(({ source_id, slug, revision }) => ({ source_id, slug, revision })))]);
+      const pages = await tx.readImageSealPages(group.map(({ source_id, slug, revision }) => ({ source_id, slug, revision })));
       if (!pages.length) return [];
-      const chunks = await tx.executeRaw<{ id: number; page_id: number; chunk_text: string; chunk_source: string;
-        embedding_input_hash: string | null; current: boolean }>(`SELECT id,page_id,chunk_text,chunk_source,embedding_input_hash,
-          ${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS current
-        FROM content_chunks c WHERE c.page_id=ANY($1::int[]) AND c.${col} IS NOT NULL AND ${chunkGenerationProbe('c')}`, [pages.map(page => Number(page.id)), target.provenanceModel]);
+      const chunks = await tx.listImageSealChunks(pages.map(page => Number(page.id)), target.column, target.provenanceModel);
       const byId = new Map(pages.map(page => [Number(page.id), page]));
       const stale = chunks.filter(chunk => {
         const page = byId.get(Number(chunk.page_id))!;
@@ -111,19 +88,12 @@ export async function sealImageProjections(engine: BrainEngine, opts: { limit?: 
         if (chunk.embedding_input_hash === null) return page.mode != null;
         const provenance = embeddingInputContext(target, page.title, page.corpus_generation, [chunk]);
         return !acceptedEmbeddingInputHashes(provenance, page.mode, chunk).includes(chunk.embedding_input_hash);
-      }).map(chunk => Number(chunk.id));
-      if (stale.length) {
-        await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
-          embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE id=ANY($1::int[])`, [stale]);
-      }
+      }).map(chunk => ({ id: Number(chunk.id), page_id: Number(chunk.page_id) }));
+      if (stale.length) await tx.clearImageSealVectors(target.column, stale);
       const done: Array<{ has_visual: boolean }> = [];
       // Only the marker: the importer's keyword vector is still the page's own, since its revision has not moved.
       for (const batch of jsonRowBatches(pages, page => ({ id: Number(page.id), revision: page.revision }))) {
-        done.push(...await tx.executeRaw<{ has_visual: boolean }>(`UPDATE pages SET text_projection_revision=pages.knowledge_revision
-          FROM jsonb_to_recordset($1::text::jsonb) AS v(id int, revision uuid)
-          WHERE pages.id=v.id AND pages.knowledge_revision=v.revision
-          RETURNING EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=pages.id AND c.embedding_image IS NOT NULL
-            AND ${chunkGenerationFilter('pages', 'c')}) AS has_visual`, [batch]));
+        done.push(...await tx.sealImagePages(JSON.parse(batch) as Array<{ id: number; revision: string }>));
       }
       return done;
     });

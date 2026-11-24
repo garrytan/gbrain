@@ -444,7 +444,7 @@ impl Brain {
         self.run(env, move |s| s.count_open_jobs_by_owner(&client_id))
     }
 
-    /// `readJobSourceState(sourceId)`: `{ archived, created_at }` or null.
+    /// `readJobSourceState(sourceId)`: `{ archived, created_at, local_path, config }` or null.
     #[napi]
     pub fn read_job_source_state<'env>(
         &self,

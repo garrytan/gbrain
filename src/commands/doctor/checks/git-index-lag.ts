@@ -30,8 +30,7 @@ async function runGitIndexLag(ctx: DoctorContext): Promise<Check[]> {
   const warnSeconds = gitIndexLagWarnSeconds();
   const checks: Check[] = [];
   try {
-    const rows = await engine.executeRaw<{ id: string; local_path: string | null; last_commit: string | null }>(
-      `SELECT id, local_path, last_commit FROM sources WHERE NOT archived AND COALESCE(config->>'canonical','')='git' ORDER BY id`);
+    const rows = await engine.readDoctorSources('strict_git');
     const sources: SourceLag[] = [];
     for (const row of rows) {
       if (!row.local_path || !existsSync(row.local_path) || !isGitCheckout(row.local_path)) { sources.push({ source_id: row.id, indexed: !!row.last_commit, commits_behind: null, seconds_behind: null }); continue; }

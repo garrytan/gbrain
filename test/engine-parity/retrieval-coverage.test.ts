@@ -11,19 +11,22 @@
  *    for the same pages and the same read scope: sources, privacy, kind, types,
  *    excluded slug prefixes, the trust floor, the flagged-page filter,
  *    soft-deleted, quarantined and archived pages. A
- *    count that reaches the cap refuses on Rust, and the probe's cached
- *    answer lasts until the next write on every arm.
+ *    count that reaches the cap counts every match in scope up to its own cap,
+ *    whatever order the pages were written in, and the probe's cached answer
+ *    lasts until the next write on every arm.
  *  - Regression: an engine whose count drifts tells a search caller that a
  *    complete answer is incomplete (or the reverse), and an engine whose probe
  *    drifts reports `ready` while pages wait for indexing. Before this lane the
  *    counts refused on Rust and the probe read `unknown` there.
  *  - Why existing coverage misses it: test/projection-readiness.test.ts and
  *    test/search-coverage-*.test.ts run on PGLite only and never compare arms.
- *  - Seam: none. Typed members and the site functions only. Page ids are
+ *  - Seam: none. Typed members and the site functions only; on Postgres one case
+ *    holds a transaction open in another database through a second connection. Page ids are
  *    serial and engine-dependent: a case passes ids it read with `getPage` and
  *    never returns them.
  */
 import { describe, expect } from 'bun:test';
+import postgres from '#postgres';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
 import {
@@ -46,6 +49,17 @@ const { parityTest } = parityArms(testBackends());
 const ALL: CoverageRelevance = { all: true, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false };
 const NONE: CoverageRelevance = { ...ALL, all: false };
 const PROTECTED_BODY = 'Scan of a receipt\n\n<!--- gbrain:facts:begin -->\n| fact |\n<!--- gbrain:facts:end -->';
+
+/** On the Postgres arm, runs `body` while the server's DATABASE_URL database holds an open transaction with an id. */
+async function withOtherDatabaseBusy<T>(backend: string, body: () => Promise<T>): Promise<T> {
+  if (backend !== 'postgres') return body();
+  const other = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false });
+  try {
+    await other.unsafe('BEGIN');
+    await other.unsafe('SELECT txid_current()');
+    return await body();
+  } finally { await other.unsafe('ROLLBACK').catch(() => undefined); await other.end(); }
+}
 
 function page(title: string, extra: Partial<PageInput> = {}): PageInput {
   return { type: 'note', title, compiled_truth: `${title} body`, timeline: '', ...extra };
@@ -200,6 +214,35 @@ describe('engine parity: retrieval coverage', () => {
     },
   );
 
+  // #10000 (loss row 40): the rebuild counts as running only while an activation row waits on a `text` page of a live
+  // source in scope, so activation rows parked on images, on an archived source or outside the scope start no clock.
+  parityTest(
+    'search/retrieval-coverage: the rebuild clock starts only from an activation row on a text page in scope',
+    { methods: ['putPage', 'claimSegmentedProjection', 'projectionRebuildProgress'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'other');
+      await createSource(engine, backend, 'gone');
+      const activate = (slug: string, sourceId = 'default') => engine.claimSegmentedProjection({ sourceId, slug }, 'protocol_activation');
+      const progress = async (scope: ProjectionReadinessScope) => {
+        const p = await countProjectionRebuild(engine, scope);
+        return p === null ? null : { done: p.done, total: p.total, rated: p.pages_per_second === null ? null : p.pages_per_second > 0 };
+      };
+      await engine.putPage('images/the_widget', page('the_widget', { page_kind: 'image', compiled_truth: 'Photo of the_widget' }));
+      await engine.putPage('notes/gone-widget', page('Gone widget'), { sourceId: 'gone' });
+      await engine.putPage('notes/other-widget', page('Other widget'), { sourceId: 'other' });
+      const claims = [await activate('images/the_widget'), await activate('notes/gone-widget', 'gone'), await activate('notes/other-widget', 'other')];
+      await archiveSource(engine, backend, 'gone');
+      const imagesOnly = { all: await progress({}), mine: await progress({ sourceId: 'default' }) };
+      await engine.putPage('notes/widget-plan', page('Widget plan'));
+      claims.push(await activate('notes/widget-plan'));
+      const withText = { mine: await progress({ sourceId: 'default' }), image: await progress({ sourceId: 'default', pageKind: 'image' }) };
+      const out = { claims, imagesOnly, withText };
+      expect(out.imagesOnly.mine).toBeNull();
+      expect(out.withText.mine).not.toBeNull();
+      return out;
+    },
+  );
+
   parityTest(
     'search/projection-readiness: ready, pending and by-design statuses follow the scope',
     { methods: ['putPage', 'sealChunks', 'softDeletePage', 'readProjectionReadiness'] },
@@ -246,12 +289,30 @@ describe('engine parity: retrieval coverage', () => {
     },
   );
 
+  // A transaction reads its own writes before they commit: the probe must not reuse an answer cached before them.
+  parityTest(
+    'search/projection-readiness: with the cache on, a probe inside a transaction sees that transaction\'s page write',
+    { methods: ['transaction', 'putPage', 'readProjectionReadinessGeneration', 'readProjectionReadiness'] },
+    async (engine) => {
+      __resetProjectionReadinessCacheForTests();
+      return withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, () => engine.transaction(async (tx) => {
+        const steps: string[] = [await probe(tx)];
+        await tx.putPage('notes/in-transaction', page('In transaction'));
+        steps.push(await probe(tx), await probe(tx));
+        expect(steps).toEqual(['ready', 'projection_pending', 'projection_pending']);
+        return steps;
+      }));
+    },
+  );
+
   parityTest(
     'search/projection-readiness: with the cache on, a probe with no write since the last reuses its answer',
     { methods: ['putPage', 'readProjectionReadinessGeneration', 'readProjectionReadiness'] },
-    async (engine) => {
+    async (engine, backend) => {
       __resetProjectionReadinessCacheForTests();
-      return withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, async () => {
+      // On Postgres a transaction stays open in another database on the same server (the server's own database), as
+      // on a server shared with other brains or a busy job queue: it must not turn this brain's cache off.
+      return withOtherDatabaseBusy(backend, () => withEnv({ [PROJECTION_READINESS_CACHE_ENV]: undefined }, async () => {
         await engine.putPage('notes/a', page('A'));
         const first = await probeProjectionReadiness(engine);
         const again = await probeProjectionReadiness(engine);
@@ -259,21 +320,59 @@ describe('engine parity: retrieval coverage', () => {
         const afterWrite = await probeProjectionReadiness(engine);
         const generation = await engine.readProjectionReadinessGeneration();
         return { status: first.status, reused: again === first, rereadAfterWrite: afterWrite !== again, named: typeof generation === 'string' };
-      });
+      }));
     },
   );
 
   parityTest(
-    'search/retrieval-coverage: a count that reaches the cap reports the same could-affect, or refuses',
+    'search/retrieval-coverage: a capped count gives the same could-affect whatever order the pages were written in',
     { methods: ['putPage', 'countPendingProjectionPages'] },
     async (engine) => {
-      // Five matching pages written first, then a cap of pages that sort before them by slug. The SQL engines read the
-      // capped subset in their own scan order (PGLite and Postgres can disagree), so the store refuses a capped count.
-      for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`));
-      for (let i = 0; i < 1000; i++) await engine.putPage(`alpha/other-${String(i).padStart(4, '0')}`, page('Other'));
+      // Three matching pages sort before a cap of other pages and two after them, and they are written in neither
+      // order. Rewriting the matching pages moves their rows on the SQL engines, so a count of the matches among the
+      // first 1000 rows an engine reads moves with them (and differs between engines); a count of every match does not.
+      const widgets = ['alpha/widget-0', 'alpha/widget-1', 'alpha/widget-2', 'zeta/widget-3', 'zeta/widget-4'];
+      for (const slug of widgets.slice(3)) await engine.putPage(slug, page(`Widget ${slug}`));
+      for (let i = 0; i < 1000; i++) await engine.putPage(`mid/other-${String(i).padStart(4, '0')}`, page('Other'));
+      for (const slug of widgets.slice(0, 3)) await engine.putPage(slug, page(`Widget ${slug}`));
+      const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
+      const written = await countPendingProjections(engine, {}, words);
+      for (const slug of widgets) await engine.putPage(slug, page(`Widget ${slug} again`));
+      const rewritten = await countPendingProjections(engine, {}, words);
+      expect({ written, rewritten }).toEqual({
+        written: { total: 1000, capped: true, could_affect: 5, could_affect_images: 0 },
+        rewritten: { total: 1000, capped: true, could_affect: 5, could_affect_images: 0 },
+      });
+      return { written, rewritten };
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: more could-affect pages than the cap stop could-affect at the cap',
+    { methods: ['putPage', 'countPendingProjectionPages'] },
+    async (engine) => {
+      // More than a cap of matching pages: could_affect stops at its own cap, never above total, and the notice's
+      // `could - images` stays non-negative.
+      for (let i = 0; i < 1003; i++) await engine.putPage(`notes/widget-${String(i).padStart(4, '0')}`, page(`Widget ${i}`));
       const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
       const capped = await countPendingProjections(engine, {}, words);
-      expect(capped?.capped).toBe(true);
+      expect(capped).toEqual({ total: 1000, capped: true, could_affect: 1000, could_affect_images: 0 });
+      return capped;
+    },
+  );
+
+  parityTest(
+    'search/retrieval-coverage: a count that reaches the cap still counts every could-affect page',
+    { methods: ['putPage', 'countPendingProjectionPages'] },
+    async (engine) => {
+      // Five matching pages written first, then a cap of pages that sort before them by slug. could_affect counts
+      // every match in scope (up to its own cap), not the matches among the first 1000 pages an engine happens to read.
+      for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`));
+      for (let i = 0; i < 1000; i++) await engine.putPage(`alpha/other-${String(i).padStart(4, '0')}`, page('Other'));
+      for (let i = 0; i < 5; i++) await engine.putPage(`zeta/widget-${i}`, page(`Widget ${i}`, { compiled_truth: `Widget ${i} body, revised` }));
+      const words = coverageRelevance([{ type: 'company' }], 'widget', undefined, new Set());
+      const capped = await countPendingProjections(engine, {}, words);
+      expect(capped).toEqual({ total: 1000, capped: true, could_affect: 5, could_affect_images: 0 });
       return capped;
     },
   );

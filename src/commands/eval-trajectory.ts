@@ -196,7 +196,7 @@ export async function runEvalTrajectory(engine: BrainEngine, args: string[]): Pr
       : undefined;
     if (reg) {
       const pct = Math.abs(reg.delta_pct * 100).toFixed(1);
-      line += ` [REGRESSION ↓${pct}%]`;
+      line += ` [REGRESSION ${reg.delta_pct > 0 ? '↑' : '↓'}${pct}%]`;
     }
     console.log(line);
   }

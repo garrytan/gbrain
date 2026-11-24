@@ -22,6 +22,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { LegacyUnscopedRead } from '../src/core/engine-sql/brands.ts';
+import * as planScans from '../src/core/engine-sql/repair-plan-scans.ts';
 import { runRepairCommand } from '../src/commands/repair.ts';
 import { WRITE_ATTRIBUTION_CONTENT_COLUMNS } from '../src/core/persistence/attribution-schema.ts';
 import { attributionBackfillRepair } from '../src/core/repair/attribution-backfill.ts';
@@ -77,10 +79,22 @@ const journalRescans = (plan: PlanNode) => planNodes(plan).filter(node => node['
  * refusing one planned to rescan the journal before it runs: such a plan takes minutes on this fixture, and PGLite
  * cannot interrupt a running statement.
  */
+/**
+ * The plan's two typed reads, run through `executeRaw` so a proxy over it sees their SQL: the engines delegate these
+ * members to engine-sql on their own connection, which a proxy over `executeRaw` cannot reach.
+ */
+function proofReads(executeRaw: BrainEngine['executeRaw']): Pick<BrainEngine, 'listProvenAttributionTargets' | 'countUnfilledAttribution'> {
+  const exec = { executeRaw } as unknown as LegacyUnscopedRead;
+  return {
+    listProvenAttributionTargets: (table, sourceIds) => planScans.listProvenAttributionTargets(exec, table, sourceIds),
+    countUnfilledAttribution: (table, sourceIds) => planScans.countUnfilledAttribution(exec, table, sourceIds),
+  };
+}
+
 function explaining(engine: BrainEngine, plans: PlanNode[]): BrainEngine {
   return new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+      const executeRaw = async (sql: string, params?: unknown[]) => {
         if (sql.includes('persistence_requests r')) {
           const [row] = await target.executeRaw<Record<string, unknown>>(`EXPLAIN (FORMAT JSON) ${sql}`, params);
           const doc = Object.values(row)[0];
@@ -90,6 +104,8 @@ function explaining(engine: BrainEngine, plans: PlanNode[]): BrainEngine {
         }
         return target.executeRaw(sql, params);
       };
+      if (prop === 'executeRaw') return executeRaw;
+      if (prop === 'listProvenAttributionTargets' || prop === 'countUnfilledAttribution') return proofReads(executeRaw as BrainEngine['executeRaw'])[prop];
       if (prop === 'transaction') return <T>(fn: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => fn(explaining(tx, plans)));
       const value = Reflect.get(target, prop);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -227,10 +243,12 @@ for (const backend of testBackends()) {
 function failingProofs(engine: BrainEngine): BrainEngine {
   return new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
+      const executeRaw = async (sql: string, params?: unknown[]) => {
         if (sql.includes('persistence_requests r')) throw new Error('proof failed');
         return target.executeRaw(sql, params);
       };
+      if (prop === 'executeRaw') return executeRaw;
+      if (prop === 'listProvenAttributionTargets' || prop === 'countUnfilledAttribution') return proofReads(executeRaw as BrainEngine['executeRaw'])[prop];
       if (prop === 'transaction') return <T>(fn: (tx: BrainEngine) => Promise<T>) => target.transaction(tx => fn(failingProofs(tx)));
       const value = Reflect.get(target, prop);
       return typeof value === 'function' ? value.bind(target) : value;

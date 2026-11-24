@@ -445,6 +445,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'host_identity_mismatch',
   // GBRA-248 W0a: managed writes waiting on an owner host quiet past the stale window (doctor/checks/owner-host-stale.ts).
   'owner_host_stale',
+  // A topology change recovering on this host that the Rust engine stops by name (doctor/checks/topology-recovery-stopped.ts).
+  'topology_recovery_stopped',
   // #6696 C6: a live serve or worker on an older build than this checkout (doctor/checks/persistence-consumers.ts).
   'serve_build_drift',
   // #7245: serve, the jobs supervisor, worker parents and job children on different builds (doctor/checks/runtime-build-skew.ts).
@@ -460,6 +462,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pglite_data_dir',
   // #6573: a local IPC socket path over the platform's AF_UNIX budget (doctor/checks/local-ipc.ts).
   'ipc_socket_path',
+  // Rust engine shadow mode's addon loads (doctor/checks/rust-engine-addon.ts); not_applicable unless shadow mode is on.
+  'rust_engine_addon',
   // db-availability loop: engine-fit + repair-recurrence signals.
   'pglite_scale',
   'db_repair_recurrence',

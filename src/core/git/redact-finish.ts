@@ -30,7 +30,7 @@ const inside = (child: string, parent: string) => child === parent || child.star
 /** Sources whose checkout is `root`, inside it, or holds it (the sources table and this host's worktree bindings), nearest first. */
 async function sourceRoots(engine: BrainEngine, root: string): Promise<Array<{ id: string; path: string }>> {
   const target = canonical(root);
-  const rows = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id');
+  const rows = await engine.executeRaw<{ id: string; local_path: string }>('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id COLLATE "C"');
   try {
     rows.push(...await engine.executeRaw<{ id: string; local_path: string }>(`SELECT s.source_id AS id, h.local_path FROM persistence_host_bindings h
       JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id WHERE h.local_path IS NOT NULL ORDER BY s.source_id`));

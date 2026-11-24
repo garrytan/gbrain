@@ -37,7 +37,39 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest: armsParityTest } = parityArms(testBackends());
+
+/**
+ * The lists below read in the database's own collation and leave ties to the plan, as master does (a Postgres brain
+ * on en_US sorts `a` before `A`; PGLite and the Rust store sort bytes). The engines' answers are compared after one
+ * client-side byte order, so a case compares what each engine lists, not how its collation sorts it.
+ */
+type Row = Record<string, unknown>;
+const bytes = (a: unknown, b: unknown): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : String(a) < String(b) ? -1 : 1);
+const bySlotThen = (...keys: string[]) => (rows: Row[]): Row[] =>
+  [...rows].sort((x, y) => { for (const k of ['slot', ...keys]) { const c = bytes(x[k], y[k]); if (c) return c; } return 0; });
+const NEWEST_GROUP_FIRST = (rows: Row[]): Row[] =>
+  [...rows].sort((x, y) => (y.last_at as Date).getTime() - (x.last_at as Date).getTime()
+    || bytes(x.slot, y.slot) || bytes(x.provider, y.provider) || bytes(x.model_resolved, y.model_resolved));
+const BYTE_ORDERED: Record<string, (rows: Row[]) => Row[]> = {
+  listDecideSpendBySlot: bySlotThen(),
+  listDecideReceiptStats: bySlotThen('mode', 'outcome', 'error_reason'),
+  decideSlotUsage: bySlotThen(),
+  listDecideCalibrations: bySlotThen(),
+  listDecideMixedModelDecisions: bySlotThen(),
+  listDecideResolvedModels: NEWEST_GROUP_FIRST,
+  listDecideReplayReceipts: (rows) => [...rows].sort((x, y) => bytes(x.decision_id, y.decision_id)),
+};
+const byteOrdered = (engine: BrainEngine): BrainEngine => new Proxy(engine, {
+  get(target, key) {
+    const sort = typeof key === 'string' ? BYTE_ORDERED[key] : undefined;
+    const member = Reflect.get(target, key, target);
+    if (!sort || typeof member !== 'function') return member;
+    return async (...args: unknown[]) => sort(await (member as (...a: unknown[]) => Promise<Row[]>).apply(target, args));
+  },
+});
+const parityTest: typeof armsParityTest = ((name: string, opts: never, run: (engine: BrainEngine, ...rest: never[]) => Promise<unknown>, ...rest: never[]) =>
+  (armsParityTest as unknown as (...a: unknown[]) => unknown)(name, opts, (engine: BrainEngine, ...r: never[]) => run(byteOrdered(engine), ...r), ...rest)) as typeof armsParityTest;
 
 /** Whether a call threw. A typed `engine_capability_missing` refusal propagates so the Rust arm counts it as refused. */
 async function threw(run: () => Promise<unknown>): Promise<boolean> {
@@ -305,7 +337,12 @@ function receipt(decisionId: string, over: Partial<Receipt> = {}): Receipt {
   return { decision_id: decisionId, slot: 'conflict', mode: 'live', provider: 'typesafe:openai', outcome: 'kept', call_site: 'sweep', lane: 'sweep', ...over };
 }
 
-/** Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. */
+/**
+ * Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. A
+ * zero-hour or zero-day window read waits this long after the last insert, so every receipt is strictly older than the
+ * read's now(): a receipt stamped in the same clock tick as the read is inside `created_at >= now() - 0` and outside
+ * `created_at < now() - 0`. The receipt insert takes no created_at, so a past timestamp cannot be written on every arm.
+ */
 const apart = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
 
 const badReceipt = (over: Record<string, unknown>) => ({ ...receipt('bad'), ...over }) as unknown as Receipt;
@@ -432,6 +469,7 @@ describe('engine parity: decide receipts', () => {
         receipt('w1', { slot: 'zeta', outcome: 'error', error_reason: 'egress_x', input_tokens: 0 }),
       ]);
       const usage = await engine.decideSlotUsage(1);
+      await apart();
       const none = await engine.decideSlotUsage(0);
       expect(usage.map((r) => r.slot)).toEqual(['Alpha', 'alpha', 'conflict', 'zeta']);
       expect(usage[2]).toEqual({ slot: 'conflict', decisions: 11, rows: 12, input_tokens: 30, errors: 2, skipped: 8, egress: 4 });
@@ -453,6 +491,7 @@ describe('engine parity: decide receipts', () => {
         receipt('t1', { slot: 'triage', outcome: 'skipped', error_reason: 'no_entity' }),
       ]);
       const counts = await engine.decideConflictNoEntityCounts(1);
+      await apart();
       const none = await engine.decideConflictNoEntityCounts(0);
       expect(counts).toEqual({ receipts: 5, skipped: 2 });
       expect(none).toEqual({ receipts: 0, skipped: 0 });
@@ -510,6 +549,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideReceipts([receipt('m7', { slot: 'triage', provider: 'typesafe:anthropic', model_resolved: 'claude-y', error_reason: 'mixed_model' })]);
       const models = await engine.listDecideResolvedModels(1);
       const mixed = await engine.listDecideMixedModelDecisions(1);
+      await apart();
       const noneModels = await engine.listDecideResolvedModels(0);
       const noneMixed = await engine.listDecideMixedModelDecisions(0);
       expect(models.every((r) => r.last_at instanceof Date && Math.abs(r.last_at.getTime() - Date.now()) < 3_600_000)).toBe(true);
@@ -529,6 +569,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideSpend([spend('keep-me', { cost_usd: 0.5 })]);
       const sevenDays = await engine.pruneDecideReceipts(7);
       const afterSeven = await engine.decideSlotUsage(1);
+      await apart();
       const zeroDays = await engine.pruneDecideReceipts(0);
       const afterZero = await engine.decideSlotUsage(1);
       const again = await engine.pruneDecideReceipts(0);
@@ -850,6 +891,37 @@ describe('engine parity: decide calibrations', () => {
       expect(Object.values(refused).every(Boolean)).toBe(true);
       expect(row).toMatchObject({ qualification: null, qualified_at: null, retired_at: null });
       return { refused, row: comparable(row!, id) };
+    },
+  );
+});
+
+/**
+ * The one decide case that does not sort client-side (Ember ruling A, Nov 20). Slot and decision-id keys differ only
+ * by case and by a non-ASCII letter, so byte order and an en_US collation list them differently. PGLite and the Rust
+ * store list bytes and must match exactly. A Postgres database on a non-C collation lists them in its own order: that
+ * order is pinned here as the known divergence (docs/designs/RUST_ENGINE.md, loss table), then the Postgres arm hands
+ * back the byte order so the arms still compare the rows themselves. A Postgres database on the C collation lists bytes
+ * and is held to them like the other two.
+ */
+describe('engine parity: decide orderings without a client-side sort', () => {
+  const KEYS = ['b', 'A', 'z', 'a', '\u00e9', 'B', 'e'];
+  const BYTE_ORDER = ['A', 'B', 'a', 'b', 'e', 'z', '\u00e9'];
+  const EN_US_ORDER = ['a', 'A', 'b', 'B', 'e', '\u00e9', 'z'];
+  armsParityTest(
+    'decideSlotUsage and listDecideReplayReceipts list case and non-ASCII keys in byte order on PGLite and Rust; Postgres on a non-C collation is the pinned divergence',
+    { methods: ['insertDecideReceipts', 'decideSlotUsage', 'listDecideReplayReceipts'] },
+    async (engine, backend) => {
+      await engine.insertDecideReceipts(KEYS.map((k) => receipt(k, { slot: k })));
+      await engine.insertDecideReceipts(KEYS.map((k) => receipt(`r-${k}`)));
+      const slots = (await engine.decideSlotUsage(1)).map((r) => r.slot).filter((s) => s !== 'conflict');
+      const refs = (await engine.listDecideReplayReceipts('conflict', 1)).map((r) => r.decision_id);
+      const byteRefs = BYTE_ORDER.map((k) => `r-${k}`);
+      if (backend === 'postgres' && slots.join() !== BYTE_ORDER.join()) {
+        expect({ backend, slots, refs }).toEqual({ backend, slots: EN_US_ORDER, refs: EN_US_ORDER.map((k) => `r-${k}`) });
+        return { slots: BYTE_ORDER, refs: byteRefs };
+      }
+      expect({ backend, slots, refs }).toEqual({ backend, slots: BYTE_ORDER, refs: byteRefs });
+      return { slots, refs };
     },
   );
 });

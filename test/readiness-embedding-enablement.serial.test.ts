@@ -131,7 +131,7 @@ describe('A7 embedding-enablement E2E matrix', () => {
     await fill(home);
     const dbPath = join(home, '.gbrain', 'brain.pglite');
     const { fix, cfg } = await enableAndVerify(home, dbPath, { VOYAGE_API_KEY: 'test-voyage-key' });
-    expect(fix.argv).toEqual(['gbrain', 'init', '--force', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--path', dbPath]);
+    expect(fix.argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
     expect(cfg.database_path).toBe(dbPath);
   }, 300_000);
 
@@ -141,7 +141,8 @@ describe('A7 embedding-enablement E2E matrix', () => {
     await seed(home, ['--pglite', '--no-embedding', '--path', dbPath]);
     await fill(home);
     const { fix, cfg } = await enableAndVerify(home, dbPath, { VOYAGE_API_KEY: 'test-voyage-key' });
-    expect(fix.argv?.slice(-2)).toEqual(['--path', dbPath]);
+    // No --path: `embeddings enable` opens the configured datastore, so the custom path is kept (enableAndVerify read it).
+    expect(fix.argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
     expect(cfg.database_path).toBe(dbPath);
   }, 300_000);
 

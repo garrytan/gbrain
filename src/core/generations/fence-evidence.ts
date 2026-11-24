@@ -47,23 +47,16 @@ export async function factsFenceHeld(db: BrainEngine, input: { sourceId: string;
   const open = () => input.rows.filter(row => row.row_num != null && !held.has(Number(row.id)));
   if (!open().length) return { held, complete: true };
   const keyOf = (row: FenceRowRef) => fenceRowKey(Number(row.row_num), factRowIdentity({ row_num: Number(row.row_num), fact: row.fact, visibility: row.visibility }));
-  const recorded = new Set((await db.executeRaw<{ item_key: string }>(`SELECT DISTINCT i.item_key FROM derived_generation_items i
-      JOIN derived_generations g ON g.id = i.generation_id
-     WHERE g.source_id = $1 AND g.kind = $2 AND g.owner_key = $3 AND g.state <> 'held' AND i.action <> 'retired' AND i.item_key = ANY($4::text[])`,
-  [sourceId, FACT_FENCE_KIND, fenceOwnerKey(slug), open().map(keyOf)])).map(row => row.item_key));
+  const recorded = new Set((await db.listRecordedFenceItemKeys({ sourceId, kind: FACT_FENCE_KIND, ownerKey: fenceOwnerKey(slug) }, open().map(keyOf)))
+    .map(row => row.item_key));
   for (const row of open()) if (recorded.has(keyOf(row))) held.add(Number(row.id));
   const markHeld = (keys: Set<string>) => { for (const row of open()) if (keys.has(rowKey(row))) held.add(Number(row.id)); };
   if (input.prior) markHeld(new Set(input.prior));
   let before: number | null = null;
-  let complete = !open().length || !(await db.executeRaw(`SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NULL LIMIT 1`, [sourceId, slug])).length;
+  let complete = !open().length || !(await db.hasBodylessPageVersion(sourceId, slug));
   for (let read = 0; open().length; read += VERSION_BATCH) {
     if (read >= VERSIONS_MAX) { complete = false; break; }
-    const versions: Array<{ id: number; compiled_truth: string; timeline: string | null }> = await db.executeRaw(`SELECT v.id, v.compiled_truth, v.timeline FROM page_versions v
-        JOIN pages p ON p.id = v.page_id
-       WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NOT NULL AND ($3::bigint IS NULL OR v.id < $3::bigint)
-         AND (strpos(v.compiled_truth, 'gbrain:facts:') > 0 OR strpos(COALESCE(v.timeline, ''), 'gbrain:facts:') > 0)
-       ORDER BY v.id DESC LIMIT $4`, [sourceId, slug, before, VERSION_BATCH]);
+    const versions = await db.listFenceVersionBodies(sourceId, slug, before, VERSION_BATCH);
     for (const version of versions) markHeld(fenceRowKeys(version, slug, sourceId));
     if (versions.length < VERSION_BATCH) break;
     before = Number(versions[versions.length - 1]!.id);
@@ -77,10 +70,5 @@ export async function factsFenceHeld(db: BrainEngine, input: { sourceId: string;
  */
 export async function moveKeptRows(tx: BrainEngine, sourceId: string, slug: string, ids: readonly number[], claimed: readonly number[]): Promise<void> {
   if (!ids.length || !claimed.length) return;
-  await tx.executeRaw(`UPDATE facts f SET row_num = m.next FROM (
-      SELECT k.id, b.top + row_number() OVER (ORDER BY k.row_num, k.id) AS next FROM facts k,
-        (SELECT GREATEST(COALESCE((SELECT max(row_num) FROM facts WHERE source_id = $1 AND source_markdown_slug = $2), 0),
-          COALESCE((SELECT max(c) FROM unnest($4::integer[]) AS c), 0)) AS top) b
-       WHERE k.source_id = $1 AND k.id = ANY($3::bigint[]) AND k.row_num = ANY($4::integer[])) m
-    WHERE f.id = m.id`, [sourceId, slug, [...ids], [...claimed]]);
+  await tx.moveKeptFactRows(sourceId, slug, ids, claimed);
 }

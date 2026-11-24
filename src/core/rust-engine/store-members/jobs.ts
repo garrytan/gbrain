@@ -1,15 +1,19 @@
 /**
  * Minion queue members (BrainEngine admitJob, getJob, listJobs, claimNextJob, renewJobLease, completeJob, failJob,
- * reclaimStalledJobs), the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert) and the page
- * embedding leases (take, renew, release). The store keeps the `minion_jobs`, `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
+ * reclaimStalledJobs, readLiveJobIds), the cycle locks (acquire, refresh, release, read, delete, delete-if-stale, assert)
+ * with the drain lease's holder record (readDrainLeaseBeacon, writeDrainLeaseHolder, refreshDrainLeaseHolder,
+ * releaseDrainLeaseHolder), and the page embedding leases (take, renew, release). The store keeps the `minion_jobs`,
+ * `minion_inbox` and `gbrain_cycle_locks` rows (rust/docs/store/jobs.md); timestamps cross
  * the binding as ISO strings and come back as `Date`s, as PGLite returns them.
  */
 import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../../engine.ts';
+import type { DrainLeaseHolderRecord } from '../../engine-sql/cycle-locks.ts';
 import type { AdmitJobPolicy, AdmitJobResult, AdmitJobSpec, ClaimJobSpec, JobRow, ListJobsFilter } from '../../engine-sql/jobs.ts';
 import { QueueQuotaExceededError } from '../../minions/admission.ts';
 import { WATCHDOG_SUSPECT_MARK } from '../../minions/watchdog-attribution.ts';
-import { delegatedPolicyHandle } from '../delegated-policy-handle.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 import { withDates } from '../store-codec.ts';
+import type { StoreBrain } from '../store.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -47,35 +51,73 @@ function admitError(error: unknown, spec: AdmitJobSpec): unknown {
   return error;
 }
 
-/**
- * The store runs the whole admission in one write and decides coalesce or release itself (same authority: coalesce a
- * live row, release a dead or cancelled one). A row held under another authority comes back as `conflict`, and the
- * caller's `decide` then throws the refusal PGLite throws. A delegated client's lock runs on the delegated policy handle
- * (../delegated-policy-handle.ts), where the grant read goes through readOauthClient; past it the admission still refuses before anything is
- * written, because the lock, the capacity count and the insert would be separate store calls.
- */
-export const admitJob: StoreMember<[spec: AdmitJobSpec, policy: AdmitJobPolicy], AdmitJobResult> = async (brain, spec, policy) => {
-  if (policy.lock || policy.checkCapacity) {
-    if (policy.lock) await policy.lock(delegatedPolicyHandle(brain, 'admitJob').tx);
-    refuseMember('admitJob', 'delegated client admission across store calls');
-  }
-  const out: { outcome: 'inserted' | 'coalesced' | 'conflict'; row: JobRow; audit: AdmitJobResult['audit'] } =
-    await storeCall({ member: 'admitJob' }, async () => {
-      try {
-        return await brain.admitJob(spec);
-      } catch (error) {
-        throw admitError(error, spec);
-      }
-    });
+type StoreAdmit = { outcome: 'inserted' | 'coalesced' | 'conflict' | 'capacity'; row: JobRow; audit: AdmitJobResult['audit'] };
+
+/** One store admission (`capacityCheck`: stop where the capacity check runs and answer `capacity`, writing nothing). */
+function storeAdmit(brain: StoreBrain, spec: AdmitJobSpec & { capacityCheck?: boolean }): Promise<StoreAdmit> {
+  return storeCall({ member: 'admitJob' }, async () => {
+    try {
+      return await brain.admitJob(spec);
+    } catch (error) {
+      throw admitError(error, spec);
+    }
+  });
+}
+
+/** The result of a store admission that answered: an insert, a coalesce, or a conflict the policy refuses. */
+async function settled(out: StoreAdmit, policy: AdmitJobPolicy): Promise<AdmitJobResult> {
   if (out.outcome === 'inserted') return { row: jobRow(out.row)!, coalesced: false, audit: null };
   const row = keyedRow(out.row);
   if (out.outcome === 'coalesced') return { row, coalesced: true, audit: out.audit ?? null };
   await policy.decide(noDatabase('admitJob'), row);
   return refuseMember('admitJob', 'a coalesce the store and the policy decide differently');
+}
+
+/**
+ * The store runs the whole admission in one write and decides coalesce or release itself (same authority: coalesce a
+ * live row, release a dead or cancelled one). A row held under another authority comes back as `conflict`, and the
+ * caller's `decide` then throws the refusal PGLite throws.
+ *
+ * A delegated client's admission (a `lock` or a `checkCapacity` policy) runs in one engine transaction, in the SQL
+ * order: the lock, then a store probe that answers a coalesce or stops where the capacity check runs, then the
+ * policy's capacity check on the transaction, then the store admission. The policy's reads see the transaction's state,
+ * and the store admits one write transaction at a time, so the check and the insert are one admission.
+ */
+export const admitJob = async function admitJob(this: RustEngine, brain: StoreBrain, spec: AdmitJobSpec, policy: AdmitJobPolicy): Promise<AdmitJobResult> {
+  if (!policy.lock && !policy.checkCapacity) return settled(await storeAdmit(brain, spec), policy);
+  return this.transaction(async (tx) => {
+    const txBrain = (await (tx as unknown as RustEngine).storeFor('admitJob')).brain;
+    const limit = policy.lock ? await policy.lock(tx) : null;
+    if (policy.checkCapacity) {
+      const probe = await storeAdmit(txBrain, { ...spec, capacityCheck: true });
+      if (probe.outcome !== 'capacity') return settled(probe, policy);
+      await policy.checkCapacity(tx, limit);
+    }
+    return settled(await storeAdmit(txBrain, spec), policy);
+  });
 };
 
 export const getJob: StoreMember<[id: number], JobRow | null> = async (brain, id) =>
   jobRow(await storeCall({ member: 'getJob' }, () => brain.getJob(id)));
+
+export const readJobDataByIdempotencyKey: StoreMember<[key: string], { data: unknown } | null> = async (brain, key) =>
+  await storeCall({ member: 'readJobDataByIdempotencyKey' }, () => brain.readJobDataByIdempotencyKey(key)) as { data: unknown } | null;
+
+/**
+ * The idempotency-key step of admitJob alone, decided by the store in one write under the rule admitJob uses (above):
+ * no row or a freed key reads null, a returned row comes back as PGLite read it, and a row held under another
+ * authority is handed to the caller's `decide`, which throws the refusal PGLite throws.
+ */
+export const coalesceOnIdempotencyKey: StoreMember<[key: string, policy: { authority: unknown; decide: AdmitJobPolicy['decide'] }], JobRow | null> =
+  async (brain, key, policy) => {
+    const out: { outcome: 'none' | 'released' | 'coalesced' | 'conflict'; row?: JobRow } =
+      await storeCall({ member: 'coalesceOnIdempotencyKey' }, () => brain.coalesceOnIdempotencyKey(key, policy.authority ?? null));
+    if (out.outcome === 'none' || out.outcome === 'released') return null;
+    const row = keyedRow(out.row!);
+    if (out.outcome === 'coalesced') return row;
+    await policy.decide(noDatabase('coalesceOnIdempotencyKey'), row);
+    return refuseMember('coalesceOnIdempotencyKey', 'a coalesce the store and the policy decide differently');
+  };
 
 export const listJobs: StoreMember<[filter?: ListJobsFilter], JobRow[]> = async (brain, filter) => {
   const rows: JobRow[] = await storeCall({ member: 'listJobs' }, () => brain.listJobs(filter ?? null));
@@ -119,6 +161,10 @@ export * from './jobs-spend.ts';
 export * from './jobs-spend-log.ts';
 // The oauth_clients table (engine-sql/oauth-clients.ts).
 export * from './jobs-oauth-clients.ts';
+// The client grant writes and audit reads (engine-sql/client-grants.ts).
+export * from './jobs-client-grants.ts';
+// The revoke deletes of a token and a client (engine-sql/oauth-revocation.ts).
+export * from './jobs-oauth-revocation.ts';
 // The access_tokens members (engine-sql/access-tokens.ts).
 export * from './jobs-access-tokens.ts';
 // The subagent transcript and tool ledger (engine-sql/jobs-subagent.ts).
@@ -170,3 +216,24 @@ export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: { ac
 
 export const assertCycleLease: StoreMember<[lockId: string, acquisitionToken: string], boolean> = (brain, lockId, acquisitionToken) =>
   storeCall({ member: 'assertCycleLease' }, () => brain.assertCycleLease(lockId, acquisitionToken));
+
+/** `readLiveJobIds`: the given ids whose job is still live, ascending (the store reads each id's row). */
+export const readLiveJobIds: StoreMember<[ids: number[]], number[]> = async (brain, ids) =>
+  await storeCall({ member: 'readLiveJobIds' }, () => brain.readLiveJobIds(ids)) as number[];
+
+/** The drain lease's holder record (engine-sql/cycle-locks.ts): its beacon read, write, renewal and release. */
+export const readDrainLeaseBeacon: StoreMember<[lockToken: string], Record<string, unknown> | null> = async (brain, lockToken) =>
+  await storeCall({ member: 'readDrainLeaseBeacon' }, () => brain.readDrainLeaseBeacon(lockToken)) as Record<string, unknown> | null;
+
+export const writeDrainLeaseHolder: StoreMember<[record: DrainLeaseHolderRecord], void> = async (brain, record) => {
+  await storeCall({ member: 'writeDrainLeaseHolder', sourceId: record.sourceId }, () => brain.writeDrainLeaseHolder(record.sourceId, record.lockToken,
+    { sourceId: record.sourceId, drain_lease_beacon: record.beacon }, record.ttlMinutes));
+};
+
+export const refreshDrainLeaseHolder: StoreMember<[lockToken: string, ttlMinutes: number], void> = async (brain, lockToken, ttlMinutes) => {
+  await storeCall({ member: 'refreshDrainLeaseHolder' }, () => brain.refreshDrainLeaseHolder(lockToken, ttlMinutes));
+};
+
+export const releaseDrainLeaseHolder: StoreMember<[lockToken: string], void> = async (brain, lockToken) => {
+  await storeCall({ member: 'releaseDrainLeaseHolder' }, () => brain.releaseDrainLeaseHolder(lockToken));
+};

@@ -14,6 +14,7 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { spawnSync } from 'child_process';
 import { createHash } from 'node:crypto';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
@@ -34,7 +35,7 @@ function run(args: string[], env: Record<string, string>) {
   const r = spawnSync('bun', [CLI, 'skillpack', ...args], {
     encoding: 'utf8',
     cwd: REPO_ROOT,
-    env: { ...process.env, ...env },
+    env: { ...envWithoutDatabaseUrl(), ...env },
     timeout: 120_000,
   });
   return { code: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
@@ -345,7 +346,7 @@ describe('review-driven CLI hardening', () => {
     const dest = mkdtempSync(join(tmpdir(), 'gb-shared-harness-dest-')); cleanups.push(dest);
     const env = { HOME: home, GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: 'default', GBRAIN_BRAIN_ID: 'host' };
     const init = spawnSync('bun', [CLI, 'init', '--pglite', '--no-embedding', '--non-interactive'], {
-      encoding: 'utf8', cwd: REPO_ROOT, env: { ...process.env, ...env }, timeout: 120_000,
+      encoding: 'utf8', cwd: REPO_ROOT, env: { ...envWithoutDatabaseUrl(), ...env }, timeout: 120_000,
     });
     expect(init.status, init.stderr).toBe(0);
     mkdirSync(join(dest, 'unrelated'));
@@ -436,14 +437,14 @@ describe('review-driven CLI hardening', () => {
     const init = spawnSync('bun', [CLI, 'init', '--pglite', '--db-only', '--no-embedding', '--non-interactive'], {
       encoding: 'utf8',
       cwd: REPO_ROOT,
-      env: { ...process.env, ...env },
+      env: { ...envWithoutDatabaseUrl(), ...env },
       timeout: 120_000,
     });
     expect(init.status, init.stderr).toBe(0);
     const set = spawnSync('bun', [CLI, 'config', 'set', 'mcp.publish_skills', 'true'], {
       encoding: 'utf8',
       cwd: REPO_ROOT,
-      env: { ...process.env, ...env },
+      env: { ...envWithoutDatabaseUrl(), ...env },
       timeout: 120_000,
     });
     expect(set.status, set.stderr).toBe(0);

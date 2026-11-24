@@ -86,8 +86,8 @@ a crontab edit. Concurrency budget: `parallel × workers × 2 ≈ 32`
 connections during the wave (each per-file worker opens its own
 2-connection pool). Stay under your Postgres `max_connections` setting.
 
-**Avoid (legacy)**: separate `gbrain sync --source default` and
-`gbrain sync --source zion-brain` entries staggered by 5 minutes. They
+**Avoid (legacy)**: separate `gbrain sync --source source-a` and
+`gbrain sync --source source-b` entries staggered by 5 minutes. They
 require manual deconfliction every time a new source is added, and a
 slow source can race a fast source on the legacy global `gbrain-sync`
 lock (v0.40.3.0+ uses per-source `gbrain-sync:<sourceId>` locks but the

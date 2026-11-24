@@ -16,6 +16,8 @@ import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.t
 import { CALENDAR_FUTURE_DAYS_MAX, CALENDAR_HORIZON_DAYS } from '../core/google/calendar-window.ts';
 import { parseExcludeLabelTokens } from '../core/google/loops-exclusion.ts';
 import { parseContactsDir } from '../core/google/source-config.ts';
+import { parseAppleContactsDir, parseHelperHost, parseHelperPort, parseSocksProxy } from '../core/apple-contacts/source-config.ts';
+import { APPLE_CONTACTS_DEFAULT_DIR, APPLE_CONTACTS_DEFAULT_PORT } from '../core/apple-contacts/types.ts';
 
 export const SOURCE_LIFECYCLE_COMMANDS = ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'] as const;
 export function isSourceLifecycleCommand(value: string): boolean {
@@ -44,9 +46,10 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const booleans = new Set(['json', 'dry-run', 'yes', 'confirm-destructive', 'keep-storage', 'force',
     'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
-    'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
+    'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'gbrainio-command', 'private-senders-file', 'services', 'history-days',
     'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install',
-    'provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility', 'channels', 'timezone', 'max-requests', 'skip']);
+    'provider', 'transcript', 'lookback-days', 'sync-interval-min', 'record', 'visibility', 'channels', 'timezone', 'max-requests', 'skip',
+    'helper-host', 'helper-port', 'proxy', 'token-file']);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('-')) { positionals.push(token); continue; }
@@ -113,15 +116,21 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     `Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (${CONNECTOR_SOURCE_KINDS.join(', ')}).`);
   // The kinds each kind-specific option applies to.
   const optionKinds: Record<string, readonly string[]> = {
-    ...Object.fromEntries(['account', 'access', 'token-command', 'services', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'].map(key => [key, ['google']])),
+    ...Object.fromEntries(['account', 'access', 'token-command', 'gbrainio-command', 'private-senders-file', 'services', 'future-days', 'loops-exclude-labels', 'calendar-id']
+      .map(key => [key, ['google']])),
+    'contacts-dir': ['google', 'apple-contacts'],
+    ...Object.fromEntries(['helper-host', 'helper-port', 'proxy', 'token-file'].map(key => [key, ['apple-contacts']])),
     ...Object.fromEntries(['scope', 'repos', 'app-id', 'app-pem', 'app-install'].map(key => [key, ['github']])),
     ...Object.fromEntries(['provider', 'transcript'].map(key => [key, ['meetings']])),
-    ...Object.fromEntries(['lookback-days', 'sync-interval-min'].map(key => [key, ['meetings', 'slack', 'imessage']])),
-    ...Object.fromEntries(['record', 'visibility'].map(key => [key, ['meetings', 'slack']])),
+    'lookback-days': ['meetings', 'slack', 'imessage'],
+    'sync-interval-min': ['meetings', 'slack', 'imessage', 'apple-contacts'],
+    record: ['meetings', 'slack', 'apple-contacts'],
+    visibility: ['meetings', 'slack'],
     ...Object.fromEntries(['channels', 'max-requests', 'skip'].map(key => [key, ['slack']])),
     timezone: ['slack', 'imessage'],
     'history-days': ['google', 'meetings', 'slack', 'imessage'],
-    'token-env': CONNECTOR_SOURCE_KINDS,
+    // An apple-contacts token is read only from its 0600 --token-file, never from the environment.
+    'token-env': CONNECTOR_SOURCE_KINDS.filter(k => k !== 'apple-contacts'),
     // An imessage source is always database-recorded: its message text never reaches a directory.
     dir: CONNECTOR_SOURCE_KINDS.filter(k => k !== 'imessage'),
   };
@@ -158,15 +167,20 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   }
   if (kind === 'google') {
     const account = values.get('account')?.trim().toLowerCase();
-    const services = (values.get('services') ?? 'gmail,calendar,contacts').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
     const access = values.get('access') ?? 'vault';
+    const services = (values.get('services') ?? (access === 'gbrainio' ? 'gmail' : 'gmail,calendar,contacts')).split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
     if (!account || !services.length || services.some(service => !(ALL_GOOGLE_SERVICES as readonly string[]).includes(service))) throw invalid('Google requires --account and valid --services.',
       `Pass --account with the Google account email and --services as a comma-separated subset of ${ALL_GOOGLE_SERVICES.join(',')}.`);
-    if (!['vault', 'command', 'env'].includes(access) || access === 'command' && !values.has('token-command')
-      || access === 'env' && !values.has('token-env') || access === 'vault' && (values.has('token-command') || values.has('token-env'))) {
-      throw invalid('Google access must be vault, command with --token-command, or env with --token-env.',
-        'Use --access vault (the default, with no token flags), --access command with --token-command, or --access env with --token-env.');
+    if (!['vault', 'command', 'env', 'gbrainio'].includes(access) || access === 'command' && !values.has('token-command')
+      || access === 'env' && !values.has('token-env') || (access === 'vault' || access === 'gbrainio') && (values.has('token-command') || values.has('token-env'))
+      || access !== 'gbrainio' && values.has('gbrainio-command')) {
+      throw invalid('Google access must be vault, command with --token-command, env with --token-env, or gbrainio.',
+        'Use --access vault (the default, with no token flags), --access command with --token-command, --access env with --token-env, or --access gbrainio (optionally with --gbrainio-command).');
     }
+    if (access === 'gbrainio' && services.some(service => service !== 'gmail')) throw invalid('--access gbrainio reads Gmail only.',
+      'Pass --services gmail, or leave --services out, for a source that reads mail through gbrain.io.');
+    if (values.has('private-senders-file') && !values.get('private-senders-file')?.trim()) throw invalid('--private-senders-file needs a path.',
+      'Pass --private-senders-file with the path of a file holding one address or @domain per line.');
     const futureDays = number('future-days');
     if (futureDays !== undefined && futureDays > CALENDAR_FUTURE_DAYS_MAX) throw invalid(`--future-days must be at most ${CALENDAR_FUTURE_DAYS_MAX}.`,
       `Pass --future-days between 1 and ${CALENDAR_FUTURE_DAYS_MAX} (days ahead the calendar sweep covers; default ${CALENDAR_HORIZON_DAYS}).`);
@@ -179,8 +193,10 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     opts.google = { account, services, historyDays: number('history-days', 90)!, calendarId: values.get('calendar-id') ?? DEFAULT_CALENDAR_ID,
       ...(contactsDir ? { contactsDir } : {}),
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
-      dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
-      tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };
+      dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env' | 'gbrainio',
+      tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env'),
+      ...(values.has('gbrainio-command') ? { gbrainioCommand: values.get('gbrainio-command')!.trim() } : {}),
+      ...(values.has('private-senders-file') ? { privateSendersFile: absolute(values.get('private-senders-file')!.trim()) } : {}) };
   }
   /** The record mode, directory, visibility and schedule flags the API-backed kinds share. */
   const recordFlags = (pages: string, alwaysPrivate: string) => {
@@ -225,6 +241,29 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     const interval = number('sync-interval-min');
     opts.imessage = { historyDays: number('history-days'), lookbackDays: number('lookback-days'), ...(values.has('timezone') ? { timezone } : {}),
       ...(interval !== undefined ? { syncIntervalMin: interval } : {}), ...(values.has('token-env') ? { tokenEnv: values.get('token-env') } : {}) };
+  }
+  if (kind === 'apple-contacts') {
+    const helperHost = parseHelperHost(values.get('helper-host'));
+    if (!helperHost) throw invalid('Apple Contacts requires --helper-host.',
+      'Pass --helper-host with the address the helper listens on as this machine reaches it (a host name or an IP address, no scheme or port), e.g. --helper-host mac-example.');
+    const helperPort = values.has('helper-port') ? parseHelperPort(values.get('helper-port')) : undefined;
+    if (helperPort === null) throw invalid('--helper-port must be a port number.', `Pass --helper-port as a whole number from 1 to 65535 (default ${APPLE_CONTACTS_DEFAULT_PORT}).`);
+    const proxy = values.has('proxy') ? parseSocksProxy(values.get('proxy')) : undefined;
+    if (proxy === null) throw invalid('--proxy must be socks5h://host:port.', 'Pass --proxy as socks5h://<host>:<port> (for example socks5h://127.0.0.1:1055), with no user name or password in it.');
+    const tokenFile = values.get('token-file');
+    if (!tokenFile) throw invalid('Apple Contacts requires --token-file.',
+      'Pass --token-file with the path of the 0600 JSON file {"accessToken":"..."} that holds the helper\'s read:contacts token; the token itself is never passed on the command line.');
+    const contactsDir = values.has('contacts-dir') ? parseAppleContactsDir(values.get('contacts-dir')) : undefined;
+    if (contactsDir === null) throw invalid('--contacts-dir must be a relative directory of lower-case segments, outside people/.',
+      `Pass --contacts-dir as one or more segments of a-z, 0-9, - and _, not people/ or a folder under it (default ${APPLE_CONTACTS_DEFAULT_DIR}).`);
+    const record = values.get('record') ?? 'auto';
+    if (record !== 'auto' && record !== 'git' && record !== 'database') throw invalid('--record must be git or database.',
+      'Pass --record git (pages committed to the Git checkout at --dir) or --record database (the database is the record, no directory); leave it out to choose from --dir.');
+    if (record === 'database' && values.has('dir')) throw invalid('--record database takes no --dir.', 'Remove --dir: a database-recorded source keeps no directory.');
+    const interval = number('sync-interval-min');
+    opts.appleContacts = { helperHost, ...(helperPort !== undefined ? { helperPort } : {}), ...(proxy ? { proxy: proxy.url } : {}), tokenFile: absolute(tokenFile),
+      ...(contactsDir ? { contactsDir } : {}), record: record as 'auto' | 'git' | 'database', ...(values.has('dir') ? { dir: absolute(values.get('dir')!) } : {}),
+      ...(interval !== undefined ? { syncIntervalMin: interval } : {}) };
   }
   return { operation: 'source_add', params: { options: opts, request_id: requestId, ...(dryRun ? { dry_run: true } : {}) },
     brain: values.get('brain'), legacyOnly: values.has('pat-file'), json: flags.has('json') };

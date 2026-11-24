@@ -24,6 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { digest } from './digest.ts';
 import { contentCanonical } from './reconcile-merge.ts';
+import type { OverwriteContentRow } from '../engine-sql/overwrite-reads.ts';
 
 /** Candidate versions read per source, newest first. */
 export const OVERWRITE_SCAN_LIMIT = 500;
@@ -50,20 +51,7 @@ export interface OverwrittenEdit {
 
 export interface OverwriteSourceScan { source_id: string; high: number; unknown: number; edits: OverwrittenEdit[]; truncated: boolean }
 
-interface ContentRow {
-  body_storage: string | null; title: string | null; type: string | null; compiled_truth: string | null; timeline: string | null;
-  frontmatter: Record<string, unknown> | string | null; tags: unknown;
-}
-interface CandidateRow extends ContentRow {
-  version_id: number | string; page_id: number | string; slug: string; lost_revision: string; db_request_id: string; db_operation: string;
-  import_request_id: string; imported_at: string | Date | null; db_outcome_known: boolean;
-}
-interface VersionRow extends ContentRow { id: number | string; page_id: number | string; write_request_id: string | null }
-interface LiveRow extends ContentRow { page_id: number | string; revision: string; revision_write_request_id: string | null }
-
-const MANAGED_IMPORT = (r: string) => `(${r}.intent->>'kind' = 'managed_sync_import'
-  OR (${r}.intent IS NULL AND ${r}.outcome->>'imported_file' = 'true' AND NOT (${r}.outcome ? 'connector_database')))`;
-const CONTENT_COLUMNS = (v: string) => `${v}.body_storage, ${v}.title, ${v}.type, ${v}.compiled_truth, ${v}.timeline, ${v}.frontmatter`;
+type ContentRow = OverwriteContentRow;
 
 const parsed = (value: unknown) => typeof value === 'string' ? JSON.parse(value) as unknown : value;
 
@@ -84,33 +72,16 @@ const sameContent = (row: ContentRow, lostDigest: string) => {
 };
 
 /** The source's open overwrites of live pages (the newest per page), from at most `limit` candidate versions; `slugs` narrows it. */
-export async function scanOverwrittenEdits(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string,
+export async function scanOverwrittenEdits(engine: Pick<BrainEngine, 'listOverwriteCandidates' | 'listVersionsAfter' | 'listOverwriteLivePages'>, sourceId: string,
   opts: { limit?: number; slugs?: readonly string[] } = {}): Promise<OverwriteSourceScan> {
   const limit = opts.limit ?? OVERWRITE_SCAN_LIMIT;
-  const candidates = await engine.executeRaw<CandidateRow>(`SELECT v.id AS version_id, v.page_id, p.slug, v.knowledge_revision::text AS lost_revision,
-      w.id::text AS db_request_id, w.operation AS db_operation, s.id::text AS import_request_id, s.completed_at AS imported_at,
-      COALESCE(w.outcome->'persistence'->>'mode' = 'database', false) AS db_outcome_known, ${CONTENT_COLUMNS('v')}, v.tags
-    FROM pages p
-    JOIN page_versions v ON v.page_id = p.id
-    JOIN persistence_requests s ON s.id = v.archived_write_request_id
-    JOIN persistence_requests w ON w.id = v.write_request_id
-    WHERE p.source_id = $1 AND p.deleted_at IS NULL AND ($3::text[] IS NULL OR p.slug = ANY($3::text[]))
-      AND s.state = 'committed' AND s.operation = 'submit_job' AND s.source_id = p.source_id AND ${MANAGED_IMPORT('s')}
-      AND w.state = 'committed' AND w.source_id = p.source_id AND NOT (w.operation = 'submit_job' AND COALESCE(w.outcome->>'imported_file', '') = 'true')
-      AND (w.outcome->'persistence'->>'mode' = 'database'
-        OR (NOT (COALESCE(w.outcome, '{}'::jsonb) ? 'persistence') AND COALESCE(w.outcome->'write_through'->>'written', 'false') <> 'true'))
-      AND COALESCE(w.outcome->'write_through'->>'skipped', '') <> 'mirror_read_only' AND COALESCE(w.outcome->>'storage', '') <> 'database_only'
-      AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.kind = 'git' AND e.revision = v.knowledge_revision)
-    ORDER BY v.id DESC LIMIT $2`, [sourceId, limit + 1, opts.slugs?.length ? [...opts.slugs] : null]);
+  const candidates = await engine.listOverwriteCandidates(sourceId, opts.slugs?.length ? [...opts.slugs] : null, limit + 1);
   const truncated = candidates.length > limit;
   const rows = candidates.slice(0, limit);
   if (!rows.length) return { source_id: sourceId, high: 0, unknown: 0, edits: [], truncated };
   const pageIds = [...new Set(rows.map(row => Number(row.page_id)))];
-  const later = await engine.executeRaw<VersionRow>(`SELECT v.id, v.page_id, v.write_request_id::text AS write_request_id, ${CONTENT_COLUMNS('v')}, v.tags
-    FROM page_versions v WHERE v.page_id = ANY($1::int[]) AND v.id > $2 ORDER BY v.id`, [pageIds, Math.min(...rows.map(row => Number(row.version_id)))]);
-  const live = await engine.executeRaw<LiveRow>(`SELECT p.id AS page_id, p.knowledge_revision::text AS revision, p.revision_write_request_id::text AS revision_write_request_id,
-      ${CONTENT_COLUMNS('p')}, COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id = p.id), '[]'::jsonb) AS tags
-    FROM pages p WHERE p.id = ANY($1::int[])`, [pageIds]);
+  const later = await engine.listVersionsAfter(pageIds, Math.min(...rows.map(row => Number(row.version_id))));
+  const live = await engine.listOverwriteLivePages(pageIds);
   const pages = new Map(live.map(row => [Number(row.page_id), row]));
   const newest = new Map<number, OverwrittenEdit>();
   for (const row of rows) {
@@ -136,3 +107,8 @@ export async function scanOverwrittenEdits(engine: Pick<BrainEngine, 'executeRaw
   const edits = [...newest.values()];
   return { source_id: sourceId, high: edits.filter(edit => edit.confidence === 'high').length, unknown: edits.filter(edit => edit.confidence === 'unknown').length, edits, truncated };
 }
+
+export const CONTENT_COLUMNS = (v: string) => `${v}.body_storage, ${v}.title, ${v}.type, ${v}.compiled_truth, ${v}.timeline, ${v}.frontmatter`;
+
+export const MANAGED_IMPORT = (r: string) => `(${r}.intent->>'kind' = 'managed_sync_import'
+  OR (${r}.intent IS NULL AND ${r}.outcome->>'imported_file' = 'true' AND NOT (${r}.outcome ? 'connector_database')))`;

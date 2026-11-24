@@ -148,7 +148,7 @@ export async function bindOrigin(tx: BrainEngine, target: OriginTarget & { sourc
 /** Every soft-deleted page `restorePage(slug, opts)` would revive, guarded (a restore without a source revives the slug in every source). */
 export async function assertRevivalUnclaimed(tx: BrainEngine, slug: string, sourceId?: string): Promise<void> {
   const rows = await tx.executeRaw<{ id: number; source_id: string }>(
-    'SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$2) ORDER BY source_id', [slug, sourceId ?? null]);
+    'SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$2) ORDER BY source_id COLLATE "C"', [slug, sourceId ?? null]);
   for (const row of rows) await assertOriginUnclaimed(tx, { sourceId: row.source_id, pageId: Number(row.id), revive: true });
 }
 
@@ -164,6 +164,7 @@ export function pickCanonicalOrigin<T extends { slug: string }>(pages: readonly 
 }
 
 export async function canonicalOriginPage(engine: Exec, sourceId: string, sourcePath: string): Promise<{ id: number; slug: string } | { ambiguous: string[] } | null> {
+  // The slug order never reaches output: pickCanonicalOrigin sorts the ambiguous slugs itself and a single row has no order.
   const rows = await engine.executeRaw<{ id: number; slug: string }>(
     'SELECT id, slug FROM pages WHERE source_id=$1 AND source_path=$2 AND deleted_at IS NULL ORDER BY slug', [sourceId, sourcePath]);
   return pickCanonicalOrigin(rows.map(row => ({ id: Number(row.id), slug: row.slug })), sourcePath);

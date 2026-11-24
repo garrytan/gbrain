@@ -1,0 +1,180 @@
+/**
+ * The follower's files and the `status --json` fields built from them (shadow follow, plan PR 1).
+ *
+ *   follower.json          the shadow child's own state: applied rows, lag histograms, queue depth, coverage
+ *                          watermark, fingerprint totals, probe and allocator results (all EPOCH totals; the epoch
+ *                          is one seed). Written by the child, atomically.
+ *   reconcile/passes.jsonl one line per reconcile pass, written by the process that ran it.
+ *
+ * State words. follower: not_seeded (no seed.json), needs_reseed (a seed written before follow), stopped (shadow mode off, or no live child wrote follower.json
+ * in the last minute), invalid (the coverage watermark is invalid), behind (rows are queued or waiting), following.
+ * reconcile: never_run, ok (the last pass found nothing to repair), repaired, error.
+ */
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { readSeedRecord, RESEED_STEPS } from './seed.ts';
+import type { ShadowState } from './state.ts';
+
+export interface ProbeRecord {
+  state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
+  ctype: string | null; locale_provider: string | null; locale: string | null;
+  /** Where the primary's lower() or [[:space:]] differs from PGLite's: first 50 as 'U+XXXX', and the total. */
+  differing_code_points: string[]; differing_code_points_total: number;
+  /** Corpus sample rows fingerprinting differently from PGLite (first names, never text); stored facts holding a differing code point. */
+  corpus_mismatches: number; corpus_mismatch_rows: string[]; facts_with_differing_code_points: number;
+}
+export interface Watermark { valid: boolean; through: string | null; invalidated_reason: string | null }
+export interface FollowerFile {
+  version: 1;
+  epoch_id: string;
+  epoch_started_at: string;
+  updated_at: string;
+  applied_rows: number;
+  queue_depth: number;
+  /** Age of the oldest committed write not yet applied; 0 when nothing waits. */
+  lag_ms: number;
+  last_seq: number | null;
+  watermark: Watermark;
+  /** Apply lag histograms: log2 buckets (bucket i holds lags below 2^i ms), the epoch and one per hour (last 25). */
+  lag: { epoch: number[]; hours: Record<string, number[]> };
+  fingerprints: { checked_rows: number; mismatches: number };
+  probe: ProbeRecord;
+  allocators: { verified: boolean; checked_at: string | null };
+}
+
+export interface PassRecord {
+  id: string;
+  kind: 'full' | 'dirty';
+  started_at: string;
+  finished_at: string;
+  repaired_rows: number;
+  repaired_by_relation: Record<string, number>;
+  /** Repaired rows found while the watermark claimed coverage through the pass's snapshot. */
+  follower_misses: number;
+  nonterminal_refresh_rows?: number; // full passes: primary refresh rows a swap must drain first
+  error?: string;
+}
+
+export const FRESH_FOLLOWER_MS = 60_000;
+export const NIGHTLY_MS = 24 * 3_600_000;
+export const NOT_RUN_PROBE: ProbeRecord = {
+  state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
+  differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
+};
+
+export const lagBucket = (ms: number): number => (ms < 1 ? 0 : Math.min(30, Math.floor(Math.log2(ms)) + 1));
+
+/** The 99th percentile as the upper bound (ms) of the log2 bucket that holds it; null without samples. */
+export function lagP99(counts: readonly number[]): number | null {
+  const total = counts.reduce((a, b) => a + b, 0);
+  if (!total) return null;
+  let seen = 0;
+  for (let i = 0; i < counts.length; i++) {
+    seen += counts[i] ?? 0;
+    if (seen >= Math.ceil(total * 0.99)) return 2 ** i;
+  }
+  return null;
+}
+
+export const followerPath = (dir: string): string => join(dir, 'follower.json');
+export const passesPath = (dir: string): string => join(dir, 'reconcile', 'passes.jsonl');
+
+export function readFollowerFile(dir: string): FollowerFile | null {
+  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? parsed : null; } catch { return null; }
+}
+
+export function writeFollowerFile(dir: string, file: FollowerFile): void {
+  const tmp = `${followerPath(dir)}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
+  renameSync(tmp, followerPath(dir));
+}
+
+export function appendPass(dir: string, pass: PassRecord): void {
+  mkdirSync(join(dir, 'reconcile'), { recursive: true, mode: 0o700 });
+  appendFileSync(passesPath(dir), JSON.stringify(pass) + '\n', { mode: 0o600 });
+}
+
+export function readPasses(dir: string): PassRecord[] {
+  if (!existsSync(passesPath(dir))) return [];
+  // A torn last line is skipped.
+  return readFileSync(passesPath(dir), 'utf8').split('\n').flatMap((line) => { try { return line ? [JSON.parse(line) as PassRecord] : []; } catch { return []; } });
+}
+
+export interface FollowStatus {
+  epoch_id: string | null;
+  epoch_started_at: string | null;
+  follower: {
+    state: 'not_seeded' | 'needs_reseed' | 'stopped' | 'invalid' | 'behind' | 'following'; action: string | null; lag_ms: number | null; lag_ms_p99_24h: number | null;
+    lag_ms_p99_epoch: number | null; queue_depth: number; applied_rows: number; coverage_watermark: Watermark;
+  };
+  reconcile: {
+    state: 'never_run' | 'ok' | 'repaired' | 'error';
+    last_pass: Omit<PassRecord, 'error'> | null;
+    consecutive_clean_full_passes: number;
+    next_full_pass_due: string | null;
+  };
+  write_comparisons: { state: 'capability_missing'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number };
+  fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
+  seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
+  allocators: { verified: boolean; checked_at: string | null };
+  primary_refreshes: { nonterminal_rows: number | null; checked_at: string | null };
+}
+
+/** The follower, reconcile, write-comparison, fingerprint, seed and allocator fields of `status --json`. */
+export function buildFollowStatus(dir: string, state: ShadowState | null, now: Date = new Date()): FollowStatus {
+  const seed = readSeedRecord(dir);
+  const file = seed ? readFollowerFile(dir) : null;
+  const live = file && file.epoch_id === seed?.seed_id ? file : null;
+  const passes = readPasses(dir);
+  const last = passes.at(-1) ?? null;
+  const fulls = passes.filter((p) => p.kind === 'full');
+  let clean = 0;
+  for (let i = fulls.length - 1; i >= 0 && fulls[i]!.repaired_rows === 0 && !fulls[i]!.error; i--) clean++;
+  const hours = Object.entries(live?.lag.hours ?? {}).filter(([h]) => Number(h) >= Math.floor(now.getTime() / 3_600_000) - 24);
+  const last24: number[] = [];
+  for (const [, counts] of hours) counts.forEach((n, i) => { last24[i] = (last24[i] ?? 0) + n; });
+  const fresh = live !== null && now.getTime() - Date.parse(live.updated_at) < FRESH_FOLLOWER_MS;
+  const watermark = live?.watermark ?? { valid: false, through: null, invalidated_reason: seed ? 'not_started' : 'not_seeded' };
+  const queue = live?.queue_depth ?? 0;
+  let followerState: FollowStatus['follower']['state'] = 'following';
+  if (!seed) followerState = 'not_seeded';
+  else if (seed.digests !== true) followerState = 'needs_reseed';
+  else if (!state?.enabled || !fresh) followerState = 'stopped';
+  else if (!watermark.valid) followerState = 'invalid';
+  else if (queue > 0 || (live?.lag_ms ?? 0) > 0) followerState = 'behind';
+  const lastFull = fulls.at(-1);
+  const { error, nonterminal_refresh_rows: _refreshes, ...lastPass } = last ?? ({} as PassRecord);
+  return {
+    epoch_id: seed?.seed_id ?? null,
+    epoch_started_at: seed?.finished_at ?? null,
+    follower: {
+      state: followerState, action: followerState === 'needs_reseed' ? RESEED_STEPS : null, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(live?.lag.epoch ?? []),
+      queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,
+    },
+    reconcile: {
+      state: !last ? 'never_run' : error ? 'error' : last.repaired_rows > 0 ? 'repaired' : 'ok',
+      last_pass: last ? lastPass : null,
+      consecutive_clean_full_passes: clean,
+      next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
+    },
+    write_comparisons: { state: 'capability_missing', sample_rate: state?.sample_rate ?? null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
+    fingerprints: { checked_rows: live?.fingerprints.checked_rows ?? 0, mismatches: live?.fingerprints.mismatches ?? 0, probe: live?.probe ?? NOT_RUN_PROBE },
+    seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
+    allocators: live?.allocators ?? { verified: false, checked_at: null },
+    primary_refreshes: { nonterminal_rows: lastFull?.nonterminal_refresh_rows ?? null, checked_at: lastFull?.nonterminal_refresh_rows === undefined ? null : lastFull.finished_at },
+  };
+}
+
+/** A short readable block for the markdown status. */
+export function renderFollowStatus(s: FollowStatus): string[] {
+  const f = s.follower;
+  const w = f.coverage_watermark;
+  const lines = [f.action ? `  follower: this brain needs a reseed (its seed was written before follow existed, so nothing is followed): ${f.action}` : `  follower: ${f.state}; applied rows ${f.applied_rows}; queue ${f.queue_depth}; lag ${f.lag_ms ?? 'unknown'} ms (p99 24h ${f.lag_ms_p99_24h ?? '-'}, epoch ${f.lag_ms_p99_epoch ?? '-'})`];
+  lines.push(`  coverage watermark: ${w.valid ? `valid through ${w.through ?? '-'}` : `invalid (${w.invalidated_reason ?? 'unknown'})`}`);
+  const r = s.reconcile;
+  lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);
+  if (r.last_pass) lines.push(`    last pass ${r.last_pass.kind} ${r.last_pass.finished_at}: repaired ${r.last_pass.repaired_rows}, follower misses ${r.last_pass.follower_misses}`);
+  lines.push(`  fingerprints (epoch): checked ${s.fingerprints.checked_rows}, mismatches ${s.fingerprints.mismatches}; probe ${s.fingerprints.probe.state}`);
+  lines.push(`  allocators: ${s.allocators.verified ? `verified ${s.allocators.checked_at}` : 'not verified'}; write comparisons: ${s.write_comparisons.state}`);
+  return lines;
+}

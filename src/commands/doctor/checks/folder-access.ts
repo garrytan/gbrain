@@ -27,7 +27,7 @@ import { isGitWorkTree, sourcePolicyRoot } from '../../../core/access/policy-git
 const DOCS = 'docs/guides/write-refusals.md#access_policy_pending';
 
 async function policySources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return engine.listAccessPolicySourceIds();
 }
 
 async function pending(engine: BrainEngine, sources: string[]): Promise<Check> {
@@ -108,8 +108,7 @@ async function guarded(name: string, run: (engine: BrainEngine, sources: string[
 
 async function runFolderAccess(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
-  const [state] = await engine.executeRaw<{ unreadable: boolean }>('SELECT gbrain_access_state_unreadable() AS unreadable').catch(() => []);
-  if (state?.unreadable) {
+  if (await engine.isAccessStateUnreadable().catch(() => false)) {
     const skipped = 'Skipped: this database role cannot read the folder access tables (see access_policy_pending).';
     return [
       { name: 'access_policy_pending', status: 'warn', details: { unreadable: true, docs: 'docs/ENGINES.md#folder-access-tables' },

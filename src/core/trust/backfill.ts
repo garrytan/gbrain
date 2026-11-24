@@ -115,10 +115,7 @@ const rank = (tier: TrustTier) => TRUST_TIER_RANK[tier];
 type Columns = { has(table: string, column: string): boolean; table(table: string): boolean };
 
 async function readColumns(engine: BrainEngine): Promise<Columns> {
-  const rows = await engine.executeRaw<{ table_name: string; column_name: string }>(
-    `SELECT table_name, column_name FROM information_schema.columns
-      WHERE table_schema = current_schema() AND table_name = ANY($1::text[])`,
-    [['pages', 'facts', 'takes', 'timeline_entries', 'sources', 'persistence_requests']]);
+  const rows = await engine.listTrustColumns();
   const set = new Set(rows.map(r => `${r.table_name}.${r.column_name}`));
   const tables = new Set(rows.map(r => r.table_name));
   return { has: (table, column) => set.has(`${table}.${column}`), table: name => tables.has(name) };
@@ -419,10 +416,7 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
   const cols = await readColumns(engine);
   const mode: TrustRelowerReport['mode'] = opts.dryRun ? 'dry_run' : 'apply';
   if (!cols.has('pages', 'trust_tier') || !cols.has('pages', 'write_origin') || !cols.has('sources', 'config')) return { mode, tables: [], rows: 0, sample: [], sources: [] };
-  const targets = opts.sources
-    ? await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, ${claimedSourceSql('s')} AS claimed FROM sources s
-        WHERE s.id = ANY($1::text[]) AND ${notConnectorSourceSql('s')} ORDER BY s.id`, [[...opts.sources]])
-    : await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, true AS claimed FROM sources s WHERE ${claimedSourceSql('s')} ORDER BY s.id`);
+  const targets = opts.sources ? await engine.listTrustClaimTargets('named', opts.sources) : await engine.listTrustClaimTargets('claimed');
   const claimed = targets.map(r => r.id);
   const ended = targets.filter(r => !r.claimed).map(r => r.id);
   const { forTable } = classifier(cols, ended, await readLegacyCeilings(engine).catch(() => null), true);
@@ -441,7 +435,8 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
       FROM ${from}
      WHERE x.write_origin->>'channel' = 'trust_claim' AND ${src} = ANY($1::text[])
        AND (${rule}) IS NOT NULL AND (${rule}) < ${trustRankSql('x.trust_tier')}`;
-    const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string | null; from_tier: string; to_tier: string }>(
+    // Only a row a claim lifted can be a candidate, so a table with none needs no classifier read.
+    const rows = await engine.countClaimLiftedRows(table) === 0 ? [] : await engine.executeRaw<{ id: number | string; source_id: string; slug: string | null; from_tier: string; to_tier: string }>(
       `${candidates} ORDER BY x.id`, [claimed]);
     const to = zero();
     for (const row of rows) {
@@ -478,9 +473,9 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
 
 /** Doctor: the stored backfill state (an interrupted run's cursor, and when a complete run finished). */
 export async function readTrustBackfillState(engine: BrainEngine): Promise<{ interrupted: boolean; completedAt: string | null }> {
-  const [row] = await engine.executeRaw<{ n: number | string }>(
-    'SELECT count(*) AS n FROM op_checkpoints WHERE op = $1 AND fingerprint = $2', [CHECKPOINT_OP, CHECKPOINT_KEY]);
-  return { interrupted: Number(row?.n ?? 0) > 0, completedAt: await engine.getConfig(TRUST_BACKFILL_COMPLETED_KEY) };
+  // saveCursor always banks one key, so a parent row reads as a key (or as a corrupt parent).
+  const { keys, corruptParent } = await engine.readOpCheckpointKeys(CHECKPOINT_OP, CHECKPOINT_KEY);
+  return { interrupted: keys.length > 0 || corruptParent, completedAt: await engine.getConfig(TRUST_BACKFILL_COMPLETED_KEY) };
 }
 
 export interface TrustTierTableCounts { table: TrustTable; rows: number; counts: TierCounts }
@@ -489,7 +484,10 @@ export interface TrustTierTableCounts { table: TrustTable; rows: number; counts:
 export async function readTrustTierCounts(engine: BrainEngine): Promise<TrustTierTableCounts[]> {
   const out: TrustTierTableCounts[] = [];
   for (const table of BACKFILL_ORDER) {
-    const rows = await engine.executeRaw<{ tier: string; n: number | string }>(`SELECT trust_tier AS tier, count(*) AS n FROM ${table} GROUP BY trust_tier`);
+    // Typed engine reads: pages (engine-sql/doctor-pages.ts), the other tables (engine-sql/doctor-facts-trust.ts).
+    const rows: Array<{ tier: string | null; n: number | string }> = table === 'pages'
+      ? await engine.countPageTrustTiers()
+      : await engine.countRowTrustTiers(table);
     const counts = zero();
     for (const row of rows) counts[isTrustTier(row.tier) ? row.tier : 'unknown'] += Number(row.n);
     out.push({ table, rows: rows.reduce((n, r) => n + Number(r.n), 0), counts });

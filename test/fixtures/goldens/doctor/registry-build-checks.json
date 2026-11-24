@@ -255,6 +255,10 @@
       },
       {
         "category": "ops",
+        "name": "rust_engine_addon"
+      },
+      {
+        "category": "ops",
         "name": "ipc_socket_path"
       },
       {
@@ -292,6 +296,10 @@
       {
         "category": "ops",
         "name": "sync_admission_restricted"
+      },
+      {
+        "category": "ops",
+        "name": "topology_recovery_stopped"
       },
       {
         "category": "ops",

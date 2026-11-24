@@ -495,6 +495,15 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+            "name": "rust_engine_addon",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Connected, 20 pages",
             "name": "connection",
             "status": "ok"
@@ -635,6 +644,20 @@
             "elapsed_ms": "<volatile>",
             "message": "sync.admission is normal: managed sync admits everything it classifies.",
             "name": "sync_admission_restricted",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+              "more": false,
+              "recovering": [],
+              "stop": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No topology change is recovering on this host.",
+            "name": "topology_recovery_stopped",
             "status": "ok"
           },
           {
@@ -796,14 +819,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1401,7 +1426,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 190/190 public tables",
+            "message": "RLS enabled on 191/191 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1460,7 +1485,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 190 table(s) the applied migrations create exist.",
+            "message": "All 191 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1485,14 +1510,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1533,14 +1560,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -1843,6 +1872,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -5135,14 +5168,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6060,6 +6095,15 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: Rust engine shadow mode is off for this brain.",
+            "name": "rust_engine_addon",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
             "message": "Connected, 20 pages",
             "name": "connection",
             "status": "ok"
@@ -6200,6 +6244,20 @@
             "elapsed_ms": "<volatile>",
             "message": "sync.admission is normal: managed sync admits everything it classifies.",
             "name": "sync_admission_restricted",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "count": 0,
+              "docs": "docs/ENGINES.md#topology-recovery-on-the-rust-engine",
+              "more": false,
+              "recovering": [],
+              "stop": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No topology change is recovering on this host.",
+            "name": "topology_recovery_stopped",
             "status": "ok"
           },
           {
@@ -6361,14 +6419,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -6966,7 +7026,7 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 190/190 public tables",
+            "message": "RLS enabled on 191/191 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -7025,7 +7085,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 190 table(s) the applied migrations create exist.",
+            "message": "All 191 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7050,14 +7110,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7098,14 +7160,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"
@@ -7408,6 +7472,10 @@
                 },
                 {
                   "name": "persistence_requests_slug_sequence",
+                  "state": "valid"
+                },
+                {
+                  "name": "persistence_requests_source_slug_c",
                   "state": "valid"
                 }
               ],
@@ -10712,14 +10780,16 @@
               "actor": "user",
               "argv": [
                 "gbrain",
-                "init",
-                "--force",
+                "embeddings",
+                "enable",
                 "--embedding-model",
                 "voyage:voyage-4",
                 "--embedding-dimensions",
-                "1024"
+                "1024",
+                "--brain",
+                "host"
               ],
-              "command": "gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024",
+              "command": "gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --brain host",
               "consent": [
                 "credentials",
                 "paid"

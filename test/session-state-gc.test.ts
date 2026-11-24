@@ -12,6 +12,8 @@ import {
   gcSessionContextState,
   MAX_ROWS_PER_CLIENT,
 } from '../src/core/context/session-state.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 
 let engine: PGLiteEngine;
 
@@ -85,5 +87,17 @@ describe('gcSessionContextState — per-(source, client) LRU cap', () => {
     await gcSessionContextState(engine, 7, 2);
     expect(await getSessionContextState(engine, 'default', 'ageclient', 'old')).toBeNull(); // aged out
     expect(await getSessionContextState(engine, 'default', 'ageclient', 'fresh')).not.toBeNull();
+  });
+
+  test('a capability refusal reaches the caller; any other GC failure stays best-effort', async () => {
+    const failing = (step: 'age' | 'cap', err: Error) => ({
+      ageOutSessionState: async () => { if (step === 'age') throw err; },
+      capSessionStatePerClient: async () => { if (step === 'cap') throw err; },
+    }) as unknown as BrainEngine;
+    for (const step of ['age', 'cap'] as const) {
+      const refusal = capabilityMissing('raw_sql', step === 'age' ? 'ageOutSessionState' : 'capSessionStatePerClient');
+      await expect(gcSessionContextState(failing(step, refusal), 7, 2)).rejects.toBe(refusal);
+      await expect(gcSessionContextState(failing(step, new Error('connection reset')), 7, 2)).resolves.toBeUndefined();
+    }
   });
 });

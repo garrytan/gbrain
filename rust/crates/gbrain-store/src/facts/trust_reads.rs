@@ -6,10 +6,14 @@
 //! (`trust/write_gate.rs`). Neither needs a key range of its own.
 //!
 //! The TypeScript member (src/core/rust-engine/store-members/facts-trust-reads.ts) refuses what the
-//! store does not model: `listSingleFactMetadata` under the remote provenance floor, an id that is
-//! not an `int4`, and a `listUnpreviewedTrustFacts` limit that is not a non-negative integer.
+//! store does not model: an id that is not an `int4`, a `listUnpreviewedTrustFacts` limit that is
+//! not a non-negative integer, and the remote provenance floor of a caller whose labelled-only grant
+//! or owner read changes it (`storeFloorPolicy`).
 
-use super::{FactRecord, ROW, count_arg, entity_rows, read_fact, rows_under, source_rows};
+use super::privacy::PrivacyPolicy;
+use super::{
+    FactRecord, ROW, count_arg, entity_rows, hidden_by_policy, read_fact, rows_under, source_rows,
+};
 use crate::Store;
 use crate::error::Result;
 use crate::keys;
@@ -21,12 +25,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-/// `listSingleFactMetadata({ sourceId, ids, remoteFloor: false })`.
+/// `listSingleFactMetadata({ sourceId, ids, remoteFloor })`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SingleFactMetadataQuery {
     pub source_id: String,
     pub ids: Vec<i64>,
+    /// `remoteProvenanceFloorSql('facts')` when the caller passes `remoteFloor`.
+    #[serde(default)]
+    pub remote_floor: Option<PrivacyPolicy>,
 }
 
 /// `listRestatedPrivateCopies({ sourceId, claim, entity, writer })`.
@@ -64,7 +71,8 @@ pub(crate) fn all_fact_rows(read: &dyn crate::kv::KvRead) -> Result<Vec<FactReco
 impl Store {
     /// `listSingleFactMetadata`: the fence position, stored trust tier and claim slot of each fact
     /// of `sourceId` whose id is in `ids` (`id = ANY(ids)`: a repeated id answers once, an id no row
-    /// has answers nothing). The SQL has no `ORDER BY`; the store answers in id order.
+    /// has answers nothing), less a fact the remote provenance floor hides. The SQL has no
+    /// `ORDER BY`; the store answers in id order.
     pub fn list_single_fact_metadata(&self, q: &SingleFactMetadataQuery) -> Result<Vec<Value>> {
         no_nul("listSingleFactMetadata", &[("sourceId", &q.source_id)])?;
         let read = self.read()?;
@@ -78,7 +86,7 @@ impl Store {
             let Some(row) = read_fact(&*read, id)? else {
                 continue;
             };
-            if row.source_id != q.source_id {
+            if row.source_id != q.source_id || hidden_by_policy(&*read, &row, &q.remote_floor)? {
                 continue;
             }
             out.push(json!({

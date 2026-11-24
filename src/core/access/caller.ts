@@ -41,7 +41,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type LiveMemberVia, type MayActForVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type LiveMemberVia, type MemberBindingVia, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -84,8 +84,10 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
 
 /** An engine that reads a live member: a typed engine, or a narrow executeRaw caller (the same SQL over it). */
 export type LiveMemberEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
+/** The typed-only form (a Rust brain without raw SQL, every persistence SqlEngine view): this line's name for what LiveMemberEngine accepts first. */
+export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'>;
 
-async function liveIdentity(engine: LiveMemberEngine, via: LiveMemberVia, key: string): Promise<string[]> {
+async function liveIdentity(engine: LiveMemberEngine, via: MemberBindingVia, key: string): Promise<string[]> {
   let row: LiveMemberRow | null;
   try {
     row = 'readLiveMember' in engine ? await engine.readLiveMember(via, key) : await readLiveMemberOver(engine, via, key);
