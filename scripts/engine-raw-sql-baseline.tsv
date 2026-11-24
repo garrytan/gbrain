@@ -79,7 +79,6 @@ src/commands/edge-proposals.ts	execute_raw	6
 src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
-src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/extract-conversation-facts.ts	execute_raw	1
 src/commands/extract-explain.ts	execute_raw	1
 src/commands/extract-stale-options.ts	execute_raw	1
@@ -125,12 +124,11 @@ src/commands/serve-http-clients.ts	execute_raw	1
 src/commands/serve-http-metrics.ts	execute_raw	1
 src/commands/serve-http-webhooks.ts	execute_raw	3
 src/commands/serve-http.ts	sql_template	1
-src/commands/sources-add-next.ts	execute_raw	2
+src/commands/sources-add-next.ts	execute_raw	1
 src/commands/sources-canonical.ts	execute_raw	1
 src/commands/sources-git-gap.ts	execute_raw	15
 src/commands/sources-git-reconcile.ts	execute_raw	1
 src/commands/sources-harden.ts	execute_raw	5
-src/commands/sources-lifecycle.ts	execute_raw	1
 src/commands/sources-mirror.ts	execute_raw	2
 src/commands/sources-pull-strategy.ts	execute_raw	1
 src/commands/sources-rebind.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the source row (incarnation, local_path, config, archived) to find its connector cursor
@@ -404,7 +402,7 @@ src/core/page-state/revision-backfill-schema.ts	execute_raw	10
 src/core/page-state/tags.ts	execute_raw	3
 src/core/page-state/versions.ts	execute_raw	5
 src/core/page-window/bounded-lead.ts	execute_raw	2
-src/core/page-window/segmented.ts	execute_raw	5
+src/core/page-window/segmented.ts	execute_raw	2
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/admin-lock.ts	execute_raw	2
 src/core/persistence/administration.ts	execute_raw	5
@@ -688,7 +686,7 @@ src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	3
 src/core/source-default-search.ts	execute_raw	1
 src/core/sources-not-readable.ts	execute_raw	1
-src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
+src/core/sources-ops.ts	execute_raw	2	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/find.ts	execute_raw	4
