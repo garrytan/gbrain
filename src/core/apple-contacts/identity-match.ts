@@ -116,8 +116,8 @@ export async function linkContactPage(engine: BrainEngine, sourceId: string, slu
   if (outcome.kind === 'one') {
     const apart = opts.apart ?? decidedSets(await engine.listIdentityDecisions()).apart;
     const contact = refKey({ source_id: sourceId, slug });
-    const people = new Set(pages.map(refKey));
-    if (apart.some(set => { const keys = set.map(refKey); return keys.includes(contact) && keys.some(k => people.has(k)); })) outcome = { kind: 'different', candidates: pages };
+    const people = new Set([...pages, ...await listEntityIdentities(engine, { entityId: outcome.entityId })].map(refKey));
+    if (apart.some(set => { const keys = set.map(refKey); return keys.includes(contact) && keys.some(k => k !== contact && people.has(k)); })) outcome = { kind: 'different', candidates: pages };
     else if (opts.contactName) {
       const verdicts = pages.map(p => titles.get(refKey(p))).filter((t): t is string => !!t).map(t => namesAgree(opts.contactName!, t));
       if (verdicts.length && verdicts.every(v => v === false)) outcome = { kind: 'name_disagrees', candidates: pages };

@@ -112,8 +112,8 @@ describe('gbrain dedupe link-contacts (Google Contacts)', () => {
 
   test('reject by a contact group id records only the person and the contact, never a member another writer linked', async () => {
     const { linkEntityIdentity } = await import('../src/core/entity-identity.ts');
-    await page('people/jade-example', 'Jade Example', { email: 'jade@example.invalid' });
-    await page('people/jade-example', 'Jade Example', {}, 'people-b');
+    await page('people/jade-example', 'Jade Example', {});
+    await page('people/jade-example', 'Jade Example', { email: 'jade@example.invalid' }, 'people-b');
     await linkEntityIdentity(engine, { entityId: 'manual-jade', slug: 'people/jade-example', sourceId: 'default', establishedBy: 'manual', canonical: true });
     await linkEntityIdentity(engine, { entityId: 'manual-jade', slug: 'people/jade-example', sourceId: 'people-b', establishedBy: 'manual' });
     await contact('c-jade', 'Jade Example', ['jade@example.invalid']);
@@ -126,6 +126,22 @@ describe('gbrain dedupe link-contacts (Google Contacts)', () => {
     expect(await linkOf('people/c-jade', 'gc')).toBeNull();
     expect((await linkOf('people/jade-example', 'people-b'))?.entity_id).toBe('manual-jade');
     expect((await linkOf('people/jade-example', 'default'))?.entity_id).toBe('manual-jade');
+    // The email sits on a member that is not the one recorded, and the next sync still keeps the pair apart.
+    expect(await linkGoogleContacts(engine, 'gc', { apply: true, slugs: ['people/c-jade'] })).toMatchObject({ linked: 0, rejected: 1 });
+    expect(await linkOf('people/c-jade', 'gc')).toBeNull();
+
+    // A group with no canonical member: the reject still records one person member and the contact, and holds.
+    await page('people/kai-example', 'Kai Example', { email: 'kai@example.invalid' });
+    await page('people/kai-example', 'Kai Example', {}, 'people-b');
+    await linkEntityIdentity(engine, { entityId: 'manual-kai', slug: 'people/kai-example', sourceId: 'default', establishedBy: 'manual' });
+    await linkEntityIdentity(engine, { entityId: 'manual-kai', slug: 'people/kai-example', sourceId: 'people-b', establishedBy: 'manual' });
+    await contact('c-kai', 'Kai Example', ['kai@example.invalid']);
+    expect(await linkGoogleContacts(engine, 'gc', { apply: true, slugs: ['people/c-kai'] })).toMatchObject({ linked: 1 });
+    const kai = JSON.parse(await dedupe(['reject', 'manual-kai', '--json']));
+    expect(kai.rejected[0].members.length).toBe(2);
+    expect(kai.rejected[0].members.some((m: { slug: string }) => m.slug === 'people/c-kai')).toBe(true);
+    expect(await linkGoogleContacts(engine, 'gc', { apply: true, slugs: ['people/c-kai'] })).toMatchObject({ linked: 0, rejected: 1 });
+    expect((await linkOf('people/kai-example', 'people-b'))?.entity_id).toBe('manual-kai');
   });
 
   test('one matching person whose page has another name waits for the owner instead of linking', async () => {
