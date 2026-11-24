@@ -662,6 +662,16 @@ already-published bad binaries; an affected release needs its own explicitly
 approved recovery and asset verification. The template and plugin publishing
 jobs pin the same Bun version.
 
+The executable build compiles with `--bytecode --format=esm` (the same flags
+sit in `bun run build` and `build:all`), so a binary starts from a stored
+parse of its bundle instead of parsing it on every command. Plain `--bytecode`
+builds CommonJS, which cannot hold top-level await, so `--format=esm` stays
+with it. `bun scripts/check-bytecode-parity.ts`, a step in the Test workflow's
+verify job, builds the release compile line for the host with and without the
+two flags and requires the same stdout, stderr and exit code from a fixed set
+of commands on a temporary PGLite brain; only clock, ids and timings are
+masked. Installs through `bun install -g` run the source and are unaffected.
+
 ### Release CI gate
 
 The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
