@@ -31,7 +31,7 @@ export function holdAppliesToPageSql(h: string, pageId: string, slug: string): s
  * The slugs a hold's own slug leads to through the same source's rename record (`slug_aliases`, alias to canonical, and
  * `slug_rename_history`, old to new; chains followed, a cycle ends), the hold's own slug included, as the CTE `reach(s)`.
  */
-function holdReachCte(h: string): string {
+export function holdReachCte(h: string): string {
   return `WITH RECURSIVE reach(s) AS (SELECT ${h}.slug UNION SELECT n.t FROM reach x JOIN LATERAL (
       SELECT a.canonical_slug AS t FROM slug_aliases a WHERE a.source_id = ${h}.source_id AND a.alias_slug = x.s
       UNION SELECT r.new_slug FROM slug_rename_history r WHERE r.source_id = ${h}.source_id AND r.old_slug = x.s) n ON true)`;

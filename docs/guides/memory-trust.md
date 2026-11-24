@@ -420,16 +420,15 @@ Claim your own sources first, so your notes are not treated as unverified.
   `gbrain trust review`, where you drop each one with `gbrain trust drop`. The
   check is read-only.
 - `write_gate_holds_stranded` finds held writes (quarantined facts and takes)
-  that no live page matches. A hold remembers its page by id, so a rename
-  leaves a bound hold on its page, and the check ignores it, as it ignores an
-  unbound hold that the rename record leads to a live page: both still hide
-  their text. A hold that names a slug where no live page is (a bound hold
-  whose page is gone, or an unbound one whose slug and rename record lead to no
-  live page) is one that no page shows: the check warns about those whose
-  rename record or history leads from the held name to a live page (a suspected
-  strand, since the history can name more than one page). Holds whose page was
-  soft-deleted, or that name a page that never existed (for example a write
-  held before its page was created), are listed as informational only. A scan
+  that no live page holds. A hold remembers its page by id, so renaming the
+  page (a sync Git rename, `gbrain repair rename-identity`) leaves it held, and
+  the check ignores every hold that a live page matches by the rule the readers
+  use: a bound hold whose page exists (whatever either is called), and an
+  unbound hold whose name, or whose rename record in the same source, leads to
+  a live page. It lists the rest as informational only: holds for a soft-deleted
+  page, and holds that name no page that exists (for example a write held
+  before its page was created). None of these leaks held text, and the check
+  changes nothing; the next step is the read-only `gbrain trust review`. A scan
   that stops at its 5000-row limit or its time limit warns that the count is
   unknown instead of reporting ok. So does a database role with row-level
   security active on the holds, the aliases, the rename history or the pages (a

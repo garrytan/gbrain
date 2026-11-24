@@ -263,7 +263,7 @@
       "  [OK] trust_sources_unclaimed: No unclaimed source holds rows from before trust tiers.",
       "  [OK] trust_release_unpreviewed_fields: No released fact was confirmed with fence-row fields its release preview did not show.",
       "  [OK] write_gate_hold_ambiguous: Every held write is tied to one page, or waits for its page to be created.",
-      "  [OK] write_gate_holds_stranded: No held write names a page that is missing (0 held write(s) read).",
+      "  [OK] write_gate_holds_stranded: No held write is without a live page (0 held write(s) read).",
       "  [OK] core_memory: Core memory is off (opt-in). If the user wants a profile loaded in every session: gbrain config set memory.core.enabled true, then gbrain core init.",
       "  [OK] two_consumers_on_host: PGLite admits one process; no consumer heartbeat rows are kept.",
       "  [OK] consumers_without_heartbeat: PGLite admits one process; no consumer heartbeat rows are kept.",
