@@ -748,7 +748,7 @@ interface RawContactGroup {
  * records this string next to the token (`contacts_person_fields`) and
  * re-lists when it changes. Change it here and nowhere else.
  */
-export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships';
+export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships,metadata';
 
 /** Google's built-in groups (`contactGroups/myContacts`, `starred`, …) say nothing a page should carry. */
 const SYSTEM_CONTACT_GROUPS = new Set(

@@ -60,10 +60,23 @@ describe('PeopleClient (#6324)', () => {
       nextSyncToken: 'ppl-1',
     }));
     const { contacts } = await people.listConnections({});
-    expect(CONTACT_PERSON_FIELDS).toBe('names,emailAddresses,organizations,phoneNumbers,memberships');
+    expect(CONTACT_PERSON_FIELDS).toBe('names,emailAddresses,organizations,phoneNumbers,memberships,metadata');
     expect(calls[0].searchParams.get('personFields')).toBe(CONTACT_PERSON_FIELDS);
     expect(contacts[0].phones).toEqual(['+15550100', '555 0101']);
     expect(contacts[0].groups).toEqual([{ id: 'contactGroups/abc123', name: null }]);
+  });
+
+  test('a tombstone the API only marks deleted under a metadata mask is read as deleted', async () => {
+    // The real People API returns a bare {resourceName, etag} for a deleted person unless personFields asks for metadata.
+    const { people } = fakePeople((u) => {
+      const masked = (u.searchParams.get('personFields') ?? '').split(',').includes('metadata');
+      return json({
+        connections: [masked ? person('gone', { etag: 'e', metadata: { deleted: true } }) : person('gone', { etag: 'e' })],
+        nextSyncToken: 'ppl-1',
+      });
+    });
+    const { contacts } = await people.listConnections({ syncToken: 'old' });
+    expect(contacts.map((c) => c.deleted)).toEqual([true]);
   });
 
   test('every page of a list repeats the same parameters, the syncToken included', async () => {
