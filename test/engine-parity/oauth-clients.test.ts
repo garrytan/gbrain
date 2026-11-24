@@ -433,21 +433,25 @@ describe('engine parity: oauth_clients rows and constraints', () => {
   parityTest('agent register: the CLI function stores the client, its grant at revision 1 and the register audit row',
     { methods: ['insertOauthClientGrant', 'readOauthClient', 'listOauthGrantAudit'] }, async (engine, backend) => {
       await setup(engine, backend);
-      const out: string[] = [];
-      const realExit = process.exit, realLog = console.log, realError = console.error;
-      process.exit = ((code?: number) => { throw Object.assign(new Error(`exit ${code} ${out.join(' ')}`), { code: 'test_exit' }); }) as typeof process.exit;
-      console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
-      console.error = () => undefined;
-      try {
-        await runAgentRegister(engine, ['grant-agent', '--harness', 'claude-code', '--url', 'http://127.0.0.1:9/mcp', '--source', 'src-a', '--federated-read', 'src-a,src-b', '--allow-old-serve', '--json']);
-      } finally { process.exit = realExit; console.log = realLog; console.error = realError; }
-      const result = JSON.parse(out.at(-1) ?? '{}') as { ok?: boolean; client_id?: string };
-      expect(result.ok).toBe(true);
-      const row = result.client_id ? await engine.readOauthClient(result.client_id) : null;
-      return {
-        ok: result.ok, row: row && { client_name: row.client_name, scope: row.scope, source_id: row.source_id, federated_read: row.federated_read, grant_revision: row.grant_revision, token_ttl: row.token_ttl, secretKept: row.client_secret_hash != null },
-        audit: result.client_id ? await audit(engine, result.client_id) : null,
+      // Once on a named write source, once on the default derived workspace source, which the register creates.
+      const register = async (name: string, ...extra: string[]) => {
+        const out: string[] = [];
+        const realExit = process.exit, realLog = console.log, realError = console.error;
+        process.exit = ((code?: number) => { throw Object.assign(new Error(`exit ${code} ${out.join(' ')}`), { code: 'test_exit' }); }) as typeof process.exit;
+        console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
+        console.error = () => undefined;
+        try {
+          await runAgentRegister(engine, [name, '--harness', 'claude-code', '--url', 'http://127.0.0.1:9/mcp', '--allow-old-serve', '--json', ...extra]);
+        } finally { process.exit = realExit; console.log = realLog; console.error = realError; }
+        const result = JSON.parse(out.at(-1) ?? '{}') as { ok?: boolean; client_id?: string };
+        expect(result.ok).toBe(true);
+        const row = await engine.readOauthClient(result.client_id!);
+        return {
+          row: row && { client_name: row.client_name, scope: row.scope, source_id: row.source_id, federated_read: row.federated_read, grant_revision: row.grant_revision, token_ttl: row.token_ttl, secretKept: row.client_secret_hash != null },
+          audit: await audit(engine, result.client_id!),
+        };
       };
+      return { named: await register('named-agent', '--source', 'src-a', '--federated-read', 'src-a,src-b'), workspace: await register('ws-agent') };
     });
 
   parityTest('revoke a client: the delete returns the client once, it is no longer live, and its ttl write finds no row',
