@@ -172,7 +172,16 @@ export async function resetScratchPostgres(engine: BrainEngine, brainKey: string
     const [own] = await engine.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1');
     if (own?.brain !== brainKey) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database belongs to another brain\'s replay');
   } else {
-    const [count] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public'");
+    // Every relation (tables, views, materialized views, sequences), function and standalone type in public counts,
+    // except what an installed extension (vector) owns.
+    const [count] = await engine.executeRaw<{ n: number }>(`SELECT (
+        (SELECT count(*) FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'))
+      + (SELECT count(*) FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND NOT EXISTS (
+          SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'))
+      + (SELECT count(*) FROM pg_type t WHERE t.typnamespace = 'public'::regnamespace AND t.typrelid = 0 AND t.typelem = 0
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'))
+      )::int AS n`);
     if ((count?.n ?? 0) > 0) throw new ReplayError('shadow_replay_postgres_not_owned', 'the scratch database is not empty and was not created by a replay');
   }
   try {

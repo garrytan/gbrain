@@ -25,8 +25,9 @@ import type { BrainEngine } from '../core/engine.ts';
 import { onPurgeIntent, purgeMirrorPath } from '../core/belief/purge-mirror.ts';
 import { configDir } from '../core/config.ts';
 import { registerEngineView, viewedEngine } from '../core/persistence/switches.ts';
+import { RUST_ENGINE_MEMBERS } from '../core/rust-engine/members.ts';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
-import { canonicalJson, encodeArgs, encodeValue } from './codec.ts';
+import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, canonicalJson, encodeArgs, encodeValue } from './codec.ts';
 import { captureIsOn, writePrivateJson } from './capture-state.ts';
 import { ReplayError } from './replay-errors.ts';
 
@@ -150,7 +151,7 @@ export function deleteAllCaptureData(cap: string): string[] {
   if (existsSync(cap)) for (const f of readdirSync(cap)) if (f.startsWith('epoch-')) gone.push(join(cap, f));
   const bases = join(cap, 'bases');
   if (existsSync(bases)) for (const f of readdirSync(bases)) gone.push(join(bases, f));
-  return removeAll([...gone, ...runCopies(cap)]);
+  return removeAll([...gone, ...runCopies(cap), join(cap, 'retry.json')]);
 }
 
 
@@ -162,8 +163,10 @@ export function invalidateIfPurged(cap: string, opts: { home?: string; force?: s
   const pointer = readEpoch(cap);
   if (!pointer || pointer.state === 'invalidated') return false;
   if (!opts.force && !purgeLogChanged(pointer.purge_log, opts.home)) return false;
-  setEpochState(cap, pointer, 'invalidated', opts.force ?? 'purge');
-  deleteAllCaptureData(cap);
+  const reason = opts.force ?? 'purge';
+  setEpochState(cap, pointer, 'invalidated', reason);
+  // A purge deletes everything; a seed failure or an unseeded epoch only that epoch (a retained failed replay stays).
+  if (reason === 'purge') deleteAllCaptureData(cap); else deleteEpochData(cap, pointer.id);
   scheduleScratchDrop(cap);
   return true;
 }
@@ -177,14 +180,17 @@ export const scratchRecordPath = (cap: string) => join(cap, 'scratch-postgres.js
 export const scratchPendingPath = (cap: string) => join(cap, 'scratch-drop-pending');
 type ScratchSql = { executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>; disconnect(): Promise<void> };
 type ScratchOpener = (url: string) => Promise<ScratchSql>;
-/** A scratch connection always gets its own pool: the module singleton may hold the brain's own Postgres. */
-export const scratchEngineConfig = (url: string) => ({ engine: 'postgres' as const, database_url: url, poolSize: 2 });
+/**
+ * The scratch connection for a drop: one plain driver connection to the recorded URL, never an engine, so neither the
+ * module connection a Postgres brain holds nor a GBRAIN_DIRECT_DATABASE_URL route can be reached through it.
+ */
 const openScratch: ScratchOpener = async url => {
-  const { constructEngine } = await import('../core/engine-construct.ts');
-  const cfg = scratchEngineConfig(url) as never;
-  const e = await constructEngine(cfg);
-  await e.connect(cfg);
-  return e;
+  const { default: postgres } = await import('#postgres');
+  const sql = postgres(url, { max: 1, onnotice: () => {}, connect_timeout: 10 });
+  return {
+    async executeRaw<T>(q: string, params: unknown[] = []) { return (await sql.unsafe(q, params as never[])) as unknown as T[]; },
+    async disconnect() { await sql.end({ timeout: 5 }); },
+  };
 };
 let scratchOpener: ScratchOpener = openScratch;
 /** Test seam: the opener the drop uses. Null restores the real one. */
@@ -206,11 +212,10 @@ export async function dropScratchPostgres(cap: string): Promise<boolean> {
   try {
     e = await scratchOpener(rec.url);
     const [marker] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
-    // Drop only a database this replay owns: its marker names this brain, or the seed verified it empty or owned
-    // before writing (a refused, unrelated database is never touched; its record is just forgotten).
-    const owned = marker?.present
-      ? (await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain === rec.brain
-      : rec.verified === true;
+    // Drop only a database whose owner marker names this brain right now (the seed writes the marker before any other
+    // table). Anything else, a database recreated or reused since, is never touched; its record is just forgotten.
+    const owned = marker?.present === true
+      && (await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain === rec.brain;
     if (!owned) {
       rmSync(recordPath, { force: true });
       rmSync(scratchPendingPath(cap), { force: true });
@@ -257,6 +262,19 @@ export function watchPurges(engine: BrainEngine, cap: string): void {
   engine.registerBeforeDisconnect(async () => { stop(); await scratchDrops.get(cap); });
 }
 
+/**
+ * Finishes the cleanup of an invalidated epoch (a crash or a failed removal can interrupt it): deletes every recording
+ * and copy again and drops the scratch copy. Only the nightly run (under its lock) and the capture commands call it,
+ * never a recorder, so it cannot race a new epoch's seed. True when nothing is left to clean.
+ */
+export async function resumeInvalidatedCleanup(cap: string): Promise<boolean> {
+  const pointer = readEpoch(cap);
+  if (pointer?.state !== 'invalidated') return scratchCleared(cap);
+  if (pointer.reason === 'purge') deleteAllCaptureData(cap); else deleteEpochData(cap, pointer.id);
+  scheduleScratchDrop(cap);
+  return scratchCleared(cap);
+}
+
 /** Reads one segment file; a torn last line is skipped and reported. */
 export function readSegment(path: string): { records: CaptureRecord[]; torn: boolean } {
   const lines = readFileSync(path, 'utf8').split('\n');
@@ -273,7 +291,7 @@ export function readSegment(path: string): { records: CaptureRecord[]; torn: boo
 export class CaptureWriter {
   readonly proc = `${process.pid}-${randomBytes(3).toString('hex')}`;
   private seq = 0;
-  private buffer: string[] = [];
+  private buffer: Array<{ t0: number; line: string }> = [];
   private bytes = 0;
   private dropped = 0;
   private dropReason = '';
@@ -294,7 +312,7 @@ export class CaptureWriter {
       line = JSON.stringify({ v: 1, proc: this.proc, seq: this.seq, t0: rec.t0, t1: rec.t1, kind: 'gap', member: rec.member, reason: 'too_large', tx: rec.tx });
     }
     if (this.bytes + line.length > CAPTURE_LIMITS.bufferBytes) return this.drop('buffer_full');
-    this.buffer.push(line);
+    this.buffer.push({ t0: rec.t0, line });
     this.bytes += line.length + 1;
     if (!this.timer) {
       this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, CAPTURE_LIMITS.flushMs);
@@ -332,8 +350,14 @@ export class CaptureWriter {
     return { path: join(dir, `${this.proc}.jsonl`), epoch };
   }
 
-  private take(): string {
-    const lines = this.buffer;
+  /**
+   * The buffered lines for `epoch`: a record whose call started before the epoch began belongs to an earlier one (which
+   * a purge may have invalidated since) and is dropped, never written into the new recording.
+   */
+  private take(epoch: EpochPointer): string {
+    const since = Date.parse(epoch.started_at);
+    const lines: string[] = [];
+    for (const b of this.buffer) { if (b.t0 >= since) lines.push(b.line); else this.drop('earlier_epoch'); }
     this.buffer = [];
     this.bytes = 0;
     if (this.dropped) {
@@ -349,7 +373,7 @@ export class CaptureWriter {
       if (!this.buffer.length && !this.dropped) return;
       const t = this.target();
       if ('stop' in t) { this.buffer = []; this.bytes = 0; this.dropped = 0; return; }
-      const data = this.take();
+      const data = this.take(t.epoch);
       try { await appendFile(t.path, data, { mode: 0o600 }); } catch { this.drop('append_error'); }
     };
     this.flushing = run().finally(() => { this.flushing = null; });
@@ -361,13 +385,13 @@ export class CaptureWriter {
     if (!this.buffer.length && !this.dropped) return;
     const t = this.target();
     if ('stop' in t) { this.buffer = []; return; }
-    try { appendFileSync(t.path, this.take(), { mode: 0o600 }); } catch { /* exit: nothing left to do */ }
+    try { appendFileSync(t.path, this.take(t.epoch), { mode: 0o600 }); } catch { /* exit: nothing left to do */ }
   }
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const LIFECYCLE = new Set(['connect', 'disconnect', 'registerBeforeDisconnect', 'initSchema', 'constructor']);
-const GAP_MEMBERS = new Set(['executeRaw', 'executeRawJsonb', 'withReservedConnection', 'reserve']);
+const GAP_MEMBERS = new Set(['executeRaw', 'executeRawDirect', 'executeRawJsonb', 'withReservedConnection', 'reserve']);
 const TX_MEMBERS = new Set(['transaction', 'transactionDirect']);
 
 function hasFunctionArg(args: unknown[]): boolean {
@@ -380,8 +404,10 @@ function isThenable(v: unknown): v is Promise<unknown> {
   return !!v && typeof (v as { then?: unknown }).then === 'function';
 }
 
+/** The result's hash, bounded: a result over the capture budget is not copied or serialized past the budget. */
 function outcomeOf(result: unknown): { ok: true; h: string } {
-  try { return { ok: true, h: sha256(canonicalJson(encodeValue(result))) }; } catch { return { ok: true, h: 'unencodable' }; }
+  try { return { ok: true, h: sha256(canonicalJson(encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }))) }; }
+  catch (e) { return { ok: true, h: e instanceof CaptureTooLargeError ? 'too_large' : 'unencodable' }; } // silent-read-ok: a result that cannot be hashed is recorded as such; the call's own answer is untouched
 }
 
 function errorCode(e: unknown): string {
@@ -403,11 +429,11 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
     let encoded: unknown;
     let access: unknown;
     try {
-      encoded = encodeArgs(args);
+      encoded = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
       const a = callerAccessRecord();
       access = a ? encodeValue(a) : undefined;
-    } catch {
-      writer.push({ t0, t1: t0, kind: 'gap', member, reason: 'encode', tx });
+    } catch (err) {
+      writer.push({ t0, t1: t0, kind: 'gap', member, reason: err instanceof CaptureTooLargeError ? 'too_large' : 'encode', tx });
       return fn.apply(engine, args);
     }
     const done = (o: { ok: boolean; h?: string; code?: string }) => {
@@ -435,6 +461,9 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
       if (typeof value !== 'function' || typeof prop !== 'string') return value;
       const hit = cache.get(prop);
       if (hit && hit.original === value) return hit.wrapped;
+      // Only BrainEngine members are recorded. Any other function-valued property (the callable `sql` handle with its
+      // own .unsafe/.reserve/.options, a helper) goes back untouched, so the engine keeps working as it did.
+      if (!(prop in RUST_ENGINE_MEMBERS) && !TX_MEMBERS.has(prop)) return value;
       const wrapped = LIFECYCLE.has(prop) || prop.startsWith('_') ? value.bind(target)
         : TX_MEMBERS.has(prop) ? transaction(prop, value) : record(prop, value);
       cache.set(prop, { original: value, wrapped });

@@ -26,6 +26,8 @@ import { SHADOW_READ_MEMBERS } from './reads.ts';
 
 export const REPLAY_REPORT_VERSION = 1;
 export const REPLAY_CALL_TIMEOUT_MS = 60_000;
+/** Pages the read-back sweep reads; past it the report says `incomplete` (counts.sweep_skipped). */
+export const SWEEP_LIMIT = 5_000;
 export type ArmName = 'pglite' | 'postgres' | 'rust';
 export const ARM_ORDER: readonly ArmName[] = ['pglite', 'postgres', 'rust'];
 
@@ -114,15 +116,18 @@ export class NormState {
 }
 
 /** The first path where `b` differs from `a`, or null when equal under `norm`. */
-export function firstDiff(a: unknown, b: unknown, norm: NormState, path: string[] = []): string[] | null {
+/** A diff path: numbers are array positions, strings are object keys (so a key spelled like `[0]` is still a key). */
+export type DiffPath = Array<string | number>;
+
+export function firstDiff(a: unknown, b: unknown, norm: NormState, path: DiffPath = []): DiffPath | null {
   if (typeof a === 'string' && typeof b === 'string') return norm.same(a, b) ? null : path;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return Object.is(a, b) ? null : path;
   if (Array.isArray(a) !== Array.isArray(b)) return path;
   if (Array.isArray(a)) {
     const bb = b as unknown[];
     for (let i = 0; i < Math.max(a.length, bb.length); i++) {
-      if (i >= a.length || i >= bb.length) return [...path, `[${i}]`];
-      const d = firstDiff(a[i], bb[i], norm, [...path, `[${i}]`]);
+      if (i >= a.length || i >= bb.length) return [...path, i];
+      const d = firstDiff(a[i], bb[i], norm, [...path, i]);
       if (d) return d;
     }
     return null;
@@ -139,14 +144,14 @@ export function firstDiff(a: unknown, b: unknown, norm: NormState, path: string[
 
 const CAPABILITY_CODES = new Set(['engine_capability_missing', 'raw_sql_missing']);
 
-function outcomeDiff(a: Outcome, b: Outcome, norm: NormState): string[] | null {
+function outcomeDiff(a: Outcome, b: Outcome, norm: NormState): DiffPath | null {
   if (!a.ok || !b.ok) return !a.ok && !b.ok && a.code === b.code ? null : ['$outcome'];
   return firstDiff(a.value, b.value, norm);
 }
 
 /** Classifies one replayed call: PGLite is the reference; Postgres, when present, splits Rust gaps from TS disagreement. */
 export function classify(out: Partial<Record<ArmName, Outcome>>, norms: { rust: NormState; postgres?: NormState }, seedLoss: boolean):
-  { cls: DiffClass; path: string[] } {
+  { cls: DiffClass; path: DiffPath } {
   const p = out.pglite!;
   const r = out.rust!;
   const g = out.postgres;
@@ -259,8 +264,8 @@ const SCHEMA_KEYS = new Set(('$outcome slug source_id title type compiled_truth 
   + 'superseded_by consolidated_at row_num source_markdown_slug status count total page_count chunk_count link_count tag_count timeline_entry_count '
   + 'embedded_count pages_by_type revision version body_storage search_vector stale public_read context_text').split(' '));
 
-export function redactPath(path: string[], key: Buffer): string[] {
-  return path.map(p => (/^\[\d+\]$/.test(p) || SCHEMA_KEYS.has(p) ? p : `#${keyedHash(key, p).slice(0, 8)}`));
+export function redactPath(path: DiffPath, key: Buffer): string[] {
+  return path.map(p => (typeof p === 'number' ? `[${p}]` : SCHEMA_KEYS.has(p) ? p : `#${keyedHash(key, p).slice(0, 8)}`));
 }
 
 export function keyedHash(key: Buffer, value: string): string {
@@ -278,7 +283,7 @@ export function renderReport(spec: RunSpec, arms: ArmName[], counts: Record<stri
   by.match = counts.compared_calls! - diffs.length;
   return {
     schema_version: REPLAY_REPORT_VERSION, epoch: spec.epoch, arms, seed_losses_present: spec.seed_losses_present,
-    coverage: counts.gaps || counts.orphaned || torn ? 'incomplete' : 'complete',
+    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || torn ? 'incomplete' : 'complete',
     counts: Object.fromEntries(Object.entries({ ...counts, torn_segments: torn }).sort()), by_class: by, diffs,
   };
 }
@@ -326,7 +331,14 @@ export function blockNetwork(allowDir: string, allowLocalTcp: boolean): void {
     if (!allowed(args)) throw refuse();
     return (origConnect as Function).apply(this, args);
   } as typeof origConnect;
-  (tls as { connect: unknown }).connect = () => { throw refuse(); };
+  const origTls = tls.connect;
+  (tls as { connect: unknown }).connect = (...args: unknown[]) => {
+    // The local scratch database may ask for TLS: allow an upgrade of an already admitted socket, or a local host.
+    const o = (args.find(a => a && typeof a === 'object') ?? {}) as { socket?: unknown; host?: string; path?: string };
+    const local = o.socket ? true : o.path ? allowed([{ path: o.path }]) : allowLocalTcp && ['localhost', '127.0.0.1', '::1', undefined].includes(o.host);
+    if (!local) throw refuse();
+    return (origTls as Function)(...args);
+  };
   const bun = (globalThis as { Bun?: Record<string, unknown> }).Bun;
   if (bun) {
     const origBunConnect = bun.connect as ((o: { hostname?: string; unix?: string }) => unknown) | undefined;
@@ -408,7 +420,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     const compare = (ref: string, member: string, outs: Partial<Record<ArmName, Outcome>>, liveOk?: boolean) => {
       compared++;
       window.to = now() + 5_000; // a database clock a few seconds ahead of this process still counts as replay time
-      let { cls, path } = classify(outs, norms, spec.seed_losses_present);
+      let { cls, path }: { cls: DiffClass; path: DiffPath } = classify(outs, norms, spec.seed_losses_present);
       if (cls === 'match' && liveOk === true && arms.every(a => outs[a] && !outs[a]!.ok)) { cls = 'replay_diverged'; path = ['$outcome']; }
       if (cls === 'match') return;
       const hashes: Partial<Record<ArmName, string>> = {};
@@ -428,7 +440,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     const slugs = new Set<string>();
     writtenSlugs(plan.units, slugs);
     const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline'] as const;
-    for (const entry of [...slugs].sort().slice(0, 500)) {
+    for (const entry of [...slugs].sort().slice(0, SWEEP_LIMIT)) {
       const [sourceId, slug] = JSON.parse(entry) as [string | null, string];
       for (const m of sweepMembers) {
         const rec = { member: m, args: sourceId ? [slug, { sourceId }] : [slug] } as CaptureRecord;
@@ -442,7 +454,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
       for (const a of arms) outs[a] = await callOn(engines[a], { member: 'getStats', args: [] } as unknown as CaptureRecord);
       compare('sweep:stats', 'sweep:getStats', outs);
     }
-    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, 500) }, diffs, torn);
+    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT) }, diffs, torn);
     const out = join(runDir, 'out');
     mkdirSync(out, { recursive: true, mode: 0o700 });
     writeOwnerOnly(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');

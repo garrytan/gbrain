@@ -15,13 +15,14 @@ import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
 import { configDir } from '../core/config.ts';
 import {
   basesDir, deleteAllCaptureData, deleteEpochData, epochDir, invalidateIfPurged, purgeLogChanged, readEpoch, scheduleScratchDrop, scratchCleared, scratchRecordPath,
-  readScratchRecord, setEpochState, startEpoch, type EpochPointer,
+  readScratchRecord, resumeInvalidatedCleanup, setEpochState, startEpoch, type EpochPointer,
 } from './capture.ts';
 import { captureDir, captureIsOn, writePrivateJson } from './capture-state.ts';
 import { FanOutSeedTarget, markScratchPostgres, REPLAY_POSTGRES_ENV, resetScratchPostgres, SqlSeedTarget, checkLocalPostgresUrl, type ArmImport } from './replay-copy.ts';
 import { ReplayError } from './replay-errors.ts';
 import { childEnv, hmacKey, prepareRun, removeRun, type ReplayReport, type RunSpec } from './replay.ts';
 import { runSeed, type SeedRecord, type SeedTarget } from './seed.ts';
+import { readStoredEmbeddingIdentity } from '../core/stored-embedding-identity.ts';
 
 export interface BaseManifest {
   version: 1;
@@ -69,11 +70,12 @@ export interface NightlyResult {
 export function acquireReplayLock(dir: string, budgetMs: number): () => void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, 'lock');
-  const token = `${process.pid} ${Date.now()} ${randomBytes(6).toString('hex')}\n`;
+  // The holder writes its own deadline: a contender with a shorter budget cannot cut a longer run short.
+  const token = `${process.pid} ${Date.now() + budgetMs + 30 * 60_000} ${randomBytes(6).toString('hex')}\n`;
   const unlock = () => { if (lockHolder(path) === token) rmSync(path, { force: true }); };
   if (createLock(path, token)) return unlock;
-  const since = Number(lockHolder(path)?.split(' ')[1] ?? 0);
-  if (Date.now() - since < budgetMs + 30 * 60_000) throw new ReplayError('shadow_replay_busy', `lock ${path}`);
+  const [pid, deadline] = (lockHolder(path) ?? '').split(' ').map(Number);
+  if (Date.now() < (deadline ?? 0) || processAlive(pid)) throw new ReplayError('shadow_replay_busy', `lock ${path}`);
   rmSync(path, { force: true });
   if (createLock(path, token)) return unlock;
   throw new ReplayError('shadow_replay_busy', `lock ${path}`);
@@ -88,6 +90,12 @@ function createLock(path: string, token: string): boolean {
   }
   try { writeSync(fd, token); } finally { closeSync(fd); }
   return true;
+}
+
+/** True while a process with this id runs on this machine. */
+function processAlive(pid: number | undefined): boolean {
+  if (!pid || !Number.isInteger(pid)) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
 /** The lock file's content, or null when there is none. */
@@ -107,27 +115,36 @@ async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): P
   if (previous && previous.url !== pgUrl && !await scheduleScratchDrop(cap)) {
     throw new ReplayError('shadow_replay_purged', 'the previous scratch Postgres copy could not be dropped yet');
   }
+  // Scratch engines would follow GBRAIN_DIRECT_DATABASE_URL for schema work: with it set, that could be the brain.
+  if (pgUrl && deps.env.GBRAIN_DIRECT_DATABASE_URL) {
+    throw new ReplayError('shadow_replay_postgres_not_local', 'GBRAIN_DIRECT_DATABASE_URL is set in this environment, and scratch schema work would follow it; unset it for the replay run');
+  }
   const store = await deps.openStore(load.addon, join(base, 'rust'));
   const sql: Record<string, SqlSeedTarget> = {};
   const opened: BrainEngine[] = [];
   let primary: BrainEngine | null = null;
   try {
     const plan = await store.seedPlan();
+    primary = await deps.openPrimary();
+    // Copies get the brain's own embedding layout (dimensions, model), not this process's defaults.
+    const identity = await readStoredEmbeddingIdentity(primary);
+    const init = identity?.model ? { embedding: { dimensions: identity.dimensions, model: identity.model } } : {};
+    const initCopy = (e: BrainEngine) => (e.initSchema as (o?: object) => Promise<void>).call(e, init);
     const pglite = await deps.openSql('pglite', join(base, 'pglite'));
     opened.push(pglite);
-    await pglite.initSchema();
+    await initCopy(pglite);
     sql.pglite = new SqlSeedTarget(pglite, plan);
     if (pgUrl) {
       const pg = await deps.openSql('postgres', pgUrl);
       opened.push(pg);
       await resetScratchPostgres(pg, deps.brainKey);
-      // Recorded once ownership is verified and before the first row lands, so a purge from any process can drop it.
-      writePrivateJson(scratchRecordPath(cap), { url: pgUrl, brain: deps.brainKey, verified: true });
-      await pg.initSchema();
+      // The owner marker goes in before any other table, and the record right after it, so a purge from any process
+      // can drop this copy (cleanup trusts only a live marker naming this brain).
       await markScratchPostgres(pg, deps.brainKey);
+      writePrivateJson(scratchRecordPath(cap), { url: pgUrl, brain: deps.brainKey, verified: true });
+      await initCopy(pg);
       sql.postgres = new SqlSeedTarget(pg, plan);
     }
-    primary = await deps.openPrimary();
     const fan = new FanOutSeedTarget(store, sql);
     const seed = await runSeed(primary, fan, { primaryEngine: deps.primaryEngine, now: deps.now });
     for (const t of Object.values(sql)) await t.finish(primary);
@@ -203,6 +220,38 @@ export async function settleSeededEpoch(cap: string, next: EpochPointer, home: s
   return false;
 }
 
+const retryPath = (cap: string) => join(cap, 'retry.json');
+type Retained = { pointer: EpochPointer; attempts: number };
+
+function readRetained(cap: string): Retained | null {
+  try { return JSON.parse(readFileSync(retryPath(cap), 'utf8')) as Retained; } catch { return null; } // silent-read-ok: no retry file means no retained replay
+}
+
+/**
+ * Replays one sealed epoch and retires it. A purge deletes it; any other failure keeps its recording and copies for
+ * one retry the next night (retry.json), and a second failure retires it. Returns the report, or throws.
+ */
+async function replayAndRetire(deps: NightlyDeps, cap: string, sealed: EpochPointer, attempts: number, budgetMs: number, home: string) {
+  try {
+    if (purgeLogChanged(sealed.purge_log, home)) throw new ReplayError('shadow_replay_purged', 'before the replay');
+    const out = await replayEpoch(deps, cap, sealed, budgetMs);
+    deleteEpochData(cap, sealed.id);
+    rmSync(retryPath(cap), { force: true });
+    return out;
+  } catch (e) {
+    if (e instanceof ReplayError && e.code === 'shadow_replay_purged') {
+      deleteAllCaptureData(cap);
+      await scheduleScratchDrop(cap);
+    } else if (attempts < 1) {
+      writePrivateJson(retryPath(cap), { pointer: sealed, attempts: attempts + 1 } satisfies Retained);
+    } else {
+      deleteEpochData(cap, sealed.id);
+      rmSync(retryPath(cap), { force: true });
+    }
+    throw e;
+  }
+}
+
 export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?: number } = {}): Promise<NightlyResult> {
   const budgetMs = (opts.budgetMinutes ?? 120) * 60_000;
   const cap = captureDir(deps.shadowDir);
@@ -211,7 +260,8 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
   const result: NightlyResult = { schema_version: 1, status: 'off' };
   try {
     const purged = invalidateIfPurged(cap, { home });
-    if (!await scratchCleared(cap)) throw new ReplayError('shadow_replay_purged', 'the scratch Postgres copy of a purged epoch could not be dropped yet');
+    // An interrupted cleanup of an invalidated epoch is finished before anything else may start.
+    if (!await resumeInvalidatedCleanup(cap)) throw new ReplayError('shadow_replay_purged', 'the cleanup of a purged epoch could not finish yet (the scratch Postgres copy is unreachable)');
     let pointer = readEpoch(cap);
     if (pointer?.state === 'recording' && !existsSync(join(basesDir(cap, pointer.id), 'manifest.json'))) {
       invalidateIfPurged(cap, { home, force: 'unseeded' });
@@ -228,30 +278,38 @@ export async function runNightlyReplay(deps: NightlyDeps, opts: { budgetMinutes?
     if (sealed) setEpochState(cap, sealed, 'sealed');
     const next = on ? startEpoch(cap, home, deps.now?.()) : null;
     if (next) result.started_epoch = next.id;
-    if (sealed) {
+    let failure: unknown = null;
+    const retained = readRetained(cap);
+    const queue: Retained[] = [
+      ...(retained && retained.pointer.id !== sealed?.id && existsSync(join(basesDir(cap, retained.pointer.id), 'manifest.json')) ? [retained] : []),
+      ...(sealed ? [{ pointer: sealed, attempts: retained?.pointer.id === sealed.id ? retained.attempts : 0 }] : []),
+    ];
+    for (const item of queue) {
       try {
-        if (purgeLogChanged(sealed.purge_log, home)) { await scheduleScratchDrop(cap); throw new ReplayError('shadow_replay_purged', 'before the replay'); }
-        const { report, dir } = await replayEpoch(deps, cap, sealed, budgetMs);
-        Object.assign(result, { status: 'replayed', replayed_epoch: sealed.id, coverage: report.coverage, by_class: report.by_class, report: join(dir, 'report.md'), summary: join(dir, 'summary.json') });
+        const { report, dir } = await replayAndRetire(deps, cap, item.pointer, item.attempts, budgetMs, home);
+        Object.assign(result, { status: 'replayed', replayed_epoch: item.pointer.id, coverage: report.coverage, by_class: report.by_class, report: join(dir, 'report.md'), summary: join(dir, 'summary.json') });
       } catch (e) {
-        if (!(e instanceof ReplayError && e.code === 'shadow_replay_purged')) throw e;
-        result.status = 'purged';
-      } finally {
-        deleteEpochData(cap, sealed.id);
+        if (e instanceof ReplayError && e.code === 'shadow_replay_purged') { result.status = 'purged'; break; }
+        failure ??= e;
       }
-    } else if (purged) result.status = 'purged';
-    if (next) {
+    }
+    if (!sealed && purged) result.status = 'purged';
+    if (next && result.status !== 'purged') {
       try {
         await seedEpoch(deps, cap, next);
       } catch (e) {
-        invalidateIfPurged(cap, { home, force: 'seed_failed' });
-        if (!await settleSeededEpoch(cap, next, home)) { result.status = 'purged'; return result; }
-        if (e instanceof ReplayError) throw e;
-        throw new ReplayError('shadow_replay_seed_failed', `error code ${(e as { code?: unknown }).code ?? (e as Error).name}`);
+        const purgedNow = purgeLogChanged(next.purge_log, home) || (e instanceof ReplayError && e.code === 'shadow_replay_purged');
+        invalidateIfPurged(cap, { home, force: purgedNow ? 'purge' : 'seed_failed' });
+        if (purgedNow) { await settleSeededEpoch(cap, next, home); result.status = 'purged'; return result; }
+        await scheduleScratchDrop(cap);
+        throw e instanceof ReplayError ? e : new ReplayError('shadow_replay_seed_failed', `error code ${(e as { code?: unknown }).code ?? (e as Error).name}`);
       }
       if (!await settleSeededEpoch(cap, next, home)) result.status = 'purged';
       else if (result.status === 'off') result.status = 'seeded_only';
+    } else if (next) {
+      await settleSeededEpoch(cap, next, home);
     }
+    if (failure && result.status !== 'purged') throw failure;
     return result;
   } finally {
     unlock();

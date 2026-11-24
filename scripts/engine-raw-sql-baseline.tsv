@@ -1260,6 +1260,7 @@ src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
 src/mcp/http-transport.ts	sql_template	3
 src/mcp/source-preflight.ts	execute_raw	1
+src/shadow/capture.ts	driver_call	1	shadow replay: a purge drops the local scratch Postgres copy through one plain driver connection, so it can never reach the brain through the module connection or a direct-URL route
 src/shadow/capture.ts	execute_raw	4	shadow replay: drops the local scratch Postgres copy's schema when the brain purges (a replay-owned scratch database, never the brain)
 src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
 src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on

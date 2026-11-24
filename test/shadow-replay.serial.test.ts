@@ -24,7 +24,7 @@ import { constructEngine } from '../src/core/engine-construct.ts';
 import type { EngineConfig } from '../src/core/types.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { captureDir } from '../src/shadow/capture-state.ts';
-import { epochDir, readEpoch } from '../src/shadow/capture.ts';
+import { basesDir, epochDir, readEpoch } from '../src/shadow/capture.ts';
 import { runNightlyReplay } from '../src/shadow/replay-run.ts';
 import { hmacKey } from '../src/shadow/replay.ts';
 import { shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
@@ -203,6 +203,8 @@ describe('shadow replay end to end', () => {
       const s = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
       const sc = await constructEngine(s);
       await sc.connect(s);
+      await sc.executeRaw('CREATE TABLE gbrain_shadow_replay_owner (brain TEXT PRIMARY KEY)');
+      await sc.executeRaw("INSERT INTO gbrain_shadow_replay_owner VALUES ('pglite-abc')");
       await sc.executeRaw('CREATE TABLE copy_rows (id int)');
       await sc.disconnect();
       const cap = capDir(dir);
@@ -229,4 +231,61 @@ describe('shadow replay end to end', () => {
       await expect(openReplayArm('postgres', spec)).rejects.toThrow(/shadow_replay_postgres_not_owned/);
     });
   });
+
+  test.skipIf(!PG)('a scratch database that holds only a materialized view is still refused and left as it was', async () => {
+    const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
+    await emptyScratch(PG!);
+    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
+    const e = await constructEngine(cfg);
+    await e.connect(cfg);
+    try {
+      await e.executeRaw('CREATE MATERIALIZED VIEW someone_elses_view AS SELECT 1 AS n');
+      await expect(resetScratchPostgres(e, 'pglite-abc')).rejects.toThrow(/shadow_replay_postgres_not_owned/);
+      const [row] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.someone_elses_view') IS NOT NULL AS present");
+      expect(row?.present).toBe(true);
+    } finally {
+      await e.disconnect();
+      await emptyScratch(PG!);
+    }
+  });
+
+  test.skipIf(!HAVE_ADDON)('copies get the brain\'s own embedding layout, not this process\'s default', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-replay-dims-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT, GBRAIN_SHADOW_CHILD: undefined, GBRAIN_SHADOW_CAPTURE: undefined, GBRAIN_SHADOW_REPLAY_POSTGRES_URL: undefined }, async () => {
+        const config = { engine: 'pglite', database_path: join(home, 'brain.pglite') } as EngineConfig;
+        const { saveConfig } = await import('../src/core/config.ts');
+        saveConfig(config as never);
+        const bare = await constructEngine(config);
+        await bare.connect(config);
+        await (bare.initSchema as (o: object) => Promise<void>).call(bare, { embedding: { dimensions: 768, model: 'example-embedding-768' } });
+        await bare.putPage('notes/vector-example', { type: 'note', title: 'Vector example', compiled_truth: 'One chunk with a 768 vector.', timeline: '' });
+        await bare.upsertChunks('notes/vector-example', [{ chunk_index: 0, chunk_text: 'One chunk with a 768 vector.', chunk_source: 'compiled_truth',
+          embedding: new Float32Array(768).fill(0.01), model: 'example-embedding-768', token_count: 6 }]);
+        await bare.disconnect();
+        const key = shadowBrainKey(config)!;
+        const shadowDir = shadowDirFor(key);
+        const io = { out: () => {}, err: () => {}, config: () => config };
+        expect(await runEngineShadow(['capture', 'on', '--yes'], io)).toBe(0);
+        const deps = nightlyDeps({ ...io, now: () => new Date(), brain: { key, dir: shadowDir, engine: 'pglite' }, openPrimary: async () => {
+          const e = await constructEngine(config); await e.connect(config); return e;
+        } });
+        expect((await runNightlyReplay(deps)).status).toBe('seeded_only');
+        const copyPath = join(basesDir(captureDir(shadowDir), readEpoch(captureDir(shadowDir))!.id), 'pglite');
+        const copyCfg = { engine: 'pglite', database_path: copyPath } as EngineConfig;
+        const copy = await constructEngine(copyCfg);
+        await copy.connect(copyCfg);
+        try {
+          const { readStoredEmbeddingIdentity } = await import('../src/core/stored-embedding-identity.ts');
+          expect((await readStoredEmbeddingIdentity(copy))?.dimensions).toBe(768);
+          const [col] = await copy.executeRaw<{ t: string }>("SELECT format_type(a.atttypid, a.atttypmod) AS t FROM pg_attribute a WHERE a.attrelid = 'content_chunks'::regclass AND a.attname = 'embedding'");
+          expect(col?.t).toBe('vector(768)');
+          const [n] = await copy.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NOT NULL');
+          expect(n?.n).toBe(1);
+        } finally { await copy.disconnect(); }
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 300_000);
 });

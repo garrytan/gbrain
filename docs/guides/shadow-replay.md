@@ -45,9 +45,13 @@ recording waits for the next run. A Postgres brain needs no window.
 
 Optional third arm: set `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` to an empty Postgres database on this machine
 (`localhost` or a Unix socket). Any other host is refused before a row is sent. The seed records the URL in
-`capture/scratch-postgres.json` (owner-only), after it has checked the database is empty or its own, so that a
-purge in any process can drop the copy. Every scratch connection uses its own connection pool, so a process that holds
-the brain on Postgres never reaches the brain through it. With three arms a difference reads as
+`capture/scratch-postgres.json` (owner-only), after it has checked the database is empty or its own and written an owner
+marker naming this brain, so that a purge in any process can drop the copy. Cleanup drops only a database whose marker
+names this brain at that moment; a database recreated or reused since is never touched. A purge drops the copy through a plain connection of its own, so a process that holds the brain on
+Postgres never reaches the brain through it. Run the nightly command with `GBRAIN_DIRECT_DATABASE_URL` unset: the seed
+refuses the Postgres arm while it is set, because schema work on the copy would follow it. The copy gets the brain's
+own embedding layout. "Empty" means no table, view, materialized view, sequence, function or type other than those an
+installed extension owns. With three arms a difference reads as
 "Rust differs" (PGLite and Postgres agree) or "the TypeScript engines disagree" (`ts_disagree`). With two arms a
 difference only shows that PGLite and Rust disagree.
 
@@ -60,6 +64,8 @@ difference only shows that PGLite and Rust disagree.
   replay refuses a database whose owner marker does not name this brain. Two replays of one brain cannot run at once.
 - Calls that finished before the snapshot are skipped (`pre_cut`); calls that overlap it are skipped (`boundary`).
 - Committed transactions replay as one group; rolled-back ones are skipped.
+- Only engine calls are recorded; a record whose call started before the current recording began is dropped, so a
+  call caught by a purge never lands in the next recording.
 - Raw SQL, reserved connections and calls with a function argument are not replayable and count as `gaps`.
 - After the replay, every page a replayed write named is read back on each arm (`sweep:` rows), so a write that one
   engine dropped is caught even when it returned the right answer.
@@ -69,9 +75,14 @@ difference only shows that PGLite and Rust disagree.
 - A call that succeeded on the live brain but fails the same way on every copy is labeled `replay_diverged`, never a
   match. The usual cause is a conditional write whose expected revision was created after the snapshot: the replay
   passes the recorded revision as is, so such calls prove nothing either way.
-- Read-back sweeps read each written page in the source the write named.
+- Read-back sweeps read each written page in the source the write named. The sweep reads up to 5,000 pages; past that the report
+  says `incomplete` and counts `sweep_skipped`.
+- A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
+  a second failure retires them. A purge always deletes them.
+- Recording stays bounded on the brain's own calls: an argument over 1 MiB is recorded as a `gaps` entry before it is
+  copied, and a result over 1 MiB is not hashed past that size.
 - The replay runs in a child process with a throwaway home and no API keys. It cannot open network connections (only
-  the local scratch Postgres) and opens only its copies, never the brain.
+  the local scratch Postgres, with TLS when that database asks for it) and opens only its copies, never the brain.
 
 ## Purge
 
@@ -90,6 +101,7 @@ the purged brain. Reports and summaries hold no content, so a purge has nothing 
 gbrain engine shadow capture off                 # stops every recording process at its next write; deletes nothing
 GBRAIN_SHADOW_CAPTURE=off gbrain serve           # off for any process started with this variable
 gbrain engine shadow capture delete --yes        # drops the scratch copy, deletes recordings, copies and reports
+gbrain engine shadow stop --delete               # also drops the replay's Postgres copy before it deletes shadow state
 ```
 
 ## Nightly run on the brain's host (for an operator agent)

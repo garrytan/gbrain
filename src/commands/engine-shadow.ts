@@ -585,6 +585,12 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
     }
   }
   if (del) {
+    // Shadow replay keeps the only record of its local Postgres copy under this directory: drop that copy first.
+    const { scheduleScratchDrop } = await import('../shadow/capture.ts');
+    if (!await scheduleScratchDrop(join(brain.dir, 'capture'))) {
+      err('engine shadow: the shadow replay Postgres copy could not be dropped, so nothing was deleted. Make that database reachable and run this again.');
+      return 1;
+    }
     rmSync(brain.dir, { recursive: true, force: true });
     out(`Shadow mode is off for brain ${brain.key}; ${brain.dir} is deleted.`);
   } else {
@@ -592,6 +598,8 @@ async function stop(brain: { key: string; dir: string; engine: string }, del: bo
   }
   return hooksLeft ? 1 : 0;
 }
+/** Test seam: `stop` with no primary (a PGLite brain takes no writer hooks). */
+export const __stopForTests = (brain: { key: string; dir: string; engine: string }, del: boolean, out: (l: string) => void) => stop(brain, del, {}, out, out, () => new Date());
 
 function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {
   const r = buildProvisionalReport(brain.dir, brain.key, readShadowState(brain.dir), now());
