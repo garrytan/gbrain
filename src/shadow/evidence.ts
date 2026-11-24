@@ -94,8 +94,8 @@ export interface EvidenceOptions {
   readinessDays?: number;
 }
 
-/** The outcomes that settle the privacy question of a private read (a completed comparison with an outcome; `stale` is the lagged mismatch). Not `order_diff`, `inconclusive`, `capability_missing`, `error`, `timeout`, `addon_unavailable`. */
-export const PRIVACY_SETTLING_OUTCOMES = ['match', 'collation_order', 'diff', 'privacy_diverged', 'stale'] as const satisfies readonly ShadowOutcome[];
+/** The outcomes that settle the privacy question of a private read: a completed comparison with an outcome (`stale` is the lagged mismatch). `order_diff` settles only because the child's judge (child.ts) turns any non-clean privacy verdict into `inconclusive` or `privacy_diverged` before it can be written. Not `inconclusive`, `capability_missing`, `error`, `timeout`, `addon_unavailable`. */
+export const PRIVACY_SETTLING_OUTCOMES = ['match', 'order_diff', 'collation_order', 'diff', 'privacy_diverged', 'stale'] as const satisfies readonly ShadowOutcome[];
 
 const COMPARED = new Set(['match', 'order_diff', 'diff', 'stale', 'inconclusive', 'collation_order']);
 const RUST_ERRORS = new Set(['error', 'timeout', 'addon_unavailable']);

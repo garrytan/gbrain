@@ -375,7 +375,8 @@ describe('the fold settles the privacy question of a private read by an allowlis
   // The one place each ledger outcome is classified. A value added to SHADOW_OUTCOMES makes this Record fail to compile, and the test below fail, until someone decides.
   const SETTLES: Record<ShadowOutcome, boolean> = {
     match: true, collation_order: true, diff: true, privacy_diverged: true, stale: true, // stale is the lagged mismatch
-    order_diff: false, inconclusive: false, capability_missing: false, error: false, timeout: false, addon_unavailable: false,
+    order_diff: true, // order_diff settles only after a completed compare with a clean privacy check: the child's judge (child.ts) makes any non-clean verdict inconclusive or privacy_diverged first
+    inconclusive: false, capability_missing: false, error: false, timeout: false, addon_unavailable: false,
   };
   test('every ledger outcome is classified: the table and the outcome list cannot drift apart', () => {
     expect(Object.keys(SETTLES).sort()).toEqual([...SHADOW_OUTCOMES].sort());

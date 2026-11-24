@@ -411,6 +411,30 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       expect(failed.evidence.privacy_checks_unsettled_7d).toBe(1);
     });
 
+    test('the same rows in another order (order_diff) settle the privacy question after a completed compare with a clean privacy check: no unsettled count, privacy_diverged present', async () => {
+      const r = await ranked((theirs) => [...theirs].reverse());
+      expect(r.rows[0]).toMatchObject({ op: 'searchVector', outcome: 'order_diff', private_read: true });
+      expect(r.evidence.privacy_checks_unsettled_7d).toBe(0);
+      expect(r.row3.state).toBe('pass');
+    });
+
+    describe('order_diff never settles after a privacy check that was not clean', () => {
+      // The first answer holds an extra row and one with no identity (not complete: a rerun is due); the reruns then answer the primary's own rows in another order.
+      // The ranked rerun compare is an order_diff, so only its privacy check decides; when that check moves or fails, the row must stay open and never be written as order_diff.
+      const reordered = (n: { calls: number }) => (theirs: Rows, spare: Record<string, unknown>): Rows => (++n.calls === 1 ? [...theirs, spare, { ...spare, page_id: undefined, slug: undefined, source_id: undefined }] : [...theirs].reverse());
+      test('a rerun whose own privacy check cannot be answered leaves the sample open, not order_diff', async () => {
+        const r = await ranked(reordered({ calls: 0 }), { settle: true, noRecall: true, child: { random: () => 0.5, sleep: async () => undefined }, onPrivacyAsk: async (n) => { if (n >= 2) throw new Error('privacy ask failed'); } });
+        expect(r.rows[0]!.outcome).not.toBe('order_diff');
+        expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: expect.stringMatching(/^skipped:/) });
+        expect(r.evidence.privacy_checks_unsettled_7d).toBeGreaterThan(0);
+      });
+      test('control: the same rerun answered clean (the rerun\'s rows are the primary\'s own, so there is no extra row to judge) closes the sample as matched and settles it', async () => {
+        const r = await ranked(reordered({ calls: 0 }), { settle: true, noRecall: true, child: { random: () => 0.5, sleep: async () => undefined } });
+        expect(r.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'matched' });
+        expect(r.evidence.privacy_checks_unsettled_7d).toBe(0);
+      });
+    });
+
     test('a read made under excludePrivate that the Rust adapter refuses (capability_missing) leaves the privacy question open: privacy_checks_unsettled_7d is above 0 and privacy_diverged stays absent', async () => {
       await privacyFixture(ctx.primary());
       const rig = await start();
