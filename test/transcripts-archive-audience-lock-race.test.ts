@@ -58,12 +58,12 @@ for (const kind of testBackends()) {
     let engine: BrainEngine;
     let close: () => Promise<void>;
     const home = emptyHome();
-    let token = '';
+    let bearer = '';
     let result: Awaited<ReturnType<typeof runTranscriptArchive>>;
 
     async function otherReads(slug: string): Promise<string[]> {
       __resetPrivateVisibilityCacheForTests();
-      const auth = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) }).verifyAccessToken(token) as unknown as AuthInfo;
+      const auth = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) }).verifyAccessToken(bearer) as unknown as AuthInfo;
       const sourceId = auth.sourceId ?? 'default';
       const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
       const leaks: string[] = [];
@@ -93,7 +93,7 @@ for (const kind of testBackends()) {
         result = await withEnv({ GBRAIN_HOME: home }, () => runTranscriptArchive(engine, { mode: 'backfill', from: '2026-10-03', to: '2026-10-03', readers: [late('agent:main:other')], now: new Date('2026-10-05T00:00:00Z') }));
       } finally { spy.mockRestore(); }
       const minted = await mintLegacyToken(engine, { name: 'tok-other', scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
-      token = minted.token;
+      bearer = minted.token;
       await bindCredential(engine, { kind: 'token', id: minted.id }, { member: OTHER });
     }, 240_000);
 
