@@ -278,7 +278,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The federation warning's exposed-pages read (engine-sql/federation-exposure.ts, federation_exposure.rs): a SELECT and a store read only.
   'readFederationExposedPages',
   'readOwnedLinks', 'readOwnerHostBinding', 'readPageRevisionWriter', 'readPageSizeRows',
-  'readPageSynopses', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'readPageSynopses', 'readPagePrivacyHidden', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches',
   'readReasonPurgeTombstones', 'readRefreshTiming', 'readRenameIdentityRows', 'readRetiredManagedSyncCursor',
   'readRevisionWriterRequest', 'readSeedTitleSlugs', 'readSegmentRegions', 'readSegmentedGateEvidence',
   'readSourceCheckoutRoot', 'readSourceMovementRows', 'readStoredConfigValue', 'readSyncAdmissionEffects', 'readSyncConversionRows',

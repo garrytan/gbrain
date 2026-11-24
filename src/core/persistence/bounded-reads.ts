@@ -110,7 +110,8 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readJournalCeiling', 'sweepJournalChunk',
   'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
   'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
-  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe']);
+  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe',
+  'readPagePrivacyHidden', 'readLinkTargetPages', 'readWriteVisibilityProbe']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

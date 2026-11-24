@@ -372,6 +372,7 @@ test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-only-reads.test.ts
 test/engine-parity/owner-only-row-delete-marks.test.ts
 test/engine-parity/owner-recovery-scans.test.ts
+test/engine-parity/owner-write-privacy.test.ts
 test/engine-parity/page-embedding-budget.test.ts
 test/engine-parity/page-lock-anchors.test.ts
 test/engine-parity/page-purge-holds.test.ts
