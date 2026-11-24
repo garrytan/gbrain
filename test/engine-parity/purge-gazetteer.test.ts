@@ -8,7 +8,8 @@
  *    is a purged slug, in its source, and keep the entries of other pages and other sources
  *    (persistence/purge-name-stores.ts `scrubPurgedNameStores`). The probe purge verification runs on the store
  *    (`countPurgeProbe` over `mention_gazetteer_entries.name_norm`, facts/purge-verify.ts) counts a held name before
- *    the purge and none after it.
+ *    the purge and none after it, and so does the page purge receipt's `slug_key` probe of the gazetteer (both
+ *    entries targeting the slug before, none after).
  *  - Regression: the Rust store kept the purged page's names in the gazetteer, and its purge probe reported the
  *    gazetteer as a store it keeps no rows of, so a Rust purge verified clean while the names stayed.
  *  - Why existing coverage misses it: the name-store scrub tests run on PGLite and Postgres only, and the mention-pass
@@ -37,8 +38,12 @@ async function seed(engine: BrainEngine, backend: ParityBackend) {
 
 const entries = async (engine: BrainEngine, sourceId: string) =>
   (await engine.listGazetteerEntryKeys(sourceId)).map(e => `${e.name_norm}>${e.target_slug}`).sort();
-const probe = (engine: BrainEngine) =>
+const tableProbe = (engine: BrainEngine) =>
   engine.countPurgeProbe({ kind: 'table', table: 'mention_gazetteer_entries', sourceId: 'default', needles: ['zed example'], probe: ['name_norm'] }, 100);
+/** The page purge receipt's probe of the gazetteer (engine-sql/purge-verify.ts `slug_key`): entries targeting the slug. */
+const slugProbe = (engine: BrainEngine) =>
+  engine.countPurgeProbe({ kind: 'slug_key', store: 'mention_gazetteer_entries', sourceId: 'default', slug: 'people/zed-example' }, 100);
+const probe = async (engine: BrainEngine) => ({ table: await tableProbe(engine), slug: await slugProbe(engine) });
 
 describe('engine parity: a page purge scrubs the mention gazetteer', () => {
   parityTest('deletePages removes the purged page\'s gazetteer entries and the purge probe agrees', {
@@ -48,7 +53,7 @@ describe('engine parity: a page purge scrubs the mention gazetteer', () => {
     const heldBefore = await probe(engine);
     const deleted = await engine.deletePages(['people/zed-example'], { sourceId: 'default' });
     const out = { heldBefore, deleted, heldAfter: await probe(engine), kept: await entries(engine, 'default'), other: await entries(engine, 'other') };
-    expect(out).toEqual({ heldBefore: 1, deleted: ['people/zed-example'], heldAfter: 0, kept: ['amy example>people/amy-example'],
+    expect(out).toEqual({ heldBefore: { table: 1, slug: 2 }, deleted: ['people/zed-example'], heldAfter: { table: 0, slug: 0 }, kept: ['amy example>people/amy-example'],
       other: ['zed example>people/zed-example'] });
     return out;
   });
@@ -64,7 +69,7 @@ describe('engine parity: a page purge scrubs the mention gazetteer', () => {
     const out = { afterSoftDelete, purged: purged.slugs, heldAfter: await probe(engine), kept: await entries(engine, 'default'),
       other: await entries(engine, 'other') };
     expect(out).toEqual({ afterSoftDelete: ['amy example>people/amy-example', 'zed example>people/zed-example', 'zed>people/zed-example'],
-      purged: ['people/zed-example'], heldAfter: 0, kept: ['amy example>people/amy-example'], other: ['zed example>people/zed-example'] });
+      purged: ['people/zed-example'], heldAfter: { table: 0, slug: 0 }, kept: ['amy example>people/amy-example'], other: ['zed example>people/zed-example'] });
     return out;
   });
 });

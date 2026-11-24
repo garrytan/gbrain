@@ -25,7 +25,7 @@ The store keeps the pass's three tables (migration v206) under the `META` family
 A hard page delete removes the page's state record and a source delete removes the source's status, entries and page
 state (`cascade.rs`), as the SQL foreign keys cascade. A page purge (`deletePages`, `purgeDeletedPages`) also deletes the
 entries whose target is a purged slug in its source (`scrub_purged_entries`, `scrubPurgedNameStores`); a soft delete keeps
-them. A purge verification probe of `mention_gazetteer_entries` searches the saved entries (`purge_probe_rows`). A status write refuses a state outside
+them. A purge verification probe of `mention_gazetteer_entries` searches the saved entries (`purge_probe_rows`), and a page purge receipt's `slug_key` probe counts the entries targeting the slug (`count_for_target`). A status write refuses a state outside
 `complete|pending|disabled|failed` and a missing source with the constraint errors Postgres raises.
 
 ## Semantics

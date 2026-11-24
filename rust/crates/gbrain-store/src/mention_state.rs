@@ -213,6 +213,18 @@ fn source_entries(read: &dyn KvRead, source: &str) -> Result<Vec<(String, String
     Ok(out)
 }
 
+/// The gazetteer entries of `source` whose target is `slug`, every name and case flag (a page purge receipt's
+/// `slug_key` probe, `SELECT 1 FROM mention_gazetteer_entries WHERE source_id = $1 AND target_slug = $2`).
+pub(crate) fn count_for_target(read: &dyn KvRead, source: &str, slug: &str) -> Result<usize> {
+    if source.contains('\0') {
+        return Ok(0);
+    }
+    Ok(source_entries(read, source)?
+        .iter()
+        .filter(|(_, target, _)| target == slug)
+        .count())
+}
+
 /// `scrubPurgedNameStores` on `mention_gazetteer_entries` (src/core/persistence/purge-name-stores.ts): deletes the
 /// entries of `source` whose target is one of the purged `slugs`, every name and case flag, and returns how many went
 /// (`DELETE .. WHERE source_id = $1 AND target_slug = ANY($2) RETURNING 1`). Entries have no foreign key to pages, so a

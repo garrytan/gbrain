@@ -22,9 +22,9 @@
  * A page purge receipt's store probes (engine-sql/purge-verify.ts) run through the same two members, as
  * `countPurgeStoreProbe` and `listPurgeStoreProbeItems` (facts/purge_store_probe.rs). The store answers `slug_key` for the
  * stores it keeps (pages, facts, take proposals, open loops, page and slug aliases, eval candidates, files, write-gate
- * holds), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
+ * holds, the mention gazetteer), `page_rows`, `fact_refs`, `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and
  * `effect_payload`. It keeps no rows of `core_edit_notices`, the retrieval event, link, feedback and weight stores,
- * `context_volunteer_events`, `mention_gazetteer_entries` or `query_cache`, so a probe of one finds nothing without a store
+ * `context_volunteer_events` or `query_cache`, so a probe of one finds nothing without a store
  * call. The fact purge receipt's `fingerprint` probe (the fact, take and take proposal stores) and `claim_text` probe (pages,
  * chunks, versions and journal requests; facts/purge_claim_probe.rs) run there too. A `claim_text` probe of `core_edit_notices`
  * finds nothing without a store call, as a `slug_key` probe of it does.
