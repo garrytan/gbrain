@@ -28,7 +28,7 @@
  *    insertAccessToken and insertOauthClient. A client binding with the attest-sources marks runs on every arm too
  *    (the last case), its sources written through the harness helpers.
  *  - Scope sources (row 32c): the last three describes pin --attest-sources and assertScopeSourceGrant on every arm, `auth rescope --token`
- *    through the real command, and, on the Rust arm alone, that the bare-name rescope (resolveRescopeTarget) and verifiedMember with no engine still stop on raw SQL (row 32d-1).
+ *    through the real command, and, on the Rust arm alone, that verifiedMember with no engine still stops on raw SQL (row 32d-1).
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -708,7 +708,7 @@ describe('engine parity: scope sources (--attest-sources, row 32c)', () => {
   }, (engine, backend) => attestSourcesCase(engine, backend));
 });
 
-describe('the Rust arm answers --attest-sources and rescope --token (row 32c), and refuses the bare-name rescope and verifiedMember with no engine', () => {
+describe('the Rust arm answers --attest-sources, rescope --token and the bare-name rescope (rows 32c, 32k), and refuses verifiedMember with no engine', () => {
   // A parity case counts a typed refusal as a pass, so these read the Rust arm's own engine and fail on a refusal.
   const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
   const rustArm = async () => {
@@ -757,17 +757,16 @@ describe('the Rust arm answers --attest-sources and rescope --token (row 32c), a
   };
   const marks = (backend: string) => ({ backend, exitCode: 0, refused: false, attest: ['scope-cli'], marked: true });
 
-  // Row 32k once stopped this on raw SQL on Rust; on main `--token <name>` marks the source and writes the credential's list on every arm.
+  // Row 32k once stopped this on raw SQL on Rust; `--token <name>` marks the source and writes the credential's list on every arm.
   test('rescope --token marks the source on every engine', async () => {
     const outcomes = await rescopeOutcomes(['--token', 'cli-tok']);
     expect(outcomes).toEqual(arms().map((arm) => marks(arm.backend)));
   });
 
-  // The bare-name form still stops on Rust: resolveRescopeTarget (legacy-token.ts) looks the name up through executeRaw. The pin fails when Rust serves it.
-  test('loss: the bare-name rescope marks the source on PGLite and Postgres and stops on raw SQL on Rust, writing nothing', async () => {
+  // The bare-name form once stopped on Rust (row 32k): resolveRescopeTarget now reads the token and the clients through typed members.
+  test('the bare-name rescope marks the source on every engine', async () => {
     const outcomes = await rescopeOutcomes(['cli-tok']);
-    expect(outcomes).toEqual(arms().map((arm) => arm.backend === 'rust'
-      ? { backend: 'rust', exitCode: 1, refused: true, attest: null, marked: null } : marks(arm.backend)));
+    expect(outcomes).toEqual(arms().map((arm) => marks(arm.backend)));
   });
 
   test('loss: verifiedMember with no engine stops on the raw_sql refusal', async () => {
