@@ -80,8 +80,10 @@ export async function primaryRelationDigest(reads: ReadSource, relation: string,
 
 /**
  * The forward fingerprint guard, inside the fence and before authority moves: the probe runs on the live primary and
- * the swap continues only when no stored fact holds a code point the Rust engine fingerprints differently and the
- * corpus sample agrees. An affected fact or a failed probe refuses `fingerprint_semantics_differ`; a probe that cannot
+ * the swap continues on the probe's own rule (probeState, src/shadow/fingerprints.ts): where the server's lower() or
+ * [[:space:]] differs from the Rust engine on some code points (stock Postgres does, so its corpus sample always reports
+ * mismatches), it refuses only when a stored fact holds one; with no differing code point, any corpus mismatch refuses.
+ * An affected fact or a failed probe refuses `fingerprint_semantics_differ`; a probe that cannot
  * run (an error, a primary without the fingerprint functions) refuses `verification_incomplete`. Never a silent pass.
  */
 export async function checkFingerprints(reads: ReadSource, rpc: Rpc): Promise<'pass'> {
@@ -99,7 +101,7 @@ export async function checkFingerprints(reads: ReadSource, rpc: Rpc): Promise<'p
   if (affected > 0) {
     throw new SwapVerifyError('fingerprint_semantics_differ', `${affected} stored fact(s) hold a code point whose fingerprint differs under the Rust engine (${record.differing_code_points_total} differing code point(s))`);
   }
-  if (record.state !== 'pass' || Number(record.corpus_mismatches ?? 0) > 0) {
+  if (record.state !== 'pass') {
     throw new SwapVerifyError('fingerprint_semantics_differ', `the fingerprint probe found ${record.mismatches + Number(record.corpus_mismatches ?? 0)} mismatch(es)`);
   }
   return 'pass';
