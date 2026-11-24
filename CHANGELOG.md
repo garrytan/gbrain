@@ -10,6 +10,192 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.770.0] - 2026-11-24
+
+**`gbrain dedupe classes` and `gbrain dedupe sample` no longer stop on a chat page stored in segments.**
+
+### Fixed
+- `gbrain dedupe classes` and `gbrain dedupe sample` refused the whole run with `page_body_segmented` when the brain held a chat page stored in segments (a page over 1 MiB). Such a page is now read whole up to 24 MiB and its chat counts as evidence. A larger one, or one whose read fails, is set aside, its chat adds no evidence, and the run carries on. The output lists it on its own line, and `--json` carries it under `messaging.segmented_page` (`read`, `set_aside` and the `pages`).
+
+**`gbrain repair ghost-pages` no longer soft-deletes a page whose file moved to another page, and `gbrain repair moved-pages` folds a file that was renamed and edited in one commit.**
+
+### Fixed
+- `gbrain repair ghost-pages` approved a page whose file a commit deleted for soft-delete even when Git shows the file moved to another live page, so the old page's links, facts and timeline were purged 72 hours later instead of carried over. The preview now lists such a page apart as `moved_to`, names the fold (`gbrain repair moved-pages --source <id> --slug <slug>`, which previews first and applies only with `--apply --expect <hash> --yes`) and never approves it. A page whose path Git renamed, or whose last committed content a file in HEAD still holds, but whose fold is not proven to lose nothing, is kept as `move_unproven`.
+- A `database_ahead_of_file` ghost now carries move evidence in the preview: `matched` when a moved page holds every line of it, database edit included, with the fold to run, and `unmatched` otherwise, naming any file that looks like where it went.
+- `gbrain repair moved-pages` folded only a move that kept the file byte for byte. It now also folds a file the deleting commit renamed (or the one live file with the same name that Git first added after the old file and no later than its deletion) when the moved page holds every line of the old page's body and timeline in order, its type, its tags and its frontmatter, and a strict move whose old page was edited in the database when the moved page holds that edit. A move whose lines changed stays held as before.
+- `gbrain extract --stale` crashed with `TypeError: undefined is not an object` on a page stored in segments (over 1 MiB) whose saved timeline derivation named a segment the page no longer holds. The incremental timeline read now falls back to the full pass, and saved timeline derivations are re-derived once.
+- Correction to the previous release's note on `file_drift` holds: it said a plain `gbrain sync` never re-checks a hold an earlier release wrote. That release adds no automatic re-check of its own, but a hold written before screen version 3 is still re-checked by every sync, as earlier releases already did.
+
+<!-- behavior-change: ghost_pages_moved_kept_gst3623 -->
+
+**Doctor keeps the "first sync stopped at a usage limit" warning through frequent reruns, skipped and queued runs, and limits hit before any mail is read.**
+
+<!-- behavior-change: sync_freshness_usage_limit_followups_gst3452 -->
+
+### Fixed
+- Doctor's `sync_usage_limited` warning for a connector source in a long first sync now holds while the newest limited run that landed pages is inside the fail age, however many later runs hit the spent limit (it read only the last 50 jobs before), and a skipped or queued newest job no longer hides it. A run whose writes are still pending no longer counts as having landed pages.
+- A gbrain.io usage limit hit while reading the account's identity, before any mail, now ends the run `partial` with `stopped_on: usage_limit` instead of failing the sync.
+- A bare permission error (HTTP 403) on one Gmail thread no longer stops the rest of the batch as if a usage limit were spent, and the log no longer calls it rate limited.
+- A sync job that keeps its job lock but has run past the staleness ceiling now reads `fail` with a read-only `gbrain jobs get` fix instead of "first sync running".
+
+**The conversation archive no longer leaves pages any member can read when a brain turns shared while an archive run is starting or still running.**
+
+### Fixed
+- An archive run read the brain's audience (personal or shared, and the owner) before it took its source's run lock. A `gbrain access member add` (or `gbrain config set brain.audience shared`) that finished in that gap kept the earlier pages to the owner, but the run then wrote its new pages with no readers, so the new member could read them, and it recorded the brain as personal again. The run now reads the audience and the archive switch again once it holds the lock, so its pages are kept to the owner and a brain whose unset switch now resolves off archives nothing.
+- When the new audience moves the run to another source (on a shared brain, a checkout source's archive goes to its database-only `<source>-owner` source), the run writes nothing and ends with the new retryable code `archive_audience_changed`; the maintenance pass records it as a skip, and the next run archives into the owner-only source.
+- A run that started on the personal brain and was still writing when the brain turned shared left its later pages for the next run to keep to the owner (`archive_rescope_pending`). An archive run into a checkout source's `<source>-owner` source, or one that found the archive off, could record the brain as shared in the meantime without holding that source's run lock, so the next run skipped the re-scope and those later pages stayed open to every member. The audience is now recorded only while the source's run lock is held; while another run holds it, the owner-only rules apply and the re-scope stays pending for the next run.
+
+**A test that counts the statements of a page write no longer fails at random, and when it fails it names the extra statement.**
+
+### Fixed
+- The test that checks a new page still costs 8 database statements leaves out the WAL checkpoint probe PGLite sends on its own when its last probe is over 50 ms old, and compares each statement by its text as well as by number. The limit of 8 is unchanged. No product behavior changes.
+
+**The nightly cycle now records what it learned, and `gbrain learned` shows it.**
+
+<!-- behavior-change: learned_view_nightly_ledger -->
+
+### Added
+- A new cycle phase, `learning_derive`, runs after the other maintenance phases and before purge. It notes each new thing the cycle learned (a fact an extractor added, a promise someone made you, a pair of facts that disagree, a thin page that enrichment filled, and a Facts row you typed yourself) as a pointer in a new `learning_items` table. It stores ids only, never the text, and records each thing once, however many cycles run.
+- `gbrain learned` (MCP tool `learned`) lists what was learned that you have not seen yet, newest first, 15 by default (`--limit` up to 100), each rendered from the live fact, loop, proposal or page. Something you forgot, purged or made private drops out. `--since <date>` lists everything since then, and `--stats` shows, per night, how many items you kept or saw without undoing. Remote callers see only what their token can read, and other sources stay out.
+- Works on a brain with no git repository, and on PGLite and Postgres. A brain whose schema is behind gets a `migrations_pending` refusal from `learned` and a skipped phase; an engine without raw SQL gets `engine_capability_missing`.
+
+**Thin-page filling can now start with the people you actually meet and message, and can stay under a daily spending cap.**
+
+<!-- behavior-change: enrich_thin_owner_contact_default -->
+
+### Added
+- `gbrain enrich --thin --order owner-contact` ranks thin person and company pages by recent contact: meetings, conversations, email threads and chronicle events from the last 90 days that link to or mention the page (newer counts more), open loops with that person, and one point when the page links to or from your own page, divided by how full the page already is. A page you met three times this week now comes before one linked from 200 old imports. The ranking is one SQL query with no model call, so it works on a keyless brain, and `--dry-run` prints the order and each source's candidates in rank order.
+- The `enrich_thin` cycle phase uses owner-contact as its default order when gbrain finds your own page with no conflict, and keeps inbound-links otherwise. A `cycle.enrich_thin.order` you set always wins. The phase stays off by default.
+- `cycle.enrich_thin.max_daily_cost_usd` and `cycle.enrich_thin.max_daily_pages` cap the phase across every run in your day (`brain.timezone`, UTC when unset), on top of the per-run caps. Unset, there is no daily cap; a cap set to something that is not a number (`$5`) stops the phase until it is fixed, instead of meaning no cap. A run charges each source its full cap before it starts and trues it up after, so a run that dies mid-source never under-counts.
+- Without a chat model the phase skips before any spend and still reports the order it would use.
+- On a brain with no chat key, `gbrain learned` now says how many people you are in touch with have thin pages ("2 close contacts have thin pages; a chat key would fill them"), with the commands that turn filling on and what it would cost. Only you see it, locally or with your owner token. Nothing is filled and nothing is spent.
+- `gbrain learned` now keeps up to five possible duplicate people open at a time, the person groups from `gbrain dedupe --preview` ranked by how recently you met them (preview order when gbrain can't find your own page). Each one shows the exact `gbrain dedupe confirm` and `gbrain dedupe reject` commands for its group, and drops out once you answer; the next best group takes its place on the next cycle, and the best-ranked shows first. Nothing is linked or merged on its own, keyless brains get the list too, and a remote token sees only groups whose pages it can read.
+
+### For contributors
+- On an engine with no raw SQL (the Rust engine), the `enrich_thin` phase skips with `engine_capability_missing` before it lists candidates.
+- The Rust engine store refuses `listEnrichCandidates` with `order: 'owner-contact'` (`engine_capability_missing`) instead of answering with another order.
+- `listEnrichCandidates` returns `contact_score` for the owner-contact order. `test/learning-duplicates.test.ts` covers the duplicate list on PGLite and Postgres.
+- `test/enrich-owner-contact.test.ts` covers the ranking on PGLite and Postgres, the default-order fallback, keyless runs and 24 runs in one day; `test/enrich-owner-contact-perf.slow.test.ts` holds the query under 500 ms at 100,000 pages on PGLite.
+
+**On the experimental Rust engine, the CLI's sync, fact repair, stale-link extraction, source refresh and code reindex commands can now hand their work to a running `gbrain serve` that owns a Rust brain, as they already do on PGLite; nothing selects the Rust engine yet, and a Rust serve does not take this work until the rest of the Rust engine lands, so nothing changes for anyone today.**
+
+### Changed
+- When a `gbrain serve` owns a Rust brain and can take the work, `gbrain sync`, `gbrain embed --stale --facts`, `gbrain extract --stale`, `gbrain sources refresh` and `gbrain reindex-code` run inside that serve instead of opening the brain themselves. A Rust owner that cannot take the work leaves each command as it runs today.
+- While `gbrain serve` owns a Rust brain, a command that cannot be handed to it (a full `dream` or cycle run, `import`, `embed --all`) waits for the serve or refuses, as on PGLite today. On Postgres these commands run beside the serve.
+- The "owner stopped before admission" errors of sync, fact repair and source refresh no longer say "PGLite", because the owner can now be a Rust brain's serve.
+
+**The shadow-off cost test no longer fails on a busy machine.**
+
+### Fixed
+- The test that checks shadow mode off adds no database statements compared two runs by the exact name of each cached statement they closed. A busy machine could change which earlier statements were cached, so the names differed even when every statement sent was the same, and the test failed about half the time under load. The test now renames closed statements the same way it already renamed prepared ones, so it fails only on a real difference in what is sent.
+
+## [0.60.769.0] - 2026-11-24
+
+### For contributors
+- The concurrency benchmark's lockfile (rust/concurrency-bench/Cargo.lock) moves the `url` crate from 2.5.8 to 2.5.9, which fixes RUSTSEC-2026-0592, so osv-scan passes again on every pull request. The same update brings `form_urlencoded` to 1.2.3 and adds the `sha2` dependency line the lockfile was missing.
+
+**`gbrain dedupe classes` counts likely duplicate people by their evidence, and `gbrain dedupe sample` exports pairs to check by hand.**
+
+`gbrain dedupe classes` groups every pair of person pages that might be one person by its evidence. That evidence is a shared email, phone or account id (C1 to C7), your email pages and chat pages (iMessage and chat exports, read only on your machine), and, if you turn it on with your own key, an Exa web search on a name plus one company or job title. It prints how many pairs would link, wait or be marked different. `gbrain dedupe sample --class <c>` picks a seeded random sample of one class for labelling. Both only read: nothing is linked or edited. Web search is off by default and is never used for a page not every reader may read (private labels, named readers, folder rules, owner-only sources) or a family or minor page; each page is read again just before its search goes out. It caches every answer, runs one live search at a time and stops at a per-run and a total cap; `--exa --dry-run` prints the cost first.
+
+<!-- behavior-change: dedupe_classes_gst3609 -->
+
+### For contributors
+- `src/core/entities/evidence/`: `people.ts` (candidate pairs and their base class), `email.ts` (E1, E3, E4), `messaging.ts` (M1 to M3, Mx), `exa.ts` (the opt-in client, cache and caps), `combine.ts` (the rule) and `classes.ts` (counts and the seeded sample).
+- New config keys: `dedupe.exa`, `dedupe.exa_run_cap`, `dedupe.exa_total_cap_usd`; internal state `dedupe.exa_spent_usd` and `dedupe.exa_cache.*`. New error code `dedupe_exa_off`.
+- test/dedupe-classes-evidence.test.ts covers every class, the contradictions, zero email and chat pages, Exa off by default, the privacy filter on a fake fetch (privacy labels, folder rules, owner-only sources, tags added with `gbrain tag`, a page changed mid-run), the cache, both caps, the live-run lock, failed requests and the dry run on a repo-less brain.
+
+**Google Contacts pages can now be linked to the person pages they describe, by exactly the same email or phone.**
+
+`gbrain dedupe link-contacts --source <id>` counts how a Google source's contact pages would link and changes nothing. `--apply` links each contact page to the one person page with exactly the same email or phone, the rule Apple Contacts already uses, and keeps the contacts each sync changes linked. A contact that matches two or more people, or one person whose page has another name, waits for you in `gbrain sync status`, a name alone never links, and no page is edited. `gbrain dedupe reject` on a contact and person pair removes that link for good, for Apple Contacts links too, and `--unlink` removes all of a source's links.
+
+<!-- behavior-change: google_contacts_identity_links_gst3609 -->
+
+### For contributors
+- `src/core/google/contact-identity.ts` settles the links through `linkContactPage` (apple-contacts/identity-match.ts), which now takes a link origin, the owner's "different" sets and a dry-run flag, and returns `different` for a single match the owner rejected. With `contactName` it returns `name_disagrees` for a single match whose page name clearly disagrees (`namesAgree`, entities/name-variants.ts), which waits as a review.
+- `google_contacts.identity_links` (default off) is the switch `sweepContacts` reads; `--apply` and `--unlink` set it. It is one switch for the whole brain, not one per Google source.
+- `gbrain dedupe reject <entity id>` on a group a contacts source joined records one person member (the canonical one when there is one) and the contact pages, never every member another writer linked. `linkContactPage` checks the owner's "different" sets against every member of the person's group, so a reject holds whichever member's email or phone matched. Apple Contacts reads those sets once per sync.
+- test/google-contacts-identity-links.test.ts covers the dry run, apply, reviews, reject, a removed contact, another writer's link and `--unlink` on a repo-less brain.
+
+**`gbrain think --save` and `--take` now work on a managed brain.**
+
+### Fixed
+- On a managed brain, `gbrain think --save` failed with `writer_coordinator_required` and `--take` was refused because the anchor page belongs to the managed checkout, so nothing was saved. Both now go through the persistence coordinator. The synthesis page and the take row are written as tracked requests at the trust tier of what the answer read, and the write gate judges the take at that same tier.
+- A save or take that was accepted but is still publishing is no longer reported as a failure. The CLI prints the answer and then exits 10 with the request id to check, the `think` tool returns the answer with a `SAVE_PENDING` or `TAKE_PENDING` warning, and the dream cycle's auto-think counts the question as answered instead of paying for the same synthesis again.
+- `think --take` now writes the take in the source you chose with `--source` (it always used `default`), and a `think` tool call with no source scope no longer refuses its take.
+
+**A page whose stored timeline sits inside its body no longer reads as drifted from its file, so writes to it stop being refused and its sync holds can be released.**
+
+### Fixed
+<!-- behavior-change: timeline_split_not_drift -->
+- Pages imported before v0.46.25.0 kept a bare dated `## Timeline` section inside the stored body with an empty timeline. Today's parser reads the same unchanged file with that section split off as the timeline, so every write to such a page was refused `source_changed` (`file_database_drift`) and sync held its next file edit `file_drift`, though both copies held the same text. The comparison now also reads the stored body split the way today's parser splits it, so these pages take writes and sync their files again. This covers pages stored inline on sources that are not read-only mirrors; a large page stored in segments, or a mirror's page, still reads as drifted. A page that differs from its file in any line still refuses and stays held, with both copies kept.
+- A `file_drift` hold an earlier release wrote stays until someone asks: `gbrain sources retry-held <id>`, or the release `gbrain repair file-drift --source <id> --held` lists, re-checks it, and a hold that came only from where the timeline was split then clears without a repair. A plain `gbrain sync` never re-checks it on its own, so on a strict source an upgrade never imports a file over a held page.
+- A hold on a file unchanged since its import (database side) whose page and file agree could not be released: `gbrain repair file-drift --held` listed it `release_hold`, but its release and `gbrain sources retry-held` left it held. The re-check, which a retry of any hold on such a page now runs, imports the page when its file holds the page and holds it again otherwise, so `gbrain repair file-drift --source <id> --slug <slug> --prefer file` releases it. A pending write still waiting for its Git publish, and a page under a `storage.db_only` folder, keep their database copy, and a retry leaves them as they were.
+- A file over the in-memory sync limit (24 MiB) whose page also changed in the database is held `file_drift` instead of streamed over the database copy, because such a file cannot be compared with the page in memory.
+
+**Connector syncs on a distant database spend fewer round trips per item, so re-checking contacts that a previous run already wrote runs about 1.3 times faster.**
+
+### Fixed
+- A managed connector sync (Google, GitHub and the rest) re-read the same run-wide rows (its lock, the source row, the owner binding, the writer grant, the mirror and slug-root modes) up to nine times for every page it read or wrote. Each is now read once per page read or write, and read again after the sync waits for an earlier write to finish; the checks that guard a write still run under their locks when the write is admitted and published. An unchanged contact now costs about 40 database statements instead of 52, and a contact written for the first time about 187 instead of 190. On a Supabase pooler about 30 ms away, re-checking a contacts page that a previous run already wrote drops from roughly 1.5 s to about 1.2 s per contact (#9990).
+
+**`gbrain doctor` stops calling a connector source "never synced" while its first sync is still working through a provider's daily limit.**
+
+<!-- behavior-change: sync_freshness_usage_limit_gst3452 -->
+
+### Fixed
+- A Gmail source read through gbrain.io (or any Google source on a tight quota) can take several runs to finish its first sync, because each run stops when the provider's usage limit runs out and the next one resumes. `gbrain doctor` failed sync_freshness for such a source with `sync_no_successful_sync`, and for a source whose first sync job was running between two sync locks, which also tripped the upgrade's doctor check and held writers for no reason. A run that stopped only at the limit now records `stopped_on: usage_limit`, and doctor reads it as `warn` (`sync_usage_limited`) while a limited run that landed pages is inside the fail age, so later runs that hit the spent limit straight away keep the warning. A running sync job reads `warn` (`sync_first_run_in_progress`). Failed items, held files, a bare permission error (403) and limited runs that stopped landing pages long ago still fail.
+
+**Held writes now stay held when their page is renamed.**
+
+When the write gate holds a fact or take for your review, it now remembers which page it was held for by the page's permanent id, not just its name. Before, renaming the page (a Git rename picked up by sync, or `gbrain repair rename-identity`) made the held row show up in answers under the new name without you releasing it, and a different page that later took the old name inherited the hold.
+
+- A held write recorded before any page had its name is claimed by the first page created there.
+- Releasing a held fact publishes it on the page it was held for, under that page's current name. If that page is gone, the release is refused and the fact stays held.
+- Purging a page removes only the holds that belong to that page; a hold that could belong to several pages stays until the last of them is purged.
+- On upgrade, existing holds are matched to their page from the page that holds the name and its rename record (the rename history and the older aliases). A hold that cannot be matched to one page stays held for every page it could belong to and is listed by the new `gbrain doctor` check `write_gate_hold_ambiguous`; drop it in `gbrain trust review`. Identical duplicates are merged; a duplicate that differs is kept.
+- The `gbrain doctor` check `write_gate_holds_stranded` now ignores holds that follow their page: a hold bound to a page that exists, or an unbound one that the rename record leads to a live page, is not reported, because renaming the page no longer lifts it. It lists only the holds that no live page matches (a soft-deleted page, or no page yet), as information, and still warns when it cannot count.
+- Known limit: if two purges run at the same time on pages that share a reused name, a held write can be left behind. It stays hidden and is never shown. `gbrain trust review` shows it, and the owner can remove it with `gbrain trust drop`. A later maintenance sweep will remove these automatically.
+
+<!-- behavior-change: held_writes_follow_page_rename -->
+
+### For contributors
+- Migration v333 adds `write_gate_holds.page_id` and `page_candidates`, with two disjoint partial unique indexes (bound on source, page id, fingerprint and detector version; unbound on source, slug, fingerprint and detector version). `recordWriteGateHold` takes an optional `pageId` that producers who already read the page pass; without it the page is found inside the same INSERT, with no page lock. The page-insert path binds waiting holds, `movePageIdReferences` carries holds with the page, and the purge sweeps delete by id (by slug only for unbound holds).
+- The Rust engine's own hold store and rename paths still have to match this: see the contract in the pull request description.
+
+**The rest of the Rust storage engine's code is now on master, and nothing selects it yet.**
+
+### Added
+- The Rust store crate's remaining modules (access members, rules and tokens, OAuth clients, generations, session state, repair scans, shared-skill catalog and the others), the `gbrain-napi` addon crate with its smoke cases, the store's tests and benches, and the design docs under `rust/docs`. Every file under `rust/` is the Rust trunk's version.
+
+### Fixed
+- Ten Rust documentation files now match the code: the `Brain.open` options and the `page_ambiguous` error in `rust/README.md`, the store format number (7, not 1) in five store docs, the compact projection-job encoding, the write receipts that pages, versions, facts and takes carry, and the keyword index follow-up.
+
+### Changed
+- The Rust store writes store format 7 and opens formats 1 to 7. Loop mutes now live under their own key prefix, so take purges no longer read wrong after a loop mute; an older store is converted when it opens. A store written by v0.60.766.0's shadow seed is read correctly or refused with a re-seed message. A downgrade after an upgrade needs a re-seed, because an older addon refuses a format 7 store.
+
+### For contributors
+- No brain behaves differently after this lands: the default engines are unchanged and the Rust engine stays unselectable until the TypeScript adapter lands.
+
+**The Rust engine swap check can now tell how many machines write your brain: while shadow mode runs, gbrain records which processes and database connections write it.**
+
+### Added
+- `engine_writer_observations`, `engine_writer_sessions` and `engine_writer_coverage_gaps` (schema migration): empty unless Rust engine shadow mode is on. Each writing gbrain process notes itself (host id, connection name, command kind, version, first and last write) at most every 10 minutes after a committed write.
+- On a Postgres brain, `gbrain engine shadow start --yes` adds one statement-level trigger to every brain table that records each writing connection, at most every 10 minutes per connection; it never fails a write and waits at most 50 ms on its own tables (an error becomes a gap row). `gbrain engine shadow stop` removes them, including any a killed start or crashed stop left. PGLite brains are not hooked.
+- The shadow status document's `eligibility` fields for the swap check: `writer_hosts_7d` and `unknown_writer_paths` (filled only when the caller passes the open brain; `gbrain engine shadow status` never opens the database), `team_brain` and `preview_target` (a release addon target: linux-x64-glibc or darwin-arm64). A failed read leaves the writer fields out and adds `eligibility_evidence` with the error code only.
+
+### Changed
+- `gbrain engine shadow start --plan` now lists these writes; plan hashes from before this change no longer match, so confirm the new plan.
+- `gbrain engine shadow stop` exits 1 when it could not remove the writer hooks (the database was unreachable), and says to run it again.
+
+<!-- behavior-change: engine_writer_observations_s5 -->
+
+**Fixed: `gbrain engine swap --plan` now reads the shadow's status, so its readiness verdict reflects what the shadow measured.**
+
+### Fixed
+- The swap plan was never given the shadow status, so every readiness criterion read as missing and the plan could never say READY. It now reads the same document `gbrain engine shadow status --json` prints for this brain.
+- A brain with no shadow now gets `NOT READY` with reason `no_shadow` and a pointer to `gbrain engine shadow start`, instead of `writer_coverage_unknown`.
+- The swap's readiness policy now lives in one file, with criterion 1's 14-day default and the dated Dec 1 override for one brain. Its hash is part of the shadow evidence, so the policy is frozen for the Dec 1 swap.
+
 ## [0.60.768.0] - 2026-11-24
 
 **The duplicate finder lists same-name pages of one source for collapsing even when a page in another source matches them, and confirm no longer links two pages of one source.**

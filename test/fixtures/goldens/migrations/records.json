@@ -1,12 +1,11 @@
 {
   "golden": {
-    "count": 331,
+    "count": 332,
     "gaps": [
       17,
       18,
       19,
       100,
-      334,
       335
     ],
     "helpers": {
@@ -5442,6 +5441,19 @@
         "version": 333
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "learning_items",
+        "sql": {
+          "length": 1300,
+          "sha256": "452befb84aff2e089f1cb62b2a220222badef1996be01e691495bf5ee152df83"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 334
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -5860,6 +5872,7 @@
       331,
       332,
       333,
+      334,
       336,
       337,
       338

@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 180 tools across 28 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 181 tools across 28 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -93,6 +93,7 @@ Every non-localOnly operation on the MCP surface: 180 tools across 28 areas. **S
 | `find_trajectory` | Return the chronological claim trajectory for an entity (typed metric values over time, plus auto-detected regressions and narrative drift). | read |  |  |
 | `get_calibration_profile` | Read the active calibration profile for a holder. | read |  |  |
 | `get_recent_salience` | Recently touched pages ranked by salience. | read | yes |  |
+| `learned` | What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). | read |  |  |
 | `volunteer_context` | Push-based context: volunteer brain pages relevant to a rolling conversation window WITHOUT being asked. | read |  |  |
 
 ## jobs

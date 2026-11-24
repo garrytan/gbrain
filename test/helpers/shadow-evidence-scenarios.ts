@@ -81,11 +81,9 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
       writeSeedRecord(home, record);
       const theirs = await primary.getTags('people/alice-example');
       const cOrder = [...theirs].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
-      if (ctx.kind === 'postgres') {
-        const [{ datcollate }] = await primary.executeRaw<{ datcollate: string }>('SELECT datcollate FROM pg_database WHERE datname = current_database()');
-        // Only a host whose collation is not C can show the class; say so when the arm cannot.
-        if (!['C', 'POSIX'].includes(datcollate)) expect(theirs).not.toEqual(cOrder);
-      }
+      // getTags sorts tags in byte order (COLLATE "C") on every engine on this tree, whatever the database collation, so
+      // the primary never shows the collation class for tags: the outcome is a match on every host.
+      expect(theirs).toEqual(cOrder);
       const state = { version: 1, enabled: true, started_at: 'x', sample_rate: 1, queue_bound: 64, plan_hash: 'h', brain: 'b', primary_engine: ctx.kind };
       await withEnv({ GBRAIN_RUST_ENGINE_ADDON: ctx.addonPath }, async () => {
         const attached = attachShadowParts(primary, home, state as never, { gbrainArgv: [process.execPath, join(import.meta.dir, '..', '..', 'src', 'cli.ts')] });

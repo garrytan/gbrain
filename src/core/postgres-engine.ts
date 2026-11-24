@@ -5665,7 +5665,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async clearCodeEdgesLeavingChunks(chunkIds: number[]): Promise<void> {
-    return codeEdgesImpl.clearCodeEdgesLeavingChunks(this.engineSql, chunkIds);
+    return codeEdgesImpl.clearCodeEdgesLeavingChunks(this.autocommitSql, chunkIds);
   }
 
   async getCallersOf(
