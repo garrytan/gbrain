@@ -2,8 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.ts';
 import { constructEngine } from './engine-construct.ts';
-import { shadowStateFor } from '../shadow/state.ts';
-import { capturePurgeWatchFor, captureStateFor } from '../shadow/capture-state.ts';
+import { shadowHomeUsed, shadowStateFor } from '../shadow/state.ts';
 
 /**
  * Create an engine instance based on config.
@@ -38,12 +37,14 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
     out = attachShadow(engine, shadow.dir, shadow.state);
   }
   // Shadow replay capture (docs/guides/shadow-replay.md): off unless `gbrain engine shadow capture on --yes`.
-  const capture = captureStateFor(config);
+  // A home that never used shadow mode has no shadow root and loads no capture module (one existsSync, as above).
+  const cs = shadowHomeUsed() ? await import('../shadow/capture-state.ts') : null;
+  const capture = cs?.captureStateFor(config);
   if (capture) {
     const { attachCapture } = await import('../shadow/capture.ts');
     out = attachCapture(out, capture.cap);
   }
-  const purgeWatch = capturePurgeWatchFor(config);
+  const purgeWatch = cs?.capturePurgeWatchFor(config);
   if (purgeWatch) (await import('../shadow/capture.ts')).watchPurges(out, purgeWatch);
   return out;
 }
