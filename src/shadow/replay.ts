@@ -45,7 +45,10 @@ export interface RunSpec {
 
 export type Outcome = { ok: true; value: unknown } | { ok: false; code: string };
 
-export type DiffClass = 'match' | 'capability_missing' | 'rust_diff' | 'rust_diff_seed_loss' | 'ts_disagree' | 'differs' | 'differs_seed_loss';
+export type DiffClass = 'match' | 'capability_missing' | 'rust_diff' | 'rust_diff_seed_loss' | 'ts_disagree' | 'differs' | 'differs_seed_loss'
+  /** Every arm failed the same way on a call that succeeded on the live brain (a replay that is not faithful, e.g. a
+   * conditional write whose expected revision was generated after the snapshot). Never counted as a match. */
+  | 'replay_diverged';
 
 export interface ReportDiff { ref: string; member: string; path: string[]; class: DiffClass; hashes: Partial<Record<ArmName, string>> }
 
@@ -231,9 +234,9 @@ async function callOn(engine: BrainEngine, rec: CaptureRecord): Promise<Outcome>
 }
 
 /** Runs a unit on one arm and returns the outcome of every call in it, in order. */
-export async function runUnit(engine: BrainEngine, unit: Unit): Promise<Array<{ member: string; out: Outcome }>> {
-  if (unit.kind === 'call') return [{ member: unit.rec.member!, out: await callOn(engine, unit.rec) }];
-  const outs: Array<{ member: string; out: Outcome }> = [];
+export async function runUnit(engine: BrainEngine, unit: Unit): Promise<Array<{ member: string; out: Outcome; liveOk?: boolean }>> {
+  if (unit.kind === 'call') return [{ member: unit.rec.member!, out: await callOn(engine, unit.rec), liveOk: unit.rec.ok }];
+  const outs: Array<{ member: string; out: Outcome; liveOk?: boolean }> = [];
   const body = async (tx: BrainEngine) => {
     for (const child of unit.children) outs.push(...await runUnit(tx, child));
   };
@@ -255,7 +258,7 @@ const SCHEMA_KEYS = new Set(('$outcome slug source_id title type compiled_truth 
   + 'embedded_count pages_by_type revision version body_storage search_vector stale public_read context_text').split(' '));
 
 export function redactPath(path: string[], key: Buffer): string[] {
-  return path.map(p => (p.startsWith('[') || SCHEMA_KEYS.has(p) ? p : `#${keyedHash(key, p).slice(0, 8)}`));
+  return path.map(p => (/^\[\d+\]$/.test(p) || SCHEMA_KEYS.has(p) ? p : `#${keyedHash(key, p).slice(0, 8)}`));
 }
 
 export function keyedHash(key: Buffer, value: string): string {
@@ -283,6 +286,7 @@ export function reportMarkdown(r: ReplayReport): string {
     r.seed_losses_present ? 'The seed had losses on the Rust arm, so a Rust difference may be a copy difference.' : '', '', '| class | calls |', '|---|---|',
     ...Object.entries(r.by_class).sort().map(([k, v]) => `| ${k} | ${v} |`), '', '| count | value |', '|---|---|',
     ...Object.entries(r.counts).map(([k, v]) => `| ${k} | ${v} |`), ''];
+  if (r.by_class.replay_diverged) lines.push('replay_diverged: every arm refused a call that succeeded on the live brain; the replay was not faithful there (often a conditional write whose expected revision was created after the snapshot), so those calls prove nothing either way.', '');
   if (r.arms.length === 2) lines.push('With two arms a difference shows that PGLite and Rust disagree, not which one is wrong.', '');
   lines.push('| member | field path | class | count |', '|---|---|---|---|');
   const groups = new Map<string, number>();
@@ -338,16 +342,28 @@ function writeOwnerOnly(path: string, text: string): void {
   chmodSync(path, 0o600);
 }
 
-/** Collects slugs a replayed write named, for the read-back sweep. */
+/** The source a call's arguments name (`sourceId` in an options object, or a row's `source_id`), else undefined. */
+function sourceOf(args: unknown[]): string | undefined {
+  for (const a of args) {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) continue;
+    const r = a as { sourceId?: unknown; source_id?: unknown };
+    if (typeof r.sourceId === 'string') return r.sourceId;
+    if (typeof r.source_id === 'string') return r.source_id;
+  }
+  return undefined;
+}
+
+/** Collects the (source, slug) pairs a replayed write named, for the read-back sweep, as JSON keys. */
 function writtenSlugs(units: Unit[], into: Set<string>): void {
   for (const u of units) {
     if (u.kind === 'tx') { writtenSlugs(u.children, into); continue; }
     const m = u.rec.member!;
     if (m in SHADOW_READ_MEMBERS || /^(get|list|search|find|count|read|resolve)/.test(m)) continue;
-    const args = decodeValue(u.rec.args) as unknown[];
-    const first = args?.[0];
-    if (typeof first === 'string' && /^[^\s]{1,300}$/.test(first)) into.add(first);
-    if (first && typeof first === 'object' && typeof (first as { slug?: unknown }).slug === 'string') into.add((first as { slug: string }).slug);
+    const args = (decodeValue(u.rec.args) as unknown[]) ?? [];
+    const first = args[0];
+    const slug = typeof first === 'string' && /^[^\s]{1,300}$/.test(first) ? first
+      : first && typeof first === 'object' && typeof (first as { slug?: unknown }).slug === 'string' ? (first as { slug: string }).slug : null;
+    if (slug) into.add(JSON.stringify([sourceOf(args) ?? null, slug]));
   }
 }
 
@@ -377,7 +393,8 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
   const plan = buildUnits(records, spec.cut);
   const known = new Set<string>();
   for (const r of records) collectKnown(r.args, known);
-  const window = { from: now(), to: Number.MAX_SAFE_INTEGER };
+  // Only times the replay itself produced are volatile: `to` moves to now before each comparison.
+  const window = { from: now(), to: now() };
   const arms = ARM_ORDER.filter(a => a !== 'postgres' || !!spec.arms.postgres);
   const engines = {} as Record<ArmName, BrainEngine>;
   try {
@@ -385,33 +402,36 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     const norms = { rust: new NormState(known, window), postgres: spec.arms.postgres ? new NormState(known, window) : undefined };
     const diffs: ReportDiff[] = [];
     let compared = 0;
-    const compare = (ref: string, member: string, outs: Partial<Record<ArmName, Outcome>>) => {
+    const compare = (ref: string, member: string, outs: Partial<Record<ArmName, Outcome>>, liveOk?: boolean) => {
       compared++;
-      const { cls, path } = classify(outs, norms, spec.seed_losses_present);
+      window.to = now() + 5_000; // a database clock a few seconds ahead of this process still counts as replay time
+      let { cls, path } = classify(outs, norms, spec.seed_losses_present);
+      if (cls === 'match' && liveOk === true && arms.every(a => outs[a] && !outs[a]!.ok)) { cls = 'replay_diverged'; path = ['$outcome']; }
       if (cls === 'match') return;
       const hashes: Partial<Record<ArmName, string>> = {};
       for (const a of arms) hashes[a] = keyedHash(key, outcomeText(outs[a]));
       diffs.push({ ref, member, path: redactPath(path, key), class: cls, hashes });
     };
     for (const unit of plan.units) {
-      const results = {} as Record<ArmName, Array<{ member: string; out: Outcome }>>;
+      const results = {} as Record<ArmName, Array<{ member: string; out: Outcome; liveOk?: boolean }>>;
       for (const a of arms) results[a] = await runUnit(engines[a], unit);
       const n = Math.max(...arms.map(a => results[a].length));
       for (let i = 0; i < n; i++) {
         const outs: Partial<Record<ArmName, Outcome>> = {};
         for (const a of arms) outs[a] = results[a][i]?.out ?? { ok: false, code: 'call_missing' };
-        compare(`${keyedHash(key, unit.order)}#${i}`, results.pglite[i]?.member ?? results.rust[i]?.member ?? '?', outs);
+        compare(`${keyedHash(key, unit.order)}#${i}`, results.pglite[i]?.member ?? results.rust[i]?.member ?? '?', outs, results.pglite[i]?.liveOk);
       }
     }
     const slugs = new Set<string>();
     writtenSlugs(plan.units, slugs);
     const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline'] as const;
-    for (const slug of [...slugs].sort().slice(0, 500)) {
+    for (const entry of [...slugs].sort().slice(0, 500)) {
+      const [sourceId, slug] = JSON.parse(entry) as [string | null, string];
       for (const m of sweepMembers) {
-        const rec = { member: m, args: [slug] } as CaptureRecord;
+        const rec = { member: m, args: sourceId ? [slug, { sourceId }] : [slug] } as CaptureRecord;
         const outs: Partial<Record<ArmName, Outcome>> = {};
         for (const a of arms) outs[a] = await callOn(engines[a], rec);
-        compare(`sweep:${keyedHash(key, slug)}`, `sweep:${m}`, outs);
+        compare(`sweep:${keyedHash(key, entry)}`, `sweep:${m}`, outs);
       }
     }
     if (plan.units.length) {

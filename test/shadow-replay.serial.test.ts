@@ -53,14 +53,14 @@ function tree(root: string): Record<string, string> {
 
 /** GBRAIN_TEST_REPLAY_POSTGRES_URL names a database this test owns: start each run from an empty schema. */
 async function emptyScratch(url: string): Promise<void> {
-  const cfg = { engine: 'postgres', database_url: url } as EngineConfig;
+  const cfg = { engine: 'postgres', database_url: url, poolSize: 1 } as EngineConfig;
   const e = await constructEngine(cfg);
   await e.connect(cfg);
   try { await e.executeRaw('DROP SCHEMA IF EXISTS public CASCADE'); await e.executeRaw('CREATE SCHEMA public'); } finally { await e.disconnect(); }
 }
 
 async function scratchTables(url: string): Promise<number> {
-  const cfg = { engine: 'postgres', database_url: url } as EngineConfig;
+  const cfg = { engine: 'postgres', database_url: url, poolSize: 1 } as EngineConfig;
   const e = await constructEngine(cfg);
   await e.connect(cfg);
   try { return (await e.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public'"))[0]!.n; } finally { await e.disconnect(); }
@@ -164,7 +164,7 @@ describe('shadow replay end to end', () => {
 
   test.skipIf(!PG)('a scratch Postgres database that holds tables a replay did not create is refused and left as it was', async () => {
     const { resetScratchPostgres } = await import('../src/shadow/replay-copy.ts');
-    const cfg = { engine: 'postgres', database_url: PG } as EngineConfig;
+    const cfg = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
     const e = await constructEngine(cfg);
     await e.connect(cfg);
     try {
@@ -176,6 +176,45 @@ describe('shadow replay end to end', () => {
     } finally {
       await e.executeRaw('DROP TABLE IF EXISTS someone_elses_table').catch(() => undefined);
       await e.disconnect();
+    }
+  });
+
+  test.skipIf(!PG)('a purge drops the scratch copy through its own connection, even when this process holds the brain on Postgres', async () => {
+    const { captureDir: capDir } = await import('../src/shadow/capture-state.ts');
+    const { dropScratchPostgres, scratchRecordPath } = await import('../src/shadow/capture.ts');
+    const { writePrivateJson } = await import('../src/shadow/capture-state.ts');
+    const primaryUrl = PG!.replace(/\/[^/?]+(\?|$)/, '/replay_primary_probe$1');
+    const admin = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
+    const a = await constructEngine(admin);
+    await a.connect(admin);
+    await a.executeRaw('DROP DATABASE IF EXISTS replay_primary_probe').catch(() => undefined);
+    await a.executeRaw('CREATE DATABASE replay_primary_probe');
+    await a.disconnect();
+    const primaryCfg = { engine: 'postgres', database_url: primaryUrl } as EngineConfig;
+    const primary = await constructEngine(primaryCfg); // the module singleton, as a Postgres brain uses it
+    await primary.connect(primaryCfg);
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-replay-pg-'));
+    try {
+      await primary.executeRaw('CREATE TABLE brain_rows (id int)');
+      await emptyScratch(PG!);
+      const s = { engine: 'postgres', database_url: PG, poolSize: 1 } as EngineConfig;
+      const sc = await constructEngine(s);
+      await sc.connect(s);
+      await sc.executeRaw('CREATE TABLE copy_rows (id int)');
+      await sc.disconnect();
+      const cap = capDir(dir);
+      writePrivateJson(scratchRecordPath(cap), { url: PG, brain: 'pglite-abc', verified: true });
+      expect(await dropScratchPostgres(cap)).toBe(true);
+      const [row] = await primary.executeRaw<{ present: boolean }>("SELECT to_regclass('public.brain_rows') IS NOT NULL AS present");
+      expect(row?.present).toBe(true);
+      expect(await scratchTables(PG!)).toBe(0);
+    } finally {
+      await primary.disconnect();
+      rmSync(dir, { recursive: true, force: true });
+      const c = await constructEngine(admin);
+      await c.connect(admin);
+      await c.executeRaw('DROP DATABASE IF EXISTS replay_primary_probe').catch(() => undefined);
+      await c.disconnect();
     }
   });
 });

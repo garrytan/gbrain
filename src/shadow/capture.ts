@@ -26,7 +26,7 @@ import { onPurgeIntent, purgeMirrorPath } from '../core/belief/purge-mirror.ts';
 import { configDir } from '../core/config.ts';
 import { registerEngineView, viewedEngine } from '../core/persistence/switches.ts';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
-import { canonicalJson, encodeValue } from './codec.ts';
+import { canonicalJson, encodeArgs, encodeValue } from './codec.ts';
 import { captureIsOn, writePrivateJson } from './capture-state.ts';
 import { ReplayError } from './replay-errors.ts';
 
@@ -122,18 +122,23 @@ function removeTree(path: string): void {
   }
 }
 
-/** Deletes an epoch's segments and base copies, and every replay work copy. Returns what it deleted. */
+/**
+ * Deletes every recording and copy the capture directory holds: all epoch directories and base copies (not only
+ * `id`'s, so ones a crashed nightly run left behind go too) and every replay run's copied segments, work copies,
+ * throwaway home and minimizer brains. Reports (content-free) stay. Returns what it deleted.
+ */
 export function deleteEpochData(cap: string, id: string): string[] {
-  const gone = [epochDir(cap, id), basesDir(cap, id)].filter(existsSync);
-  for (const path of gone) removeTree(path);
+  const gone = [epochDir(cap, id), basesDir(cap, id)];
+  if (existsSync(cap)) for (const f of readdirSync(cap)) if (f.startsWith('epoch-')) gone.push(join(cap, f));
+  const bases = join(cap, 'bases');
+  if (existsSync(bases)) for (const f of readdirSync(bases)) gone.push(join(bases, f));
   const runs = join(cap, '..', 'replay');
   if (existsSync(runs)) {
-    for (const run of readdirSync(runs)) {
-      const work = join(runs, run, 'work');
-      if (existsSync(work)) { removeTree(work); gone.push(work); }
-    }
+    for (const run of readdirSync(runs)) for (const sub of ['work', 'segments', 'home', 'fresh', 'run.json']) gone.push(join(runs, run, sub));
   }
-  return gone;
+  const removed = [...new Set(gone)].filter(existsSync);
+  for (const path of removed) removeTree(path);
+  return removed;
 }
 
 /**
@@ -159,9 +164,11 @@ export const scratchRecordPath = (cap: string) => join(cap, 'scratch-postgres.js
 export const scratchPendingPath = (cap: string) => join(cap, 'scratch-drop-pending');
 type ScratchSql = { executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>; disconnect(): Promise<void> };
 type ScratchOpener = (url: string) => Promise<ScratchSql>;
+/** A scratch connection always gets its own pool: the module singleton may hold the brain's own Postgres. */
+export const scratchEngineConfig = (url: string) => ({ engine: 'postgres' as const, database_url: url, poolSize: 2 });
 const openScratch: ScratchOpener = async url => {
   const { constructEngine } = await import('../core/engine-construct.ts');
-  const cfg = { engine: 'postgres', database_url: url } as never;
+  const cfg = scratchEngineConfig(url) as never;
   const e = await constructEngine(cfg);
   await e.connect(cfg);
   return e;
@@ -175,15 +182,21 @@ const scratchDrops = new Map<string, Promise<boolean>>();
 export async function dropScratchPostgres(cap: string): Promise<boolean> {
   const recordPath = scratchRecordPath(cap);
   if (!existsSync(recordPath)) { rmSync(scratchPendingPath(cap), { force: true }); return true; }
-  let rec: { url: string; brain: string };
+  let rec: { url: string; brain: string; verified?: boolean };
   try { rec = JSON.parse(readFileSync(recordPath, 'utf8')); } catch { return false; } // silent-read-ok: not silent; false keeps the drop pending and every replay, status and seed refuses
   let e: ScratchSql | null = null;
   try {
     e = await scratchOpener(rec.url);
     const [marker] = await e.executeRaw<{ present: boolean }>("SELECT to_regclass('public.gbrain_shadow_replay_owner') IS NOT NULL AS present");
-    if (marker?.present) {
-      const [own] = await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1');
-      if (own && own.brain !== rec.brain) return false;
+    // Drop only a database this replay owns: its marker names this brain, or the seed verified it empty or owned
+    // before writing (a refused, unrelated database is never touched; its record is just forgotten).
+    const owned = marker?.present
+      ? (await e.executeRaw<{ brain: string }>('SELECT brain FROM gbrain_shadow_replay_owner LIMIT 1'))[0]?.brain === rec.brain
+      : rec.verified === true;
+    if (!owned) {
+      rmSync(recordPath, { force: true });
+      rmSync(scratchPendingPath(cap), { force: true });
+      return true;
     }
     await e.executeRaw('DROP SCHEMA IF EXISTS public CASCADE');
     await e.executeRaw('CREATE SCHEMA public');
@@ -372,7 +385,7 @@ export function wrapCaptureEngine<E extends BrainEngine>(engine: E, writer: Capt
     let encoded: unknown;
     let access: unknown;
     try {
-      encoded = encodeValue(args);
+      encoded = encodeArgs(args);
       const a = callerAccessRecord();
       access = a ? encodeValue(a) : undefined;
     } catch {

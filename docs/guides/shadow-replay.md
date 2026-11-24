@@ -40,7 +40,9 @@ copies, and seeds fresh copies for the next one. Run it once a night. It needs t
 
 Optional third arm: set `GBRAIN_SHADOW_REPLAY_POSTGRES_URL` to an empty Postgres database on this machine
 (`localhost` or a Unix socket). Any other host is refused before a row is sent. The seed records the URL in
-`capture/scratch-postgres.json` (owner-only) so that a purge in any process can drop the copy. With three arms a difference reads as
+`capture/scratch-postgres.json` (owner-only), after it has checked the database is empty or its own, so that a
+purge in any process can drop the copy. Every scratch connection uses its own connection pool, so a process that holds
+the brain on Postgres never reaches the brain through it. With three arms a difference reads as
 "Rust differs" (PGLite and Postgres agree) or "the TypeScript engines disagree" (`ts_disagree`). With two arms a
 difference only shows that PGLite and Rust disagree.
 
@@ -55,6 +57,10 @@ difference only shows that PGLite and Rust disagree.
 - Timestamps the replay itself produced and ids first created during the replay are matched one to one between arms.
   A wrong stored id or a wrong date is still a difference.
 - When the seed could not copy everything into the Rust store, Rust differences are labeled `*_seed_loss`.
+- A call that succeeded on the live brain but fails the same way on every copy is labeled `replay_diverged`, never a
+  match. The usual cause is a conditional write whose expected revision was created after the snapshot: the replay
+  passes the recorded revision as is, so such calls prove nothing either way.
+- Read-back sweeps read each written page in the source the write named.
 - The replay runs in a child process with a throwaway home and no API keys. It cannot open network connections (only
   the local scratch Postgres) and opens only its copies, never the brain.
 
@@ -62,7 +68,7 @@ difference only shows that PGLite and Rust disagree.
 
 When you purge a page or fact, gbrain writes a line to its purge log. Any new purge-log line, or a purge log that
 cannot be read, deletes the whole current recording and its copies, and drops the local Postgres scratch copy's
-schema. The process doing the purge does this at once, whether capture is on, off or turned off with
+schema. It also deletes recordings and copies a crashed nightly run left behind. The process doing the purge does this at once, whether capture is on, off or turned off with
 `GBRAIN_SHADOW_CAPTURE=off`, as long as the brain has a capture directory. Other processes and the nightly run check
 before they write. A running replay is stopped within seconds. If the scratch database cannot be reached at that
 moment, a pending marker stays, and every later replay, status and seed refuses to go on until the drop succeeds

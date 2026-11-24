@@ -140,7 +140,7 @@ export function nightlyDeps(io: ShadowReplayIo): import('../shadow/replay-run.ts
 function sqlConfig(kind: 'pglite' | 'postgres', where: string): EngineConfig {
   switch (kind) {
     case 'pglite': return { engine: kind, database_path: where } as EngineConfig;
-    case 'postgres': return { engine: kind, database_url: where } as EngineConfig;
+    case 'postgres': return { engine: kind, database_url: where, poolSize: 2 } as EngineConfig; // own pool, never the module singleton
     default: { const unreachable: never = kind; return unreachable; }
   }
 }

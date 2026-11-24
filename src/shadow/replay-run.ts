@@ -89,11 +89,11 @@ async function seedEpoch(deps: NightlyDeps, cap: string, epoch: EpochPointer): P
     await pglite.initSchema();
     sql.pglite = new SqlSeedTarget(pglite, plan);
     if (pgUrl) {
-      // Recorded before the first row lands, so a purge from any process can drop this copy (capture.ts).
-      writePrivateJson(scratchRecordPath(cap), { url: pgUrl, brain: deps.brainKey });
       const pg = await deps.openSql('postgres', pgUrl);
       opened.push(pg);
       await resetScratchPostgres(pg, deps.brainKey);
+      // Recorded once ownership is verified and before the first row lands, so a purge from any process can drop it.
+      writePrivateJson(scratchRecordPath(cap), { url: pgUrl, brain: deps.brainKey, verified: true });
       await pg.initSchema();
       await markScratchPostgres(pg, deps.brainKey);
       sql.postgres = new SqlSeedTarget(pg, plan);

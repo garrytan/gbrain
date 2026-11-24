@@ -17,13 +17,14 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { appendPurgeIntent } from '../src/core/belief/purge-mirror.ts';
 import {
-  __setScratchOpenerForTests, attachCapture, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, scratchCleared,
+  __setScratchOpenerForTests, attachCapture, dropScratchPostgres, scratchEngineConfig, basesDir, CaptureWriter, epochDir, invalidateIfPurged, readEpoch, readSegment, scratchCleared,
   scratchPendingPath, scratchRecordPath, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
 import { checkLocalPostgresUrl } from '../src/shadow/replay-copy.ts';
+import { decodeValue } from '../src/shadow/codec.ts';
 import {
-  buildUnits, childEnv, classify, firstDiff, NormState, runReplayChild, type ArmName, type RunSpec,
+  buildUnits, childEnv, classify, firstDiff, NormState, redactPath, runReplayChild, type ArmName, type RunSpec,
 } from '../src/shadow/replay.ts';
 
 const dirs: string[] = [];
@@ -31,8 +32,9 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-replay-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 /** A small in-memory brain. `dropWrites` returns the right receipt but stores nothing (the negative control). */
-function fakeEngine(opts: { dropWrites?: boolean; alterFrontmatter?: boolean; idPrefix?: string } = {}) {
+function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean } = {}) {
   const pages = new Map<string, { slug: string; title: string; compiled_truth: string; frontmatter: Record<string, unknown>; updated_at: string }>();
+  const scoped = new Map<string, { slug: string; title: string }>();
   let n = 0;
   const engine = {
     kind: 'pglite',
@@ -42,12 +44,21 @@ function fakeEngine(opts: { dropWrites?: boolean; alterFrontmatter?: boolean; id
       if (!opts.dropWrites) pages.set(slug, row);
       return { slug, id: `${opts.idPrefix ?? '0000'}${String(++n).padStart(4, '0')}-0000-4000-8000-000000000000`.slice(0, 36) };
     },
-    async getPage(slug: string) { return pages.get(slug) ?? null; },
+    async getPage(slug: string, o?: { sourceId?: string }) { return o?.sourceId ? scoped.get(`${o.sourceId}:${slug}`) ?? null : pages.get(slug) ?? null; },
+    async putScoped(slug: string, p: { title: string }, o: { sourceId: string }) {
+      if (opts.dropSource !== o.sourceId) scoped.set(`${o.sourceId}:${slug}`, { slug, title: p.title });
+      return { slug };
+    },
+    async updateIfRevision(slug: string, o: { expectedRevision: string }) {
+      if (opts.strictRevision) throw Object.assign(new Error('stale'), { code: 'revision_conflict' });
+      return { slug, revision: o.expectedRevision };
+    },
+    async optionalArg(a: unknown, b?: unknown) { return { second_given: b !== undefined, second_null: b === null }; },
     async getTags() { return []; },
     async getLinks() { return []; },
     async getBacklinks() { return []; },
     async getTimeline() { return []; },
-    async getStats() { return { page_count: pages.size }; },
+    async getStats() { return { page_count: pages.size, ...(opts.due ? { due: opts.due } : {}) }; },
     async searchKeyword(q: string) { return [...pages.values()].filter(p => p.compiled_truth.includes(q)).map(p => ({ slug: p.slug })); },
     async transaction<T>(fn: (e: unknown) => Promise<T>) {
       const snapshot = new Map(pages);
@@ -80,9 +91,10 @@ function segmentRecords(cap: string): CaptureRecord[] {
 
 const PRIVATE = { slug: 'people/zelda-secretname', title: 'Zelda Secretname', body: 'quarterly plan for project nightjar', key: 'secret_project_key' };
 
-async function recordSession(cap: string, home: string): Promise<CaptureRecord[]> {
+async function recordSession(cap: string, home: string, extra: (e: BrainEngine) => Promise<unknown> = async () => {}): Promise<CaptureRecord[]> {
   const writer = new CaptureWriter(cap, home, {});
   const e = wrapCaptureEngine(fakeEngine() as unknown as BrainEngine, writer);
+  await extra(e);
   await e.putPage(PRIVATE.slug, { title: PRIVATE.title, compiled_truth: PRIVATE.body, frontmatter: { [PRIVATE.key]: 'x' } } as never);
   await e.transaction(async tx => { await tx.putPage('notes/tx-kept', { title: 'kept', compiled_truth: 'kept body' } as never); });
   await e.transaction(async tx => { await tx.putPage('notes/tx-rolled', { title: 'gone', compiled_truth: 'gone' } as never); throw new Error('abort'); }).catch(() => undefined);
@@ -151,7 +163,7 @@ describe('capture', () => {
     for (const enabled of [true, false]) {
       const { cap, home } = recordingCapture();
       writePrivateJson(join(cap, 'state.json'), { version: 1, enabled, turned_on_at: '2026-11-22T00:00:00.000Z' });
-      writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc' });
+      writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc', verified: true });
       const sql: string[] = [];
       __setScratchOpenerForTests(async () => ({ async executeRaw(q: string) { sql.push(q); return [] as never[]; }, async disconnect() {} }));
       const onDisconnect: Array<() => Promise<void>> = [];
@@ -168,7 +180,7 @@ describe('capture', () => {
 
   test('a scratch drop that fails stays pending, and the copy counts as not cleared until a drop succeeds', async () => {
     const { cap, home } = recordingCapture();
-    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc' });
+    writePrivateJson(scratchRecordPath(cap), { url: 'postgresql://localhost/replay_scratch', brain: 'pglite-abc', verified: true });
     __setScratchOpenerForTests(async () => { throw Object.assign(new Error('down'), { code: 'ECONNREFUSED' }); });
     try {
       appendPurgeIntent({ request: 'r9', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
@@ -212,16 +224,16 @@ describe('comparison', () => {
   });
 });
 
-async function replayOnFakes(rustOpts: { dropWrites?: boolean; alterFrontmatter?: boolean } = {}) {
+async function replayOnFakes(rustOpts: Parameters<typeof fakeEngine>[0] = {}, session: (e: BrainEngine) => Promise<unknown> = async () => {}, allOpts: Parameters<typeof fakeEngine>[0] = {}) {
   const { cap, home } = recordingCapture();
-  await recordSession(cap, home);
+  await recordSession(cap, home, session);
   const runDir = join(tmp(), 'run');
   mkdirSync(runDir, { recursive: true });
   const spec: RunSpec = { version: 1, epoch: readEpoch(cap)!.id, brain_key: 'pglite-abc', hmac_key: 'ab'.repeat(32), arms: { pglite: 'x', rust: 'y' },
     cut: { before: 0, after: 0 }, seed_losses_present: false, segments: epochDir(cap, readEpoch(cap)!.id) };
   writeFileSync(join(runDir, 'run.json'), JSON.stringify(spec));
   const run = async () => {
-    const report = await runReplayChild(runDir, { blockNetwork: () => {}, openArm: async (arm: ArmName) => fakeEngine(arm === 'rust' ? { ...rustOpts, idPrefix: 'ffff' } : { idPrefix: 'aaaa' }) as unknown as BrainEngine }, () => Date.now() - 60_000);
+    const report = await runReplayChild(runDir, { blockNetwork: () => {}, openArm: async (arm: ArmName) => fakeEngine(arm === 'rust' ? { ...allOpts, ...rustOpts, idPrefix: 'ffff' } : { ...allOpts, idPrefix: 'aaaa' }) as unknown as BrainEngine }, () => Date.now());
     return { report, text: readFileSync(join(runDir, 'out', 'report.json'), 'utf8'), summary: readFileSync(join(runDir, 'out', 'summary.json'), 'utf8') };
   };
   return { run };
@@ -251,6 +263,65 @@ describe('replay child (in-memory arms)', () => {
       expect(summary.toLowerCase()).not.toContain(s.toLowerCase());
     }
     expect(Object.keys(JSON.parse(summary))).toEqual(['schema_version', 'coverage', 'arms', 'by_class', 'differences']);
+  });
+});
+
+describe('review fixes (ship pass 1)', () => {
+  test('a frontmatter key that starts with "[" is hashed like any other non-schema field name', () => {
+    expect(redactPath(['frontmatter', '[private-client]', '[0]'], Buffer.alloc(32)).join('.')).toMatch(/^frontmatter\.#[0-9a-f]{8}\.\[0\]$/);
+  });
+
+  test('an explicit undefined argument replays as undefined, not null', async () => {
+    const { cap, home } = recordingCapture();
+    const recs = await recordSession(cap, home, e => (e as unknown as { optionalArg(a: unknown, b?: unknown): Promise<unknown> }).optionalArg('x', undefined));
+    const rec = recs.find(r => r.member === 'optionalArg')!;
+    expect((decodeValue(rec.args) as unknown[]).length).toBe(2);
+    expect((decodeValue(rec.args) as unknown[])[1]).toBeUndefined();
+  });
+
+  test('a call that succeeded live but fails the same way on every arm is replay_diverged, never a match', async () => {
+    const { run } = await replayOnFakes({}, e => (e as unknown as { updateIfRevision(s: string, o: object): Promise<unknown> }).updateIfRevision('notes/a', { expectedRevision: 'rev-from-live' }), { strictRevision: true });
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'updateIfRevision' && d.class === 'replay_diverged')).toBe(true);
+  });
+
+  test('two different future dates are a difference, not replay noise', async () => {
+    const { run } = await replayOnFakes({ due: '2030-01-02T00:00:00.000Z' }, async () => {}, { due: '2030-01-01T00:00:00.000Z' });
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'sweep:getStats')).toBe(true);
+  });
+
+  test('the read-back sweep reads a write in its own source', async () => {
+    const { run } = await replayOnFakes({ dropSource: 'other' }, e => (e as unknown as { putScoped(s: string, p: object, o: object): Promise<unknown> }).putScoped('notes/same', { title: 'other copy' }, { sourceId: 'other' }));
+    const { report } = await run();
+    expect(report.diffs.some(d => d.member === 'sweep:getPage')).toBe(true);
+  });
+
+  test('a purge deletes recordings and copies a crashed nightly run left behind, not only the current epoch', async () => {
+    const { cap, home, shadowDir } = recordingCapture();
+    for (const p of [join(cap, 'epoch-old'), join(cap, 'bases', 'old', 'pglite'), join(shadowDir, 'replay', 'run-x', 'segments'), join(shadowDir, 'replay', 'run-x', 'work'), join(shadowDir, 'replay', 'run-x', 'out')]) mkdirSync(p, { recursive: true });
+    appendPurgeIntent({ request: 'r7', request_id: 'q', source_id: 'default', source_incarnation: 'i', scope: 'page', purge_epoch: 1, facts: [], takes: [], lifetimes: [] }, home);
+    expect(invalidateIfPurged(cap, { home })).toBe(true);
+    for (const p of [join(cap, 'epoch-old'), join(cap, 'bases', 'old'), join(shadowDir, 'replay', 'run-x', 'segments'), join(shadowDir, 'replay', 'run-x', 'work')]) expect(existsSync(p)).toBe(false);
+    expect(existsSync(join(shadowDir, 'replay', 'run-x', 'out'))).toBe(true);
+  });
+
+  test('cleanup never drops a scratch database the seed did not verify, and never drops one another brain owns', async () => {
+    for (const [record, owner] of [[{ url: 'postgresql://localhost/x', brain: 'pglite-abc' }, null], [{ url: 'postgresql://localhost/x', brain: 'pglite-abc', verified: true }, 'pglite-other']] as const) {
+      const { cap } = recordingCapture();
+      writePrivateJson(scratchRecordPath(cap), record);
+      const sql: string[] = [];
+      __setScratchOpenerForTests(async () => ({
+        async executeRaw(q: string) { sql.push(q); return (q.includes('to_regclass') ? [{ present: owner !== null }] : q.includes('FROM gbrain_shadow_replay_owner') ? [{ brain: owner }] : []) as never[]; },
+        async disconnect() {},
+      }));
+      try { expect(await dropScratchPostgres(cap)).toBe(true); } finally { __setScratchOpenerForTests(null); }
+      expect(sql.some(q => q.startsWith('DROP'))).toBe(false);
+    }
+  });
+
+  test('the scratch connection gets its own pool, never the module singleton the brain may hold', () => {
+    expect(scratchEngineConfig('postgresql://localhost/x').poolSize).toBeGreaterThan(0);
   });
 });
 
