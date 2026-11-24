@@ -22,6 +22,8 @@ import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import type { AuthInfo } from '../../src/core/ops/contract.ts';
+import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { __resetPrivateVisibilityCacheForTests, HONOR_ALIASES_KEY, readHonorAliases } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest, arms } = parityArms(testBackends());
 const SRC = 'work';
@@ -81,6 +83,15 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     return out;
   });
 
+  parityTest('a page with `access: private` and no visibility is private to the privacy read only while visibility.honor_aliases is on', { methods: ['putPage', 'readPagePrivacyHidden', 'setConfig'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await engine.putPage('notes/aliased', { type: 'note', title: 'Aliased', compiled_truth: 'Body.', timeline: '', frontmatter: { access: 'private' } }, { sourceId: SRC });
+    const hidden = async (value: string) => { __resetPrivateVisibilityCacheForTests(); await engine.setConfig(HONOR_ALIASES_KEY, value); return withEngineScope(engine, async () => { await readHonorAliases(engine); return engine.readPagePrivacyHidden(SRC, 'notes/aliased'); }); };
+    const result = { on: await hidden('true'), off: await hidden('false'), onAgain: await hidden('true') };
+    expect(result).toEqual({ on: true, off: false, onAgain: true });
+    return result;
+  });
+
   // Not a parityTest: on Rust a non-owner member's call also reaches a labelled-only raw read that the dispatch swallows (row 32e-b),
   // and the harness fails a case that caught a refusal. The answers must still be equal on every arm.
   test('a plain member\'s put_page rewrite of an existing page, open or naming its readers, is written on every arm', async () => {
@@ -98,4 +109,24 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     }
     expect(arms().length).toBeGreaterThan(0);
   }, 120_000);
+
+  // A typed read that fails during a remote put_page must refuse it with that failure: a swallowed one would read as "not hidden" and publish (a later guard may still refuse).
+  test('a failure of a typed visibility read refuses the write and publishes nothing', async () => {
+    const cases = [['ownerOnLivePage', 'readPagePrivacyHidden', 1, OWNER, 'diary'], ['ownerRewriteOf', 'readPagePrivacyHidden', 2, OWNER, 'diary'], ['hiddenUnder', 'readLinkTargetPages', 1, 'bob-example', 'vault']] as const;
+    for (const arm of arms()) for (const [site, member, from, writer, slug] of cases) {
+      await resetArm(arm);
+      const engine = arm.engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      await seed(arm.engine, arm.backend);
+      await addMember(arm.engine, 'bob-example');
+      const frontmatter = slug === 'diary' ? { visibility: 'private' } : { visibility: 'private', readable_by: [OWNER] };
+      await arm.engine.putPage(`notes/${slug}`, { type: 'note', title: slug, compiled_truth: 'First.', timeline: '', frontmatter }, { sourceId: SRC });
+      const snapshot = async () => { const page = await arm.engine.getPage(`notes/${slug}`, { sourceId: SRC }); return { page: page && [page.compiled_truth, page.frontmatter, page.knowledge_revision], versions: (await arm.engine.getVersions(`notes/${slug}`, { sourceId: SRC })).length }; };
+      const before = await snapshot();
+      const original = engine[member]!; let calls = 0, thrown = 0;
+      engine[member] = function (this: unknown, ...args: unknown[]) { if (++calls !== from) return original.apply(this, args); thrown++; return Promise.reject(new Error('injected read failure')); };
+      const out = await ownerPut(arm.engine, `notes/${slug}`, `---\ntitle: ${slug}\n${slug === 'vault' ? `readable_by: [${OWNER}, bob-example]\n` : ''}---\nSecond.`, before.page?.[2] as string, writer).finally(() => { delete engine[member]; });
+      expect({ backend: arm.backend, site, fired: thrown > 0, failed: ['internal_error', 'storage_error'].includes(out), after: await snapshot() }).toEqual({ backend: arm.backend, site, fired: true, failed: true, after: before });
+    }
+    expect(arms().length).toBeGreaterThan(0);
+  }, 240_000);
 });
