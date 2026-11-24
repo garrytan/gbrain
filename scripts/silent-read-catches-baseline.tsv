@@ -57,7 +57,6 @@ src/commands/claw-test.ts#mergeChildFriction	catch_empty	1
 src/commands/code-scope.ts#sourceExists	capability_refusal_swallowed	1
 src/commands/config.ts#hostBrainSelected	catch_empty	1
 src/commands/config.ts#restampVisibilityPosture	catch_empty	1
-src/commands/config.ts#runConfig	capability_refusal_swallowed	1
 src/commands/config.ts#runConfig	catch_empty	1
 src/commands/core.ts#runCore	capability_refusal_swallowed	1
 src/commands/db-repair.ts#acquireRepairLock	catch_empty	1
@@ -84,10 +83,7 @@ src/commands/doctor/checks/chat-fallback.ts#checkChatFallbackChain	catch_empty	2
 src/commands/doctor/checks/chat-fallback.ts#userCapKeys	catch_empty	1
 src/commands/doctor/checks/connectors.ts#connectorsHealthCheck	catch_empty	1
 src/commands/doctor/checks/consolidation-cycle.ts#checkPoolBudget	catch_empty	1	audit health-5: pool_budget answers ok "Skipped"
-src/commands/doctor/checks/content-quality.ts#runContentSanity	capability_refusal_swallowed	4
 src/commands/doctor/checks/content-quality.ts#runContentSanity	catch_empty	1	audit health-5: scraper_junk_pages and content_sanity_audit_recent answer ok "Skipped"
-src/commands/doctor/checks/content-quality.ts#runContentSanity	promise_catch_empty	2
-src/commands/doctor/checks/content-quality.ts#runFrontmatter>dbPageCountForSource	capability_refusal_swallowed	1
 src/commands/doctor/checks/content-quality.ts#runFrontmatter>dbPageCountForSource	catch_empty	1
 src/commands/doctor/checks/core-health.ts#checkVolunteerChannels	catch_empty	1
 src/commands/doctor/checks/core-health.ts#checkVolunteerChannels<anon@3>	catch_empty	1
@@ -106,8 +102,7 @@ src/commands/doctor/checks/default-source-path.ts#defaultSourceLocalPathCheck	ca
 src/commands/doctor/checks/embed-backfill-stalled.ts#embedBackfillStalledCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/embedding-health.ts#runAlternativeProviders	catch_empty	1
 src/commands/doctor/checks/embedding-health.ts#runEmbeddingColumnRegistry	capability_refusal_swallowed	1
-src/commands/doctor/checks/embedding-health.ts#runEmbeddingProvider	capability_refusal_swallowed	3
-src/commands/doctor/checks/embedding-health.ts#runEmbeddingProvider	catch_empty	4
+src/commands/doctor/checks/embedding-health.ts#runEmbeddingProvider	catch_empty	3
 src/commands/doctor/checks/embedding-health.ts#runEmbeddingQueryPrefix	catch_empty	1
 src/commands/doctor/checks/engine-fit.ts#pgliteScaleCheck	catch_empty	1
 src/commands/doctor/checks/engine-fit.ts#rustScaleCheck	catch_empty	1	sync 13b: the Rust scale check answers null when stats are unavailable and says so in its own comment: the stats check owns that failure
@@ -115,7 +110,6 @@ src/commands/doctor/checks/extraction-sync.ts#brainShapeCanCarryCycleStamps	catc
 src/commands/doctor/checks/extraction-sync.ts#checkDbOnlyCollectorCollision	capability_refusal_swallowed	2
 src/commands/doctor/checks/extraction-sync.ts#checkUndeclaredDbOnlyPages	capability_refusal_swallowed	1
 src/commands/doctor/checks/extraction-sync.ts#checkUndeclaredDbOnlyPages	catch_empty	1
-src/commands/doctor/checks/extraction-sync.ts#countExtractAtomsBacklogBySource	capability_refusal_swallowed	1
 src/commands/doctor/checks/extraction-sync.ts#countExtractAtomsBacklogBySource	catch_empty	1
 src/commands/doctor/checks/fact-admission-floors.ts#runFactAdmissionFloors	catch_empty	1
 src/commands/doctor/checks/fence-integrity.ts#fenceIntegrityResult	promise_catch_empty	2
@@ -129,8 +123,6 @@ src/commands/doctor/checks/foreign-writers.ts#reflogs	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#reflogs>walk	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#repositories	capability_refusal_swallowed	1
 src/commands/doctor/checks/foreign-writers.ts#repositories	catch_empty	2
-src/commands/doctor/checks/git-convergence.ts#markReadOnlyMirrors	capability_refusal_swallowed	1
-src/commands/doctor/checks/git-convergence.ts#markReadOnlyMirrors	promise_catch_empty	1
 src/commands/doctor/checks/git-convergence.ts#sourceRoots	promise_catch_empty	1
 src/commands/doctor/checks/git-convergence.ts#unwatchedDurableRoots	capability_refusal_swallowed	1
 src/commands/doctor/checks/git-convergence.ts#unwatchedDurableRoots	promise_catch_empty	1
@@ -162,8 +154,7 @@ src/commands/doctor/checks/local-runtime.ts#runMinionsMigration	catch_empty	1
 src/commands/doctor/checks/managed-guard.ts#checkManagedGuardSchemaDrift	capability_refusal_swallowed	1
 src/commands/doctor/checks/managed-sync-convergence.ts#runManagedSyncConvergenceCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/memory-writeback.ts#ambientBlockCandidatePaths	catch_empty	1
-src/commands/doctor/checks/memory-writeback.ts#buildMemoryWritebackCheck	capability_refusal_swallowed	2
-src/commands/doctor/checks/memory-writeback.ts#buildMemoryWritebackCheck	catch_empty	7
+src/commands/doctor/checks/memory-writeback.ts#buildMemoryWritebackCheck	catch_empty	6
 src/commands/doctor/checks/memory-writeback.ts#buildMemoryWritebackCheck	promise_catch_empty	1
 src/commands/doctor/checks/memory-writeback.ts#remoteFactReaders	catch_empty	2
 src/commands/doctor/checks/memory-writeback.ts#sessionCorpusDir	promise_catch_empty	1
@@ -174,8 +165,7 @@ src/commands/doctor/checks/pglite-worker.ts#computePoolReapHealthCheck	catch_emp
 src/commands/doctor/checks/pglite-worker.ts#computeWorkerOomLoopCheck	catch_empty	3
 src/commands/doctor/checks/postgres-tls.ts#runPostgresTls	capability_refusal_swallowed	1
 src/commands/doctor/checks/postgres-tls.ts#runPostgresTls	catch_empty	1
-src/commands/doctor/checks/projection-readiness.ts#checkProjectionReadiness	capability_refusal_swallowed	1
-src/commands/doctor/checks/projection-readiness.ts#checkProjectionReadiness	promise_catch_empty	2
+src/commands/doctor/checks/projection-readiness.ts#checkProjectionReadiness	promise_catch_empty	1
 src/commands/doctor/checks/projection-readiness.ts#runProjectionResident	catch_empty	1
 src/commands/doctor/checks/queue-assets.ts#runImageAssets	catch_empty	2
 src/commands/doctor/checks/queue-assets.ts#runQueueHealth	capability_refusal_swallowed	1
@@ -198,8 +188,7 @@ src/commands/doctor/checks/shared-agent-access.ts#sharedAgentVerdict	capability_
 src/commands/doctor/checks/slug-collisions.ts#slugCollisionsCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/stale-embedding-effects.ts#staleEmbeddingEffectsCheck	promise_catch_empty	1
 src/commands/doctor/checks/supersession-calibration.ts#runSupersessionCalibration	catch_empty	2
-src/commands/doctor/checks/supervisor-health.ts#runSupervisor	capability_refusal_swallowed	1
-src/commands/doctor/checks/supervisor-health.ts#runSupervisor	catch_empty	3
+src/commands/doctor/checks/supervisor-health.ts#runSupervisor	catch_empty	2
 src/commands/doctor/checks/sync-config-keys.ts#runSyncConfigKeys>stored	promise_catch_empty	1
 src/commands/doctor/checks/sync-failures.ts#checkRecordedSyncFailures	catch_empty	1
 src/commands/doctor/checks/timeline-history.ts#loadState	catch_empty	1
@@ -215,13 +204,12 @@ src/commands/doctor/last-known.ts#writeLastKnown	catch_empty	1
 src/commands/doctor/registry.ts#readEntryBudget	promise_catch_empty	1
 src/commands/doctor/remediate.ts#pendingMigrationsNotice	catch_empty	1
 src/commands/doctor/remediate.ts#pendingMigrationsNotice	promise_catch_empty	1
-src/commands/doctor/report-remote.ts#doctorReportRemote	capability_refusal_swallowed	2
-src/commands/doctor/report-remote.ts#doctorReportRemote	catch_empty	3
+src/commands/doctor/report-remote.ts#doctorReportRemote	capability_refusal_swallowed	1
+src/commands/doctor/report-remote.ts#doctorReportRemote	catch_empty	2
 src/commands/doctor/schema-pack-checks.ts#checkSchemaPackActive	catch_empty	1
 src/commands/doctor/schema-pack-checks.ts#checkSchemaPackSourceDrift	capability_refusal_swallowed	1
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck	catch_empty	1
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>countPages	catch_empty	1
-src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>countPagesForSource	capability_refusal_swallowed	1
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>countPagesForSource	catch_empty	1
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>countPagesInDir	catch_empty	1
 src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>getConfig	catch_empty	1
@@ -230,7 +218,6 @@ src/commands/doctor/skill-checks.ts#skillPreconditionsCheck>listSourceIds	catch_
 src/commands/doctor/skill-checks.ts#skillsManifestIntegrityCheck	catch_empty	1
 src/commands/edges-backfill.ts#runEdgesBackfill	capability_refusal_swallowed	1
 src/commands/embed.ts#embedAllStale	catch_empty	2
-src/commands/embed.ts#embedAllStale>embedOneKey	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/embed.ts#preflightDimMismatch	catch_empty	2
 src/commands/embed.ts#runEmbedCore	catch_empty	1
 src/commands/engine-shadow.ts#seedFrom	promise_catch_empty	1	added on the shadow seed branch (rust-engine/shadow-s3) before it merged this guard; known debt, fix by a typed degraded marker
@@ -804,11 +791,9 @@ src/core/eligibility/stamp.ts#stampRowTrust	catch_empty	1
 src/core/embed-backfill-submit.ts#keylessEmbedBackfill	promise_catch_empty	1
 src/core/embed-concurrency.ts#resolveStaleEmbedConcurrency	catch_empty	1
 src/core/embed-consent.ts#embeddingProviderIsFree	catch_empty	1
-src/core/embed-consent.ts#estimateEmbedBackfillUsd	capability_refusal_swallowed	1
 src/core/embed-consent.ts#estimateEmbedBackfillUsd	catch_empty	1
 src/core/embed-facts.ts#embedStaleFacts	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/embed-stale-images.ts#embedStaleImages	promise_catch_empty	1
-src/core/embed-stale.ts#embedStalePages	capability_refusal_swallowed	1
 src/core/embedding-ann-build.ts#buildDeferredAnnIndexes<anon@2>	capability_refusal_swallowed	1
 src/core/embedding-ann-build.ts#buildDeferredAnnIndexes<anon@2>	promise_catch_empty	1
 src/core/embedding-ann-build.ts#buildDeferredAnnIndexes<anon@2><anon@1>	capability_refusal_swallowed	1
@@ -829,7 +814,6 @@ src/core/embedding-migration.ts#runSchemaTransition	catch_empty	1
 src/core/embedding-migration.ts#verifyMigrationComplete	capability_refusal_swallowed	1
 src/core/embedding-migration.ts#verifyMigrationComplete	catch_empty	3
 src/core/embedding-migration.ts#verifySearchRoundTrip	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/embedding-readiness.ts#prepareEmbeddingProjections	capability_refusal_swallowed	1
 src/core/embedding-restamp.ts#restampCurrentSpaceSignatures	capability_refusal_swallowed	1
 src/core/embedding-state.ts#keylessFix	catch_empty	1
 src/core/engine-sql/chunks.ts#upsertChunksOnce	catch_empty	1
@@ -1015,7 +999,7 @@ src/core/minions/detached-stderr.ts#openDetachedStderrSink	catch_empty	1
 src/core/minions/global-maintenance-stall.ts#readGlobalMaintenanceVerdict	catch_empty	1
 src/core/minions/handlers/autopilot-global-maintenance.ts#readGlobalMaintenanceProgress	catch_empty	1
 src/core/minions/handlers/embed-backfill.ts#currentBackfillEmbeddingModel	catch_empty	1
-src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfillHandler	capability_refusal_swallowed	2
+src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfillHandler	capability_refusal_swallowed	1
 src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfillHandler	catch_empty	1
 src/core/minions/handlers/embed-backfill.ts#makeEmbedBackfillHandler>embedBackfillHandler	promise_catch_empty	1	fixed on rust-engine/doctor-checks-2 e6a66e9306, not on master
 src/core/minions/handlers/subagent-oneshot.ts#runSubagentOneshot	capability_refusal_swallowed	1

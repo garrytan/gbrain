@@ -38,6 +38,7 @@ import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
 import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, receiptContentDirectory, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
 import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -486,9 +487,8 @@ async function countExtractAtomsBacklogBySource(
     // unscoped local/host path.
     const sources = sourceIds
       ? [...sourceIds].sort().map((source_id) => ({ source_id }))
-      : await engine.executeRaw<{ source_id: string }>(
-        `SELECT source_id FROM pages WHERE deleted_at IS NULL GROUP BY source_id ORDER BY source_id COLLATE "C"`,
-      );
+      // The typed roster (engine-sql/mention-reads.ts), so a Rust brain answers it; source ids are ASCII, so sort() is byte order.
+      : (await engine.listLivePageSourceIds()).map(row => row.id).sort().map((source_id) => ({ source_id }));
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);
@@ -496,7 +496,8 @@ async function countExtractAtomsBacklogBySource(
       if (backlog > 0) rows.push({ source_id: src.source_id, backlog });
     }
     return rows;
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     return null;
   }
 }

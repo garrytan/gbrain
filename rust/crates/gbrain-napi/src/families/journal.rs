@@ -718,6 +718,30 @@ impl Brain {
         })
     }
 
+    /// `readStaleEmbeddingCounts(sourceIds | null)`: `{ count, failed, requeued }` over doctor's stale embedding effects.
+    #[napi]
+    pub fn read_stale_embedding_counts<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_stale_embedding_counts(source_ids.as_deref())
+        })
+    }
+
+    /// `listStaleEmbeddingEffects(sourceIds | null)`: the first 10 of them by effect id.
+    #[napi]
+    pub fn list_stale_embedding_effects<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_embedding_effects(source_ids.as_deref())
+        })
+    }
+
     /// `listEmbeddingCandidates(sourceIds, neverRetried)`: the stale queued and failed embedding
     /// effects `gbrain repair embedding-effects` settles, in effect id order.
     #[napi]

@@ -243,6 +243,7 @@ test/engine-parity/doctor-terminal.test.ts
 test/engine-parity/dream-config-members.test.ts
 test/engine-parity/dream-cycle-sites.test.ts
 test/engine-parity/effect-scans.test.ts
+test/engine-parity/embed-stale-work.test.ts
 test/engine-parity/embedding-catalog.test.ts
 test/engine-parity/embedding-install.test.ts
 test/engine-parity/entity-anchor-reads.test.ts
@@ -410,6 +411,7 @@ test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
+test/engine-parity/refusal-swallow-sites.test.ts
 test/engine-parity/relational-reads.test.ts
 test/engine-parity/remember-members.test.ts
 test/engine-parity/remember-meta.test.ts

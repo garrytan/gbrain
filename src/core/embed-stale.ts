@@ -34,8 +34,9 @@ import { resolveStaleEmbedConcurrency } from './embed-concurrency.ts';
 import { AbortError } from './abort-check.ts';
 import { contentDriftSweepLine, runContentDriftSweep, type ContentDriftSweepStatus } from './content-drift-sweep.ts';
 import { meterPageBatch, spendGrant } from './page-embedding-budget.ts';
-import { acquirePageEmbeddingLease, stillPendingChunks, vectorlessChunkIndexes } from './page-embedding-lease.ts';
+import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-lease.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -315,7 +316,8 @@ export async function embedStalePages(
       }
       const pageId = await engine.readLivePageIdBySlug(slug, sourceId);
       if (pageId === null) continue;
-      await using lease = await acquirePageEmbeddingLease(engine, pageId, { signal: opts.signal });
+      const page = { id: pageId };
+      await using lease = await acquirePageEmbeddingLease(engine, page.id, { signal: opts.signal });
       if (lease.busy) continue;
       // SUP-3874: split legacy oversized rows before embedding so a single
       // pre-cap chunk cannot permanently fail the page.
@@ -323,7 +325,7 @@ export async function embedStalePages(
       const prepared = await readProjectionSnapshot(engine, slug, sourceId, { requireLiveSource: true });
       if (!prepared || prepared.snapshot.page.id !== pageId) continue;
       const existing = prepared.chunks;
-      const staleIdx = await vectorlessChunkIndexes(engine, pageId, staleColumn);
+      const staleIdx = new Set(await engine.listUnembeddedChunkIndexes(slug, sourceId, staleColumn));
       if (staleIdx.size === 0) continue;
       const pageRow = prepared.snapshot.page;
       const metered = await meterPageBatch(engine, pageRow, existing.filter(c => staleIdx.has(c.chunk_index)), { signature: opts.embeddingSignature ?? null });
@@ -359,6 +361,8 @@ export async function embedStalePages(
         result.aborted = true;
         return result;
       }
+      // A page that fails is skipped; an engine that cannot embed it refuses the whole call instead of reporting 0.
+      rethrowCapabilityMissing(e);
       process.stderr.write(`\n  [embed-stale] error on ${sourceId}/${slug}: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }

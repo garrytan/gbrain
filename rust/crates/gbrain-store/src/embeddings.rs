@@ -40,6 +40,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+pub mod stale_work;
+
 const CHUNK_VECTOR: u8 = b'c';
 const TAKE_VECTOR: u8 = b't';
 const GENERATION: u8 = b'g';
@@ -776,6 +778,10 @@ impl Store {
         let read = self.read()?;
         let mut out = Vec::new();
         for ctx in page_contexts(&*read)? {
+            // `staleChunkWhere`'s `NOT budgetLimited`: a held or capped large page leaves the queue.
+            if !ctx.live() || ctx.embed_skip() || stale_work::budget_limited(&*read, &ctx.page)? {
+                continue;
+            }
             for chunk in ctx.live_body() {
                 if options.stale(&ctx, chunk) {
                     out.push(each(chunk));
@@ -799,7 +805,7 @@ impl Store {
             .sum())
     }
 
-    /// `listStaleChunks(opts?)`: vector-less chunks of live, non-embed_skip pages, keyset-paged in
+    /// `listStaleChunks(opts?)`: vector-less chunks of live, non-embed_skip, not budget-limited pages, keyset-paged in
     /// `(page_id, chunk_index)` order, or newest page first with `orderBy: 'updated_desc'`.
     pub fn list_stale_chunks(&self, options: &ListStaleChunksOptions) -> Result<Vec<Value>> {
         let read = self.read()?;
@@ -823,6 +829,7 @@ impl Store {
                     .source_id
                     .as_deref()
                     .is_some_and(|id| id != ctx.page.source_id)
+                || stale_work::budget_limited(&*read, &ctx.page)?
             {
                 continue;
             }
@@ -1008,6 +1015,7 @@ impl Store {
                         .as_deref()
                         .is_some_and(|id| id != ctx.page.source_id)
                     || !source_live(&*tx, &mut sources, &ctx.page.source_id)?
+                    || stale_work::budget_limited(&*tx, &ctx.page)?
                 {
                     continue;
                 }

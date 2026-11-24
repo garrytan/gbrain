@@ -24,6 +24,8 @@ src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	L
 src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
+src/core/engine-sql/embed-stale-work.ts	countArchivedEmbeddingWork	sql	META	moved from embedding-readiness.ts: body <> '' predicate on archived pages
+src/core/engine-sql/embed-stale-work.ts	sumEmbedBackfillChars	sql	META	moved from embed-consent.ts estimateEmbedBackfillUsd: character length of chunkless inline bodies for the cost estimate; a segmented page's NULL columns add nothing
 src/core/engine-sql/mention-reads.ts	readExplainScanPage	sql	STREAM	moved from src/commands/extract-mentions-explain.ts explainMention, same statement
 src/core/engine-sql/mention-reads.ts	readPageNameText	sql	STREAM	moved from src/commands/extract-mentions-explain.ts pageNames, same statement
 src/core/engine-sql/mention-reads.ts	listRejectedDeclarationPages	sql	STREAM	moved from src/commands/extract-mentions-explain.ts rejectedDeclaration, same statement
@@ -166,10 +168,8 @@ src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
 src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/scan.ts	assess	field	STREAM	
-src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
 src/core/embedding-migration-worst-case.ts	REPROJECTED_PAGE	sql	META	
-src/core/embedding-readiness.ts	countArchivedEmbeddingWork	sql	META	
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
 src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
