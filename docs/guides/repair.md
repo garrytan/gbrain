@@ -2129,7 +2129,8 @@ A fault part way through a page's move rolls that page back whole. Applying the 
 
 Classic brains only. On a managed brain page tables take writes only through coordinated publications, so the preview
 lists the pages as [`managed_remedy_unavailable`](error-codes.md#managed_remedy_unavailable) and an apply refuses with
-it: a person has to decide how to rename each page, which stays readable and editable by its stored spelling.
+it: a person has to decide how to rename each page, which stays readable and editable by its stored spelling. A preview by a
+role that row-level security applies to (above) is refused with `writer_coordinator_required` before it lists anything, on a managed brain too.
 
 Explicit-only: `gbrain repair --all`, the maintenance cycle and the doctor remediation plan never run it, and a remote
 caller is refused. Moving a page automatically inside a full replace is not part of this repair.
