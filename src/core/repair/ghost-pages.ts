@@ -309,7 +309,7 @@ function moveCode(move: GhostMove | undefined): GhostMoveCode | null {
   return move.candidates.some(candidate => candidate.match !== 'same_file_name' || candidate.linked !== false) ? MOVE_UNPROVEN_CODE : null;
 }
 
-/** The move read for each committed-deletion ghost with a candidate or an unreadable history: one candidate read per call, then the moved-pages verdict per ghost. */
+/** The move read for each committed-deletion ghost with a candidate or an unreadable history: one candidate read per call, then the moved-pages verdict per ghost on the history that read walked. */
 async function readGhostMoves(engine: BrainEngine, sourceId: string, root: string, ghosts: GhostPage[], provenance: Map<string, DeletionProvenance>): Promise<Map<number, GhostMove>> {
   const read = await readMoveCandidates(engine, { sourceId, root, ghosts: ghosts.map(ghost => ({ page_id: ghost.page_id, path: ghost.path, deletion: provenance.get(ghost.path) ?? { kind: 'unknown' } })) });
   const moves = new Map<number, GhostMove>();
@@ -317,7 +317,7 @@ async function readGhostMoves(engine: BrainEngine, sourceId: string, root: strin
     if (read.unread.has(ghost.page_id)) { moves.set(ghost.page_id, { unread: true }); continue; }
     const candidates = read.found.get(ghost.page_id);
     if (!candidates) continue;
-    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path), candidates });
+    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path), candidates, history: read.history });
     moves.set(ghost.page_id, { candidates, verdict });
   }
   const survivors = [...moves.values()].flatMap(move => !move.unread && move.verdict.verdict === 'moved' ? [move.verdict.survivor.page_id] : []);
@@ -330,6 +330,11 @@ async function readGhostMoves(engine: BrainEngine, sourceId: string, root: strin
 /** Move reads of one apply run, keyed by checkout root and HEAD: a read depends on Git only once candidates are named, so one HEAD shares it. */
 const runMoves = { checkout: '', moves: new Map<string, GhostMove | undefined>() };
 const headOf = (root: string) => { try { return syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { return null; } };
+/** HEAD of the ghost's checkout under its owner's binding, or null. */
+async function ghostCheckoutHead(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<string | null> {
+  const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
+  return binding?.local_path ? headOf(join(binding.local_path, binding.relative_path)) : null;
+}
 const moveKey = (ghost: GhostPage) => `${ghost.page_id}:${ghost.revision}:${ghost.path}`;
 
 /** Reads the moves of every ghost an apply is about to retire in one pass, so each item's veto reuses it at the same HEAD. */
@@ -341,11 +346,18 @@ async function primeGhostMoves(engine: BrainEngine, sourceId: string, root: stri
   runMoves.moves = new Map(ghosts.map(ghost => [moveKey(ghost), moves.get(ghost.page_id)]));
 }
 
+/** Reads the moves of `ghosts` (one source, one owner) in one pass, so each one's `ghostMoveVeto` at this HEAD reuses it. */
+export async function primeGhostMoveVetoes(engine: BrainEngine, ghosts: GhostPage[], owner: GhostOwner): Promise<void> {
+  if (!ghosts.length) return;
+  const binding = await getWorktreeBinding(engine, ghosts[0]!.source_id, owner.host_id);
+  if (binding?.local_path) await primeGhostMoves(engine, ghosts[0]!.source_id, join(binding.local_path, binding.relative_path), ghosts);
+}
+
 /**
  * Whether the ghost's move keeps it from soft-delete now: the soft-delete's own check (ghost-pages, file-drift --prefer file
  * and the managed preparer), so an approval saved before a move, or before this check, cannot remove it.
  */
-export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<(RepairItemOutcome & { reason: GhostMoveCode; detail: { message: string } }) | null> {
+export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<(RepairItemOutcome & { reason: GhostMoveCode; detail: { message: string; unread?: true } }) | null> {
   const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
   if (!binding?.local_path) return null;
   const root = join(binding.local_path, binding.relative_path);
@@ -354,7 +366,7 @@ export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner
   const move = cached ? runMoves.moves.get(moveKey(ghost))
     : (await readGhostMoves(engine, ghost.source_id, root, [ghost], await readDeletionProvenance(root, [ghost.path]))).get(ghost.page_id);
   const code = moveCode(move);
-  return code ? { applied: false, outcome: 'refused', reason: code, detail: { message: ghostMoveDetail(ghost, move!) } } : null;
+  return code ? { applied: false, outcome: 'refused', reason: code, detail: { message: ghostMoveDetail(ghost, move!), ...(move!.unread ? { unread: true as const } : {}) } } : null;
 }
 
 const candidateList = (move: { candidates: MoveCandidate[] }) => move.candidates.map(candidate => `${candidate.slug ?? 'no page yet'} (${candidate.path}, ${candidate.match})`).join(', ');
@@ -492,6 +504,7 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
     : opError('revision_conflict', 'The ghost page changed since the preview.',
       `Page ${row.slug} in source ${row.source_id} changed after the preview (${outcome.reason}), so request ${row.request_id} removed nothing. Preview the repair again and apply the new preview after the user agrees.`,
       { fix: previewFix(row.source_id) });
+  const head = await ghostCheckoutHead(engine, ghost, owner);
   const skip = await stillApproved(engine, ghost, owner);
   if (skip) throw refuse(skip);
   await authorizeWrite(engine, row.authority, 'delete_page', row.slug);
@@ -503,7 +516,14 @@ export async function prepareGhostPageRetirement(engine: BrainEngine, row: Write
   if (!page.file || (target !== ghost.path && !recordedFile)) throw refuse(changed('its canonical file target moved'));
   if (page.file.expectedBeforeHash !== null) throw refuse(restored(ghost));
   const file = recordedFile ? { ...page.file, path: nativeFileTarget(page.file.root, join(page.file.root, ghost.path)) } : page.file;
-  return { ...page, file, validate: async tx => { await page.validate?.(tx); await authorizeWrite(tx, row.authority, 'delete_page', row.slug); },
+  return { ...page, file, validate: async tx => {
+    await page.validate?.(tx);
+    await authorizeWrite(tx, row.authority, 'delete_page', row.slug);
+    // A commit since the preparer's move check can show the file moved: the check runs again before the delete is published.
+    if (head !== null && await ghostCheckoutHead(tx, ghost, owner) === head) return;
+    const veto = await ghostMoveVeto(tx, ghost, owner);
+    if (veto) throw refuse(veto);
+  },
     // GBRA-133: the soft delete is the decision a held deletion of this file waited for, so its hold clears with it.
     apply: async (tx, preimage) => {
       const outcome = await page.apply(tx, preimage);
