@@ -861,7 +861,7 @@ export const cases: Case[] = [
         console.log(`        ${calls} hostile calls, outcomes: ${[...seen].sort().map(([code, n]) => `${code}=${n}`).join(' ')}`);
 
         // 3. The brain still works after all of it.
-        assert.equal((await brain.info()).format_version, 5);
+        assert.equal((await brain.info()).format_version, 8);
         await brain.setConfig('fuzz.after', 'fine');
         assert.equal(await brain.getConfig('fuzz.after'), 'fine');
         // (The fuzz may have soft-deleted people/alice, so write and read a new page.)
