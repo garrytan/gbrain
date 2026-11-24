@@ -77,7 +77,7 @@ test('X1: an upgrade from v178 builds the request indexes; managed working-tree 
     await engine.executeRaw('DROP INDEX IF EXISTS persistence_requests_sync_run_committed');
     await engine.setConfig('version', '178');
     expect(await runMigrations(engine)).toEqual({ applied: MIGRATIONS.filter(m => m.version > 178).length, current: LATEST_VERSION });
-    // #6511/#6757/#7649: the online-built set is the checkpoint pair, the purge slug index, the request-id index, the claims' foreground-commit index, the failed-writes replay-id and slug-sequence indexes (#8707) and the byte-order slug index (v332).
+    // #6511/#6757/#7649: the online-built set is the checkpoint pair, the purge slug index, the request-id index, the claims' foreground-commit index, the failed-writes replay-id and slug-sequence indexes (#8707) and the byte-order slug index (v334).
     expect((await readRequestIndexStates(engine)).map(index => index.state)).toEqual(['valid', 'valid', 'valid', 'valid', 'valid', 'valid', 'valid', 'valid']);
     expect((await requestIndexesCheck(engine)).status).toBe('ok');
 

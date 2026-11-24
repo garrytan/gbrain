@@ -33,8 +33,9 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 331 is master's access_read_log (sync 11); 332 is the cli-members line's byte-order slug indexes, 333 the trunk's
-    // projection-jobs index and 334 the pages projection-waiting words index (renumbered above master's newest at batch 12).
+    // 331 is master's access_read_log (sync 11); 332 is master's engine_writer_observations and 333 its hold-page-id;
+    // 334 is the cli-members line's byte-order slug indexes, 335 the trunk's projection-jobs index and 336 the pages projection-waiting
+    // words index (renumbered above master's newest at sync 15).
     expect(golden.gaps).toEqual([17, 18, 19, 100]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);

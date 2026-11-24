@@ -4,8 +4,4 @@
 // The highest schema migration version (migrate.ts LATEST_VERSION), importable without
 // loading the migrations themselves.
 
-<<<<<<< HEAD
-export const LATEST_SCHEMA_VERSION = 334;
-=======
-export const LATEST_SCHEMA_VERSION = 333;
->>>>>>> origin/master
+export const LATEST_SCHEMA_VERSION = 336;

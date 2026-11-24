@@ -332,14 +332,11 @@ import { v328 } from './v328-owner-only-reads-complete.ts';
 import { v329 } from './v329-serves-since-subsecond.ts';
 import { v330 } from './v330-entity-identity-reviews-evidence.ts';
 import { v331 } from './v331-access-read-log.ts';
-<<<<<<< HEAD
-import { v332 } from './v332-byte-order-slug-indexes.ts';
-import { v333 } from './v333-projection-jobs-byte-order-index.ts';
-import { v334 } from './v334-pages-projection-waiting-haystack-trgm.ts';
-=======
 import { v332 } from './v332-engine-writer-observations.ts';
 import { v333 } from './v333-hold-page-id.ts';
->>>>>>> origin/master
+import { v334 } from './v334-byte-order-slug-indexes.ts';
+import { v335 } from './v335-projection-jobs-byte-order-index.ts';
+import { v336 } from './v336-pages-projection-waiting-haystack-trgm.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -672,8 +669,7 @@ export const MIGRATIONS: Migration[] = [
   v331,
   v332,
   v333,
-<<<<<<< HEAD
   v334,
-=======
->>>>>>> origin/master
+  v335,
+  v336,
 ];
