@@ -413,3 +413,9 @@ Claim your own sources first, so your notes are not treated as unverified.
   without showing them. Review each listed fact (`gbrain trust explain f<id>`)
   and edit the row or forget the fact if a field is wrong. The check is
   read-only and never lowers a tier.
+- `write_gate_hold_ambiguous` warns while a held write from before the
+  upgrade that made holds follow their page could not be tied to one page. It
+  lists up to 50 of them, each with its candidate pages; every one stays held
+  for all of its candidates, and a release is refused for it. Its fix is
+  `gbrain trust review`, where you drop each one with `gbrain trust drop`. The
+  check is read-only.
