@@ -1792,7 +1792,13 @@ impl Store {
                     live_targets.push(slug.clone());
                 }
             }
-            let keys_after = keys_for_origin(&*tx, page_id, &input.link_types)?;
+            // The keyed lookup of this statement's own new transitions is written when the statement
+            // ends (`keyed_index.rs`), so the rows inserted above are added here; a row it deleted
+            // reads back as gone.
+            let mut keys_after = keys_for_origin(&*tx, page_id, &input.link_types)?;
+            keys_after.extend(inserted.iter().cloned());
+            keys_after.sort();
+            keys_after.dedup();
             Ok(ApplyTemporalResult {
                 inserted,
                 live_targets,

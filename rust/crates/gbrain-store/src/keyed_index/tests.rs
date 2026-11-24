@@ -171,7 +171,7 @@ fn step(store: &Store, rng: &mut Lcg) -> Option<String> {
             store
                 .apply_link_temporal_rows(&input)
                 .ok()
-                .map(|_| format!("temporal {slug}>{other} x{n}"))
+                .map(|applied| format!("temporal {slug}>{other} x{n}: {applied:?}"))
         }
         8 => store
             .delete_page(slug, Some(source))
@@ -432,4 +432,67 @@ fn a_raw_title_entry_reads_back_its_title_and_page() {
     let long = "x".repeat(RAW_TITLE_MAX + 1);
     assert_eq!(title_entry(&long, 7)[1], LONG_TITLE);
     assert_eq!(title_entry(&"x".repeat(RAW_TITLE_MAX), 7)[1], TITLE);
+}
+
+/// A write that reads the lookups inside its own statement (`applyLinkTemporalRows` reads the
+/// origin's keys after inserting transitions) answers as the scan does: the same seeded workload
+/// run with the lookups and with the scans returns the same answer from every write.
+#[test]
+fn every_write_answers_as_the_scans_inside_its_own_statement() {
+    let run = |full_scan: bool| {
+        FULL_SCAN.with(|f| f.set(full_scan));
+        let store = crate::test_support::store();
+        source(&store, "work");
+        let mut rng = Lcg(5);
+        let labels: Vec<Option<String>> = (0..400).map(|_| step(&store, &mut rng)).collect();
+        FULL_SCAN.with(|f| f.set(false));
+        labels
+    };
+    let keyed = run(false);
+    let scanned = run(true);
+    let temporal = keyed
+        .iter()
+        .flatten()
+        .filter(|l| l.starts_with("temporal") && !l.contains("keys_after: []"))
+        .count();
+    assert!(
+        temporal > 5,
+        "only {temporal} temporal writes returned keys"
+    );
+    assert_eq!(keyed, scanned);
+}
+
+/// Transition-only evidence: a new dated relationship with no link between the pages reports its
+/// key in `keys_after`, so the caller materializes its relationship state.
+#[test]
+fn new_transitions_with_no_link_are_in_keys_after() {
+    let store = crate::test_support::store();
+    let mut rng = Lcg(1);
+    put(&store, &mut rng, "people/a", "default");
+    put(&store, &mut rng, "companies/b", "default");
+    let page_id = crate::pages::read_page(&*store.read().unwrap(), "default", "people/a")
+        .unwrap()
+        .unwrap()
+        .id;
+    let to_id = crate::pages::read_page(&*store.read().unwrap(), "default", "companies/b")
+        .unwrap()
+        .unwrap()
+        .id;
+    let input: ApplyTemporalInput = de(json!({
+        "pageId": page_id, "sourceId": "default", "producers": ["timeline"], "linkTypes": ["works_at"],
+        "transitions": [{ "from_slug": "people/a", "to_slug": "companies/b", "link_type": "works_at",
+            "kind": "start", "occurred_on": "2020-01-01", "date_precision": "day", "producer": "timeline",
+            "line_hash": "h" }],
+    }));
+    let applied = store.apply_link_temporal_rows(&input).unwrap();
+    let want = vec![crate::link_queries::RelationshipKey {
+        from_page_id: page_id,
+        to_page_id: to_id,
+        link_type: "works_at".into(),
+    }];
+    assert_eq!(applied.inserted, want);
+    assert_eq!(applied.keys_after, want);
+    // Applying the same evidence again replaces the row: still one key, still reported.
+    let again = store.apply_link_temporal_rows(&input).unwrap();
+    assert_eq!(again.keys_after, want);
 }
