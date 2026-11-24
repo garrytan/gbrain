@@ -728,7 +728,7 @@
         "kind": "variable",
         "name": "ENRICH_ORDER_SQL",
         "signature": [
-          "Record<\"inbound-links\" | \"updated\" | \"salience\", string>"
+          "Record<\"inbound-links\" | \"updated\" | \"salience\" | \"owner-contact\", string>"
         ]
       },
       {
@@ -782,6 +782,7 @@
         "kind": "interface",
         "members": [
           "body_len: number",
+          "contact_score?: number | undefined",
           "inbound_count: number",
           "slug: string",
           "source_id: string",
@@ -794,7 +795,9 @@
         "kind": "interface",
         "members": [
           "limit: number",
-          "order: \"inbound-links\" | \"updated\" | \"salience\"",
+          "order: \"inbound-links\" | \"updated\" | \"salience\" | \"owner-contact\"",
+          "ownerSlug?: string | undefined",
+          "ownerSourceId?: string | undefined",
           "reenrichAfterMs?: number | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",
@@ -10474,7 +10477,7 @@
         "kind": "variable",
         "name": "ENRICH_ORDER_SQL",
         "signature": [
-          "Record<\"inbound-links\" | \"updated\" | \"salience\", string>"
+          "Record<\"inbound-links\" | \"updated\" | \"salience\" | \"owner-contact\", string>"
         ]
       },
       {
@@ -10528,6 +10531,7 @@
         "kind": "interface",
         "members": [
           "body_len: number",
+          "contact_score?: number | undefined",
           "inbound_count: number",
           "slug: string",
           "source_id: string",
@@ -10540,7 +10544,9 @@
         "kind": "interface",
         "members": [
           "limit: number",
-          "order: \"inbound-links\" | \"updated\" | \"salience\"",
+          "order: \"inbound-links\" | \"updated\" | \"salience\" | \"owner-contact\"",
+          "ownerSlug?: string | undefined",
+          "ownerSourceId?: string | undefined",
           "reenrichAfterMs?: number | undefined",
           "sourceId?: string | undefined",
           "sourceIds?: string[] | undefined",

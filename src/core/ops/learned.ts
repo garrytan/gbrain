@@ -20,7 +20,7 @@ const learned: Operation = {
   outputRedaction: 'retrieval',
   description:
     'What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), ' +
-    'promises people made to you, thin pages it filled in, and rows you typed into Facts fences (shown, never counted). ' +
+    'promises people made to you, people who may be the same person (with the gbrain dedupe confirm and reject commands, run on the brain host), thin pages it filled in, and rows you typed into Facts fences (shown, never counted). ' +
     'Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. ' +
     'Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links ' +
     '(the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends ' +
