@@ -15,3 +15,4 @@
 
 <!-- behavior-change: legacy_slug_put_names_repair -->
 - On a Postgres database whose encoding is not UTF8, the upgrade skips the new spelling index instead of stopping, and the repair refuses (`slug_spelling_encoding`) without reading anything.
+- For a source that is a subfolder of its Git repository in git-root slug mode, a page whose file is already at the normal path now moves, and the suggested file rename names the right paths.

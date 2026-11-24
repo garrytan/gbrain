@@ -41,7 +41,8 @@ import type { Action } from '../agent-output.ts';
 import { shellQuote } from '../agent-output.ts';
 import { OperationError } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
-import { resolveRecordedSourceFilePath } from '../markdown.ts';
+import { resolveRecordedSourceFilePath, sourceGitScope } from '../markdown.ts';
+import type { SlugRootMode } from '../sync-anchor.ts';
 import { normalizeSlug, validateSlug, withStoredSlug } from '../utils.ts';
 import { SCAN_KEY_SQL, serverEncoding, SPELLING_KEY_SQL, spellingKeys } from '../slug-spelling-key.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
@@ -126,6 +127,9 @@ export interface FileEvidence {
   /** A page that records no file: whether a file sits at the old spelling's path (and not the same file as the normal path's). */
   old_path_file?: boolean;
   normal_path_file?: boolean;
+  /** Where the page's file is and where the normal slug puts it, relative to the source's checkout (the `git mv` the fix names). */
+  from_path?: string;
+  to_path?: string;
 }
 export interface SpellingPage { page_id: number; slug: string; normal: string; revision: string; deleted: boolean; source_path: string | null; evidence: FileEvidence }
 export interface SpellingEntry extends SpellingPage {
@@ -186,23 +190,37 @@ function sameFile(a: string, b: string): boolean {
 
 const isFile = (path: string): boolean => { try { return statSync(path).isFile(); } catch { return false; } };
 
+/**
+ * A slug's file path relative to the source's checkout. A source that is a subfolder of its Git repository, synced in
+ * git-root slug mode (the default), names its pages from the repository root, so their slugs carry the folder's path and
+ * the file sits under the checkout without it (`notes/alice` is `alice.md` in the `notes/` checkout).
+ */
+function checkoutPath(slug: string, scope: readonly string[] | null, mode: SlugRootMode | null): string {
+  if (!scope?.length || mode === 'source-root') return slug;
+  const parts = slug.split('/');
+  return parts.length > scope.length && scope.every((segment, i) => normalizeSlug(parts[i]!) === normalizeSlug(segment)) ? parts.slice(scope.length).join('/') : slug;
+}
+
 /** The file evidence of one page: what the source's checkout holds at the page's recorded path or at the old spelling's path. */
-export function fileEvidence(root: string | null, page: { slug: string; normal: string; source_path: string | null }): FileEvidence {
+export function fileEvidence(root: string | null, page: { slug: string; normal: string; source_path: string | null }, mode: SlugRootMode | null = null): FileEvidence {
   if (!root) return { checkout: 'none' };
   if (!existsSync(root)) return { checkout: 'unavailable' };
+  const scope = sourceGitScope(root);
   const recorded = page.source_path?.trim();
   if (recorded) {
     // The resolver returns the direct path even when no file is there, so the file itself is checked.
-    const resolved = resolveRecordedSourceFilePath(root, recorded, page.slug);
+    const resolved = resolveRecordedSourceFilePath(root, recorded, page.slug, mode ?? undefined, scope);
     if (!resolved || !isFile(resolved)) return { checkout: 'present', origin_file: 'missing' };
     const rel = relative(resolve(root), resolved).split(sep).join('/');
-    return { checkout: 'present', origin_file: rel === `${page.normal}${extname(recorded)}` ? 'at_normal_path' : 'elsewhere' };
+    const to = `${checkoutPath(page.normal, scope, mode)}${extname(recorded)}`;
+    return { checkout: 'present', origin_file: rel === to ? 'at_normal_path' : 'elsewhere', from_path: rel, to_path: to };
   }
-  const at = (slug: string): string | null => { try { validateSlug(slug); return join(root, `${slug}.md`); } catch { return null; } };
+  const at = (slug: string): string | null => { try { validateSlug(slug); return join(root, `${checkoutPath(slug, scope, mode)}.md`); } catch { return null; } };
   const oldPath = at(page.slug), normalPath = at(page.normal);
   const normalFile = !!normalPath && existsSync(normalPath);
   const oldFile = !!oldPath && existsSync(oldPath) && !(normalFile && sameFile(oldPath, normalPath!));
-  return { checkout: 'present', old_path_file: oldFile, normal_path_file: normalFile };
+  return { checkout: 'present', old_path_file: oldFile, normal_path_file: normalFile,
+    from_path: `${checkoutPath(page.slug, scope, mode)}.md`, to_path: `${checkoutPath(page.normal, scope, mode)}.md` };
 }
 
 const fileBlocks = (evidence: FileEvidence, recorded: boolean): string | null => {
@@ -213,9 +231,12 @@ const fileBlocks = (evidence: FileEvidence, recorded: boolean): string | null =>
   return null;
 };
 
+/** The source row the preview and the move read: its checkout, its incarnation and its slug-root mode (null: git-root, the default). */
+const SOURCE_SQL = "SELECT local_path, incarnation::text AS incarnation, CASE WHEN config->>'slug_root_mode' IN ('git-root', 'source-root') THEN config->>'slug_root_mode' END AS slug_root_mode FROM sources WHERE id=$1";
+
 /** One source's pages whose slug is not normal, classified; bounded by `SLUG_SPELLING_LIMIT` listed and `SLUG_SPELLING_SCAN_LIMIT` read. */
 export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<SpellingScan> {
-  const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string; slug_root_mode: SlugRootMode | null }>(SOURCE_SQL, [sourceId]);
   if (!source) throw new OperationError('invalid_params', `Source '${sourceId}' does not exist.`, 'Run `gbrain sources list` and pass an active source id.');
   const candidates: PageRow[] = [];
   let inspected = 0, truncated = false, after = 0;
@@ -236,7 +257,7 @@ export async function scanSlugSpellings(engine: Pick<BrainEngine, 'executeRaw'>,
     if (entries.length >= SLUG_SPELLING_LIMIT) { truncated = true; break; }
     const normal = normalizeSlug(row.slug);
     const base: SpellingPage = { page_id: Number(row.id), slug: row.slug, normal, revision: String(row.revision), deleted: row.deleted === true, source_path: row.source_path,
-      evidence: fileEvidence(source.local_path, { slug: row.slug, normal, source_path: row.source_path }) };
+      evidence: fileEvidence(source.local_path, { slug: row.slug, normal, source_path: row.source_path }, source.slug_root_mode) };
     const others = await samePrintedName(engine, sourceId, normal, base.page_id);
     if (others.length) { entries.push({ ...base, class: 'needs_human', code: 'slug_spelling_collision', holders: others }); continue; }
     const blocked = fileBlocks(base.evidence, !!base.source_path?.trim());
@@ -296,8 +317,8 @@ const entryAction = (sourceId: string, entry: SpellingEntry, root: string | null
     return { ...readFix(`Shows page ${other.slug}, which prints the same name as ${entry.slug}; read both before deciding which to keep.`, { argv: getArgv(sourceId, other.slug) }),
       verify: { argv: [...slugSpellingPreviewArgv(sourceId), '--json'] } };
   }
-  const normalPath = `${entry.normal}${extname(entry.source_path ?? '') || '.md'}`;
-  const from = entry.source_path?.trim() || `${entry.slug}.md`;
+  const normalPath = entry.evidence.to_path ?? `${entry.normal}${extname(entry.source_path ?? '') || '.md'}`;
+  const from = entry.evidence.from_path ?? (entry.source_path?.trim() || `${entry.slug}.md`);
   return { argv: ['git', '-C', root ?? '<checkout>', 'mv', from, normalPath], consent: [], actor: 'user',
     why: `The page's file is not at ${normalPath}; moving only the database row would split the page from its file.`,
     user_message: `Rename the file with git mv ${from} ${normalPath}, commit, and sync; sync carries the page identity to the new path. Then preview again.`,
@@ -403,12 +424,18 @@ export const slugSpellingRepair: RepairHandler = {
 const stripEntry = (entry: SpellingEntry): SpellingPage => ({ page_id: entry.page_id, slug: entry.slug, normal: entry.normal, revision: entry.revision, deleted: entry.deleted, source_path: entry.source_path, evidence: entry.evidence });
 
 /** Why the page now is not the page the preview bound, or null. */
+/** Whether two file evidences say the same, whatever their key order (the approved preview comes back from storage re-keyed). */
+function sameEvidence(a: FileEvidence, b: FileEvidence): boolean {
+  const canonical = (e: FileEvidence) => JSON.stringify(Object.fromEntries(Object.entries(e).sort(([x], [y]) => x.localeCompare(y))));
+  return canonical(a) === canonical(b);
+}
+
 function changedFact(page: SpellingPage, current: SpellingEntry): string | null {
   if (current.slug !== page.slug) return `the page is now ${current.slug}`;
   if (current.revision !== page.revision) return 'the page has a new revision';
   if (current.deleted !== page.deleted) return 'the page was deleted or restored';
   if (current.source_path !== page.source_path) return 'the page\'s recorded origin changed';
-  if (JSON.stringify(current.evidence) !== JSON.stringify(page.evidence)) return 'the file evidence in the checkout changed';
+  if (!sameEvidence(current.evidence, page.evidence)) return 'the file evidence in the checkout changed';
   if (current.class === 'needs_human') return 'another page now prints the same name (slug_spelling_collision)';
   if (current.class === 'rename_file_first') return `${current.reason} (rename_file_first)`;
   return null;
@@ -429,14 +456,14 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     await tx.lockPageKeys([{ sourceId, slug: page.slug }, { sourceId, slug: page.normal }]);
     // Row security is checked before anything is read: a table it applies to can come back short.
     await assertGuardTablesReadable(tx, sourceId);
-    const [source] = await tx.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+    const [source] = await tx.executeRaw<{ local_path: string | null; incarnation: string; slug_root_mode: SlugRootMode | null }>(SOURCE_SQL, [sourceId]);
     if (source?.incarnation !== incarnation) throw changedSincePreview(sourceId, page.slug, 'the source was replaced (its incarnation changed)');
     const [row] = await tx.executeRaw<PageRow>('SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2', [page.page_id, sourceId]);
     if (!row || row.slug !== page.slug) throw changedSincePreview(sourceId, page.slug, row ? `the page is now ${row.slug}` : 'the page is gone');
     if (String(row.revision) !== page.revision) throw changedSincePreview(sourceId, page.slug, 'the page has a new revision');
     if ((row.deleted === true) !== page.deleted) throw changedSincePreview(sourceId, page.slug, 'the page was deleted or restored');
     if (row.source_path !== page.source_path) throw changedSincePreview(sourceId, page.slug, 'the page\'s recorded origin changed');
-    if (JSON.stringify(fileEvidence(source.local_path, { slug: page.slug, normal: page.normal, source_path: row.source_path })) !== JSON.stringify(page.evidence)) {
+    if (!sameEvidence(fileEvidence(source.local_path, { slug: page.slug, normal: page.normal, source_path: row.source_path }, source.slug_root_mode), page.evidence)) {
       throw changedSincePreview(sourceId, page.slug, 'the file evidence in the checkout changed');
     }
     const [taken] = await samePrintedName(tx, sourceId, page.normal, page.page_id);

@@ -2129,7 +2129,8 @@ Each page in the preview is one of:
 - **rename_file_first** ([`rename_file_first`](error-codes.md#rename_file_first)): the page's file in the source's
   checkout is not at the path of the normal slug (or the recorded file is not in the checkout, the checkout is not on this host, or a file sits at the old spelling's path). Moving only
   the row would split the page from its file. `git mv` the file to the normal path, commit and sync; sync carries the page
-  identity. Then preview again.
+  identity. Then preview again. For a source that is a subfolder of its Git repository in git-root slug mode (the default),
+  slugs carry the folder's path, so the normal path and the `git mv` the fix names are taken inside the source's folder.
 
 The plan hash binds the brain, the source incarnation and, for every page, its id, revision, recorded origin, source path
 and the file evidence read from the checkout. The apply needs the user's consent (destructive): without `--yes` a
