@@ -15,6 +15,7 @@
  *     when DATABASE_URL is set, on Postgres (testBackends). Holds are inserted as a pre-v333 writer would have (no page
  *     columns, which the test removes first); pages and renames go through the engine.
  */
+import { LATEST_SCHEMA_VERSION } from '../src/core/schema-migrations/latest.generated.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -206,7 +207,8 @@ for (const backend of backends) {
 
       const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
       expect(columns).toEqual(['page_candidates', 'page_id']);
-      expect(await engine.getConfig('version')).toBe('333');
+      // The replay ends at the latest schema version: the trunk's three migrations (v334 to v336) sit above v333 here.
+      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
       expect((await holdStates(engine, sourceId)).find(s => s.id === Number(old!.id))).toMatchObject({ page_id: null, page_candidates: null, slug: 'notes/early' });
       const indexes = (await engine.executeRaw<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='write_gate_holds'")).map(i => i.indexname);
       expect(indexes).toContain('write_gate_holds_bound_dedupe_idx');
