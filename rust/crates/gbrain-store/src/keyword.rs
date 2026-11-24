@@ -53,6 +53,7 @@ mod chunk_search;
 mod cjk;
 mod entity_fuzzy;
 mod filters;
+mod frontmatter_ids;
 mod index;
 mod index_build;
 mod index_writer;

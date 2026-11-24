@@ -74,7 +74,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'countUnfencedFactGroups', 'countUnlinkedFactStats', 'countUnlinkedFactsByOrigin', 'countUnreadableFilesAt', 'countUnscannedTrustRows',
   'countWakeWatches', 'countWorldFacts', 'countZeroWeightWithTakes', 'currentCodeChunksExist', 'edgeClosureLanded',
   'edgeValidityCounts', 'entityGraphCoverage', 'factReadableUnder', 'factRelinkAttemptsTableExists',
-  'filterPagesAtRevision', 'findActiveAccessTokens', 'findActiveSingleFact', 'findBulkFactDays',
+  'filterPageIdsByFrontmatter', 'filterPagesAtRevision', 'findActiveAccessTokens', 'findActiveSingleFact', 'findBulkFactDays',
   'findCodeDefinitions', 'findCodeRefChunks', 'findConsolidatedTakeIds', 'findConsolidatedTakes',
   'findConsolidationPageIds', 'findExactBasenameCandidates', 'findExactSlug', 'findFuzzyEntityCandidates',
   'findOntologyTwin', 'findPagesByTitles', 'findPurgeBlockedPublication', 'findSameClaimFenceRow',

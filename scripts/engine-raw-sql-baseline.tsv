@@ -613,7 +613,6 @@ src/core/search/entity-anchor.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
-src/core/search/frontmatter-where.ts	execute_raw	1
 src/core/search/image-vector-presence.ts	execute_raw	1
 src/core/search/private-visibility.ts	execute_raw	1
 src/core/search/projection-statistics.ts	execute_raw	11

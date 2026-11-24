@@ -69,7 +69,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // the connector sync attempt stamp and cursor write (engine-sql/connector-attempts.ts, connector-db-cursor.ts)
     'recordConnectorSyncAttempt', 'writeConnectorDbCursor'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
-    'searchKeywordChunks'],
+    'searchKeywordChunks', 'filterPageIdsByFrontmatter'],
   search_reads: ['cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts',
     'slugsEndingIn', 'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo'],
   link_reads: ['inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
