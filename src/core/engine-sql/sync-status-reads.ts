@@ -198,6 +198,44 @@ export async function readSyncRecoveryProbeRow(exec: SyncStatusExec, sourceId: s
  * The open identity-downgrade records (no disposition, old page still soft-deleted by that sync) of the listed sources
  * (null: every source), oldest first, each with the live slugs at its new path (null when none).
  */
+/** The soft-deleted page an identity-downgrade record names: id, slug and `deleted_at::text`. */
+export interface IdentityDowngradeOldPage { id: number | string; slug: string; deleted_at: string }
+/** What an old page carries: its facts, links and aliases. */
+export interface IdentityDowngradeCarry { facts: number | string; links: number | string; aliases: number | string }
+/** One page of a pair as the remedy binds it. */
+export interface IdentityRemedySideRow { id: number | string; slug: string; revision: string | null; deleted: boolean }
+
+/**
+ * The soft-deleted page of the source that recorded `path` (or, recording no path, sits at `slug`), the most recently
+ * deleted first, then the lowest id (sync-identity-downgrades.ts recordIdentityDowngrades).
+ */
+export async function readIdentityDowngradeOldPage(exec: SyncStatusExec, sourceId: string, path: string, slug: string): Promise<IdentityDowngradeOldPage | null> {
+  const [row] = await exec.executeRaw<IdentityDowngradeOldPage>(
+    `SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
+      AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`,
+    [sourceId, path, slug]);
+  return row ?? null;
+}
+
+/** The source's facts about `slug`, the links from or to `pageId`, and the source's alias rows of `slug`. */
+export async function countIdentityDowngradeCarry(exec: SyncStatusExec, sourceId: string, slug: string, pageId: number): Promise<IdentityDowngradeCarry> {
+  const [row] = await exec.executeRaw<IdentityDowngradeCarry>(`SELECT
+      (SELECT count(*) FROM facts WHERE source_id = $1 AND entity_slug = $2) AS facts,
+      (SELECT count(*) FROM links WHERE from_page_id = $3 OR to_page_id = $3) AS links,
+      (SELECT count(*) FROM page_aliases WHERE source_id = $1 AND slug = $2) AS aliases`, [sourceId, slug, pageId]);
+  return row ?? { facts: 0, links: 0, aliases: 0 };
+}
+
+/** One page of the source by id or by slug, deleted or not, as the identity remedy binds it, or null. */
+export async function readIdentityRemedySide(exec: SyncStatusExec, sourceId: string, by: { pageId: number } | { slug: string }): Promise<IdentityRemedySideRow | null> {
+  const [row] = 'pageId' in by
+    ? await exec.executeRaw<IdentityRemedySideRow>(
+      'SELECT id, slug, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id = $1 AND id = $2 LIMIT 1', [sourceId, by.pageId])
+    : await exec.executeRaw<IdentityRemedySideRow>(
+      'SELECT id, slug, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1', [sourceId, by.slug]);
+  return row ?? null;
+}
+
 export function readIdentityDowngradeRows<D = Record<string, unknown>>(exec: SyncStatusExec, sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>> {
   return exec.executeRaw<{ record: D | string; new_slugs: string[] | null }>(
     `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint

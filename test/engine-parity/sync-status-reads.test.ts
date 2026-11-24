@@ -34,7 +34,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { syncLockId } from '../../src/core/db-lock.ts';
 import { writePassRow } from '../../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
-import { listIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
+import { identityRemedyParts, listIdentityDowngrades, recordIdentityDowngrades } from '../../src/core/sync-identity-downgrades.ts';
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../../src/core/apple-contacts/review-status.ts';
 import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
 import { DATABASE_ONLY_SOURCES_KEY } from '../../src/core/persistence/unbound-source.ts';
@@ -341,4 +341,51 @@ describe('engine parity: sync status reads', () => {
       });
       return result;
     });
+
+  parityTest('recordIdentityDowngrades records a renamed file\'s old page with what it carries, and the remedy binds both pages of the pair', {
+    methods: ['putPage', 'addLink', 'insertFact', 'softDeletePage', 'readIdentityDowngradeOldPage', 'countIdentityDowngradeCarry', 'readRenameIdentityRows',
+      'writeOpCheckpointRecord', 'readIdentityDowngradeRows', 'readIdentityRemedySide', 'readPersistenceBrainId'],
+  }, async (engine) => {
+    const page = (slug: string, path: string) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Body of ${slug}.`, timeline: '', source_path: path });
+    await page('notes/old', 'notes/old.md');
+    await page('notes/new', 'notes/new.md');
+    await page('notes/other', 'notes/other.md');
+    await engine.addLink('notes/old', 'notes/other', 'see', 'mentions');
+    await engine.addLink('notes/other', 'notes/old', 'back', 'mentions');
+    await engine.insertFact({ fact: 'The old note names alice-example', entity_slug: 'notes/old', source: 'mcp:remember', valid_from: new Date('2026-05-01T00:00:00Z') } as never, { source_id: 'default' });
+    await engine.softDeletePage('notes/old');
+    const pairs = [
+      { from: 'notes/old.md', to: 'notes/new.md', similarity: 0.4, reason: 'no_identity_signal' as const },
+      // No soft-deleted page recorded this path: nothing to carry, nothing recorded.
+      { from: 'notes/never.md', to: 'notes/new.md', similarity: 0.4, reason: 'no_identity_signal' as const },
+    ];
+    const recorded = await recordIdentityDowngrades(engine, 'default', pairs);
+    expect(recorded.length).toBe(1);
+    const [record] = recorded;
+    expect(record!.old_deleted_at).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?\+00$/);
+    const listed = await listIdentityDowngrades(engine as never, ['default']);
+    const parts = await identityRemedyParts(engine, record!, 'carry');
+    const side = (s: { page_id: number; slug: string; revision: string; deleted: boolean } | null) =>
+      s && { slug: s.slug, deleted: s.deleted, revision: /^[0-9a-f-]{36}$/.test(s.revision) };
+    const result = {
+      record: { old_slug: record!.old_slug, new_slug: record!.new_slug, facts: record!.facts, links: record!.links, aliases: record!.aliases,
+        recorded_at_is_deleted_at: new Date(record!.recorded_at).getTime() === new Date(record!.old_deleted_at.replace(' ', 'T').replace('+00', 'Z')).getTime() },
+      listed: listed.map(r => ({ old_slug: r.old_slug, new_slug: r.new_slug, old_page_id: r.old_page_id === record!.old_page_id })),
+      parts: { old: side(parts.old), new: side(parts.new), disposition: parts.disposition, kind: parts.kind },
+      direct: {
+        oldPage: (await engine.readIdentityDowngradeOldPage('default', 'notes/old.md', 'notes/old'))?.slug ?? null,
+        noOldPage: await engine.readIdentityDowngradeOldPage('default', 'notes/new.md', 'notes/new'),
+        carry: Object.fromEntries(Object.entries(await engine.countIdentityDowngradeCarry('default', 'notes/old', record!.old_page_id)).map(([k, v]) => [k, Number(v)])),
+        sideBySlug: (await engine.readIdentityRemedySide('default', { slug: 'notes/new' }))?.deleted ?? null,
+        sideMissing: await engine.readIdentityRemedySide('default', { slug: 'notes/missing' }),
+      },
+    };
+    expect(result).toEqual({
+      record: { old_slug: 'notes/old', new_slug: 'notes/new', facts: 1, links: 2, aliases: 0, recorded_at_is_deleted_at: true },
+      listed: [{ old_slug: 'notes/old', new_slug: 'notes/new', old_page_id: true }],
+      parts: { old: { slug: 'notes/old', deleted: true, revision: true }, new: { slug: 'notes/new', deleted: false, revision: true }, disposition: 'carry', kind: 'rename-identity-v1' },
+      direct: { oldPage: 'notes/old', noOldPage: null, carry: { facts: 1, links: 2, aliases: 0 }, sideBySlug: false, sideMissing: null },
+    });
+    return result;
+  });
 });

@@ -731,7 +731,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readOrphanedManagedSyncFailureRows': OOS.callerRawSql, 'listFreshnessTargets': OOS.callerRawSql, 'readMovementWatermark': OOS.callerRawSql, 'readMovementHead': OOS.callerRawSql, 'readMovementHoldSummary': OOS.callerRawSql,
   'readSyncHeadRequestRow': OOS.callerRawSql,
   'readSyncRecoveryProbeRow': OOS.callerRawSql,
-  'readIdentityDowngradeRows': OOS.callerRawSql,
+  'readIdentityDowngradeRows': OOS.callerRawSql, 'readIdentityDowngradeOldPage': OOS.callerRawSql, 'countIdentityDowngradeCarry': OOS.callerRawSql, 'readIdentityRemedySide': OOS.callerRawSql,
   'readWriteWatermarkRow': OOS.callerRawSql,
   'readSourceCheckoutRoot': OOS.callerRawSql,
   'readUnembeddedPageSummary': OOS.callerRawSql,

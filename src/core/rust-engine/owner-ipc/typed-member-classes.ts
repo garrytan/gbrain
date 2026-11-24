@@ -241,7 +241,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // Added when the sync and notifier lanes merged: each reads only, as its engine-sql function and the Rust store function it calls
   // show (test/rust-owner-ipc-read-classes.test.ts scans both). A cursor declare or fetch and a lock take no entry here.
   'countBrainLivePages', 'countChunksBySource', 'countCompanyPages', 'countGitHolds',
-  'countHeldBehindImport', 'countLivePagesBySource', 'countPeopleFolderPages', 'countRepoBoundSources',
+  'countHeldBehindImport', 'countIdentityDowngradeCarry', 'countLivePagesBySource', 'countPeopleFolderPages', 'countRepoBoundSources',
   'countWaitingJobs', 'hasAccessPolicyState', 'hasCompletedFactsExtraction', 'hasDeferralRoom',
   'hasNotifierCoverage', 'hasPendingFactsExtraction', 'holdsNotifierLease', 'listAccessCoverage',
   'listAccessPolicySources', 'listAccessPrefixSlugs', 'listAccessRules', 'listAttendedOriginSlugs',
@@ -252,7 +252,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readAccessStoreConfig', 'readAdmittedPageRefs', 'readAdmittedWriteRequests', 'readBrainMaturity',
   'readDueWantedMarkers', 'readFirstDue', 'readGitHoldCodeCountRows', 'readGitHoldListingRows',
   'readGitHoldRecords', 'readGitHoldReportInputs', 'readGitHoldRetryRequest', 'readGitHoldRow',
-  'readGitImageHoldCountRows', 'readIdentityDowngradeRows', 'readLinkTargetPages', 'readLiveAccessToken',
+  'readGitImageHoldCountRows', 'readIdentityDowngradeOldPage', 'readIdentityDowngradeRows', 'readIdentityRemedySide', 'readLinkTargetPages', 'readLiveAccessToken',
   'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncPassRows',
   'readManagedSyncCursorHeader', 'readManagedSyncFailureRows', 'readNamedEntitySlugs', 'readNotifierLease',
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',

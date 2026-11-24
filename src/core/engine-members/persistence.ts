@@ -33,7 +33,7 @@ import type { WriteRequest } from '../persistence/model.ts';
 import type { CounterColumn } from '../engine-sql/writer-release.ts';
 import type { EmbeddingCandidate } from '../engine-sql/persistence-effect-scans.ts';
 import type { GitHoldListingRow } from '../engine-sql/sync-hold-store.ts';
-import type { ManagedSyncFailureRow, MovementHeadRow, MovementHoldRow, MovementWatermarkRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
+import type { IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, MovementHeadRow, MovementHoldRow, MovementWatermarkRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow } from '../engine-sql/sync-status-reads.ts';
 import type { ReceiptCompactionCandidate, ReceiptCompactionWindow } from '../engine-sql/persistence-housekeeping.ts';
 import type { RefreshTiming, WorktreeAdmission, WorktreeAdmissionKey } from '../engine-sql/persistence-admission.ts';
 import type { SegmentedGateEvidenceRow } from '../engine-sql/writer-versions.ts';
@@ -125,6 +125,12 @@ export interface PersistenceMembers {
   readSyncRecoveryProbeRow(sourceId: string, opts?: SyncStatusProbeOptions): Promise<SyncRecoveryProbeRow>;
   /** The open identity-downgrade records of the listed sources (null: every source), oldest first, with the live slugs at each new path. */
   readIdentityDowngradeRows<D = Record<string, unknown>>(sourceIds: readonly string[] | null): Promise<Array<{ record: D | string; new_slugs: string[] | null }>>;
+  /** The soft-deleted page an identity-downgrade record names (by recorded path, else slug), most recently deleted first, or null. */
+  readIdentityDowngradeOldPage(sourceId: string, path: string, slug: string): Promise<IdentityDowngradeOldPage | null>;
+  /** What an old page carries into a downgrade record: the source's facts about the slug, the page's links and the slug's aliases. */
+  countIdentityDowngradeCarry(sourceId: string, slug: string, pageId: number): Promise<IdentityDowngradeCarry>;
+  /** One page of the source by id or slug, deleted or not, as the identity remedy binds it, or null. */
+  readIdentityRemedySide(sourceId: string, by: { pageId: number } | { slug: string }): Promise<IdentityRemedySideRow | null>;
   /** A source's sync point and pending write requests, for the applied watermark (SQL in engine-sql/applied-watermark-reads.ts). */
   readWriteWatermarkRow(sourceId: string): Promise<WriteWatermarkRow>;
   /** A source's incarnation and its checkout on host `hostId` (else the source's path); null when absent. */

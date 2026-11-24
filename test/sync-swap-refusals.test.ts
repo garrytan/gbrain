@@ -54,9 +54,9 @@ describe('a refused sync read surfaces instead of reading as empty', () => {
 
   test('identityRemedyParts (sync-identity-downgrades.ts) binds the brain id the typed read returns, and a refused read surfaces', async () => {
     const record = { source_id: 's', from: 'a.md', to: 'b.md', recorded_at: 'x', old_page_id: 1, new_slug: null } as never;
-    const parts = await identityRemedyParts({ readPersistenceBrainId: async () => 'brain-1', executeRaw: async () => [] } as never, record, 'close');
+    const parts = await identityRemedyParts({ readPersistenceBrainId: async () => 'brain-1', readIdentityRemedySide: async () => null } as never, record, 'close');
     expect(parts.brain_id).toBe('brain-1');
-    expect(await code(() => identityRemedyParts({ readPersistenceBrainId: async () => refused(), executeRaw: async () => [] } as never, record, 'close')))
+    expect(await code(() => identityRemedyParts({ readPersistenceBrainId: async () => refused(), readIdentityRemedySide: async () => null } as never, record, 'close')))
       .toBe('engine_capability_missing');
   });
 

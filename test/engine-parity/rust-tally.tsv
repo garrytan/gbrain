@@ -48,8 +48,8 @@ test/engine-parity/collate-engine-sql.test.ts	28	7
 test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
 test/engine-parity/collate-outputs.test.ts	2	5
-test/engine-parity/collate-persistence-a.test.ts	0	20
-test/engine-parity/collate-persistence-b.test.ts	0	21
+test/engine-parity/collate-persistence-a.test.ts	2	19
+test/engine-parity/collate-persistence-b.test.ts	6	16
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	0	4
 test/engine-parity/collate-schema-pack-samples.test.ts	0	4
@@ -95,6 +95,7 @@ test/engine-parity/entity-card-option-reads.test.ts	6	0
 test/engine-parity/entity-card-timeline.test.ts	2	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
 test/engine-parity/entity-identities.test.ts	9	4
+test/engine-parity/entity-names-siblings.test.ts	1	0
 test/engine-parity/entity-reads.test.ts	13	1
 test/engine-parity/export-bytes.test.ts	2	0
 test/engine-parity/extract-bookkeeping.test.ts	2	0
@@ -265,7 +266,7 @@ test/engine-parity/repair-bookkeeping.test.ts	7	1
 test/engine-parity/repair-busy.test.ts	1	0
 test/engine-parity/repair-facts-previews-2.test.ts	4	4
 test/engine-parity/repair-facts-previews-3.test.ts	4	6
-test/engine-parity/repair-facts-previews-4.test.ts	1	8
+test/engine-parity/repair-facts-previews-4.test.ts	2	7
 test/engine-parity/repair-facts-previews.test.ts	5	0
 test/engine-parity/repair-fence-scans.test.ts	2	1
 test/engine-parity/repair-frontmatter-holds.test.ts	0	1
@@ -311,6 +312,7 @@ test/engine-parity/source-last-commit.test.ts	1	0
 test/engine-parity/source-order-callers.test.ts	3	2
 test/engine-parity/source-resolver-reads.test.ts	27	0
 test/engine-parity/source-verify-reads.test.ts	2	0
+test/engine-parity/sources-add-json.test.ts	1	0
 test/engine-parity/spend-log.test.ts	11	0
 test/engine-parity/stats-pages-by-type-ties.test.ts	2	0
 test/engine-parity/stats-vectors.test.ts	3	0
@@ -321,13 +323,14 @@ test/engine-parity/sync-admission.test.ts	3	0
 test/engine-parity/sync-aliases.test.ts	11	0
 test/engine-parity/sync-checkpoint.test.ts	2	0
 test/engine-parity/sync-import-provenance.test.ts	4	0
-test/engine-parity/sync-pass-pages.test.ts	3	1
+test/engine-parity/sync-pass-pages.test.ts	4	0
 test/engine-parity/sync-requests.test.ts	3	0
 test/engine-parity/sync-restored-file-holds.test.ts	0	1
 test/engine-parity/sync-route.test.ts	6	0
 test/engine-parity/sync-run-reads.test.ts	3	0
 test/engine-parity/sync-run.test.ts	1	0
-test/engine-parity/sync-status-reads.test.ts	6	2
+test/engine-parity/sync-status-reads.test.ts	10	0
+test/engine-parity/sync-swap-reads.test.ts	6	0
 test/engine-parity/take-held-rows.test.ts	2	0
 test/engine-parity/take-proposals.test.ts	7	1
 test/engine-parity/take-purge-ledger.test.ts	4	0
