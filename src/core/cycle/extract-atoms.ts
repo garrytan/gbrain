@@ -395,17 +395,8 @@ Output ONLY the JSON object, no prose. Use null for unavailable optional metadat
  * Fails soft: any executeRaw error is logged to stderr and returns [].
  * The transcript path still proceeds.
  *
- * D9 fixes incorporated:
- *   #1 sourceId threading on putPage — happens at the caller (this
- *      function returns DiscoveredPage; caller does the writes).
- *   #3 content_hash IS NOT NULL filter — pages without a hash can't
- *      participate in the NOT EXISTS check anyway.
- *   #4 dream_generated exclusion — prevents the phase from chewing
- *      its own output (e.g. dream-generated originals).
- *   #5 raw source-holder exclusion — source pages that only point at a raw
- *      import payload are not extractable prose; counting them creates a
- *      permanent backlog/no-progress loop (see
- *      RAW_SOURCE_HOLDER_EXCLUSION_SQL).
+ * The caller owns publication. Discovery needs a content hash and excludes
+ * generated output and raw source-holder pages to avoid repeated extraction.
  */
 export async function discoverExtractablePages(
   engine: BrainEngine,
