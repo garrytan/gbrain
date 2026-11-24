@@ -788,9 +788,7 @@ export class ManagedConnectorSync {
     const attribution = await maintenanceAttribution(this.engine);
     await this.engine.transaction(async tx => {
       await this.assertLease(tx);
-      await withCoordinatedWrite(tx, [this.sourceId], () => tx.executeRaw(
-        'UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-        [this.sourceId, this.source.incarnation, newestContentAt ?? null]), attribution);
+      await withCoordinatedWrite(tx, [this.sourceId], () => stampConnectorFresh(tx, this.sourceId, this.source.incarnation, newestContentAt), attribution);
     });
   }
   /** The run's remaining wait allowance; the caller's own deadline arrives through the lease signal. */
@@ -1238,6 +1236,18 @@ export class ManagedConnectorSync {
   }
 }
 
+/**
+ * The managed connector sync's freshness stamp: sets the source's last sync time to the database clock and, when the run
+ * saw newer content, its newest content time (null or absent keeps the stored value), only while the source is still the
+ * incarnation the run bound. Runs inside the caller's transaction: `stampFreshness` (a run whose checkpoint save was
+ * skipped, in a coordinated write) and the `connector_v2_checkpoint` publication below (a fresh checkpoint). Callers do
+ * not read the result.
+ */
+export async function stampConnectorFresh(tx: BrainEngine, sourceId: string, incarnation: string, newestContentAt?: string | null): Promise<unknown> {
+  return tx.executeRaw('UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
+    [sourceId, incarnation, newestContentAt ?? null]);
+}
+
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const p = row.intent as ConnectorIntent | null;
   if (!p || !CONNECTOR_V2_KINDS.includes(p.kind) ||
@@ -1288,8 +1298,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       { fix: receiptFix(row.request_id, 'The receipt confirms the checkpoint save did not commit.') });
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector',$1,$2::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [p.checkpointKey, JSON.stringify(p.checkpointAfter)]);
-    if (p.fresh) await tx.executeRaw('UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-      [row.source_id, row.source_incarnation, p.newestContentAt ?? null]);
+    if (p.fresh) await stampConnectorFresh(tx, row.source_id, row.source_incarnation, p.newestContentAt);
     return { status: 'checkpointed', source_id: row.source_id };
   } };
   // #9062: a page stored in segments is read back as strings (up to PAGE_MAX_BYTES), so its re-render carries its timeline and fences like an inline page's.
