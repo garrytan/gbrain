@@ -31,7 +31,7 @@ below; rotate is still raw SQL and stops on a Rust brain.
 | `brain.accessTokenLive(id)` | whether a token not revoked has this id, compared as text (`id::text = $1`) |
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
-| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
+| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them. A record that does not parse is skipped, so one damaged record does not refuse every sign-in, unless it could be the token asked for. That is a JSON record whose `token_hash` is this hash, or a record that is not JSON at all and whose bytes hold this hash, and then the read fails closed. The skip is silent (no log or counter) |
 | `brain.listUnboundTokenNames()` | the distinct names of the tokens not revoked and bound to no member, in byte order (`SELECT DISTINCT name COLLATE "C" ... ORDER BY name`) |
 | `brain.readLiveAccessToken(name)` | `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` of the token not revoked with exactly this name, or null. When several share the name, the oldest (then the lowest id) answers |
 | `brain.recordTokenSetupReads(name, reads)` | null. Sets `setup_reads` to `reads` in the `permissions` object of every token not revoked with this name, keeping the other fields, in one write; a token whose `permissions` is not an object is left alone |
@@ -111,7 +111,8 @@ A refused write leaves the row as it was (no row on an insert).
 `brain.touchAccessTokenLastUsed(id, unified)` stamps `last_used_at` with the store clock, at most once a minute: it skips a
 token stamped in the last 60 seconds, a token that is not there, and (when `unified` is true) a token with no `source_grant`,
 which is the legacy-shape row `resolveTokenGrant` converts first. With `unified` false it stamps any row. The id is
-compared lower-cased. A caller does not wait for it (`touchTokenLastUsed` ignores the result).
+compared lower-cased. It reads first and opens a write only when a stamp is due, and the write checks again. A caller does
+not wait for it (`touchTokenLastUsed` ignores the result).
 
 `brain.convertLegacyAccessTokenGrant(id, columns)` is the first-read conversion `resolveTokenGrant`
 (`src/core/grants/legacy-token.ts`, given the engine by both bearer checks and `gbrain access`) runs on a token with no
