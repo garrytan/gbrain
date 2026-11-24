@@ -16,3 +16,4 @@
 <!-- behavior-change: pointers_name_exact_calls_gbra789 -->
 - gbrain setup exits 1, with the failure on stderr, when a requested --notes, --docs or --transcripts import fails or its folder cannot be read; the wiring that finished stays.
 <!-- behavior-change: setup_failed_import_exits_nonzero_gbra789 -->
+- AGENTS.md, the README and the company-brain tutorial agree on install time: a few minutes, with the measured machine time (about 10 seconds each for the install and setup) stated apart from the time you spend.
