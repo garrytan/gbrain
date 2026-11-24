@@ -915,12 +915,12 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	118	no	yes	yes	serves
-getJob	minion_jobs	yes	42	no	yes	yes	serves
+admitJob	minion_jobs	yes	119	no	yes	yes	serves
+getJob	minion_jobs	yes	43	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 listJobs	minion_jobs	yes	1	no	yes	yes	serves
-claimNextJob	minion_jobs	yes	85	no	yes	yes	serves
+claimNextJob	minion_jobs	yes	86	no	yes	yes	serves
 renewJobLease	minion_jobs	yes	1	no	yes	yes	serves
 completeJob	minion_jobs	yes	49	no	yes	yes	serves
 failJob	minion_jobs	yes	37	no	yes	yes	serves
