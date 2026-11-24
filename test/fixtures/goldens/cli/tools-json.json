@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 303534,
-    "stdoutSha256": "5b1f32ab0cf653a08e29f6d11b7f7dbb1df64a31d6b6019af34c57289e29fb08",
+    "stdoutBytes": 303530,
+    "stdoutSha256": "5411528c40047fabadd3b52fe40bbd18786ae3bb56c55a9a7d05274658bdb015",
     "toolNames": [
       "remember",
       "entity",
@@ -9346,7 +9346,7 @@
         "scope": "write"
       },
       {
-        "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, at most 15 in the text form; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
+        "description": "What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), promises people made to you, thin pages it filled in, and rows you typed into Facts fences (shown, never counted). Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links (the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -9360,7 +9360,7 @@
         "schema": {
           "properties": {
             "limit": {
-              "description": "Most items to return (default 15, at most 100; the text form shows at most 15).",
+              "description": "Most items to return (default 15, at most 100). Every item returned is shown and stamped.",
               "type": "number"
             },
             "since": {

@@ -140,14 +140,18 @@ export interface LearnedView {
   conflict_backlog: { count: number; command: string[] } | null;
 }
 
-/** The note: unseen pending items of the last seven days by default, or every item since `since`. Stamps shown_at on what it returns. */
+/**
+ * The note: unseen pending items of the last seven days by default, or every item since `since`. Stamps shown_at on
+ * what it returns, only for a caller that reads the whole ledger (local, or the owner's token) and is not a local
+ * `--as` preview, so a narrower reader never uses up the owner's unseen view.
+ */
 export async function readLearned(engine: BrainEngine, ctx: OperationContext,
   opts: { sourceIds: string[] | null; since?: Date; limit: number; now?: Date }): Promise<LearnedView> {
   const now = opts.now ?? new Date();
   const since = opts.since ?? new Date(now.getTime() - LEARNED_WINDOW_DAYS * 86_400_000);
   const f = await callerFilters(engine, ctx);
   const items = await liveItems(engine, ctx, f, { sourceIds: opts.sourceIds, since, unseenOnly: opts.since === undefined, limit: opts.limit });
-  if (!ctx.dryRun && items.length) {
+  if (!ctx.dryRun && items.length && f.full && !ctx.applyRemoteReadPolicy && !ctx.accessIdentity) {
     await engine.executeRaw(`UPDATE learning_items SET shown_at = now(), member_id = COALESCE(member_id, $2) WHERE id = ANY($1::bigint[]) AND shown_at IS NULL`,
       [items.map(i => i.id), ctx.auth?.member?.id ?? null]);
   }
@@ -167,9 +171,9 @@ const KIND_HEADINGS: Record<string, string> = {
   you_wrote: 'You wrote (from your own Facts fences; not counted)',
 };
 
-/** The CLI's text form: at most 15 items grouped by kind, each number bound to its stable item id. */
+/** The CLI's text form: every returned item (the ones the read stamped) grouped by kind, each number bound to its stable item id. */
 export function formatLearned(view: LearnedView): string {
-  const shown = view.items.slice(0, LEARNED_DEFAULT_LIMIT);
+  const shown = view.items;
   if (!shown.length && !view.conflict_backlog) return `Nothing new learned since ${view.window.since.slice(0, 10)}.\n`;
   const lines = [`What I learned since ${view.window.since.slice(0, 16).replace('T', ' ')} UTC (${shown.length} item${shown.length === 1 ? '' : 's'}):`];
   for (const kind of KIND_ORDER) {

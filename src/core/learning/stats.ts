@@ -29,6 +29,8 @@ export interface NightStats {
 export interface LearnedStats {
   timezone: string; night_ends: string; since: string; scope: 'ledger' | 'readable';
   nights: NightStats[]; nights_total: number; nights_with_bar: number; bar: number; share_with_bar: number | null;
+  /** True when more ledger rows than the read cap fell in the range: the newest rows were read, so the oldest night may be partial. */
+  truncated: boolean;
 }
 
 /** The night an instant belongs to: its local calendar date in `timeZone`, or the day before when local time is before 06:00. */
@@ -55,17 +57,20 @@ export function countsTowardBar(row: Pick<LedgerRow, 'kind' | 'state' | 'shown_a
   return !row.decided_at || Date.parse(row.decided_at) - Date.parse(row.shown_at) > UNDO_GRACE_MS;
 }
 
-export async function learnedStats(engine: BrainEngine, ctx: OperationContext, opts: { sourceIds: string[] | null; since?: Date; now?: Date }): Promise<LearnedStats> {
+export async function learnedStats(engine: BrainEngine, ctx: OperationContext, opts: { sourceIds: string[] | null; since?: Date; now?: Date; rowCap?: number }): Promise<LearnedStats> {
+  const rowCap = opts.rowCap ?? STATS_ROW_CAP;
   const now = opts.now ?? new Date();
   const since = opts.since ?? new Date(now.getTime() - STATS_DEFAULT_DAYS * 86_400_000);
   const timeZone = await brainTimeZone(engine);
   const iso = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
   let rows = await engine.executeRaw<LedgerRow>(`SELECT id, kind, state, ${iso('created_at')} AS created_at, ${iso('shown_at')} AS shown_at, ${iso('decided_at')} AS decided_at
       FROM learning_items WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) AND created_at >= $2::timestamptz
-     ORDER BY created_at LIMIT $3`, [opts.sourceIds, since.toISOString(), STATS_ROW_CAP]);
+     ORDER BY created_at DESC, id DESC LIMIT $3`, [opts.sourceIds, since.toISOString(), rowCap + 1]);
+  const truncated = rows.length > rowCap;
+  if (truncated) rows = rows.slice(0, rowCap);
   const filters = await callerFilters(engine, ctx);
   if (!filters.full) {
-    const readable = new Set((await liveItems(engine, ctx, filters, { sourceIds: opts.sourceIds, since, unseenOnly: false, limit: STATS_ROW_CAP })).map(i => i.id));
+    const readable = new Set((await liveItems(engine, ctx, filters, { sourceIds: opts.sourceIds, since, unseenOnly: false, limit: rowCap })).map(i => i.id));
     rows = rows.filter(r => readable.has(String(r.id)));
   }
   const nights = new Map<string, NightStats>();
@@ -87,7 +92,7 @@ export async function learnedStats(engine: BrainEngine, ctx: OperationContext, o
   return {
     timezone: timeZone, night_ends: `0${NIGHT_ENDS_HOUR}:00`, since: since.toISOString(), scope: filters.full ? 'ledger' : 'readable',
     nights: list, nights_total: list.length, nights_with_bar: withBar, bar: BAR_ITEMS_PER_NIGHT,
-    share_with_bar: list.length ? Math.round((withBar / list.length) * 1000) / 1000 : null,
+    share_with_bar: list.length ? Math.round((withBar / list.length) * 1000) / 1000 : null, truncated,
   };
 }
 
@@ -98,5 +103,6 @@ export function formatLearnedStats(stats: LearnedStats): string {
     lines.push(`  ${n.night}: ${n.counted} counted of ${n.change_items} changes (shown ${n.shown}, kept ${n.kept}, undone ${n.undone}, expired ${n.expired}); ${n.questions} questions (${n.answered} answered); ${n.you_wrote} you wrote`);
   }
   lines.push(`${stats.nights_with_bar} of ${stats.nights_total} nights reached ${stats.bar} counted items.`);
+  if (stats.truncated) lines.push('Truncated: too many items to read at once, so only the newest were counted; the oldest night shown may be incomplete. Pass a later --since.');
   return lines.join('\n') + '\n';
 }

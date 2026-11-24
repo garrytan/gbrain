@@ -30,7 +30,9 @@ import { bindCredential } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { runPhaseLearningDerive, LEARNING_WATERMARK_KEY } from '../src/core/learning/derive.ts';
-import { countsTowardBar, learnedStats, nightOf } from '../src/core/learning/stats.ts';
+import { countsTowardBar, formatLearnedStats, learnedStats, nightOf } from '../src/core/learning/stats.ts';
+import { formatResult } from '../src/cli/main.ts';
+import { openAsPreview } from '../src/cli/as-preview.ts';
 import { formatLearned, type LearnedView } from '../src/core/learning/read.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -160,8 +162,8 @@ for (const backend of testBackends()) {
       await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, created_at, valid_from, claim_metric, claim_value, claim_unit, claim_period)
         SELECT $1, 'companies/backlog-' || g, 'Backlog MRR ' || g, 'fact', 'world', 'fixture', now() - interval '40 days', now() - interval '40 days', 'mrr', g, 'USD', 'monthly'
           FROM generate_series(1, 1000) g`, [SRC]);
-      await engine.executeRaw(`INSERT INTO decide_proposals (source_id, sweep_id, pair_index, new_fact_id, old_fact_id, p_supersede, proposal_floor)
-        SELECT $1, 'claim_conflicts:backlog', g, n.id, o.id, 0.9, 0.5
+      await engine.executeRaw(`INSERT INTO decide_proposals (source_id, sweep_id, pair_index, new_fact_id, old_fact_id, p_supersede, proposal_floor, created_at)
+        SELECT $1, 'claim_conflicts:backlog', g, n.id, o.id, 0.9, 0.5, now() - interval '40 days'
           FROM generate_series(1, 500) g
           JOIN facts n ON n.source_id = $1 AND n.fact = 'Backlog MRR ' || (2 * g)
           JOIN facts o ON o.source_id = $1 AND o.fact = 'Backlog MRR ' || (2 * g - 1)`, [SRC]);
@@ -265,6 +267,92 @@ for (const backend of testBackends()) {
       expect((await local('learned', { since: '2000-01-01' }) as LearnedView).count).toBe(1);
     });
 
+    test('only a reader of the whole ledger stamps: a world-scope token and a local --as preview leave the owner\'s unseen view intact', async () => {
+      await insertFact('Bob plays chess canarystamp', { visibility: 'world' });
+      await derive();
+      for (const who of ['unbound', 'member']) expect(mentions(await remote(who, {}), 'canarystamp')).toBe(true);
+      const as = await openAsPreview(engine, 'carol-example', 'learned', true);
+      const preview = await as.run(() => operationsByName.learned!.handler(as.context({ engine, remote: false, sourceId: SRC, config: {} as never, logger: console as never, dryRun: false }) as never, {})) as LearnedView;
+      expect(mentions(preview, 'canarystamp')).toBe(true);
+      expect(await engine.executeRaw('SELECT count(*)::int AS n FROM learning_items WHERE shown_at IS NOT NULL')).toEqual([{ n: 0 }]);
+      expect(mentions(await local('learned', {}) as LearnedView, 'canarystamp')).toBe(true);
+      expect(await engine.executeRaw('SELECT count(*)::int AS n FROM learning_items WHERE shown_at IS NOT NULL')).toEqual([{ n: 1 }]);
+    });
+
+    test('limit 20 prints and stamps 20: what is stamped is what is shown', async () => {
+      for (let i = 1; i <= 20; i++) await insertFact(`Bob fact number ${i}`);
+      await derive();
+      const view = await local('learned', { limit: 20 }) as LearnedView;
+      expect(view.count).toBe(20);
+      const text = formatLearned(view);
+      expect(text).toContain('(20 items)');
+      for (const item of view.items) expect(text).toContain(`[item ${item.id}]`);
+      expect(await engine.executeRaw('SELECT count(*)::int AS n FROM learning_items WHERE shown_at IS NOT NULL')).toEqual([{ n: 20 }]);
+    });
+
+    test('a claim-conflict proposal created in the window is itemized even when its newer fact is older; one created before stays a count', async () => {
+      const oldA = await insertFact('Acme ARR is 1000', { entity: COMPANY, visibility: 'world', source: 'fixture', ageDays: 30, claim: ['arr', 1000] });
+      const oldB = await insertFact('Acme ARR is 2000', { entity: COMPANY, visibility: 'world', source: 'fixture', ageDays: 20, claim: ['arr', 2000] });
+      const oldC = await insertFact('Acme ARR is 3000', { entity: COMPANY, visibility: 'world', source: 'fixture', ageDays: 20, claim: ['arr', 3000] });
+      await engine.executeRaw(`INSERT INTO decide_proposals (source_id, sweep_id, pair_index, new_fact_id, old_fact_id, p_supersede, proposal_floor, created_at)
+        VALUES ($1, 'claim_conflicts:window', 1, $2, $3, 0.9, 0.5, now()), ($1, 'claim_conflicts:window', 2, $4, $3, 0.9, 0.5, now() - interval '20 days')`, [SRC, oldB, oldA, oldC]);
+      const phase = await derive();
+      expect((phase.details.recorded as Record<string, number>).conflict_found).toBe(1);
+      expect(phase.details.conflict_backlog).toBe(1);
+    });
+
+    test('a kept item survives its target\'s removal; a pending one is pruned; the read view hides both', async () => {
+      const kept = await insertFact('Bob keeps bees canarykept');
+      const pending = await insertFact('Bob keeps goats canarypending');
+      await derive();
+      await engine.executeRaw("UPDATE learning_items SET state = 'kept', decided_at = now() WHERE target_table = 'facts' AND target_id = $1", [kept]);
+      await engine.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[])', [[kept, pending]]);
+      expect((await derive()).details.pruned).toBe(1);
+      expect(await engine.executeRaw<{ state: string }>('SELECT state FROM learning_items')).toEqual([{ state: 'kept' }]);
+      expect((await local('learned', { since: '2000-01-01' }) as LearnedView).count).toBe(0);
+    });
+
+    test('a remote caller with no resolved source scope is refused', async () => {
+      await expect(operationsByName.learned!.handler({ engine, remote: true, config: {} as never, logger: console as never, dryRun: false } as never, {}))
+        .rejects.toMatchObject({ code: 'permission_denied' });
+    });
+
+    test('a dry run writes no rows, prunes nothing and leaves the watermark', async () => {
+      await insertFact('Bob reads poetry');
+      await engine.executeRaw(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id) VALUES ('00000000-0000-4000-8000-000000000000', $1, 'fact_added', 'facts', 999999999)`, [SRC]);
+      const phase = await runPhaseLearningDerive(engine, { runId: '00000000-0000-4000-8000-000000000001', dryRun: true });
+      expect(phase).toMatchObject({ status: 'ok', details: { dry_run: true, pruned: 0 } });
+      expect((phase.details.recorded as Record<string, number>).fact_added).toBe(1);
+      expect(await engine.executeRaw<{ target_id: string | number }>('SELECT target_id FROM learning_items')).toHaveLength(1);
+      expect(await engine.getConfig(LEARNING_WATERMARK_KEY)).toBeNull();
+    });
+
+    test('a pass truncated at the per-kind cap keeps the old watermark and the next pass records the rest', async () => {
+      for (const n of [1, 2, 3]) await insertFact(`Bob visited city ${n}`);
+      const run = (id: string) => runPhaseLearningDerive(engine, { runId: id, dryRun: false, maxPerKind: 2 });
+      const first = await run('00000000-0000-4000-8000-000000000002');
+      expect(first.details).toMatchObject({ recorded: { fact_added: 2 }, truncated: ['fact_added', 'you_wrote'] });
+      expect(await engine.getConfig(LEARNING_WATERMARK_KEY)).toBeNull();
+      const second = await run('00000000-0000-4000-8000-000000000003');
+      expect(second.details).toMatchObject({ recorded: { fact_added: 1 }, truncated: [] });
+      expect(await engine.getConfig(LEARNING_WATERMARK_KEY)).not.toBeNull();
+    });
+
+    test('a failed ledger write is a warn result, never a throw', async () => {
+      await insertFact('Bob paints murals');
+      const failing = new Proxy(engine, { get(target, key) {
+        if (key === 'executeRaw') return (sql: string, params?: unknown[]) => /INSERT INTO learning_items/.test(sql) ? Promise.reject(new Error('disk full (test)')) : target.executeRaw(sql, params);
+        const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      const phase = await runPhaseLearningDerive(failing, { runId: '00000000-0000-4000-8000-000000000004', dryRun: false });
+      expect(phase).toMatchObject({ status: 'warn', details: { error: 'disk full (test)' } });
+    });
+
+    test('learned refuses an invalid since or limit with invalid_params', async () => {
+      for (const params of [{ since: 'not-a-date' }, { limit: 0 }, { limit: 1.5 }]) await expect(local('learned', params)).rejects.toThrow(/invalid_param/);
+    });
+
     test('a brain behind the migration: the phase skips with a reason and learned refuses with migrations_pending', async () => {
       await engine.executeRaw('ALTER TABLE learning_items RENAME TO learning_items_away');
       try {
@@ -292,6 +380,25 @@ describe('learned stats: the night and the bar', () => {
   let engine: PGLiteEngine;
   beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); }, 240_000);
   afterAll(async () => { await engine?.disconnect(); }, 60_000);
+
+  test('stats over more rows than the cap keep the newest nights and say they were truncated; the CLI prints the nights table', async () => {
+    await engine.executeRaw('DELETE FROM learning_items');
+    await engine.setConfig('brain.timezone', 'UTC');
+    for (const [id, at] of [[1, '2026-11-18T12:00:00Z'], [2, '2026-11-19T12:00:00Z'], [3, '2026-11-20T12:00:00Z']] as const) {
+      await engine.executeRaw(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, state, created_at)
+        VALUES ('00000000-0000-4000-8000-000000000000', 'default', 'fact_added', 'facts', $1, 'kept', $2::timestamptz)`, [id, at]);
+    }
+    const stats = await learnedStats(engine, { engine, remote: false } as never, { sourceIds: null, since: new Date('2026-11-01T00:00:00Z'), rowCap: 2 });
+    expect(stats.truncated).toBe(true);
+    expect(stats.nights.map(n => n.night)).toEqual(['2026-11-19', '2026-11-20']);
+    expect(formatLearnedStats(stats)).toMatch(/truncated/i);
+    const full = await learnedStats(engine, { engine, remote: false } as never, { sourceIds: null, since: new Date('2026-11-01T00:00:00Z') });
+    expect(full.truncated).toBe(false);
+    const text = formatResult('learned', { stats: full }, {});
+    expect(text).toContain('Nights since 2026-11-01');
+    for (const night of ['2026-11-18', '2026-11-19', '2026-11-20']) expect(text).toContain(`  ${night}: 1 counted of 1 changes`);
+    await engine.executeRaw('DELETE FROM learning_items');
+  });
 
   test('a night is the local day ending 06:00 in the brain timezone', () => {
     expect(nightOf(new Date('2026-11-24T05:59:00Z'), 'UTC')).toBe('2026-11-23');

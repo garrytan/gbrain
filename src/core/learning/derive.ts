@@ -6,14 +6,14 @@
  *
  *   fact_added      machine-extracted facts (facts.source names an extractor) created in the window
  *   you_wrote       facts reconciled from a Facts fence row with no source cell (fence:reconcile); shown, never counted
- *   conflict_found  pending claim_conflicts proposals whose newer fact appeared in the window; older pairs stay a count
+ *   conflict_found  pending claim_conflicts proposals created in the window; older proposals stay a count
  *   page_filled     pages enrich wrote in the window, pointing at the page version that holds the prior revision
  *   promise_found   open loops of kind commitment_owed_to_me created in the window
  *
  * The window starts an hour before the previous pass (learning.derive.watermark), at most seven days back. Each kind
  * inserts at most MAX_PER_KIND rows per pass; a truncated pass keeps the old watermark, so the next pass continues.
  * Idempotent on the (kind, target_table, target_id) key. Never throws: a failure is a `warn` result, so it never fails
- * the cycle. A pointer whose target row is gone (a purge) is pruned.
+ * the cycle. A pending or expired pointer whose target row is gone (a purge) is pruned; a decided one stays for stats.
  */
 
 import type { BrainEngine } from '../engine.ts';
@@ -50,7 +50,7 @@ const PRODUCERS: Array<{ kinds: LearningKind[]; select: string }> = [
     SELECT d.source_id, 'conflict_found' AS kind, 'decide_proposals' AS target_table, d.id AS target_id,
            n.entity_slug AS subject_slug, d.source_id AS subject_source_id, NULL::text AS prior_revision
       FROM decide_proposals d JOIN facts n ON n.id = d.new_fact_id AND n.source_id = d.source_id
-     WHERE ${CLAIM_CONFLICT_SWEEP_SQL} AND d.status = 'pending' AND n.created_at >= $1::timestamptz
+     WHERE ${CLAIM_CONFLICT_SWEEP_SQL} AND d.status = 'pending' AND d.created_at >= $1::timestamptz
        AND EXISTS (SELECT 1 FROM sources s WHERE s.id = d.source_id)
        AND ${notRecordedSql("'conflict_found'", 'decide_proposals', 'd.id')}
      ORDER BY d.id LIMIT $2` },
@@ -75,15 +75,16 @@ const PRODUCERS: Array<{ kinds: LearningKind[]; select: string }> = [
      ORDER BY l.id LIMIT $2` },
 ];
 
-const PRUNE_SQL = `DELETE FROM learning_items li WHERE
+const PRUNE_SQL = `DELETE FROM learning_items li WHERE li.state IN ('pending', 'expired') AND (
      (li.target_table = 'facts' AND NOT EXISTS (SELECT 1 FROM facts t WHERE t.id = li.target_id))
   OR (li.target_table = 'decide_proposals' AND NOT EXISTS (SELECT 1 FROM decide_proposals t WHERE t.id = li.target_id))
   OR (li.target_table = 'open_loops' AND NOT EXISTS (SELECT 1 FROM open_loops t WHERE t.id = li.target_id))
-  OR (li.target_table = 'page_versions' AND NOT EXISTS (SELECT 1 FROM page_versions t WHERE t.id = li.target_id))
+  OR (li.target_table = 'page_versions' AND NOT EXISTS (SELECT 1 FROM page_versions t WHERE t.id = li.target_id)))
   RETURNING li.id`;
 
 /** The learning_derive phase. `runId` is the cycle's run id (src/core/cycle.ts mints one per cycle). */
-export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId: string; dryRun: boolean; now?: Date }): Promise<PhaseResult> {
+export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId: string; dryRun: boolean; now?: Date; maxPerKind?: number }): Promise<PhaseResult> {
+  const cap = opts.maxPerKind ?? MAX_PER_KIND;
   const skipped = (reason: string, summary: string): PhaseResult =>
     ({ phase: 'learning_derive', status: 'skipped', duration_ms: 0, summary, details: { reason, run_id: opts.runId } });
   if (!hasCapability(engine, 'raw_sql')) return skipped('engine_capability_missing', "skipped: this brain's engine has no learning ledger yet");
@@ -97,12 +98,12 @@ export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId:
     const truncated: LearningKind[] = [];
     for (const producer of PRODUCERS) {
       const rows = opts.dryRun
-        ? await engine.executeRaw<{ kind: string }>(`SELECT kind FROM (${producer.select}) c`, [since, MAX_PER_KIND])
+        ? await engine.executeRaw<{ kind: string }>(`SELECT kind FROM (${producer.select}) c`, [since, cap])
         : await engine.executeRaw<{ kind: string }>(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, subject_slug, subject_source_id, prior_revision)
             SELECT $3::uuid, c.source_id, c.kind, c.target_table, c.target_id, c.subject_slug, c.subject_source_id, c.prior_revision FROM (${producer.select}) c
-            ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING kind`, [since, MAX_PER_KIND, opts.runId]);
+            ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING kind`, [since, cap, opts.runId]);
       for (const r of rows) counts[r.kind] = (counts[r.kind] ?? 0) + 1;
-      if (rows.length >= MAX_PER_KIND) truncated.push(...producer.kinds);
+      if (rows.length >= cap) truncated.push(...producer.kinds);
     }
     const [backlog] = await engine.executeRaw<{ n: number | string }>(CONFLICT_BACKLOG_SQL, [null]);
     const pruned = opts.dryRun ? 0 : (await engine.executeRaw(PRUNE_SQL)).length;

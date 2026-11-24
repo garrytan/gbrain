@@ -1,12 +1,12 @@
 /**
  * Nightly learning PR 1: the `learned` read op ("what I learned since we last talked"). Lists the learning ledger's
- * items (src/core/learning/) rendered live at the caller's own scope, at most 15 in the text form; `stats` returns
+ * items (src/core/learning/) rendered live at the caller's own scope, 15 by default; `stats` returns
  * the per-night scoreboard instead. Showing an item stamps its shown_at, so the default view is what the caller has
  * not seen yet. Never import from '../operations.ts' here (cycle).
  */
 
 import { opError, type Operation } from './contract.ts';
-import { invalidParam } from './op-fix.ts';
+import { invalidParam, readFix } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
 import { hasCapability } from '../engine-capabilities.ts';
 import { capabilityMissing } from '../rust-engine/errors.ts';
@@ -23,12 +23,12 @@ const learned: Operation = {
     'What the brain learned since you last looked: new facts its extractors saved, facts that disagree (which one is right?), ' +
     'promises people made to you, thin pages it filled in, and rows you typed into Facts fences (shown, never counted). ' +
     'Default: the items you have not been shown yet from the last 7 days; with since, every item since that date. ' +
-    'Grouped by kind, questions first, at most 15 in the text form; each item carries a stable id and evidence links ' +
+    'Grouped by kind, questions first, 15 by default; each item carries a stable id and evidence links ' +
     '(the page or loop it came from). Reading stamps the items as shown. With stats: per-night counts (a night ends ' +
     'at 06:00 in brain.timezone) of items shown, kept, undone and expired, and the share of nights with at least 5 counted items.',
   params: {
     since: { type: 'string', description: 'ISO date or timestamp (e.g. 2026-11-20). Lists every item recorded since then, shown or not. Default: unseen items of the last 7 days (stats: the last 30 days).' },
-    limit: { type: 'number', description: `Most items to return (default ${LEARNED_DEFAULT_LIMIT}, at most ${LEARNED_MAX_LIMIT}; the text form shows at most ${LEARNED_DEFAULT_LIMIT}).` },
+    limit: { type: 'number', description: `Most items to return (default ${LEARNED_DEFAULT_LIMIT}, at most ${LEARNED_MAX_LIMIT}). Every item returned is shown and stamped.` },
     stats: { type: 'boolean', description: 'Return the per-night stats instead of the items. Shows nothing, so it stamps nothing.' },
   },
   scope: 'read',
@@ -54,6 +54,11 @@ const learned: Operation = {
         'Run gbrain apply-migrations --yes on the brain host, then let a dream cycle run.');
     }
     const scope = sourceScopeOpts(ctx);
+    if (ctx.remote !== false && !scope.sourceId && !scope.sourceIds) {
+      throw opError('permission_denied', 'learned: remote callers need a resolved source scope',
+        'Pass a source this connection can read (fix lists them).',
+        { fix: readFix('Lists the sources this connection can read.', { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } }) });
+    }
     const sourceIds = scope.sourceIds?.length ? scope.sourceIds : scope.sourceId ? [scope.sourceId] : null;
     if (p.stats === true) return { stats: await learnedStats(ctx.engine, ctx, { sourceIds, since }) };
     return readLearned(ctx.engine, ctx, { sourceIds, since, limit: Math.min(rawLimit, LEARNED_MAX_LIMIT) });
