@@ -59,7 +59,7 @@ difference only shows that PGLite and Rust disagree.
 ## What the replay does and does not do
 
 - The arms are compared with each other, never with the live brain. They start from the same snapshot.
-- Ids (UUIDs) the seed copied are compared as stored values; only ids and times the replay itself produced are
+- Ids (UUIDs) the seed copied, including ones inside JSON and lists, are compared as stored values; only ids and times the replay itself produced are
   matched one to one between arms.
 - The Postgres arm is always the copy the seed made and verified, never a database the variable names later; the
   replay refuses a database whose owner marker does not name this brain. Two replays of one brain cannot run at once.
@@ -76,8 +76,9 @@ difference only shows that PGLite and Rust disagree.
 - A call that succeeded on the live brain but fails the same way on every copy is labeled `replay_diverged`, never a
   match. The usual cause is a conditional write whose expected revision was created after the snapshot: the replay
   passes the recorded revision as is, so such calls prove nothing either way.
-- Read-back sweeps read each written page in the source the write named. The sweep reads up to 5,000 pages; past that the report
-  says `incomplete` and counts `sweep_skipped`.
+- Read-back sweeps read each written page in the source the write named. Batch writes are read back for every page their rows
+  name. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
+  write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.
 - A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
   a second failure retires them. A purge always deletes them.
 - Recording stays bounded on the brain's own calls: an argument over 1 MiB is recorded as a `gaps` entry before it is

@@ -21,7 +21,7 @@ import {
   scratchPendingPath, scratchRecordPath, startEpoch, watchPurges, wrapCaptureEngine, type CaptureRecord,
 } from '../src/shadow/capture.ts';
 import { captureDir, captureOffMarker, writePrivateJson } from '../src/shadow/capture-state.ts';
-import { checkLocalPostgresUrl } from '../src/shadow/replay-copy.ts';
+import { checkLocalPostgresUrl, FanOutSeedTarget } from '../src/shadow/replay-copy.ts';
 import { acquireReplayLock, runNightlyReplay, settleSeededEpoch } from '../src/shadow/replay-run.ts';
 import { decodeValue } from '../src/shadow/codec.ts';
 import {
@@ -33,7 +33,8 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'gbrain-replay-')); dir
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 /** A small in-memory brain. `dropWrites` returns the right receipt but stores nothing (the negative control). */
-function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean } = {}) {
+function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFrontmatter?: boolean; idPrefix?: string; due?: string; strictRevision?: boolean; wrongTimeline?: boolean } = {}) {
+  const timeline = new Map<string, Array<{ summary: string }>>();
   const pages = new Map<string, { slug: string; title: string; compiled_truth: string; frontmatter: Record<string, unknown>; updated_at: string }>();
   const scoped = new Map<string, { slug: string; title: string }>();
   let n = 0;
@@ -52,7 +53,11 @@ function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFron
     async getTags() { return []; },
     async getLinks() { return []; },
     async getBacklinks() { return []; },
-    async getTimeline() { return []; },
+    async getTimeline(slug: string) { return timeline.get(slug) ?? []; },
+    async addTimelineEntriesBatch(rows: Array<{ slug: string; summary: string }>) {
+      for (const r of rows) timeline.set(r.slug, [...(timeline.get(r.slug) ?? []), { summary: opts.wrongTimeline ? 'something else' : r.summary }]);
+      return rows.length;
+    },
     async getStats() { return { page_count: pages.size, ...(opts.due ? { due: opts.due } : {}) }; },
     async searchKeyword(q: string) { return [...pages.values()].filter(p => p.compiled_truth.includes(q)).map(p => ({ slug: p.slug })); },
     async transaction<T>(fn: (e: unknown) => Promise<T>) {
@@ -541,6 +546,48 @@ describe('review fixes (ship pass 1, outside voice)', () => {
     expect(report.counts.sweep_skipped).toBeGreaterThan(0);
     expect(report.coverage).toBe('incomplete');
   }, 60_000);
+});
+
+describe('review fixes (ship pass 2)', () => {
+  test('a batch write is read back for every page its rows name', async () => {
+    const { run } = await replayOnFakes({ wrongTimeline: true }, e => (e as unknown as { addTimelineEntriesBatch(r: object[]): Promise<number> }).addTimelineEntriesBatch([{ slug: 'notes/a', summary: 'met' }, { slug: 'notes/b', summary: 'called' }]));
+    const { report } = await run();
+    expect(report.diffs.filter(d => d.member === 'sweep:getTimeline').length).toBe(2);
+    expect(report.counts.writes_not_swept).toBe(0);
+  });
+
+  test('a segment with more records than a call takes arguments still loads', async () => {
+    const { cap, home } = recordingCapture();
+    const dir = epochDir(cap, readEpoch(cap)!.id);
+    // The runtime refuses a spread of about a million arguments (500,000 still passes).
+    const line = JSON.stringify({ v: 1, proc: 'p', seq: 1, t0: 1, t1: 1, kind: 'gap' });
+    writeFileSync(join(dir, 'big.jsonl'), (line + '\n').repeat(1_000_000));
+    const runDir = join(tmp(), 'run');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'run.json'), JSON.stringify({ version: 1, epoch: readEpoch(cap)!.id, brain_key: 'pglite-abc', hmac_key: 'ab'.repeat(32),
+      arms: { pglite: 'x', rust: 'y' }, cut: { before: 0, after: 0 }, seed_losses_present: false, segments: dir } satisfies RunSpec));
+    const report = await runReplayChild(runDir, { blockNetwork: () => {}, openArm: async () => fakeEngine() as unknown as BrainEngine });
+    expect(report.counts.gaps).toBe(1_000_000);
+    void home;
+  }, 60_000);
+
+  test('the seed lists ids inside JSON text and nested values too, so they are compared as stored values', async () => {
+    const id = 'aaaaaaaa-1111-4222-8333-444444444444';
+    const rust = { seedPlan: async () => ({}) as never, importRelation: async () => ({ imported: 1, skipped: 0, dropped: 0, unmapped_columns: [], losses: {} }) };
+    const fan = new FanOutSeedTarget(rust as never, {});
+    await fan.importRelation('s', 'pages', [{ slug: 'a', frontmatter: JSON.stringify({ owner: id.toUpperCase() }), tags: [`x:${id}`] } as never]);
+    expect(fan.seededIds.has(id)).toBe(true);
+  });
+
+  test('a stale lock is reclaimed once; the lock file is never seen empty', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'lock'), `999999999 ${Date.now() - 1} old\n`);
+    const unlock = acquireReplayLock(dir, 60_000);
+    expect(readFileSync(join(dir, 'lock'), 'utf8').trim().split(' ').length).toBe(3);
+    expect(() => acquireReplayLock(dir, 60_000)).toThrow(/shadow_replay_busy/);
+    unlock();
+    expect(readdirSync(dir).filter(f => f.startsWith('lock'))).toEqual([]);
+  });
 });
 
 describe('isolation', () => {

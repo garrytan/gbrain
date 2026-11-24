@@ -18,7 +18,14 @@ import type { SeedTarget } from './seed.ts';
 import { ReplayError } from './replay-errors.ts';
 
 const PROJECTION_PREFIX = 'projection_job_';
-const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_ANYWHERE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** Every UUID inside a seeded value: whole columns, and ones inside JSON text, objects and arrays. */
+function collectUuids(v: unknown, into: Set<string>): void {
+  if (typeof v === 'string') { for (const m of v.match(UUID_ANYWHERE) ?? []) into.add(m.toLowerCase()); return; }
+  if (Array.isArray(v)) { for (const x of v) collectUuids(x, into); return; }
+  if (v && typeof v === 'object' && !(v instanceof Uint8Array)) for (const x of Object.values(v)) collectUuids(x, into);
+}
 
 export interface ArmImport { rows: number; imported: number; skipped: number; dropped: number; unmapped_columns: string[]; losses: Record<string, number> }
 
@@ -115,7 +122,7 @@ export class FanOutSeedTarget implements SeedTarget {
 
   async importRelation(seedId: string, relation: string, rows: SeedRow[]): Promise<SeedImportResult> {
     const result = await this.rust.importRelation(seedId, relation, rows);
-    for (const row of rows) for (const v of Object.values(row)) if (typeof v === 'string' && UUID_VALUE.test(v)) this.seededIds.add(v.toLowerCase());
+    for (const row of rows) collectUuids(row, this.seededIds);
     this.add('rust', rows.length, result);
     for (const [name, target] of Object.entries(this.sql)) this.add(name, rows.length, await target.importRelation(seedId, relation, rows));
     this.cut.after ??= Date.now();

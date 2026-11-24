@@ -8,7 +8,7 @@
  * The first night only seeds. Nothing here writes to the brain.
  */
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
@@ -74,22 +74,33 @@ export function acquireReplayLock(dir: string, budgetMs: number): () => void {
   const token = `${process.pid} ${Date.now() + budgetMs + 30 * 60_000} ${randomBytes(6).toString('hex')}\n`;
   const unlock = () => { if (lockHolder(path) === token) rmSync(path, { force: true }); };
   if (createLock(path, token)) return unlock;
-  const [pid, deadline] = (lockHolder(path) ?? '').split(' ').map(Number);
-  if (Date.now() < (deadline ?? 0) || processAlive(pid)) throw new ReplayError('shadow_replay_busy', `lock ${path}`);
-  rmSync(path, { force: true });
+  const seen = lockHolder(path);
+  const [pid, deadline] = (seen ?? '').split(' ').map(Number);
+  if (seen === null || Date.now() < (deadline ?? 0) || processAlive(pid)) throw new ReplayError('shadow_replay_busy', `lock ${path}`);
+  // Reclaim a dead holder's lock by renaming it aside (only one contender's rename succeeds), then check the moved
+  // file is the one judged stale; a fresh lock that landed in between is put back and this run stays out.
+  const aside = `${path}.reclaim-${randomBytes(4).toString('hex')}`;
+  try { renameSync(path, aside); } catch { throw new ReplayError('shadow_replay_busy', `lock ${path}`); } // silent-read-ok: another contender reclaimed it first
+  if (readFileSync(aside, 'utf8') !== seen) {
+    try { linkSync(aside, path); } catch { /* a third run holds the lock now: it stays */ }
+    rmSync(aside, { force: true });
+    throw new ReplayError('shadow_replay_busy', `lock ${path}`);
+  }
+  rmSync(aside, { force: true });
   if (createLock(path, token)) return unlock;
   throw new ReplayError('shadow_replay_busy', `lock ${path}`);
 }
 
 /** Creates the lock file exclusively; false when it already exists. */
 function createLock(path: string, token: string): boolean {
-  let fd: number;
-  try { fd = openSync(path, 'wx', 0o600); } catch (e) {
+  // The token is written to a private file first and linked into place, so the lock is never seen empty.
+  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}`;
+  const fd = openSync(tmp, 'wx', 0o600);
+  try { writeSync(fd, token); } finally { closeSync(fd); }
+  try { linkSync(tmp, path); return true; } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
     throw e;
-  }
-  try { writeSync(fd, token); } finally { closeSync(fd); }
-  return true;
+  } finally { rmSync(tmp, { force: true }); }
 }
 
 /** True while a process with this id runs on this machine. */

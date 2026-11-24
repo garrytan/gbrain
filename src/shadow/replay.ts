@@ -23,6 +23,7 @@ import { canonicalJson, decodeValue, encodeValue } from './codec.ts';
 import { readSegment, type CaptureRecord } from './capture.ts';
 import { ReplayError } from './replay-errors.ts';
 import { SHADOW_READ_MEMBERS } from './reads.ts';
+import { RUST_ENGINE_MEMBERS } from '../core/rust-engine/members.ts';
 
 export const REPLAY_REPORT_VERSION = 1;
 export const REPLAY_CALL_TIMEOUT_MS = 60_000;
@@ -98,7 +99,7 @@ export class NormState {
   constructor(readonly known: ReadonlySet<string>, readonly window: { from: number; to: number }) {}
 
   volatile(s: string): boolean {
-    if (this.known.has(s)) return false;
+    if (this.known.has(s) || this.known.has(s.toLowerCase())) return false;
     if (UUID_RE.test(s)) return true;
     if (!ISO_RE.test(s)) return false;
     const t = Date.parse(s);
@@ -290,7 +291,7 @@ export function renderReport(spec: RunSpec, arms: ArmName[], counts: Record<stri
   by.match = counts.compared_calls! - diffs.length;
   return {
     schema_version: REPLAY_REPORT_VERSION, epoch: spec.epoch, arms, seed_losses_present: spec.seed_losses_present,
-    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || torn ? 'incomplete' : 'complete',
+    coverage: counts.gaps || counts.orphaned || counts.sweep_skipped || counts.writes_not_swept || torn ? 'incomplete' : 'complete',
     counts: Object.fromEntries(Object.entries({ ...counts, torn_segments: torn }).sort()), by_class: by, diffs,
   };
 }
@@ -374,18 +375,47 @@ function sourceOf(args: unknown[]): string | undefined {
   return undefined;
 }
 
-/** Collects the (source, slug) pairs a replayed write named, for the read-back sweep, as JSON keys. */
-function writtenSlugs(units: Unit[], into: Set<string>): void {
+const SLUG_FIELDS = ['slug', 'from_slug', 'to_slug', 'page_slug'] as const;
+/** Capabilities whose writes change a page the sweep reads back. */
+const PAGE_CAPS = new Set(['pages', 'page_body', 'links', 'timeline', 'tags', 'chunks', 'page_versions']);
+
+/** The (source, slug) pairs one row names: `slug`, `from_slug`, `to_slug`, `page_slug`, with the row's own source. */
+function rowSlugs(row: Record<string, unknown>, fallbackSource: string | null): Array<[string | null, string]> {
+  const src = typeof row.source_id === 'string' ? row.source_id : typeof row.sourceId === 'string' ? row.sourceId : fallbackSource;
+  const out: Array<[string | null, string]> = [];
+  for (const f of SLUG_FIELDS) {
+    const v = row[f];
+    if (typeof v !== 'string' || !/^[^\s]{1,300}$/.test(v)) continue;
+    const s = f === 'from_slug' && typeof row.from_source_id === 'string' ? row.from_source_id : f === 'to_slug' && typeof row.to_source_id === 'string' ? row.to_source_id : src;
+    out.push([s, v]);
+  }
+  return out;
+}
+
+/**
+ * Collects the (source, slug) pairs a replayed write named, for the read-back sweep, as JSON keys: a slug argument, a
+ * row with slug fields, or every row of a batch. Returns how many page-changing writes named no page it could find
+ * (those writes are not read back, and the report says its coverage is incomplete).
+ */
+function writtenSlugs(units: Unit[], into: Set<string>): number {
+  let unresolved = 0;
   for (const u of units) {
-    if (u.kind === 'tx') { writtenSlugs(u.children, into); continue; }
+    if (u.kind === 'tx') { unresolved += writtenSlugs(u.children, into); continue; }
     const m = u.rec.member!;
     if (m in SHADOW_READ_MEMBERS || /^(get|list|search|find|count|read|resolve)/.test(m)) continue;
     const args = (decodeValue(u.rec.args) as unknown[]) ?? [];
+    const source = sourceOf(args) ?? null;
     const first = args[0];
-    const slug = typeof first === 'string' && /^[^\s]{1,300}$/.test(first) ? first
-      : first && typeof first === 'object' && typeof (first as { slug?: unknown }).slug === 'string' ? (first as { slug: string }).slug : null;
-    if (slug) into.add(JSON.stringify([sourceOf(args) ?? null, slug]));
+    const pairs: Array<[string | null, string]> = [];
+    if (typeof first === 'string' && /^[^\s]{1,300}$/.test(first)) pairs.push([source, first]);
+    for (const a of args) {
+      if (Array.isArray(a)) { for (const row of a) if (row && typeof row === 'object') pairs.push(...rowSlugs(row as Record<string, unknown>, source)); }
+      else if (a && typeof a === 'object') pairs.push(...rowSlugs(a as Record<string, unknown>, source));
+    }
+    for (const p of pairs) into.add(JSON.stringify(p));
+    if (!pairs.length && PAGE_CAPS.has((RUST_ENGINE_MEMBERS as Record<string, string>)[m] ?? '')) unresolved++;
   }
+  return unresolved;
 }
 
 function collectKnown(value: unknown, into: Set<string>): void {
@@ -408,7 +438,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
   let torn = 0;
   for (const f of readdirSync(spec.segments).filter(f => f.endsWith('.jsonl')).sort()) {
     const seg = readSegment(join(spec.segments, f));
-    records.push(...seg.records);
+    for (const r of seg.records) records.push(r); // no spread: a busy segment has more records than a call takes arguments
     if (seg.torn) torn++;
   }
   const plan = buildUnits(records, spec.cut);
@@ -445,7 +475,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
       }
     }
     const slugs = new Set<string>();
-    writtenSlugs(plan.units, slugs);
+    const writesNotSwept = writtenSlugs(plan.units, slugs);
     const sweepMembers = ['getPage', 'getTags', 'getLinks', 'getBacklinks', 'getTimeline'] as const;
     for (const entry of [...slugs].sort().slice(0, SWEEP_LIMIT)) {
       const [sourceId, slug] = JSON.parse(entry) as [string | null, string];
@@ -461,7 +491,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
       for (const a of arms) outs[a] = await callOn(engines[a], { member: 'getStats', args: [] } as unknown as CaptureRecord);
       compare('sweep:stats', 'sweep:getStats', outs);
     }
-    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT) }, diffs, torn);
+    const report = renderReport(spec, arms, { ...plan.counts, compared_calls: compared, swept_pages: Math.min(slugs.size, SWEEP_LIMIT), sweep_skipped: Math.max(0, slugs.size - SWEEP_LIMIT), writes_not_swept: writesNotSwept }, diffs, torn);
     const out = join(runDir, 'out');
     mkdirSync(out, { recursive: true, mode: 0o700 });
     writeOwnerOnly(join(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
