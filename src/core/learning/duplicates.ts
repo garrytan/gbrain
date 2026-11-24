@@ -55,19 +55,21 @@ export async function rankDuplicateGroups(engine: BrainEngine): Promise<{ ranked
   return { ranked_by: 'owner-contact', groups: groups.map(g => ({ g, s: best(g) })).sort((a, b) => b.s - a.s).map(x => x.g) };
 }
 
-/** The learning_derive step: records the top groups' anchors, best first, each once. */
+/** The learning_derive step: records the best-ranked anchors not already in the ledger, at most five per pass, each once. */
 export async function recordDuplicateQuestions(engine: BrainEngine, opts: { runId: string; dryRun: boolean }):
   Promise<{ recorded: number; groups: number; ranked_by: 'owner-contact' | 'preview'; owner_reason?: string }> {
   const { groups, ...ranking } = await rankDuplicateGroups(engine);
-  const anchors = groups.slice(0, MAX_DUPLICATE_QUESTIONS).map(g => g.anchor);
+  const anchors = [...new Set(groups.map(g => g.anchor))];
   if (!anchors.length) return { recorded: 0, groups: 0, ...ranking };
+  const fresh = `SELECT u.id, u.ord FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord)
+     WHERE ${notRecordedSql("'duplicate_to_confirm'", 'pages', 'u.id')} ORDER BY u.ord LIMIT ${MAX_DUPLICATE_QUESTIONS}`;
   const rows = opts.dryRun
-    ? await engine.executeRaw(`SELECT u.id FROM unnest($1::bigint[]) AS u(id) WHERE ${notRecordedSql("'duplicate_to_confirm'", 'pages', 'u.id')}`, [anchors])
+    ? await engine.executeRaw(fresh, [anchors])
     : await engine.executeRaw(`INSERT INTO learning_items (run_id, source_id, kind, target_table, target_id, subject_slug, subject_source_id)
-        SELECT $1::uuid, p.source_id, 'duplicate_to_confirm', 'pages', p.id, p.slug, p.source_id
-          FROM unnest($2::bigint[]) WITH ORDINALITY AS u(id, ord) JOIN pages p ON p.id = u.id
+        SELECT $2::uuid, p.source_id, 'duplicate_to_confirm', 'pages', p.id, p.slug, p.source_id
+          FROM (${fresh}) AS u JOIN pages p ON p.id = u.id
          ORDER BY u.ord
-        ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING id`, [opts.runId, anchors]);
+        ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING id`, [anchors, opts.runId]);
   return { recorded: rows.length, groups: groups.length, ...ranking };
 }
 

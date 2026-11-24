@@ -44,6 +44,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageType } from '../types.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
+import { hasCapability } from '../engine-capabilities.ts';
 import { resolveOwnerContactAnchor, type OwnerContactAnchor } from '../enrich/owner-contact.ts';
 import { DEFAULT_THIN_THRESHOLD } from '../enrich/thin.ts';
 import { isAvailable } from '../ai/gateway.ts';
@@ -222,9 +223,10 @@ async function writeDailySpend(engine: BrainEngine, v: EnrichThinDailySpend): Pr
   await engine.setConfig(ENRICH_THIN_DAILY_SPEND_KEY, JSON.stringify(v));
 }
 
-/** The order this run uses, and why: a set order wins, else owner-contact when the owner resolves. */
+/** The order this run uses, and why: a set order wins, else owner-contact when the owner resolves and the engine can rank it. */
 async function resolveOrder(engine: BrainEngine, configured: EnrichOrder | null): Promise<{ order: EnrichOrder; reason: string; owner?: OwnerContactAnchor | null }> {
   if (configured && configured !== 'owner-contact') return { order: configured, reason: 'configured' };
+  if (!configured && !hasCapability(engine, 'raw_sql')) return { order: 'inbound-links', reason: 'engine_capability_missing' };
   const resolved = await resolveOwnerContactAnchor(engine);
   if (configured) return { order: configured, reason: 'configured', owner: resolved.owner };
   if (resolved.owner) return { order: 'owner-contact', reason: 'owner_resolved', owner: resolved.owner };

@@ -168,6 +168,14 @@ for (const kind of testBackends()) {
       expect(await resolveOwnerContactAnchor(engine)).toEqual({ owner: null, reason: 'owner_conflict' });
       expect(await phaseOrder()).toEqual({ order: 'inbound-links', reason: 'owner_conflict' });
 
+      // An engine that cannot rank owner-contact (no raw SQL, as on the Rust engine) keeps inbound-links by default.
+      await engine.unsetConfig('cycle.enrich_thin.order');
+      await raw("DELETE FROM pages WHERE slug LIKE 'people/owner-example%'");
+      expect(await resolveOwnerContactAnchor(engine)).toEqual({ owner: { slug: 'memory/owner', source_id: 'default' } });
+      const noSql = new Proxy(engine, { get: (t, p) => p === 'capabilities' ? new Set([...t.capabilities].filter(c => c !== 'raw_sql')) : (v => typeof v === 'function' ? v.bind(t) : v)(Reflect.get(t, p)) }) as typeof engine;
+      const noSqlRun = await runPhaseEnrichThin(noSql, { dryRun: true });
+      expect({ order: noSqlRun.details.order, reason: noSqlRun.details.order_reason }).toEqual({ order: 'inbound-links', reason: 'engine_capability_missing' });
+
       // Explicit owner-contact still wins when the owner does not resolve.
       await engine.setConfig('cycle.enrich_thin.order', 'owner-contact');
       expect(await phaseOrder()).toEqual({ order: 'owner-contact', reason: 'configured' });

@@ -144,6 +144,9 @@ for (const backend of testBackends()) {
       expect(await personGroups()).toHaveLength(7);
       expect((await derive()).details.duplicates).toMatchObject({ recorded: 5, groups: 7 });
       expect(dupes(await local())).toHaveLength(5);
+      // The next pass takes the groups not asked yet instead of the same five again.
+      expect((await derive()).details.duplicates).toMatchObject({ recorded: 2, groups: 7 });
+      expect((await derive()).details.duplicates).toMatchObject({ recorded: 0, groups: 7 });
     });
 
     test('a group confirmed or rejected through gbrain dedupe leaves the next note', async () => {
