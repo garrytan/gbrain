@@ -30,6 +30,8 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       return [];
     },
+    // The guest-source read moved off executeRaw onto the typed listGuestSourceIds; the raw stub answered it with no rows.
+    async listGuestSourceIds() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

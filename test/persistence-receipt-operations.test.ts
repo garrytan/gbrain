@@ -7,6 +7,7 @@ import { localHostId, withVerifiedLocalRegistration, type LocalGrant, type Local
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
+import { readSourceMembership as readSourceMembershipStatement } from '../src/core/engine-sql/persistence-claims.ts';
 
 const RECEIPTS = ['get_write_request', 'list_write_requests', 'cancel_write_request'];
 let engine: PGLiteEngine;
@@ -125,12 +126,15 @@ describe('own-principal write receipt operations', () => {
   test('authorization query failures fail closed rather than using optional diagnostic fallback', async () => {
     const row = await accept();
     let queries = 0;
-    const proxy = new Proxy(engine, { get(target, key) {
+    const proxy = new Proxy(engine, { get(target, key, receiver) {
       if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
         if (args[0].includes('WITH roots AS')) queries++;
         if (args[0].startsWith('SELECT incarnation,archived FROM sources')) throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE');
         return target.executeRaw(...args);
       };
+      // The authorization's source read is the typed readSourceMembership member: it issues its statement through this
+      // proxy's executeRaw, so the injected failure above reaches it as it reached master's raw read.
+      if (key === 'readSourceMembership') return (sourceId: string, opts?: { lock?: boolean | 'update' }) => readSourceMembershipStatement(receiver, sourceId, opts);
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });

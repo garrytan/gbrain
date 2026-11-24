@@ -30,6 +30,8 @@ function fakeEngine(opts: { busySlugs?: Set<string> } = {}) {
   const tx = {
     kind: 'postgres',
     lockPageKeys: async () => undefined,
+    // ownership.ts reads the binding through the typed getWorktreeBinding member; it answers as the raw branch below.
+    getWorktreeBinding: async () => ({ owner_epoch: '3' }),
     executeRaw: async (sql: string, params: unknown[] = []) => {
       if (sql.includes('set_config')) return [];
       if (sql.includes('FROM op_checkpoints')) return [{ run_id: 'run-1', index: 0, request_id: null }];
