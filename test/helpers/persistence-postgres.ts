@@ -7,11 +7,14 @@ import { assertSafeE2eDatabaseUrl } from './db-guard.ts';
  * Permanent receipt IDs deliberately survive source deletion; use a fresh test brain.
  * `collation: 'C'` creates it with code-point text order (LC_COLLATE 'C') whatever the server's default collation is.
  */
-export async function isolatedPersistencePostgres(databaseUrl:string, connectionStyle:'instance'|'module'='instance', poolSize=4, opts:{collation?:'C'}={}):Promise<{engine:PostgresEngine;databaseUrl:string;close:()=>Promise<void>}> {
+export async function isolatedPersistencePostgres(databaseUrl:string, connectionStyle:'instance'|'module'='instance', poolSize=4, opts:{collation?:'C'|'icu-en-US'}={}):Promise<{engine:PostgresEngine;databaseUrl:string;close:()=>Promise<void>}> {
   assertSafeE2eDatabaseUrl(databaseUrl);
   const database=`gbrain_test_persistence_${randomUUID().replace(/-/g,'')}`;
   const admin=postgres(databaseUrl,{max:1,prepare:false});
-  await admin.unsafe(opts.collation==='C' ? `CREATE DATABASE ${database} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C'` : `CREATE DATABASE ${database}`);
+  await admin.unsafe(opts.collation==='C' ? `CREATE DATABASE ${database} TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C'`
+    // An ICU-default brain (PostgreSQL 15+): text sorts in the en-US locale, not byte order.
+    : opts.collation==='icu-en-US' ? `CREATE DATABASE ${database} TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER icu ICU_LOCALE 'en-US' LOCALE 'C.UTF-8'`
+    : `CREATE DATABASE ${database}`);
   const url=new URL(databaseUrl);url.pathname=`/${database}`;
   const engine=new PostgresEngine();
   const close=async()=>{await engine.disconnect();await admin.unsafe(`DROP DATABASE ${database} WITH (FORCE)`);await admin.end();};
