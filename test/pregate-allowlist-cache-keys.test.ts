@@ -274,7 +274,7 @@ describe('pregate allowlist: Rust store lines the secrets check reads as keys, p
       ['444444', '444444"), "sourceId": "default",'].join(''),
     ] },
   ];
-  const added = policy.allowlist.slice(ORIGINAL);
+  const added = policy.allowlist.slice(ORIGINAL, ORIGINAL + LINES.length);
   const secret = ['sk-live-', '0123456789abcdef', '0123456789abcdef'].join('');
   const pemBody = ['-----BEGIN ', 'RSA ', 'PRIVATE KEY-----', ' probe body that is not a key'].join('');
   const phone = ['+1 (415) ', '555', '-0100'].join('');
@@ -312,5 +312,36 @@ describe('pregate allowlist: Rust store lines the secrets check reads as keys, p
     expect(deps['rust/concurrency-bench/**']).toEqual([]);
     expect(deps['scripts/bench/**']).toEqual([]);
     expect(Object.keys(deps).filter(k => k.includes('concurrency-bench'))).toEqual(['rust/concurrency-bench/**']);
+  });
+});
+
+describe('pregate allowlist: the persistence journal claim statement (for the RP2 landing, rust-engine/land-rp2)', () => {
+  // `CLAIM_STAMP_SQL` in src/core/engine-sql/persistence-journal.ts has a line `execution_token=$2::uuid,claim_expires_at=...`:
+  // the secrets check reads the column assignment as a secret-named key with a random-looking value. The one entry is
+  // for that file and that line's text from the flagged column (the value after `execution_token=`) to the line end.
+  const FILE = 'src/core/engine-sql/persistence-journal.ts';
+  const TAIL = "$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),";
+  const secret = ['sk-live-', '0123456789abcdef', '0123456789abcdef'].join('');
+  const pemBody = ['-----BEGIN ', 'RSA ', 'PRIVATE KEY-----', ' probe body that is not a key'].join('');
+  const rows = policy.allowlist.filter(e => e.paths?.includes(FILE));
+  const entry = rows[0]!;
+
+  test('exactly one entry for the file, env.kv, one exact path, no glob, anchored at both ends, and nothing after the Rust entries', () => {
+    expect(policy.allowlist).toHaveLength(ORIGINAL + 29 + 1);
+    expect(policy.allowlist[policy.allowlist.length - 1]).toBe(entry);
+    expect(rows).toHaveLength(1);
+    expect(entry.finding).toBe('env.kv');
+    expect(entry.paths).toEqual([FILE]);
+    expect(entry.pattern!.startsWith('^') && entry.pattern!.endsWith('$')).toBe(true);
+    expect(entry.reason.length).toBeGreaterThan(20);
+  });
+
+  test('covers the flagged value of the claim line and nothing a credential could ride on', () => {
+    expect({ tail: TAIL, covered: anchored(entry.pattern, TAIL) }).toEqual({ tail: TAIL, covered: true });
+    for (const probe of [
+      `${TAIL} x`, `x${TAIL}`, `${TAIL}${secret}`, `"${secret}", ${TAIL}`, `"${secret}", // ${TAIL}`, `${TAIL} // "${secret}"`,
+      `$2::uuid,claim_expires_at=now(),`, `"${secret}",`, pemBody, `'${secret}'`,
+    ]) expect({ probe, covered: anchored(entry.pattern, probe) }).toEqual({ probe, covered: false });
+    expect(new RegExp(entry.pattern!).test(`execution_token="${secret}",claim_expires_at=now(),`)).toBe(false);
   });
 });

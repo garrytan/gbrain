@@ -534,6 +534,14 @@
       ],
       "pattern": "^(?:1111-4111-8111-111111111111\"\\);|111111111111\"\\);|4444-4444-8444-444444444444\"\\), \"sourceId\": \"default\",|444444444444\"\\), \"sourceId\": \"default\",)$",
       "reason": "fictional 555-01xx test numbers and the digit groups of an all-ones or all-fours test UUID, which the scanner reads as phone numbers"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "src/core/engine-sql/persistence-journal.ts"
+      ],
+      "pattern": "^\\$2::uuid,claim_expires_at=now\\(\\)\\+\\(\\$3::double precision\\*interval '1 millisecond'\\),$",
+      "reason": "a SQL column assignment, `execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),` in CLAIM_STAMP_SQL (the persistence journal's claim statement): a parameter placeholder and a cast, never a credential value; for the RP2 landing (rust-engine/land-rp2)"
     }
   ]
 }
