@@ -3142,6 +3142,7 @@
     "sync_not_applicable": 1,
     "sync_parser_regression": 1,
     "sync_pass_superseded": 1,
+    "sync_usage_limited": 1,
     "tag_too_long": 1,
     "tail_changed": 1,
     "tail_exposure_approval": 1,

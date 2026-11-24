@@ -51,6 +51,8 @@ export interface SyncResult {
   embedDeferralReason?: 'large_sync';
   pagesAffected: string[]; /** #5867: a Google sweep's loops_extract enqueue (sweep plus managed catch-up). */ loops_enqueue?: { enqueued: number; deferred: number; skipped_reason: string | null };
   failedFiles?: number; // count of parse failures (Bug 9)
+  /** GST-3452: a partial connector run that stopped only at a provider usage or rate limit, with no other failure. */
+  stopped_on?: 'usage_limit';
   /**
    * #3875: code breakdown of the blocking failures (set on
    * `blocked_by_failures` only). Lets printSyncResult (and --json consumers)

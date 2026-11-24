@@ -325,3 +325,29 @@ test('gbrain.io source on an unmanaged brain: the same window walk, tiers and sk
     }
   }
 }), 120_000);
+
+test('gbrain.io source: a run stopped only by a usage limit says so, and a real failure does not', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const config = gbrainioConfig();
+    const f = await source(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const limit = { exitCode: 1, stdout: '', stderr: 'daily usage limit reached' };
+    fakeGbrainio(MAIL, { override: (args) => args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200' ? limit : null });
+    const limited = await runGoogleSync(engine, f.id, cfg, options);
+    expect(limited.status).toBe('partial');
+    expect((limited as { stopped_on?: string }).stopped_on).toBe('usage_limit');
+    const fresh = await engine.executeRaw<{ last_sync_at: string | null }>('SELECT last_sync_at FROM sources WHERE id=$1', [f.id]);
+    expect(fresh[0]!.last_sync_at).toBeNull();
+
+    fakeGbrainio(MAIL, { override: (args) => args[3] === 'search' ? limit : null });
+    const listing = await runGoogleSync(engine, f.id, cfg, options);
+    expect(listing.status).toBe('partial');
+    expect((listing as { stopped_on?: string }).stopped_on).toBe('usage_limit');
+
+    fakeGbrainio(MAIL, { override: (args) => args[2] === 'thread' && args[4] === 'b2b2b2b2b2b2b200' ? { exitCode: 1, stdout: '', stderr: 'upstream error' } : null });
+    const failed = await runGoogleSync(engine, f.id, cfg, options);
+    expect(failed.status).toBe('partial');
+    expect((failed as { stopped_on?: string }).stopped_on).toBeUndefined();
+  }
+}), 180_000);
+
