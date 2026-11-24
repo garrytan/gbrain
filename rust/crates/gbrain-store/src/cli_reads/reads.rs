@@ -435,7 +435,7 @@ pub struct RankEntityRow {
 
 /// `retiredPageSql`: canonical false/no, a superseded_by or merged_into value, or an alias /
 /// redirect status word.
-fn retired(fm: &Map<String, Value>) -> bool {
+pub(crate) fn retired(fm: &Map<String, Value>) -> bool {
     let canonical = pg_lower(&fm_text(fm, "canonical").unwrap_or_default());
     canonical == "false"
         || canonical == "no"
