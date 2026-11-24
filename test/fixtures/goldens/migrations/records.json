@@ -5412,10 +5412,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "learning_items",
+        "name": "engine_writer_observations",
         "sql": {
-          "length": 1300,
-          "sha256": "452befb84aff2e089f1cb62b2a220222badef1996be01e691495bf5ee152df83"
+          "length": 4019,
+          "sha256": "26fa8ac4134ddb50f21c31fe1406aeef7461f346c0f07d0f30a7c13f41aa466d"
         },
         "sqlFor": "absent",
         "transaction": "absent",

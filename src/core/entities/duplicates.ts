@@ -234,6 +234,13 @@ async function sourceTypes(engine: BrainEngine, sourceId: string, override: Find
   return { person, company, declared };
 }
 
+/** Every page type a source's schema pack reads as a person, across the sources that are not archived. */
+export async function personPageTypes(engine: BrainEngine): Promise<string[]> {
+  const out = new Set<string>();
+  for (const s of await engine.listAllSources()) for (const t of (await sourceTypes(engine, s.id, undefined)).person) out.add(t);
+  return [...out].sort();
+}
+
 async function loadScan(engine: BrainEngine, opts: FindDuplicatesOptions): Promise<{ scan: DuplicateScan; byKey: Map<string, EntityPage>; crowded: number; carriers: Map<string, EntityPage[]> }> {
   const sources = await engine.listAllSources();
   const typesBySource = new Map<string, SourceTypes>();

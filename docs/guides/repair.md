@@ -265,7 +265,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `planner-stats` | `planner_stats_stale` | Runs `ANALYZE` on the hot tables (pages, links, facts, takes, content_chunks, timeline_entries) whose planner statistics are stale, so search and graph reads stop planning as slow nested loops. PGLite also resets each table's pending row count; Postgres runs each `ANALYZE` with a 60 s statement timeout and a 2 s lock timeout. No journal admission, no user data changes, brain-wide. | none |
 | `contextual-mode` | `contextual_retrieval_coverage` (pages with no recorded mode) | Stamps the contextual retrieval mode on markdown pages imported without one (for example by a large `--no-embed` sync, or by a connector source on an older gbrain), exactly as a fresh import of the page would: the page, source and brain settings decide, and the per-chunk synopsis tier lands at the free title tier. It rebuilds projections only: no page write, no new page version and no request ID. A page whose stored vectors already match the stamped convention keeps them and queues no re-embedding; a page whose embedding input changes has only those vectors cleared and is re-embedded once, unless you pass `--no-embed`. | `unsealed_projection`: pages whose chunks lag their text; `gbrain embed --stale` or `safe-chunks` seals them first, and the next run stamps them. `embed_skip`: pages marked to skip embedding keep their stored vectors and are not stamped. |
 | `file-drift` | `maintenance_write_drift` | Explicit-only, preview-bound. Resolves pages whose canonical file differs from the database copy (`source_changed` / `file_database_drift`) through canonical reconciliation, preferring the file or the database copy within reconcile's protections. `--all-drifted` refuses mixed drift classes unless `--class` keeps one; `--only`/`--skip` narrow by canonical file path glob. Opt-in `storage.keep_db` lets the owner host's resident consumer resolve drift under declared prefixes with the database copy. A page whose file is gone from the last commit: `--prefer database` recreates the file, `--prefer file` soft-deletes the page ([deleted canonical files](#deleted-canonical-files)). See [file drift](#file-drift). | Protected metadata, the tag union and protected takes or private fact rows, listed per page as `exceptions`; pages changed after the preview (`changed_since_preview`). |
-| `ghost-pages` | `ghost_pages` | Explicit-only, preview-bound, destructive consent. Soft-deletes live pages whose canonical file is missing on the owner host (ghost pages: every write refuses `canonical_file_missing` and no sync can import a file that is not there), through `delete_page` bound to the previewed owner, path and revision. `--apply --expect <hash> --yes`. See [ghost pages](#ghost-pages). | Declared db_only and never-filed derived pages (never listed); a page whose file came back before the apply (`file_restored`); pages changed after the preview (`changed_since_preview`). |
+| `ghost-pages` | `ghost_pages` | Explicit-only, preview-bound, destructive consent. Soft-deletes live pages whose canonical file is missing on the owner host (ghost pages: every write refuses `canonical_file_missing` and no sync can import a file that is not there), through `delete_page` bound to the previewed owner, path and revision. `--apply --expect <hash> --yes`. See [ghost pages](#ghost-pages). | Declared db_only and never-filed derived pages (never listed); ghosts whose file no commit deleted (`ghost_never_committed`, `ghost_worktree_only`, `ghost_history_unknown`) or that were written after their file (`database_ahead_of_file`), listed apart with their restore routes; a page whose file came back before the apply (`file_restored`); pages changed after the preview (`changed_since_preview`). |
 | `moved-pages` | `ghost_pages` | Explicit-only, preview-bound, destructive consent. Folds a page left behind by a file that moved into the page the moved file imported as (GST-2584): when sync held the old page's deletion (`file_gone`), the new path imported as a fresh page. A page folds only on proof read from Git: its old path's last committed content is what one new path took at the move (or in that path's first commit), and the old page still holds it. Its links, relationship dates, timeline, raw data, files, user tags, aliases, facts and saved versions move to the moved page, its slug becomes an alias, its hold is cleared and it is soft-deleted (restorable for 72 h); no file is written. `--apply --expect <hash> --yes`. See [moved pages](#moved-pages). | Every other page whose file is gone, listed `held:<reason>`: `several_candidates`, `shared_survivor` (another old page with the same content claims the same moved page), `segmented_versions` (the page or a saved version is stored in segments, over 1 MiB), `access_differs` (the two pages differ in readers, folder rules or privacy label), `both_changed` (edited in the database after the move), `first_blob_differs`, `same_id_body_differs`, `evidence_conflicts`, `history_shallow`, `history_unknown`, `deletion_not_committed`, `not_moved`. |
 | `uncommitted-deletions` | `uncommitted_sync_deletions` | Explicit-only, preview-bound, consent. Restores soft-deleted pages a managed sync removed before #7130 although Git never held their recorded file (`.gitignore` excludes it, or no commit holds it and it is not on the disk), one `restore_page` with `detach` each, published database-only: the page comes back live, forgets its recorded file, and no file is written. `--apply --expect <hash> --yes`. See [uncommitted deletions](#uncommitted-deletions). | Pages another writer deleted (listed, restored only with `--include-ambiguous`); tombstones whose file Git once committed or that is on the disk again; paths Git could not answer for (`unknown`); purged pages (only a backup brings them back). |
 | `rows-behind` | `sync_rows_behind_checkpoint` | Explicit-only, preview-bound. Re-imports live pages of a managed source whose row holds an older version of its file than the sync checkpoint (`sources.last_commit`) says was imported, with no hold (#8071), from the file as committed at the checkpoint, through the managed file repair (no file is written). A file whose import is refused, or that is over the sync read bound, is held with that code instead. `--source <id>`, then `--apply --expect <hash>`. See [rows behind the checkpoint](#rows-behind). | Rows with no import record (`excluded:unproven`, joined with `--include-ambiguous`; one whose older version equals its committed file, so the database moved since, never joins: `excluded:database_moved`, nor one whose page and file both moved: `excluded:both_moved`), rows with an uncommitted working-tree edit (`excluded:worktree_differs`), rows whose import would keep page data the file does not carry (`excluded:import_overlay`); rows that moved after the preview (`changed_since_preview`). |
@@ -1604,6 +1604,21 @@ which is right:
   gone from HEAD), `gbrain repair file-drift --prefer database` recreates the
   file from the page instead ([deleted canonical files](#deleted-canonical-files)).
 - **Remove the page**: preview, then apply after the user agrees.
+
+The repair removes only a page whose file a commit deleted, since only then
+does Git still hold what the file held. Every other ghost is listed apart with
+its restore route, never approved, and refused by the soft-delete itself if an
+older approval names it:
+
+| Class | What it means | Route |
+|---|---|---|
+| `ghost_never_committed` | No commit ever held the recorded file (a page written in the database only, or a file removed before any commit), or sync last imported it from an uncommitted edit that the deleting commit never held, so the page holds the only copy of its content. | Write the file from the page with `gbrain repair file-drift --source <id> --slug <slug> --prefer database`, commit it and sync, or keep the page. |
+| `ghost_worktree_only` | HEAD still holds the file; only the working tree lost it. | Restore it with `git -C '<source root>' checkout HEAD -- '<path>'` and sync. If the removal is intended, commit the deletion, sync, then preview again. |
+| `database_ahead_of_file` | The page was written in the database after its file last held it. | Recreate the file from the page (`--prefer database` above), or keep the page. |
+| `ghost_history_unknown` | Git cannot say which commit deleted the file (the source is not a Git checkout, its history is shallow, or the history read failed). | Recreate the file from the page. In a shallow clone, fetch the full history (`git fetch --unshallow`) and preview again. In a folder that is not a Git checkout, delete the page by hand (`gbrain delete <slug>`) if you meant to remove it. |
+
+`gbrain repair file-drift --prefer file` applies the same check before it
+soft-deletes a page whose file is gone.
 
 ```bash
 gbrain repair ghost-pages --source default        # preview: each ghost, its recorded path and revision, and a hash
@@ -3697,7 +3712,7 @@ by where the deletion stands in Git:
 
 | The file is | Route | `--prefer database` | `--prefer file` |
 |---|---|---|---|
-| deleted in the worktree but still committed at HEAD (staged or not) | Not file drift: commit the deletion (sync then imports it), or remove the page with [`gbrain repair ghost-pages`](#ghost-pages) (its own valve and consent). To keep the page, restore the file from Git and sync. The file-drift preview lists it `deletion_uncommitted` and resolves nothing. | — | — |
+| deleted in the worktree but still committed at HEAD (staged or not) | Not file drift: to keep the page, restore the file from Git (`git checkout HEAD -- '<path>'`) and sync; to remove it, commit the deletion and sync. [`gbrain repair ghost-pages`](#ghost-pages) lists it apart (`ghost_worktree_only`) and removes nothing while HEAD holds the file. The file-drift preview lists it `deletion_uncommitted` and resolves nothing. | — | — |
 | gone from the last commit (a committed deletion sync held because the page changed, or a checkout with no commit) | `gbrain repair file-drift --source <id> --slug <slug> --prefer database\|file` | Recreates the canonical file from the page through the reconcile apply; the page is unchanged. Git durability commits the file; when it is off the preview warns, and you commit the file yourself, or the next sync imports the committed deletion again | Soft-deletes exactly that page (purged after 72 h; `gbrain restore <slug> --force` undoes it until then) |
 
 Both are preview-first and bound to the page revision and the observed
@@ -3723,7 +3738,8 @@ printed for unknown pages.
 
 <a id="file-drift-held"></a>**Held drift, one Decision at a time** (#6712). A managed sync holds a
 two-sided change as `file_drift` with a `side` (`both`: the file and the page
-both changed since the last import; `unknown`: the page has no import record
+both changed since the last import; `database`: only the page changed since
+the file was last imported; `unknown`: the page has no import record
 to tell; `deleted`: one side is a deletion) and, for a deleted side, a
 `state`: `tombstone_edited` (the page was deleted and the file was edited, or
 [came back as it was](#file-drift-restored)), `purged_differs` (a purged page's
@@ -3901,7 +3917,10 @@ them changed. A preview that finds nothing still prints an apply command; it
 applies nothing. Page and
 file agree when they differ only in formatting sync does not import (frontmatter
 key order or quoting, or a retype's database-only `legacy_type` stamp on a file that
-still names the old type). An apply refused before it published reserves no request
+still names the old type), or only in where the timeline is split (a page imported
+before v0.46.25.0 keeps a bare dated `## Timeline` section inside its stored body,
+which today's parser reads from the same file as the timeline; this covers pages
+stored inline on sources that are not read-only mirrors). An apply refused before it published reserves no request
 id, so the apply a fresh preview prints goes through. A page with
 no recorded file origin (no source path, and a source URI that is not a
 `file:` URI) is compared with, and adopts, the file at its slug path, spelled
@@ -3912,7 +3931,10 @@ the next sync re-screen every held `file_drift` page that is not a deletion
 once: a page that now agrees with its file is released with no commit and no
 change to its body, type or stamps (a stale stored copy of the `type` key is
 normalised away), and the sync prints `Released N held file(s) that no longer need a
-decision.` (JSON `holds_released`). A page a read-only mirror stored database-only (`mirror_read_only`)
+decision.` (JSON `holds_released`). The timeline-split reading above does not
+trigger that re-screen: a hold an earlier release wrote for such a page waits until
+`gbrain sources retry-held <id>` or a `release_hold` apply asks for it, so a plain
+sync never imports a file over a held page. A page a read-only mirror stored database-only (`mirror_read_only`)
 is compared with the file at its slug path once its source is writable again;
 the apply records that path and clears the stamp.
 

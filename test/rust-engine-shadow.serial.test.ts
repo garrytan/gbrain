@@ -60,7 +60,7 @@ describe('gbrain engine shadow', () => {
     await inHome(async (_home, config) => {
       const preview = capture();
       expect(await runEngineShadow(['start'], { ...preview.deps, config: () => config, ...unmanagedBrain })).toBe(3);
-      expect(preview.out.join('\n')).toContain('never writes: the brain database, the brain config table, the brain repo');
+      expect(preview.out.join('\n')).toContain('never writes: brain content (pages, chunks, facts, links), the brain config table, the brain repo');
       const wrong = capture();
       expect(await runEngineShadow(['start', '--yes', '--expect', 'nope'], { ...wrong.deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(3);
       expect(wrong.err.join('\n')).toContain('preview_changed');

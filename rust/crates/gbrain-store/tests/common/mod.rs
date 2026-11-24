@@ -33,6 +33,21 @@ impl Drop for TempDir {
     }
 }
 
+/// Opens the test brain. `GBRAIN_RUST_CONCURRENT_WRITES=1` runs the suite with concurrent writes
+/// on, so the gate checks both modes.
 pub fn open(dir: &TempDir) -> Store {
-    Store::open_dir(&dir.path().join("brain"), OpenOptions::default()).unwrap()
+    let options = OpenOptions {
+        concurrent_writes: std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1"),
+        ..OpenOptions::default()
+    };
+    Store::open_dir(&dir.path().join("brain"), options).unwrap()
+}
+
+/// Opens the test brain with concurrent writes on.
+pub fn open_concurrent(dir: &TempDir) -> Store {
+    let options = OpenOptions {
+        concurrent_writes: true,
+        ..OpenOptions::default()
+    };
+    Store::open_dir(&dir.path().join("brain"), options).unwrap()
 }

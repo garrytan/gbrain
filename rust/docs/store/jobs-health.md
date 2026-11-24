@@ -15,6 +15,7 @@ Every window and cut-off is an argument. The clock is the store's, read once per
 | `brain.listPrivateQueueHealth()` | per `dream-inline-` queue: the smallest `data.source_id`, live-lock active, waiting-class (`waiting` and `delayed`) and paused rows, the minutes since the oldest waiting-class row and the oldest row's `created_at` in epoch milliseconds |
 | `brain.readWedgeSignals(queue, handlerNames)` | one queue's `{ stalled, activeHealthy, waiting, waitingClaimable, lastCompleted, lastCompletedClaimable }`; the two dates are `Date`s (ISO text across the binding) |
 | `brain.readOldestWaitingAge(queue)` | whole seconds since the oldest waiting row of the queue was created, or null |
+| `brain.countWaitingJobs(excludeFactsAbsorb)` | the number of `waiting` rows, without the `facts-absorb` rows when `excludeFactsAbsorb`. The readiness worker probe passes `true` only on PGLite, so a Rust brain counts its `facts-absorb` jobs as a SQL Postgres brain does |
 | `brain.listStuckActiveJobsByName()` | `{ name, n }` for the active rows whose lock lapsed or whose stalled counter reached 2, the most first |
 
 Ordering and other engine differences:

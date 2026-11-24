@@ -117,6 +117,12 @@ pub struct TakesVectorOptions {
     pub source_ids: Option<Vec<Option<String>>>,
     /// A read-eligibility policy was given: hide takes of soft-deleted and quarantined pages.
     pub eligible_only: bool,
+    /// `eligibility.floor`: `trustFloorSql` over the take's stored tier; null sets none.
+    pub min_trust: Option<String>,
+    /// `eligibility.suppressFlagged`: drop a take `activationSuppressedSql('takes')` flags.
+    pub suppress_flagged: bool,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -673,12 +679,28 @@ fn search_takes(
     query: &[f64],
     options: &TakesVectorOptions,
 ) -> Result<Vec<Value>> {
+    // Postgres refuses a NUL byte in a text parameter before it runs the statement.
+    let texts: Vec<(&str, &str)> = [
+        ("takesHoldersAllowList", &options.allow_list),
+        ("sourceIds", &options.source_ids),
+    ]
+    .into_iter()
+    .flat_map(|(name, list)| {
+        list.iter()
+            .flatten()
+            .flatten()
+            .map(move |v| (name, v.as_str()))
+    })
+    .collect();
+    crate::links::no_nul("searchTakesVector", &texts)?;
     let query = check_query(query)?;
     let limit = options.limit.unwrap_or(DEFAULT_TAKES_LIMIT) as usize;
     if index.takes.is_empty() {
         return Ok(Vec::new());
     }
     let query_norm_sq = dot(&query, &query);
+    let trust =
+        crate::trust::TrustPolicy::parse(options.min_trust.as_deref(), options.suppress_flagged)?;
     let mut takes: HashMap<u64, TakeRecord> =
         all_takes(read)?.into_iter().map(|t| (t.id, t)).collect();
     let mut pages: HashMap<u64, Option<PageRecord>> = HashMap::new();
@@ -706,6 +728,14 @@ fn search_takes(
         {
             continue;
         }
+        if let Some(policy) = &options.exclude_private
+            && crate::facts::page_hidden(read, page, policy)?
+        {
+            continue;
+        }
+        if !trust.admits(read, "takes", take.id, take.trust.tier())? {
+            continue;
+        }
         if stored.vector.len() != query.len() {
             return Err(dims_mismatch(query.len(), stored.vector.len()));
         }
@@ -715,7 +745,12 @@ fn search_takes(
         hits.push((distance, take, slug));
     }
     // `ORDER BY embedding <=> q`: nearest first, NaN last; equal distances by take id.
-    hits.sort_by(|(da, a, _), (db, b, _)| da.total_cmp(db).then(a.id.cmp(&b.id)));
+    hits.sort_by(|(da, a, _), (db, b, _)| {
+        da.is_nan()
+            .cmp(&db.is_nan())
+            .then(da.total_cmp(db))
+            .then(a.id.cmp(&b.id))
+    });
     Ok(hits
         .iter()
         .take(limit)
