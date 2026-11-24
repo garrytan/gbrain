@@ -3,17 +3,14 @@
 Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](oauth-clients.md)); the rules in
 [rust/README.md](../../README.md) ("The brain store") apply.
 
-The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the write grant read, the requester-scope read and the write-attribution name read touch. The SQL for the
-PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`; the store serves the same members. Every other
-reader and writer of the table (verify, list, revoke, rescope, rotate, the read-side grant reads) is still raw SQL and stops on a Rust
-brain.
+The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the write grant read, the requester-scope read and the write-attribution name read
 touch. The SQL for the PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts` (mint, floor) and
 `src/core/engine-sql/access-credentials.ts` (list, grant read, liveness, revokes, the bearer check); the store serves the
 same members. Only `readLiveAccessToken` returns a token hash (the member-key setup compares it to the key file); the
 store never logs one. The member binding columns (`member_id`, `may_act_for`, the four attest columns and
 `reads_unscoped`) are read and written by the credential binding members below. The grant edits of `gbrain auth rescope
---token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`) and `--migrate-legacy` use the grant write members
-below; rotate is still raw SQL and stops on a Rust brain.
+--token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`), `--attest-sources` and `--migrate-legacy` use the grant write and binding members
+below, so `gbrain auth rescope --token` marks the source on a Rust brain as on PGLite and Postgres (the bare-name form still stops on raw SQL in `resolveRescopeTarget`); rotate is still raw SQL and stops on a Rust brain.
 
 | Member | Returns |
 | --- | --- |
