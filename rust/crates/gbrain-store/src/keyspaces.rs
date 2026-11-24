@@ -101,6 +101,11 @@ pub const KEYSPACES: &[Keyspace] = &[
         "reason_tombstones",
         "purged change reasons",
     ),
+    ks(
+        keys::SECRET_STORE,
+        "secret_store",
+        "secret store entries and occurrences",
+    ),
     Keyspace {
         tag: keys::TAKE,
         family: "takes",
