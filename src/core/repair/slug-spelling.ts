@@ -412,6 +412,8 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
   const report = { appended: 0 };
   const outcome = await maintenanceTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId, slug: page.slug }, { sourceId, slug: page.normal }]);
+    // Row security is checked before anything is read: a table it applies to can come back short.
+    await assertGuardTablesReadable(tx, sourceId);
     const [source] = await tx.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
     if (source?.incarnation !== incarnation) throw changedSincePreview(sourceId, page.slug, 'the source was replaced (its incarnation changed)');
     const [row] = await tx.executeRaw<PageRow>('SELECT id, slug, knowledge_revision::text AS revision, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE id=$1 AND source_id=$2', [page.page_id, sourceId]);
@@ -422,7 +424,6 @@ async function movePageUnderStoredSlug(engine: BrainEngine, sourceId: string, pa
     if (JSON.stringify(fileEvidence(source.local_path, { slug: page.slug, normal: page.normal, source_path: row.source_path })) !== JSON.stringify(page.evidence)) {
       throw changedSincePreview(sourceId, page.slug, 'the file evidence in the checkout changed');
     }
-    await assertGuardTablesReadable(tx, sourceId);
     const [taken] = await samePrintedName(tx, sourceId, page.normal, page.page_id);
     if (taken) throw changedSincePreview(sourceId, page.slug, `another page now prints the same name, ${taken.slug} (id ${taken.page_id}) (slug_spelling_collision)`);
     let attachments = 0, guards: Awaited<ReturnType<typeof carryGuards>> = { fact_purges: 0, take_purges: 0 };

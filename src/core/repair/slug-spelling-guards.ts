@@ -19,24 +19,34 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-/** The guard tables: the carry reads every tombstone of the page in them and writes the copies. */
-const GUARD_TABLES = ['fact_purges', 'take_purges'] as const;
+/**
+ * The tables the preview and the move read or write as the running role: the pages and their other spellings, the source,
+ * the attachments re-keyed with the page, and the purge tombstones the carry copies.
+ */
+const GUARD_TABLES = ['fact_purges', 'files', 'pages', 'sources', 'take_purges'] as const;
 
 /**
- * Refuses (`writer_coordinator_required`, nothing written) when row-level security applies to any guard table for the
- * running role. A policy's existence does not prove it shows every row (a `USING (false)` policy hides them all), and a
- * tombstone the role cannot see is not copied, so only a role row security does not apply to (the table owner without
- * FORCE ROW LEVEL SECURITY, or a BYPASSRLS role) may move a page.
+ * The tables of `tables` that row-level security applies to for the running role, in name order. A policy's existence does
+ * not prove it shows every row (a `USING (false)` policy hides them all), so a read of such a table can come back short.
+ */
+export async function rowSecurityTables(db: Pick<BrainEngine, 'executeRaw'>, tables: readonly string[]): Promise<string[]> {
+  return (await db.executeRaw<{ t: string }>('SELECT t FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t', [[...tables]])).map(row => row.t);
+}
+
+/**
+ * Refuses (`writer_coordinator_required`, nothing written) when row-level security applies to any table of `GUARD_TABLES`
+ * for the running role: a page, another spelling of its name, an attachment or a tombstone the role cannot see would be
+ * missed (a collision taken for a free name, an attachment or a guard left on the old spelling), so only a role row security
+ * does not apply to (the table owner without FORCE ROW LEVEL SECURITY, or a BYPASSRLS role) may preview or move a page.
  */
 export async function assertGuardTablesReadable(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
-  const hidden = (await tx.executeRaw<{ unreadable: string }>(
-    'SELECT t AS unreadable FROM unnest($1::text[]) AS t WHERE pg_catalog.row_security_active(t) ORDER BY t', [[...GUARD_TABLES]])).map(row => row.unreadable);
+  const hidden = await rowSecurityTables(tx, GUARD_TABLES);
   if (!hidden.length) return;
   const error = new OperationError('writer_coordinator_required',
-    `Pages of source ${sourceId} were not moved: row-level security applies to ${hidden.join(', ')} for this database role, so the repair cannot prove it sees every purge tombstone of a page and could leave one on the old spelling; nothing was written.`,
+    `Pages of source ${sourceId} were not moved: row-level security applies to ${hidden.join(', ')} for this database role, so the repair cannot prove it sees every page, attachment and purge tombstone it must check or carry; nothing was written.`,
     `Run the repair as the owner of ${hidden.join(', ')} (with FORCE ROW LEVEL SECURITY off) or as a role with BYPASSRLS; then preview again.`,
     'docs/guides/repair.md#slug-spelling');
-  error.fix = { consent: [], actor: 'user', why: 'Row-level security can hide purge tombstones from the running role, and a tombstone the move cannot see stays on the old spelling, so a purged claim could be saved again under the normal name.',
+  error.fix = { consent: [], actor: 'user', why: 'Row-level security can hide rows from the running role: a hidden page with the same name would be taken for a free name, and a hidden attachment or purge tombstone would stay on the old spelling, so a purged claim could be saved again under the normal name.',
     user_message: `Run gbrain repair slug-spelling as the owner of ${hidden.join(', ')} or as a database role with BYPASSRLS.`, requires_exclusive: false };
   throw error;
 }

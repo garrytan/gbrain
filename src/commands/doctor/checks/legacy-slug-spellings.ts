@@ -4,7 +4,8 @@
  * the page moves to its normal slug. The finding counts them per source and names the read-only preview,
  * `gbrain repair slug-spelling --source <id>`; applying it needs the preview's hash and the owner's consent. On a managed
  * brain the repair is unavailable, so the finding says a person has to decide and names no command that would refuse.
- * With none left the check is ok; a scan that stopped at its candidate limit without finding one is a warning (unknown), never ok.
+ * With none left the check is ok; a scan that stopped at its candidate limit without finding one, or a role that row-level
+ * security applies to on pages (its count can come back short), is a warning (unknown), never ok.
  */
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError, doctorVerify } from '../check-fix.ts';
@@ -12,6 +13,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { slugSpellingPreviewArgv } from '../../../core/persistence/legacy-slug-put.ts';
 import { managedPersistenceEnabled } from '../../../core/persistence/ownership.ts';
 import { countSlugSpellings, SLUG_SPELLING_SCAN_LIMIT } from '../../../core/repair/slug-spelling.ts';
+import { rowSecurityTables } from '../../../core/repair/slug-spelling-guards.ts';
 import type { Action } from '../../../core/agent-output.ts';
 
 const DOCS = 'docs/guides/repair.md#slug-spelling';
@@ -20,6 +22,12 @@ async function runLegacySlugSpellings(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   try {
     const engine = connectedEngine(ctx);
+    // A count read through row security can come back short (a USING (false) policy shows nothing), so it is unknown, never ok.
+    if ((await rowSecurityTables(engine, ['pages'])).length) {
+      checks.push({ name: 'legacy_slug_spellings', status: 'warn', details: { count: 'unknown', row_security: ['pages'], docs: DOCS },
+        message: 'This database role reads pages through row-level security, so pages stored under an older spelling may be hidden from it and whether any remain is unknown. Run gbrain doctor as the table owner or a role with BYPASSRLS to count them.' });
+      return checks;
+    }
     const { by_source, truncated } = await countSlugSpellings(engine);
     const count = by_source.reduce((sum, entry) => sum + entry.count, 0);
     const details: Record<string, unknown> = { count, by_source, truncated, docs: DOCS };
