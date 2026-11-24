@@ -564,7 +564,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // serves (countReadersNoncanonicalHolds, listReaderCandidatePages), so the check answers as it does on PGLite.
       // access_disabled_member_credentials (master #9586, GBRA-585) reads disabled members' credentials through raw SQL; it stops on the
       // typed raw_sql refusal on a Rust brain (owner: access family, lane 15).
-      typedRefusals: ['access_disabled_member_credentials'],
+      // write_gate_hold_ambiguous (master #10200) lists the holds the v333 upgrade could not tie to one page; the Rust hold carries no
+      // page id (the hold-by-page-id swap row, due Fri Nov 27), so the check stops on the typed refusal rather than answer a quiet zero.
+      typedRefusals: ['access_disabled_member_credentials', 'write_gate_hold_ambiguous'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
