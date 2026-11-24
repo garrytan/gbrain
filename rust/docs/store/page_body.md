@@ -219,9 +219,61 @@ The TypeScript engine refuses these with `engine_capability_missing`:
 - A flip unseals the page's text projection on both engines, so `getChunks` answers `[]` for a
   segmented page after a flip until a text-projection seal exists (`sealSegmentedPage`). This is
   parity.
-- `upsertSegmentDerivations` never refuses `derivation_purge_pending`: the store has no fact-purge
-  sweep to hold rows.
+- `upsertSegmentDerivations` raises `derivation_purge_pending` as PGLite does, for the rows a recorded fact purge sweep drops (see
+  "The fact purge's derivation sweep record"); the store has no sweep that walks a record and ends it.
 - The sweep has no upload parts to delete and no upload byte reservations to release when it expires
   an upload staging: the store keeps neither.
 - PGLite's text delete skips a text another writer has locked (`FOR UPDATE SKIP LOCKED`); the store
   serializes writes, so no text is ever skipped for that reason.
+
+## The fact purge's derivation sweep record (`page_body/purge_record.rs`)
+
+`recordDerivationPurgeRow(row)` keeps the record `recordDerivationPurge` (`src/core/page-body/segment-derive.ts`) wrote to
+`page_segment_derivation_purges`: the claim forms (`needles`, `patterns`) and the pages the purge rewrote (`page_ids`, in the order
+the purge gave them), keyed by the purge request under `b 0x09 <request uuid>`. A second record of the same request keeps nothing
+(`ON CONFLICT (request_id) DO NOTHING`); the request id is read as Postgres reads a uuid (upper or lower case, compact, brace-wrapped, a hyphen after any group of four digits) and kept in its canonical hyphenated form, so every spelling is one request; a request id that is not a uuid, a page id outside
+`integer` and, for a new record, an unknown source refuse as Postgres does (the source's foreign key). `readDerivationPurgeState(requestId)`
+answers `{ state: 'pending', reason: null }` for a record and null for none. A claim that normalizes to nothing records nothing, in
+TypeScript before the call.
+
+While a record is there, `upsertSegmentDerivations` does what the trigger `gbrain_refuse_purging_derivation` does: a row of the record's
+source that its sweep would delete (its page one the purge rewrote or a deleted page, or no live manifest row of its page and occurrence
+with the row's segment hash backing it) and that holds the claim (the output or receipt holds a claim form as whole words of one string
+value or key) is not stored (it is dropped before the CHECK constraints and before the repeated-key check, as the BEFORE trigger drops it ahead of them), the stored row stays, the other rows are stored, and the member raises `derivation_purge_pending` with the
+count dropped. The table probe counts the records within their source.
+
+### The sweep (`page_body/derivation_sweep.rs`, `continueDerivationSweep`)
+
+`continueDerivationSweep(sourceId, { first, retry, inline }, limits)` walks the records the way the SQL engines' `runDerivationSweep`
+(`src/core/page-body/segment-derive.ts`, whose statements `test/derivation-sweep-sql-pin.test.ts` pins byte for byte) does, batch for
+batch, and `continueDerivationPurges` calls it. A call picks the record named `first`, then the source's others oldest first, and walks
+one batch of it in one write transaction: the next `batchRows` derivation rows of the source's pages after the record's cursor, in
+(page, pipeline, occurrence) order. A row in the sweep's scope (the same test the write guard above applies) that holds the claim (it
+passes the words prefilter first) is deleted. A batch that read `batchRows` rows stores the cursor and its deletions in the record
+(`phase`, `cursor`, `found`); a shorter one ends the walk. The first walk (`sweep`) is followed by a `verify` walk from the start,
+repeated until one deletes nothing, and then the record is deleted (`readDerivationPurgeState` answers null). A call starts batches
+until `totalMs` has passed (`inlineMs` for the purge's own call) and always runs one. It returns `{ deleted, work }`: the rows the first
+walks deleted, and per page the rows of those walks that were in scope, passed the prefilter and were deleted.
+
+A page can enter a sweep's scope behind the walk without a derivation write: it is soft-deleted (`softDeletePage`, the hidden derived
+pages of a purge) or a live published manifest row of it (no close, no staging) is closed (a body flip) or deleted (`sweepSegments`
+removing a row no generation or version names, and a page deleted for good). The store notes the page on every record of the source
+(`note_scope_entry`; for a manifest row, the source the row names, as the SQL triggers read `OLD.source_id`; the triggers write
+`page_segment_derivation_purge_pages`), and the end of a verify
+walk takes the notes: it reads the first batch of the noted pages' rows and, when that is not all of them or a row in it holds the claim,
+walks only those pages again (`recheck`) before it deletes the record. A record keeps at most 1000 notes; past that its walk goes back to
+the start of a full verify walk. A record has a source index (`b 0x0A <source> 0x00 <request id>`), so a walk reads its own source's
+records and no other's; a record kept before the index existed gets its entry when the brain is opened writable (`backfill_source_index`: it
+runs to completion before the open returns, in write transactions of 256 records that discover and write together, and leaves a marker, so
+later opens read that one key; a read-only open does not scan, and a write error other than `read_only_transaction` fails the open)
+or when the same request is recorded again. The table probe shows a record's `recheck` as the page ids it holds (`{1,2,3}`, `int[]` text).
+
+The derivation keys are grouped by page, not by source, so a batch visits the physical keys in order and keeps those of the source's
+pages; it visits at most `max(8 × batchRows, 512)` keys. A batch the cap stopped before it had `batchRows` rows stores the physical
+cursor and the walk goes on (it is not the end of the walk), so a source with few rows beside sources with many costs several short
+batches where the SQL engines read one; the work of any one batch, and the time before the call looks at its deadline, are bounded.
+
+What differs from the SQL engines: the store has no statement budget, so no batch times out, none is halved, no row is deleted unread
+and no record stalls (`readDerivationPurgeState` never answers `stalled`, and `retry` has nothing to clear); it has one writer and no
+scope lock, so no record waits on `scope_lock_busy`. The test seams (`hooks`: after each batch, before an unread delete, and the
+work counters) stay in the SQL engines. The store has no source delete, so the foreign key's cascade has nothing to remove.

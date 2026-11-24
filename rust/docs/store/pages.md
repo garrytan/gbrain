@@ -107,7 +107,7 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
   throws the raw Postgres error (code `23514`); the store uses `constraint_violation` with the same message.
 - A version snapshot copies the page's NULLs.
 - Format: records written before these fields were nullable hold strings and read unchanged; a record without
-  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 7
+  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 8
   now ([format.md](format.md)).
 
 ## Search timeline
@@ -144,3 +144,12 @@ PGLite SQL that sets `title` or `timeline`, and where the store forgets the reco
 Any other write that changes the title or timeline through `pages::write_page` forgets the record there, since a
 changed value means PGLite's `SET` list named the column. A write that keeps both values (a seal, a tag change, a soft
 delete, a restore, a rename, `revertToVersion`, which sets only `compiled_truth` and `frontmatter`) keeps it.
+
+The page purge's receipt reads: `relationExists(table)` (`src/core/engine-sql/purge-receipt.ts`) is answered in TypeScript without a
+store call (`src/core/rust-engine/store-members/purge-receipt.ts`), because the store keeps keyspaces, not SQL relations.
+`relationExists` answers true for a name the graduation inventory
+lists as a table or view (an optional `public.` prefix is dropped and an unquoted name is lowercased, as `to_regclass` reads it) and
+false for any other name, a quoted or other-schema one included; the query cache is on that list, so the purge receipt names no
+missing cache, as `clearQueryCache` answering 0 already assumes. `page_segment_derivation_purges` is a relation the store keeps
+(see the derivation sweep record in page_body.md), so it answers true for it. `readDerivationPurgeState` goes to the store: `pending` for a
+request whose fact purge recorded a sweep, null for none.

@@ -542,6 +542,48 @@ pub(crate) fn purge_stale_checkpoints_in(
 }
 
 impl Store {
+    /// `readOpCheckpointDoc(op, fingerprint)`: the one JSON document the parent holds
+    /// (`completed_keys -> 0`), or JSON null when there is no parent, its keys are not an array or
+    /// the array is empty. The propose_takes failure ledger keeps its record this way.
+    pub fn read_op_checkpoint_doc(&self, op: &str, fingerprint: &str) -> Result<Value> {
+        let row = get_json::<HousekeepingRow>(&*self.read()?, &parent_key(op, fingerprint)?)?;
+        Ok(row
+            .and_then(|r| match r.completed_keys {
+                Value::Array(mut items) if !items.is_empty() => Some(items.swap_remove(0)),
+                _ => None,
+            })
+            .unwrap_or(Value::Null))
+    }
+
+    /// `writeOpCheckpointDoc(op, fingerprint, doc)`: the parent's keys replaced by `[doc]`, its
+    /// stamp now (`ON CONFLICT ... DO UPDATE`). The children stay.
+    pub fn write_op_checkpoint_doc(&self, op: &str, fingerprint: &str, doc: &Value) -> Result<()> {
+        let key = parent_key(op, fingerprint)?;
+        fn has_nul(v: &Value) -> bool {
+            match v {
+                Value::String(t) => t.contains('\0'),
+                Value::Array(items) => items.iter().any(has_nul),
+                Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
+                _ => false,
+            }
+        }
+        // jsonb refuses `\u0000`, as the SQL's `$3::jsonb` parse does.
+        if has_nul(doc) {
+            return Err(StoreError::invalid(
+                "an op checkpoint document cannot contain NUL",
+            ));
+        }
+        self.write(|tx| {
+            put_json(
+                tx,
+                &key,
+                &HousekeepingRow {
+                    completed_keys: json!([crate::jsonb::ordered(doc)]),
+                    updated_at_us: self.env.now_micros(),
+                },
+            )
+        })
+    }
     /// `readOpCheckpointRecord(op, fingerprint, { freshWithinDays })`.
     pub fn read_op_checkpoint_record(
         &self,
@@ -996,6 +1038,25 @@ mod tests {
         assert!(
             store
                 .write_op_checkpoint_keys("embed", "f", &strings(&["a\0b"]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_checkpoint_document_reads_back_and_keeps_the_paths() {
+        let s = store();
+        assert_eq!(s.read_op_checkpoint_doc("op", "fp").unwrap(), json!(null));
+        s.append_op_checkpoint_paths("op", "fp", &strings(&["a"]))
+            .unwrap();
+        assert_eq!(s.read_op_checkpoint_doc("op", "fp").unwrap(), json!(null));
+        s.write_op_checkpoint_doc("op", "fp", &json!({"pages": {"x": 3}}))
+            .unwrap();
+        assert_eq!(
+            s.read_op_checkpoint_doc("op", "fp").unwrap(),
+            json!({"pages": {"x": 3}})
+        );
+        assert!(
+            s.write_op_checkpoint_doc("op", "fp", &json!({"k": "a\u{0}b"}))
                 .is_err()
         );
     }
