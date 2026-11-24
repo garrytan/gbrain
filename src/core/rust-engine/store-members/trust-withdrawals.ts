@@ -1,7 +1,7 @@
 /**
  * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, isFactWithdrawn, isFactPurged, insertFactWithdrawal,
  * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys,
- * readFactCacheWatermark, readTrustGeneration), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
+ * readFactCacheWatermark, readTrustGeneration, listGlobalPurgeWithdrawals), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
  * watermark's access digest is that of empty folder access tables: the store keeps none. The trust generation is the
  * store's commit sequence, which moves on every commit. `withdrawnAt` must be the ISO form `Date#toISOString` gives;
  * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md). The purge reads answer from
@@ -22,6 +22,10 @@ export const isFactWithdrawn: Member<'isFactWithdrawn'> = (brain, sourceId, visi
 
 export const isFactPurged: Member<'isFactPurged'> = (brain, sourceId, visibility, claim, entitySlug) =>
   storeCall({ member: 'isFactPurged', sourceId }, () => brain.isFactPurged(sourceId, visibility, claim, entitySlug ?? null));
+
+/** The withdrawal overlay's `*` purges of the fingerprints `hashes`, from the fact purge ledger, in (visibility, fingerprint) order. */
+export const listGlobalPurgeWithdrawals: Member<'listGlobalPurgeWithdrawals'> = (brain, sourceId, hashes, worldOnly) =>
+  storeCall({ member: 'listGlobalPurgeWithdrawals', sourceId }, () => brain.listGlobalPurgeWithdrawals(sourceId, [...hashes], worldOnly));
 
 export const insertFactWithdrawal: Member<'insertFactWithdrawal'> = (brain, sourceId, visibility, claim, subject, withdrawnAt) =>
   storeCall({ member: 'insertFactWithdrawal', sourceId }, () => brain.insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt ?? null));

@@ -44,7 +44,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/persistence/sync-cursor-key.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/sync-drain.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-dry-run-writer.ts': { count: 1, why: 'managed sync' },
-  'src/core/persistence/sync-movement.ts': { count: 1, why: 'managed sync' },
+  'src/core/engine-sql/applied-watermark-reads.ts': { count: 1, why: 'managed sync (the movement watermark, moved from persistence/sync-movement.ts)' },
   'src/core/persistence/sync-pass-batch.ts': { count: 1, why: 'managed sync' },
   'src/core/persistence/sync-pass-carried.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/sync-pass-run.ts': { count: 3, why: 'managed sync' },

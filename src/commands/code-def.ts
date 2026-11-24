@@ -20,8 +20,8 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
-import type { CodeReadScope } from '../core/code-intel/read-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag, parseCodeLimit } from './code-scope.ts';
+import { codeReadFilter, type CodeReadScope } from '../core/code-intel/read-scope.ts';
 import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 export interface CodeDefResult {
@@ -110,7 +110,7 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
     }
     process.exit(2);
   }
-  const limit = parseInt(parseFlag(args, '--limit') || '20', 10);
+  const limit = parseCodeLimit(args, 'code-def', 20, shouldEmitJson(args));
   const language = parseFlag(args, '--lang');
   // Outside the try, matching code-callers / code-callees: the helper signals
   // usage failures with process.exit(2), and a surrounding catch would

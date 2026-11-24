@@ -78,7 +78,7 @@ and no brain connection is needed.
   --catalog <name>     the catalog to rank (repeatable to merge; default: the only one)
   --text <t>           the user message (or send turn JSON with --input-json -)
   --session <id>       the harness session: suggestions are not repeated within it, and its
-                       block tokens are capped by skills.resolver.session_token_budget (2000)
+                       block tokens are capped by skills.resolver.session_token_budget (8000)
   --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
@@ -295,6 +295,7 @@ async function runResolve(args: string[]): Promise<void> {
       ...(p.flags.get('--catalog') ? { catalogs: p.flags.get('--catalog') } : {}), failOpen,
       ...(one(p, '--load-hint') ? { loadHint: one(p, '--load-hint') } : {}), namesOnly: p.bools.has('--names-only'),
       ...(one(p, '--explain-target') !== undefined ? { explainTarget: one(p, '--explain-target') } : {}),
+      router: true,
     });
   } catch (e) {
     if (!(e instanceof ResolverError)) throw e;

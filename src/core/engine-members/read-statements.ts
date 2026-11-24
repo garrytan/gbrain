@@ -14,6 +14,7 @@ import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
 import type { FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
+import type { FrontmatterWhere } from '../search/frontmatter-where.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from '../engine-sql/withdrawal-discovery.ts';
 import type { PageKeyRef } from '../engine-sql/trust-tier-reads.ts';
@@ -101,12 +102,16 @@ export interface ReadStatementMembers {
   listEmbeddingStores(): Promise<EmbeddingCatalogSql.EmbeddingStore[]>;
   /** Whether any row of `store` holds a vector. */
   hasStoredVectors(store: EmbeddingCatalogSql.EmbeddingStore): Promise<boolean>;
+  /** Whether any chunk holds an image vector (`embedding_image`): search's cross-modal image arm reads only that column. */
+  hasChunkImageVectors(): Promise<boolean>;
   /** Per source with chunks, the chunk count and how many hold a vector in a fixed column (`embedding_image`, `embedding_multimodal`), in source id order. */
   countChunkVectorCoverage(column: EmbeddingCatalogSql.FixedVectorColumn): Promise<EmbeddingCatalogSql.ChunkVectorCoverageRow[]>;
   /** doctor embedding_column_registry: the type of each named `content_chunks` column that exists (`vector(1024)`), in no set order. */
   readChunkColumnTypes(columns: string[]): Promise<EmbeddingCatalogSql.ChunkColumnType[]>;
   /** doctor embedding_column_registry: every `content_chunks` row and the percent holding a value in `column` (pct null with no row). Throws when the column is missing. */
   countChunkColumnCoverage(column: string): Promise<EmbeddingCatalogSql.ChunkColumnCoverage>;
+  /** The ids among `ids` whose page frontmatter holds every `where` key (search's frontmatter check on finished rows), in no set order. */
+  filterPageIdsByFrontmatter(ids: number[], where: FrontmatterWhere): Promise<number[]>;
 
   // Entity and mention reads (engine-sql/entity-reads.ts): the statements the CLI ran through executeRaw.
   /** The newest mention pass time (ISO, UTC, whole seconds) over every source or one source; null when no pass ran. */
@@ -129,6 +134,8 @@ export interface ReadStatementMembers {
    * at most `limit`, with frontmatter `identity` as text. `excludePrivate` and `excludeQuarantined` filter candidates.
    */
   readIdentitySiblingCandidates(sourceId: string, q: SiblingCandidateQuery): Promise<SiblingCandidateRow[]>;
+  /** mentions/siblings.ts siblingCanonical: the live pages of the source at `slugs`, with frontmatter identity as text. */
+  readSiblingGroupRows(sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }): Promise<SiblingCandidateRow[]>;
   /** The first of `slugs` holding a live page that is (`retired: true`), is not (`false`) or is either (omitted) a retired page (`retiredPageSql`). */
   findExactSlug(sourceId: string, slugs: readonly string[], opts?: { retired?: boolean }): Promise<string | null>;
   /** The slugs among `slugs` holding a live page, retired or not, each once, in no set order; `limit: 2` stops at two. */
@@ -296,7 +303,7 @@ export interface ReadStatementMembers {
   /** The uncommitted page-level secret store occurrences of these pages (read before their rows go). */
   listPageSecretOccurrences(pageIds: readonly number[]): Promise<Array<{ id: string; page_id: number }>>;
   /** Delete the write-gate holds of purged slugs (up to each page's `deletedAt` when given) and the holds' receipts. */
-  deletePurgedSlugHolds(sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null }>): Promise<{ write_gate_holds: number; write_gate_receipts: number }>;
+  deletePurgedSlugHolds(sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>): Promise<{ write_gate_holds: number; write_gate_receipts: number }>;
   /**
    * The held-concept rebuild's reads and link carry (SQL in engine-sql/concept-rebuild.ts). A held concept is a
    * synthesized concept tombstone whose needs_rederive mark is open at its delete and on which no owner purge is owed.

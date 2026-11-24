@@ -84,6 +84,22 @@ impl Store {
         })
     }
 
+    /// `lockContentDriftState(key, initial)`: stores `initial` under `key` when the key has no value, then returns the
+    /// stored value (`INSERT ... ON CONFLICT (key) DO NOTHING`, then `SELECT value ... FOR UPDATE`). The store has one
+    /// writer, so the write itself is the lock.
+    pub fn ensure_config(&self, key: &str, initial: &str) -> Result<String> {
+        let key = config_key(key)?;
+        self.write(|tx| match tx.get(&key)? {
+            Some(bytes) => String::from_utf8(bytes).map_err(|_| {
+                StoreError::new(crate::error::STORE_CORRUPT, "a config value is not UTF-8")
+            }),
+            None => {
+                tx.put(&key, initial.as_bytes())?;
+                Ok(initial.to_owned())
+            }
+        })
+    }
+
     /// Removes `key`; returns how many rows were removed (0 or 1). Mirrors `unsetConfig`.
     pub fn unset_config(&self, key: &str) -> Result<u32> {
         let key = config_key(key)?;

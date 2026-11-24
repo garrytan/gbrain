@@ -45,15 +45,17 @@ export async function pageSecretOccurrences(engine: Pick<SlugStoreScrubber, 'lis
 }
 
 /**
- * #9146: the write-gate holds of hard-deleted pages and their receipts. An immediate hard delete drops every hold of
- * the slug, as the direct purge does. A tombstone expiry passes each page's `deletedAt` (text, so microseconds
- * survive) and drops only holds last seen up to it: a hold that arrived, or was re-opened by the same content
- * arriving again, after the soft delete is a later write, kept for review.
+ * #9146: the write-gate holds of hard-deleted pages and their receipts. A page's holds are the ones bound to its id
+ * (`id`, the purged row's id: they follow it whatever it was called) and, only the unbound ones, those at its slug. A
+ * hold bound to another page is never touched, so a page that reused the name takes none of a renamed page's holds
+ * with it. A hold the upgrade marked with candidate pages stays while any candidate survives (`dropPurgedCandidates`). An immediate hard delete drops every such hold, as the direct purge does. A tombstone expiry passes each
+ * page's `deletedAt` (text, so microseconds survive) and drops only holds last seen up to it: a hold that arrived, or
+ * was re-opened by the same content arriving again, after the soft delete is a later write, kept for review.
  */
 export async function scrubPurgedSlugHolds(
   engine: Pick<SlugStoreScrubber, 'deletePurgedSlugHolds'>,
   sourceId: string,
-  pages: ReadonlyArray<{ slug: string; deletedAt?: string | null }>,
+  pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>,
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   return engine.deletePurgedSlugHolds(sourceId, pages);
 }

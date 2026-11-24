@@ -5,6 +5,8 @@
  *
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -59,16 +61,19 @@ export async function listPageSecretOccurrences(tx: Raw, pageIds: readonly numbe
 }
 
 /**
- * Deletes the write-gate holds of these slugs and the holds' receipts. A page with `deletedAt` (text, so microseconds
- * survive) loses only holds last seen up to it; one without loses every hold of the slug.
+ * Deletes the write-gate holds of these pages and the holds' receipts. A page's holds are the ones bound to its id (`id`,
+ * the purged row's id: they follow it whatever it was called) and, only the unbound ones, those at its slug; a hold bound to
+ * another page is never touched, and a candidate-marked hold stays while a candidate survives (`dropPurgedCandidates`). A page
+ * with `deletedAt` (text, so microseconds survive) loses only holds last seen up to it; one without loses every such hold.
  */
 export async function deletePurgedSlugHolds(
-  tx: Raw, sourceId: string, pages: ReadonlyArray<{ slug: string; deletedAt?: string | null }>,
+  tx: Raw, sourceId: string, pages: ReadonlyArray<{ slug: string; id?: number | null; deletedAt?: string | null }>,
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   if (!pages.length) return { write_gate_holds: 0, write_gate_receipts: 0 };
-  const holds = (await tx.executeRaw<{ id: string }>(`DELETE FROM write_gate_holds h USING unnest($2::text[], $3::timestamptz[]) AS d(slug, upto)
-    WHERE h.source_id = $1 AND h.slug = d.slug AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`,
-  [sourceId, pages.map(p => p.slug), pages.map(p => p.deletedAt ?? null)])).map(h => h.id);
+  const { text, params } = renderFragment(sqlFragment`DELETE FROM write_gate_holds h USING unnest(${pages.map(p => p.slug)}::text[], ${pages.map(p => p.id ?? null)}::bigint[], ${pages.map(p => p.deletedAt ?? null)}::timestamptz[]) AS d(slug, id, upto)
+    WHERE h.source_id = ${sourceId} AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug'))} AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`);
+  const holds: string[] = (await tx.executeRaw<{ id: string }>(text, params)).map(h => h.id);
+  holds.push(...await dropPurgedCandidates(tx, sourceId, pages));
   const receipts = holds.length
     ? (await tx.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = ANY($1::text[]) RETURNING 1", [holds])).length
     : 0;

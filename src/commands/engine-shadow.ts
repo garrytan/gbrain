@@ -2,8 +2,9 @@
  * `gbrain engine shadow start|status|stop|report|seed` (plan PR S1, the read half of S2 and the seed of S3).
  *
  * Shadow mode mirrors a sample of the host brain's reads to the Rust engine in a supervised child process and
- * records whether the answers agree. It is off by default and writes nothing to the brain database, its config
- * table or the brain repo: every file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
+ * records whether the answers agree. It is off by default. Its only writes to the brain database are the swap-eligibility
+ * writer evidence (engine_writer_observations, and on Postgres the hooks and engine_writer_sessions / _coverage_gaps);
+ * it never writes brain content, the config table or the brain repo, and every other file lives in `<gbrain home>/shadow/<brain>/`. `start` previews a plan with a hash
  * and needs `--yes --expect <hash>`; the installed addon is loaded then, in the foreground. Shadow mode gathers evidence on
  * managed-storage brains too; only the swap refuses them. `start` opens the brain once, best-effort, to read its storage
  * mode, reports a brain that cannot swap, records the mode in state.json, and never refuses over it. The
@@ -17,10 +18,12 @@ import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
-import { readFaults, readShadowSummary } from '../shadow/ledger.ts';
-import { buildFollowStatus, renderFollowStatus } from '../shadow/follow-status.ts';
-import { readManagedStorage, storageLine, storageReport, type ManagedStorageRecord, type StorageReport } from '../shadow/managed-gate.ts';
+import { renderEvidenceStatus } from '../shadow/evidence.ts';
+import { renderFollowStatus } from '../shadow/follow-status.ts';
+import { readManagedStorage, storageLine, type ManagedStorageRecord } from '../shadow/managed-gate.ts';
 import { readSeedRecord, RESEED_STEPS, runSeed, SeedBudgetError, writeSeedRecord, type SeedRecord, type SeedTarget } from '../shadow/seed.ts';
+import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
+import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
   brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, readShadowState, shadowBrainKey, shadowDirFor,
@@ -36,6 +39,8 @@ export interface EngineShadowDeps {
   loadAddon?: () => Promise<RustEngineAddonLoad>;
   out?: (line: string) => void;
   err?: (line: string) => void;
+  /** Test seam: runs after the writer hooks are installed and before the new state is written. */
+  afterHooks?: () => void;
   now?: () => Date;
   /** The `__child` loop; default runShadowChild on stdin/stdout. */
   runChild?: (dir: string) => Promise<number>;
@@ -60,8 +65,12 @@ Usage:
 
 Shadow mode is off by default. When on, a sample of reads this brain answers is sent, after the answer, to a
 supervised child process that runs the same read on the Rust engine and records match, diff or why it could not
-compare. The primary answer never waits for the child. It writes nothing to the brain database, its config or the
-brain repo; everything lives in <gbrain home>/shadow/<brain>/. stop --delete removes that directory.
+compare. The primary answer never waits for the child. Its only write to the brain database is one row per writing
+process in engine_writer_observations (host id, connection name, command kind, version, first and last write time), at
+most every 10 minutes, which the swap's eligibility check reads. On a Postgres brain, start also adds one trigger to
+every brain table that notes which connections write (engine_writer_sessions; it never fails a write and waits at most 50 ms on its own tables), and
+stop removes them. It writes nothing to the brain config or the brain repo; everything else lives in
+<gbrain home>/shadow/<brain>/. stop --delete removes that directory.
 
 start runs on a brain that uses managed storage too; only the swap refuses such a brain. start opens the brain
 database once to read its storage mode, even with --plan, prints a line when the brain cannot swap, and records the mode
@@ -135,8 +144,13 @@ export function shadowPlan(brain: string, primaryEngine: string, dir: string, o:
   const plan: ShadowPlan = {
     brain, primary_engine: primaryEngine, directory: dir, sample_rate: o.sampleRate, queue_bound: o.queueBound,
     mirrors: 'a sample of reads and searches this brain answers, after the answer; none inside a transaction',
-    writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`],
-    never_writes: ['the brain database', 'the brain config table', 'the brain repo'],
+    writes: [`${dir}/state.json`, `${dir}/store (the Rust engine's own store)`, `${dir}/ledger, summaries, faults.jsonl, reports, child.log`,
+      'the brain database: one row per writing process in engine_writer_observations, at most every 10 minutes (swap eligibility)',
+      ...(primaryTakesWriterHooks(primaryEngine) ? [
+        'the brain database: one statement-level trigger (gbrain_writer_note) on every brain table while shadow mode is on, removed by stop; each records the writing connection in engine_writer_sessions at most every 10 minutes per connection, never fails the write and waits at most 50 ms on its own tables (an error becomes a row in engine_writer_coverage_gaps), and takes a short lock on each table when it is added or removed',
+        `${dir}/writer-hooks.json (which tables were hooked, written before the first trigger)`,
+      ] : [])],
+    never_writes: ['brain content (pages, chunks, facts, links)', 'the brain config table', 'the brain repo'],
   };
   const hash = createHash('sha256').update(JSON.stringify(plan)).digest('hex').slice(0, 16);
   return { plan, hash };
@@ -187,8 +201,8 @@ export async function runEngineShadow(args: string[], deps: EngineShadowDeps = {
     }
     const brain = await resolveBrain(deps);
     if (sub === 'start') return await start(brain, parseStart(rest), deps, out, err, now);
-    if (sub === 'status') return status(brain, flags(rest, ['--json'], 'status').has('--json'), out);
-    if (sub === 'stop') return stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), out, now);
+    if (sub === 'status') return await status(brain, flags(rest, ['--json'], 'status').has('--json'), out, now);
+    if (sub === 'stop') return await stop(brain, flags(rest, ['--delete'], 'stop').has('--delete'), deps, out, err, now);
     if (sub === 'report') return report(brain, flags(rest, ['--json'], 'report').has('--json'), out, now);
     if (sub === 'seed') return await seed(brain, flags(rest, ['--json', '--reseed'], 'seed'), deps, out, err, now);
     if (sub === 'reconcile') return await reconcileCommand(brain, flags(rest, ['--json', '--full'], 'reconcile').has('--json'), deps, out, err);
@@ -284,9 +298,53 @@ async function start(
   }
   const storage = await readStorage(brain, deps, now);
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
+  // The writer-evidence epoch: this seed's first start. A restart keeps it, so evidence already gathered stays in the window.
+  // `stop` records a gap row when it removes the hooks (nothing recorded writers after that), so a restart after it still refuses.
+  const prior = readShadowState(brain.dir);
+  const seed = readSeedRecord(brain.dir);
+  const seedId = seed?.seed_id ?? null;
+  const sameEpoch = prior?.writer_evidence_since !== undefined && (prior.writer_evidence_seed ?? null) === seedId;
+  // A state file written before the epoch fields existed names no seed: it is the same seed when that seed finished before
+  // the state's own start (a reseed needs shadow mode off, so a later seed would have finished after it). Adopt its start as the
+  // earliest known one, and treat a stopped legacy state as hooks that were off (an older stop recorded no gap).
+  const priorStart = prior ? Date.parse(prior.started_at) : Number.NaN;
+  const legacySame = prior !== null && prior.writer_evidence_since === undefined && Number.isFinite(priorStart)
+    && (seed === null || (Number.isFinite(Date.parse(seed.finished_at)) && Date.parse(seed.finished_at) <= priorStart));
+  const evidenceSince = sameEpoch ? prior!.writer_evidence_since! : legacySame ? prior!.started_at : now().toISOString();
+  // A stop that ran with this code recorded its own gap in the removal transaction; a legacy stop did not.
+  const hooksWereOff = legacySame && prior!.enabled === false;
+  // Continuing an epoch is a coverage break criterion 11 cannot see inside (hooks were replaced or off), so it fails closed for the window.
+  const continuing = sameEpoch || legacySame;
+  if (continuing && prior) {
+    // The restart marker goes into the state file BEFORE any hook is touched, so a start that dies after the hooks change cannot
+    // leave a healthy-looking catalog with no trace. If it cannot be written, nothing was changed and the start stops.
+    try { writeShadowState(brain.dir, { ...prior, writer_coverage_restarted_at: now().toISOString() }); } catch (e) {
+      err(`engine shadow: state_unwritable (${typeof (e as { code?: unknown })?.code === 'string' ? (e as { code: string }).code : 'unknown'}): could not record the restart, so no hook was touched.`);
+      return 3;
+    }
+  }
+  if (primaryTakesWriterHooks(brain.engine)) {
+    let primary: BrainEngine | null = null;
+    try {
+      primary = await (deps.openPrimary ?? openConfiguredPrimary)();
+      const tables = await installWriterHooks(primary, brain.dir, hooksWereOff ? { gap: 'hooks_off_interval' } : {});
+      out(`Hooked ${tables.length} brain tables to record which connections write (swap eligibility).`);
+    } catch (e) {
+      const code = (e as { code?: unknown })?.code;
+      err(`engine shadow: writer_hooks_failed (${typeof code === 'string' ? code : 'unknown'}): could not hook the brain tables, so shadow mode stays off.`);
+      err('Fix: run it again when no long transaction holds a brain table, as the database role that owns the brain tables. gbrain engine shadow stop removes any hook a failed start left.');
+      return 3;
+    } finally {
+      await primary?.disconnect().catch(() => undefined);
+    }
+  }
+  deps.afterHooks?.(); // test seam: a throw here stands for a start killed after the hooks changed and before the state is published
   const state: ShadowState = {
     version: SHADOW_STATE_VERSION, enabled: true, started_at: now().toISOString(), sample_rate: o.sampleRate,
     queue_bound: o.queueBound, plan_hash: hash, brain: brain.key, primary_engine: brain.engine, storage,
+    writer_evidence_since: evidenceSince, writer_evidence_seed: seedId,
+    ...(continuing ? { writer_coverage_restarted_at: now().toISOString() } : {}),
+    ...(continuing && prior?.writer_coverage_stopped_at ? { writer_coverage_stopped_at: prior.writer_coverage_stopped_at } : {}),
   };
   writeShadowState(brain.dir, state);
   out(`Shadow mode is on for brain ${brain.key}. Processes that open this brain from now on mirror reads.`);
@@ -297,51 +355,36 @@ async function start(
   return 0;
 }
 
-function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void): number {
-  const state = readShadowState(brain.dir);
-  const summary = existsSync(brain.dir) ? readShadowSummary(brain.dir) : null;
-  const faults = existsSync(brain.dir) ? readFaults(brain.dir, 5) : [];
-  const totals: Record<string, number> = {};
-  for (const counts of Object.values(summary?.by_op ?? {})) {
-    for (const [outcome, n] of Object.entries(counts)) totals[outcome] = (totals[outcome] ?? 0) + (n ?? 0);
-  }
+async function status(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): Promise<number> {
+  // No engine: status never opens the database, so the eligibility writer fields stay out (the swap passes its primary).
+  const doc = await shadowStatusDocument(brain, now());
   if (json) {
-    out(JSON.stringify({
-      schema_version: 1, brain: brain.key, enabled: state?.enabled === true, state, directory: brain.dir,
-      totals, by_op: summary?.by_op ?? {}, serving: summary?.primary ?? null, child_shed: summary?.child_shed ?? 0,
-      children: summary?.children ?? 0, recent_faults: faults, storage: storageReport(state?.storage),
-      ...buildFollowStatus(brain.dir, state), seed: seedStatus(readSeedRecord(brain.dir)), // the seed block carries the recorded storage mode
-    }, null, 2));
+    out(JSON.stringify(doc, null, 2));
     return 0;
   }
+  const { state, totals, recent_faults: faults } = doc;
   out(`Shadow mode: ${state?.enabled ? 'on' : 'off'} (brain ${brain.key})`);
   if (state) out(`  started ${state.started_at}${state.stopped_at ? `, stopped ${state.stopped_at}` : ''}; sample rate ${state.sample_rate}`);
   const line = storageLine(state?.storage);
   if (line) out(`  storage: ${line}`);
   const compared = Object.values(totals).reduce((a, b) => a + b, 0);
   out(`  comparisons: ${compared}${compared ? ` (${Object.entries(totals).map(([k, v]) => `${k} ${v}`).join(', ')})` : ''}`);
-  if (summary) {
-    const p = summary.primary;
+  if (doc.serving) {
+    const p = doc.serving;
     out(`  serving: offered ${p.offered}, sent ${p.sent}, sampled out ${p.sampled_out}, shed ${p.shed_queue_full + p.shed_too_large + p.shed_transport + p.shed_unmirrorable}, in transaction ${p.skipped_in_transaction}`);
   }
   const seeded = readSeedRecord(brain.dir);
   out(seeded ? `  seed ${seeded.seed_id} finished ${seeded.finished_at}; unseeded gap rows ${seeded.unseeded_gap_rows_total}` : '  seed: none (gbrain engine shadow seed)');
   const seedStorage = storageLine(seeded?.storage);
   if (seedStorage) out(`  storage: ${seedStorage}`);
-  if (seeded) for (const line of renderFollowStatus(buildFollowStatus(brain.dir, state))) out(line);
+  if (seeded) for (const line of [...renderFollowStatus(doc), ...renderEvidenceStatus(doc)]) out(line);
+  if (doc.evidence_epoch_unstable) out('  evidence epoch: it changed while this status was read, so the epoch-bound evidence is left out; run the status again');
   for (const f of faults) out(`  fault ${f.ts} ${f.kind}: ${f.detail}`);
   return 0;
 }
 
-/** The `seed` block of `status --json`: null fields until a seed finished. */
-export function seedStatus(record: SeedRecord | null): {
-  seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null; storage: StorageReport | null;
-} {
-  return {
-    seed_id: record?.seed_id ?? null, finished_at: record?.finished_at ?? null, unseeded_gap_rows_total: record?.unseeded_gap_rows_total ?? null,
-    storage: storageReport(record?.storage),
-  };
-}
+/** The `seed` block of `status --json` (src/shadow/status-document.ts). */
+export { seedStatus };
 
 const RESEED_STEP = `A Rust store is seeded once. To seed again, start from a new shadow directory: ${RESEED_STEPS}.`;
 
@@ -510,16 +553,34 @@ function renderSeed(r: SeedRecord, path: string, out: (l: string) => void): void
     : '  unseeded gap rows: 0');
 }
 
-function stop(brain: { key: string; dir: string }, del: boolean, out: (l: string) => void, now: () => Date): number {
+async function stop(brain: { key: string; dir: string; engine: string }, del: boolean, deps: EngineShadowDeps, out: (l: string) => void, err: (l: string) => void, now: () => Date): Promise<number> {
   const state = readShadowState(brain.dir);
-  if (state?.enabled) writeShadowState(brain.dir, { ...state, enabled: false, stopped_at: now().toISOString() });
+  // The stop time is written before the hooks go: from here on nothing is proven to record writers (a file, so it cannot fail like a gap insert).
+  if (state?.enabled) writeShadowState(brain.dir, { ...state, enabled: false, stopped_at: now().toISOString(), writer_coverage_stopped_at: now().toISOString() });
+  else if (state && state.writer_coverage_stopped_at === undefined) writeShadowState(brain.dir, { ...state, writer_coverage_stopped_at: now().toISOString() });
+  let hooksLeft = false;
+  if (primaryTakesWriterHooks(brain.engine)) {
+    let primary: BrainEngine | null = null;
+    try {
+      primary = await (deps.openPrimary ?? openConfiguredPrimary)();
+      const removed = await removeWriterHooks(primary, brain.dir);
+      if (removed > 0) out(`Removed the writer hooks from ${removed} brain tables.`);
+    } catch (e) {
+      hooksLeft = true;
+      const code = (e as { code?: unknown })?.code;
+      err(`engine shadow: writer_hooks_left (${typeof code === 'string' ? code : 'unknown'}): shadow mode is off, but the writer hooks could not be removed yet; they keep noting writers until they are.`);
+      err('Fix: run gbrain engine shadow stop again when the brain database is reachable.');
+    } finally {
+      await primary?.disconnect().catch(() => undefined);
+    }
+  }
   if (del) {
     rmSync(brain.dir, { recursive: true, force: true });
     out(`Shadow mode is off for brain ${brain.key}; ${brain.dir} is deleted.`);
   } else {
     out(state?.enabled ? `Shadow mode is off for brain ${brain.key}. Running processes stop mirroring within 30 seconds.` : `Shadow mode was already off for brain ${brain.key}.`);
   }
-  return 0;
+  return hooksLeft ? 1 : 0;
 }
 
 function report(brain: { key: string; dir: string }, json: boolean, out: (l: string) => void, now: () => Date): number {

@@ -3,8 +3,9 @@
  * (rust/crates/gbrain-store/src/cli_reads/doctor_checkpoints.rs, rust/docs/store/cli-reads-doctor-checkpoints.md).
  *
  * Served from the store: the doctor last-known pair, the latest connector receipt and the facts-absorb failure groups
- * (`ingest_log`), the sync-admission setting's config value, and the fence census candidate rows (written by the census,
- * rust/docs/store/cli-reads-doctor-fence.md).
+ * (`ingest_log`), the sync-admission setting's config value, the fence census candidate rows (written by the census,
+ * rust/docs/store/cli-reads-doctor-fence.md), and the derived-origin parks whose page is a tombstone (the checkpoint and
+ * page records, persistence/diagnostic_checkpoints.rs; any typed `writeOpCheckpointRecord(s)` writes a park).
  *
  * Empty, no writer: every other `op_checkpoints` operation is written only through `executeRaw`, which a Rust brain
  * refuses, so no row of it exists there. Those members answer the empty value without a store call: what the same read
@@ -15,7 +16,10 @@ import { storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-export const listDerivedOriginParks: Member<'listDerivedOriginParks'> = async () => [];
+/** The parks whose page is still a tombstone, oldest first (rust/crates/gbrain-store/src/persistence/diagnostic_checkpoints.rs). */
+export const listDerivedOriginParks: Member<'listDerivedOriginParks'> = async (brain, op) =>
+  ((await storeCall({ member: 'listDerivedOriginParks' }, () => brain.listDerivedOriginParks(op))) as Array<{ park: unknown }>)
+    .map(row => row.park) as Awaited<ReturnType<BrainEngine['listDerivedOriginParks']>>;
 export const listPurgeParks: Member<'listPurgeParks'> = async () => [];
 export const readSoakCounterRows: Member<'readSoakCounterRows'> = async () => [];
 export const listUnfinishedManagedSyncCursors: Member<'listUnfinishedManagedSyncCursors'> = async () => [];

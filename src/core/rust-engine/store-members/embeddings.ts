@@ -4,7 +4,7 @@
  * invalidate that state as PGLite's shared SQL does. Built by the core store work; other families do not edit this
  * file.
  *
- * Members: getEmbeddingsByChunkIds, cosinesByChunkIds, countStaleChunks, sumStaleChunkChars, setPageEmbeddingSignature,
+ * Members: getEmbeddingsByChunkIds, cosinesByChunkIds, countStaleChunks, sumStaleChunkChars, setPageEmbeddingSignature, readPageProvenanceComplete,
  * invalidateStaleSignatureEmbeddings, invalidateContentDriftEmbeddings, listStaleChunks, readEmbeddingStateCounts,
  * listEmbeddingStateRows, getChunksWithEmbeddings, updateTakeEmbeddings, getTakeEmbeddings, countStaleTakes,
  * listStaleTakes.
@@ -72,6 +72,12 @@ export const setPageEmbeddingSignature: StoreMember<[slug: string, opts: { sourc
   async (brain, slug, opts) => {
     const options = takeOptions('setPageEmbeddingSignature', opts, ['sourceId', 'signature']);
     await storeCall({ member: 'setPageEmbeddingSignature', slug }, () => brain.setPageEmbeddingSignature(slug, options));
+  };
+
+export const readPageProvenanceComplete: StoreMember<[slug: string, sourceId: string, model: string, dims: number | null, column: string], boolean> =
+  async (brain, slug, sourceId, model, dims, column) => {
+    if (column !== 'embedding') refuseMember('readPageProvenanceComplete', `column ${column}`);
+    return storeCall({ member: 'readPageProvenanceComplete', slug }, () => brain.readPageProvenanceComplete(slug, sourceId, model, dims)) as Promise<boolean>;
   };
 
 export const invalidateStaleSignatureEmbeddings: StoreMember<[opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }], number> =

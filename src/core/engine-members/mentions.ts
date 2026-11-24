@@ -51,7 +51,7 @@ export interface MentionPassMembers {
   /** Remove `removed` and add `added` to the source's saved entries. */
   applyGazetteerEntryChanges(sourceId: string, removed: readonly MentionPassSql.GazetteerEntryKeyRow[], added: readonly MentionPassSql.GazetteerEntryKeyRow[]): Promise<void>;
   /** Mark pages due for the reconcile: every page of `sourceIds`, or the pages in `pageIds`. */
-  resetMentionRevisions(by: { sourceIds: readonly string[] } | { pageIds: readonly number[] }): Promise<void>;
+  resetMentionRevisions(by: MentionPassSql.MentionResetBy): Promise<void>;
   /** Each source's generation (`lock`: row-locked FOR SHARE, the publish check). */
   readMentionGenerations(sourceIds: readonly string[], lock: boolean): Promise<Array<{ source_id: string; generation: string }>>;
   /** Live pages of the source after id `after` due for the mention pass at extractor `version`, by id, up to `limit`. */

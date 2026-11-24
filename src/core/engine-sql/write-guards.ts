@@ -31,6 +31,17 @@ export async function readPageOrigin(exec: LegacyUnscopedRead, target: PageOrigi
   return row ?? null;
 }
 
+/** A soft-deleted page a restore of its slug would revive. */
+export interface RevivalPageRow { id: number; source_id: string }
+
+// moved from persistence/origin-guard.ts assertRevivalUnclaimed unchanged
+const REVIVAL_PAGES_SQL = 'SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$2) ORDER BY source_id COLLATE "C"';
+
+/** The soft-deleted pages with `slug` (of `sourceId` only, when given), by source id in byte order. */
+export async function listRevivalPages(exec: LegacyUnscopedRead, slug: string, sourceId: string | null): Promise<RevivalPageRow[]> {
+  return exec.executeRaw<RevivalPageRow>(REVIVAL_PAGES_SQL, [slug, sourceId]);
+}
+
 /**
  * Takes the transaction advisory lock of each origin key in `lockKeys` (in the order given), then returns the live
  * pages of `sourceId`, other than page `excludePageId`, whose origin is one of `spellings`, in slug order. On Windows

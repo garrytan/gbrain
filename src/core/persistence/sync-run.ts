@@ -54,7 +54,7 @@ import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
 import { checkpointSuperseded } from './sync-checkpoint-replaced.ts';
 import { publicFailureDetail } from './publication-failure.ts';
-import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
+import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, heldDeletionHeadMoved, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
 import { faultPoint } from './fault-points.ts';
 import { syncReceiptWait } from './sync-receipt-wait.ts';
 import { directoryAt, filterOwnedRefusal, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
@@ -75,10 +75,11 @@ import { LockUnavailableError, syncLockId } from '../db-lock.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { assertPassAdmission, isPassBatchKey, passBatchStep, passedOverBefore, passRequestId, readPassBatch, setPassBatch, type PassEntry } from './sync-pass-batch.ts';
 import type { PassStamp } from './sync-prepare.ts';
-import { runSyncPass } from './sync-pass-run.ts';
+import { runSyncPass, stampManagedSourceFresh } from './sync-pass-run.ts';
 import { serr } from '../console-prefix.ts';
 import { noteIdentityDowngrades } from '../sync-identity-downgrades.ts';
 import { isContentRefusal } from '../import-screen.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 
 export interface ManagedSyncWriteDiagnostic {
   source_id: string;
@@ -481,11 +482,11 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
     }
     // #6712 PR 1: an import whose page moved since its file was last imported runs only as a proven no-op (sync-prescreen.ts).
     // #7931: a file that holds the page as prepareFileTarget and repair file-drift read it (format-insensitive) is one too;
-    // GST-2568: and so is a page that holds its file's baseline (or an earlier committed version) in that same reading.
-    if (entry.drift && !occupantRebound && content !== null && snapshot && !(image ? sameImageBytes(imageBytes, snapshot.page)
+    // GST-2568: and so is a page that holds its file's baseline (or an earlier committed version) in that same reading. A streamed file is never compared, so it is held.
+    if (entry.drift && !occupantRebound && snapshot && (bodyRef !== null || content !== null && !(image ? sameImageBytes(imageBytes, snapshot.page)
       : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal)
         || await fileMatchesSnapshot(engine, slug, content, snapshot, entry.sourcePath).catch(() => false) || await pageHoldsDriftBaseline(cursor.gitRoot, entry, async baseline => await sameContentAtOrigin(engine, cursor, entry, key, snapshot, baseline, null, false, run.signal, true)
-        || baseline !== null && onlyDerivedKeysAdded(baseline, snapshot.page.frontmatter) && await fileMatchesSnapshot(engine, slug, baseline, snapshot, entry.sourcePath).catch(() => false)))) {
+        || baseline !== null && onlyDerivedKeysAdded(baseline, snapshot.page.frontmatter) && await fileMatchesSnapshot(engine, slug, baseline, snapshot, entry.sourcePath).catch(() => false))))) {
       if (!holdsOn) throw syncRunRefusal('file_drift', 'An import would overwrite a database version of the page that sync never saw.', retry, `Page ${slug} in source ${cursor.sourceId} ${entry.drift === 'unknown' ? `differs from ${entry.path} and has no import record to tell whether the file or the database changed` : `changed in the database since ${entry.path} was last imported, and the file differs from it`}, so the run stopped before admitting it (sync.holds=fail).`);
       const proof = await pageChangeProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pageId, expectedRevision: null }); assertActive();
       return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath), baseline: entry.driftBaseline ?? null }) };
@@ -1275,6 +1276,7 @@ export interface RetryWait { request_id: string; kind: string | null; slug: stri
  * returns `sync_drain_lease_held` (resumable). A dry run takes no lease.
  */
 export async function performManagedSync(engine: BrainEngine, opts: SyncOpts, slice?: { maxPages: number; maxMs: number }): Promise<SyncResult> {
+  requireManagedPersistence(engine, 'performManagedSync', 'a managed sync imports a managed worktree through the persistence coordinator');
   if (opts.dryRun) return performManagedPass(engine, opts, slice);
   // GBRA-218: every managed pass (sync, drain, sources refresh, git conversion, owner slice) applies the committed folder rules.
   return (await import('../access/policy-git.ts')).withCommittedPolicy(engine, opts.sourceId ?? 'default', opts.repoPath, () => performLeasedPass(engine, opts, slice));
@@ -1573,8 +1575,8 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         // #6712 PR 4b (design v3.2 §2): a pass's write refused because its file changed after admission is the level moving, not a
         // page failure: the entry is passed over and the next round classifies the new level (a level that never settles ends the
         // pass not_converged); its receipt read again (same level: an uncommitted edit) and a pinned-worktree conflict hold worktree_dirty below. So is an import whose
-        // page identity another writer changed after the freeze (a repair created the page at its slug): its page moved.
-        if (cursor.passId && ((fileChangedAfterAdmission(done) && !passedOverBefore(cursor.passId, pending.requestId)) || (done.error_code === 'page_identity_changed'
+        // page identity another writer changed after the freeze (a repair created the page at its slug): its page moved. GST-3648: a held deletion too.
+        if (cursor.passId && (((fileChangedAfterAdmission(done) || heldDeletionHeadMoved(done)) && !passedOverBefore(cursor.passId, pending.requestId)) || (done.error_code === 'page_identity_changed'
           && await liveRevision(engine, context.sourceId, pending) !== (pending.intent.expected_revision == null ? null : String(pending.intent.expected_revision))))) {
           cursor = await saveCursor(engine, key, cursor, committedPast({ ...cursor, counts: { ...cursor.counts } }, pending));
           await faultPoint('sync:passed_over', { sourceId: cursor.sourceId, path: pending.intent.path ?? undefined });
@@ -1682,7 +1684,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
         // A complete check that found nothing is still a sync: stamp the freshness heartbeat for this incarnation only (#6712 PR 2: and release what left the source).
         await engine.transaction(tx => withCoordinatedWrite(tx, [context.sourceId], async () => {
           assertActive(); await releaseDiscoveredHolds(tx, fresh);
-          return tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1 AND incarnation=$2::uuid', [context.sourceId, context.incarnation]);
+          return stampManagedSourceFresh(tx, context.sourceId, context.incarnation);
         }, principalAttribution(authority.writer.principal)));
         await clearManagedSyncFailureAfterSuccess(engine, key);
         assertActive();

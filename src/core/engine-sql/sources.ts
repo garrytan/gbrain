@@ -11,6 +11,7 @@ import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL } from '../access/owner-only.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
 
 export async function listAllSources(exec: LegacyUnscopedRead, opts?: {
@@ -254,8 +255,8 @@ export interface SyncCheckpointAdvance {
   sourceId: string;
   /** The source incarnation the run started under; another incarnation changes nothing. */
   incarnation: string;
-  /** The commit the checkpoint moves to (`last_commit`). */
-  commit: string;
+  /** The commit the checkpoint moves to (`last_commit`); null re-stamps a checkpoint still at a null `from` (a first sync's unfinished slice). */
+  commit: string | null;
   /** The `last_commit` the run started from (null before the first sync). */
   from: string | null;
   /** Also accept a checkpoint already at `commit` (an overtaken run, and every pass stamp). */
@@ -330,6 +331,9 @@ export async function countRepoBoundSources(exec: LegacyUnscopedRead): Promise<n
   return Number(rows[0]?.n ?? 0);
 }
 
+/** A source id and its local path (`listSourcePathRows`). */
+export interface SourcePathRow { id: string; local_path: string }
+
 /** A source with a local path and its archived flag (`listLocalPathSources`). */
 export interface LocalPathSourceRow { id: string; local_path: string; archived: boolean }
 
@@ -343,6 +347,12 @@ export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: num
  * Sources that have a local path, with `archived`, in no particular order. Unscoped on master (source resolution
  * tier 4 read it through `executeRaw`). Throws on a brain older than the `archived` column; the caller falls back.
  */
+/** Every source with a local path, archived ones included, as `{ id, local_path }`, in no particular order: the other
+ * sources' directories `sources add` checks an API-backed kind's --dir against (sources-ops.ts insertApiSource). */
+export async function listSourcePathRows(exec: LegacyUnscopedRead): Promise<SourcePathRow[]> {
+  return exec.executeRaw<SourcePathRow>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL');
+}
+
 export async function listLocalPathSources(exec: LegacyUnscopedRead): Promise<LocalPathSourceRow[]> {
   return exec.executeRaw<LocalPathSourceRow>(`SELECT id, local_path, archived FROM sources WHERE local_path IS NOT NULL`);
 }
@@ -542,6 +552,32 @@ export async function readLiveIdentityHolders(exec: LegacyUnscopedRead, sourceId
         WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
     [sourceId, [...ids], [...titles]],
   );
+}
+
+/** What `readSourcesNotReadable` counts (sources-not-readable.ts): world facts too (recall, query), and the remote read floor. */
+export interface SourcesNotReadableOpts { facts: boolean; excludePrivate: boolean }
+
+/**
+ * Whether an unscoped remote read over `readable` reads nothing while other sources hold pages: no live, unquarantined
+ * page in `readable` (with `facts`, no active world fact either) and such a page in some other source that is not
+ * archived. `excludePrivate` adds the remote read floor (`remoteReadFloorSql('p')`) for the caller in context to both
+ * sides. Unscoped on master.
+ */
+export async function readSourcesNotReadable(exec: LegacyUnscopedRead, readable: readonly string[], opts: SourcesNotReadableOpts): Promise<boolean> {
+  const ids = [...readable];
+  const visible = opts.excludePrivate
+    ? sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))} AND ${trustedSql(remoteReadFloorSql('p'))}`
+    : sqlFragment` AND ${trustedSql(quarantineFilterFragment('p'))}`;
+  const facts = opts.facts
+    ? sqlFragment` OR EXISTS (SELECT 1 FROM facts WHERE source_id = ANY(${ids}::text[]) AND visibility = 'world'
+                       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()))`
+    : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.source_id = ANY(${ids}::text[]) AND p.deleted_at IS NULL${visible})${facts} THEN false
+                   ELSE EXISTS (SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
+                                 WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND NOT (p.source_id = ANY(${ids}::text[]))${visible})
+              END AS refuse`);
+  const [row] = await exec.executeRaw<{ refuse: boolean }>(text, params);
+  return row?.refuse === true;
 }
 
 /** The columns `insertSource` writes; the table fills the rest with its defaults. */

@@ -11,7 +11,7 @@ of its own. The TypeScript side is `src/core/rust-engine/store-members/doctor-pa
 | JS | Resolves | Doctor check |
 | --- | --- | --- |
 | `listOversizedPages(minBytes)` | live pages without an `embed_skip` key whose body plus timeline bytes pass `minBytes`, largest first, at most 101 | `oversized_pages` |
-| `listScraperJunkCandidates(limit \| null)` | live pages with title, body and timeline heads and frontmatter, newest update first (`limit`), or all | `scraper_junk_pages` |
+| `listScraperJunkCandidates(limit \| null)` | live pages with title, body and timeline heads, frontmatter and whether the page is segmented, newest update first (`limit`), or all | `scraper_junk_pages` |
 | `countMarkedPages('quarantine' \| 'content_flag')` | live pages whose frontmatter has the key | `quarantined_pages`, `flagged_pages` |
 | `countOversizedCorePages(maxBytes)` | live `always_load` pages stored in segments over `maxBytes` | `core_memory` |
 | `readRawProvenanceGaps()` | `{count, slugs}` of synthesized pages with no trace; the five-slug sample is read only when the count is over 0 | `raw_provenance` |

@@ -110,6 +110,7 @@ const MATRIX: Row[] = [
   { name: 'volunteer_context', mode: 'skip', reason: 'session/reflex machinery; volunteer-context suites own scoping' },
   { name: 'context_pack', mode: 'skip', reason: 'verbs conformance owns it; budget-packed composite of scoped reads' },
   { name: 'delta', mode: 'skip', reason: 'session-cursor verb; conformance suite owns it — page-delta arm is session-coupled (probe: fresh writes not listed)' },
+  { name: 'learned', mode: 'skip', reason: 'ledger rows exist only after the learning_derive phase runs; test/learning-ledger.test.ts owns its source and remote scoping' },
   { name: 'find_trajectory', mode: 'skip', reason: 'typed-claim/event rows come from the extraction pipeline; eval-trajectory + facts suites own it (probe: hand-seeded claim rows do not surface)' },
   { name: 'ontology_conflicts', mode: 'skip', reason: 'conflict rows need the ontology merge pipeline cross-observation shape; D7 ontology-merge parity suite owns conflicts' },
   { name: 'get_skill', mode: 'skip', reason: 'skills catalog + brain-resident packs; skill-catalog confinement suites own it' },

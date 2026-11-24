@@ -21,7 +21,7 @@ export const DOCTOR_SEARCH_MEMBERS: readonly string[] = [
   'listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs',
   'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages',
   'countPagesHiddenByPrefix', 'listGitImageHoldCounts', 'readProjectionBacklog',
-  'countAtomExtractionBacklog',
+  'countAtomExtractionBacklog', 'listAtomBacklogSourceIds',
 ];
 
 /** Rows `listTruncatedMarkdownBodies` reads: the list limit of the markdown_body_completeness check plus one (a full list means a floor). */
@@ -180,4 +180,12 @@ export async function countPagesHiddenByPrefix(raw: EngineRawRead, pattern: stri
 export async function listGitImageHoldCounts(raw: EngineRawRead, sourceIds: string[]): Promise<GitImageHoldCount[]> {
   const rows = await raw<{ source_id: string; images: string | number }>(GIT_IMAGE_HOLD_COUNTS_SQL, [GIT_HOLD_SUMMARY_OP, sourceIds]);
   return rows.map((row) => ({ source_id: row.source_id, images: Number(row.images) }));
+}
+
+// moved from commands/doctor/checks/extraction-sync.ts countExtractAtomsBacklogBySource unchanged
+const LIST_ATOM_BACKLOG_SOURCE_IDS_SQL = `SELECT source_id FROM pages WHERE deleted_at IS NULL GROUP BY source_id ORDER BY source_id COLLATE "C"`;
+
+/** The sources with a live page, by id in byte order: the roster extract_atoms_backlog counts per source on the unscoped path. */
+export async function listAtomBacklogSourceIds(raw: EngineRawRead): Promise<Array<{ source_id: string }>> {
+  return raw<{ source_id: string }>(LIST_ATOM_BACKLOG_SOURCE_IDS_SQL);
 }

@@ -38,7 +38,7 @@ const REFUSED_OPS = [
   'assemble_evidence', 'chronicle_day', 'chronicle_last_seen', 'chronicle_on_this_day', 'chronicle_since', 'context_pack',
   'delta', 'entity_identity_list', 'extraction_pending', 'fetch', 'find_contradictions', 'find_trajectory',
   'get_active_schema_pack', 'get_brain_health', 'get_brain_identity', 'get_calibration_profile', 'get_chunks',
-  'get_ingest_log', 'get_memory_settings', 'get_raw_data', 'get_skill', 'get_skill_asset', 'join_brain', 'leave_brain',
+  'get_ingest_log', 'get_memory_settings', 'get_raw_data', 'get_skill', 'get_skill_asset', 'join_brain', 'learned', 'leave_brain',
   'list_brain_skillpack', 'list_link_sources', 'list_schema_packs', 'list_skills', 'list_write_conflicts',
   'memory_recall', 'ontology_conflicts', 'ontology_dimensions', 'ontology_get', 'open_loops', 'questions_list',
   'questions_status', 'rank_entities', 'recall', 'request_tools', 'resolve_slugs', 'schema_explain_type', 'schema_graph',

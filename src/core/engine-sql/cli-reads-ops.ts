@@ -11,6 +11,7 @@
  * `jitOff` read with JIT disabled; PGLite runs every read as one statement.
  * The statements and their parameters are unchanged; only their home moved.
  */
+import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 import { buildExactBatchStatement, type ExactBatchRow, type ExactScanOpts } from '../search/exact-scan.ts';
 import { exactIdentityStatement, type ExactIdentityRow, type ExactIdentityStatementOpts } from './exact-identity.ts';
 import { rankCoverageStatement, rankEntitiesStatement, type RankCoverageStatementOpts, type RankEntitiesStatementOpts, type RankEntityRow } from './graph-rank.ts';
@@ -175,8 +176,8 @@ export async function readFenceOverlayRows(raw: EngineRawRead, page: { sourceId:
       ORDER BY f.id DESC LIMIT 1) AS row_flagged,
     EXISTS (SELECT 1 FROM fact_purges fp WHERE fp.source_id = v.source_id AND fp.visibility = i.visibility
       AND fp.fact_hash = gbrain_fact_fingerprint(i.claim) AND (fp.subject = '*' OR fp.subject = v.slug)) AS purged,
-    EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind = 'fact' AND h.source_id = v.source_id AND h.slug = v.slug
-      AND h.status = 'held' AND h.fingerprint = i.fp) AS held,
+    EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind = 'fact' AND h.source_id = v.source_id
+      AND h.status = 'held' AND h.fingerprint = i.fp AND ${trustedSql(holdAppliesToPageSql('h', '(SELECT p.id FROM pages p WHERE p.source_id = v.source_id AND p.slug = v.slug)', 'v.slug'))}) AS held,
     ${narrower} AS narrower
   FROM ROWS FROM (jsonb_to_recordset(${JSON.stringify(incoming)}::text::jsonb) AS (row_num integer, claim text, visibility text, fp text)) WITH ORDINALITY AS i(row_num, claim, visibility, fp, ord)
   CROSS JOIN v
