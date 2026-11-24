@@ -433,7 +433,7 @@ src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/admin-lock.ts	execute_raw	2
 src/core/persistence/administration.ts	execute_raw	5
 src/core/persistence/atom-maintenance.ts	execute_raw	20
-src/core/persistence/authority.ts	execute_raw	4
+src/core/persistence/authority.ts	execute_raw	3
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
@@ -593,7 +593,6 @@ src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/takes-prepare.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
 src/core/persistence/topology-locks.ts	execute_raw	19
 src/core/persistence/topology-receipts.ts	execute_raw	9

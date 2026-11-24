@@ -228,6 +228,8 @@ export interface ReadStatementMembers {
   deleteTakesByIds(ids: readonly number[]): Promise<void>;
   /** The id of the page's take at `rowNum`, or null. */
   findTakeId(pageId: number, rowNum: number): Promise<number | null>;
+  /** The distinct holders of the page's takes at `rowNums`, in no set order. */
+  listTakeHoldersAtRows(pageId: number, rowNums: readonly number[]): Promise<string[]>;
   /** Resolved takes stamped `mcp:` by the MCP server, in the caller's source and holder scope. */
   countMcpResolvedTakes(spec: McpResolvedSpec): Promise<number>;
   /** A holder's 25 heaviest active resolved takes (the calibration pattern drill-down). */

@@ -3229,6 +3229,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   matchTakeRows(pageId: number, rows: readonly TakeFenceRow[], limit: number): Promise<number[]>;
   /** Delete the page's takes at `rowNums`, with their synthesis evidence; an empty list deletes nothing. */
   deleteTakeRows(pageId: number, rowNums: readonly number[]): Promise<void>;
+  /** Set the `resolved_at` of the page's take at `rowNum` (a date or an ISO time); no take there writes nothing. */
+  stampTakeResolvedAt(pageId: number, rowNum: number, resolvedAt: string): Promise<void>;
+  /** Store `holders` as persistence request `requestId`'s `authority.takeHoldersUsed`, in the order given. */
+  recordTakeHoldersUsed(requestId: string, holders: readonly string[]): Promise<void>;
 
   /**
    * Persist a single contradiction-probe run row. Caller supplies a full

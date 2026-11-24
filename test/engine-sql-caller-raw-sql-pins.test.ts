@@ -3380,6 +3380,24 @@ const PINS: Pin[] = [
     JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
       AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
   },
+  // The takes publication's prepare step and a remote takes write's holder check, copied verbatim from their callers.
+  {
+    from: 'src/core/persistence/takes-prepare.ts:276 the resolved_at stamp (at a6e972420c)',
+    case: { method: 'stampTakeResolvedAt', variant: 'default', run: e => e.stampTakeResolvedAt(1, 2, '2026-11-20') },
+    texts: ['UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2'],
+  },
+  {
+    from: 'src/core/persistence/takes-prepare.ts:261 the request\'s takeHoldersUsed (at a6e972420c)',
+    case: { method: 'recordTakeHoldersUsed', variant: 'default', run: e => e.recordTakeHoldersUsed('00000000-0000-4000-8000-000000000001', ['world']) },
+    texts: [`UPDATE persistence_requests
+      SET authority=jsonb_set(authority,'{takeHoldersUsed}',$2::text::jsonb)
+      WHERE id=$1::uuid`],
+  },
+  {
+    from: 'src/core/persistence/authority.ts:279 authorizeStoredTakeHolders (at a6e972420c)',
+    case: { method: 'listTakeHoldersAtRows', variant: 'default', run: e => e.listTakeHoldersAtRows(1, [2, 3]) },
+    texts: ['SELECT DISTINCT holder FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])'],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';

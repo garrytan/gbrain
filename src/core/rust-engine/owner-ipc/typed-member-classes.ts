@@ -131,7 +131,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages',
   'listSubagentTimelineAppendCalls', 'listSubagentToolExecutions', 'listSubagentWriteOutcomes',
   'listSymbolTypesForName', 'listSynopsisSourceIds', 'listSynthesisCompletionKeys', 'listSynthesisPageBodies',
-  'listTakeIdsLeavingFence', 'listTakePreimages', 'listTakeRowsForPage', 'listTakeSupersessionCandidates',
+  'listTakeHoldersAtRows', 'listTakeIdsLeavingFence', 'listTakePreimages', 'listTakeRowsForPage', 'listTakeSupersessionCandidates',
   'listTimelineOrphanPages', 'listTrueUpRequests', 'listTrustAllowRuleRows', 'listTrustProposals',
   'listTrustScanRows', 'filterUnarchivedSourceIds', 'listUnattributedFacts', 'listUnbackedConversationRows',
   'listUnfencedFactRows', 'listUnlinkedConversationRows', 'listUnlinkedConversationSlugs',
@@ -377,6 +377,9 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',
   lockMentionSources: nothingLock,
   lockMentionEntries: nothingLock,
+  // The takes publication's prepare step (engine-sql/takes-reads.ts): each sets a value to the one given.
+  stampTakeResolvedAt: 'nothing: the stamp sets resolved_at to the value given, so running it again writes the same value',
+  recordTakeHoldersUsed: 'nothing: it sets the request\'s recorded take holders to the list given, so running it again writes the same list',
   deleteSourceMentionLinks: 'listMentionLinkOrigins for that source (no plain mention link left on the origins it deleted)',
   clearMentionSourceIndex: 'listGazetteerEntryKeys and listDerivedAliasRows for that source (both empty)',
   deleteDerivedAliasesForSlugs: 'listDerivedAliasRows for those slugs',

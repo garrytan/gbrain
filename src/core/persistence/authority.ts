@@ -102,7 +102,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
 /** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
-export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'getConfig' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'getConfig' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential' | 'listTakeHoldersAtRows'>;
 function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
@@ -276,9 +276,7 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
   const numbers = [row.intent?.row_num, row.outcome?.row_num, row.outcome?.old_row, row.outcome?.new_row]
     .filter((value): value is number => Number.isSafeInteger(value) && Number(value) > 0);
   if (row.page_id !== null && numbers.length) {
-    const targets = await engine.executeRaw<{ holder: string }>(
-      'SELECT DISTINCT holder FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [row.page_id, numbers]);
-    for (const target of targets) holders.add(target.holder);
+    for (const holder of await engine.listTakeHoldersAtRows(row.page_id, numbers)) holders.add(holder);
   }
   if (row.state === 'committed' && holders.size === 0) deny('The legacy take receipt has no verifiable holder authority.');
   for (const holder of holders) await authorizeTakeHolder(engine, row.authority, holder);

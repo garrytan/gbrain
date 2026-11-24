@@ -20,6 +20,7 @@ export const LEDGER_MEMBERS = {
   listTakePreimages: 'takes',
   deleteTakesByIds: 'takes',
   findTakeId: 'takes',
+  listTakeHoldersAtRows: 'takes',
   listGuardedTakeRows: 'takes',
   countMcpResolvedTakes: 'takes',
   listTopResolvedTakesForHolder: 'takes',

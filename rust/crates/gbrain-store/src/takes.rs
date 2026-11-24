@@ -41,6 +41,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod extract;
 mod held;
+mod prepare;
 mod reads;
 
 pub use extract::{FenceRowClaim, IncomingTake, TakesLeavingFence};

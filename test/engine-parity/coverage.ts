@@ -127,6 +127,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listTakeSupersessionCandidates', 'listHeldFenceTakeRows',
     // the reads and the delete of `gbrain extract takes`
     'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId',
+    // the takes publication's prepare step (engine-sql/takes-reads.ts)
+    'stampTakeResolvedAt', 'recordTakeHoldersUsed', 'listTakeHoldersAtRows',
     // the take-supersession repair (engine-sql/takes-reads.ts)
     'listTakePointers', 'listTakeSupersedeReceipts', 'setTakeSupersededBy',
     // the accepted-takes repair (engine-sql/takes-reads.ts)

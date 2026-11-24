@@ -21,6 +21,8 @@ export const RECORDS_MEMBERS = {
   listActiveTakesForPages: 'takes',
   matchTakeRows: 'takes',
   deleteTakeRows: 'takes',
+  stampTakeResolvedAt: 'takes',
+  recordTakeHoldersUsed: 'takes',
   // files
   upsertFile: 'files',
   getFile: 'files',
