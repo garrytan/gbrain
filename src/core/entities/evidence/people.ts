@@ -144,6 +144,7 @@ export async function stillSendsQuery(engine: BrainEngine, p: PersonPage, query:
   if (!page) return false;
   const keys = Object.fromEntries(PERSON_KEYS.map(k => [k, (page.frontmatter as Record<string, unknown> | undefined)?.[k]]));
   const fresh = toPerson({ source_id: p.source_id, slug: p.slug, page_id: p.page_id, title: page.title, keys, identity: null }, '');
+  fresh.sensitive = await tableSensitivity(engine, fresh, fresh.sensitive);
   await markRestricted(engine, [fresh]);
   const q = exaQueryFor(fresh);
   return 'query' in q && q.query === query;
@@ -252,5 +253,14 @@ export async function scanPeople(engine: BrainEngine): Promise<PeopleScan> {
     if (!c) { skipped.no_class++; continue; }
     pairs.push({ id: pairId(a, b), a, b, ...c });
   }
+  const paired = new Map<string, PersonPage>();
+  for (const p of pairs) { paired.set(pageKey(p.a), p.a); paired.set(pageKey(p.b), p.b); }
+  for (const p of paired.values()) p.sensitive = await tableSensitivity(engine, p, p.sensitive);
   return { people, carriers, nameCounts, pairs, skipped, countryCode };
+}
+
+/** Folds in tags added with `gbrain tag` or add_tag, which live only in the tags table, never in frontmatter. */
+async function tableSensitivity(engine: BrainEngine, p: { slug: string; source_id: string }, fromFrontmatter: Sensitivity | null): Promise<Sensitivity | null> {
+  if (fromFrontmatter === 'minor') return fromFrontmatter;
+  return sensitivityOf({ tags: await engine.getTags(p.slug, { sourceId: p.source_id }) }) ?? fromFrontmatter;
 }

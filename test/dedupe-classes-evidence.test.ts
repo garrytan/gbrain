@@ -257,6 +257,24 @@ describe('gbrain dedupe classes --exa', () => {
     } finally { fetchSpy.mockRestore(); }
   });
 
+  test('a family or minor tag added with gbrain tag (the tags table, not frontmatter) keeps the page out of search and its pair waiting', async () => {
+    await person('people/ada-example', 'Ada Example', { company: 'Acme Example' });
+    await person('people/ada-example', 'Ada Example', { company: 'Beta Example' }, 'people-b');
+    await person('people/ben-example', 'Ben Example', { company: 'Acme Example' });
+    await person('people/ben-example', 'Ben Example', { company: 'Beta Example' }, 'people-b');
+    await engine.addTag('people/ada-example', 'family', { sourceId: 'people-b' } as never);
+    await engine.addTag('people/ben-example', 'minor', { sourceId: 'default' } as never);
+    expect(await engine.getTags('people/ada-example', { sourceId: 'people-b' })).toContain('family');
+    const fetchSpy = spyOn(globalThis, 'fetch');
+    try {
+      const dry = await classifyPairs(engine, { exa: { mode: 'dry_run', settings: settings() } });
+      expect((dry.report.exa as { blocked: Record<string, number> }).blocked).toMatchObject({ family: 2, minor: 2 });
+      expect(one(dry.pairs, 'Ada Example')).toMatchObject({ verdict: 'wait', reason: 'family or minor page' });
+      expect(one(dry.pairs, 'Ben Example')).toMatchObject({ verdict: 'wait', reason: 'family or minor page' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally { fetchSpy.mockRestore(); }
+  });
+
   test('live: an HTTP error, a failed request or a held lock stops the run cleanly; a failed request counts as spent; reported cost tightens the cap and never lowers the total', async () => {
     await person('people/yara-example', 'Yara Example', { company: 'Acme Example' });
     await person('people/yara-example', 'Yara Example', { company: 'Beta Example' }, 'people-b');
