@@ -107,7 +107,6 @@ const MOVED_CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   upsertOpenLoop: (e) => e.upsertOpenLoop(any),
   closeOpenLoop: (e) => e.closeOpenLoop('default', 1, 'done', 'test'),
   listOpenLoops: (e) => e.listOpenLoops(),
-  countOpenLoopsByCounterpartyEmail: (e) => e.countOpenLoopsByCounterpartyEmail('default', ['a@example.com'], 'waiting_on_me'),
   readEntityOpenLoops: (e) => e.readEntityOpenLoops('people/a', 'default', 10),
   countOpenLoopsByCounterpartyEmail: (e) => e.countOpenLoopsByCounterpartyEmail('default', ['a@example.com'], 'unanswered_inbound'),
 };

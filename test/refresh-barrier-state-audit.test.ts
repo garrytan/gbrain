@@ -18,6 +18,8 @@ const OPEN_WITHOUT_DEFERRED = /'queued', ?'running', ?'recovering'/g;
 
 /** Files whose open-state lists leave `deferred` out on purpose, with how many such lists each holds. */
 const DECIDED: Record<string, { count: number; why: string }> = {
+  'src/core/engine-sql/doctor-terminal.ts': { count: 6, why: 'the terminal-failure aggregate and batch, written out from terminal-failures.ts and terminal-classify.ts (test/doctor-terminal-sql.test.ts pins the copy): the classifier lists sync knock-ons and managed sync' },
+  'src/core/engine-sql/doctor-sync.ts': { count: 3, why: 'the managed-sync failure and orphan reads, written out from managed-sync-orphans.ts and sync-failures.ts (test/doctor-sync-sql.test.ts pins the copy): managed sync' },
   'src/commands/book-mirror.ts': { count: 1, why: 'receipt state (a deferred row reads as queued)' },
   'src/core/cycle/synthesize-postprocess.ts': { count: 1, why: 'cycle producer, never deferred' },
   'src/core/facts/absorb-log.ts': { count: 1, why: 'facts producer, never deferred' },
