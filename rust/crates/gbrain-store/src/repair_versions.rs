@@ -346,6 +346,37 @@ impl Store {
             }))
     }
 
+    /// `movePageVersions(fromPageId, toPageId)` (the moved-pages fold): every version of page `from`
+    /// moves to page `to` (key and `page_id`), as `UPDATE page_versions SET page_id=$2 WHERE
+    /// page_id=$1`; the moved ids in id order. A missing `to` page refuses as the foreign key does when
+    /// a version would move; a page with no versions moves nothing.
+    pub fn move_page_versions(&self, from_page_id: i64, to_page_id: i64) -> Result<Vec<u64>> {
+        let (Ok(from), Ok(to)) = (u64::try_from(from_page_id), u64::try_from(to_page_id)) else {
+            return Ok(Vec::new());
+        };
+        self.write(|tx| {
+            let versions = versions_of(&*tx, from)?;
+            if versions.is_empty() || from == to {
+                return Ok(versions.iter().map(|v| v.id).collect());
+            }
+            if read_page_by_id(&*tx, to)?.is_none() {
+                return Err(crate::error::StoreError::new(
+                    crate::error::CONSTRAINT_VIOLATION,
+                    format!("insert or update on table \"page_versions\" violates foreign key constraint \"page_versions_page_id_fkey\": page {to} is not present"),
+                ));
+            }
+            let mut ids = Vec::with_capacity(versions.len());
+            for mut v in versions {
+                tx.delete(&keys::version(from, v.id))?;
+                v.page_id = to;
+                put_json(tx, &keys::version(to, v.id), &v)?;
+                ids.push(v.id);
+            }
+            ids.sort_unstable();
+            Ok(ids)
+        })
+    }
+
     /// `listInlineVersionTexts(pageId)`: `[{ id, compiled_truth, timeline }]` of the page's versions with an inline
     /// body, by id (`gbrain repair lost-fence-rows`).
     pub fn list_inline_version_texts(&self, page_id: i64) -> Result<Vec<Value>> {

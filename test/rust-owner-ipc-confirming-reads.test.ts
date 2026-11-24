@@ -5,6 +5,8 @@
  * is a member that only reads, and the three errors' answers before and after the send.
  */
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { RUST_ENGINE_MEMBERS } from '../src/core/rust-engine/members.ts';
 import { OWNER_IPC_CONFIRMING_READS } from '../src/core/rust-engine/owner-ipc/confirming-reads.ts';
 import {
@@ -132,5 +134,27 @@ describe('the owner errors render a read-only fix and redact host details over H
     }
     // The CLI view keeps them: the local user can act on them.
     expect(JSON.stringify(toAgentError(errors[0]!, { transport: 'cli', render: cliRenderContext() }))).toContain('/home/user-example');
+  });
+});
+
+describe('the docs list the members the owner socket refuses', () => {
+  const refused = Object.entries(OWNER_IPC_ROUTES).filter(([, route]) => route === 'refuse').map(([member]) => member).sort();
+  const named = (text: string) => [...new Set([...text.matchAll(/`(\w+)`/g)].map(m => m[1]!).filter(name => name in OWNER_IPC_ROUTES))].sort();
+  const doc = (path: string) => readFileSync(join(import.meta.dir, '..', path), 'utf8');
+
+  // Value: protects=the two design docs name every member routes.ts refuses; fails_when=a member is added to the REFUSE set and
+  // either doc still lists the old members (the owner socket's refusals are read from these two paragraphs); why_new=worktreeClaimStore
+  // and writerAdminStore joined the set after the docs were written; seam=none; no_claim=the rest of either paragraph
+  test('RUST_ENGINE.md and the key-files entry name exactly the refused members', () => {
+    expect(refused).toContain('worktreeClaimStore');
+    expect(refused).toContain('writerAdminStore');
+    const design = doc('docs/designs/RUST_ENGINE.md');
+    const sentence = design.slice(design.indexOf('So `transaction`, `transactionDirect`'), design.indexOf('`owner-ipc/whole-op.ts` can send the four'));
+    expect(sentence.length).toBeGreaterThan(200);
+    expect(named(sentence)).toEqual(refused);
+    const keyFiles = doc('docs/architecture/key-files/engines-2-more.md');
+    const list = keyFiles.slice(keyFiles.indexOf('`refuse` (`transaction`'), keyFiles.indexOf('or `forward` (everything else'));
+    expect(list.length).toBeGreaterThan(200);
+    expect(named(list)).toEqual(refused);
   });
 });

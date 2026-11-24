@@ -32,11 +32,16 @@ export function foregroundPriorityText(priority: boolean | null | undefined): st
   return PRIORITY_SQL[priorityKey(priority)];
 }
 
+/** The same switch as a fragment, for statements that splice it beside `claimableWriteFragment`. */
+export function foregroundPriorityFragment(priority: boolean | null | undefined): ReturnType<typeof trustedSql> {
+  return trustedSql(PRIORITY_SQL[priorityKey(priority)]);
+}
+
 /**
  * `claimableWriteSql(priority, lanes)` (journal.ts): the rows `claimNextWrite` may claim. `hostId` and `excludeRoots`
  * bind as $1 and $2, the text the journal writes; with no `laneRoots` the lane list is the empty literal, as there.
  */
-export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
+export function claimableWriteFragment(priority: boolean | null | undefined, hostId: string | null, excludeRoots: string[], laneRoots?: string[]): SqlFragment {
   const p = trustedSql(PRIORITY_SQL[priorityKey(priority)]);
   const lanes = laneRoots === undefined ? sqlFragment`'{}'::text[]` : sqlFragment`${laneRoots}::text[]`;
   return sqlFragment`(r.state='queued' OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)
@@ -169,6 +174,15 @@ export async function insertTopologyChange(exec: SqlExecutor, row: TopologyChang
     row.sourceId, row.sourceIncarnation, row.worktreeIds, row.state, row.recovery ? JSON.stringify(row.recovery) : null, row.recoveryBytes ?? 0,
     row.terminalBytes, row.outcome ? JSON.stringify(row.outcome) : null, row.intentBytes ?? 0]);
   return inserted!;
+}
+
+/**
+ * The digest a topology change with request id `requestId` recorded for source `sourceId`, whichever principal wrote
+ * it, or null: the `sources add` replay read (source-default-search.ts acceptedChoice).
+ */
+export async function readTopologyChangeDigest(exec: LegacyUnscopedRead, requestId: string, sourceId: string): Promise<string | null> {
+  const [prior] = await exec.executeRaw<{ digest: string }>('SELECT digest FROM persistence_topology_changes WHERE request_id = $1::uuid AND source_id = $2', [requestId, sourceId]);
+  return prior ? prior.digest : null;
 }
 
 /** The first of `requestIds` a topology change of local writer `principalId` already used (a lifecycle id), as `[{ request_id }]`, or []. */

@@ -482,6 +482,39 @@ impl Store {
     ) -> Result<Vec<Value>> {
         find_topology_changes_in(&*self.read()?, principal_id, request_ids)
     }
+
+    /// `readTopologyChangeDigest(requestId, sourceId)`: the digest of a topology change with this
+    /// request id for this source, whichever principal recorded it, or `None` (the replay read of
+    /// `sources add`, src/core/source-default-search.ts). The SQL has no ORDER BY; (principal,
+    /// request id) is unique, so this takes the first in key order.
+    pub fn read_topology_change_digest(
+        &self,
+        request_id: &str,
+        source_id: &str,
+    ) -> Result<Option<String>> {
+        let request_id = uuid_param(request_id, "requestId")?;
+        let mut found: Option<Result<String>> = None;
+        scan_prefix(
+            &*self.read()?,
+            &[keys::PERSISTENCE, super::TOPOLOGY],
+            false,
+            &mut |_, v| {
+                match serde_json::from_slice::<TopologyChangeRecord>(v) {
+                    Ok(r) if r.request_id == request_id && r.source_id == source_id => {
+                        found = Some(Ok(r.digest));
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        found = Some(Err(StoreError::invalid(format!(
+                            "a topology change record: {e}"
+                        ))));
+                    }
+                }
+                found.is_none()
+            },
+        )?;
+        found.transpose()
+    }
 }
 
 /// Every stored topology change as (principal id, `terminal_bytes`), for `readCounterDrift`

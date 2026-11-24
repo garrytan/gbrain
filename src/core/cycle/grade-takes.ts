@@ -675,13 +675,8 @@ class GradeTakesPhase extends BaseCyclePhase {
       const sig = evidenceSignature(evidence, judgeModelId);
 
       // Idempotency: skip when (take_id, prompt_version, judge_model_id, evidence_signature) exists.
-      const cached = await engine.executeRaw<{ verdict: string; confidence: number; applied: boolean }>(
-        `SELECT verdict, confidence, applied FROM take_grade_cache
-         WHERE take_id = $1 AND prompt_version = $2 AND judge_model_id = $3 AND evidence_signature = $4
-         LIMIT 1`,
-        [take.id, promptVersion, judgeModelId, sig],
-      );
-      if (cached.length > 0) {
+      const cached = await engine.readTakeGrade({ takeId: take.id, promptVersion, judgeModelId, evidenceSignature: sig });
+      if (cached) {
         result.cache_hits += 1;
         continue;
       }
@@ -831,13 +826,10 @@ class GradeTakesPhase extends BaseCyclePhase {
 
       // Write the verdict to the cache. Idempotency conflict means another
       // run beat us to it; either way the row exists with consistent state.
-      await engine.executeRaw(
-        `INSERT INTO take_grade_cache
-           (take_id, prompt_version, judge_model_id, evidence_signature, verdict, confidence, applied)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (take_id, prompt_version, judge_model_id, evidence_signature) DO NOTHING`,
-        [take.id, promptVersion, recordedJudgeModelId, recordedSig, recordedVerdict.verdict, recordedVerdict.confidence, shouldApply],
-      );
+      await engine.insertTakeGrade({
+        takeId: take.id, promptVersion, judgeModelId: recordedJudgeModelId, evidenceSignature: recordedSig,
+        verdict: recordedVerdict.verdict, confidence: recordedVerdict.confidence, applied: shouldApply,
+      });
       result.verdicts_written += 1;
 
       // Apply to canonical takes if eligible.
@@ -846,9 +838,7 @@ class GradeTakesPhase extends BaseCyclePhase {
           if (managed) {
             // Resolve the judged take by page identity, not the cached slug: a
             // rename during judging must not redirect the resolution to another page.
-            const [page] = await engine.executeRaw<{ slug: string; source_id: string }>(
-              `SELECT p.slug, p.source_id FROM pages p JOIN takes t ON t.page_id=p.id
-                WHERE p.id=$1 AND p.deleted_at IS NULL AND t.row_num=$2 AND t.claim=$3`, [take.page_id, take.row_num, take.claim]);
+            const page = await engine.readLiveTakePage({ pageId: take.page_id, rowNum: take.row_num, claim: take.claim });
             if (!page) throw new Error('the judged take moved or changed during grading; it is graded again next run');
             const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
             // The resolution publishes against this exact revision, so the judged
@@ -899,9 +889,7 @@ class GradeTakesPhase extends BaseCyclePhase {
           result.warnings.push(`auto-apply failed on take ${take.id}: ${msg}`);
           // Managed: drop the cached verdict so the next run grades the take
           // again instead of skipping it as already applied.
-          if (managed) await engine.executeRaw(`DELETE FROM take_grade_cache
-            WHERE take_id=$1 AND prompt_version=$2 AND judge_model_id=$3 AND evidence_signature=$4`,
-          [take.id, promptVersion, recordedJudgeModelId, recordedSig]);
+          if (managed) await engine.deleteTakeGrade({ takeId: take.id, promptVersion, judgeModelId: recordedJudgeModelId, evidenceSignature: recordedSig });
         }
       }
 

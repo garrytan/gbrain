@@ -91,7 +91,8 @@ A complete agent grant (src/core/grants/schema.ts, `GRANT_CONSTRAINTS_SQL`) has 
 `source_id` that equals `bound_source_id` and is in `federated_read`, a delegated namespace that fits its slug prefixes
 (`job` with none, `prefixes` with at least one) and `bound_max_concurrent` above 0. The scope word is matched as
 Postgres matches `(^|[[:space:]])agent([[:space:]]|$)`: a space, tab, newline, vertical tab, form feed or carriage
-return around it. A refused write leaves no row.
+return around it, or any other character in PGLite's `[[:space:]]` (U+0085, U+2000 to U+2006, U+2008 to U+200A, U+2028,
+U+2029, U+205F and U+3000, but not U+00A0), so `read<U+3000>agent` holds the word. A refused write leaves no row.
 
 Keys: `m 0x2A client_id -> record` (the whole row as JSON; times in microseconds, the cap in hundredths of a dollar);
 `m 0x2E id -> audit row` (the sequence `oauth_grant_audit`).

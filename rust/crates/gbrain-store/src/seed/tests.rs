@@ -558,7 +558,7 @@ fn aliases_are_copied_and_retries_skip() {
     let r = import(&s, "slug_aliases", vec![slug_alias.clone()]);
     assert_eq!(r.imported, 1);
     let found = s
-        .resolve_slug_with_alias_detailed("people/alice", &["default".to_string()])
+        .resolve_slug_with_alias_detailed("people/alice", &["default".to_string()], None)
         .unwrap()
         .unwrap();
     assert_eq!(found.canonical_slug, "people/alice-example");
@@ -958,6 +958,9 @@ fn the_not_copied_list_is_pinned_sorted_and_disjoint_from_the_relations() {
             "code_traversal_cache",
             "conversation_parser_llm_cache",
             "dream_verdicts",
+            "engine_writer_coverage_gaps",
+            "engine_writer_observations",
+            "engine_writer_sessions",
             "eval_candidates",
             "eval_capture_failures",
             "eval_contradictions_cache",

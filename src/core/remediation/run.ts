@@ -10,6 +10,7 @@
 //   - D7 per-step recheck (re-compute plan from fresh health)
 //   - Hooks for caller observability (no console.* in the library)
 
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import crypto from 'crypto';
 import type { BrainEngine } from '../engine.ts';
 import { queueWorkerAlive } from '../minions/no-worker.ts';
@@ -23,6 +24,7 @@ import { planRepairStepsReport, previewFailureField, runRepairSteps, type Repair
 import { OperationError } from '../ops/contract.ts';
 import { isManualOnlyStep, manualOnlyFix } from './manual-only.ts';
 import type { RemediationCheckpoint } from '../remediation-checkpoint.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type {
   ManualOnlySkippedStep,
   RemediationHooks,
@@ -73,12 +75,14 @@ function manualOnlySkips(engine: BrainEngine) {
     const manual = steps.filter((s) => isManualOnlyStep(s) && s.status === 'remediable' && !skipped.some((m) => m.id === s.id));
     if (manual.length) {
       const { cliRenderContext, renderAction } = await import('../agent-output.ts');
-      const queued = await engine.executeRaw<{ id: number | string; name: string; status: string }>(
-        `SELECT id, name, status FROM minion_jobs
-          WHERE name = ANY($1::text[]) AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
-          ORDER BY id`,
-        [[...new Set(manual.map((s) => s.job))]],
-      ).catch(() => []);
+      // Every unfinished job of those names, by id, in one typed read (no page limit, one snapshot).
+      let queued: Array<{ id: number | string; name: string; status: string }> = [];
+      try {
+        queued = await engine.listUnfinishedJobsByName([...new Set(manual.map((s) => s.job))]);
+      } catch (e) {
+        rethrowCapabilityRefusal(e); // an engine that cannot list jobs refuses; it does not report "none queued"
+        // any other read error: the skip is still reported, without the queued-job note
+      }
       for (const step of manual) {
         const jobs = queued.filter((q) => q.name === step.job).map((q) => ({ id: Number(q.id), status: q.status }));
         skipped.push({
@@ -132,6 +136,17 @@ async function runJobInline(
     worker.stop();
     await running;
   }
+}
+
+/**
+ * Write a step's impact row. The job already ran, so an engine that refuses the write (a Rust brain keeps no
+ * migration_impact_log) marks the step `impact_log` instead of turning its terminal status into an error.
+ */
+async function closeImpactOrMark(close: () => Promise<void>, result: StepResult): Promise<void> {
+  await close().catch((err: unknown) => {
+    if (!isEngineCapabilityRefusal(err)) throw err;
+    result.impact_log = 'not_recorded: engine_capability_missing';
+  });
 }
 
 export async function runRemediation(
@@ -456,7 +471,7 @@ export async function runRemediation(
 
         const terminal = await waitStep(job.id, { pollMs: isPGLite ? 250 : 1000, timeoutMs: (step.est_seconds + 60) * 1000 });
         submittedResult.status = terminal.status;
-        if (impact) await closeStepImpact(engine, impact, step, { jobId: job.id, status: terminal.status, doctorRunId });
+        if (impact) await closeImpactOrMark(() => closeStepImpact(engine, impact, step, { jobId: job.id, status: terminal.status, doctorRunId }), submittedResult);
         if (terminal.status !== 'completed') abortedIds.add(step.id);
         hooks.onStepEnd?.(submittedResult);
       } catch (e) {

@@ -6,7 +6,7 @@ This family moves a page to a new slug, keeps the old slug as an alias of the ne
 alias names a page answers to, and keeps a page's contextual retrieval state. In PGLite these are
 the `slug_aliases` and `page_aliases` tables and the `pages.contextual_retrieval_mode` and
 `pages.corpus_generation` columns. The key tag is the reserved `k`. These records were part of format 1 and
-changed no format number; the store is at format 6 now ([format.md](format.md)). Text
+changed no format number; the store is at format 7 now ([format.md](format.md)). Text
 parts of a key are joined with a `0x00` byte.
 
 | Key | Value | Mirrors |
@@ -46,7 +46,7 @@ A deleted source loses every alias row of that source, as Postgres's `ON DELETE 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.updateSlug(oldSlug, newSlug, sourceId?)` | the number of pages moved, 0 or 1. The page at `(sourceId ?? 'default', oldSlug)`, soft-deleted or not, is versioned as it stood, moved by `pages::rename_page` (same id, new knowledge revision, cleared text projection revision, new `updated_at`), then its old slug becomes an alias of the new one and its alias rows move with it. `invalid_slug` for a bad new slug and `constraint_violation` for a taken one; either keeps nothing. A segmented page is versioned as a reference to its live body generation (as `createVersion`), so its body never moves. A NULL body with no segmented generation behind it (a row PGLite's CHECK forbids) answers `invalid_state` before anything is written, and the member refuses it as `engine_capability_missing`. Moving a page onto its own slug changes only `updated_at` | `updateSlug` |
-| `brain.resolveSlugWithAliasDetailed(slug, sources)` | `{ canonical_slug, source_id, matches }` from the first source in `sources` that has `slug` as an alias, or `null`. The TypeScript member warns once per process when `matches > 1` and returns `canonical_slug` (or `slug`) for `resolveSlugWithAlias` | `resolveSlugWithAliasDetailed`, `resolveSlugWithAlias` |
+| `brain.resolveSlugWithAliasDetailed(slug, sources, excludePrivate?)` | `{ canonical_slug, source_id, matches }` from the first source in `sources` that has `slug` as an alias, or `null`. The TypeScript member warns once per process when `matches > 1` and returns `canonical_slug` (or `slug`) for `resolveSlugWithAlias` | `resolveSlugWithAliasDetailed`, `resolveSlugWithAlias` |
 | `brain.listSlugAliases(sourceId)` | `[{ alias_slug, canonical_slug }]`: every `k 0x01` row of the source, in alias byte order (the SQL has no `ORDER BY`; link extraction builds a map from it). A source id with a NUL byte names no row. The TypeScript member is in `store-members/alias-fanout-reads.ts`, beside its SQL | `listSlugAliases` |
 | `brain.resolveAliases(aliasNorms, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? }?)` | `[aliasNorm, [{ slug, source_id }]]` pairs in alias byte order, pages by source then slug, for aliases that name a live page (not soft deleted, not quarantined, source not archived) in the scope. `excludePrivate` is the page policy (`page_hidden`), the caller's reader identity and private-readable grant included, `minTrust` and `suppressFlagged` the trust floor and flagged-page filter over the page's stored tier and write-gate receipts; a page they drop names nothing. Within one source only the best origin of the remaining rows answers (frontmatter, then declared, then subject), and a derived alias yields to another live page the same scope may read whose lower-cased title is the alias. A tier name that is no tier refuses with `invalid_argument`. The TypeScript member builds the `Map` | `resolveAliases` |
 | `brain.aliasCanonicalRefs({ refs, source_ids, live, exclude_private })` | `[{ source_id, canonical_slug }]` for each distinct ref that is the canonical slug of a `slug_aliases` row (one `k 0x05` prefix scan per ref) and whose page row exists, in byte order by source then slug (the SQL has no `ORDER BY`). With `live` (the TypeScript member sets it when a policy was passed, as `pageReadFilter('p', policy, !!policy)` does) the page must be live: not soft deleted, not quarantined, its source present and not archived; without it a soft-deleted page still answers. `source_ids` keeps the named sources. `exclude_private` applies the page policy of `facts/privacy.rs` (`page_hidden`), a caller's reader identity and private-readable grant included. The TypeScript member reads `sourceIds`, else `sourceId`, and `excludePrivate` through `storePagePolicy` (with `callerReaders`); `minTrust` and `suppressFlagged` apply `trust::TrustPolicy` to the canonical page's stamped tier and its write-gate receipts, as `pageReadFilter` does; it ignores the other search options the SQL does not read | `aliasCanonicalRefs` |
@@ -89,7 +89,9 @@ Where this engine differs from PGLite:
 - The `constraint_violation` message for a taken slug is `pages::rename_page`'s, not Postgres's
   unique-violation text.
 - Text that holds a NUL byte is refused `invalid_argument` on write and finds nothing on read.
-- On the other alias reads `excludePrivate`, `minTrust` and `suppressFlagged` refuse with
+- `resolveSlugWithAlias` under `excludePrivate` counts an alias row only when its canonical page exists, is not
+  soft deleted and passes the caller's page policy (`resolveSlugWithAliasDetailed`'s third argument), as the SQL's
+  `EXISTS` does. On the other alias reads `excludePrivate`, `minTrust` and `suppressFlagged` refuse with
   `engine_capability_missing`. `requireSafeChunks` and `inline` change nothing.
 
 `crates/gbrain-store/tests/aliases.rs` covers what the parity cases in

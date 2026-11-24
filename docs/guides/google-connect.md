@@ -123,6 +123,29 @@ Two remedies, independent of each other:
   pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
   canonical twin of each stub and the next step.
 
+### Link each contact to its person page
+
+`gbrain dedupe link-contacts --source <id>` counts how the source's contact
+pages would link to your person pages and changes nothing. Add `--apply` to
+link them. A contact page joins the identity group of the one person page
+whose email or phone is exactly the same as one of the contact's, the rule
+the Apple Contacts source uses:
+
+- A name alone never links.
+- A contact whose email or phone matches two or more people, or one person
+  whose page has another name (a shared or reused address), stays unlinked
+  and waits for you: `gbrain sync status --source <id>` lists it, and
+  `gbrain dedupe confirm` or `reject` on those people settles it.
+- `gbrain dedupe reject` on a contact and person pair removes that link,
+  and the pair is never linked again.
+- A contact already in an identity group you made is left as it is.
+- Only identity links are written. No page is edited, so what every caller
+  can read stays the same.
+
+`--apply` also sets `google_contacts.identity_links` on, so each sync links
+the contacts it changed and settles the waiting ones. `--unlink` removes
+every link the source made and sets it off.
+
 ### What a contact page carries
 
 Each page records the contact's names, email addresses, organization and

@@ -61,6 +61,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   embed: { tier: 'paid', class: 'no_coordinated_write', reason: 'Embeddings are a physical projection the canonical writer guard does not cover.' },
   orphans: { tier: 'free', class: 'no_coordinated_write', reason: 'Read-only orphan report.' },
   'schema-suggest': { tier: 'free', class: 'no_coordinated_write', reason: 'Writes schema suggestions outside the canonical tables.' },
+  learning_derive: { tier: 'free', class: 'no_coordinated_write', reason: 'Records pointer rows in the learning_items ledger only (ids, never text); it writes no page, fact or file.' },
   purge: { tier: 'deletes', class: 'writes', reason: 'Expired tombstones are purged one by one through coordinated delete_page purges.' },
   bookkeeping_gc: { tier: 'deletes', class: 'no_coordinated_write', reason: 'Deletes bookkeeping rows and files past their retention (op checkpoints, brainstorm checkpoints, batch-retry audit files, volunteer events, decision receipts, applied captures, retrieval feedback); it never touches a page.' },
 };

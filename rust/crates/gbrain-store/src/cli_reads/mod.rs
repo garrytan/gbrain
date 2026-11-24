@@ -18,6 +18,7 @@ pub mod doctor_pages;
 pub mod doctor_persistence;
 pub mod doctor_search;
 pub mod doctor_sources;
+pub mod doctor_tallies;
 pub mod doctor_terminal;
 pub mod entities;
 pub mod export;

@@ -204,6 +204,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_SURFACE',                  // stdio MCP tool surface: a planted `full` widens the tools an agent sees (a shell export still widens; GBRAIN_MCP_FORCE_SURFACE stays narrow-only)
   // --- trusted-output injection --------------------------------------------
   'GBRAIN_TEST_SKILLS_MOVED_REGISTRY', // test seam read by bundled-skill and skillpack: a planted registry puts an install command of its choosing in output agents follow
+  'GBRAIN_TEST_UPGRADE_CGROUP',        // test seam read by the upgrade restart: a planted cgroup hides the systemd unit a serve runs in, so the upgrade signals it instead of restarting its unit
 ];
 
 /**

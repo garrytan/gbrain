@@ -33,6 +33,7 @@ import {
 } from '../../core/audit-skill-brain-first.ts';
 import type { Check } from '../doctor.ts';
 import { checkError, infoCheck } from './check-fix.ts';
+import { rethrowCapabilityMissing } from '../../core/rust-engine/errors.ts';
 
 /** Quick skill conformance check — frontmatter + required sections */
 export function skillConformanceCheck(skillsDir: string): Check {
@@ -264,12 +265,9 @@ export async function skillPreconditionsCheck(
     },
     async countPagesForSource(id: string) {
       try {
-        const rows = await engine.executeRaw<{ n: number }>(
-          'SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1',
-          [id],
-        );
-        return rows[0]?.n ?? 0;
-      } catch { return 0; }
+        // The typed count (soft-deleted pages included, as before), so a Rust brain answers it.
+        return await engine.countSourcePages(id, { includeDeleted: true });
+      } catch (e) { rethrowCapabilityMissing(e); return 0; }
     },
     async getConfig(key: string) {
       try {

@@ -11,6 +11,7 @@ import { sourceScopeOpts } from '../../core/ops/context.ts';
 import { invalidParam } from '../../core/ops/op-fix.ts';
 import { computeDoctorReport, doctorReportRemote, buildChecks, type DoctorReport } from '../doctor.ts';
 import { doctorCheckNames, opsCheckNames } from './registry.ts';
+import { accessReachEntry } from './checks/access-reach.ts';
 import { startDoctorDeadline } from './budget.ts';
 import { ALERT_BUDGET_MS_DEFAULT, alertRanChecks } from './alert.ts';
 import { PAGE_CHECK_NAMES } from '../../core/doctor-categories.ts';
@@ -25,6 +26,10 @@ export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<strin
   const known = doctorCheckNames();
   const unknown = (only ?? []).filter((n) => !known.has(n));
   if (unknown.length) throw invalidParam(ctx, 'run_doctor', 'only', `run_doctor: unknown check ${unknown.join(', ')}. Valid names: ${[...known].sort().join(', ')}.`, { example: ['persistence_capacity'] });
+  const hostOnly = (only ?? []).filter((n) => accessReachEntry.emits!.includes(n));
+  if (hostOnly.length) {
+    throw invalidParam(ctx, 'run_doctor', 'only', `run_doctor: ${hostOnly.join(', ')} runs only on the brain host, because it reads every member's keys. Ask the brain host's operator to run ${hostOnly.map((n) => `gbrain doctor --only ${n}`).join(' and ')}.`, { example: ['persistence_capacity'] });
+  }
 
   const scope = sourceScopeOpts(ctx);
   const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);

@@ -42,6 +42,7 @@ const EXEMPT_FILES: Record<string, string> = {
 };
 
 const CONSTANT_ALLOWLIST: Record<string, string> = {
+  EFFECT_BYTES_SQL: 'src/core/persistence/receipt-bytes.ts: constant per-row byte expression over persistence_effects columns (no input); spliced by engine-sql/page-purge-journal.ts readEffectBytes',
   ENRICH_ORDER_SQL: 'src/core/types.ts: ORDER BY text keyed by the EnrichCandidatesOpts order union (whitelisted enum)',
   SOURCE_CONFIG_OBJECT_SQL: 'src/core/source-config-sql.ts: static sources.config coercion expression (no input)',
   EMBED_SKIP_FILTER_FRAGMENT: 'src/core/embed-skip.ts: constant embed_skip predicate over alias p',
@@ -102,6 +103,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   extractedFromPageSql: 'src/core/facts/gone-page-facts.ts: constant extracted-from-page predicate over a caller facts alias and slug expression; the source list is a module constant; engine-sql passes f and g.slug; no values',
   derivationSweepScopeSql: 'src/core/page-body/schema.ts: constant sweep-scope predicate over caller aliases d and p with a hand-numbered page-id placeholder bound by the caller; no values',
   derivationAfterSql: 'src/core/page-body/segment-derive.ts: constant key-after predicate over the caller alias d with three hand-numbered cursor placeholders bound by the caller; no values',
+  foldSql: 'src/core/page-body/schema.ts: wraps the caller-given constant expression in the constant replace and translate fold; the one caller passes the literal gbrain_fact_normalize(c); no values',
   derivationHoldsClaimSql: 'src/core/page-body/schema.ts: constant holds-claim predicate over the caller alias d with hand-numbered needle and pattern placeholders bound by the caller; no values',
   derivationClaimCandidateSql: 'src/core/page-body/schema.ts: constant claim-candidate predicate over the caller alias d with a hand-numbered pattern placeholder bound by the caller; no values',
 
@@ -168,6 +170,7 @@ const VETTED_BUILDERS: Record<string, string> = {
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
   openPageSql: 'src/core/engine-sql/access-setup.ts: the constant deleted_at test AND accessAllowedSql with an empty identity and no satisfied rules over a caller page alias; no values',
   callerAccessAllowedSql: 'src/core/search/private-visibility.ts: the member-access part of privatePagesFilterForCaller alone (callerAccessSql); readers identities pass validIdentity before they are quoted in, and a satisfied rule id that is not a valid qualified id empties the set (fail closed); no values',
+  dependentsSql: 'src/core/repair/dependents-sql.ts: the constant dependents statement (namingSql and privacyPartSql over constant aliases); its $1-$4 placeholders (cleared ids, source ids, slugs, label keys) are bound by the caller as four arrays; the mode picks between constant texts; no values',
   privatePagesFilterForCaller: 'src/core/search/private-visibility.ts: privatePagesFilterFragment ORed with the private-readable source ids, each checked by isValidSourceId (alphabet [a-z0-9-], no quote) before it is quoted in',
   privateLinkOriginFilterForCaller: 'src/core/search/private-visibility.ts: constant link-origin predicate ORed with isValidSourceId-checked private-readable source ids',
   privateTimelineEventFilterForCaller: 'src/core/search/private-visibility.ts: constant timeline-event predicate ORed with isValidSourceId-checked private-readable source ids',
@@ -231,6 +234,9 @@ const VETTED_BUILDERS: Record<string, string> = {
   rankingLinkSql: 'src/core/link-ranking-policy.ts: constant non-ranking link-type predicate (code-constant type names) over a caller alias',
   boundedBodyPrefixSql: 'src/core/page-window/bounded-lead.ts: constant bounded body-prefix expression (BOUNDED_PREFIX_BYTES literal) over a caller page alias; no values',
   retiredPageSql: 'src/core/entities/resolve.ts: constant retired-page frontmatter predicate over a caller alias; no values',
+  holdAppliesToPageSql: 'src/core/write-gate-binding.ts: constant hold-reaches-page predicate over caller-given constant aliases and column expressions; no values',
+  holdOwnedByDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-owned-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
+  holdResidueOfDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-left-behind-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
   privacyLabelKeySql: 'src/core/search/ignored-privacy-labels.ts: constant has-a-privacy-label-key predicate (code-constant PRIVACY_LABEL_KEYS) over a caller alias; no values',
   ignoredPrivacyLabelSql: 'src/core/search/ignored-privacy-labels.ts: constant ignored-privacy-label predicate (code-constant keys and type names) over a caller alias; no values',
   vectorLiteralSql: 'src/core/engine-sql/facts.ts: master\'s inlined vector literal; toPgVectorLiteral output (numbers joined by commas) + a ::vector/::halfvec constant',

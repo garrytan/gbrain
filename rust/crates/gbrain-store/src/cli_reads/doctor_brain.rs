@@ -6,7 +6,7 @@
 //! `fm_text`, a `jsonb` column comes back in jsonb key order, and every order is bytewise, as PGLite's C.UTF-8
 //! collation orders.
 
-use super::pg_text::{fm_text, jsonb_value, pg_lower};
+use super::pg_text::{fm_text, is_pg_space, jsonb_value, pg_lower};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
@@ -95,6 +95,53 @@ impl Store {
             ));
         }
         rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+        Ok(rows
+            .into_iter()
+            .map(|(source_id, slug, frontmatter)| {
+                json!({ "source_id": source_id, "slug": slug, "frontmatter": frontmatter })
+            })
+            .collect())
+    }
+
+    /// `listReaderCandidatePages(sourceIds)`: the live pages of unarchived sources (of `source_ids`
+    /// when given) whose frontmatter has a key other than `readable_by` that reads `readableby` once
+    /// lower-cased with every run of `-`, `_` and `[[:space:]]` removed (`regexp_replace(lower(k),
+    /// '[-_[:space:]]+', '', 'g')`). Rows: `{source_id, slug, frontmatter}`, by source then slug in
+    /// byte order. Postgres orders this list by the database collation; the store keeps byte order.
+    pub fn list_reader_candidate_pages(&self, source_ids: Option<&[String]>) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let live_sources: Vec<String> = all_sources(&*read)?
+            .into_iter()
+            .filter(|s| !s.archived)
+            .map(|s| s.id)
+            .collect();
+        let squashed = |k: &str| -> String {
+            pg_lower(k)
+                .chars()
+                .filter(|c| *c != '-' && *c != '_' && !is_pg_space(*c))
+                .collect()
+        };
+        let mut rows: Vec<(String, String, Value)> = Vec::new();
+        for page in all_pages(&*read)? {
+            if page.deleted_at_us.is_some()
+                || !live_sources.contains(&page.source_id)
+                || source_ids.is_some_and(|ids| !ids.contains(&page.source_id))
+                || !page
+                    .frontmatter
+                    .keys()
+                    .any(|k| k != "readable_by" && squashed(k) == "readableby")
+            {
+                continue;
+            }
+            rows.push((
+                page.source_id,
+                page.slug,
+                jsonb_value(&Value::Object(page.frontmatter)),
+            ));
+        }
+        rows.sort_by(|a, b| {
+            (a.0.as_bytes(), a.1.as_bytes()).cmp(&(b.0.as_bytes(), b.1.as_bytes()))
+        });
         Ok(rows
             .into_iter()
             .map(|(source_id, slug, frontmatter)| {

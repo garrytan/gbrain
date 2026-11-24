@@ -19,6 +19,7 @@ use gbrain_store::facts::purge::{
 use gbrain_store::facts::purge_ledger::FactPurgeInsert;
 use gbrain_store::facts::reconcile::{BacklogArgs, DrainArgs, LockArgs, SettleArgs};
 use gbrain_store::facts::take_purges::TakePurgeRow;
+use gbrain_store::generations::DerivationInputsArgs;
 
 #[napi]
 impl Brain {
@@ -35,8 +36,7 @@ impl Brain {
         })
     }
 
-    /// `listDerivedRows({ frontier, limit })`: resolves the rows one walk hop reaches (none: the
-    /// store keeps no `derivation_inputs`).
+    /// `listDerivedRows({ frontier, limit })`: resolves the rows one walk hop reaches.
     #[napi]
     pub fn list_derived_rows<'env>(
         &self,
@@ -46,6 +46,20 @@ impl Brain {
         self.run(env, move |s| {
             let a: DerivedRowsQuery = required(args, "listDerivedRows args")?;
             s.list_derived_rows(&a)
+        })
+    }
+
+    /// `recordDerivationInputs({ derived, sourceId, inputs })`: stores each edge once and resolves
+    /// null.
+    #[napi]
+    pub fn record_derivation_inputs<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: DerivationInputsArgs = required(args, "recordDerivationInputs args")?;
+            s.record_derivation_inputs(&a)
         })
     }
 

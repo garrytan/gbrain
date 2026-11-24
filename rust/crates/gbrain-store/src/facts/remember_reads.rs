@@ -384,6 +384,35 @@ impl Store {
         })
     }
 
+    /// `retireSupersededFact`: the remember consumer's supersede (persistence/memory-prepare.ts):
+    /// expires the source's unexpired old fact now, links it to the new one, and ends it at `until`
+    /// when given, else keeps its end (`COALESCE($4, valid_until)`); the row count.
+    pub fn retire_superseded_fact(&self, args: &ExpireSupersededFactArgs) -> Result<u64> {
+        const OP: &str = "retireSupersededFact";
+        no_nul(OP, &[("sourceId", &args.source_id)])?;
+        let old_id = fact_number(OP, args.old_id)?;
+        let new_id = bigint(OP, "newId", args.new_id)?;
+        let until = opt_time(OP, "until", &args.until)?;
+        let now = self.env.now_micros();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = old_id.map(|id| read_fact(tx, id)).transpose()?.flatten() else {
+                return Ok(0);
+            };
+            if old.source_id != args.source_id || old.expired_at_us.is_some() {
+                return Ok(0);
+            }
+            let mut new = old.clone();
+            new.superseded_by = Some(require_fact(tx, new_id)?);
+            if until.is_some() {
+                new.valid_until_us = until;
+            }
+            new.expired_at_us = Some(now);
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(1)
+        })
+    }
+
     /// `restoreSupersededFact`: puts the source's old fact back as it was, only while it still points at
     /// `expectedSupersededBy` (`IS NOT DISTINCT FROM`); the row count. The withdrawal guard runs (`expired_at` is in
     /// the `SET` list): a row restored active that a withdrawal of its claim reaches comes back expired.
