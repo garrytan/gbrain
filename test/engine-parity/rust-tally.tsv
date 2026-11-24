@@ -169,7 +169,7 @@ test/engine-parity/import-writes.test.ts	11	0
 test/engine-parity/jobs-checks.test.ts	9	0
 test/engine-parity/jobs-health.test.ts	8	0
 test/engine-parity/jobs-insight.test.ts	2	0
-test/engine-parity/jobs-queue.test.ts	38	0
+test/engine-parity/jobs-queue.test.ts	39	0
 test/engine-parity/jobs-spend.test.ts	4	0
 test/engine-parity/jobs-status.test.ts	12	0
 test/engine-parity/jobs-subagent.test.ts	16	0

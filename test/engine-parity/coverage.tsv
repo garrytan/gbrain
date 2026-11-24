@@ -1021,7 +1021,7 @@ takePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 renewPageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 releasePageEmbeddingLease	cycle_locks	yes	1	no	yes	yes	serves
 assertCycleLease	cycle_locks	yes	1	no	yes	yes	serves
-admitJob	minion_jobs	yes	115	no	yes	yes	serves
+admitJob	minion_jobs	yes	116	no	yes	yes	serves
 getJob	minion_jobs	yes	39	no	yes	yes	serves
 readJobDataByIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
 coalesceOnIdempotencyKey	minion_jobs	yes	2	no	yes	yes	serves
@@ -1081,8 +1081,8 @@ deleteOauthRefreshToken	minion_queue	yes	1	no	yes	yes	serves
 readOauthCodeChallenge	minion_queue	yes	4	no	yes	yes	serves
 issueOauthTokens	minion_queue	yes	4	no	yes	yes	serves
 deleteTerminalJob	minion_queue	yes	3	no	yes	yes	serves
-pauseJob	minion_queue	yes	9	no	yes	yes	serves
-resumeJob	minion_queue	yes	2	no	yes	yes	serves
+pauseJob	minion_queue	yes	10	no	yes	yes	serves
+resumeJob	minion_queue	yes	3	no	yes	yes	serves
 failParentJob	minion_queue	yes	3	no	yes	yes	serves
 resolveParentJob	minion_queue	yes	1	no	yes	yes	serves
 resolveStrandedParents	minion_queue	yes	1	no	yes	yes	serves
@@ -1107,8 +1107,8 @@ listOpenJobIdsInQueue	minion_queue	yes	1	no	yes	yes	serves
 renewPrivateQueueLease	minion_queue	yes	1	no	yes	yes	serves
 listOwnedPrivateQueues	minion_queue	yes	1	no	yes	yes	serves
 readPrivateQueueState	minion_queue	yes	1	no	yes	yes	serves
-listStaleWaitingJobIds	minion_queue	yes	1	no	yes	yes	serves
-countTtlExpiredWaiting	minion_queue	yes	1	no	yes	yes	serves
+listStaleWaitingJobIds	minion_queue	yes	2	no	yes	yes	serves
+countTtlExpiredWaiting	minion_queue	yes	2	no	yes	yes	serves
 readJobStats	minion_queue	yes	1	no	yes	yes	serves
 readQueueFamilyStats	minion_queue	yes	1	no	yes	yes	serves
 hasOverdueWatchdogSuspect	minion_queue	yes	1	no	yes	yes	serves
