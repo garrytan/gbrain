@@ -40,7 +40,7 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   extraction_pending: 'labeled', entity_identity_list: 'labeled', find_contradictions: 'filtered',
   storage_find: 'labeled', storage_get: 'labeled', storage_list: 'labeled', reveal_secret: 'labeled',
   find_experts: 'labeled', find_trajectory: 'labeled', takes_scorecard: 'labeled', takes_calibration: 'labeled',
-  open_loops: 'labeled', schema_review_orphans: 'labeled',
+  open_loops: 'labeled', learned: 'labeled', schema_review_orphans: 'labeled',
   questions_list: 'labeled', questions_status: 'labeled',
   code_callers: 'labeled', code_callees: 'labeled', code_def: 'labeled', code_refs: 'labeled', code_blast: 'labeled', code_flow: 'labeled',
   // no stored memory text

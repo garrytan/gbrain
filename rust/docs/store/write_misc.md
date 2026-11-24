@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are statements that a page write ran through `executeRaw` and that belong to no other storage domain
-([docs/research/rust-put-write-path.md](../../../docs/research/rust-put-write-path.md)). PGLite and Postgres run the
+(the write-path research note from the Rust engine branch; it is not on master). PGLite and Postgres run the
 same SQL as before, now in `src/core/engine-sql/write-misc.ts`. The store answers the source read
 and the path attach from its source records, and the reader-naming page list from its page records (`crates/gbrain-store/src/write_misc.rs`) and has no keys of its own. The folder
 access reads go to the `access_rules` family ([access_rules.md](access_rules.md)). The TypeScript
@@ -30,8 +30,7 @@ The link endpoint read (`listLinkEndpointPages`) is in [link_queries.md](link_qu
 | `getWorktreeBinding(sourceId, hostId)` | `brain.getWorktreeBinding` | The binding an unmanaged writer claim (`claimWorktree`) recorded; `null` for an unbound source. See "Worktree bindings" in [persistence.md](persistence.md). |
 | `isSourceClaimed(sourceId)` | `brain.isSourceClaimed` | Whether a binding names the source at its current incarnation, as the `EXISTS` over `persistence_source_bindings` in `engine-sql/sources.ts` reads it. A claimed source meets classic sync's pre-activation claim refusal here too. |
 | `hasExtractedEvents(sourceId, pageId)` | `brain.hasExtractedEvents` | Whether any chronicle ledger row (`a 0x0E`) of the page is `extracted`, as the `EXISTS` over `chronicle_page_state` reads it ([chronicle-state.md](chronicle-state.md)). No Rust writer sets `extracted` yet (the extraction runner stays raw SQL), so it answers `false` until one does. |
-| `listActiveAccessMembers()` | `[]` | The store keeps no access members. |
-| `hasLabelledOnlyMember()` | `false` | The store keeps no access members, so none carries the labelled-only grant and a remote write skips the labelled-only checks. |
+| `hasLabelledOnlyMember()` | `false` | No store write sets a member's labelled-only grant, so none carries it and a remote write skips the labelled-only checks. |
 | `listAccessTokens()` | `[]` | The store keeps no access tokens: minting, revoking and the bearer check are raw SQL on `access_tokens`, which this engine refuses, so `gbrain auth list` lists none. PGLite answers the same for a brain with no tokens. |
 | `readOpCheckpointKeys(op, fingerprint)` | the op's banked keys | Served by the store with the checkpoint writes (persistence.md, "Op checkpoints"); a resumable op stopped on this engine resumes with the keys it banked. |
 | `readHealthMemoClock()` | `<brain id>/<commit sequence>` | `brain.readHealthMemoClock()`: the `readProjectionReadinessGeneration` value outside a transaction. Every commit advances it, a page write among them, so the get_health memo reuses an answer only while nothing was written. The SQL engines answer `<brain id>:<page clock>`; only equality between two reads of one engine matters. |

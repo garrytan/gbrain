@@ -5,7 +5,7 @@
  * Fail-first: on rust-engine/main 0ce95bbf7f and rust-engine/bound-write-rust 3d53109dc0 every case here fails on the
  * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust. Case 2's pin is gone (the Rust
  * createVersion member serves the preimage option, so the write commits), and so is case 3's: the chronicle decision
- * runs through typed members (rust-engine/page-mutation-reads), so the page commits on every arm.
+ * runs through typed members (rust-engine/chronicle-decision-rust), so the page commits on every arm.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: (1) a put_page to a git-rooted source that no writer claimed commits the page and writes its file on
@@ -78,8 +78,14 @@ describe('the bench save failures', () => {
           // managed mode (capability managed_persistence, held in store-capabilities.ts), so the claim refuses by name and
           // nothing is written.
           if (backend === 'rust') {
-            expect(out).toEqual({ put: { ok: false, code: 'engine_capability_missing' }, page: false, file: false });
-            throw (put as { error?: unknown }).error;
+            // Named stop, by design (Garry, B2, Nov 22): managed_persistence refused by design on Rust (B2) until the
+            // Rust engine carries managed mode. A capability refusal takes the in-test pin (harness.ts: assert the
+            // refusal, rethrow it), so the Rust arm counts the case as stopped and never as equal.
+            const refusal = (put as { error?: { detail?: unknown } }).error;
+            expect({ ...out, managedPersistence: String(refusal?.detail ?? '').includes('capability=managed_persistence') },
+              'managed_persistence refused by design on Rust (B2)').toEqual(
+              { put: { ok: false, code: 'engine_capability_missing' }, page: false, file: false, managedPersistence: true });
+            throw refusal;
           }
           const rule = backend === 'postgres'
             ? { put: { ok: false, code: 'owner_unavailable' }, page: false, file: false }

@@ -61,6 +61,17 @@ describe('gbrain bundled-skill', () => {
     expect(doc.description.length).toBeGreaterThan(0);
   });
 
+  test('--json with no name gives the installed skills folder, found from the binary and not the cwd', async () => {
+    const home = emptyHome();
+    mkdirSync(join(home, 'skills'), { recursive: true });
+    writeFileSync(join(home, 'skills', 'RESOLVER.md'), 'not this one');
+    const r = await cli(home, ['--json']);
+    expect(r.exitCode).toBe(0);
+    const doc = JSON.parse(r.stdout);
+    expect(doc.skills_root).toBe(SKILLS);
+    expect(existsSync(join(doc.skills_root, 'conventions'))).toBe(true);
+  });
+
   test('no name lists every bundled skill', async () => {
     const r = await cli(emptyHome(), ['--json']);
     expect(r.exitCode).toBe(0);

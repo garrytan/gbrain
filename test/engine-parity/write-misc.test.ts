@@ -424,20 +424,11 @@ describe('engine parity: write misc', () => {
       return { none, named, deleted };
     });
 
-  // A source's own contextual-retrieval mode is written by `sources` admin raw SQL; on Rust the seed refuses, because no
-  // Rust brain keeps one, and the member answers none, as the fresh-brain case.
-  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['listSynopsisSourceIds'] }, async (engine, backend) => {
+  // A source's own contextual-retrieval mode is written by `sources set-cr-mode` (the typed setSourceContextualMode).
+  parityTest('listSynopsisSourceIds lists live synopsis sources by id, not archived ones', { methods: ['setSourceContextualMode', 'listSynopsisSourceIds'] }, async (engine, backend) => {
     for (const id of ['work', 'alt', 'old']) await createSource(engine, backend, id);
     await archiveSource(engine, backend, 'old');
-    let seeded: unknown = null;
-    try {
-      await engine.executeRaw(`UPDATE sources SET contextual_retrieval_mode = 'per_chunk_synopsis' WHERE id IN ('work', 'alt', 'old')`);
-    } catch (error) { seeded = error; }
-    if (seeded) {
-      expect(isCapabilityRefusal(seeded, 'raw_sql')).toBe(true);
-      expect(await engine.listSynopsisSourceIds()).toEqual([]);
-      throw seeded;
-    }
+    for (const id of ['work', 'alt', 'old']) expect(await engine.setSourceContextualMode(id, 'per_chunk_synopsis')).toBe(true);
     const ids = await engine.listSynopsisSourceIds();
     expect(ids).toEqual(['alt', 'work']);
     return { ids, configured: (await readSynopsisTierConfig(engine)).configured };
@@ -1355,19 +1346,13 @@ describe('engine parity: write misc', () => {
     return { alpha: view(alpha), plain: view(plain), missing };
   });
 
-  // listAccessTokens is constant empty on Rust only because no Rust brain can hold a token: the token mint (raw SQL on
-  // access_tokens, token-mint.ts) must stop on the typed raw_sql refusal there and leave the list empty.
-  parityTest('a minted token refuses on Rust and lists newest first on the SQL engines', { methods: ['listAccessTokens'] }, async (engine, backend) => {
-    const mint = await engine.executeRaw(
-      `INSERT INTO access_tokens (name, token_hash, scopes, created_at, revoked_at) VALUES
-         ('old-client', 'hash-old', ARRAY['read'], '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z'),
-         ('new-client', 'hash-new', NULL, '2026-03-01T00:00:00Z', NULL)`).then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(mint, 'raw_sql')).toBe(true);
-      expect(await engine.listAccessTokens()).toEqual([]);
-      throw mint;
-    }
-    expect(mint).toBeNull();
+  // The tokens are written through the typed insert the token mint uses (insertAccessToken), with fixed times.
+  parityTest('minted tokens list newest first, a revoked one included', { methods: ['insertAccessToken', 'listAccessTokens'] }, async (engine) => {
+    const token = (name: string, hash: string, scopes: string[] | null, created: string, revoked: string | null) => engine.insertAccessToken({
+      name, token_hash: hash, scopes, permissions: {}, source_grant: null, source_id: null, federated_read: null, allowed_operations: null,
+      takes_holders: null, created_at: new Date(created), revoked_at: revoked === null ? null : new Date(revoked) });
+    await token('old-client', 'hash-old', ['read'], '2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z');
+    await token('new-client', 'hash-new', null, '2026-03-01T00:00:00Z', null);
     const rows = await engine.listAccessTokens();
     const tokens = rows.map(r => ({ name: r.name, scopes: r.scopes, revoked: r.revoked_at !== null, id: UUID.test(String(r.id)) }));
     expect(tokens.map(t => t.name)).toEqual(['new-client', 'old-client']);

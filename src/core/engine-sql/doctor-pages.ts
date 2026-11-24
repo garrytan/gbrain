@@ -28,7 +28,8 @@ export const SLUG_PATH_CANDIDATE_ROWS = 20_001;
 export const SLUG_PATH_CANDIDATE_PATTERN = '[^a-z0-9/._-]|--|-/|/-|^-|-$|//';
 
 export interface OversizedPageRow { slug: string; source_id: string; bytes: number }
-export interface ScraperJunkRow { slug: string; source_id: string; title: string; body_head: string | null; tl_head: string; frontmatter: Record<string, unknown> | null }
+/** `segmented`: the page keeps its body in segments, so `body_head` is NULL and only its title is assessed. */
+export interface ScraperJunkRow { slug: string; source_id: string; title: string; body_head: string | null; tl_head: string; frontmatter: Record<string, unknown> | null; segmented: boolean }
 export interface RawProvenanceGaps { count: number; slugs: string[] }
 export interface ContentHashDuplicateRow { source_id: string; content_hash: string; slugs: string }
 export interface TrustTierCount { tier: string | null; n: number }
@@ -51,7 +52,7 @@ const OVERSIZED_PAGES_SQL = `SELECT p.slug, p.source_id,
 const SCRAPER_JUNK_LIMITED_SQL = `SELECT p.slug, p.source_id, p.title,
                   LEFT(p.compiled_truth, 2048) AS body_head,
                   LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                  p.frontmatter
+                  p.frontmatter, p.body_storage = 'segmented' AS segmented
              FROM pages p
             WHERE p.deleted_at IS NULL
             ORDER BY p.updated_at DESC
@@ -60,7 +61,7 @@ const SCRAPER_JUNK_LIMITED_SQL = `SELECT p.slug, p.source_id, p.title,
 const SCRAPER_JUNK_ALL_SQL = `SELECT p.slug, p.source_id, p.title,
                   LEFT(p.compiled_truth, 2048) AS body_head,
                   LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                  p.frontmatter
+                  p.frontmatter, p.body_storage = 'segmented' AS segmented
              FROM pages p
             WHERE p.deleted_at IS NULL`;
 

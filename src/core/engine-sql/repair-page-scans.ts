@@ -11,6 +11,7 @@ import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fra
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 import { CREDENTIAL_RESEAL_HELD } from '../page-state/credential-reseal-hold.ts';
 import { syncDeleteOrigin } from '../persistence/sync-delete-tombstones.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 /** One page `gbrain repair safe-chunks` re-seals (`rebuildable`) or reports. */
 export interface SafeChunksPendingRow { id: number; source_id: string; slug: string; page_kind: string; rebuildable: boolean; chars: number }
@@ -20,6 +21,17 @@ export interface OriginTwinGroupRow { source_path: string; ids: number[]; paths:
 
 /** A live page recording `<prefix><origin>` beside another live page recording `origin`. */
 export interface LegacyOriginPair { legacy_id: number; legacy_path: string; legacy_slug: string; origin: string }
+
+/**
+ * What the origin-twins verdict reads of a live page (persistence/origin-twins.ts `decideOriginTwins`): the inline body
+ * digest (`md5(compiled_truth) || md5(timeline)`, NULL for a segmented body, so unknown never matches), the explicit
+ * frontmatter id, the trust tier, whether the no-caller page policy keeps the page (`private`, its SQL value under that
+ * name) and whether fact withdrawals or purges are keyed to its slug (`restricted`).
+ */
+export interface OriginClaimantRow {
+  id: number; slug: string; revision: string; body_hash: string | null; fm_id: string | null; trust_tier: string | null;
+  private: boolean; restricted: boolean;
+}
 
 /** A live page and the origin it records. */
 export interface LiveOriginPage { id: number; source_path: string }
@@ -111,6 +123,19 @@ export async function listLiveOriginPages(exec: LegacyUnscopedRead, sourceId: st
   const rows = await exec.executeRaw<LiveOriginPage>('SELECT id, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[]) ORDER BY id',
     [sourceId, [...paths]]);
   return rows.map(row => ({ id: Number(row.id), source_path: row.source_path }));
+}
+
+/** The verdict inputs of the live pages of the source with these ids, by id (`OriginClaimantRow`). */
+export async function listOriginClaimants(exec: LegacyUnscopedRead, sourceId: string, ids: readonly number[]): Promise<OriginClaimantRow[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.slug, p.knowledge_revision::text AS revision,
+       CASE WHEN p.compiled_truth IS NULL THEN NULL ELSE md5(p.compiled_truth) || md5(COALESCE(p.timeline, '')) END AS body_hash,
+       p.frontmatter->>'id' AS fm_id, p.trust_tier::text AS trust_tier, (${trustedSql(privatePagesFilterFragment('p'))}) AS private,
+       (EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=p.source_id AND w.subject=p.slug)
+         OR EXISTS (SELECT 1 FROM fact_purges f WHERE f.source_id=p.source_id AND f.subject=p.slug)) AS restricted
+     FROM pages p WHERE p.source_id=${sourceId} AND p.id=ANY(${[...ids]}::bigint[]) AND p.deleted_at IS NULL ORDER BY p.id`);
+  const rows = await exec.executeRaw<OriginClaimantRow>(text, params);
+  return rows.map(row => ({ id: Number(row.id), slug: row.slug, revision: String(row.revision), body_hash: row.body_hash, fm_id: row.fm_id,
+    trust_tier: row.trust_tier ?? null, private: row.private === true, restricted: row.restricted === true }));
 }
 
 /** The soft-deleted pages of the source recording a non-blank file, below `q.before`, by id descending. */

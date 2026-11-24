@@ -21,6 +21,16 @@ impl Brain {
         self.run(env, move |s| s.read_facts_embedding_column())
     }
 
+    /// `listFactSourcePages(ids)`: resolves `[{ id, page_id, slug, title, type }]`, the holding page of each fact.
+    #[napi]
+    pub fn list_fact_source_pages<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_fact_source_pages(&ids))
+    }
+
     /// `listNearestFacts(args)`: resolves the pool rows nearest the vector, each with its `similarity`.
     #[napi]
     pub fn list_nearest_facts<'env>(

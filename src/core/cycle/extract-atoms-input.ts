@@ -16,6 +16,7 @@
  * changes. `releasePartialDispositions` runs before discovery with the current
  * cap and clears the records a raised cap supersedes.
  */
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from '../persistence/model.ts';
 import { truncateUtf8 } from '../text-safe.ts';
@@ -115,6 +116,7 @@ export async function releasePartialDispositions(engine: BrainEngine, sourceId: 
          AND (completed_keys->0->>'partial')::integer < $2`,
       [sourceId, maxInputChars]);
   } catch (err) {
+    rethrowCapabilityRefusal(err); // a refused statement is not a failed release: the phase must say it cannot run
     console.error(`[extract_atoms] partial-disposition release failed (cut items stay skipped): ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -135,7 +137,10 @@ export async function stampTranscriptTombstone(engine: BrainEngine, sourceId: st
        VALUES ($1, $2, $3, 0, TRUE, now())
        ON CONFLICT (source_id, file_path, content_hash) DO UPDATE SET tombstoned = TRUE, updated_at = now()`,
       [sourceId, filePath, contentHash.slice(0, 16)]);
-  } catch { /* fail-soft: transcript stays rediscoverable */ }
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // fail-soft, but a refused write is not a lost one: it would re-spend the transcript every cycle
+    /* fail-soft: transcript stays rediscoverable */
+  }
 }
 
 /**

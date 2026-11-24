@@ -36,7 +36,10 @@ import type { BrainEngine } from '../engine.ts';
 import { stripGapsSection, type ThinkResult } from './index.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveTakesRepoDir, addTakeToPage, TakesWriteError } from '../takes-write.ts';
-import { deriveTrust, derivedMaintenanceTransaction } from '../trust/taint.ts';
+import { declareDerivation, deriveTrust, derivedMaintenanceTransaction } from '../trust/taint.ts';
+import { maintenancePreflight, submitMaintenanceIntent, THINK_TAKE_INTENT } from '../persistence/prepared-maintenance.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { derivedFileTarget } from '../cycle/derived-write-through.ts';
 import { fileDatabaseDriftToken, mirroredBody, readStoredBody } from '../facts/file-body-guard.ts';
 import { stripTakesFence, TAKES_FENCE_BEGIN } from '../takes-fence.ts';
@@ -92,7 +95,9 @@ export function claimFromAnswer(answer: string): string | null {
  * Append the synthesis claim as a take row on the anchor page. Never throws
  * for the expected refusal shapes (no repo, empty answer, failed synthesis) —
  * those return take_row:null with a machine-stable warning so both callers
- * (CLI + op) surface the same story.
+ * (CLI + op) surface the same story. A managed take accepted but still
+ * publishing throws write_pending with its receipt (GST-3612): it is progress,
+ * not a refusal, and both callers keep the answer and name the receipt.
  */
 export async function persistTakeFromSynthesis(
   engine: BrainEngine,
@@ -114,6 +119,32 @@ export async function persistTakeFromSynthesis(
     return { take_row: null, warnings };
   }
 
+  const holder = resolveOwnerHolder({
+    configValue: await engine.getConfig('emotional_weight.user_holder'),
+  });
+  // #5575 I2: the take restates the synthesis, so it carries the tier of everything in the synthesis prompt.
+  const derivation = await deriveTrust(engine, result.taint_refs ?? [], { channel: 'derive:think' });
+  const sourceId = opts.sourceId ?? 'default';
+
+  // GST-3612: a managed brain appends the row through the coordinator (a receipted, revision-bound request the owner
+  // publishes to the page's file and database together); a request still publishing throws write_pending with its receipt.
+  try {
+    const maintenance = await maintenancePreflight(engine, sourceId);
+    if (maintenance) {
+      const snapshot = await engine.readPageSnapshot(opts.anchor, { sourceId });
+      if (!snapshot) throw new TakesWriteError('page_not_found', `Page ${opts.anchor} not found in source ${sourceId}.`);
+      const receipt = throwIfHeld(await submitMaintenanceIntent(engine, maintenance, opts.anchor, { kind: THINK_TAKE_INTENT, expected_revision: snapshot.revision,
+        claim, holder, source: 'think', derivation: declareDerivation(derivation.trust, derivation.inputs) }), false);
+      const file = await derivedFileTarget(engine, opts.anchor, sourceId);
+      return { take_row: Number(receipt.row_num), ...(file.ok ? { path: file.target.filePath } : {}), warnings };
+    }
+  } catch (e) {
+    if (acceptedPendingReceipt(e)) throw e;
+    const detail = e instanceof TakesWriteError ? `${e.code}: ${e.message}` : (e instanceof Error ? e.message : String(e));
+    warnings.push(`TAKE_WRITE_FAILED: ${detail}`);
+    return { take_row: null, warnings };
+  }
+
   const brainDir = await resolveTakesRepoDir(engine);
   if (!brainDir) {
     // md is canonical for takes — with no repo there is nothing durable to
@@ -122,12 +153,6 @@ export async function persistTakeFromSynthesis(
     return { take_row: null, warnings };
   }
 
-  const holder = resolveOwnerHolder({
-    configValue: await engine.getConfig('emotional_weight.user_holder'),
-  });
-
-  // #5575 I2: the take restates the synthesis, so it carries the tier of everything in the synthesis prompt.
-  const derivation = await deriveTrust(engine, result.taint_refs ?? [], { channel: 'derive:think' });
   try {
     await assertTakeFileCanonical(engine, opts.anchor, opts.sourceId ?? 'default');
     const { rowNum, mirror } = await addTakeToPage(

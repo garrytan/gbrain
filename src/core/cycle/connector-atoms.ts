@@ -23,10 +23,13 @@ export async function connectorAtomExclusion(engine: BrainEngine): Promise<{ pag
   return { pageTypes: [...CONNECTOR_ATOM_PAGE_TYPES], sourceKinds: [...CONNECTOR_SOURCE_KINDS] };
 }
 
-/** The discovery/backlog predicate over `pages p`: empty unless opted out, else the connector email/meeting exclusion. */
+/** A page whose frontmatter says `extract_atoms: false` (a record-tier or private email, ingest-tiers.ts) is never sent to the chat model. */
+const PAGE_ATOM_OPT_OUT_SQL = `AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'`;
+
+/** The discovery/backlog predicate over `pages p`: the per-page opt-out, plus the connector email/meeting exclusion when opted out. */
 export async function connectorAtomExclusionSql(engine: BrainEngine): Promise<string> {
-  if (await connectorAtomPagesEnabled(engine)) return '';
+  if (await connectorAtomPagesEnabled(engine)) return PAGE_ATOM_OPT_OUT_SQL;
   const list = (values: readonly string[]) => values.map(v => `'${v}'`).join(',');
-  return `AND NOT (p.type IN (${list(CONNECTOR_ATOM_PAGE_TYPES)}) AND EXISTS (SELECT 1 FROM sources cs
+  return `${PAGE_ATOM_OPT_OUT_SQL} AND NOT (p.type IN (${list(CONNECTOR_ATOM_PAGE_TYPES)}) AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' IN (${list(CONNECTOR_SOURCE_KINDS)})))`;
 }

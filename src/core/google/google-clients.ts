@@ -414,6 +414,9 @@ export function extractCalendarMethod(part: RawGmailPart | undefined): string | 
 }
 
 export class GmailClient extends GoogleApiClient {
+  /** history.list is available: the sweep follows the change feed (gbrainio-gmail.ts has none). */
+  readonly supportsHistory: boolean = true;
+
   async getProfile(opts: { signal?: AbortSignal } = {}): Promise<{ emailAddress: string; historyId: string }> {
     return this.fetchJSON(`${GMAIL_BASE}/users/me/profile`, 'gmail', opts);
   }
@@ -867,3 +870,8 @@ export class PeopleClient extends GoogleApiClient {
     return { names, complete: !morePages };
   }
 }
+
+/** What the Gmail sweep reads: the Gmail API client, or a reader such as GbrainioGmailReader with no change feed. */
+export type GmailReader = Pick<GmailClient, 'getProfile' | 'getLabels' | 'listMessageIds' | 'listHistoryThreadIds' | 'getThread'> & {
+  readonly supportsHistory: boolean;
+};

@@ -69,9 +69,16 @@ export const CHRONICLE_STATE_SQL = {
 } as const;
 
 /**
- * The chronicle activation stamp's insert, kept apart from CHRONICLE_STATE_SQL's reads so the owner-socket read scan
- * (test/rust-owner-ipc-read-classes.test.ts) sees that those reads reach no write.
+ * The chronicle judge reservation's lock, insert and prune, kept apart from CHRONICLE_STATE_SQL's reads so the
+ * owner-socket read scan (test/rust-owner-ipc-read-classes.test.ts) sees that those reads reach no write.
  */
+export const CHRONICLE_RESERVATION_SQL = {
+  reserveLock: "SELECT pg_advisory_xact_lock(hashtext('gbrain:chronicle:daily_reservation'))",
+  reserveInsert: 'INSERT INTO chronicle_judge_reservations (source_id, page_id, content_hash) VALUES ($1, $2, $3)',
+  pruneReservations: "DELETE FROM chronicle_judge_reservations WHERE reserved_at < now() - interval '48 hours'",
+} as const;
+
+/** The chronicle activation stamp's insert, apart from CHRONICLE_STATE_SQL's reads for the same reason. */
 export const CHRONICLE_ACTIVATION_SQL = 'INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING';
 
 /** The ledger row at `key`, every column, or null. */
@@ -91,6 +98,32 @@ export async function hasPendingAutoChronicleRow(tx: Raw, sourceId: string, page
 export async function countRecentChronicleReservations(tx: Raw): Promise<number> {
   const [row] = await tx.executeRaw<{ n: number | string }>(CHRONICLE_STATE_SQL.dailyCount);
   return Number(row?.n ?? 0);
+}
+
+/** The page an automatic judge reservation is taken for. */
+export interface ChronicleJudgeKey {
+  sourceId: string;
+  pageId: number;
+  contentHash: string;
+}
+
+/**
+ * Takes one automatic judge slot: true when fewer than `limit` reservations were taken in the last 24 hours and one is
+ * recorded now, false otherwise. One transaction serialized by a transaction-scoped advisory lock, so concurrent hosts
+ * cannot both take the last slot (the statements chronicle/ledger.ts reserveChronicleSlot ran).
+ */
+export function reserveChronicleJudgeSlot(engine: Pick<BrainEngine, 'transaction'>, limit: number, key: ChronicleJudgeKey): Promise<boolean> {
+  return engine.transaction(async (tx) => {
+    await tx.executeRaw(CHRONICLE_RESERVATION_SQL.reserveLock);
+    if (await countRecentChronicleReservations(tx) >= limit) return false;
+    await tx.executeRaw(CHRONICLE_RESERVATION_SQL.reserveInsert, [key.sourceId, key.pageId, key.contentHash]);
+    return true;
+  });
+}
+
+/** Deletes the reservations older than 48 hours (the window serves 24; doctor reads two days). */
+export async function pruneChronicleReservations(tx: Raw): Promise<void> {
+  await tx.executeRaw(CHRONICLE_RESERVATION_SQL.pruneReservations);
 }
 
 /** Sets a config key only when it has none; an existing value stays. */

@@ -21,7 +21,9 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const LINK: u8 = 0x04;
+/// The sub-tag of the links. Store formats 7 and older also kept the shared-skill token secret
+/// at `x 0x04`, the one record whose key is exactly `x 0x04` (`access_key_split.rs` moves it).
+pub(crate) const LINK: u8 = 0x04;
 
 /// One `access_member_links` row, less the key columns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +41,7 @@ fn link_key(system: &str, external_id: &str) -> Vec<u8> {
 }
 
 /// `CHECK (system ~ '^[a-z][a-z0-9_-]{0,31}$')`.
-fn valid_system(system: &str) -> bool {
+pub(crate) fn valid_system(system: &str) -> bool {
     let b = system.as_bytes();
     !b.is_empty()
         && b.len() <= 32
@@ -50,7 +52,7 @@ fn valid_system(system: &str) -> bool {
 }
 
 /// `CHECK (length(external_id) >= 1 AND length(external_id) <= 256 AND external_id ~ '^[!-~]+$')`.
-fn valid_external_id(id: &str) -> bool {
+pub(crate) fn valid_external_id(id: &str) -> bool {
     let b = id.as_bytes();
     !b.is_empty() && b.len() <= 256 && b.iter().all(|c| (b'!'..=b'~').contains(c))
 }

@@ -23,6 +23,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../../src/core/repair/core.ts';
 import { repairRunner } from '../../src/core/repair/registry.ts';
 import { clearApprovedSet, loadApprovedSet, saveApprovedSet } from '../../src/core/persistence/preview-approval.ts';
+import { GRADUATION_INVENTORY } from '../../src/core/persistence/graduation-inventory.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -162,6 +163,18 @@ describe('engine parity: the repair runner', () => {
     methods: ['readDriftConflictBounds', 'listDriftConflictGroups', 'readDriftConflictDetails'],
     timeout: 60_000,
   }, previewThenApply('file-drift'));
+  // A Rust store creates every record family when it opens, so it checks PGLite's table list and finds none missing, as
+  // a fully migrated PGLite brain does; the empty preview saves no set, so the apply refuses with the same code (batch 9).
+  // Postgres expects its own table list (the graduation inventory's postgres column), so the count is checked per engine.
+  parityTest('gbrain repair missing-tables checks every expected table, finds none missing, and its apply refuses with the same code', {
+    methods: ['readOpCheckpointRecord', 'readPersistenceBrainId', 'readCounterRows', 'getConfig'], timeout: 60_000,
+  }, async (engine, backend) => {
+    const result = await previewThenApply('missing-tables')(engine);
+    const { checked, ...details } = result.preview.details as { checked: number };
+    const column = backend === 'postgres' ? 'postgres' : 'pglite';
+    expect(checked).toBe(GRADUATION_INVENTORY.entries.filter(e => e.kind === 'table' && e.engines[column]).length);
+    return { ...result, preview: { ...result.preview, details } };
+  });
   for (const kind of B1_KINDS) {
     if (REFUSED_APPLY.has(kind)) {
       parityTest(`gbrain repair ${kind} previews, and its apply refuses with the same code`, {

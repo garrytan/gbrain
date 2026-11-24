@@ -12,6 +12,7 @@ import type { ChronicleTimelineRow, OntologyValue } from '../types.ts';
 import { readPolicyOpts, requireWritablePage, sourceScopeOpts } from './context.ts';
 import { withFolderRestricted, worldOnlyFacts } from '../search/private-visibility.ts';
 import { invalidParam } from './op-fix.ts';
+import { legacySpellings } from './slug-params.ts';
 import { quoteTimelineRows } from './timeline-quote.ts';
 import { quoteFacts, quotePageText, quotesStored, unquoteAnyTranscriptText, unquoteFactText } from '../search/transcript-quote.ts';
 
@@ -39,8 +40,7 @@ async function remoteTimeline(ctx: OperationContext, rows: ChronicleTimelineRow[
   const quoted = await quoteTimelineRows(ctx, r => r.page_slug, redactDiaryTimeline(ctx, rows));
   const events = quoted.flatMap(r => (r.kind ? [Number(r.event_page_id)] : []));
   if (ctx.remote === false || events.length === 0) return quoted;
-  const pages = new Map((await ctx.engine.executeRaw<{ id: number | string; type: string | null; trust_tier: string | null }>(
-    'SELECT id, type, trust_tier FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(events)]])).map(p => [Number(p.id), p]));
+  const pages = new Map((await ctx.engine.listPageQuoteTiers({ ids: [...new Set(events)] })).map(p => [Number(p.id), p]));
   return quoted.map(r => {
     const page = pages.get(Number(r.event_page_id));
     return r.kind && quotesStored(page?.type, page?.trust_tier)
@@ -164,6 +164,18 @@ const chronicle_last_seen: Operation = {
   cliHints: { name: 'last-seen', positional: ['entity'] },
 };
 
+/** One row per dimension across per-spelling reads: newest valid_from (none last), then confidence, then fact id, as the engine query orders them. */
+function resolveOntologyRows(reads: OntologyValue[][]): OntologyValue[] {
+  if (reads.length === 1) return reads[0]!;
+  const time = (r: OntologyValue) => (r.valid_from === null ? Number.NEGATIVE_INFINITY : new Date(r.valid_from).getTime());
+  const best = new Map<string, OntologyValue>();
+  for (const row of reads.flat()) {
+    const held = best.get(row.dimension);
+    if (!held || time(row) - time(held) > 0 || (time(row) === time(held) && (row.confidence > held.confidence || (row.confidence === held.confidence && row.fact_id > held.fact_id)))) best.set(row.dimension, row);
+  }
+  return [...best.values()].sort((a, b) => (a.dimension < b.dimension ? -1 : a.dimension > b.dimension ? 1 : 0));
+}
+
 const ontology_get: Operation = {
   name: 'ontology_get',
   mutating: false,
@@ -180,14 +192,16 @@ const ontology_get: Operation = {
     include_quarantined: { type: 'boolean', description: 'Include quarantined novel dimensions (default false).' },
   },
   handler: async (ctx, p) => {
-    const rows = await ctx.engine.getOntology(String(p.entity), {
+    const read = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
-      visibility: worldOnlyFacts(ctx.remote) ? ['world'] : undefined,
+      visibility: worldOnlyFacts(ctx.remote) ? ['world' as const] : undefined,
       excludeDiary: ctx.remote !== false,
       ...await readPolicyOpts(ctx),
-    });
+    };
+    // Facts keep the spelling they were written under, so every spelling the caller may mean is read, then resolved per dimension.
+    const rows = resolveOntologyRows(await Promise.all(legacySpellings(String(p.entity)).map(slug => ctx.engine.getOntology(slug, read))));
     // Remote redaction: the visibility recall reads (worldOnlyFacts), resolved before
     // DISTINCT ON; never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? remoteOntology(ctx, rows.filter((r) => !(r.source ?? '').startsWith('life/diary/'))) : rows;
