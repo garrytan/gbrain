@@ -154,5 +154,11 @@ describe.skipIf(SKIP)('holds follow a page across a rename under concurrent conn
     await expectHeldHidden(engine, sourceId, 'notes/beta');
     await renameWhile(sourceId, 'notes/beta', 'notes/gamma', async () => {});
     await expectHeldHidden(engine, sourceId, 'notes/gamma');
+
+    // Review finding 7: a different page now takes the original name. The late hold must not be handed to it (that would end its reach
+    // to the renamed page): the renamed page keeps its quarantine, and the new page is held too (over-hiding under name reuse is accepted).
+    await putPage(sourceId, 'notes/alpha');
+    await expectHeldHidden(engine, sourceId, 'notes/gamma');
+    await expectHeldHidden(engine, sourceId, 'notes/alpha');
   });
 });

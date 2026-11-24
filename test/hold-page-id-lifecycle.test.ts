@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { movePageIdReferences } from '../src/core/page-state/rename-alias.ts';
-import { carryHoldsToPage } from '../src/core/write-gate-binding.ts';
+import { carryHoldsToPage, holdResidueOfDeletedPageSql } from '../src/core/write-gate-binding.ts';
 import { writeGateHoldAmbiguousEntry } from '../src/commands/doctor/checks/write-gate-hold-ambiguous.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import type { Check } from '../src/commands/doctor.ts';
@@ -201,6 +201,48 @@ for (const backend of backends) {
       await expectHeldHidden(engine(), sourceId, 'notes/middle');
       await rename(sourceId, 'notes/middle', 'notes/final');
       await expectHeldHidden(engine(), sourceId, 'notes/final');
+    });
+
+    // Pins review finding 7 deterministically: a late unbound hold (committed after its page was created) must not be bound to a different
+    // page that takes the name once the original page was renamed away; the renamed page keeps its quarantine.
+    test('name reuse after a rename: a late unbound hold is not bound to the new page, and the renamed page stays held', async () => {
+      const sourceId = await source();
+      const late = await holdFenceRow(engine(), { sourceId, slug: 'notes/first', claim: HELD, rowNum: 1 });
+      await engine().executeRaw("UPDATE write_gate_holds SET created_at = now() + interval '1 day' WHERE id=$1", [late]);
+      await putPage(sourceId, 'notes/first');
+      // The hold committed after the page's creation, but its row says it was written before (a transaction that began earlier).
+      await engine().executeRaw("UPDATE write_gate_holds SET created_at = now() - interval '1 day' WHERE id=$1", [late]);
+      await rename(sourceId, 'notes/first', 'notes/moved');
+
+      await putPage(sourceId, 'notes/first');
+      await expectHeldHidden(engine(), sourceId, 'notes/moved');
+      await expectHeldHidden(engine(), sourceId, 'notes/first');
+      expect((await holds(sourceId)).map(h => [h.id, h.page_id])).toEqual([[late, null]]);
+    });
+
+    // Pins review finding 8: an unbound hold whose rename record still reaches a surviving page is not deleted when an unrelated page that
+    // reused its slug is purged, and the purge verifier does not count it as a residue of the purged page.
+    test('purging the page that reused a name keeps an unbound hold whose rename record reaches a surviving page', async () => {
+      const sourceId = await source();
+      const late = await holdFenceRow(engine(), { sourceId, slug: 'notes/first', claim: HELD, rowNum: 1 });
+      await engine().executeRaw("UPDATE write_gate_holds SET created_at = now() + interval '1 day' WHERE id=$1", [late]);
+      await putPage(sourceId, 'notes/first');
+      await rename(sourceId, 'notes/first', 'notes/moved');
+      const other = await putPage(sourceId, 'notes/other');
+      await rename(sourceId, 'notes/other', 'notes/first');
+      await expectHeldHidden(engine(), sourceId, 'notes/moved');
+
+      expect(await engine().deletePages(['notes/first'], { sourceId })).toEqual(['notes/first']);
+
+      expect((await holds(sourceId)).map(h => [h.id, h.page_id, h.status])).toEqual([[late, null, 'held']]);
+      await expectHeldHidden(engine(), sourceId, 'notes/moved');
+      const residue = await engine().executeRaw(`SELECT 1 FROM write_gate_holds h WHERE h.source_id = $1 AND ${holdResidueOfDeletedPageSql('h', String(other), "'notes/first'")}`, [sourceId]);
+      expect(residue).toEqual([]);
+      // Once the renamed page is purged too, nothing survives for the hold to protect, and it goes.
+      const movedId = Number((await engine().executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, 'notes/moved']))[0]!.id);
+      expect(await engine().deletePages(['notes/moved'], { sourceId })).toEqual(['notes/moved']);
+      expect(movedId).toBeGreaterThan(0);
+      expect(await holds(sourceId)).toEqual([]);
     });
 
     // Pins decision L for candidate-marked holds (review finding 1): a hold the upgrade marked with candidate pages is held for each of
