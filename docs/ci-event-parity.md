@@ -111,6 +111,17 @@ break shows up at full-ci before landing instead of on the first push.
 `test/scripts/macos-runner-events.test.ts` evaluates both workflows'
 conditions for each event.
 
+## Advisory native cells
+
+Three `native-locks.yml` cells run on every full event and report their own
+result, but a failure in them fails neither `native-locks` nor `test-status`
+and `full-suite` (job-level `continue-on-error`): the darwin-arm64 and
+darwin-x64 cells, whose runners wedge or wait a long time for a slot, and the
+OpenClaw context-engine startup cell, which flaps (#6143, GST-3494). A red
+advisory cell still shows on the run, so read it before landing a change to
+native, lock or OpenClaw code. Every other native cell still gates.
+`test/scripts/macos-runner-events.test.ts` checks which cells are advisory.
+
 ## Enumeration and census tests
 
 Some unit tests fail whenever a change adds a new operation, command, `--flag`,
