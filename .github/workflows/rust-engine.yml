@@ -13,7 +13,7 @@ name: Rust engine
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to
 #              PGLite, refused with a typed refusal, or has no Rust engine; only a diverged command
 #              fails), then uploads the .node file. Each target (Linux and macOS) is two matrix
-#              halves, each under 30 minutes: both build the addon and run the smoke test, each
+#              halves, each under 45 minutes: both build the addon and run the smoke test, each
 #              runs half of the parity files, and the CLI parity steps are divided between them
 #              (see the addon job).
 #   addon-linux-gate, addon-darwin-gate  one check per target named like the old single cell
@@ -241,8 +241,8 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
     # darwin-arm64 runners run about 1.3x slower; one cell took 43 min in run 45126845000 (the parity loop took 33 min of it).
-    # Each target is therefore two halves (shard 1 and 2 of 2), and every cell has the same 30 minute cap.
-    timeout-minutes: 30
+    # Each target is therefore two halves (shard 1 and 2 of 2), and every cell has the same 45 minute cap.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
