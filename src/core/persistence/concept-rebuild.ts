@@ -29,6 +29,7 @@ import { PRIVACY_ALIASES, privacyPartSql, privatePagesFilterFragment } from '../
 import { preservedConceptSections } from '../cycle/concept-sections.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
+import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 
 type Sql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -108,7 +109,7 @@ const STATED_SQL = `SELECT array_remove(ARRAY[
   CASE WHEN EXISTS (SELECT 1 FROM page_aliases a WHERE a.source_id = $2 AND a.slug = $3) THEN 'page_aliases' END,
   CASE WHEN EXISTS (SELECT 1 FROM slug_aliases a WHERE a.source_id = $2 AND a.canonical_slug = $3) THEN 'slug_aliases' END,
   CASE WHEN EXISTS (SELECT 1 FROM core_edit_notices c WHERE c.source_id = $2 AND c.slug = $3) THEN 'core_edit_notices' END,
-  CASE WHEN EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.source_id = $2 AND h.slug = $3) THEN 'write_gate_holds' END,
+  CASE WHEN EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.source_id = $2 AND ${holdAppliesToPageSql('h', '$1', '$3')}) THEN 'write_gate_holds' END,
   CASE WHEN EXISTS (SELECT 1 FROM pages p WHERE p.id = $1 AND p.title <> replace(regexp_replace(p.slug, '^.*/', ''), '-', ' ')) THEN 'title' END,
   CASE WHEN EXISTS (SELECT 1 FROM pages p, jsonb_each(p.frontmatter) e WHERE p.id = $1 AND e.key <> ALL($6::text[]) AND e.key <> ALL($5::text[])
     AND NOT (e.key = 'tags' AND e.value = '[]'::jsonb)) THEN 'frontmatter' END,

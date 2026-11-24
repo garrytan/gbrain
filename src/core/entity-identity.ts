@@ -44,6 +44,8 @@ export const ENTITY_IDENTITY_UNION_CONFIG_KEY = 'entity_identity.union';
  */
 const ENTITY_ID_RE = /^[a-z0-9][a-z0-9._/-]{0,127}$/;
 
+export const isEntityId = (value: string): boolean => ENTITY_ID_RE.test(value.trim());
+
 export function validateEntityId(entityId: string): string {
   const trimmed = entityId.trim();
   if (!ENTITY_ID_RE.test(trimmed)) {

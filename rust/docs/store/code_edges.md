@@ -61,6 +61,6 @@ that source (`ON DELETE CASCADE` on `source_id`).
   filter and the bare fallback of `getCallersOf` / `getCalleesOf` scan every chunk once per call (O(chunks)). A core
   index keyed by chunk id would make these reads O(rows read). Correctness does not need it; it is deferred to core.
 
-`hasCodeEdgesSymbol(sourceId)` (whether the source owns an unresolved symbol-table edge) is not served yet: it lands with a later Rust-engine landing, with its own page.
+`hasCodeEdgesSymbol(sourceId)` (whether the source owns an unresolved symbol-table edge) is documented in [takes-reads.md](takes-reads.md).
 
-The `code_traversal_cache` table (`getCodeTraversalCache`, `putCodeTraversalCache`, `clearCodeTraversalCache`) is not served yet: it lands with a later Rust-engine landing, with its own page.
+The `code_traversal_cache` table (`getCodeTraversalCache`, `putCodeTraversalCache`, `clearCodeTraversalCache`) is documented in [code-traversal-cache.md](code-traversal-cache.md).

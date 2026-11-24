@@ -6002,7 +6002,9 @@ Shadow mode checks the Rust engine against your real reads before you switch to 
 nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
 reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
 compares the two answers and records only content-free rows (time, operation, outcome, reason code, row counts, timings) in a local
-ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
+ledger. Its only writes to the brain database are the swap-eligibility writer evidence below (one row per writing
+process, and on Postgres one trigger per table while shadow mode is on); nothing is written to brain content, the
+config table or the brain repo, and all other shadow state lives in
 `~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
 
 **Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
@@ -6070,6 +6072,69 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
+  gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
+  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
+  a shadow keeps the table empty.
+- **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
+  brain table, and `stop` removes them. Each trigger records the writing connection (its `application_name`, client
+  address and backend pid) in `engine_writer_sessions`, at most every 10 minutes per connection, so a writer that is
+  not a gbrain process on the shadow machine (another machine, `psql`, an older gbrain) still leaves a row. A trigger
+  never fails the write and never waits on the evidence tables: it takes each table's lock with `NOWAIT`, so a lock someone else
+  holds is an error it catches at once, and its own `lock_timeout` of 50 ms (set on the function, so the writer's settings are
+  untouched afterwards) bounds any other wait. The sessions table has no unique key, so the trigger's insert has no uniqueness check that could wait on another transaction's uncommitted row (repeated rows do not raise the session count, and a refresh updates every matching row that no other transaction holds locked). It does not catch a cancelled query, so a user's own cancel still cancels, it skips a row
+  another transaction holds (that skip is recorded as a gap, since the write went unrecorded), and any error becomes a row in `engine_writer_coverage_gaps` (that table has no
+  sequence, so an INSERT alone records a gap). It stamps the time it ran, not the start of the writer's transaction.
+  If both evidence tables are unusable at once, the trigger can only warn; a table that is missing or locked then
+  makes the eligibility read fail (`eligibility_evidence`, NOT READY), and a role with no usable route is counted by
+  the role check, so a stretch with no evidence cannot read as clean while the damage lasts. Two limits remain: a
+  statement timeout that fires inside the trigger is not caught (the 50 ms bound keeps it far below any timeout), and
+  a writer whose write lands while both evidence tables are locked by someone else at the same moment, and the locks
+  are gone before the swap reads, leaves no row. `gbrain engine shadow stop` exits 1 and says to run it again when it could not remove the hooks (the database was unreachable); the hooks keep noting writers until a later stop removes them. `stop` ends the bookkeeping of processes that are still open: they
+  note and repair only while `state.json` says shadow mode is on, and a repair acts only while the hooks file says
+  `installed`. Adding or removing the triggers takes a short lock on each table (start refuses after 5 seconds
+  rather than queue writers). `<shadow dir>/writer-hooks.json` is written before the first trigger, the
+  install is one transaction (a killed start leaves nothing), and the next `start` or `stop` removes triggers a crash
+  left. PGLite brains are not hooked: one process on one machine opens them. Measured cost on a local Postgres 16,
+  one client, 1,500 writes each, two rounds: a one-statement write went from about 1.08 to 1.34 ms at p50 (p99 1.46
+  to 1.95 ms, about 21% fewer writes per second), and `put_page` from about 2.33 to 2.58 ms at p50 (p99 3.80 to
+  4.00 ms, about 10% fewer per second). The cost applies only while shadow mode is on.
+- **Eligibility.** The swap reads the evidence with one read-only query: `eligibility.writer_hosts_7d` counts the
+  machines that claimed writes in the last 7 days (from the first start of the current seed at the earliest, with 10 minutes of slack; starting again keeps that
+  start, `start` replaces the hooks in one transaction so writers are never unhooked in between, and `stop` records a gap row in
+  the transaction that removes the hooks, because nothing records writers after that; a state file from before this
+  start was recorded keeps its own start, and a stopped one records the gap at the next start),
+  and `eligibility.unknown_writer_paths` counts what no claim accounts for: a writing connection no gbrain process on
+  the shadow machine claimed, a gap row, a brain table whose hook is missing or does not fire for every write
+  (disabled, replica-only, conditional, the wrong events or another function; the next note repairs it and leaves a
+  gap row), a role that can write brain tables (a table privilege, or a privilege on any single column) but has no
+  complete way to record evidence (INSERT on `engine_writer_coverage_gaps`, and row-level security that lets it in; the
+  session table alone is not enough, because a refresh the trigger skips can only be recorded as a gap), plus the
+  file-side evidence: reconcile follower misses, repairs made while coverage was invalid, and a lost note. The roles
+  judged are the login roles and every role a non-superuser login can `SET ROLE` to (the SET option of a membership
+  on PostgreSQL 16 and newer, direct or through a chain; plain membership on older servers), because the trigger runs
+  with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
+  while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
+  runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
+  failure instead of holding one of the brain's connections.
+  A fault or pass record that is
+  torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
+  NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
+  being off or not provably enabled adds one unknown writer path for as long as it stays that way. A `stop`, or a `start`
+  that continues an existing epoch, first writes a marker to `state.json` (`writer_coverage_stopped_at`,
+  `writer_coverage_restarted_at`) before any hook changes, so a failed gap insert cannot hide it; either or both markers
+  add one more unknown path while they fall inside the eligibility window (7 days plus the 10-minute refresh slack), and
+  the swap is refused with `writer_coverage_unknown` until then. The open engine's capabilities decide whether the hooks
+  must exist. A state file whose primary engine is missing, not a known kind, or not exactly the open engine's kind adds
+  one unknown path. An unreadable state file adds one when the swap builds its status document; if `state.json` is
+  absent, the swap reader reports no shadow instead. Known limit: criterion 11 reads role privileges as they are now, so a privilege repair inside the window can hide an earlier unrecorded write (follow-up: a durable coverage-break record across role and ACL changes). A write that only takes a lock,
+  a log or a cache row counts as a write for the note, though the follower does not copy it. The plan's idea of
+  counting how often an enabled process held no attached engine is not built: it cannot be measured from the shadow
+  machine, and the database hooks replace it. Any
+  one of them refuses the swap (`writer_coverage_unknown`). A connection pooler in transaction mode hides the client's
+  connection name, so its writes read as unclaimed. `gbrain engine shadow status` never opens the database, so it
+  shows only `team_brain` and `preview_target`; the swap passes in the brain it already has open.
 - **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
   or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
   reset between fixtures (`rust_benchmark_unsupported`), so until the benchmark can reset a Rust store without raw SQL (the Rust engine never reports `raw_sql`) the flag
@@ -6143,7 +6208,18 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
   this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
-  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+  `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
+  names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
+  capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
+  starts every count over.
+- **Evidence fields.** `status --json` also carries the swap's read and search evidence for the current epoch (`report` prints
+  the same counts):
+  `reads` (successful comparisons per operation class with their minimum, and the 7-day counts of `capability_missing`,
+  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements), `child`
+  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at` and the counting
+  rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
+  fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
+  evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
   `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
   differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
@@ -8973,7 +9049,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | The dream cycle's purge phase fails every night with `managed_purge_failed` (`42P01`, relation `query_cache` does not exist), or doctor `schema_missing_tables` warns | upgrade (#6911: the purge skips a missing rebuildable cache), then preview recreating it: `gbrain repair missing-tables` ([missing tables](repair.md#missing-tables)); apply the printed `--apply --expect <hash>` command. Pages parked by the earlier failures: `gbrain pages purge-deleted --retry-parked --dry-run`, then without `--dry-run` | agent, after the user agrees | `destructive` (the parked-page retry purges them) | `gbrain doctor --only schema_missing_tables --json` reports ok |
 | A managed source's autopilot freshness `sync` jobs each land about one page, or `sources status` says `parked` while a sync job runs | upgrade (#6706: sync jobs drain to their deadline and count as the source's live drain), then restart `gbrain jobs work` / the supervisor so the worker loads the handler; a job result with `incomplete: true` names its follow-up (`continuation_job_id`) or the next step in `next` | agent | none | `gbrain sync status --source <id> --json` shows `live_job_id` or a cursor at `done`; `gbrain jobs get <id> --json` shows `outcome` |
 | A classic `gbrain sync` with pull returns `partial` / `pull_failed` on every run after the upstream was force-pushed, and doctor `sync_failures` names `upstream_rewritten`, `upstream_unknown` or `upstream_diverged` | follow the check's `fix` ([upstream rewritten](#upstream-rewritten)): `upstream_diverged` runs `gbrain git commit-push --pull --path <checkout>`; `upstream_rewritten` and `upstream_unknown` preview `gbrain sources reset-upstream <id> --expect-local <sha> --expect-upstream <sha> --dry-run`, then run it without `--dry-run`; then `gbrain sync --source <id>` | agent; the reset after the user agrees | `destructive` (the reset; the old history is kept under a backup ref) | `gbrain doctor --only sync_failures --json` no longer names the source |
-| Doctor `sync_freshness` says a source has "no successful sync recorded" or "first sync running" | follow the check's `fix`: `first sync running` (code `sync_first_run_in_progress`, warn) means wait; `no successful sync recorded` (code `sync_no_successful_sync`, fail) names the last attempt and its `reason`: wait for a queued job, inspect holds (`gbrain sync status --source <id> --json`), or retry (`gbrain sync --source <id>`) ([details](#sync-freshness-no-successful-sync)) | agent | none | `gbrain doctor --only sync_freshness --json` |
+| Doctor `sync_freshness` says a source has "no successful sync recorded", "first sync running" or "first sync stopped at a usage limit" | follow the check's `fix`: `first sync running` (code `sync_first_run_in_progress`, warn) means wait; `first sync stopped at a usage limit` (code `sync_usage_limited`, warn) means wait for the next scheduled sync to resume; `no successful sync recorded` (code `sync_no_successful_sync`, fail) names the last attempt and its `reason`: wait for a queued job, inspect holds (`gbrain sync status --source <id> --json`), or retry (`gbrain sync --source <id>`) ([details](#sync-freshness-no-successful-sync)) | agent | none | `gbrain doctor --only sync_freshness --json` |
 | Recall returns conversation facts like "Date said …", "Attendees said …" or "Summary said …" | `gbrain repair conversation-labels` previews them ([conversation labels](repair.md#conversation-labels)); apply the printed command with `--yes` | agent, after the user agrees | `destructive` | `gbrain doctor --only conversation_label_facts --json` is ok |
 | Conversation facts are dated 1970-01-01 | same preview: `gbrain repair conversation-labels` (an undated page's pre-fix facts carry a `segment 1970-01-01` context); add a `date:` to the page frontmatter before re-extracting it | agent, after the user agrees | `destructive` | `gbrain doctor --only conversation_label_facts --json` is ok |
 | `remember` or `put_page` refused `source_changed` "The canonical file contains an uncoordinated local edit" on many pages nobody edited, or doctor `lost_caller_writes` warns | upgrade to v0.60.157.0 or later (a database-only v0.13.1 `validate: false` stamp was read as a file edit, #6429); then `gbrain repair failed-writes --source <id>` previews the refused writes and prints the apply command ([failed writes](repair.md#failed-writes)) | agent; the apply after the user agrees | none to preview | `gbrain doctor --only lost_caller_writes --json` is ok |
@@ -9400,7 +9476,7 @@ though the parent connects fine, and running in-process removes the
 spawn entirely. The v0.13.1 grandfather migration writes nothing since #7814: it
 records completion and leaves every page as it was.
 
-<a id="ghost-pages"></a>**A write refuses `source_changed` with "The canonical file was removed outside coordinated publication." (`canonical_file_missing`), or doctor `ghost_pages` warns?** The page is a ghost: its canonical file is gone on the owner host but the database page is live, so every write refuses and no sync can import a file that is not there. On the owner host, list them with `gbrain pages ghosts --source <id>` (read-only). For each, the user decides: to keep the page, restore its file at the recorded path (from Git or a backup; gbrain has no automated file restore) and run `gbrain sync --source <id>`; to remove it, preview `gbrain repair ghost-pages --source <id>`, show the user the list, and after they agree run the printed `--apply --expect <hash> --yes`. Removed pages are purged after 72 h; `gbrain restore <slug> --force` undoes one until then. Off the owner host it refuses `not_owner_host`; on an unreadable checkout `ghost_storage_unknown`; when ghosts are more than half of the source's file-backed pages `ghost_mass_delete_refused` (check the checkout first). See [ghost pages](repair.md#ghost-pages). **Say to your agent:** *"Which pages lost their files? Show me the list before you remove anything."*
+<a id="ghost-pages"></a>**A write refuses `source_changed` with "The canonical file was removed outside coordinated publication." (`canonical_file_missing`), or doctor `ghost_pages` warns?** The page is a ghost: its canonical file is gone on the owner host but the database page is live, so every write refuses and no sync can import a file that is not there. On the owner host, list them with `gbrain pages ghosts --source <id>` (read-only). For each, the user decides: to keep the page, restore its file at the recorded path (from Git or a backup; gbrain has no automated file restore) and run `gbrain sync --source <id>`; to remove it, preview `gbrain repair ghost-pages --source <id>`, show the user the list, and after they agree run the printed `--apply --expect <hash> --yes`. The preview approves only pages whose file a commit deleted; a page whose file no commit held, that HEAD still holds, whose deletion Git cannot place, or that was written after its file is listed apart with its restore route. Removed pages are purged after 72 h; `gbrain restore <slug> --force` undoes one until then. Off the owner host it refuses `not_owner_host`; on an unreadable checkout `ghost_storage_unknown`; when ghosts are more than half of the source's file-backed pages `ghost_mass_delete_refused` (check the checkout first). See [ghost pages](repair.md#ghost-pages). **Say to your agent:** *"Which pages lost their files? Show me the list before you remove anything."*
 
 <a id="maintenance-write-drift"></a>**Writes to the same pages keep refusing `source_changed` with `file_database_drift`, or doctor `maintenance_write_drift` warns?** Each of those pages has a canonical file that differs from its database copy, usually from an edit outside a coordinated write, so every coordinated write to it refuses and leaves a conflict receipt. Maintenance now checks the file first: `synthesize_concepts` skips a drifted concept before any model call (the phase warns and names the commands below) and other maintenance writes refuse before admission, so the pile stops growing. To list the pages, run `gbrain sources reconcile <id> --brain host --audit --conflicts` (read-only; receipts per slug, whether the file still differs, its drift class and producer; MCP `list_write_conflicts` gives remote readers the database-derived part). Then preview `gbrain repair file-drift --source <id> --all-drifted --prefer file` (add `--class <name>` when the preview reports mixed classes, narrow it with `--only '<path glob>'` / `--skip '<path glob>'` over the canonical file paths, or pick pages with `--slug`), show the user the per-page `exceptions` (and, for `--prefer database`, any `kept_newer_file` page: a file edit sync never imported, which bulk keeps), and after they agree run the printed `--apply --expect <hash> --yes` command exactly as printed; without `--yes` it exits 3 with the consent message ([newer file changes](repair.md#file-drift-newer)). For derived pages under one directory, such as regenerated concepts: (6) preview `gbrain repair file-drift --source default --all-drifted --only 'concepts/**' --prefer database`, show the user the count, the exceptions and any `kept_newer_file` page, and after they agree run the apply command it prints (it ends in `--yes`), which applies exactly the previewed pages. To keep resolving such a directory with the database copy from now on, the user can declare it under `storage:` `keep_db:` in the source's gbrain.yml; the owner host's serve, jobs or autopilot consumer then reconciles drifted pages there at most 10 every 10 minutes, and doctor echoes the policy with its matched count and receipt cost ([keep_db](repair.md#file-drift-keep-db)). `--keep` is refused here: use `--prefer database` or `--prefer file`. See [file drift](repair.md#file-drift). **Say to your agent:** *"Which pages keep refusing source_changed? Preview resolving them and show me before you apply."*
 
@@ -9926,8 +10002,23 @@ syncs keep ending `partial` or failing has none, however many pages it imported.
 - **First sync running** (`warn`, code `sync_first_run_in_progress`): the source
   holds a live sync lock inside the staleness ceiling. Running is not fresh, and
   a second sync only contends for the lock, so the fix is to wait and re-run
-  `gbrain doctor --only sync_freshness --json`. A lock held past the ceiling
-  reads as wedged (`fail`) with its `--break-lock` command.
+  `gbrain doctor --only sync_freshness --json`. A sync job that is running with
+  a live job lock reads the same way between two runs of a long first sync. A
+  lock held past the ceiling reads as wedged (`fail`) with its `--break-lock`
+  command, and a job running past the ceiling reads as not finishing (`fail`)
+  with a read-only `gbrain jobs get <id> --json` fix.
+- **First sync stopped at a usage limit** (`warn`, code `sync_usage_limited`):
+  the last sync ended `partial` only because the provider's usage or rate limit
+  ran out (gbrain.io's daily allowance, Google's quota), with nothing else failed
+  or held, and a run of that kind landed pages inside the fail age (later runs
+  that hit the spent limit before landing anything, skipped runs and a queued
+  next run keep the warning; a run whose writes are still pending has not landed
+  pages). A limit reached before any mail is read, such as on the account's
+  identity check, ends the run the same way. The unread
+  range stays open and the next scheduled sync resumes it, so the fix is to wait.
+  A run that fails items or holds files, a bare permission error (403), or no
+  limited run landing pages inside the fail age reads as no successful sync
+  (`fail`).
 - **No successful sync recorded** (`fail`, code `sync_no_successful_sync`): no
   sync is running. The message names the last attempt, read-only from the newest
   `sync` job and (on a managed brain) `gbrain sync status`: its time, result

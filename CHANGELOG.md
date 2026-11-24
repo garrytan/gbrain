@@ -10,6 +10,163 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.769.0] - 2026-11-24
+
+### For contributors
+- The concurrency benchmark's lockfile (rust/concurrency-bench/Cargo.lock) moves the `url` crate from 2.5.8 to 2.5.9, which fixes RUSTSEC-2026-0592, so osv-scan passes again on every pull request. The same update brings `form_urlencoded` to 1.2.3 and adds the `sha2` dependency line the lockfile was missing.
+
+**`gbrain dedupe classes` counts likely duplicate people by their evidence, and `gbrain dedupe sample` exports pairs to check by hand.**
+
+`gbrain dedupe classes` groups every pair of person pages that might be one person by its evidence. That evidence is a shared email, phone or account id (C1 to C7), your email pages and chat pages (iMessage and chat exports, read only on your machine), and, if you turn it on with your own key, an Exa web search on a name plus one company or job title. It prints how many pairs would link, wait or be marked different. `gbrain dedupe sample --class <c>` picks a seeded random sample of one class for labelling. Both only read: nothing is linked or edited. Web search is off by default and is never used for a page not every reader may read (private labels, named readers, folder rules, owner-only sources) or a family or minor page; each page is read again just before its search goes out. It caches every answer, runs one live search at a time and stops at a per-run and a total cap; `--exa --dry-run` prints the cost first.
+
+<!-- behavior-change: dedupe_classes_gst3609 -->
+
+### For contributors
+- `src/core/entities/evidence/`: `people.ts` (candidate pairs and their base class), `email.ts` (E1, E3, E4), `messaging.ts` (M1 to M3, Mx), `exa.ts` (the opt-in client, cache and caps), `combine.ts` (the rule) and `classes.ts` (counts and the seeded sample).
+- New config keys: `dedupe.exa`, `dedupe.exa_run_cap`, `dedupe.exa_total_cap_usd`; internal state `dedupe.exa_spent_usd` and `dedupe.exa_cache.*`. New error code `dedupe_exa_off`.
+- test/dedupe-classes-evidence.test.ts covers every class, the contradictions, zero email and chat pages, Exa off by default, the privacy filter on a fake fetch (privacy labels, folder rules, owner-only sources, tags added with `gbrain tag`, a page changed mid-run), the cache, both caps, the live-run lock, failed requests and the dry run on a repo-less brain.
+
+**Google Contacts pages can now be linked to the person pages they describe, by exactly the same email or phone.**
+
+`gbrain dedupe link-contacts --source <id>` counts how a Google source's contact pages would link and changes nothing. `--apply` links each contact page to the one person page with exactly the same email or phone, the rule Apple Contacts already uses, and keeps the contacts each sync changes linked. A contact that matches two or more people, or one person whose page has another name, waits for you in `gbrain sync status`, a name alone never links, and no page is edited. `gbrain dedupe reject` on a contact and person pair removes that link for good, for Apple Contacts links too, and `--unlink` removes all of a source's links.
+
+<!-- behavior-change: google_contacts_identity_links_gst3609 -->
+
+### For contributors
+- `src/core/google/contact-identity.ts` settles the links through `linkContactPage` (apple-contacts/identity-match.ts), which now takes a link origin, the owner's "different" sets and a dry-run flag, and returns `different` for a single match the owner rejected. With `contactName` it returns `name_disagrees` for a single match whose page name clearly disagrees (`namesAgree`, entities/name-variants.ts), which waits as a review.
+- `google_contacts.identity_links` (default off) is the switch `sweepContacts` reads; `--apply` and `--unlink` set it. It is one switch for the whole brain, not one per Google source.
+- `gbrain dedupe reject <entity id>` on a group a contacts source joined records one person member (the canonical one when there is one) and the contact pages, never every member another writer linked. `linkContactPage` checks the owner's "different" sets against every member of the person's group, so a reject holds whichever member's email or phone matched. Apple Contacts reads those sets once per sync.
+- test/google-contacts-identity-links.test.ts covers the dry run, apply, reviews, reject, a removed contact, another writer's link and `--unlink` on a repo-less brain.
+
+**`gbrain think --save` and `--take` now work on a managed brain.**
+
+### Fixed
+- On a managed brain, `gbrain think --save` failed with `writer_coordinator_required` and `--take` was refused because the anchor page belongs to the managed checkout, so nothing was saved. Both now go through the persistence coordinator. The synthesis page and the take row are written as tracked requests at the trust tier of what the answer read, and the write gate judges the take at that same tier.
+- A save or take that was accepted but is still publishing is no longer reported as a failure. The CLI prints the answer and then exits 10 with the request id to check, the `think` tool returns the answer with a `SAVE_PENDING` or `TAKE_PENDING` warning, and the dream cycle's auto-think counts the question as answered instead of paying for the same synthesis again.
+- `think --take` now writes the take in the source you chose with `--source` (it always used `default`), and a `think` tool call with no source scope no longer refuses its take.
+
+**A page whose stored timeline sits inside its body no longer reads as drifted from its file, so writes to it stop being refused and its sync holds can be released.**
+
+### Fixed
+<!-- behavior-change: timeline_split_not_drift -->
+- Pages imported before v0.46.25.0 kept a bare dated `## Timeline` section inside the stored body with an empty timeline. Today's parser reads the same unchanged file with that section split off as the timeline, so every write to such a page was refused `source_changed` (`file_database_drift`) and sync held its next file edit `file_drift`, though both copies held the same text. The comparison now also reads the stored body split the way today's parser splits it, so these pages take writes and sync their files again. This covers pages stored inline on sources that are not read-only mirrors; a large page stored in segments, or a mirror's page, still reads as drifted. A page that differs from its file in any line still refuses and stays held, with both copies kept.
+- A `file_drift` hold an earlier release wrote stays until someone asks: `gbrain sources retry-held <id>`, or the release `gbrain repair file-drift --source <id> --held` lists, re-checks it, and a hold that came only from where the timeline was split then clears without a repair. A plain `gbrain sync` never re-checks it on its own, so on a strict source an upgrade never imports a file over a held page.
+- A hold on a file unchanged since its import (database side) whose page and file agree could not be released: `gbrain repair file-drift --held` listed it `release_hold`, but its release and `gbrain sources retry-held` left it held. The re-check, which a retry of any hold on such a page now runs, imports the page when its file holds the page and holds it again otherwise, so `gbrain repair file-drift --source <id> --slug <slug> --prefer file` releases it. A pending write still waiting for its Git publish, and a page under a `storage.db_only` folder, keep their database copy, and a retry leaves them as they were.
+- A file over the in-memory sync limit (24 MiB) whose page also changed in the database is held `file_drift` instead of streamed over the database copy, because such a file cannot be compared with the page in memory.
+
+**Connector syncs on a distant database spend fewer round trips per item, so re-checking contacts that a previous run already wrote runs about 1.3 times faster.**
+
+### Fixed
+- A managed connector sync (Google, GitHub and the rest) re-read the same run-wide rows (its lock, the source row, the owner binding, the writer grant, the mirror and slug-root modes) up to nine times for every page it read or wrote. Each is now read once per page read or write, and read again after the sync waits for an earlier write to finish; the checks that guard a write still run under their locks when the write is admitted and published. An unchanged contact now costs about 40 database statements instead of 52, and a contact written for the first time about 187 instead of 190. On a Supabase pooler about 30 ms away, re-checking a contacts page that a previous run already wrote drops from roughly 1.5 s to about 1.2 s per contact (#9990).
+
+**`gbrain doctor` stops calling a connector source "never synced" while its first sync is still working through a provider's daily limit.**
+
+<!-- behavior-change: sync_freshness_usage_limit_gst3452 -->
+
+### Fixed
+- A Gmail source read through gbrain.io (or any Google source on a tight quota) can take several runs to finish its first sync, because each run stops when the provider's usage limit runs out and the next one resumes. `gbrain doctor` failed sync_freshness for such a source with `sync_no_successful_sync`, and for a source whose first sync job was running between two sync locks, which also tripped the upgrade's doctor check and held writers for no reason. A run that stopped only at the limit now records `stopped_on: usage_limit`, and doctor reads it as `warn` (`sync_usage_limited`) while a limited run that landed pages is inside the fail age, so later runs that hit the spent limit straight away keep the warning. A running sync job reads `warn` (`sync_first_run_in_progress`). Failed items, held files, a bare permission error (403) and limited runs that stopped landing pages long ago still fail.
+
+**Held writes now stay held when their page is renamed.**
+
+When the write gate holds a fact or take for your review, it now remembers which page it was held for by the page's permanent id, not just its name. Before, renaming the page (a Git rename picked up by sync, or `gbrain repair rename-identity`) made the held row show up in answers under the new name without you releasing it, and a different page that later took the old name inherited the hold.
+
+- A held write recorded before any page had its name is claimed by the first page created there.
+- Releasing a held fact publishes it on the page it was held for, under that page's current name. If that page is gone, the release is refused and the fact stays held.
+- Purging a page removes only the holds that belong to that page; a hold that could belong to several pages stays until the last of them is purged.
+- On upgrade, existing holds are matched to their page from the page that holds the name and its rename record (the rename history and the older aliases). A hold that cannot be matched to one page stays held for every page it could belong to and is listed by the new `gbrain doctor` check `write_gate_hold_ambiguous`; drop it in `gbrain trust review`. Identical duplicates are merged; a duplicate that differs is kept.
+- The `gbrain doctor` check `write_gate_holds_stranded` now ignores holds that follow their page: a hold bound to a page that exists, or an unbound one that the rename record leads to a live page, is not reported, because renaming the page no longer lifts it. It lists only the holds that no live page matches (a soft-deleted page, or no page yet), as information, and still warns when it cannot count.
+- Known limit: if two purges run at the same time on pages that share a reused name, a held write can be left behind. It stays hidden and is never shown. `gbrain trust review` shows it, and the owner can remove it with `gbrain trust drop`. A later maintenance sweep will remove these automatically.
+
+<!-- behavior-change: held_writes_follow_page_rename -->
+
+### For contributors
+- Migration v333 adds `write_gate_holds.page_id` and `page_candidates`, with two disjoint partial unique indexes (bound on source, page id, fingerprint and detector version; unbound on source, slug, fingerprint and detector version). `recordWriteGateHold` takes an optional `pageId` that producers who already read the page pass; without it the page is found inside the same INSERT, with no page lock. The page-insert path binds waiting holds, `movePageIdReferences` carries holds with the page, and the purge sweeps delete by id (by slug only for unbound holds).
+- The Rust engine's own hold store and rename paths still have to match this: see the contract in the pull request description.
+
+**The rest of the Rust storage engine's code is now on master, and nothing selects it yet.**
+
+### Added
+- The Rust store crate's remaining modules (access members, rules and tokens, OAuth clients, generations, session state, repair scans, shared-skill catalog and the others), the `gbrain-napi` addon crate with its smoke cases, the store's tests and benches, and the design docs under `rust/docs`. Every file under `rust/` is the Rust trunk's version.
+
+### Fixed
+- Ten Rust documentation files now match the code: the `Brain.open` options and the `page_ambiguous` error in `rust/README.md`, the store format number (7, not 1) in five store docs, the compact projection-job encoding, the write receipts that pages, versions, facts and takes carry, and the keyword index follow-up.
+
+### Changed
+- The Rust store writes store format 7 and opens formats 1 to 7. Loop mutes now live under their own key prefix, so take purges no longer read wrong after a loop mute; an older store is converted when it opens. A store written by v0.60.766.0's shadow seed is read correctly or refused with a re-seed message. A downgrade after an upgrade needs a re-seed, because an older addon refuses a format 7 store.
+
+### For contributors
+- No brain behaves differently after this lands: the default engines are unchanged and the Rust engine stays unselectable until the TypeScript adapter lands.
+
+**The Rust engine swap check can now tell how many machines write your brain: while shadow mode runs, gbrain records which processes and database connections write it.**
+
+### Added
+- `engine_writer_observations`, `engine_writer_sessions` and `engine_writer_coverage_gaps` (schema migration): empty unless Rust engine shadow mode is on. Each writing gbrain process notes itself (host id, connection name, command kind, version, first and last write) at most every 10 minutes after a committed write.
+- On a Postgres brain, `gbrain engine shadow start --yes` adds one statement-level trigger to every brain table that records each writing connection, at most every 10 minutes per connection; it never fails a write and waits at most 50 ms on its own tables (an error becomes a gap row). `gbrain engine shadow stop` removes them, including any a killed start or crashed stop left. PGLite brains are not hooked.
+- The shadow status document's `eligibility` fields for the swap check: `writer_hosts_7d` and `unknown_writer_paths` (filled only when the caller passes the open brain; `gbrain engine shadow status` never opens the database), `team_brain` and `preview_target` (a release addon target: linux-x64-glibc or darwin-arm64). A failed read leaves the writer fields out and adds `eligibility_evidence` with the error code only.
+
+### Changed
+- `gbrain engine shadow start --plan` now lists these writes; plan hashes from before this change no longer match, so confirm the new plan.
+- `gbrain engine shadow stop` exits 1 when it could not remove the writer hooks (the database was unreachable), and says to run it again.
+
+<!-- behavior-change: engine_writer_observations_s5 -->
+
+**Fixed: `gbrain engine swap --plan` now reads the shadow's status, so its readiness verdict reflects what the shadow measured.**
+
+### Fixed
+- The swap plan was never given the shadow status, so every readiness criterion read as missing and the plan could never say READY. It now reads the same document `gbrain engine shadow status --json` prints for this brain.
+- A brain with no shadow now gets `NOT READY` with reason `no_shadow` and a pointer to `gbrain engine shadow start`, instead of `writer_coverage_unknown`.
+- The swap's readiness policy now lives in one file, with criterion 1's 14-day default and the dated Dec 1 override for one brain. Its hash is part of the shadow evidence, so the policy is frozen for the Dec 1 swap.
+
+## [0.60.768.0] - 2026-11-24
+
+**The duplicate finder lists same-name pages of one source for collapsing even when a page in another source matches them, and confirm no longer links two pages of one source.**
+
+<!-- behavior-change: dedupe_same_source_split_gst3609 -->
+
+### Fixed
+- When a cross-source duplicate group holds two or more pages of one source, `gbrain dedupe --preview` and doctor `entity_duplicates` now also list those pages as their own same-source group, so they show up for collapsing. Before, they appeared only inside the cross-source group.
+- `gbrain dedupe confirm <id>` refuses a cross-source group that holds two pages of one source (`dedupe_group_not_confirmable`, reason `same_source_members`), and the confirm list leaves it out. Before, confirming it linked the two same-source pages as one identity. Collapse those pages first, and the next preview shows the cross-source group with one page per source.
+
+### For contributors
+- The `gbrain doctor --json` golden tests no longer fail on a slow CI runner. A doctor run past 10 s prints a `still reading doctor checks (N s so far)` progress line, and the test compares two captures byte for byte. The golden normalizer (test/helpers/doctor-json-golden.ts) now drops those lines and keeps every other stderr line.
+
+**`gbrain repair ghost-pages` no longer deletes pages that hold the only copy of their content: it removes a page only when a commit deleted its file.**
+
+<!-- behavior-change: ghost_pages_only_copy_gst3637 -->
+
+### Fixed
+- `gbrain repair ghost-pages` approved any page whose file was missing for a soft-delete, which autopilot purges after 72 hours. That included pages whose file no commit ever held, pages whose last import came from an uncommitted edit that the deleting commit never held, and pages whose file was only deleted in the working tree, so the page could be the only copy of its content. The preview now lists those pages apart, with a route to restore each, and never approves them: `ghost_never_committed` (write the file from the page with `gbrain repair file-drift --prefer database`, then commit and sync), `ghost_worktree_only` (`git checkout HEAD -- <path>` and sync, or commit the deletion) and `ghost_history_unknown` (Git cannot say which commit deleted the file). The apply refuses them too, so an approval saved before upgrading keeps the page.
+- `gbrain repair file-drift --prefer file` reads the same check and skips those pages with the same codes.
+- The route printed for a missing file whose history is still in HEAD, or unknown, now says to restore the file or commit the deletion, instead of pointing at `repair ghost-pages`.
+
+**`gbrain doctor` now warns when a held write no longer points at a live page, so you can see the quarantine a rename lifted.**
+
+### Added
+- New doctor check `write_gate_holds_stranded`. A fact or take the write gate holds names its page only by name, so after a page is renamed (a sync Git rename, `gbrain repair rename-identity`) the hold still names the old name and the page at the new name is no longer protected by it. The check lists those holds per source, separates a suspected rename from a soft-deleted page and from a name that never had a page (informational), and points at the read-only `gbrain trust review`.
+- When the scan stops at its 5000-row limit or its time limit, or cannot read the rename records, or runs as a database role that has row-level security active on them, or runs on an engine that refuses the read, the check warns that the count is unknown instead of reporting ok.
+
+### Not changed
+- This check detects the problem; it does not fix it. Releasing or dropping a hold does not restore the quarantine on the renamed page or take back text already delivered. Holds that follow a page id instead of a name are a separate, later change.
+
+**Database URLs no longer show part of a password that contains a raw @, and four small date and limit flags now refuse bad values instead of misreading them.**
+
+<!-- behavior-change: pg_url_raw_at_redaction_gst3639 -->
+<!-- behavior-change: strict_since_limit_values_gst3639 -->
+
+### Fixed
+- A database password containing a raw, unencoded `@` is now redacted whole. The redactor ended the password at its first `@`, while the database driver splits at the last one, so such a URL connected fine and the rest of the password showed after `***@` in `gbrain config get database_url`, `gbrain engine status --json`, `gbrain doctor`, and the init, db-repair and migrate-embeddings notes.
+- `--since` refuses a date that is not a real calendar day, such as `2026-02-30`, in `gbrain agent logs`, `gbrain access read-log`, `gbrain beliefs`, `gbrain repair` and `gbrain recall`, and in the recall tool's `since` parameter. Before, the date rolled over into March and the command quietly used another window.
+- `gbrain code-callers`, `code-callees`, `code-def` and `code-refs` refuse a `--limit` that is not a whole number of 1 or more, or that has no value, with an `invalid_params` usage error (exit 2). Before, `--limit abc` or `--limit -5` failed with an `unknown` server error, and `5abc`, `0` and `1.5` were quietly misread.
+- The `gbrain recall --today` heading shows the local date its window starts on. Before, it printed the UTC date, so in the evening west of UTC today's facts appeared under tomorrow's date.
+
+**The secret scanner now hides the whole password in a database or https URL when the password contains a raw @.**
+
+<!-- behavior-change: secret_scan_url_raw_at_gst3639 -->
+
+### Fixed
+- A password containing a raw, unencoded `@` inside a database URL (postgres, mysql, mongodb, redis, amqp, mssql) or an https URL in page text is now redacted whole. The scanner ended the password at its first `@`, while URL parsers and database drivers split at the last one before the host, so the rest of the password stayed visible after the redaction marker in the text gbrain redacts with it, such as search output and rendered transcripts. An `@` in the path or query still does not count as part of the password. Two shapes stay unrecognized: a password that starts with a raw `@`, and the part after the ninth raw `@` in one password.
+- A finding for such a URL now covers the whole password, so its fingerprint changes. An entry in `.gbrain-scan-allow` pinned to the old fingerprint no longer matches; add the new fingerprint the scanner reports.
+
 ## [0.60.767.0] - 2026-11-24
 
 **The mention pass records why it stopped and keeps draining on a large source, and mention links no longer land on pages merged into another page.**
