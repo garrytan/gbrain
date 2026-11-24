@@ -309,7 +309,7 @@ function moveCode(move: GhostMove | undefined): GhostMoveCode | null {
   return move.candidates.some(candidate => candidate.match !== 'same_file_name' || candidate.linked !== false) ? MOVE_UNPROVEN_CODE : null;
 }
 
-/** The move read for each committed-deletion ghost with a candidate or an unreadable history: one candidate read per call, then the moved-pages verdict per ghost. */
+/** The move read for each committed-deletion ghost with a candidate or an unreadable history: one candidate read per call, then the moved-pages verdict per ghost on the history that read walked. */
 async function readGhostMoves(engine: BrainEngine, sourceId: string, root: string, ghosts: GhostPage[], provenance: Map<string, DeletionProvenance>): Promise<Map<number, GhostMove>> {
   const read = await readMoveCandidates(engine, { sourceId, root, ghosts: ghosts.map(ghost => ({ page_id: ghost.page_id, path: ghost.path, deletion: provenance.get(ghost.path) ?? { kind: 'unknown' } })) });
   const moves = new Map<number, GhostMove>();
@@ -317,7 +317,7 @@ async function readGhostMoves(engine: BrainEngine, sourceId: string, root: strin
     if (read.unread.has(ghost.page_id)) { moves.set(ghost.page_id, { unread: true }); continue; }
     const candidates = read.found.get(ghost.page_id);
     if (!candidates) continue;
-    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path), candidates });
+    const verdict = await readMovedPage(engine, { sourceId, root, old: { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path }, provenance: provenance.get(ghost.path), candidates, history: read.history });
     moves.set(ghost.page_id, { candidates, verdict });
   }
   const survivors = [...moves.values()].flatMap(move => !move.unread && move.verdict.verdict === 'moved' ? [move.verdict.survivor.page_id] : []);
@@ -344,6 +344,13 @@ async function primeGhostMoves(engine: BrainEngine, sourceId: string, root: stri
   const moves = await readGhostMoves(engine, sourceId, root, ghosts, await readDeletionProvenance(root, ghosts.map(ghost => ghost.path)));
   runMoves.checkout = `${root}\0${head}`;
   runMoves.moves = new Map(ghosts.map(ghost => [moveKey(ghost), moves.get(ghost.page_id)]));
+}
+
+/** Reads the moves of `ghosts` (one source, one owner) in one pass, so each one's `ghostMoveVeto` at this HEAD reuses it. */
+export async function primeGhostMoveVetoes(engine: BrainEngine, ghosts: GhostPage[], owner: GhostOwner): Promise<void> {
+  if (!ghosts.length) return;
+  const binding = await getWorktreeBinding(engine, ghosts[0]!.source_id, owner.host_id);
+  if (binding?.local_path) await primeGhostMoves(engine, ghosts[0]!.source_id, join(binding.local_path, binding.relative_path), ghosts);
 }
 
 /**

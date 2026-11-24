@@ -24,7 +24,8 @@ import type { BrainEngine } from '../engine.ts';
 import { execFile } from '../spawn.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
-import { ghostFileBacked, ghostMoveVeto } from '../repair/ghost-pages.ts';
+import type { GhostPage } from '../ghost-pages.ts';
+import { ghostFileBacked, ghostMoveVeto, primeGhostMoveVetoes } from '../repair/ghost-pages.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
 import type { ManagedSyncContext } from './sync-discovery.ts';
@@ -110,6 +111,7 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
   const blobs = await readBlobs(level.gitRoot, [...new Set([...parents.values()].flatMap(parent => parent.oid ? [parent.oid] : []))], BLOB_MAX_BYTES).catch(() => new Map<string, Buffer>());
   const activePack = (await loadActivePackForEngine(engine, { remote: false, sourceId: level.sourceId }).catch(() => null))?.manifest;
   const owner = { host_id: context.binding.owner_host_id ?? '', worktree_id: context.binding.worktree_id, owner_epoch: String(context.binding.owner_epoch), source_incarnation: level.incarnation };
+  const backed: Array<{ entry: ShadowPath; ghost: GhostPage; proof: HeldDeletionProof }> = [];
   for (const entry of batch) {
     const parent = parents.get(entry.path);
     if (!parent) continue;
@@ -122,8 +124,10 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
     if (!same) { verdicts.set(entry.path, { refused: 'content_differs' }); continue; }
     const ghost = { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! };
     if (!await ghostFileBacked(engine, ghost, owner, provenance.get(entry.path))) { verdicts.set(entry.path, { refused: 'database_ahead_of_file' }); continue; }
-    verdicts.set(entry.path, await ghostMoveVeto(engine, ghost, owner) ? { refused: 'file_moved' } : { commit: parent.commit, blob_oid: parent.oid! });
+    backed.push({ entry, ghost, proof: { commit: parent.commit, blob_oid: parent.oid! } });
   }
+  await primeGhostMoveVetoes(engine, backed.map(item => item.ghost), owner);
+  for (const { entry, ghost, proof } of backed) verdicts.set(entry.path, await ghostMoveVeto(engine, ghost, owner) ? { refused: 'file_moved' } : proof);
   return verdicts;
 }
 
