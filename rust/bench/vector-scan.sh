@@ -8,8 +8,9 @@
 # explains the corpus, the modes and what `verify` compares.
 #
 # Usage (from anywhere): rust/bench/vector-scan.sh [sizes=10000,50000] [queries=40] [limit=50]
-# Env: VECTOR_BENCH_DIR  scratch root (default: a new dir under ${TMPDIR:-/var/tmp}); the stores
-#                        are written there and deleted at the end.
+# Env: VECTOR_BENCH_DIR  scratch root (default: ${TMPDIR:-/var/tmp}). The script makes a new
+#                        directory inside it, writes the stores there and deletes only that
+#                        directory at the end; nothing else under the root is touched.
 #      VECTOR_BENCH_VERIFY=0  skip the byte-for-byte comparison of the two paths.
 # Prints one line per (size, filter, path) and a summary table: machine, pages, chunks, N, p50/p99.
 set -euo pipefail
@@ -18,8 +19,9 @@ sizes="${1:-10000,50000}"
 queries="${2:-40}"
 limit="${3:-50}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-root="${VECTOR_BENCH_DIR:-$(mktemp -d "${TMPDIR:-/var/tmp}/gbrain-vector-bench.XXXXXX")}"
-mkdir -p "$root"
+scratch="${VECTOR_BENCH_DIR:-${TMPDIR:-/var/tmp}}"
+mkdir -p "$scratch"
+root="$(mktemp -d "$scratch/gbrain-vector-bench.XXXXXX")"
 trap 'rm -rf "$root"' EXIT
 
 (cd "$here" && cargo build --release --locked -q -p gbrain-store --example vector_scale)

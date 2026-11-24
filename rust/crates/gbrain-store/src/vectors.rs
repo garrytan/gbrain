@@ -587,6 +587,8 @@ impl ChunkScan<'_> {
         raw: impl Fn(usize, &IndexedVector) -> f64,
     ) -> Result<Option<Hit>> {
         let (read, options) = (self.read, self.options);
+        #[cfg(test)]
+        tests::PAGES_READ.with(|n| n.set(n.get() + 1));
         let page_id = group[0].id;
         let Some(page) = read_page_by_id(read, page_id)? else {
             return Ok(None);
@@ -1125,6 +1127,12 @@ mod tests {
     use crate::sources::SourceInput;
     use crate::takes::TakeInput;
     use crate::test_support::store;
+
+    thread_local! {
+        /// Pages `ChunkScan::best_chunk` read on this thread, so a test can show the bounded scan
+        /// reads fewer pages than the full scan.
+        pub(super) static PAGES_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
 
     #[test]
     fn a_query_value_beyond_float4_range_is_refused_not_turned_into_infinity() {
@@ -2127,6 +2135,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_bounded_scan_reads_only_the_pages_that_can_rank() {
+        let s = store();
+        page(&s, "default", "best", &[axis(0, 4)], json!({}));
+        for i in 0..30 {
+            page(
+                &s,
+                "default",
+                &format!("far-{i:02}"),
+                &[vec![0.1, 1.0, 0.0, 0.0]],
+                json!({}),
+            );
+        }
+        let query = q(&[1.0, 0.0, 0.0, 0.0]);
+        let read = s.read().unwrap();
+        let index = load_index(&*read, Some(&s.vectors)).unwrap();
+        let o = opts(json!({"limit": 1}));
+        let mut reads = [0usize; 2];
+        let mut rows = Vec::new();
+        for (slot, full) in [false, true].into_iter().enumerate() {
+            PAGES_READ.with(|n| n.set(0));
+            rows.push(search_chunks_by(&*read, &index, &query, &o, full).unwrap());
+            reads[slot] = PAGES_READ.with(|n| n.get());
+        }
+        assert_eq!(names(&rows[0]), ["best#0 1.0000"]);
+        assert_eq!(rows[0], rows[1]);
+        assert_eq!(reads, [1, 31]);
     }
 
     #[test]

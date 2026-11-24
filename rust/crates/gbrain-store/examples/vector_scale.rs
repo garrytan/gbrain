@@ -35,6 +35,7 @@
 //! when no full scan returned a row or no bounded call ran in under half the full scan's time
 //! (the store does not report which path ran, so that is a timing check, not a record).
 
+use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -182,17 +183,17 @@ fn query(d: &Dirs, i: u64) -> Vec<f64> {
 
 /// A record file whose `sync` does nothing; the loader syncs once at the end.
 #[derive(Debug)]
-struct NoSyncFile(Arc<std::fs::File>);
+struct NoSyncFile(Arc<File>);
 
 impl FileBackend for NoSyncFile {
     fn size(&self) -> std::io::Result<u64> {
         Ok(self.0.metadata()?.len())
     }
     fn read_at(&self, offset: u64, out: &mut [u8]) -> std::io::Result<()> {
-        std::os::unix::fs::FileExt::read_exact_at(&*self.0, out, offset)
+        read_exact_at(&self.0, out, offset)
     }
     fn write_at(&self, offset: u64, data: &[u8]) -> std::io::Result<()> {
-        std::os::unix::fs::FileExt::write_all_at(&*self.0, data, offset)
+        write_all_at(&self.0, data, offset)
     }
     fn set_len(&self, len: u64) -> std::io::Result<()> {
         self.0.set_len(len)
@@ -200,6 +201,45 @@ impl FileBackend for NoSyncFile {
     fn sync(&self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn read_exact_at(file: &File, out: &mut [u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::read_exact_at(file, out, offset)
+}
+
+#[cfg(unix)]
+fn write_all_at(file: &File, data: &[u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::write_all_at(file, data, offset)
+}
+
+// Windows has no `read_exact_at`; `seek_read` and `seek_write` may transfer less than asked, so loop.
+#[cfg(windows)]
+fn read_exact_at(file: &File, mut out: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    while !out.is_empty() {
+        match std::os::windows::fs::FileExt::seek_read(file, out, offset)? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            n => {
+                out = &mut out[n..];
+                offset += n as u64;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_all_at(file: &File, mut data: &[u8], mut offset: u64) -> std::io::Result<()> {
+    while !data.is_empty() {
+        match std::os::windows::fs::FileExt::seek_write(file, data, offset)? {
+            0 => return Err(std::io::ErrorKind::WriteZero.into()),
+            n => {
+                data = &data[n..];
+                offset += n as u64;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn body(rng: &mut Rng, words: usize) -> String {
@@ -475,8 +515,10 @@ fn verify(dir: &Path, n: u64) {
     let d = dirs(dims);
     let (mut compared, mut mismatches) = (0u64, Vec::new());
     let (mut fast_ms, mut full_ms) = (0f64, 0f64);
-    // Positive controls: cases whose full scan returned rows, and cases where the bounded call
-    // took under half the full scan's time (the bounded path ran; the store reports no path).
+    // Positive controls: cases whose full scan returned rows, and cases with rows where the bounded
+    // call took under half the full scan's time (a timing sign the bounded path ran; the store
+    // reports no path, so the unit test `the_bounded_scan_reads_only_the_pages_that_can_rank`
+    // is the deterministic check).
     let (mut nonempty, mut faster) = (0u64, 0u64);
     let mut compare = |filter: &str,
                        limit: Value,
@@ -493,8 +535,10 @@ fn verify(dir: &Path, n: u64) {
         fast_ms += fast_t;
         full_ms += full_t;
         compared += 1;
-        nonempty += u64::from(full.as_ref().is_ok_and(|rows| !rows.is_empty()));
-        faster += u64::from(fast_t * 2.0 < full_t);
+        let rows = full.as_ref().is_ok_and(|rows| !rows.is_empty());
+        nonempty += u64::from(rows);
+        // Only a case with rows counts: a limit-0 call or a refusal is fast on both paths.
+        faster += u64::from(rows && fast_t * 2.0 < full_t);
         let a = serde_json::to_string(&fast).unwrap();
         let b = serde_json::to_string(&full).unwrap();
         if a != b {
