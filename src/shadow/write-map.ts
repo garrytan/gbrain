@@ -152,6 +152,7 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   updateTakeEmbeddings: { tables: ['takes'], plan: (a) => each<any>(a[0], (t) => [{ relation: 'takes', sel: { id: id(t.take_id) } }]) },
   updateTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   resolveTake: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
+  stampTakeResolvedAt: { tables: ['takes'], plan: (a) => [{ relation: 'takes', sel: { page_id: id(a[0]), row_num: id(a[1]) } }] },
   supersedeTake: { tables: ['takes'], plan: (a) => [childById('takes', a[0])] },
   deleteTakeRows: { tables: ['takes', 'owner_only_marks'], plan: (a) => [childById('takes', a[0], true), ...OWNER_MARKS] },
   addSynthesisEvidence: { tables: ['synthesis_evidence'], plan: (a) => each<any>(a[0], (e) => [childById('synthesis_evidence', e.synthesis_page_id, false, 'synthesis_page_id')]) },
@@ -196,6 +197,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   'connect', 'connectForRestore', 'connectWithHeldLock', 'disconnect', 'reconnect', 'initSchema', 'registerBeforeDisconnect',
   'closeRetainingLock', 'holdsDatastoreLock', 'batchRetry', 'applyTransactionSettings', 'applyForwardReferenceBootstrap',
   'lockPageKeys', 'lockRegisteredSourceIds', 'keywordBoundedRead', 'rewriteLinks', 'matchTakeRows',
+  // Writes only persistence_requests (a request's takeHoldersUsed), which the shadow does not copy (seed/not_copied.rs: MachineLocal).
+  'recordTakeHoldersUsed',
   // Locks.
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Logs, caches and machine-local state (not copied).
