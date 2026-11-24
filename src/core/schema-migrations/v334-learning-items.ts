@@ -7,8 +7,8 @@ import { LEARNING_ITEMS_SCHEMA_SQL } from '../learning/schema.ts';
 // Nightly learning PR 1: learning_items, the ledger of what each cycle learned (src/core/learning/). Pointers only: a
 // row names its target row and never copies its text or visibility (DDL and rationale in learning/schema.ts, which
 // fresh installs also get through src/schema.sql). Bookkeeping, not brain content: a repo-less brain gets it unchanged.
-export const v333: Migration = {
-  version: 333,
+export const v334: Migration = {
+  version: 334,
   name: 'learning_items',
   idempotent: true,
   sql: LEARNING_ITEMS_SCHEMA_SQL,

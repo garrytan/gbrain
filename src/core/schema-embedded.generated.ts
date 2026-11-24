@@ -3781,7 +3781,7 @@ CREATE TABLE IF NOT EXISTS sync_notifier_sources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Learning ledger (migration v333, nightly learning): pointers to what each cycle learned, no copied text.
+-- Learning ledger (migration v334, nightly learning): pointers to what each cycle learned, no copied text.
 -- BEGIN GENERATED from src/core/learning/schema.ts (LEARNING_ITEMS_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 CREATE TABLE IF NOT EXISTS learning_items (
   id                BIGSERIAL PRIMARY KEY,
