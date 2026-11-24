@@ -9,7 +9,6 @@ over the page records.
 
 | Member | Returns |
 | --- | --- |
-| `brain.readChronicleBackfillBatch(q)` | The live pages after `afterId`, in id order, at most `pageBatch` (the SQL's `LIMIT 500`): a page whose type is in `types` or whose slug matches a `slugPattern` (`LIKE`), in `sourceIds` (when not empty) or else `sourceId` (when set), updated on or after `since` (a date, midnight UTC) when set. Each row is `{ id, source_id, slug, type, compiled_truth, frontmatter, effective_date, effective_date_source, content_hash, done }`; `compiled_truth` falls back to the truth lead, `effective_date` is ISO text. `done` is always false: the store keeps no chronicle ledger (`chronicle_page_state`), as the chronicle event reads assume ([generations.md](generations.md)). |
+| `brain.readChronicleBackfillBatch(q)` | The live pages after `afterId`, in id order, at most `pageBatch` (the SQL's `LIMIT 500`): a page whose type is in `types` or whose slug matches a `slugPattern` (`LIKE`), in `sourceIds` (when not empty) or else `sourceId` (when set), updated on or after `since` (a date, midnight UTC) when set. Each row is `{ id, source_id, slug, type, compiled_truth, frontmatter, effective_date, effective_date_source, content_hash, done }`; `compiled_truth` falls back to the truth lead, `effective_date` is ISO text. `done` reads the ledger row at the page's content hash and extractor version (`chronicle_ledger.rs`, [chronicle-ledger.md](chronicle-ledger.md)): true when it is extracted, or a pending or failed backfill row with fewer than `maxAttempts` attempts. |
 
-A real backfill queue (`--yes`) still writes the ledger through `upsertChronicleRow` (`src/core/chronicle/ledger.ts`),
-raw SQL the store refuses with `engine_capability_missing`.
+A real backfill queue (`--yes`) writes the ledger through `upsertChronicleRow` ([chronicle-ledger.md](chronicle-ledger.md)).

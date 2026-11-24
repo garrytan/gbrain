@@ -60,6 +60,27 @@ fn row_key(source_id: &str, page_id: i64, content_hash: &str, version: i32) -> V
     k
 }
 
+/// The backfill batch's `done` (`engine-sql/chronicle-reads.ts`, `chronicle_reads.rs`): the page's row at its
+/// content hash and extractor version is extracted, or is a pending or failed backfill row with attempts left.
+pub(crate) fn backfill_done(
+    read: &dyn crate::kv::KvRead,
+    source_id: &str,
+    page_id: i64,
+    content_hash: &str,
+    version: i32,
+    max_attempts: i32,
+) -> Result<bool> {
+    let Some(r) =
+        get_json::<LedgerRecord>(read, &row_key(source_id, page_id, content_hash, version))?
+    else {
+        return Ok(false);
+    };
+    Ok(r.state == "extracted"
+        || (matches!(r.state.as_str(), "pending" | "failed")
+            && r.trigger == "backfill"
+            && r.attempts < max_attempts))
+}
+
 /// One `chronicle_page_state` row; the times are microseconds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LedgerRecord {

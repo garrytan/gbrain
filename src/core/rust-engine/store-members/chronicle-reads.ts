@@ -1,6 +1,6 @@
 /**
  * The page batch of `chronicle-backfill` (engine-sql/chronicle-reads.ts) on a Rust brain, served by the store's pages
- * (rust/docs/store/chronicle-reads.md). The store keeps no chronicle ledger, so no page reads as `done`. The store
+ * (rust/docs/store/chronicle-reads.md). `done` reads the store's chronicle ledger row for the page. The store
  * answers `effective_date` as ISO text; the SQL engines answer Dates. Carried from 6f801f6d17, the batch read only.
  */
 import type { BrainEngine } from '../../engine.ts';

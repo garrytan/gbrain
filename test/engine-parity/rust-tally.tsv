@@ -23,6 +23,8 @@ test/engine-parity/brief-reads.test.ts	6	0
 test/engine-parity/calibration-profiles.test.ts	5	0
 test/engine-parity/caller-typed-reads.test.ts	8	0
 test/engine-parity/checkpoint-validation.test.ts	2	3
+test/engine-parity/chronicle-backfill-done.test.ts	2	0
+test/engine-parity/chronicle-backfill.test.ts	2	0
 test/engine-parity/chronicle-decision.test.ts	6	2
 test/engine-parity/chronicle-executor.test.ts	3	0
 test/engine-parity/chronicle-publish-parity.test.ts	3	0

@@ -5,8 +5,8 @@
 //!
 //! The SQL reads live pages after a cursor whose type is a chronicle type or whose slug matches a
 //! rescue pattern, in the source scope and `since` window, in id order, at most `pageBatch` rows,
-//! and flags `done` from the chronicle ledger (`chronicle_page_state`). The store keeps no chronicle
-//! ledger (see `generations/chronicle_events.rs`), so `done` is always false here.
+//! and flags `done` from the chronicle ledger (`chronicle_page_state`, `chronicle_ledger.rs`): the row at the
+//! page's content hash and extractor version is extracted, or is a pending or failed backfill row with attempts left.
 
 use crate::Store;
 use crate::env::{iso, parse_iso};
@@ -88,6 +88,17 @@ impl Store {
             if !in_scope || since_us.is_some_and(|s| page.updated_at_us < s) {
                 continue;
             }
+            let done = match page.content_hash.as_deref() {
+                Some(hash) => crate::chronicle_ledger::backfill_done(
+                    &*read,
+                    &page.source_id,
+                    page.id as i64,
+                    hash,
+                    q.extractor_version,
+                    q.max_attempts,
+                )?,
+                None => false,
+            };
             out.push(json!({
                 "id": page.id,
                 "source_id": page.source_id,
@@ -98,8 +109,7 @@ impl Store {
                 "effective_date": page.effective_date_us.map(iso),
                 "effective_date_source": page.effective_date_source,
                 "content_hash": page.content_hash,
-                // No chronicle ledger in the store, so no row marks the page done.
-                "done": false,
+                "done": done,
             }));
         }
         Ok(Value::Array(out))
@@ -175,5 +185,36 @@ mod tests {
         assert_eq!(first["done"], json!(false));
         store.soft_delete_page("cal/c", None).unwrap();
         assert_eq!(slugs(&batch(&store, json!({}))), ["meetings/a"]);
+    }
+
+    #[test]
+    fn done_is_an_extracted_row_or_an_open_backfill_with_attempts_left() {
+        let store = crate::test_support::store();
+        put(&store, "meetings/a", "meeting");
+        put(&store, "meetings/b", "meeting");
+        put(&store, "meetings/c", "meeting");
+        let rows = batch(&store, json!({}));
+        let decide = |i: usize, state: &str, trigger: &str| {
+            let w: crate::chronicle_ledger::ChronicleRowInput = serde_json::from_value(json!({
+                "sourceId": "default", "pageId": rows[i]["id"], "contentHash": rows[i]["content_hash"],
+                "extractorVersion": 2, "slug": rows[i]["slug"], "state": state, "trigger": trigger,
+            }))
+            .unwrap();
+            store.upsert_chronicle_row(&w).unwrap();
+        };
+        decide(0, "pending", "backfill");
+        decide(1, "pending", "auto");
+        let done: Vec<bool> = batch(&store, json!({}))
+            .iter()
+            .map(|r| r["done"].as_bool().unwrap())
+            .collect();
+        // A pending backfill row is done; a pending automatic row and no row are not.
+        assert_eq!(done, [true, false, false]);
+        // Another extractor version reads no row.
+        let other: Vec<bool> = batch(&store, json!({ "extractorVersion": 3 }))
+            .iter()
+            .map(|r| r["done"].as_bool().unwrap())
+            .collect();
+        assert_eq!(other, [false, false, false]);
     }
 }

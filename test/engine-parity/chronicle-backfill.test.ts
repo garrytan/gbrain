@@ -6,10 +6,8 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: chronicle_backfill --dry-run over seeded calendar, rescue-slug, note and old pages reports the same
  *    counts, skips and estimate on every engine and queues nothing; the source-list, one-source,
- *    unscoped and `since` scans agree; a `since` in the future scans nothing. A real queue (--yes) still writes the
- *    chronicle ledger through raw SQL (chronicle/ledger.ts upsertChronicleRow), so on an engine without raw SQL it
- *    stops on the typed engine_capability_missing refusal; the SQL engines queue the eligible pages. Every engine arm
- *    answers the same (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
+ *    unscoped and `since` scans agree; a `since` in the future scans nothing. A real queue (--yes) is
+ *    test/engine-parity/chronicle-backfill-done.test.ts. Every engine arm answers the same (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: the batch was raw SQL, so on a Rust brain chronicle_backfill refused before it scanned a page, even
  *    as a dry run.
  *  - Why existing coverage misses it: test/chronicle-*.test.ts run on PGLite and Postgres only.
@@ -73,15 +71,5 @@ describe('engine parity: the chronicle-backfill page batch', () => {
       expect({ listed: out.listed, one: out.one }).toEqual({ listed: out.unscoped, one: out.unscoped });
       expect({ elsewhere: (out.elsewhere as { scanned: number }).scanned, future: (out.future as { scanned: number }).scanned }).toEqual({ elsewhere: 0, future: 0 });
       return out;
-    });
-
-  parityTest('chronicle_backfill --yes queues the eligible pages on the SQL engines; the ledger write still needs raw SQL',
-    { methods: ['readChronicleBackfillBatch', 'putPage'], requires: 'raw_sql', timeout: 120_000 }, async (engine) => {
-      await seedPages(engine);
-      const queued = stable(await cli(engine, { yes: true }));
-      const again = stable(await cli(engine, { dry_run: true }));
-      expect(queued).toMatchObject({ ask_user: false });
-      expect((again as { queued: number }).queued).toBe(0);
-      return { queued, again };
     });
 });
