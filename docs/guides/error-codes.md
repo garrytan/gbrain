@@ -6466,7 +6466,7 @@ More: [docs/guides/write-refusals.md#sync_drain_lease_held](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's first sync is running (it holds a live sync lock inside the staleness ceiling, or its sync job is running with a live job lock) and no successful sync is recorded yet, so doctor sync_freshness warns instead of reading it as fresh. | A sync stamps last_sync_at only when it succeeds; a running sync is not a fresh source, and starting a second one beside it only contends for the lock. Over the staleness ceiling the lock reads as wedged (fail) instead. | Wait for the running sync, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
+| A source's first sync is running (it holds a live sync lock inside the staleness ceiling, or its sync job, started inside that ceiling, is running with a live job lock) and no successful sync is recorded yet, so doctor sync_freshness warns instead of reading it as fresh. | A sync stamps last_sync_at only when it succeeds; a running sync is not a fresh source, and starting a second one beside it only contends for the lock. Over the staleness ceiling the lock reads as wedged (fail) instead. | Wait for the running sync, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/troubleshooting.md#sync-freshness-no-successful-sync](../../docs/guides/troubleshooting.md#sync-freshness-no-successful-sync)
 
@@ -6488,7 +6488,7 @@ More: [docs/guides/write-refusals.md#sync_in_progress](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No successful sync is recorded for a source (last_sync_at is NULL) and no sync of it is running; doctor sync_freshness fails with the last attempt's time, result and held files. | The attempt comes from the newest sync job and, on a managed brain, the source's sync status (read-only). `reason` names the state: no_attempt (nothing recorded: run a sync), attempt_queued (a job is queued: wait), holds_pending (held files: inspect them first), last_attempt_unsuccessful (inspect the job or failure, then retry). | Follow the check fix: it waits, inspects holds (gbrain sync status --source <id> --json) or retries (gbrain sync --source <id>) depending on the state. | agent | `gbrain doctor --json` | 1 | no |
+| No successful sync is recorded for a source (last_sync_at is NULL) and no sync of it is running, or its sync job has run past the staleness ceiling; doctor sync_freshness fails with the last attempt's time, result and held files. | The attempt comes from the newest sync job and, on a managed brain, the source's sync status (read-only). `reason` names the state: no_attempt (nothing recorded: run a sync), attempt_queued (a job is queued: wait), holds_pending (held files: inspect them first), last_attempt_unsuccessful (inspect the job or failure, then retry; also a sync job that keeps its job lock past the staleness ceiling, which is not finishing). | Follow the check fix: it waits, inspects holds (gbrain sync status --source <id> --json) or retries (gbrain sync --source <id>) depending on the state. | agent | `gbrain doctor --json` | 1 | no |
 
 Reasons: `no_attempt`, `attempt_queued`, `holds_pending`, `last_attempt_unsuccessful`.
 

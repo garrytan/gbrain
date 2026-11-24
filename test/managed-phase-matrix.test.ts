@@ -453,6 +453,15 @@ const MATRIX: Record<CyclePhase, Entry> = {
   'schema-suggest': {
     seed: async ({ engine, sourceId }) => put(engine, sourceId, 'notes/schema-example', page('note', 'Schema', 'A plain note.')),
   },
+  learning_derive: {
+    seed: async ({ engine, sourceId }) => {
+      await engine.executeRaw("INSERT INTO facts (source_id, fact, kind, visibility, source) VALUES ($1, 'Alice moved to Lisbon', 'fact', 'private', 'mcp:extract_facts')", [sourceId]);
+    },
+    assert: async ({ engine, sourceId, result }) => {
+      expect((result.details.recorded as Record<string, number>).fact_added).toBe(1);
+      expect(await engine.executeRaw("SELECT kind FROM learning_items WHERE source_id=$1", [sourceId])).toEqual([{ kind: 'fact_added' }]);
+    },
+  },
   purge: {
     seed: async ({ engine, sourceId }) => {
       await put(engine, sourceId, 'notes/expired', page('note', 'Expired', 'Gone soon.'));
