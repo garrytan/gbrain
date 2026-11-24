@@ -395,7 +395,7 @@ jobs:
     needs: [scope, addon]
     if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"linux-x64-glibc"') }}
     runs-on: ubicloud-standard-2-ubuntu-2404
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       actions: read
@@ -411,9 +411,19 @@ jobs:
         run: |
           set -euo pipefail
           want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
-          rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.conclusion // \"running\")] | @tsv")
-          printf '%s\n' "$rows"
+          # filter=all, newest attempt per half: re-running only this check leaves the halves in an earlier
+          # attempt, which filter=latest drops. Wait (bounded) while a half shows no conclusion: the jobs API
+          # can lag a half that finished seconds before this job started.
+          deadline=$(( $(date +%s) + ${GATE_POLL_SECS:-240} ))
+          while :; do
+            rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.run_attempt // 1), (.conclusion // \"running\")] | @tsv" \
+              | sort -t $'\t' -k1,1 -k2,2n | awk -F'\t' 'NF { last[$1] = $3 } END { for (n in last) print n "\t" last[n] }' | sort)
+            printf '%s\n' "$rows"
+            printf '%s\n' "$rows" | awk -F'\t' '$2 == "running"' | grep -q . || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep "${GATE_POLL_INTERVAL:-10}"
+          done
           have=$(printf '%s\n' "$rows" | grep -c . || true)
           ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
           echo "$TARGET halves expected $want, found $have, passed $ok"
@@ -424,7 +434,7 @@ jobs:
     needs: [scope, addon]
     if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"darwin-arm64"') }}
     runs-on: ubicloud-standard-2-ubuntu-2404
-    timeout-minutes: 5
+    timeout-minutes: 8
     permissions:
       contents: read
       actions: read
@@ -440,9 +450,19 @@ jobs:
         run: |
           set -euo pipefail
           want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
-          rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.conclusion // \"running\")] | @tsv")
-          printf '%s\n' "$rows"
+          # filter=all, newest attempt per half: re-running only this check leaves the halves in an earlier
+          # attempt, which filter=latest drops. Wait (bounded) while a half shows no conclusion: the jobs API
+          # can lag a half that finished seconds before this job started.
+          deadline=$(( $(date +%s) + ${GATE_POLL_SECS:-240} ))
+          while :; do
+            rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.run_attempt // 1), (.conclusion // \"running\")] | @tsv" \
+              | sort -t $'\t' -k1,1 -k2,2n | awk -F'\t' 'NF { last[$1] = $3 } END { for (n in last) print n "\t" last[n] }' | sort)
+            printf '%s\n' "$rows"
+            printf '%s\n' "$rows" | awk -F'\t' '$2 == "running"' | grep -q . || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep "${GATE_POLL_INTERVAL:-10}"
+          done
           have=$(printf '%s\n' "$rows" | grep -c . || true)
           ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
           echo "$TARGET halves expected $want, found $have, passed $ok"
