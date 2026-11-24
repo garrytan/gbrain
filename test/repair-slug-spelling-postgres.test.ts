@@ -237,6 +237,23 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       }
     }), 120_000);
 
+    test('an empty schema before public on the search path (the role-named schema of "$user") does not hide the brain tables from the check', () => withEnv(env, async () => {
+      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      const apply = await purgedPage(sourceId, 'Notes/Rls-Schema');
+      await openAllBut('take_purges');
+      await engine.executeRaw(`CREATE POLICY ${ROLE}_open ON take_purges FOR ALL TO ${ROLE} USING (false) WITH CHECK (true)`);
+      await engine.executeRaw(`CREATE SCHEMA ${ROLE} AUTHORIZATION ${ROLE}`);
+      try {
+        const [{ schema }] = await scoped.executeRaw<{ schema: string }>('SELECT current_schema() AS schema');
+        const error = await repairJson(apply, scoped).then(() => undefined, e => e as OperationError);
+        expect({ schema, code: error?.code, names: `${error?.message}`.includes('take_purges'), slugs: await slugsIn(sourceId), comesBack: await takeComesBack(sourceId, 'notes/rls-schema') })
+          .toEqual({ schema: ROLE, code: 'writer_coordinator_required', names: true, slugs: ['Notes/Rls-Schema'], comesBack: false });
+      } finally {
+        await engine.executeRaw(`DROP SCHEMA IF EXISTS ${ROLE}`);
+        await openAllBut(null);
+      }
+    }), 120_000);
+
     test('FORCE ROW LEVEL SECURITY on the owner refuses the move too, even with policies that show every row', () => withEnv(env, async () => {
       const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
       const apply = await purgedPage(sourceId, 'Notes/Rls-Force');
