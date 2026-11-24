@@ -2129,6 +2129,7 @@
     "generations.valve.max_per_run",
     "generations.valve.max_ratio",
     "google_api_key",
+    "google_contacts.identity_links",
     "health.cache_ttl_ms",
     "hooks.stop_push_debounce_min",
     "identity.phone_country_code",
