@@ -36,7 +36,7 @@ test/engine-parity/chunk-safe-fence.test.ts	3	0
 test/engine-parity/chunk-vector-overflow.test.ts	1	0
 test/engine-parity/chunks.test.ts	21	0
 test/engine-parity/cli-capabilities.test.ts	2	0
-test/engine-parity/cli-reads-export.test.ts	16	0
+test/engine-parity/cli-reads-export.test.ts	18	0
 test/engine-parity/cli-reads-import.test.ts	20	0
 test/engine-parity/cli-reads-ops.test.ts	22	2
 test/engine-parity/code-eval-salience.test.ts	13	0
@@ -106,6 +106,7 @@ test/engine-parity/extract-bookkeeping.test.ts	2	0
 test/engine-parity/extract-takes-reads.test.ts	9	0
 test/engine-parity/extract-takes.test.ts	2	0
 test/engine-parity/extraction.test.ts	7	0
+test/engine-parity/fact-fingerprint-ambiguous.test.ts	2	3
 test/engine-parity/fact-fingerprint-corpus.test.ts	2	0
 test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-insert-guard.test.ts	2	0
