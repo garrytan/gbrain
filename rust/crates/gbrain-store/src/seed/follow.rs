@@ -396,6 +396,21 @@ pub fn relation_digest_stream(
     lo: Option<&[u8]>,
     hi: Option<&[u8]>,
 ) -> Result<IntervalDigest> {
+    relation_digest_stream_until(read, relation, lo, hi, &|| false)?.ok_or_else(|| {
+        StoreError::new(crate::error::STORE_CORRUPT, "the digest scan stopped early")
+    })
+}
+
+/// [`relation_digest_stream`] that asks `stop` before every entry and returns `None` the moment
+/// it says yes, with nothing hashed kept. The store snapshot passes its cancellation here, so a
+/// cancelled copy gives its pinned read back at the next entry, not at the end of the relation.
+pub(crate) fn relation_digest_stream_until(
+    read: &dyn KvRead,
+    relation: &str,
+    lo: Option<&[u8]>,
+    hi: Option<&[u8]>,
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<IntervalDigest>> {
     let prefix = digest_prefix(relation);
     let start = digest_key(relation, lo.unwrap_or_default());
     let end = match hi {
@@ -405,8 +420,13 @@ pub fn relation_digest_stream(
     let mut hasher = Sha256::new();
     let mut rows = 0u64;
     let mut failure = None;
+    let mut stopped = false;
     if start < end {
         read.scan(&start, &end, false, &mut |k, v| {
+            if stop() {
+                stopped = true;
+                return false;
+            }
             if v.len() < 40 {
                 failure = Some(StoreError::new(
                     crate::error::STORE_CORRUPT,
@@ -422,12 +442,15 @@ pub fn relation_digest_stream(
             true
         })?;
     }
+    if stopped {
+        return Ok(None);
+    }
     failure.map_or_else(
         || {
-            Ok(IntervalDigest {
+            Ok(Some(IntervalDigest {
                 rows,
                 digest: to_hex(&hasher.finalize()),
-            })
+            }))
         },
         Err,
     )

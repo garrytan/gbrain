@@ -173,7 +173,7 @@ fn read_records(kv: &RedbReadOnlyKv, report: &mut VerifyReport) -> Result<()> {
     let mut inventory = Inventory::default();
     inventory.scan(read)?;
     (report.keys, report.bytes, report.tags) = inventory.finish();
-    report.relations = relation_digests(read)?;
+    report.relations = relation_digests(read, None)?;
     report.keyword_index = Some(check_index(read)?);
     Ok(())
 }

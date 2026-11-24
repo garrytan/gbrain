@@ -31,7 +31,14 @@ source pass ends.
 symbolic link, and neither the target nor the brain directory may lie inside the other. A cancel or an
 error removes what the call created, and the call returns only after the read is released and the new
 file is closed, so a caller that sees the return may delete its scratch space. `SnapshotOp::progress()`
-reports `pinned`, false from that moment on.
+reports `pinned`, false from that moment on. A cancel is checked for every entry of the source pass,
+including the relation digests of a seeded store, so the read is not held for the relations that remain.
+
+The removal is checked: it runs only while the path still names the directory the call created (same
+device and inode, not a link), and a removal that does not finish is a `store_io` error that names the
+target that remains, never a clean cancel. The new directory entry and the finished files are made
+durable by syncing their directories; a directory that cannot be synced fails the call (a platform
+that cannot open a directory skips the step).
 
 The copy has `records.redb`, `FORMAT` and, written last after both are synced, `SNAPSHOT.json`. A
 directory without `SNAPSHOT.json` is incomplete.

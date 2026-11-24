@@ -27,7 +27,7 @@ use crate::error::{INVALID_STATE, Result, SNAPSHOT_CANCELLED, STORE_CORRUPT, Sto
 use crate::format::{self, FormatRecord, RECORDS_FILE};
 use crate::kv::KvRead;
 use crate::redb_kv::{RedbReadOnlyKv, RedbSink};
-use crate::seed::{MANIFEST, SeedManifest, relation_digest_stream};
+use crate::seed::{MANIFEST, SeedManifest, relation_digest_stream_until};
 use crate::{Store, StoredFormat, config, get_json, keys};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -332,16 +332,25 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The digest of every relation the seed manifest names; `None` for a store with no seed.
+/// The digest of every relation the seed manifest names; `None` for a store with no seed. With an
+/// `op`, a cancel ends the pass at the next entry with `snapshot_cancelled`, so the pinned read is
+/// not held for the relations that remain.
 pub(crate) fn relation_digests(
     read: &dyn KvRead,
+    op: Option<&SnapshotOp>,
 ) -> Result<Option<BTreeMap<String, RelationDigest>>> {
     let Some(manifest) = get_json::<SeedManifest>(read, &keys::meta(MANIFEST))? else {
         return Ok(None);
     };
     let mut out = BTreeMap::new();
+    let stop = || op.is_some_and(SnapshotOp::is_cancelled);
     for relation in manifest.relations.keys() {
-        let digest = relation_digest_stream(read, relation, None, None)?;
+        let Some(digest) = relation_digest_stream_until(read, relation, None, None, &stop)? else {
+            return Err(SnapshotOp::cancelled());
+        };
+        if stop() {
+            return Err(SnapshotOp::cancelled());
+        }
         out.insert(
             relation.clone(),
             RelationDigest {
@@ -353,11 +362,15 @@ pub(crate) fn relation_digests(
     Ok(Some(out))
 }
 
-/// The target directory this call made. Dropping the claim without `keep` removes the files it
-/// names and the directory, and nothing else.
+/// The target directory this call made. `cleanup` (and, as a fallback, dropping the claim) removes
+/// the files it names and the directory, and nothing else, and only while the path still names the
+/// directory this call created.
 struct Reservation {
     root: PathBuf,
     kept: bool,
+    /// Device and inode of the directory this call created.
+    #[cfg(unix)]
+    identity: (u64, u64),
 }
 
 impl Reservation {
@@ -390,18 +403,51 @@ impl Reservation {
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
         match builder.create(&root) {
-            Ok(()) => Ok(Reservation { root, kept: false }),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => invalid("it already exists"),
-            Err(e) => Err(io("creating it", e)),
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return invalid("it already exists");
+            }
+            Err(e) => return Err(io("creating it", e)),
         }
+        let reservation = Reservation {
+            #[cfg(unix)]
+            identity: identity(&fs::symlink_metadata(&root).map_err(|e| io("reading it", e))?),
+            root,
+            kept: false,
+        };
+        // The new entry is durable in its parent before anything is written into it; a parent that
+        // cannot be synced fails the call, and the drop of `reservation` removes the directory.
+        sync_dir(reservation.root.parent().unwrap_or(Path::new(".")))?;
+        Ok(reservation)
     }
-}
 
-impl Drop for Reservation {
-    fn drop(&mut self) {
+    /// Removes what this call made. It leaves the path alone when it no longer names the directory
+    /// this call created (it was renamed away or replaced, for example by a link), and it reports a
+    /// removal that did not finish, naming the target that remains.
+    fn cleanup(&mut self) -> Result<()> {
         if self.kept {
-            return;
+            return Ok(());
         }
+        self.kept = true;
+        let left = |what: &str| {
+            StoreError::io(format!(
+                "snapshot target {} was not removed: {what}",
+                self.root.display()
+            ))
+        };
+        let meta = match fs::symlink_metadata(&self.root) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(left(&format!("{}", e.kind()))),
+        };
+        #[cfg(unix)]
+        let same = identity(&meta) == self.identity;
+        #[cfg(not(unix))]
+        let same = true;
+        if !meta.is_dir() || meta.file_type().is_symlink() || !same {
+            return Err(left("it no longer names the directory this call made"));
+        }
+        let mut failure = None;
         for name in [
             RECORDS_FILE,
             format::FORMAT_FILE,
@@ -409,17 +455,50 @@ impl Drop for Reservation {
             MANIFEST_FILE,
             "SNAPSHOT.json.tmp",
         ] {
-            let _ = fs::remove_file(self.root.join(name));
+            match fs::remove_file(self.root.join(name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => failure = failure.or(Some(format!("{name}: {}", e.kind()))),
+            }
         }
-        let _ = fs::remove_dir(&self.root);
+        match fs::remove_dir(&self.root) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => failure = failure.or(Some(format!("the directory: {}", e.kind()))),
+        }
+        failure.map_or(Ok(()), |what| Err(left(&what)))
     }
 }
 
-fn sync_dir(dir: &Path) {
-    // A platform that cannot open a directory skips this.
-    if let Ok(handle) = fs::File::open(dir) {
-        let _ = handle.sync_all();
+#[cfg(unix)]
+fn identity(meta: &fs::Metadata) -> (u64, u64) {
+    (
+        std::os::unix::fs::MetadataExt::dev(meta),
+        std::os::unix::fs::MetadataExt::ino(meta),
+    )
+}
+
+impl Drop for Reservation {
+    /// The fallback for a path that leaves without `cleanup` (a panic); a failure is not reported.
+    fn drop(&mut self) {
+        let _ = self.cleanup();
     }
+}
+
+/// Makes the directory's entries durable. A failure to open or sync it is an error on a platform
+/// that can sync a directory; a platform that cannot open one (Windows) skips it.
+fn sync_dir(dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        let io = |what: &str, e: std::io::Error| {
+            StoreError::io(format!("snapshot: {what} {}: {}", dir.display(), e.kind()))
+        };
+        let handle = fs::File::open(dir).map_err(|e| io("opening", e))?;
+        handle.sync_all().map_err(|e| io("syncing", e))?;
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
 }
 
 fn write_manifest(root: &Path, manifest: &SnapshotManifest) -> Result<()> {
@@ -436,8 +515,7 @@ fn write_manifest(root: &Path, manifest: &SnapshotManifest) -> Result<()> {
         .map_err(|e| io("writing the manifest", e))?;
     file.sync_all().map_err(|e| io("syncing the manifest", e))?;
     fs::rename(&temp, root.join(MANIFEST_FILE)).map_err(|e| io("publishing the manifest", e))?;
-    sync_dir(root);
-    Ok(())
+    sync_dir(root)
 }
 
 impl Store {
@@ -478,9 +556,21 @@ impl Store {
             ));
         };
         let mut reservation = Reservation::make(dir, target)?;
-        let manifest = self.copy(dir, &reservation.root, op, reopen, make_sink)?;
-        reservation.kept = true;
-        Ok(manifest)
+        match self.copy(dir, &reservation.root.clone(), op, reopen, make_sink) {
+            Ok(manifest) => {
+                reservation.kept = true;
+                Ok(manifest)
+            }
+            // The copy has dropped its sink and its read. A removal that did not finish is the
+            // error the caller sees, with the target that remains named, not a clean cancel.
+            Err(error) => match reservation.cleanup() {
+                Ok(()) => Err(error),
+                Err(left) => Err(StoreError::io(format!(
+                    "{} (the copy stopped with {})",
+                    left.message, error.code
+                ))),
+            },
+        }
     }
 
     fn copy(
@@ -554,9 +644,12 @@ impl Store {
                 None => break,
             }
         }
-        let relations = relation_digests(pin.read())?;
+        let relations = relation_digests(pin.read(), Some(op))?;
         // The source pass is over: give the source its pages back before the copy is finished.
         drop(pin);
+        if op.is_cancelled() {
+            return Err(SnapshotOp::cancelled());
+        }
         let (keys, bytes, tags) = inventory.finish();
         sink.finish(generation)?;
         if reopen {
@@ -585,8 +678,7 @@ impl Store {
 
 fn write_format(root: &Path, record: &FormatRecord) -> Result<()> {
     format::write(root, record)?;
-    sync_dir(root);
-    Ok(())
+    sync_dir(root)
 }
 
 #[cfg(test)]

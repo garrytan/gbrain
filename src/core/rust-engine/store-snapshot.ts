@@ -114,7 +114,16 @@ export async function snapshotStore(
 ): Promise<SnapshotStatus & { manifest: StoreSnapshotManifest; free_bytes: { initial: number; low: number } }> {
   if (callerIsRemote()) throw ownerIpcRefusal('snapshotStore', 'a remote caller may not copy the whole brain');
   const opId = String(options?.opId ?? '');
-  const store = (engine as { openStore(member: string): RustStore }).openStore('snapshotStore');
+  // The open store, at once when there is one. A call that reaches an owner whose store is still opening waits for it
+  // (`storeFor`), as every other served member does, and is refused only when the engine is not connected.
+  const served = engine as { openStore(member: string): RustStore; storeFor?(member: string, args?: unknown[]): Promise<RustStore> };
+  let store: RustStore;
+  try {
+    store = served.openStore('snapshotStore');
+  } catch (error) {
+    if (!served.storeFor) throw error;
+    store = await served.storeFor('snapshotStore');
+  }
   if (busyStores.has(store) || entries.get(opId)?.state === 'running') throw stopped('busy', `op=${busyStores.get(store) ?? opId}`);
   const now = deps.now ?? Date.now;
   const statfs = deps.statfs ?? ((path: string) => statfsSync(path) as FsStats);
@@ -152,6 +161,11 @@ export async function snapshotStore(
     ...(options.batchDelayMs !== undefined ? { batchDelayMs: options.batchDelayMs } : {}),
     ...(options.batchBytes !== undefined ? { batchBytes: options.batchBytes } : {}),
   });
+  // A disconnect stops the copy and waits for the native call to return, so the store never closes under a running copy.
+  const unregister = (engine as { registerBeforeDisconnect?(stop: () => Promise<void>): () => void }).registerBeforeDisconnect?.(async () => {
+    stop('cancelled');
+    await copying.catch(() => undefined);
+  });
   const signal = requestSignal();
   const onAbort = (): void => stop('cancelled');
   signal?.addEventListener('abort', onAbort, { once: true });
@@ -177,6 +191,7 @@ export async function snapshotStore(
   } finally {
     clearInterval(poll);
     clearTimeout(age);
+    unregister?.();
     signal?.removeEventListener('abort', onAbort);
     busyStores.delete(store);
   }

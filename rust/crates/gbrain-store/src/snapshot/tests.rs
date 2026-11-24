@@ -2,7 +2,7 @@
 //! read held on the source. The sink is a byte file that fails on demand.
 
 use super::*;
-use crate::error::STORE_IO;
+use crate::error::{SNAPSHOT_CANCELLED, STORE_IO};
 use crate::kv::FileBackend;
 use crate::{OpenOptions, Store};
 use std::sync::Mutex;
@@ -191,6 +191,173 @@ fn a_manifest_read_from_javascript_numbers_accepts_whole_floats_only() {
             "{bad}"
         );
     }
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A read that cancels `op` after the first entry of any scan, as a client that leaves mid-pass does.
+struct CancelAfterFirstEntry<'a> {
+    inner: &'a dyn KvRead,
+    op: &'a SnapshotOp,
+}
+
+impl KvRead for CancelAfterFirstEntry<'_> {
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        self.inner.get(key)
+    }
+    fn scan(
+        &self,
+        start: &[u8],
+        end: &[u8],
+        reverse: bool,
+        f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+    ) -> Result<()> {
+        self.inner.scan(start, end, reverse, &mut |k, v| {
+            let more = f(k, v);
+            self.op.cancel();
+            more
+        })
+    }
+}
+
+/// The relation pass runs while the source read is pinned, so a cancel has to end it at the next
+/// entry, not after the relations that remain.
+#[test]
+fn a_cancel_during_the_relation_pass_ends_it_at_the_next_entry() {
+    // A seed needs an empty store, so this one has no pages.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-tmp")
+        .join(format!("snap-relation-cancel-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let options = OpenOptions {
+        keyword_index_builder: false,
+        ..OpenOptions::default()
+    };
+    let store = Store::open_dir(&root.join("brain"), options).unwrap();
+    let row = |k: &str| -> crate::seed::SeedRow {
+        [("key", k), ("value", "1")]
+            .iter()
+            .map(|(a, b)| ((*a).to_owned(), Some((*b).to_owned())))
+            .collect()
+    };
+    let digests = [1u8, 2, 3].map(|n| crate::seed::DigestInput {
+        sort: format!("{n:02x}"),
+        digest: format!("{n:02x}").repeat(32),
+    });
+    store
+        .import_relation_with_digests(
+            "seed-1",
+            "config",
+            vec![row("a"), row("b"), row("c")],
+            &digests,
+        )
+        .unwrap();
+    let (read, _) = store.kv.versioned_snapshot().unwrap();
+    // No cancel: every entry is hashed.
+    let whole = relation_digests(&*read, Some(&SnapshotOp::new()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(whole["config"].rows, 3);
+    // A cancel after the first entry: the second entry is never hashed.
+    let op = SnapshotOp::new();
+    let error = relation_digests(
+        &CancelAfterFirstEntry {
+            inner: &*read,
+            op: &op,
+        },
+        Some(&op),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, SNAPSHOT_CANCELLED, "{error:?}");
+    // A cancel that came before the pass ends it before the first relation is read.
+    let op = SnapshotOp::new();
+    op.cancel();
+    assert_eq!(
+        relation_digests(&*read, Some(&op)).unwrap_err().code,
+        SNAPSHOT_CANCELLED
+    );
+    drop(read);
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Runs a snapshot of `store` into `target` slowly, and lets `mischief` act once the copy has
+/// started; `mischief` then cancels the call.
+fn cancelled_with(store: &Store, target: &Path, mischief: impl FnOnce() + Send) -> StoreError {
+    let op = SnapshotOp::new()
+        .with_batch_bytes(4096)
+        .with_batch_delay_ms(150);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while op.progress().keys == 0 {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            mischief();
+            op.cancel();
+        });
+        store.snapshot_to(target, &op).unwrap_err()
+    })
+}
+
+/// A removal that cannot finish is the error the caller sees, with the target named; it is not a
+/// clean cancel.
+#[cfg(unix)]
+#[test]
+fn a_cleanup_that_cannot_finish_is_reported_with_the_target_that_remains() {
+    use std::os::unix::fs::PermissionsExt;
+    let (store, root) = brain("snap-cleanup-fails");
+    let target = root.join("copy");
+    let shut = target.clone();
+    let error = cancelled_with(&store, &target, move || {
+        fs::set_permissions(&shut, fs::Permissions::from_mode(0o500)).unwrap();
+    });
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(error.code, STORE_IO, "{error:?}");
+    assert!(error.message.contains("copy"), "{}", error.message);
+    assert!(error.message.contains("not removed"), "{}", error.message);
+    assert!(target.join(RECORDS_FILE).exists(), "the remains are real");
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A path that stopped naming the directory this call made is not cleaned: here it was swapped for
+/// a link to the brain itself, and a cancel must leave the brain's files alone.
+#[cfg(unix)]
+#[test]
+fn a_target_swapped_for_a_link_to_the_brain_is_not_cleaned_through() {
+    let (store, root) = brain("snap-link-swap");
+    let target = root.join("copy");
+    let (moved, brain_dir) = (root.join("moved"), root.join("brain"));
+    let (from, to) = (target.clone(), brain_dir.clone());
+    let to_moved = moved.clone();
+    let error = cancelled_with(&store, &target, move || {
+        fs::rename(&from, &to_moved).unwrap();
+        std::os::unix::fs::symlink(&to, &from).unwrap();
+    });
+    assert_eq!(error.code, STORE_IO, "{error:?}");
+    assert!(
+        error.message.contains("no longer names the directory"),
+        "{}",
+        error.message
+    );
+    assert!(brain_dir.join(RECORDS_FILE).exists(), "the brain's records");
+    assert!(
+        brain_dir.join(format::FORMAT_FILE).exists(),
+        "the brain's FORMAT"
+    );
+    assert!(moved.join(RECORDS_FILE).exists(), "the moved copy is left");
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A directory that cannot be synced is an error, not a skipped step.
+#[cfg(unix)]
+#[test]
+fn a_directory_that_cannot_be_synced_is_an_error() {
+    let (store, root) = brain("snap-sync-dir");
+    assert!(sync_dir(&root).is_ok());
+    let error = sync_dir(&root.join("missing")).unwrap_err();
+    assert_eq!(error.code, STORE_IO, "{error:?}");
     drop(store);
     let _ = fs::remove_dir_all(root);
 }

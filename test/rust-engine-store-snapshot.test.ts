@@ -189,4 +189,33 @@ const plenty: FsStats = { bavail: 1_000_000_000, bsize: 4096, blocks: 2_000_000_
       await client.disconnect();
     }
   }, 30_000);
+  test('a disconnect during an in-process copy stops it and waits for the native call before the store closes', async () => {
+    const lone = join(root, 'lone-brain');
+    const engine = openRustEngine({ addon, databasePath: lone });
+    await engine.connect({ engine: 'pglite', database_path: lone } as never);
+    for (let n = 0; n < 40; n++) {
+      await engine.putPage(`notes/q${n}`, { type: 'note', title: `Q ${n}`, compiled_truth: `Body ${n} ${'filler '.repeat(40)}`, timeline: '' });
+    }
+    const opId = nextId();
+    const target = join(root, 'copy-disconnect');
+    const copying = snapshotStore(engine, target, { opId, batchBytes: 4096, batchDelayMs: 100 }, { statfs: () => plenty });
+    await until('the copy to start', () => existsSync(join(target, 'records.redb')));
+    const outcome = reason(copying);
+    await engine.disconnect();
+    expect(await outcome).toBe('cancelled');
+    // Terminal only after the native call returned: nothing is left and the status is final.
+    expect(snapshotStatus(opId)).toMatchObject({ state: 'cancelled', reason: 'cancelled' });
+    expect(existsSync(target)).toBe(false);
+  }, 30_000);
+
+  test('a copy that reaches an owner whose store is still opening waits for the store', async () => {
+    let opened = false;
+    const waiting = {
+      openStore: () => { throw new Error('engine_closed: the store is not open yet'); },
+      storeFor: async (member: string) => { await sleep(50); opened = true; return (owner as unknown as { openStore(m: string): unknown }).openStore(member); },
+    };
+    const done = await snapshotStore(waiting, join(root, 'copy-waiting'), { opId: nextId() }, { statfs: () => plenty });
+    expect(opened).toBe(true);
+    expect(done.state).toBe('done');
+  }, 30_000);
 });
