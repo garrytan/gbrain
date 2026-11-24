@@ -55,21 +55,54 @@ async function primaryFloors(reads: ReadSource, plan: SeedPlan): Promise<Record<
   return out;
 }
 
-/** The full-relation digest of `relation` on the primary, computed as the store computes `relationDigest(null, null)`. */
-async function primaryDigest(reads: ReadSource, relation: string, key: readonly string[]): Promise<{ rows: number; digest: string }> {
+/**
+ * The full-relation digest of `relation` on the primary, computed as the store computes `relationDigest(null, null)`.
+ * Keys are walked in byte order (`COLLATE "C"`, graduation-digest.ts) whatever the database's default collation, so an
+ * ICU-default Postgres brain digests the same way the Rust store does. `order` is the first key column of each row, in
+ * walk order (tests).
+ */
+export async function primaryRelationDigest(reads: ReadSource, relation: string, key: readonly string[]): Promise<{ rows: number; digest: string; order: string[] }> {
   // The read source opens each read in one REPEATABLE READ transaction with the digest session settings.
   return reads.read(async (tx) => {
     const plan = await relationRead(tx, relation, key);
     const entries: Array<{ sort: Buffer; digest: Buffer }> = [];
+    const order: string[] = [];
     let after: readonly string[] | null = null;
     for (;;) {
       const rows = await readKeysetRows(tx, plan, after, DIGEST_BATCH);
-      for (const r of rows) entries.push({ sort: sortKey(plan.key, r.key), digest: rowDigest(r.values) });
+      for (const r of rows) { entries.push({ sort: sortKey(plan.key, r.key), digest: rowDigest(r.values) }); order.push(String(r.key[0])); }
       if (rows.length < DIGEST_BATCH) break;
       after = rows[rows.length - 1]!.key;
     }
-    return { rows: entries.length, digest: intervalDigest(entries).toString('hex') };
+    return { rows: entries.length, digest: intervalDigest(entries).toString('hex'), order };
   });
+}
+
+/**
+ * The forward fingerprint guard, inside the fence and before authority moves: the probe runs on the live primary and
+ * the swap continues only when no stored fact holds a code point the Rust engine fingerprints differently and the
+ * corpus sample agrees. An affected fact or a failed probe refuses `fingerprint_semantics_differ`; a probe that cannot
+ * run (an error, a primary without the fingerprint functions) refuses `verification_incomplete`. Never a silent pass.
+ */
+export async function checkFingerprints(reads: ReadSource, rpc: Rpc): Promise<'pass'> {
+  let record: ProbeRecord;
+  try {
+    const sample = await reads.read(async (tx) => ((await hasFingerprintFunctions(tx)) ? probeOnPrimary(tx) : null));
+    if (!sample) throw new SwapVerifyError('verification_incomplete', 'the fingerprint probe could not run: the primary has no fingerprint functions (run gbrain apply-migrations)');
+    const { sql, ...meta } = sample;
+    record = await rpc<ProbeRecord>('probe', { sql, ...meta }, 30_000);
+  } catch (error) {
+    if (error instanceof SwapVerifyError) throw error;
+    throw new SwapVerifyError('verification_incomplete', `the fingerprint probe could not run (${String((error as { code?: unknown } | null)?.code ?? 'error')})`);
+  }
+  const affected = Number(record.facts_with_differing_code_points ?? 0);
+  if (affected > 0) {
+    throw new SwapVerifyError('fingerprint_semantics_differ', `${affected} stored fact(s) hold a code point whose fingerprint differs under the Rust engine (${record.differing_code_points_total} differing code point(s))`);
+  }
+  if (record.state !== 'pass' || Number(record.corpus_mismatches ?? 0) > 0) {
+    throw new SwapVerifyError('fingerprint_semantics_differ', `the fingerprint probe found ${record.mismatches + Number(record.corpus_mismatches ?? 0)} mismatch(es)`);
+  }
+  return 'pass';
 }
 
 export interface VerifyDeps {
@@ -95,19 +128,12 @@ export async function verifyEngines(d: VerifyDeps): Promise<NonNullable<SwapReco
   // Read back from the store, not the follower file (the child writes that file at most once a second).
   const checked = await d.rpc<Array<{ ok: boolean }>>('allocatorCheck', { primaryMax: floors }, 60_000);
   if (!checked.every(c => c.ok)) throw new SwapVerifyError('verification_incomplete', 'the allocator check did not pass');
-  const sample = await d.reads.read(async (tx) => ((await hasFingerprintFunctions(tx)) ? probeOnPrimary(tx) : null));
-  let probe: 'pass' | 'fail' | 'not_run' = 'not_run';
-  if (sample) {
-    const { sql, ...meta } = sample;
-    const record = await d.rpc<ProbeRecord>('probe', { sql, ...meta }, 30_000);
-    probe = record.state;
-    if (probe === 'fail') throw new SwapVerifyError('fingerprint_semantics_differ', `the fingerprint probe found ${record.mismatches} mismatch(es)`);
-  }
+  const probe: 'pass' | 'fail' | 'not_run' = await checkFingerprints(d.reads, d.rpc);
   const tables = new Set(await d.reads.read(async (_, query) => (await query(`SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relkind = 'r'`)).map(r => String(r.name))));
   const digests: NonNullable<SwapRecord['verify']>['digests'] = [];
   for (const rp of plan.relations) {
     if (!tables.has(rp.relation)) continue;
-    const ours = await primaryDigest(d.reads, rp.relation, rp.key);
+    const ours = await primaryRelationDigest(d.reads, rp.relation, rp.key);
     const theirs = await d.rpc<SeedIntervalDigest>('relationDigest', { relation: rp.relation, lo: null, hi: null }, 120_000);
     digests.push({ relation: rp.relation, rows: ours.rows, primary: ours.digest, rust: theirs.digest });
     if (theirs.rows !== ours.rows || theirs.digest !== ours.digest) {

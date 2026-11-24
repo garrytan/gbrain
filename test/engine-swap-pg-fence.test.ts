@@ -60,12 +60,12 @@ d('a swap run on a Postgres primary', () => {
     expect(bySlug.order).toEqual(bytes);
     expect(got.digest).toMatch(/^[0-9a-f]{64}$/);
     // The digest is stable and equals one computed from the same rows in byte order.
-    const again = await primaryRelationDigest(reads, 'pages', ['source_id', 'slug']);
+    const again = await primaryRelationDigest(reads, 'pages', ['id']);
     expect(again.digest).toBe(got.digest);
   }, 60_000);
 
   test('the fence refuses every other session; only the run writes; cutover keeps the fence', async () => {
-    const fenced = await fencePrimary(engine, RUN, { hostId: 'host-test', config: CONFIG });
+    const fenced = await fencePrimary(engine, RUN, { hostId: '00000000-0000-4000-8000-0000000000b1', config: CONFIG });
     expect(fenced.tables).toBeGreaterThan(50);
     expect(await primaryFenced(engine, RUN)).toBe(true);
     await expect(insertPage(engine, 'after-fence')).rejects.toThrow();
@@ -86,7 +86,7 @@ d('a swap run on a Postgres primary', () => {
   test('a resumed run repairs a fence trigger that went missing, and keeps the run row', async () => {
     await withGraduationRun(engine, RUN, async tx => { await tx.executeRaw(`DROP TRIGGER ${GRADUATION_FENCE_TRIGGER} ON pages`); });
     expect(await primaryFenced(engine, RUN)).toBe(false);
-    await fencePrimary(engine, RUN, { hostId: 'host-test', config: CONFIG });
+    await fencePrimary(engine, RUN, { hostId: '00000000-0000-4000-8000-0000000000b1', config: CONFIG });
     expect(await primaryFenced(engine, RUN)).toBe(true);
     expect((await readGraduationRow(engine))!.run_id).toBe(RUN);
     await expect(insertPage(engine, 'after-repair')).rejects.toThrow();
