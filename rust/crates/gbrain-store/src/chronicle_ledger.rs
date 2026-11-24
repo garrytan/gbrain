@@ -190,11 +190,12 @@ fn scan<T: for<'de> Deserialize<'de>>(
 }
 
 impl Store {
-    /// `upsertChronicleRow(w)`: inserts the row, or replaces the decision columns of the row at the same key and
-    /// stamps it now. Returns false when a guard leaves the old row alone: an automatic decision never overwrites a
-    /// pending or failed backfill row, and an extracted row yields only to a different generation of the page that
-    /// was extracted after it.
-    pub fn upsert_chronicle_row(&self, w: &ChronicleRowInput) -> Result<bool> {
+    /// The upsert of `upsertChronicleRow(w)` without its foreign-key checks (`Store::upsert_chronicle_row`, in
+    /// chronicle_state.rs, checks the row's source and page first): inserts the row, or replaces the decision columns of
+    /// the row at the same key and stamps it now. Returns false when a guard leaves the old row alone: an automatic
+    /// decision never overwrites a pending or failed backfill row, and an extracted row yields only to a different
+    /// generation of the page that was extracted after it.
+    pub(crate) fn upsert_chronicle_row_unchecked(&self, w: &ChronicleRowInput) -> Result<bool> {
         no_nul(
             OP_UPSERT,
             &[
