@@ -276,10 +276,13 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       }
     }), 120_000);
 
-    for (const table of ['pages', 'files']) {
+    // Every table the move reads or re-keys by slug (SLUG_COLUMNS_MOVED); the purge tables have their own cases below.
+    for (const table of ['pages', 'files', 'facts', 'fact_withdrawals', 'page_aliases', 'secret_store_occurrence', 'slug_aliases', 'slug_rename_history']) {
       test(`row security on ${table} (a policy that shows the role nothing) refuses the preview and names the table`, () => withEnv(env, async () => {
         const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
         await purgedPage(sourceId, `Notes/Rls-${table}`);
+        const [{ rowsecurity }] = await engine.executeRaw<{ rowsecurity: boolean }>("SELECT rowsecurity FROM pg_tables WHERE schemaname='public' AND tablename=$1", [table]);
+        if (!rowsecurity) await engine.executeRaw(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
         await openAllBut(table);
         await engine.executeRaw(`CREATE POLICY ${ROLE}_open ON ${table} FOR ALL TO ${ROLE} USING (false) WITH CHECK (true)`);
         try {
@@ -287,6 +290,8 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
           expect({ code: error?.code, names: `${error?.message}`.includes(table) && `${error?.suggestion}`.includes('BYPASSRLS'), slugs: await slugsIn(sourceId) })
             .toEqual({ code: 'writer_coordinator_required', names: true, slugs: [`Notes/Rls-${table}`] });
         } finally {
+          await engine.executeRaw(`DROP POLICY IF EXISTS ${ROLE}_open ON ${table}`);
+          if (!rowsecurity) await engine.executeRaw(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY`);
           await openAllBut(null);
         }
       }), 120_000);
