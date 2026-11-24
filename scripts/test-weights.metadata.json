@@ -19,6 +19,25 @@
     "a9c0908f74bc0290ca7cd7f01944bce6f4dd512a"
   ],
   "measuredFiles": 5467,
-  "totalFiles": 5467,
-  "mergeExisting": false
+  "totalFiles": 5510,
+  "mergeExisting": true,
+  "coverageOnly": {
+    "addedFiles": 43,
+    "run": "45431264437",
+    "commit": "30e980e7707278d3704cc87b406f53cdfc5fe2a9",
+    "runs": [
+      "45431264437",
+      "45426238477",
+      "45412413625",
+      "45405933522",
+      "45398986192"
+    ],
+    "commits": [
+      "30e980e7707278d3704cc87b406f53cdfc5fe2a9",
+      "99a0369406562551f7c7078e6aa3f63c096a3ab5",
+      "233bd0401bd7aae94a2e64883c1030bb96b2ca4c",
+      "d7b17d4dac73daaaddf0bd5544a16aaef5e1f852",
+      "4b16903ecbe945af1e01df4dcdedd9243c9e916b"
+    ]
+  }
 }
