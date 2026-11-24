@@ -37,6 +37,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   facts_drain: 'global',
   embed: 'global',
   orphans: 'global',
+  learning_derive: 'global',
   purge: 'global',
   bookkeeping_gc: 'global',
   'schema-suggest': 'source',

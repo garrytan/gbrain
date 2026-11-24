@@ -3000,6 +3000,32 @@ CREATE TABLE IF NOT EXISTS sync_notifier_sources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Learning ledger (migration v334, nightly learning): pointers to what each cycle learned, no copied text.
+CREATE TABLE IF NOT EXISTS learning_items (
+  id                BIGSERIAL PRIMARY KEY,
+  run_id            UUID NOT NULL,
+  source_id         TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  kind              TEXT NOT NULL CHECK (kind IN ('fact_added','you_wrote','promise_found','page_filled','conflict_found','duplicate_to_confirm')),
+  target_table      TEXT NOT NULL CHECK (target_table IN ('facts','decide_proposals','open_loops','page_versions','pages')),
+  target_id         BIGINT NOT NULL,
+  subject_slug      TEXT,
+  subject_source_id TEXT,
+  prior_revision    TEXT,
+  state             TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','kept','undone','answered','expired')),
+  shown_at          TIMESTAMPTZ,
+  decided_at        TIMESTAMPTZ,
+  decided_by        TEXT,
+  member_id         TEXT,
+  CONSTRAINT learning_items_target_uniq UNIQUE (kind, target_table, target_id)
+);
+CREATE INDEX IF NOT EXISTS learning_items_source_state_created_idx ON learning_items (source_id, state, created_at);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE learning_items ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
 -- Last statement: pg_temp ends every gbrain function's pinned search_path (#7632), after any CREATE OR REPLACE above reset it.
 DO \$harden\$
 DECLARE f RECORD;

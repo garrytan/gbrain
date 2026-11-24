@@ -36,7 +36,7 @@ async function sharedSourceUnread(engine: BrainEngine, remote: boolean): Promise
         AND NOT EXISTS (SELECT 1 FROM access_member_sources ms WHERE ms.source_id = s.id)
         AND NOT ${guestSourceSql('s.config', 's.id')}
         AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = s.id AND p.deleted_at IS NULL)
-      ORDER BY s.id`)).map(r => r.id);
+      ORDER BY s.id COLLATE "C"`)).map(r => r.id);
   const grants: PrincipalGrant[] = [
     ...(await engine.executeRaw<Record<string, unknown>>(
       `SELECT t.* FROM access_tokens t JOIN access_members m ON m.id = t.member_id WHERE t.revoked_at IS NULL AND ${ENABLED}`))
