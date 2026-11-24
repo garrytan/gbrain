@@ -365,7 +365,8 @@ function hash12(value: string): string {
 
 /** Minimal config slice the engine-uniform path resolvers key on (loadConfig's shape). */
 export interface IpcPathConfig {
-  engine?: 'postgres' | 'pglite';
+  /** `rust` keys like PGLite: one store directory, sockets inside it (rust-engine/owner-ipc/). */
+  engine?: 'postgres' | 'pglite' | 'rust';
   database_path?: string;
   database_url?: string;
 }
