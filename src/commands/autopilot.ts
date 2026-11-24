@@ -1535,15 +1535,7 @@ export function classifyAutopilotStatus(input: {
   daemon?: { staleAfter: number; nextTickAt: string | null } | null;
   lastLog: string;
 }): AutopilotStatusReport {
-  // Tolerance = 6 intervals. The adaptive scheduler sleeps TWO intervals
-  // between ticks on the healthiest brains (score >= 90), and the heartbeat
-  // only refreshes at tick top — so a healthy gap is cycle_duration + 2x
-  // interval, and a 3x tolerance would flap 'stale' exit-1 alarms on exactly
-  // the installs doing best. 6x still catches the dead-daemon incident in
-  // 30 minutes at the default interval instead of 71 days. A non-finite or
-  // non-positive interval (a typo'd flag upstream) would make staleAfter NaN
-  // and every age comparison false — reading a long-dead daemon as 'fresh' —
-  // so the pure layer defends itself too.
+  // Six intervals cover one cycle plus adaptive sleep. Invalid flags retain the default cutoff.
   const daemon = input.daemon && Number.isFinite(input.daemon.staleAfter) && input.daemon.staleAfter > 0 ? input.daemon : null;
   const staleAfter = daemon ? daemon.staleAfter
     : Number.isFinite(input.intervalSeconds) && input.intervalSeconds > 0
@@ -1607,8 +1599,7 @@ function showStatus(json: boolean, intervalSeconds: number) {
 
   const jobStatus = autopilotJobStatus(job);
   const installTarget = jobStatus.installTarget;
-  // Service managers outside `autopilot --install` can run the native daemon.
-  // The processing record is tied to the live owner of this brain's lock.
+  // The native processing record ties externally launched daemons to this brain's live lock owner.
   const processing = readAutopilotProcessingStatus();
   const report = classifyAutopilotStatus({
     installed: installTarget !== null,
