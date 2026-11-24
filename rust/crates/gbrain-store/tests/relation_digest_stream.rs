@@ -33,12 +33,12 @@ const ROWS: u32 = 300_000;
 struct Synthetic;
 
 fn entry(i: u32) -> (Vec<u8>, Vec<u8>) {
-    let mut key = b"Mshadow_digest/chunks/".to_vec();
-    key.extend_from_slice(&i.to_be_bytes());
+    let mut record_id = b"Mshadow_digest/chunks/".to_vec();
+    record_id.extend_from_slice(&i.to_be_bytes());
     let mut value = vec![(i % 251) as u8; 32];
     value.extend_from_slice(&0u64.to_be_bytes());
     value.extend_from_slice(br#"{"id":"0000000000","chunk_index":"0","page_id":"0000000000"}"#);
-    (key, value)
+    (record_id, value)
 }
 
 impl KvRead for Synthetic {
