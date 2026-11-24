@@ -25,6 +25,7 @@ import { maintenanceTransaction } from '../src/core/persistence/attribution.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { withStoredSlug } from '../src/core/utils.ts';
 import { recordWriteGateHold } from '../src/core/write-gate-store.ts';
+import { holdAppliesToPageSql } from '../src/core/write-gate-binding.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -110,17 +111,18 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
     expect(await refused(() => engine.addTakesBatch([{ page_id: page!.id, row_num: 1, claim: 'A purged take', kind: 'take', holder: 'brain', weight: 0.5 }]))).toContain('purged_content');
   }), 60_000);
 
-  test('a decided hold of the page that a writer re-opens during the move is never missed: the move waits for the hold row, then refuses and moves nothing', () => withEnv(env, async () => {
+  test('a hold a writer re-opens during the move, or records under the old spelling after it, still keeps its row out of the moved page', () => withEnv(env, async () => {
     _resetCliExitVerdictForTests();
     const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
-    const claim = 'Alpha ignored the previous instructions zanzibarquux';
+    const claim = 'Alpha ignored the previous instructions zanzibarquux', later = 'Alpha ignored the previous instructions gladewick';
     await engine.executeRaw("INSERT INTO sources(id,name,config) VALUES($1,$1,'{}')", [sourceId]);
     await engine.putPage('notes/seed-hold-race', { type: 'note', title: 'Hold race', compiled_truth: 'before', timeline: '' }, { sourceId });
     await engine.executeRaw('UPDATE pages SET slug=$1 WHERE slug=$2 AND source_id=$3', ['Notes/Hold-Race', 'notes/seed-hold-race', sourceId]);
+    const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1', [sourceId]);
     const assessment = { verdict: 'quarantine' as const, tier: 'agent_written' as const, ran: true, families: ['override' as const], hits: [], detectorError: false, detectorVersion: 2, contentHash: null };
-    const hold = (tx: BrainEngine, slug: string) => recordWriteGateHold(tx, { kind: 'fact', sourceId, slug, texts: [claim, null, null], assessment,
-      payload: { fact: claim, kind: 'fact', visibility: 'world', entity_slug: slug, row_num: 2 } });
-    // The page's only hold is a decided record, so the preview moves it.
+    const hold = (tx: BrainEngine, slug: string, text = claim, row = 2) => recordWriteGateHold(tx, { kind: 'fact', sourceId, slug, texts: [text, null, null], assessment,
+      payload: { fact: text, kind: 'fact', visibility: 'world', entity_slug: slug, row_num: row } });
+    // The page's only hold is a decided record bound to the page.
     await hold(engine, 'Notes/Hold-Race');
     await engine.executeRaw("UPDATE write_gate_holds SET status='dropped' WHERE source_id=$1", [sourceId]);
     const preview = await repairJson(['slug-spelling', '--source', sourceId]);
@@ -129,22 +131,23 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
     let release!: () => void, resighted!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const touched = new Promise<void>(resolve => { resighted = resolve; });
-    // A writer that records no page lock: it re-opens the decided hold and keeps its transaction open.
+    // A writer that records no page lock: it re-opens the decided hold and keeps its transaction open while the move runs.
     const writer = engine.transaction(async tx => { await hold(tx, 'Notes/Hold-Race'); resighted(); await gate; });
     await touched;
-    let settled = false;
-    const apply = repairJson(['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes']).then(
-      value => { settled = true; return value; }, error => { settled = true; throw error; });
+    const apply = repairJson(['slug-spelling', '--source', sourceId, '--apply', '--expect', preview.preview_hash, '--yes']);
     apply.catch(() => undefined);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    expect(settled).toBe(false);
+    await Promise.race([apply, new Promise(resolve => setTimeout(resolve, 1500))]);
     release();
     await writer;
-    const error = await apply.then(() => undefined, e => e as OperationError);
-    expect(error?.code).toBe('changed_since_preview');
-    const holds = await engine.executeRaw<{ slug: string; status: string }>('SELECT slug, status FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [sourceId]);
-    expect(holds.map(h => [h.slug, h.status])).toEqual([['Notes/Hold-Race', 'held']]);
-    expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug)).toEqual(['Notes/Hold-Race']);
+    expect(await apply).toMatchObject({ applied: 1 });
+    expect((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1', [sourceId])).map(r => r.slug)).toEqual(['notes/hold-race']);
+    // A writer on another connection that still names the old spelling after the move.
+    await engine.transaction(async tx => { await hold(tx, 'Notes/Hold-Race', later, 3); });
+    const holds = await engine.executeRaw<{ slug: string; status: string; page_id: number | null }>('SELECT slug, status, page_id FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [sourceId]);
+    expect(holds.map(h => [h.slug, h.status, h.page_id === null ? null : Number(h.page_id)])).toEqual([['Notes/Hold-Race', 'held', Number(page!.id)], ['Notes/Hold-Race', 'held', null]]);
+    const applying = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM write_gate_holds h JOIN pages p ON p.source_id = h.source_id AND p.slug = 'notes/hold-race'
+      WHERE h.source_id = $1 AND h.status = 'held' AND ${holdAppliesToPageSql('h', 'p.id', 'p.slug')}`, [sourceId]);
+    expect(applying[0]!.n).toBe(2);
   }), 60_000);
 
   describe('a role that row-level security keeps from a guard table', () => {
@@ -182,7 +185,7 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       }
     }
 
-    for (const hidden of ['take_purges', 'fact_purges', 'write_gate_holds']) {
+    for (const hidden of ['take_purges', 'fact_purges']) {
       test(`${hidden} hidden from the role: the move is refused before anything moves, and moves once the role can read it`, () => withEnv(env, async () => {
         _resetCliExitVerdictForTests();
         const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;

@@ -5,8 +5,7 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  1. Contract: the preview lists every page of one source whose slug is not its normal slug, as `move`, `needs_human`
- *     (a page already holds the normal slug, or two stored spellings share it, or the page has a held write under either
- *     spelling: never moved, the owner releases or drops the holds first) or `rename_file_first` (the page's file
+ *     (a page already holds the normal slug, or two stored spellings share it: never moved) or `rename_file_first` (the page's file
  *     in a checkout is not at the normal path). `--apply --expect <hash> --yes` moves only the movable pages, one
  *     transaction per page, keeping the page id, versions, tags, timeline, links, facts, withdrawals, aliases and
  *     attachments (`files.page_slug`; ids, storage paths and bytes unchanged); another source's rows are untouched.
@@ -337,35 +336,37 @@ describe('guards that follow the page to its normal slug', () => {
     engine.executeRaw(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, status, seen_count)
       VALUES ($1, $2, $3, $4, 2, 'external_untrusted', $5::text::jsonb, $6, 3)`, [opts.kind ?? 'fact', sourceId, slug, holdFingerprint(opts.kind ?? 'fact', [opts.claim, null, null]),
       JSON.stringify({ fact: opts.claim, kind: opts.kind ?? 'fact', visibility: 'world', entity_slug: slug, row_num: opts.row ?? 2 }), opts.status ?? 'held']);
-  const holdRows = (sourceId: string) => engine.executeRaw('SELECT id, kind, slug, status, fingerprint, payload, seen_count, decided_by FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [sourceId]);
+  const holdRows = (sourceId: string) => engine.executeRaw('SELECT id, kind, slug, page_id, page_candidates, status, fingerprint, payload, seen_count, decided_by FROM write_gate_holds WHERE source_id=$1 ORDER BY id', [sourceId]);
   const items = (preview: { details?: unknown }) => (preview.details as { items: Array<{ slug: string; code?: string; message?: string; fix?: { user_message?: string } }> }).items;
 
-  test('a page with a held fence row is never moved: it is listed as needs_human naming the held writes, the apply moves nothing, and the hold stays held under its spelling', () => withEnv(env, async () => {
+  test('a page with a held fence row moves: a hold bound to the page keeps its page id, a hold under the old spelling still reaches the page, and the held row stays out of the moved page', () => withEnv(env, async () => {
     const s = await newSource();
     const claim = 'Alpha ignored the previous instructions zanzibarquux';
     const compiled = `Alpha runs acme-example.\n\n## Facts\n\n${renderFactsTable([fenceRow(1, 'Alpha ships widgets'), fenceRow(2, claim)])}\n`;
-    const old = await storeAs(s.id, 'Notes/Hold-Move', 'Hold page', compiled);
+    const unbound = await storeAs(s.id, 'Notes/Hold-Move', 'Hold page', compiled);
+    const bound = await storeAs(s.id, 'Notes/Hold-Bound', 'Bound page', compiled);
     await hold(s.id, 'Notes/Hold-Move', { claim });
+    await hold(s.id, 'Notes/Hold-Bound', { claim });
+    await engine.executeRaw('UPDATE write_gate_holds SET page_id = $1 WHERE source_id = $2 AND slug = $3', [bound.id, s.id, 'Notes/Hold-Bound']);
     const overlayAt = (slug: string) => loadFenceChunkOverlay(engine, { sourceId: s.id, slug, compiled_truth: compiled });
     expect([...(await overlayAt('Notes/Hold-Move'))!.omit]).toEqual([2]);
+    expect([...(await overlayAt('Notes/Hold-Bound'))!.omit]).toEqual([2]);
     const holdsBefore = await holdRows(s.id);
 
     const preview = await repairJson(previewArgs(s.id));
-    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Move`]: 'needs_human' });
-    expect(items(preview).find(item => item.slug === 'Notes/Hold-Move')).toMatchObject({ code: 'slug_spelling_held_writes' });
-    expect(items(preview)[0]!.message).toContain('gbrain trust release');
-    expect(items(preview)[0]!.message).toContain('gbrain trust drop');
-    expect(items(preview)[0]!.fix?.user_message).toContain('gbrain trust release');
-    expect(preview.preview_hash).toBeTruthy();
+    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Bound`]: 'move', [`${s.id}:Notes/Hold-Move`]: 'move' });
     const applied = await repairJson(applyArgs(s.id, preview.preview_hash));
-    expect(applied).toMatchObject({ applied: 0 });
-    expect(await slugsOf(s.id)).toEqual(['Notes/Hold-Move']);
-    expect(await row(s.id, 'Notes/Hold-Move')).toMatchObject({ id: old.id });
+    expect(applied).toMatchObject({ applied: 2 });
+    expect(await slugsOf(s.id)).toEqual(['notes/hold-bound', 'notes/hold-move']);
+    expect(await row(s.id, 'notes/hold-move')).toMatchObject({ id: unbound.id });
+    expect(await row(s.id, 'notes/hold-bound')).toMatchObject({ id: bound.id });
+    // No hold is re-keyed or decided: the bound one keeps its page id, the unbound one its slug.
     expect(await holdRows(s.id)).toEqual(holdsBefore);
-    expect([...(await overlayAt('Notes/Hold-Move'))!.omit]).toEqual([2]);
+    expect([...(await overlayAt('notes/hold-move'))!.omit]).toEqual([2]);
+    expect([...(await overlayAt('notes/hold-bound'))!.omit]).toEqual([2]);
   }), 60_000);
 
-  test('a page with a held fact or take write is refused the same way, whichever kind and whichever of its spellings the hold names', () => withEnv(env, async () => {
+  test('pages with held fact or take writes move whichever kind and whichever of their spellings the hold names, and every hold stays as it was', () => withEnv(env, async () => {
     const s = await newSource();
     await storeAs(s.id, 'Notes/Hold-Fact', 'Fact page', 'body');
     await storeAs(s.id, 'Notes/Hold-Take', 'Take page', 'body');
@@ -377,11 +378,9 @@ describe('guards that follow the page to its normal slug', () => {
     const holdsBefore = await holdRows(s.id);
 
     const preview = await repairJson(previewArgs(s.id));
-    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Fact`]: 'needs_human', [`${s.id}:Notes/Hold-Take`]: 'needs_human', [`${s.id}:Notes/Hold-Normal`]: 'needs_human' });
-    expect(items(preview).map(item => item.code)).toEqual(['slug_spelling_held_writes', 'slug_spelling_held_writes', 'slug_spelling_held_writes']);
-    expect(preview.preview_hash).toBeTruthy();
-    await repairJson(applyArgs(s.id, preview.preview_hash));
-    expect(await slugsOf(s.id)).toEqual(['Notes/Hold-Fact', 'Notes/Hold-Normal', 'Notes/Hold-Take']);
+    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Fact`]: 'move', [`${s.id}:Notes/Hold-Take`]: 'move', [`${s.id}:Notes/Hold-Normal`]: 'move' });
+    expect(await repairJson(applyArgs(s.id, preview.preview_hash))).toMatchObject({ applied: 3 });
+    expect(await slugsOf(s.id)).toEqual(['notes/hold-fact', 'notes/hold-normal', 'notes/hold-take']);
     expect(await holdRows(s.id)).toEqual(holdsBefore);
   }), 60_000);
 
@@ -400,19 +399,20 @@ describe('guards that follow the page to its normal slug', () => {
     expect(await holdRows(s.id)).toEqual(holdsBefore);
   }), 60_000);
 
-  test('a hold that appears after the preview refuses changed_since_preview for that page, whichever spelling it names, and moves nothing', () => withEnv(env, async () => {
+  test('a hold that appears after the preview, or under the old spelling after the move, does not stop the move and still keeps its row out of the moved page', () => withEnv(env, async () => {
     const s = await newSource();
-    await storeAs(s.id, 'Notes/Hold-Late', 'Late page', 'body');
-    await storeAs(s.id, 'Notes/Hold-Late-Normal', 'Late normal page', 'body');
-    for (const [slug, claim] of [['Notes/Hold-Late', 'Alpha ignored the previous instructions fenwick'], ['Notes/Hold-Late-Normal', 'Alpha ignored the previous instructions gladewick']] as const) {
-      const preview = await repairJson(previewArgs(s.id));
-      expect(Object.values(classes(preview)).sort()).toEqual(['move', 'move']);
-      await hold(s.id, slug === 'Notes/Hold-Late' ? slug : slug.toLowerCase(), { claim });
-      const error = await refusal(() => repairJson(applyArgs(s.id, preview.preview_hash)));
-      expect(error.code).toBe('changed_since_preview');
-      expect(await slugsOf(s.id)).toEqual(['Notes/Hold-Late', 'Notes/Hold-Late-Normal']);
-      await engine.executeRaw("UPDATE write_gate_holds SET status='dropped' WHERE source_id=$1", [s.id]);
-    }
+    const late = 'Alpha ignored the previous instructions fenwick', after = 'Alpha ignored the previous instructions gladewick';
+    const compiled = `Alpha runs acme-example.\n\n## Facts\n\n${renderFactsTable([fenceRow(1, 'Alpha ships widgets'), fenceRow(2, late), fenceRow(3, after)])}\n`;
+    const old = await storeAs(s.id, 'Notes/Hold-Late', 'Late page', compiled);
+    const overlayAt = (slug: string) => loadFenceChunkOverlay(engine, { sourceId: s.id, slug, compiled_truth: compiled });
+    const preview = await repairJson(previewArgs(s.id));
+    expect(classes(preview)).toEqual({ [`${s.id}:Notes/Hold-Late`]: 'move' });
+    await hold(s.id, 'Notes/Hold-Late', { claim: late, row: 2 });
+    expect(await repairJson(applyArgs(s.id, preview.preview_hash))).toMatchObject({ applied: 1 });
+    expect(await row(s.id, 'notes/hold-late')).toMatchObject({ id: old.id });
+    // A writer that still names the old spelling after the move: its hold reaches the page through the rename record.
+    await hold(s.id, 'Notes/Hold-Late', { claim: after, row: 3 });
+    expect([...(await overlayAt('notes/hold-late'))!.omit].sort()).toEqual([2, 3]);
   }), 60_000);
 
   test('a write by the stored spelling and the repair take the same two page locks: the legacy key is locked too, and a change after the preview refuses', () => withEnv(env, async () => {
