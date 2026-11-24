@@ -29,6 +29,7 @@ import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
 /** The "my addresses" identity set: account + Gmail sendAs aliases. */
 import type { PrivateSenders } from './ingest-tiers.ts';
+import { CredentialError } from '../creds/errors.ts';
 
 export function myAddressSet(entry: CredentialEntry): Set<string> {
   const out = new Set<string>();
@@ -62,8 +63,23 @@ export interface GoogleSyncSummary {
   limitStopped?: boolean;
   /** GST-3452: items that failed on that limit (each also counted in failedFiles). */
   limitedItems?: number;
+  /** Why the run ended partial, one line each, at most PARTIAL_CAUSE_LIMIT, so the stored job result names the cause. */
+  partialCauses?: string[];
   /** Threads per ingest tier, when the source sorts threads into tiers (ingest-tiers.ts). */
   ingestTiers?: Record<string, number>;
+}
+
+/** GST-3452: a provider usage or rate limit (gbrain.io's allowance, Google's quota); the next sync resumes. */
+export const isUsageLimit = (e: unknown): boolean => e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited');
+
+const PARTIAL_CAUSE_LIMIT = 5;
+
+/** Ends the run partial and records why; repeated causes are kept once. */
+export function markPartial(summary: GoogleSyncSummary, cause: string): void {
+  summary.status = 'partial';
+  const line = cause.split('\n')[0]!.slice(0, 200);
+  const causes = summary.partialCauses ??= [];
+  if (causes.length < PARTIAL_CAUSE_LIMIT && !causes.includes(line)) causes.push(line);
 }
 
 export interface GoogleSyncDeps {
