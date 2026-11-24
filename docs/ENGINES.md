@@ -1929,7 +1929,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `access` or `confidentiality` alias the primary reads as private; an alias row counts only when the primary's own answer left it out,
   because a brain can turn the aliases off and the child cannot read that setting.
   Not checked, because the result carries nothing to check: `resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`,
-  `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages` and `searchTakes` rows have no source column, search rows only
+  `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages`, `searchTakes` and `searchTakesVector` rows have no source column, search rows only
   when they carry `source_id`, and `excludePrivate` only on rows with `frontmatter` (so not facts, links, finds or search rows).
   A leak in those shows as `diff`.
 - **Brains and deleting.** Each brain gets its own directory, keyed by its engine and where it lives: the database path for PGLite, or the host, port, database and user name for Postgres
@@ -2116,7 +2116,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and only when nothing the policy reads changed since the read. A Rust row is held when it is byte-equal to a primary row in every
   field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
-  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used, and it clears only when every field but the ranking ones is the primary's own stored one for that page and chunk (the same read, widened, under the same filters, so a row the caller's own query filters exclude is never one the primary holds); a stored row that cannot be read leaves the row unexplained. "Nothing changed" is proven by a freshness token taken from the primary BEFORE the primary read started (never a newer one) and
+  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used, and it clears only when every field but the ranking ones is the primary's own stored one for that page and chunk (the same read, with its limit widened to five times the caller's, at least 50 and at most 500, under the same filters, so a row the caller's own query filters exclude is never one the primary holds, and a row ranked beyond the widened limit is not found); a stored row that cannot be read leaves the row unexplained. "Nothing changed" is proven by a freshness token taken from the primary BEFORE the primary read started (never a newer one) and
   checked again at the end of the check. The token is the transaction snapshot's upper bound (`pg_snapshot_xmax(pg_current_snapshot())`, one more than the
   newest transaction that has finished anywhere in the cluster, kept as the whole 64-bit `xid8` and never cut to 32 bits) and the list of transactions in progress at that moment (the snapshot's
   own list and the one each session is running; a subtransaction becomes visible only with its top-level transaction, so that is the one listed), all
@@ -2158,9 +2158,10 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Evidence fields.** `status --json` also carries the swap's read and search evidence for the current epoch (`report` prints
   the same counts):
   `reads` (successful comparisons per operation class with their minimum, and the 7-day counts of `capability_missing`,
-  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements), `child`
-  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at` and the counting
-  rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
+  unresolved `rust_error` and unexplained divergences), `search` (trigram and keyword/title exact disagreements, plus `vector_recall_at_10` and `primary_recall_at_10` once 30 samples are scored), `privacy_diverged`
+  (the count of rows a caller may not read; absent until something is compared, and while a privacy check of the last 7 days is unsettled), `child`
+  (panics and faults) and `evidence` (`epoch_id`, `epoch_started_at`, `readiness_days`, `earliest_ready_at`, `recall_samples`,
+  `ranking_differences`, `privacy_checks_unsettled_7d` and the counting rules). A count with no evidence is left out, never zero, and the swap reads it as `NOT READY`. The follower and evidence
   fields are read from one epoch; if the epoch keeps changing while the document is built, `epoch_id` is `null`, the
   evidence fields are left out and `evidence_epoch_unstable` is `true`. `gbrain engine swap --plan` reads this same document.
 - **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
