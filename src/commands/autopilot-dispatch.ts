@@ -717,7 +717,7 @@ export async function submitAutoDrains(
     const n = parseFloat(v);
     return Number.isFinite(n) && n >= 0 ? n : d;
   };
-  const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 25);
+  const threshold = parsePosInt(await engine.getConfig('autopilot.auto_drain.threshold'), 10);
   const { AI_CHAT_TIMEOUT_MS } = await import('../core/ai/gateway.ts');
   const requestedWindowSeconds = parsePosInt(await engine.getConfig('autopilot.auto_drain.window_seconds'), 120);
   const bounds = resolveAutopilotAutoDrainBounds(timeoutMs, requestedWindowSeconds, AI_CHAT_TIMEOUT_MS);
