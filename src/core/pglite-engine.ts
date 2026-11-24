@@ -2992,6 +2992,7 @@ export class PGLiteEngine implements BrainEngine {
   listOriginDependents(origins: readonly labelDoorImpl.OriginRefInput[]) { return labelDoorImpl.listOriginDependents(this, origins); }
   listCheckoutFiles(pageIds: readonly number[]) { return labelDoorImpl.listCheckoutFiles(this, pageIds); }
   readPageLabelRow(sourceId: string, slug: string) { return labelDoorImpl.readPageLabelRow(this, sourceId, slug); }
+  readLabelGuardTiers(pageId: number) { return labelDoorImpl.readLabelGuardTiers(this, pageId); }
   writePageLabelGuard(pageId: number, tier: import('./trust/tier.ts').TrustTier | null) { return labelDoorImpl.writePageLabelGuard(this, pageId, tier); }
   writerAdminStore(): Promise<WriterAdminStore> { return writerAdminImpl.writerAdminStore(this); }
   writerReleaseStore(): Promise<WriterReleaseStore> { return writerReleaseImpl.writerReleaseStore(this); }

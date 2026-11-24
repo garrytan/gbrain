@@ -1681,6 +1681,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   listCheckoutFiles(pageIds: readonly number[]): Promise<CheckoutFileRow[]>;
   /** The page at (sourceId, slug), soft-deleted or not: its id and stored frontmatter. */
   readPageLabelRow(sourceId: string, slug: string): Promise<PageLabelRow | null>;
+  /** The tiers a label guard over the page raises to: its owner-set guard tier and its open `lower_page` prior tiers. */
+  readLabelGuardTiers(pageId: number): Promise<import('./engine-sql/label-door.ts').LabelGuardTiers>;
   /** Sets the page's label guard (GST-2521) to `tier`, stamped now; null removes it. */
   writePageLabelGuard(pageId: number, tier: import('./trust/tier.ts').TrustTier | null): Promise<void>;
   /**

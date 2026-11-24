@@ -1702,6 +1702,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listOriginDependents': OOS.labelDoor,
   'listCheckoutFiles': OOS.labelDoor,
   'readPageLabelRow': OOS.labelDoor,
+  'readLabelGuardTiers': OOS.labelDoor,
   'writePageLabelGuard': OOS.labelDoor,
   'listPurgeClaimFacts': OOS.pagePurge,
   'listPurgeClaimTakes': OOS.pagePurge,
