@@ -93,6 +93,7 @@ export const SLUG_COLUMNS_EXEMPT: Readonly<Record<string, string>> = {
   'guest_marks.slug_at_write': REASON_HISTORY,
   'guest_promotions.target_slug': REASON_RECORD,
   'ingest_applied_captures.slug': REASON_HISTORY,
+  'learning_items.subject_slug': 'The subject a learning item named when it was derived, read with its target id; a page rename (updateSlug) does not move it either.',
   'memory_proposals.slug': REASON_RECORD,
   'memory_proposals.to_slug': REASON_RECORD,
   'mention_gazetteer_entries.target_slug': REASON_DERIVED,
