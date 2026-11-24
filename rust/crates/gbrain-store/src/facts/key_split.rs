@@ -118,6 +118,7 @@ pub(crate) fn split_take_purges_from_loop_mutes(tx: &mut dyn KvWrite) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FORMAT_VERSION;
     use crate::error::SHADOW_RESEED_REQUIRED;
     use crate::facts::take_purges::TakePurgeInsert;
     use crate::kv::{Kv, scan_prefix};
@@ -256,7 +257,7 @@ mod tests {
             (4, 0)
         );
         let store = open(&kv).unwrap();
-        assert_eq!(store.info().format_version, 7);
+        assert_eq!(store.info().format_version, FORMAT_VERSION);
         assert_eq!(answers(&store), expected());
         drop(store);
         let after = dump(&kv);
@@ -277,7 +278,11 @@ mod tests {
         for version in 1..=5 {
             let kv = old_brain(version);
             let store = open(&kv).unwrap_or_else(|e| panic!("format {version}: {e:?}"));
-            assert_eq!(store.info().format_version, 7, "format {version}");
+            assert_eq!(
+                store.info().format_version,
+                FORMAT_VERSION,
+                "format {version}"
+            );
             assert_eq!(answers(&store), expected(), "format {version}");
         }
     }

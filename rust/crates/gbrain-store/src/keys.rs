@@ -114,7 +114,8 @@ pub const SESSION_STATE: u8 = b'y';
 /// Family `persistence_journal`, the `derived_generations` ledger (`generations.rs`).
 pub const DERIVED_GENERATION: u8 = b'h';
 /// Family access_members (access_members.rs): members 0x01, groups 0x02, group members 0x03, member links 0x04
-/// (access_member_links.rs).
+/// (access_member_links.rs), shared-skill members 0x05, batches 0x06, the token secret 0x0d
+/// (shared_skill_members.rs); rust/docs/store/access-members.md lists every sub-tag.
 pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
