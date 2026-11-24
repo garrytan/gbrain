@@ -1,5 +1,5 @@
 /**
- * Migration v332: quarantine holds remember their page (plan decisions C, F, K; companion of test/hold-page-id.test.ts).
+ * Migration v333: quarantine holds remember their page (plan decisions C, F, K; companion of test/hold-page-id.test.ts).
  *
  * Authoring gate
  *  1. Protects: the upgrade ties each existing hold to its page by classification, never by guess: exact, lineage and
@@ -12,7 +12,7 @@
  *  3. Why new: test/schema-bootstrap-coverage.test.ts pins that the bootstrap adds the columns, and the catalog goldens
  *     pin the end state; neither runs the classification over rows.
  *  4. Seams: the real migration (`runMigrations` over the registry) and the real `initSchema` replay, on PGLite and,
- *     when DATABASE_URL is set, on Postgres (testBackends). Holds are inserted as a pre-v332 writer would have (no page
+ *     when DATABASE_URL is set, on Postgres (testBackends). Holds are inserted as a pre-v333 writer would have (no page
  *     columns, which the test removes first); pages and renames go through the engine.
  */
 import { withEnv } from './helpers/with-env.ts';
@@ -27,13 +27,13 @@ import { bareBody, expectHeldHidden, HELD, holdFenceRow, ROWS } from './helpers/
 
 const OLD_INDEX = 'CREATE UNIQUE INDEX write_gate_holds_dedupe_idx ON write_gate_holds (source_id, slug, fingerprint, detector_version)';
 
-/** Takes the brain back to its v331 shape: no binding columns (their indexes go with them), the old dedupe index, version 331. */
-async function toV331(engine: BrainEngine): Promise<void> {
+/** Takes the brain back to its v332 shape: no binding columns (their indexes go with them), the old dedupe index, version 332. */
+async function toV332(engine: BrainEngine): Promise<void> {
   await engine.executeRaw('ALTER TABLE write_gate_holds DROP COLUMN IF EXISTS page_id');
   await engine.executeRaw('ALTER TABLE write_gate_holds DROP COLUMN IF EXISTS page_candidates');
   await engine.executeRaw('DROP INDEX IF EXISTS write_gate_holds_dedupe_idx');
   await engine.executeRaw(OLD_INDEX);
-  await engine.setConfig('version', '331');
+  await engine.setConfig('version', '332');
 }
 
 interface HoldState { id: number; slug: string; page_id: number | null; page_candidates: number[] | null; status: string; seen_count: number }
@@ -58,7 +58,7 @@ beforeAll(async () => {
 afterAll(async () => { for (const b of brains) await b.close(); });
 
 for (const backend of backends) {
-  describe(`v332 hold_page_id backfill (${backend})`, () => {
+  describe(`v333 hold_page_id backfill (${backend})`, () => {
     const brain = () => brains.find(b => b.backend === backend)!.engine;
 
     // Pins decision C: one brain holding every class of hold, classified by the real migration.
@@ -87,7 +87,7 @@ for (const backend of backends) {
       await page('notes/td-old', 10); await rename('notes/td-old', 'notes/td-new');
       const td = Number((await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id=$1 AND slug='notes/td-new'", [sourceId]))[0]!.id);
 
-      await toV331(engine);
+      await toV332(engine);
       const add = async (slug: string, fp: string, o: { payload?: Record<string, unknown>; seen?: number; status?: string; kind?: string } = {}) => {
         const [row] = await engine.executeRaw<{ id: string }>(
           `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, status, seen_count, created_at, last_seen_at)
@@ -145,7 +145,7 @@ for (const backend of backends) {
 
       // Decision K, retried migration: running it again (the version counter put back) changes nothing.
       const before = await holdStates(engine, sourceId);
-      await engine.setConfig('version', '331');
+      await engine.setConfig('version', '332');
       expect((await runMigrations(engine)).applied).toBeGreaterThanOrEqual(1);
       expect(await holdStates(engine, sourceId)).toEqual(before);
     }, 240_000);
@@ -173,7 +173,7 @@ for (const backend of backends) {
       await engine.executeRaw('DELETE FROM slug_rename_history WHERE source_id=$1', [sourceId]);
       expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM slug_aliases WHERE source_id=$1 AND notes='rename'", [sourceId]))[0]!.n).toBeGreaterThanOrEqual(2);
 
-      await toV331(engine);
+      await toV332(engine);
       await runMigrations(engine);
 
       const by = new Map((await holdStates(engine, sourceId)).map(s => [s.id, s]));
@@ -186,7 +186,7 @@ for (const backend of backends) {
 
   // Pins decision K: a brain whose write_gate_holds predates the columns upgrades through initSchema (bootstrap, blob replay, migration).
   describe(`pre-column upgrade replay (${backend})`, () => {
-    // Its own brain: the test takes it back to v331 and replays the schema over it.
+    // Its own brain: the test takes it back to v332 and replays the schema over it.
     let engine: BrainEngine, close: () => Promise<void>;
     beforeAll(async () => {
       // Cold PGLite: the unit runner's schema-snapshot fast path (GBRAIN_PGLITE_SNAPSHOT) would skip the replay this case pins.
@@ -195,9 +195,9 @@ for (const backend of backends) {
     }, 180_000);
     afterAll(async () => { await close(); });
 
-    test('initSchema on a brain at v331 adds the columns before the blob names them, then v332 runs', async () => {
+    test('initSchema on a brain at v333 adds the columns before the blob names them, then v333 runs', async () => {
       const sourceId = 'default';
-      await toV331(engine);
+      await toV332(engine);
       const [old] = await engine.executeRaw<{ id: string }>(
         `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload) VALUES ('fact', $1, 'notes/early', 'fp-early', 2, 'external_untrusted', '{"fact":"early"}'::jsonb) RETURNING id::text AS id`, [sourceId]);
       expect((await engine.executeRaw("SELECT 1 FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name='page_id'")).length).toBe(0);
@@ -206,7 +206,7 @@ for (const backend of backends) {
 
       const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
       expect(columns).toEqual(['page_candidates', 'page_id']);
-      expect(await engine.getConfig('version')).toBe('332');
+      expect(await engine.getConfig('version')).toBe('333');
       expect((await holdStates(engine, sourceId)).find(s => s.id === Number(old!.id))).toMatchObject({ page_id: null, page_candidates: null, slug: 'notes/early' });
       const indexes = (await engine.executeRaw<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='write_gate_holds'")).map(i => i.indexname);
       expect(indexes).toContain('write_gate_holds_bound_dedupe_idx');

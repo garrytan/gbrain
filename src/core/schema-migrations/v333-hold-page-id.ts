@@ -21,8 +21,8 @@ import type { Migration } from './types.ts';
 // dropping the merged hold's receipt; a twin that differs in any way is never dropped: it stays a separate row, marked
 // with the page as its only candidate, so it is held for that page and listed. The bound index is dropped first and
 // rebuilt last, so a retried run (or a brain whose schema replay already built it) starts clean.
-export const v332: Migration = {
-  version: 332,
+export const v333: Migration = {
+  version: 333,
   name: 'hold_page_id',
   // Re-running must be safe: ADD COLUMN IF NOT EXISTS, a classification that only reads unclassified holds, and indexes rebuilt by name.
   idempotent: true,

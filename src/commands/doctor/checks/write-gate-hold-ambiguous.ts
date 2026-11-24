@@ -1,5 +1,5 @@
 /**
- * write_gate_hold_ambiguous: quarantine holds the v332 upgrade could not tie to one page. A hold normally remembers its
+ * write_gate_hold_ambiguous: quarantine holds the v333 upgrade could not tie to one page. A hold normally remembers its
  * page's permanent id, so a rename cannot lift it; on upgrade each older hold was classified from the page that held its
  * slug and the rename history, and one that fits several pages (a page created after the hold now has the slug, the name
  * moved, or two pages qualify) was left unbound with its candidate pages recorded. Such a hold stays held for every
