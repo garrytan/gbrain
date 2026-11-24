@@ -21,7 +21,9 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
 - **Your notes, read only.** `--notes DIR` imports the markdown in that folder
   (`gbrain import DIR --no-embed`). Setup never writes into the folder. Above 500
   markdown files it prints the import command for the agent to run as its own step,
-  so setup stays quick.
+  so setup stays quick. If the import fails or setup can't read the folder, setup
+  still finishes the rest, prints the error and the import command on stderr, and
+  exits 1.
 
 ## Company: what it writes
 

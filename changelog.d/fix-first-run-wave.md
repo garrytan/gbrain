@@ -14,3 +14,5 @@
 - The page anatomy guide lists the timeline forms gbrain reads (bold-date bullets with `|`, `###` date headings, dated `[Source: …]` citations) and says a plain dated list makes no row.
 - Brain-page pointers name the exact get_page or entity {name} call and how to reach get_page from the starter tool list; entity called with slug says to pass it as name.
 <!-- behavior-change: pointers_name_exact_calls_gbra789 -->
+- gbrain setup exits 1, with the failure on stderr, when a requested --notes, --docs or --transcripts import fails or its folder cannot be read; the wiring that finished stays.
+<!-- behavior-change: setup_failed_import_exits_nonzero_gbra789 -->

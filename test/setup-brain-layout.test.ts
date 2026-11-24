@@ -130,6 +130,38 @@ describe('setup --shape personal', () => {
     expect(r.doc.brain_layout.pages.every((p: any) => p.action === 'write')).toBe(true);
   }, 180_000);
 
+  test('a requested notes import that fails exits non-zero with the failure on stderr and one JSON document, keeping the wiring', async () => {
+    const b = box();
+    const notes = join(b.root, 'notes-mixed');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'good.md'), '---\ntype: note\ntitle: Acme pricing\n---\n# Acme pricing\n\nThe starter plan stays free.\n');
+    writeFileSync(join(notes, 'bad.md'), '---\ntitle: [unclosed\n  bad: : :\n---\nbody\n');
+    const r = await setup(b, ['claude-code', '--shape', 'personal', '--notes', notes]);
+    expect(r.doc).not.toBeNull();
+    expect(r.doc.brain_layout.notes.action).toBe('failed');
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain(`the notes import of ${notes} failed`);
+    expect(r.doc.state).toBeTruthy();
+    expect(readFileSync(claudeMd(b), 'utf8')).toContain(LAYOUT_BEGIN);
+  }, 240_000);
+
+  test('an unreadable notes folder is a failed import, never "0 files imported"', async () => {
+    const b = box();
+    const notes = join(b.root, 'notes-locked');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'a.md'), '# Locked\n');
+    chmodSync(notes, 0o000);
+    try {
+      const r = await setup(b, ['claude-code', '--shape', 'personal', '--notes', notes]);
+      expect(r.doc.brain_layout.notes).toMatchObject({ action: 'failed' });
+      expect(r.doc.brain_layout.notes.detail).toContain('cannot read');
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain(`the notes import of ${notes} failed`);
+    } finally {
+      chmodSync(notes, 0o755);
+    }
+  }, 240_000);
+
   test('--no-instructions writes the pages and no layout block', async () => {
     const b = box();
     const r = await setup(b, ['claude-code', '--shape', 'personal', '--no-instructions']);
