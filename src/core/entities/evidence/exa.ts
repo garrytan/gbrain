@@ -119,21 +119,32 @@ export async function resolveExa(engine: Pick<BrainEngine, 'getConfig' | 'setCon
   const report: ExaReport = { mode: opts.mode, queries: unique.length, cached: hits.size, sent: 0, unsent: 0, cost_usd: 0,
     uncapped_cost_usd: round(todo.length * EXA_COST_PER_QUERY_USD), spent_total_usd: round(settings.spentUsd), run_cap: settings.runCap,
     total_cap_usd: settings.totalCapUsd, blocked };
+  const live = opts.mode === 'live';
   let spent = settings.spentUsd;
+  let perQuery = EXA_COST_PER_QUERY_USD;
   for (const q of todo) {
     if (report.sent >= settings.runCap) { report.stopped = 'run_cap'; break; }
-    if (spent + EXA_COST_PER_QUERY_USD > settings.totalCapUsd + 1e-9) { report.stopped = 'total_cap'; break; }
-    if (opts.mode === 'dry_run') { report.sent++; spent += EXA_COST_PER_QUERY_USD; report.cost_usd += EXA_COST_PER_QUERY_USD; continue; }
-    const res = await (opts.fetch ?? fetch)(EXA_SEARCH_URL, {
-      method: 'POST',
-      headers: { 'x-api-key': opts.apiKey ?? '', 'content-type': 'application/json' },
-      body: JSON.stringify({ query: q.query, type: EXA_SEARCH_TYPE, category: 'people', numResults: 1 }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!res.ok) { report.stopped = `http_${res.status}`; break; }
-    const body = await res.json() as { results?: Array<{ title?: unknown; url?: unknown }>; costDollars?: { total?: unknown } };
+    if (live) spent = num(await engine.getConfig(EXA_SPENT_KEY), 0);
+    if (spent + perQuery > settings.totalCapUsd + 1e-9) { report.stopped = 'total_cap'; break; }
+    if (!live) { report.sent++; spent += EXA_COST_PER_QUERY_USD; report.cost_usd += EXA_COST_PER_QUERY_USD; continue; }
+    let res: Response;
+    let body: { results?: Array<{ title?: unknown; url?: unknown }>; costDollars?: { total?: unknown } };
+    try {
+      res = await (opts.fetch ?? fetch)(EXA_SEARCH_URL, {
+        method: 'POST',
+        headers: { 'x-api-key': opts.apiKey ?? '', 'content-type': 'application/json' },
+        body: JSON.stringify({ query: q.query, type: EXA_SEARCH_TYPE, category: 'people', numResults: 1 }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (!res.ok) { report.stopped = `http_${res.status}`; break; }
+      body = await res.json() as typeof body;
+    } catch {
+      report.stopped = 'network';
+      break;
+    }
     const cost = typeof body.costDollars?.total === 'number' ? body.costDollars.total : EXA_COST_PER_QUERY_USD;
-    spent += cost;
+    perQuery = Math.max(perQuery, cost);
+    spent = num(await engine.getConfig(EXA_SPENT_KEY), 0) + cost;
     report.cost_usd += cost;
     report.sent++;
     await engine.setConfig(EXA_SPENT_KEY, String(round(spent)));

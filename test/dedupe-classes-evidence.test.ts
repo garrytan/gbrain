@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { connectTemplateBrain } from './helpers/brain-template.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
 import { runDedupe } from '../src/commands/dedupe.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { classifyPairs, samplePairs, type ClassifiedPair } from '../src/core/entities/evidence/classes.ts';
@@ -234,6 +235,42 @@ describe('gbrain dedupe classes --exa', () => {
     expect(bodies.length).toBe(sent);
     expect(one(cached.pairs, 'Omar Example').signals).toEqual(['X1']);
     expect((await engine.listConfigKeys(EXA_CACHE_PREFIX)).length).toBe(4);
+  });
+
+  test('a page private only by a privacy label, a folder rule or an owner-only source is never searched', async () => {
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('owner-src','owner-src','{"owner_only":true}'::jsonb) ON CONFLICT DO NOTHING`);
+    await engine.executeRaw("INSERT INTO sources(id,name) VALUES('people-c','people-c') ON CONFLICT DO NOTHING");
+    await person('people/vera-example', 'Vera Example', { company: 'Acme Example', confidentiality: 'secret' });
+    await person('people/vera-example', 'Vera Example', { company: 'Beta Example' }, 'people-b');
+    await person('people/wes-example', 'Wes Example', { company: 'Acme Example' }, 'owner-src');
+    await person('people/wes-example', 'Wes Example', { company: 'Beta Example' }, 'people-b');
+    await person('people/xena-example', 'Xena Example', { company: 'Acme Example' }, 'people-c');
+    await person('people/xena-example', 'Xena Example', { company: 'Beta Example' }, 'people-b');
+    await proposeRevision(engine, 'people-c', [{ id: 'staff', prefix: 'people/', readable_by: ['member:alice-example'] }], { origin: 'cli', store: 'database' });
+    const fetchSpy = spyOn(globalThis, 'fetch');
+    try {
+      const dry = await classifyPairs(engine, { exa: { mode: 'dry_run', settings: settings() } });
+      expect((dry.report.exa as { blocked: Record<string, number> }).blocked.private).toBe(4);
+      expect(dry.report.exa).toMatchObject({ queries: 4, cached: 4, sent: 0 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally { fetchSpy.mockRestore(); }
+  });
+
+  test('live: an HTTP error or a failed request stops the run cleanly; a dearer reported cost tightens the total cap', async () => {
+    await person('people/yara-example', 'Yara Example', { company: 'Acme Example' });
+    await person('people/yara-example', 'Yara Example', { company: 'Beta Example' }, 'people-b');
+    const live = (f: typeof fetch, s: ExaSettings = settings()) => classifyPairs(engine, { exa: { mode: 'live', settings: s, apiKey: 'test-key', fetch: f } });
+    const failed = await live((async () => new Response('busy', { status: 503 })) as unknown as typeof fetch);
+    expect(failed.report.exa).toMatchObject({ sent: 0, unsent: 2, stopped: 'http_503' });
+    const thrown = await live((async () => { throw new Error('socket hang up'); }) as unknown as typeof fetch);
+    expect(thrown.report.exa).toMatchObject({ sent: 0, unsent: 2, stopped: 'network' });
+    expect((await engine.listConfigKeys(EXA_CACHE_PREFIX)).length).toBe(4);
+    const before = Number(await engine.getConfig(EXA_SPENT_KEY));
+    const dear = (async (_url: string, init: RequestInit) => new Response(JSON.stringify({
+      results: [{ title: `${(JSON.parse(String(init.body)) as { query: string }).query}`, url: 'https://linkedin.com/in/yara' }], costDollars: { total: 0.01 } }), { status: 200 })) as unknown as typeof fetch;
+    const capped = await live(dear, settings({ spentUsd: before, totalCapUsd: before + 0.015 }));
+    expect(capped.report.exa).toMatchObject({ sent: 1, unsent: 1, stopped: 'total_cap' });
+    expect(Number(await engine.getConfig(EXA_SPENT_KEY))).toBeCloseTo(before + 0.01, 6);
   });
 });
 

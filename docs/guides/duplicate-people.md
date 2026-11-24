@@ -53,7 +53,8 @@ reader, so Signal chats add nothing. A role or team address turns email evidence
 Web search is off unless you set `EXA_API_KEY` and turn it on with `gbrain config set dedupe.exa on`. When it is
 on, for pairs that would otherwise wait, each page's name plus one company or job title is sent to Exa (a paid web
 search service) and nothing else: no email addresses, phone numbers, page text or anything about you, and never for a
-page that is private, restricted to some readers, marked family or about a minor.
+page that not every reader may read (a private visibility or privacy label such as `confidentiality: secret`, named
+readers, a folder rule, or an owner-only source), marked family or about a minor.
 
 ```bash
 gbrain dedupe classes --exa --dry-run   # how many searches, what they would cost; sends nothing

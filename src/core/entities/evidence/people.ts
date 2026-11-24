@@ -22,6 +22,8 @@ import type { BrainEngine } from '../../engine.ts';
 import { CROWDED_LIMIT, ROLE_MAILBOXES, findTypedDuplicateGroups, personPageTypes, strictNameFold, type EntityPage } from '../duplicates.ts';
 import { namesAgree } from '../name-variants.ts';
 import { decidedSets } from '../identity-decisions.ts';
+import { withEngineScope } from '../../engine-scope.ts';
+import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
 import { identityEmailKey } from '../../ops/whois.ts';
 import { canonicalPhone, parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY } from '../../phone-key.ts';
 
@@ -45,7 +47,7 @@ export interface PersonPage {
   role: string | null;
   /** A page labelled family or about a minor: never linked automatically, never searched on the web. */
   sensitive: Sensitivity | null;
-  /** Private or restricted to some readers (visibility other than world, readable_by): never searched on the web. */
+  /** Not every reader may read it (see readPeople): never searched on the web. */
   restricted: boolean;
   entity_id: string | null;
 }
@@ -123,16 +125,28 @@ function toPerson(row: { source_id: string; slug: string; page_id: number; title
     sensitive: sensitivityOf(k), restricted: visibility !== 'world' || strings(k.readable_by).length > 0, entity_id: row.identity?.entity_id ?? null };
 }
 
-/** Every live person page, keyed by pageKey. */
+/**
+ * Every live person page, keyed by pageKey. A page is restricted when its frontmatter names readers or a non-world
+ * visibility, when the shared private-page rule says not every reader may read it (privacy labels, folder rules, private
+ * lineage), or when its source is owner-only.
+ */
 export async function readPeople(engine: BrainEngine, countryCode: string): Promise<Map<string, PersonPage>> {
   const types = await personPageTypes(engine);
   const out = new Map<string, PersonPage>();
   for (let after: { source_id: string; slug: string } | undefined; ;) {
     const rows = await engine.listEntityKeyRows({ types, keys: PERSON_KEYS, limit: PAGE, ...(after ? { after } : {}) });
     for (const row of rows) out.set(pageKey(row), toPerson(row, countryCode));
-    if (rows.length < PAGE) return out;
+    if (rows.length < PAGE) break;
     after = { source_id: rows.at(-1)!.source_id, slug: rows.at(-1)!.slug };
   }
+  const ownerOnly = new Set((await engine.listAllSources({ includeArchived: true })).filter(s => isOwnerOnlySourceConfig(s.config)).map(s => s.id));
+  const open = [...out.values()].filter(p => !p.restricted);
+  for (const p of open) if (ownerOnly.has(p.source_id)) p.restricted = true;
+  for (let i = 0; i < open.length; i += PAGE) {
+    const batch = open.slice(i, i + PAGE).map(p => ({ source_id: p.source_id, slug: p.slug }));
+    for (const r of await withEngineScope(engine, () => engine.listRestrictedIdentityMembers(batch))) out.get(pageKey(r))!.restricted = true;
+  }
+  return out;
 }
 
 export function pairId(a: { source_id: string; slug: string }, b: { source_id: string; slug: string }): string {
