@@ -7,7 +7,8 @@
  * This script reads that exact compile line, builds it twice on this host (once as written, once
  * with the two bytecode flags removed), and runs a fixed command set against each binary on a
  * fresh PGLite brain at the same path. stdout, stderr and the exit code of every command must be
- * byte-identical. Only text that changes between two runs of one binary is masked (see NORMALIZE).
+ * byte-identical, and every command must succeed in both builds. Only text that changes between two
+ * runs of one binary is masked (see NORMALIZE).
  *
  * The query step uses a loopback OpenAI-compatible embeddings stub (deterministic vectors, no
  * network, no key), so the vector path runs too.
@@ -78,8 +79,11 @@ function startEmbeddingStub(): Promise<{ port: number; close: () => void }> {
   return new Promise(ok => server.listen(0, '127.0.0.1', () => ok({ port: (server.address() as { port: number }).port, close: () => server.close() })));
 }
 
-/** `@BIN@` and `@HOME@` in args expand per run; `shows` must appear in both builds' stdout, so a step broken the same way in both cannot pass. */
-interface Step { name: string; args: string[]; stdin?: string; env?: Record<string, string>; mcp?: boolean; shows?: string }
+/**
+ * `@BIN@` and `@HOME@` in args expand per run. Both builds must exit with `exit` (default 0) and print `shows`,
+ * so a step that fails, hangs or breaks the same way in both builds cannot pass.
+ */
+interface Step { name: string; args: string[]; stdin?: string; env?: Record<string, string>; mcp?: boolean; shows?: string; exit?: number }
 
 const PAGE_A = '---\ntitle: Alpha Example\ntype: note\n---\n# Alpha Example\n\nThe parity widget ships on Tuesdays. See [[notes/beta]].\n';
 const PAGE_B = '---\ntitle: Beta Example\ntype: note\n---\n# Beta Example\n\nBeta covers the widget roadmap and its release cadence.\n';
@@ -98,7 +102,7 @@ export const STEPS: Step[] = [
   { name: 'get', args: ['get', 'notes/alpha'], shows: 'The parity widget ships on Tuesdays' },
   { name: 'list', args: ['list'], shows: 'notes/beta' },
   { name: 'search-keyword', args: ['search', 'widget', '--match', 'keyword'], shows: 'notes/alpha' },
-  { name: 'embed', args: ['embed', '--stale', '--yes'] },
+  { name: 'embed', args: ['embed', '--stale', '--yes'], shows: 'Embedded' },
   { name: 'query', args: ['query', 'when does the widget ship', '--json'], shows: '"cosine"' },
   { name: 'doctor', args: ['doctor', '--json'], shows: '"checks"' },
   { name: 'mcp-tools-list', args: ['serve'], stdin: MCP_INPUT, mcp: true, shows: '"name":"get_page"' },
@@ -108,7 +112,16 @@ export const STEPS: Step[] = [
     stdin: JSON.stringify({ prompt: 'please deploy the widget to staging', session_id: 'parity-1', cwd: '@HOME@' }), shows: 'id: \\"deploy-widget\\"' },
 ];
 
-interface Outcome { stdout: string; stderr: string; status: number | null }
+export interface Outcome { stdout: string; stderr: string; status: number | null }
+
+/** Why one step fails: a wrong or killed exit in either build, a missing marker, or a difference between the builds. */
+export function stepProblems(step: Step, a: Outcome, b: Outcome, port: number): string[] {
+  const want = step.exit ?? 0, problems: string[] = [];
+  if (a.status !== want || b.status !== want) problems.push(`exit plain=${a.status} bytecode=${b.status}, expected ${want}`);
+  if (step.shows !== undefined && !(a.stdout.includes(step.shows) && b.stdout.includes(step.shows))) problems.push(`stdout lacks ${step.shows} (the step did not run its path)`);
+  for (const k of ['stdout', 'stderr'] as const) if (NORMALIZE(a[k], port) !== NORMALIZE(b[k], port)) problems.push(`${k} differs`);
+  return problems;
+}
 
 /** One binary through every step, on a brain at `runDir` (wiped first, so both binaries see the same paths). */
 async function runAll(built: string, runDir: string, port: number, saveDir: string): Promise<Map<string, Outcome>> {
@@ -194,20 +207,14 @@ async function main(): Promise<number> {
     let failed = 0;
     for (const step of STEPS) {
       const a = plain.get(step.name)!, b = bytecode.get(step.name)!;
-      const diffs = (['stdout', 'stderr', 'status'] as const).filter(k =>
-        k === 'status' ? a.status !== b.status : NORMALIZE(a[k], stub.port) !== NORMALIZE(b[k], stub.port));
+      const problems = stepProblems(step, a, b, stub.port);
       const size = `${a.stdout.length}+${a.stderr.length} bytes, exit ${a.status}`;
-      const missing = step.shows !== undefined && !(a.stdout.includes(step.shows) && b.stdout.includes(step.shows));
-      if (diffs.length === 0 && !missing) { console.log(`ok   ${step.name} (${size})`); continue; }
+      if (problems.length === 0) { console.log(`ok   ${step.name} (${size})`); continue; }
       failed++;
-      if (missing) console.log(`MISS ${step.name}: stdout lacks ${step.shows} (the step did not run its path)`);
-      if (diffs.length) console.log(`DIFF ${step.name}: ${diffs.join(', ')} differ (${size})`);
-      for (const k of diffs) {
-        if (k === 'status') console.log(`  exit: plain=${a.status} bytecode=${b.status}`);
-        else console.log(`  diff ${join(work, 'out-plain', `${step.name}.${k}`)} ${join(work, 'out-bytecode', `${step.name}.${k}`)}`);
-      }
+      console.log(`FAIL ${step.name}: ${problems.join('; ')} (${size})`);
+      console.log(`  outputs: ${join(work, 'out-plain', step.name)}.* ${join(work, 'out-bytecode', step.name)}.*`);
     }
-    if (failed) { console.error(`FAIL: ${failed} of ${STEPS.length} commands differ between the plain and the bytecode build`); return 1; }
+    if (failed) { console.error(`FAIL: ${failed} of ${STEPS.length} commands failed or differ between the plain and the bytecode build`); return 1; }
     console.log(`PASS: ${STEPS.length} commands give the same stdout, stderr and exit code from the plain and the bytecode build (clock, ids and timings masked)`);
     return rc = 0;
   } finally {

@@ -8,7 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BYTECODE_FLAGS, NORMALIZE, releaseCompileArgs } from '../../scripts/check-bytecode-parity.ts';
+import { BYTECODE_FLAGS, NORMALIZE, releaseCompileArgs, STEPS, stepProblems } from '../../scripts/check-bytecode-parity.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const RELEASE = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
@@ -41,6 +41,18 @@ describe('bytecode release build', () => {
     expect(NORMALIZE('score 0.51533', 1)).not.toBe(NORMALIZE('score 0.51633', 1));
     expect(NORMALIZE('{"page_count":2}', 1)).not.toBe(NORMALIZE('{"page_count":3}', 1));
     expect(NORMALIZE('Usage: gbrain put <slug>', 1)).toBe('Usage: gbrain put <slug>');
+  });
+
+  test('a step fails when both builds fail, hang or skip its path the same way, not only when they differ', () => {
+    const mcp = STEPS.find(s => s.name === 'mcp-tools-list')!;
+    const ok = { stdout: '{"name":"get_page"}', stderr: '', status: 0 };
+    expect(stepProblems(mcp, ok, ok, 1)).toEqual([]);
+    const killed = { ...ok, status: null };
+    expect(stepProblems(mcp, killed, killed, 1)).toEqual(['exit plain=null bytecode=null, expected 0']);
+    const refused = { stdout: '', stderr: 'Error', status: 3 };
+    expect(stepProblems(STEPS.find(s => s.name === 'embed')!, refused, refused, 1)).toEqual(['exit plain=3 bytecode=3, expected 0', 'stdout lacks Embedded (the step did not run its path)']);
+    expect(stepProblems(mcp, ok, { ...ok, stderr: 'warn' }, 1)).toEqual(['stderr differs']);
+    for (const s of STEPS) expect({ step: s.name, exit: s.exit ?? 0 }).toEqual({ step: s.name, exit: 0 });
   });
 
   test('pull requests run the check in the verify job', () => {
