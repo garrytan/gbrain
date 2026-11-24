@@ -247,6 +247,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'staleLinkRelationshipKeys', 'wordLexemes',
   // Lane 15 reads whose names carry no read prefix: the schema-pack retype probe and the explain-target probe.
   'probeRetypeRows', 'probeTargetRows',
+  // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.
+  'filterPageIdsByFrontmatter', 'lockEffectRow', 'secretEntryExists',
 ]);
 
 /**
@@ -365,6 +367,8 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'carryConceptIncomingLinks', 'chronicleStore', 'claimTakeProposal', 'clearQueryCache', 'continueDerivationSweep', 'deleteFactPurgesByRequests', 'deleteOriginHoldRows', 'deletePagePurgeTombstones', 'deletePageSegmentTexts', 'deletePageStagings', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'deletePurgedPageGateReceipts', 'deletePurgedPageHolds', 'deletePurgedPageTrustProposals', 'deletePurgedSlugHolds', 'deletePurgedSlugStoreRows', 'deleteTakeGrade', 'deleteTakeHorizon', 'deleteTakeProposalTombstones', 'deleteTakePurgesByRequests', 'insertConfigIfAbsent', 'insertPageFactPurges', 'insertTakeGrade', 'insertTakeNudge', 'insertTakeProposal', 'pruneChronicleReservations', 'purgeTakeNudgesByWave', 'recordConnectorSyncAttempt', 'recordDerivationPurgeRow', 'recordOwedPurgeRows', 'recordSyncConversion', 'redactWriteRequestRow', 'rejectTakeProposal', 'releaseTakeProposalClaim', 'releaseTerminalBytes', 'renameSource', 'reserveChronicleJudgeSlot', 'revertWaveTakeResolutions', 'setTakeProposalPromotedRow', 'sweepPageTextsForClaims', 'unapplyWaveTakeGrades', 'upsertChronicleRow', 'upsertDerivedOriginPark', 'upsertExtractRollupDay', 'upsertTakeHorizon', 'writeConnectorDbCursor', 'writeOpCheckpointDoc', 'writePageLabelGuard',
   // embed --stale writes (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
   'invalidateContentDriftChunks', 'lockContentDriftState',
+  // Batch 12 typed writes (repair-rust b9/b6b, lanes 6, 13 and the segmented and secret-store members): not mapped to a write plan yet, so they publish invalid like the rest of the list.
+  'clearCodeEdgesLeavingChunks', 'deleteChunksByIds', 'deleteManagedSyncFailureObservation', 'deleteUnreferencedSecretEntry', 'dispatchBudgetReservation', 'insertBackupSecretEntry', 'insertBackupSecretOccurrence', 'insertOpCheckpointIfAbsent', 'insertRemirrorEffects', 'insertSecretEntry', 'insertSecretOccurrence', 'markSecretEntryAllowed', 'movePageVersions', 'moveTwinFacts', 'moveTwinPageChildren', 'moveTwinRelationships', 'reclaimBudgetReservations', 'recordRenameAlias', 'releaseBudgetReservation', 'replaceOpCheckpointAtVersion', 'reserveBudgetReservation', 'retireStaleSegmentChunks', 'setRawDataValue', 'setRedactedPageFields', 'setRedactedRowText', 'setRetainedVersionBody', 'settleBudgetReservation', 'upsertFenceTrendRunRecord',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
