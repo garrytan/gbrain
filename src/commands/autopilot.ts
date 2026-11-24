@@ -1485,6 +1485,7 @@ export type AutopilotState = 'not_installed' | 'disabled' | 'paused' | 'never_ru
 export interface AutopilotStatusReport {
   installed: boolean;
   install_target: InstallTarget | null;
+  externally_managed: boolean;
   state: AutopilotState;
   disabled_reason: string | null;
   paused_reason: string | null;
@@ -1525,6 +1526,7 @@ export function autopilotStatusExitCode(state: AutopilotState, globalMaintenance
 export function classifyAutopilotStatus(input: {
   installed: boolean;
   installTarget: InstallTarget | null;
+  runtimeObserved?: boolean;
   disabledReason: string | null;
   pausedReason?: string | null;
   heartbeatAgeSeconds: number | null;
@@ -1548,9 +1550,10 @@ export function classifyAutopilotStatus(input: {
     ? input.intervalSeconds * 6
     : 1800;
   const pausedReason = input.pausedReason ?? null;
+  const externallyManaged = !input.installed && input.runtimeObserved === true;
   let state: AutopilotState;
   if (input.disabledReason !== null) state = 'disabled';
-  else if (!input.installed) state = 'not_installed';
+  else if (!input.installed && !externallyManaged) state = 'not_installed';
   // Paused outranks the heartbeat states: the tick loop refreshes its
   // heartbeat BEFORE honoring the pause marker, so a parked daemon looks
   // 'fresh' by mtime while doing no work. Without this state a pause marker
@@ -1563,6 +1566,7 @@ export function classifyAutopilotStatus(input: {
   return {
     installed: input.installed,
     install_target: input.installTarget,
+    externally_managed: externallyManaged,
     state,
     disabled_reason: input.disabledReason,
     paused_reason: pausedReason,
@@ -1603,9 +1607,13 @@ function showStatus(json: boolean, intervalSeconds: number) {
 
   const jobStatus = autopilotJobStatus(job);
   const installTarget = jobStatus.installTarget;
+  // Service managers outside `autopilot --install` can run the native daemon.
+  // The processing record is tied to the live owner of this brain's lock.
+  const processing = readAutopilotProcessingStatus();
   const report = classifyAutopilotStatus({
     installed: installTarget !== null,
     installTarget,
+    runtimeObserved: processing !== null,
     disabledReason,
     pausedReason,
     heartbeatAgeSeconds,
@@ -1613,13 +1621,13 @@ function showStatus(json: boolean, intervalSeconds: number) {
     daemon: readDaemonStaleAfter(),
     lastLog: lastLine,
   });
-  const processing = readAutopilotProcessingStatus();
   const globalMaintenance = readGlobalMaintenanceVerdict();
   const stalled = globalMaintenance !== null && globalMaintenance.status !== 'ok';
 
   if (json) {
     console.log(JSON.stringify({ ...report, ...processing, job: jobStatus.report, global_maintenance: globalMaintenance }));
   } else {
+    const manager = report.externally_managed ? 'externally managed' : report.install_target;
     switch (report.state) {
       case 'not_installed':
         console.log('Autopilot: not installed. Install with `gbrain autopilot --install`.');
@@ -1636,17 +1644,17 @@ function showStatus(json: boolean, intervalSeconds: number) {
         console.log('  pid it names is dead and no daemon is running to clean it up.');
         break;
       case 'never_run':
-        console.log(`Autopilot: installed (${report.install_target}) but has NEVER run.`);
+        console.log(`Autopilot: no heartbeat recorded (${manager}).`);
         break;
       case 'stale':
         console.log(
-          `Autopilot: installed (${report.install_target}) but NOT ticking — last heartbeat ` +
+          `Autopilot: not ticking (${manager}) — last heartbeat ` +
           `${report.heartbeat_age_seconds}s ago (stale after ${report.stale_after_seconds}s).`,
         );
         break;
       case 'fresh':
         console.log(
-          `Autopilot: running (${report.install_target}) — last heartbeat ` +
+          `Autopilot: running (${manager}) — last heartbeat ` +
           `${report.heartbeat_age_seconds}s ago.`,
         );
         break;
