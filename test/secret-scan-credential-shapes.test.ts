@@ -147,6 +147,26 @@ describe('a raw @ inside a URL password is redacted whole', () => {
     }
   });
 
+  test('url_credentials redacts a password whose first piece reads as a mask', () => {
+    for (const first of ['***', 'xxx']) {
+      const rest = rand(12);
+      const url = userinfoUrl('https', 'u', [first, rest].join(at));
+      const { text } = redactFindings(url);
+      expect(text).toBe(`${REDACTED('url_credentials')}host.example/path`);
+      expect(text.includes(rest)).toBe(false);
+    }
+  });
+
+  test('url_credentials redacts a password whose first piece reads as a $VARIABLE', () => {
+    for (const first of [`$${'A'}${rand(6)}`, `$${'Summer'}2024`]) {
+      const rest = rand(12);
+      const url = userinfoUrl('https', 'u', [first, rest].join(at));
+      const { text } = redactFindings(url);
+      expect(text).toBe(`${REDACTED('url_credentials')}host.example/path`);
+      expect(text.includes(rest)).toBe(false);
+    }
+  });
+
   test('url_credentials still leaves a whole placeholder password alone', () => {
     const url = userinfoUrl('https', 'u', '<password>');
     expect(redactFindings(url).text).toBe(url);
