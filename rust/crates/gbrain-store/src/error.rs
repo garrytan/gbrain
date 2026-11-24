@@ -83,6 +83,13 @@ impl StoreError {
     pub fn io(message: impl Into<String>) -> Self {
         Self::new(STORE_IO, message)
     }
+
+    /// Whether the file system or the storage engine failed (`store_io`, `store_corrupt`), as
+    /// against a record the caller's data does not fit. A failure like this says nothing about
+    /// any one record, so a step that turns a bad record into a refusal must pass it on as it is.
+    pub fn is_storage_failure(&self) -> bool {
+        matches!(self.code, STORE_IO | STORE_CORRUPT)
+    }
 }
 
 impl fmt::Display for StoreError {
