@@ -14,6 +14,7 @@ import { isThinClient, loadConfig } from '../core/config.ts';
 import { finishCliTeardown } from '../core/cli-force-exit.ts';
 import { exitCliError, usageError } from './cli-error.ts';
 import { ALL_SOURCES, NO_SOURCES } from '../core/source-id.ts';
+import { decodeDeepResearchId } from '../core/deep-research-id.ts';
 
 const NON_OPERATION_SEARCH = new Set(['modes', 'stats', 'tune', 'diagnose']);
 
@@ -32,6 +33,12 @@ export interface AsPreview {
   run<T>(fn: () => Promise<T>): Promise<T>;
   /** The operation context under the preview; may narrow `params` in place (an __all__ read). */
   context<C extends { sourceId?: string; localFederatedSourceIds?: string[] }>(ctx: C, params?: Record<string, unknown>): C;
+}
+
+/** The source a fetch result id names; fetch decodes it inside its handler, past the preview's source check. */
+function fetchedSource(params: Record<string, unknown>): string | undefined {
+  if (typeof params.id !== 'string') return undefined;
+  try { return decodeDeepResearchId(params.id)?.sourceId; } catch { return undefined; }
 }
 
 const PASSTHROUGH: AsPreview = { run: fn => fn(), context: ctx => ctx };
@@ -82,10 +89,12 @@ export async function openAsPreview(engine: BrainEngine, member: string | undefi
     run: fn => withCallerAccess(access, fn),
     context: (ctx, params = {}) => {
       let scoped = ctx;
-      if (hidden.size) {
+      if (hidden.size && readOnly) {
         const named = namedSourceIds(params);
-        const denied = [ctx.sourceId ?? '', ...named].find(s => hidden.has(s));
+        const anchor = ctx.localFederatedSourceIds?.length && params.source === undefined ? [] : [ctx.sourceId ?? ''];
+        const denied = [...anchor, ...named].find(s => hidden.has(s));
         if (denied) throw refuse(denied);
+        if (hidden.has(fetchedSource(params) ?? '')) throw opError('page_not_found', 'Page not found', 'Pass an id returned by a current `search` call.');
         if (ctx.sourceId === ALL_SOURCES || named.includes(ALL_SOURCES) || params.all_sources === true) {
           delete params.source_id;
           delete params.all_sources;

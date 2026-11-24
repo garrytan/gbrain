@@ -23,7 +23,7 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
-import { localFederatedSourceIds, noGrantFederatedScope } from '../src/core/source-resolver.ts';
+import { explicitReadBinding, localFederatedSourceIds, noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { setOwner } from '../src/core/access/owner.ts';
@@ -148,6 +148,33 @@ for (const kind of testBackends()) {
       expect(await viaStdio('quin-example', 'quin')).toBe(true);
       expect(await viaStdio(OWNER_MEMBER, 'pat')).toBe(true);
       expect(await viaStdio(OWNER_MEMBER, 'owner')).toBe(true);
+    }, 120_000);
+
+    test('a key with no source list reads no default source bound to another member when nothing federates', async () => {
+      const [{ config }] = await engine.executeRaw<{ config: unknown }>("SELECT config FROM sources WHERE id = 'default'");
+      await engine.executeRaw(`UPDATE sources SET config = '{"federated": false}'::jsonb WHERE id = 'default'`);
+      await importFromContent(engine, 'chats/default-only', '---\ntype: note\ntitle: chats/default-only\n---\n# Chat\n\nThe plan zebracanaryscalar is late.\n', { sourceId: 'default' });
+      await bindMemberSource(engine, PAGES.pat.member, 'default');
+      try {
+        const reads = async (who: string) => (await call(who, 'get_page', { slug: 'chats/default-only' })).text.includes('zebracanaryscalar');
+        expect(await reads('quin')).toBe(false);
+        expect(await reads('pat')).toBe(true);
+        expect(await reads('owner')).toBe(true);
+      } finally {
+        await unbindMemberSource(engine, PAGES.pat.member, 'default', { apply: true });
+        await engine.executeRaw('UPDATE sources SET config = $1::jsonb WHERE id = \'default\'', [typeof config === 'string' ? config : JSON.stringify(config)]);
+      }
+    }, 120_000);
+
+    test('a stdio server pinned to a source and bound to a member names no other member\'s personal source', async () => {
+      const binding = await explicitReadBinding(engine, PAGES.team.source, 'env');
+      expect(binding?.sourceIds).toContain(PAGES.pat.source);
+      const named = async (member: string, key: PersonalKey) => (await dispatchToolCall(engine, 'get_page', { slug: PAGES[key].slug, source_id: PAGES[key].source }, {
+        remote: true, transport: 'stdio', stdioMember: member, sourceId: PAGES.team.source, explicitReadBinding: binding, takesHoldersAllowList: ['world'],
+      })).content.map(x => x.text).join('\n').includes(PAGES[key].canary);
+      expect(await named('quin-example', 'pat')).toBe(false);
+      expect(await named('quin-example', 'quin')).toBe(true);
+      expect(await named(OWNER_MEMBER, 'pat')).toBe(true);
     }, 120_000);
 
     test('access check reports the read set dispatch applies', async () => {

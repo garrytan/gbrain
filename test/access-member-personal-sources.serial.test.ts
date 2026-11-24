@@ -20,6 +20,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { encodeDeepResearchId } from '../src/core/deep-research-id.ts';
 import { OWNER_MEMBER, PERSONAL_KEYS, PERSONAL_PAGES, personalCliReads, personalPageText, personalReads, readNames, readingExactly, type PersonalKey } from './helpers/personal-sources-fixture.ts';
 
 const CLI = join(resolve(import.meta.dir, '..'), 'src', 'cli.ts');
@@ -98,6 +99,35 @@ describe('--as previews personal sources the way member keys read them (repo-les
       expect(r.stdout + r.stderr).not.toContain(PERSONAL_PAGES.pat.canary);
       expect(JSON.parse(r.stdout)).toMatchObject({ code: 'permission_denied' });
     }
+  }, 120_000);
+
+  test('--as on a write keeps refusing --source __all__ instead of writing to one source', async () => {
+    await must(['put', 'notes/keep-me', '--source-id', 'default'], '---\ntype: note\ntitle: Keep\n---\n# Keep\n\nStill here.\n');
+    for (const args of [['delete', 'notes/keep-me'], ['put', 'notes/keep-me']]) {
+      const r = await cli([...args, '--source', '__all__', '--as', 'quin-example', '--json'], '---\ntype: note\ntitle: Keep\n---\n# Keep\n\nReplaced.\n');
+      expect({ args, exit: r.exitCode === 0, code: JSON.parse(r.stdout).code }).toEqual({ args, exit: false, code: 'invalid_params' });
+    }
+    expect((await must(['get', 'notes/keep-me', '--source', 'default'])).stdout).toContain('Still here.');
+  }, 120_000);
+
+  test('--as moves off a brain default that is another member\'s personal source instead of refusing', async () => {
+    await must(['sources', 'default', PERSONAL_PAGES.pat.source]);
+    try {
+      const r = await cli(['search', PERSONAL_PAGES.quin.canary, '--as', 'quin-example']);
+      expect({ exit: r.exitCode, quin: r.stdout.includes(PERSONAL_PAGES.quin.canary), pat: (r.stdout + r.stderr).includes(PERSONAL_PAGES.pat.canary) }).toEqual({ exit: 0, quin: true, pat: false });
+    } finally {
+      await must(['sources', 'default', 'default']);
+    }
+  }, 120_000);
+
+  test('--as fetch of another member\'s personal page answers like a missing page', async () => {
+    const fetch = async (source: string, slug: string) => cli(['fetch', encodeDeepResearchId(source, slug), '--as', 'quin-example', '--json']);
+    const hidden = await fetch(PERSONAL_PAGES.pat.source, PERSONAL_PAGES.pat.slug);
+    const absent = await fetch(PERSONAL_PAGES.team.source, 'chats/absent-page');
+    expect(hidden.stdout + hidden.stderr).not.toContain(PERSONAL_PAGES.pat.canary);
+    const shape = (r: { stdout: string; exitCode: number }) => ({ exit: r.exitCode, ...(({ code, message, suggestion }) => ({ code, message, suggestion }))(JSON.parse(r.stdout)) });
+    expect(shape(hidden)).toEqual(shape(absent));
+    expect((await fetch(PERSONAL_PAGES.quin.source, PERSONAL_PAGES.quin.slug)).stdout).toContain(PERSONAL_PAGES.quin.canary);
   }, 120_000);
 
   test('the plain local CLI is unchanged: it reads every source', async () => {
