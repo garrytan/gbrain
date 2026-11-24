@@ -17,7 +17,7 @@ A doctor-derived member answers one of two ways on the Rust engine:
    `derived_generation_activations`, `extract_rollup_7d`. Members: `listRecordedTombstones`, `listBudgetLimitedRows`,
    `readBudgetHoldAge`, `listAmbiguousExtractionInputs`, `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
    `listHeldGenerations`, `listPendingGenerationMembers`, `listOrphanGenerationCandidates`, `readExtractRollup7d`,
-   `listRecordedHaltReasons7d`. If a Rust writer for one of these relations lands, its member must move to the first kind in the
+   `readExtractKindRollup7d` (the one all-null aggregate row), `listRecordedHaltReasons7d`. If a Rust writer for one of these relations lands, its member must move to the first kind in the
    same change.
 
 No member is refused any more: the nine that were (wave 1) are served now, and the table lists them.

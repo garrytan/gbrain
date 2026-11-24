@@ -21,14 +21,17 @@ import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
-import type { CapturedRead, MirrorCounters } from './mirror.ts';
+import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
-import { memberKind } from './write-map.ts';
+import { sqlWrites } from './sql-writes.ts';
+import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
 export interface ShadowSink {
   readonly counters: MirrorCounters;
   /** Takes a capture function; the sink calls it synchronously when it accepts the read (mirror.ts). */
-  offer(capture: () => CapturedRead): void;
+  offer(capture: () => CapturedRead, op?: string): void;
+  /** Notes one call of an operation class on the per-operation meter (mirror.ts `UsageMeter`); a sink without one skips it. */
+  use?(op: string, field: UsageField): void;
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
 }
@@ -45,7 +48,15 @@ export interface ShadowWrapperOptions {
    * Active only while the shadow sink is active; when off, writes cost nothing extra.
    */
   follow?: FollowOptions;
+  /**
+   * Swap eligibility (writer-observations.ts): called after each committed write, outside any transaction or when the
+   * outermost transaction that wrote resolves. Independent of `follow` and of the sink's health.
+   */
+  onCommittedWrite?: () => void;
 }
+
+/** Whether the outermost transaction saw a write; shared by the transaction engine proxies it hands out. */
+interface TxWrites { wrote: boolean }
 
 const TX_MEMBERS: ReadonlySet<PropertyKey> = new Set(SHADOW_TRANSACTION_MEMBERS);
 
@@ -65,7 +76,18 @@ function isThenable(value: unknown): value is Promise<unknown> {
 
 /** Wraps `engine` for shadow mode. The result is registered as a view of `engine` (persistence/switches.ts). */
 export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions): E {
-  return buildProxy(engine, sink, opts, false, null);
+  return buildProxy(engine, sink, opts, false, null, null);
+}
+
+/** Whether a member call may write: a mapped or unmapped member, schema work, a reserved connection, raw SQL with a write statement, or an ignored member that writes the database (locks, logs, caches). A false yes only notes a process that writes anyway. */
+function mayWrite(name: string, args: unknown[]): boolean {
+  const kind = memberKind(name);
+  if (kind === 'ignored') return IGNORED_WRITE_MEMBERS.has(name);
+  if (kind === 'read_name') return false;
+  if (kind === 'raw') {
+    try { return typeof args[0] !== 'string' || sqlWrites(args[0]).length > 0; } catch { return true; }
+  }
+  return true;
 }
 
 /** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
@@ -77,32 +99,40 @@ function isMethod(target: object, prop: PropertyKey): boolean {
   return true;
 }
 
-function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean, frame: Frame | null): E {
+function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean, frame: Frame | null, txWrites: TxWrites | null): E {
   const random = opts.random ?? Math.random;
   const now = opts.now ?? (() => performance.now());
   const sampleRate = Math.min(1, Math.max(0, opts.sampleRate));
   // Bound functions cached per member, re-bound when the primary replaces a member (the factory wraps disconnect).
   const cache = new Map<PropertyKey, { original: Function; wrapped: Function }>();
 
+  const use = (op: string, field: UsageField): void => { try { sink.use?.(op, field); } catch { /* fail open */ } };
+
   const wrapRead = (op: string, fn: Function): Function => function shadowRead(this: unknown, ...args: unknown[]) {
+    if (!sink.active()) return fn.apply(engine, args);
+    use(op, 'offered');
     if (inTransaction) {
-      if (sink.active()) sink.counters.skipped_in_transaction++;
+      sink.counters.skipped_in_transaction++;
+      use(op, 'skipped_in_transaction');
       return fn.apply(engine, args);
     }
-    if (!sink.active()) return fn.apply(engine, args);
     if (sampleRate < 1 && random() >= sampleRate) {
       sink.counters.sampled_out++;
+      use(op, 'sampled_out');
       return fn.apply(engine, args);
     }
     if (hasFunctionArg(args)) {
       sink.counters.shed_unmirrorable++;
+      use(op, 'unmirrorable');
       return fn.apply(engine, args);
     }
     let encodedArgs: unknown;
     try {
       encodedArgs = encodeArgs(args, { left: CAPTURE_BUDGET_BYTES });
     } catch (error) {
-      try { sink.counters[error instanceof CaptureTooLargeError ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
+      const tooLarge = error instanceof CaptureTooLargeError;
+      try { sink.counters[tooLarge ? 'shed_too_large' : 'encode_error']++; } catch { /* fail open */ }
+      use(op, tooLarge ? 'shed' : 'unmirrorable');
       return fn.apply(engine, args);
     }
     const started = now();
@@ -111,7 +141,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return out.then((result: unknown) => {
       const primaryMs = now() - started;
       try {
-        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }));
+        sink.offer(() => ({ op, args: encodedArgs, result: encodeValue(result, undefined, { left: CAPTURE_BUDGET_BYTES }), primary_ms: primaryMs, at: Date.now() }), op);
       } catch { /* the shadow never fails a call */ }
       return result;
     }, (error: unknown) => {
@@ -126,11 +156,34 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
 
   const wrapTransaction = (fn: Function): Function => function shadowTransaction(this: unknown, callback: unknown, ...rest: unknown[]) {
     if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
+    // A nested transaction (a savepoint) keeps its own mark and hands it to the enclosing one only when it succeeds, so a write
+    // that a caught inner rollback undid does not make the outer transaction look like it wrote.
+    const outer = txWrites;
+    const writes: TxWrites = { wrote: false };
     const call = (scope: Frame | null) => fn.apply(engine, [
-      (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope) : tx),
+      (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx),
       ...rest,
     ]);
-    return follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
+    const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
+    if (!outer) return afterCommit(out, () => writes.wrote);
+    const merge = (value: unknown): unknown => { if (writes.wrote) outer.wrote = true; return value; };
+    return isThenable(out) ? out.then(merge) : merge(out);
+  };
+
+  /** Calls onCommittedWrite once `out` resolves (a thenable) or now (a plain value), when `wrote()` says so. */
+  const afterCommit = (out: unknown, wrote: () => boolean): unknown => {
+    const observe = opts.onCommittedWrite;
+    if (!observe) return out;
+    const notify = (): void => { try { if (wrote()) observe(); } catch { /* the shadow never fails a call */ } };
+    if (!isThenable(out)) { notify(); return out; }
+    return out.then((value: unknown) => { notify(); return value; });
+  };
+
+  /** A member that may write: inside a transaction it marks the transaction, outside it notes after it resolves. */
+  const wrapObserved = (name: string, fn: Function): Function => function shadowObserved(this: unknown, ...args: unknown[]) {
+    if (!mayWrite(name, args)) return fn.apply(this, args);
+    if (txWrites) { txWrites.wrote = true; return fn.apply(this, args); }
+    return afterCommit(fn.apply(this, args), () => true);
   };
 
   /** `withReservedConnection`: the callback's connection gets a raw-SQL wrapper whose writes publish when the callback ends. */
@@ -165,6 +218,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
       else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
       else wrapped = value.bind(target);
+      if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
       cache.set(prop, { original: value, wrapped });
       return wrapped;
     },

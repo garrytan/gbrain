@@ -29,7 +29,7 @@ import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readPageBodyPolicy, chooseBodyStorage, SEGMENTED_DEMOTE_AT_OR_BELOW_BYTES, type PageBodyPolicy } from '../page-body/limits.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import { faultPoint } from './fault-points.ts';
 import { bodyStagingGoneError, LIVE_STAGING_STATES } from '../engine-sql/page-body.ts';
 import { segmentedPageSearchable } from './searchable.ts';
@@ -105,7 +105,7 @@ export async function materializedSnapshot(engine: BrainEngine, snapshot: PageSn
     throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
   });
   if (page === snapshot.page) return snapshot;
-  Object.assign(page, await overlayCanonicalBodies(engine, page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
+  Object.assign(page, await overlayCanonicalBodiesTyped(engine, page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
     { sourceId: page.source_id, marker: snapshot.globalPurges }));
   return { ...snapshot, page };
 }

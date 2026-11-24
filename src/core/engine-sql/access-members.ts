@@ -140,6 +140,41 @@ export async function readCredentialBindingForUpdate(exec: SqlExecutor, target: 
   return row;
 }
 
+/** A legacy token's attest columns and revoked_at (access/actor.ts attestRightOf). */
+export interface AccessTokenAttestRow {
+  revoked_at: Date | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: unknown; attest_read: string | null;
+  member_id: string | null;
+}
+
+/** An OAuth client's attest columns, deleted_at, grant types and whether it is confidential (a secret hash is stored). */
+export interface OauthClientAttestRow {
+  client_id: string; deleted_at: Date | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: unknown;
+  attest_read: string | null; member_id: string | null; grant_types: string[] | null; confidential: boolean;
+}
+
+// attest_sources and attest_read came after attest_actor, attest_ops and member_id, so they are read through
+// to_jsonb(row) and read as absent on a schema from before them. A schema before attest_actor, attest_ops or member_id
+// fails, and the caller (access/actor.ts attestRightOf) reads that as no right.
+
+/** A legacy token's attest row by its id text, revoked or not, or null. */
+export async function readAccessTokenAttest(exec: Pick<SqlExecutor, 'executeRaw'>, id: string): Promise<AccessTokenAttestRow | null> {
+  const [row] = await exec.executeRaw<AccessTokenAttestRow>(
+    `SELECT revoked_at, attest_actor, attest_ops, to_jsonb(access_tokens)->'attest_sources' AS attest_sources, to_jsonb(access_tokens)->>'attest_read' AS attest_read, member_id FROM access_tokens WHERE id::text = $1`, [id]);
+  return row ?? null;
+}
+
+/**
+ * An OAuth client's attest row by client_id, deleted or not, or null; `lock` reads it FOR UPDATE (run it inside the
+ * caller's transaction).
+ */
+export async function readOauthClientAttest(exec: Pick<SqlExecutor, 'executeRaw'>, clientId: string, opts?: { lock?: boolean }): Promise<OauthClientAttestRow | null> {
+  const [row] = await exec.executeRaw<OauthClientAttestRow>(opts?.lock
+    ? `SELECT client_id, deleted_at, attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, to_jsonb(oauth_clients)->>'attest_read' AS attest_read, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients WHERE client_id = $1 FOR UPDATE`
+    : `SELECT client_id, deleted_at, attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, to_jsonb(oauth_clients)->>'attest_read' AS attest_read, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients WHERE client_id = $1`,
+    [clientId]);
+  return row ?? null;
+}
+
 /**
  * The member a credential is bound to, or null when it is unbound or absent. A revoked token or deleted client is read
  * too, and nothing is locked: page-visibility.ts defaultSourceMemberWriter decides a remote write's reader with it.
@@ -149,6 +184,22 @@ export async function readCredentialMemberId(exec: Pick<SqlExecutor, 'executeRaw
     ? 'SELECT member_id FROM access_tokens WHERE id::text = $1'
     : 'SELECT member_id FROM oauth_clients WHERE client_id = $1', [target.id]);
   return row?.member_id ?? null;
+}
+
+/** One live credential named in a usage log row and the member it is bound to (null: bound to nobody). */
+export interface CredentialMemberBinding { name: string; member_id: string | null }
+
+/**
+ * The brain-audience heuristic's binding read (facts/writeback-audience.ts classifyBrainAudience): for each name, the
+ * tokens not revoked with that name and the OAuth clients not deleted with that client id, each with its member. A
+ * name can match several credentials; an empty list reads nothing. The rows come in no set order.
+ */
+export async function listCredentialMemberBindings(exec: Pick<SqlExecutor, 'executeRaw'>, names: readonly string[]): Promise<CredentialMemberBinding[]> {
+  if (!names.length) return [];
+  const rows = await exec.executeRaw<{ name: string; member_id: string | null }>(
+    `SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL
+       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL`, [[...names]]);
+  return rows.map(r => ({ name: r.name, member_id: r.member_id ?? null }));
 }
 
 /** An enabled member linked to a person of a trusted system, with its groups in `group_id` order. */

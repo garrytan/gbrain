@@ -1099,48 +1099,7 @@ export async function scanStaleMentions(
   const gazetteer = await buildGazetteer(engine);
   const allowCrossSource = await isCrossSourceLinksEnabled(engine);
 
-  // Same bounded page set for both queries so the link rows and the bodies
-  // can never describe different pages.
-  const scannedCte =
-    `WITH scanned AS (
-       SELECT p.id
-         FROM pages p
-        WHERE p.deleted_at IS NULL
-          AND EXISTS (
-            SELECT 1 FROM links l
-             WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
-          )
-        ORDER BY p.slug COLLATE "C", p.id
-        LIMIT $1
-     )`;
-
-  const bodies = await engine.executeRaw<{
-    id: number; slug: string; source_id: string | null; body: string; title: string | null; body_storage: string | null;
-  }>(
-    `${scannedCte}
-     SELECT p.id, p.slug, p.source_id, p.title, p.body_storage,
-            COALESCE(p.title, '') || E'\n\n' || COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
-       FROM pages p
-       JOIN scanned s ON s.id = p.id
-      ORDER BY p.slug COLLATE "C", p.id`,
-    [limit],
-  );
-
-  const rows = await engine.executeRaw<{
-    from_id: number; from_slug: string; to_slug: string;
-    to_source_id: string | null; link_kind: string | null; link_type: string;
-  }>(
-    `${scannedCte}
-     SELECT l.from_page_id AS from_id, f.slug AS from_slug,
-            t.slug AS to_slug, t.source_id AS to_source_id, l.link_kind, l.link_type
-       FROM links l
-       JOIN scanned s ON s.id = l.from_page_id
-       JOIN pages f ON f.id = l.from_page_id
-       JOIN pages t ON t.id = l.to_page_id
-      WHERE l.link_source = 'mentions'
-      ORDER BY f.slug COLLATE "C", t.slug COLLATE "C"`,
-    [limit],
-  );
+  const { pages: bodies, links: rows } = await engine.readStaleMentionScan(limit);
 
   const byPage = new Map<number, typeof rows>();
   for (const r of rows) {

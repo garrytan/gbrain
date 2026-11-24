@@ -22,9 +22,9 @@ export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
   /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
-  /** Of `claims`, each one the ledger recorded under its pre-v336 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
+  /** Of `claims`, each one the ledger recorded under its pre-v339 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
   readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]): Promise<BeliefLedgerSql.LegacyClaimFingerprintRow[]>;
-  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v336 fingerprint. No set order; the Rust store answers none. */
+  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v339 fingerprint. No set order; the Rust store answers none. */
   readLegacyBeliefTombstones(sourceId: string, probes: readonly BeliefLedgerSql.LegacyTombstoneProbe[]): Promise<string[]>;
   /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored`, or null. */
   readLatestBeliefCoverage(sourceId: string): Promise<BeliefLedgerSql.BeliefCoverageRow | null>;
@@ -311,4 +311,8 @@ export interface LedgerMembers {
   listOpenLoops(opts?: OpenLoopListOpts): Promise<OpenLoopsSql.OpenLoopDbRow[]>;
   /** The open loops whose counterparty page is (sourceId, slug), newest activity first, at most `limit` (entity-card.ts). */
   readEntityOpenLoops(slug: string, sourceId: string, limit: number): Promise<OpenLoopsSql.EntityOpenLoopRow[]>;
+  /** The open loops of `loopType` in `sourceId` per counterparty email among `emails`, one row per email with any, in no set order, with no limit (ops/loops.ts withheld noise). */
+  countOpenLoopsByCounterpartyEmail(sourceId: string, emails: readonly string[], loopType: string): Promise<OpenLoopsSql.CounterpartyEmailLoopCount[]>;
+  /** The applied-capture records older than `ttlDays` days deleted; how many (ingestion/applied-captures.ts, the dream cycle's bookkeeping purge). */
+  purgeStaleAppliedCaptures(ttlDays: number): Promise<number>;
 }

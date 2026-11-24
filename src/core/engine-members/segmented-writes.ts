@@ -5,24 +5,14 @@
  */
 import type { ResolvedColumn } from '../types.ts';
 import type {
-  LiveEmbedSegmentRow, OccurrenceChunkRow, RechunkCandidateScope, RetiredChunkVectorRow, SegmentChunkRowRow, SegmentedGenerationLock,
-  SegmentedLivePageRow, SegmentedProjectionPage, SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts,
+  LiveEmbedSegmentRow, OccurrenceChunkRow, RechunkCandidateScope, SegmentChunkRowRow, SegmentedGenerationLock,
+  SegmentedLivePageRow, SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts,
   SegmentedVectorInstall,
 } from '../engine-sql/segmented-writes.ts';
 
 export interface SegmentedWriteMembers {
   /** A segmented write: page `pageId`'s storage class, generation, title, type and body flags, deleted or not, or null (engine-sql/segmented-writes.ts). */
   readSegmentedLivePage(pageId: number): Promise<SegmentedLivePageRow | null>;
-  /** A segmented write: the members of `occurrenceIds`, in order, with a chunk row at or below `generation` (engine-sql/segmented-writes.ts). */
-  listChunkedOccurrences(pageId: number, occurrenceIds: readonly number[], generation: number): Promise<number[]>;
-  /** A segmented write: the stored vectors in `column` of the visible chunks of `occurrences`, in chunk_index order, for reuse (engine-sql/segmented-writes.ts). */
-  readRetiredChunkVectors(pageId: number, occurrences: readonly number[], column: string): Promise<RetiredChunkVectorRow[]>;
-  /** A segmented projection: whether the page stores a chunk row generation `generation` (live occurrences `live`) does not hold (engine-sql/segmented-writes.ts). */
-  hasStaleSegmentChunks(pageId: number, generation: number, live: readonly number[]): Promise<boolean>;
-  /** A segmented projection: delete up to `maxRows` of those stale chunk rows; returns how many it deleted (engine-sql/segmented-writes.ts). */
-  retireStaleSegmentChunks(pageId: number, generation: number, live: readonly number[], maxRows: number): Promise<number>;
-  /** A segmented projection: the live segmented page at `sourceId`/`slug` it builds, or null (engine-sql/segmented-writes.ts). */
-  readSegmentedProjectionPage(sourceId: string, slug: string): Promise<SegmentedProjectionPage | null>;
   /** gbrain reindex --segmented: ids of sealed, live segmented pages below `chunkerVersion` in the scope, in (source_id, slug) order (engine-sql/segmented-writes.ts). */
   listSegmentedRechunkCandidates(chunkerVersion: number, scope?: RechunkCandidateScope): Promise<number[]>;
   /** gbrain reindex --segmented: segmented page `pageId` with its revision, seal and updated_at in microseconds, deleted or not, or null (engine-sql/segmented-writes.ts). */

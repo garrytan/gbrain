@@ -13,6 +13,7 @@ import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { attachShadowParts } from '../src/shadow/attach.ts';
 import { openRustEngine } from '../src/core/rust-engine.ts';
+import { constructEngine } from '../src/core/engine-construct.ts';
 import { FollowChild } from '../src/shadow/follow-child.ts';
 import { readFollowerFile } from '../src/shadow/follow-status.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
@@ -21,6 +22,7 @@ import { readSeedRecord, writeSeedRecord, type SeedRecord } from '../src/shadow/
 import { shadowBrainKey, shadowDirFor, type ShadowState } from '../src/shadow/state.ts';
 import { fillSeedFixture, seedInto } from './helpers/shadow-seed-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { defineEvidenceScenarios } from './helpers/shadow-evidence-scenarios.ts';
 import { defineFollowScenarios } from './helpers/shadow-follow-scenarios.ts';
 
 const TARGET = detectAddonTarget();
@@ -68,6 +70,8 @@ describe('a seed written before shadow follow existed', () => {
       expect(follower.state).toBe('needs_reseed');
       expect(follower.action).toContain(STOP_COMMAND);
       expect(follower.action).toContain('gbrain engine shadow seed');
+      expect(follower.action).toContain('gbrain engine shadow start --plan');
+      expect(follower.action).toContain('gbrain engine shadow start --yes --expect <plan_hash>');
       const md = capture();
       expect(await runEngineShadow(['status'], { ...deps, ...md.deps })).toBe(0);
       const text = md.out.join('\n');
@@ -114,6 +118,8 @@ describe('a seed written before shadow follow existed', () => {
     primary: () => primary, addon: () => addon, kind: 'pglite',
     tempDir: () => { const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-follow-')); dirs.push(dir); return dir; },
   });
+
+  defineEvidenceScenarios({ primary: () => primary, addon: () => addon, addonPath: BUILT, kind: 'pglite' });
 
   test('gbrain engine shadow reconcile runs a full pass through a real child and repairs a changed row', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-reconcile-'));
@@ -205,4 +211,64 @@ describe('a seed written before shadow follow existed', () => {
       try { expect((await rust.getPage('people/erin-example'))?.title).toBe('Erin Example'); } finally { await rust.disconnect(); }
     });
   }, 180_000);
+
+  test('the reseed steps status prints turn shadow mode back on when run, in order, through the real gbrain command', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-shadow-printed-steps-'));
+    dirs.push(home);
+    const databasePath = join(home, 'brain.pglite');
+    const brain = await constructEngine({ engine: 'pglite', database_path: databasePath });
+    await brain.connect({ engine: 'pglite', database_path: databasePath });
+    try { await brain.initSchema(); await fillSeedFixture(brain); } finally { await brain.disconnect(); }
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: databasePath }));
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== 'DATABASE_URL' && key !== 'GBRAIN_DATABASE_URL') env[key] = value;
+    Object.assign(env, { GBRAIN_HOME: home, GBRAIN_RUST_ENGINE_ADDON: BUILT });
+    const gbrain = async (args: string[], stdin?: string): Promise<{ code: number; out: string; err: string }> => {
+      const proc = Bun.spawn([process.execPath, join(import.meta.dir, '..', 'src', 'cli.ts'), ...args], {
+        env, stdin: stdin === undefined ? 'ignore' : new Blob([stdin]), stdout: 'pipe', stderr: 'pipe', timeout: 90_000,
+      });
+      const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      return { code, out, err };
+    };
+    const status = async () => JSON.parse((await gbrain(['engine', 'shadow', 'status', '--json'])).out);
+
+    // A brain whose seed was written before follow existed: seed it with the real command, then drop the `digests` mark.
+    const first = await gbrain(['engine', 'shadow', 'seed']);
+    expect(first.err.split('\n').filter((l) => l && !l.includes('seeding '))).toEqual([]);
+    expect(first.code).toBe(0);
+    const dir = await withEnv({ GBRAIN_HOME: home }, async () => shadowDirFor(shadowBrainKey({ engine: 'pglite', database_path: databasePath })!));
+    writeSeedRecord(dir, legacyRecord(readSeedRecord(dir)!));
+    const before = await status();
+    expect(before.follower.state).toBe('needs_reseed');
+
+    // The steps are the ones status prints, in the order it prints them: `gbrain engine shadow <args>`, up to a comma, a bracket or "to turn".
+    const printed: string = before.follower.action;
+    const steps = [...printed.matchAll(/gbrain engine shadow ([^(,]+?)(?= \(|,| to turn|$)/g)].map((m) => m[1]!);
+    expect(steps).toEqual(['stop --delete', 'seed', 'start --plan', 'start --yes --expect <plan_hash>']);
+
+    let planHash: string | null = null;
+    for (const step of steps) {
+      if (step.includes('<plan_hash>')) expect(planHash).not.toBeNull();
+      const args = step.replace('<plan_hash>', planHash ?? '').split(' ');
+      const run = await gbrain(['engine', 'shadow', ...args]);
+      expect({ step, code: run.code, err: run.err.split('\n').filter((l) => l && !l.includes('seeding ')) }).toEqual({ step, code: 0, err: [] });
+      if (step.includes('--plan')) planHash = /plan_hash: ([0-9a-f]+)/.exec(run.out)?.[1] ?? null;
+    }
+
+    // Shadow mode is on, and a process that opens the brain starts the follower (status moves off needs_reseed and stopped).
+    const on = await status();
+    expect(on.enabled).toBe(true);
+    expect(readSeedRecord(dir)?.digests).toBe(true);
+    const put = await gbrain(['put', 'concepts/reseed-probe'], '---\ntype: concept\ntitle: Reseed Probe\n---\nWritten after the reseed.\n');
+    expect(put.code).toBe(0);
+    const deadline = Date.now() + 30_000;
+    let after = await status();
+    while (Date.now() < deadline && ['stopped', 'needs_reseed', 'not_seeded'].includes(after.follower.state)) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      after = await status();
+    }
+    expect(['invalid', 'behind', 'following']).toContain(after.follower.state);
+    expect(readFollowerFile(dir)).not.toBeNull();
+  }, 240_000);
 });

@@ -127,15 +127,15 @@ test('listPurgeMatchCandidates sends the old --match statement', async () => {
   params: ['src-a', 'Raised'] });
 });
 
-test('listPurgeProbeItems names the rows of a named probe, 20 at most, ordered by item', async () => {
+test('listPurgeProbeItems names the rows of a named probe, 20 at most, in byte order of the item', async () => {
   const { engine, last } = recordingEngine();
   await engine.listPurgeProbeItems({ kind: 'named', table: 'links', sourceId: 'src-a', needles: [CLAIM] });
   const count = OLD.s49.text;
   const select = count.slice('SELECT count(*)::int AS n FROM ('.length, count.lastIndexOf(' LIMIT '));
-  expect(last()).toEqual({ text: `SELECT * FROM (${select}) q ORDER BY item COLLATE "C" LIMIT 20`, params: OLD.s49.params });
+  expect(last()).toEqual({ text: `SELECT item FROM (${select}) probe_items ORDER BY item COLLATE "C" LIMIT 20`, params: OLD.s49.params });
 });
 
-/** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move; the withdrawal-discovery key read also matches gbrain_fact_fingerprint_v2 (migration v336). */
+/** sha256 of the 99 statements (text, params, lane) the plan and dry run below sent before the move; the withdrawal-discovery key read also matches gbrain_fact_fingerprint_v2 (migration v339). */
 const SEQUENCE_SHA256 = "4dd58ad514828019e3e41f7367bc9b054ea90176fd61e67829402cabbc1bb3fe";
 
 test('the plan, dry run and request finders send the same 99 statements as before, in order, on the same lanes', async () => {

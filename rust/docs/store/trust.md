@@ -56,7 +56,7 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
-hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v336 can hold
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v339 can hold
 `gbrain_fact_fingerprint_v2(claim)` (whitespace by the database locale); the SQL reads match that hash too. The store
 never wrote one: it folds the explicit `is_pg_space` list, which `gbrain_fact_fingerprint` folds on every engine. Deleting a source removes its rows (the table's
 `ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename (`updateSlug`) moves them in its own
@@ -176,8 +176,8 @@ values. An optional source and an ISO `since` filter by the proposal.
 ## Derivation trust (`trust::derivation`)
 
 The derived-row trust writes and counts. They read and write the page, take, timeline and fact records and keep no
-key of their own. The `derivation_inputs` edges are not kept on this store line: `recordDerivationInputs` and
-`derivedRowsFrom` (src/core/facts/derivation-inputs.ts) still send raw SQL.
+key of their own. The `derivation_inputs` edges are kept by `generations/derivation_inputs.rs` (facts.md, "Derivation
+inputs"): `recordDerivationEdges` writes them and `listDerivedRows` reads one hop of `derivedRowsFrom`.
 
 | Member | Store method | PGLite statement (src/core/engine-sql/derivation-trust.ts) |
 | --- | --- | --- |
@@ -257,6 +257,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listVersionTrustTiers` | `list_version_trust_tiers`: the snapshot tier of each listed version, by id | `SELECT pv.id, pv.trust_tier FROM page_versions pv WHERE pv.id = ANY($1)` |
 | `listVersionReasonWriters` | `list_version_reason_writers`: the type and tier of the page's next snapshot, else of the page (deleted or not) | `LEFT JOIN LATERAL (… ORDER BY n.id LIMIT 1)` |
 | `listPageRefsByIds` | `list_page_refs_by_ids`: the source, slug and type of each listed page record (deleted or not), by id, once each; an unknown or negative id answers nothing | `SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id` |
+| `listPageQuoteTiers` | `list_page_quote_tiers`: the type and tier of each listed page record (deleted or not) by id, or of the live pages with the slug in the listed sources, by id, once each; both forms or neither is an invalid argument | `SELECT id, type, trust_tier FROM pages WHERE id = ANY($1::bigint[])` / `… WHERE slug = $1 AND source_id = ANY($2::text[]) AND deleted_at IS NULL ORDER BY id` |
 | `listValidTimeIdentities` | `list_valid_time_identities` (`trust/valid_time.rs`): the live pages with the slug in the source scope, by source in byte order, at most six, with the source's checkout and the no-caller page policy's verdict | `… ORDER BY p.source_id COLLATE "C" LIMIT 6` |
 | `pickValidTimeEdition` | `pick_valid_time_edition`: the edition in force on a date over the page and its `V` version records, the competing ordinals, the history counts and the prune marks (`successor_pruned`, the page's `version_history_gap_at`) | the `WITH rows AS (…)` pick |
 
@@ -374,7 +375,7 @@ because enable refused on this engine before it, so no store could hold a baseli
   and the take half from the take purge ledger (`facts.md`, "The take purge ledger"). A fingerprint found in both
   halves, or asked twice, is answered once.
 - `readLegacyClaimFingerprints` and `readLegacyBeliefTombstones` make no store call and answer none: they find a claim
-  recorded or purged under the pre-v336 Postgres fingerprint, which the store never held (it folds the explicit
+  recorded or purged under the pre-v339 Postgres fingerprint, which the store never held (it folds the explicit
   `is_pg_space` list).
 - `readBeliefHistoryRows` reads the source's current incarnation by id, ascending or descending, in batches, with
   the slug, subject key, recorded-time window, subject key list and `beforeId` filters. Each row carries
@@ -429,3 +430,12 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+## Label guards (`trust::label_guards`)
+
+The `page_label_guards` table (GST-2521): the trust tier an owner label write set on a page. One record per page:
+
+`t 0x0e page_id` (8 bytes, big-endian; `t 0x0a` is the belief ledger's page lifetimes) -> `{"tier": <tier>, "set_at_us": <i64>}`
+
+`writePageLabelGuard` ([label_door.md](label_door.md)) writes and deletes it. A hard page delete removes it (the
+table's `ON DELETE CASCADE`, through `cascade::remove_page_rows`). The guard's readers (`labelGuardTier` and the
+deletion and graduation inventories) still read the table through `executeRaw`, which the Rust engine refuses.

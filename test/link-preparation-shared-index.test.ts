@@ -109,12 +109,13 @@ const POLICIES = [
 /** Basename-resolved targets of a page whose body is `body`, and how many full slug reads the preparation issued. */
 async function basenameTargets(engine: BrainEngine, slug: string, body: string) {
   await engine.executeRaw(`UPDATE pages SET compiled_truth=$2 WHERE source_id='default' AND slug=$1`, [slug, body]);
-  const reads = spyOn(engine, 'executeRaw');
+  // A full slug read is the typed probe with afterId 0 (engine-sql/link-slug-reads.ts readSourceSlugProbe).
+  const reads = spyOn(engine, 'readSourceSlugProbe');
   try {
     const snapshot = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
     const prepared = await prepareAutomaticLinks(engine, slug, { ...snapshot.page, frontmatter: snapshot.page.frontmatter ?? {} }, 'default');
     return { targets: prepared.pageKeys.map(key => key.slug).filter(key => key !== slug).sort(),
-      fullReads: reads.mock.calls.filter(([sql]) => String(sql).includes('AS slugs FROM pages')).length };
+      fullReads: reads.mock.calls.filter(([, afterId]) => afterId === 0).length };
   } finally { reads.mockRestore(); }
 }
 

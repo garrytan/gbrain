@@ -122,7 +122,7 @@ fn live_segmented(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 }
 
 /// The page's chunks `chunkGenerationFilter` keeps, in stored (chunk_index) order.
-fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
+pub(super) fn visible_chunks(read: &dyn KvRead, page_id: u64) -> Result<Vec<ChunkRecord>> {
     let state = read_body_state(read, page_id)?;
     let segmented = state
         .as_ref()
@@ -619,5 +619,27 @@ mod tests {
             .rest
             .insert("embedding".into(), json!([1.0, 2.0, 3.0]));
         assert!(store.stage_segment_chunks(id, 1, &[wide]).is_err());
+    }
+
+    #[test]
+    fn rows_without_a_stored_vector_are_not_retired_vectors() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        store
+            .stage_segment_chunks(id, 1, &[chunk(1, 0, "one"), chunk(2, 0, "two")])
+            .unwrap();
+        store.seal_segmented_page(id, "", None).unwrap();
+        assert!(
+            store
+                .read_retired_chunk_vectors(id, &[1, 2])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            store
+                .read_retired_chunk_vectors(id, &[])
+                .unwrap()
+                .is_empty()
+        );
     }
 }

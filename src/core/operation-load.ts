@@ -15,6 +15,7 @@ import { withEngineScope } from './engine-scope.ts';
 import { isRemoteCaller, withRemoteCaller } from './remote-caller.ts';
 import { withGuestMarks } from './guests/marker.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
+import { withNormalizedSlugParams } from './ops/slug-params.ts';
 
 // ---------------------------------------------------------------------------
 // WP4 (amendment 22) — area taxonomy.
@@ -148,7 +149,9 @@ export function finalizeOperation(op: Operation): void {
   // It also runs under the remote-caller mark its context names (remote-caller.ts), so a handler a model's tool call
   // reaches outside MCP dispatch (a subagent brain tool, a SkillOpt tool) is a remote caller too. The mark is sticky:
   // a nested call with `remote: false` under a remote caller stays remote.
-  const handler = withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction });
+  // Slug params are normalized outermost (ops/slug-params.ts), so every wrapper and the handler see the stored form.
+  const handler = withNormalizedSlugParams(op,
+    withOutputRedaction({ handler: withPrivacyHoldReplies(op, withGuestMarks(op, op.handler)), outputRedaction: op.outputRedaction }));
   op.handler = (ctx, params) => withEngineScope(ctx.engine,
     () => withRemoteCaller(isRemoteCaller() || ctx.remote !== false, () => handler(ctx, params)));
 }

@@ -24,6 +24,9 @@
  *    characters, 4 x ` COLLATE "C"`), and `listNearestFacts` now selects `f.embedding <=> $4 AS distance` in the inner
  *    query, which binds the vector literal once more as $4 (params [model, dims, literal, literal, ...pool params, model,
  *    dims, literal, limit]) and shifts every later placeholder up by one.
+ *    Three later changes are pinned on purpose: the owner-only read predicates also check the owner_only_held catalog
+ *    mark, listCallOffCueFacts orders a future-dated fact by its created_at, and listFactProvenance is the facts-cycle
+ *    member (it orders by id). Those pins hold the merged text, not the text at 2eb69f4613.
  *  - Regression: a member that reorders a clause, renumbers a placeholder, binds a value differently, drops a cast or
  *    sends the iterative-scan settings in another order changes what Postgres answers while the parity cases may still
  *    pass on a small fixture.
@@ -257,7 +260,7 @@ const PINS: Pin[] = [
     from: "src/core/ops/facts.ts:706 withProvenance",
     member: 'listFactProvenance',
     run: e => e.listFactProvenance('s1', [1, 2]),
-    statements: [{ text: `SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])`, params: ['s1', [1, 2]] }],
+    statements: [{ text: `SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id`, params: ['s1', [1, 2]] }],
   },
   {
     from: "src/core/facts/derivation-inputs.ts:39 recordDerivationInputs",

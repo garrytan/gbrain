@@ -13,17 +13,11 @@ function makeEngine(
 ): BrainEngine {
   return {
     kind: 'postgres',
-    executeRaw: async <T>(sql: string, params?: unknown[]): Promise<T[]> => {
+    // listAllSources: the live sources (archived ones left out), as the engines answer it.
+    listAllSources: async () => {
       if (opts.throwing) throw new Error('engine down');
-      if (sql.includes('SELECT id FROM sources WHERE id = $1')) {
-        const id = params?.[0];
-        if (typeof id !== 'string' || !registeredSources.includes(id)) return [];
-        // Mirror the real predicate: an archived row is only filtered out when
-        // the query asks for it.
-        if (sql.includes('archived = false') && opts.archived?.includes(id)) return [];
-        return [{ id } as T];
-      }
-      return [];
+      return registeredSources.filter(id => !opts.archived?.includes(id))
+        .map(id => ({ id, name: id, local_path: null, last_sync_at: null, config: {} }));
     },
   } as unknown as BrainEngine;
 }
@@ -59,7 +53,7 @@ describe('stdio MCP source preflight', () => {
     const engine = {
       kind: 'postgres',
       [DEGRADED_STATE]: () => true,
-      executeRaw: async () => { queries++; throw new Error('must not inspect source contents'); },
+      listAllSources: async () => { queries++; throw new Error('must not inspect source contents'); },
     } as unknown as BrainEngine;
     let stderr = '';
     const write = spyOn(process.stderr, 'write').mockImplementation(chunk => {
@@ -82,12 +76,12 @@ describe('stdio MCP source preflight', () => {
     await expect(assertStdioSourceBindable(makeEngine([], { throwing: true }), 'workspace')).resolves.toBeUndefined();
   });
 
-  test('degraded engine: preflight is skipped without touching executeRaw', async () => {
+  test('degraded engine: preflight is skipped without reading sources', async () => {
     let calls = 0;
     const engine = {
       kind: 'postgres',
       [DEGRADED_STATE]: () => true,
-      executeRaw: async <T>(): Promise<T[]> => { calls++; return []; },
+      listAllSources: async () => { calls++; return []; },
     } as unknown as BrainEngine;
     await expect(assertStdioSourceBindable(engine, 'workspace')).resolves.toBeUndefined();
     expect(calls).toBe(0);

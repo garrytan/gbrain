@@ -43,10 +43,10 @@ export async function readBeliefTombstones(exec: LegacyUnscopedRead, sourceId: s
 export interface LegacyClaimFingerprintRow { claim: string; fingerprint: string }
 
 /**
- * For each of `claims` whose pre-v336 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
+ * For each of `claims` whose pre-v339 Postgres fingerprint (gbrain_fact_fingerprint before fact_fingerprint_v3, which folded
  * whitespace by the locale's `[[:space:]]`) differs from the current one and names an event of `sourceId` that recorded
  * this claim (the event's fact or claim text has the claim's current fingerprint, so a new claim never joins an older,
- * different claim that shares the old fold), the claim and its pre-v336 fingerprint. A claim with none is absent.
+ * different claim that shares the old fold), the claim and its pre-v339 fingerprint. A claim with none is absent.
  */
 export async function readLegacyClaimFingerprints(exec: LegacyUnscopedRead, sourceId: string, claims: readonly string[]): Promise<LegacyClaimFingerprintRow[]> {
   if (!claims.length) return [];
@@ -62,7 +62,7 @@ export interface LegacyTombstoneProbe { kind: 'fact' | 'take'; claimFp: string; 
 
 /**
  * The `claimFp` of each probe whose claim text a purge of the source tombstoned under the claim's current fingerprint or a
- * pre-v336 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v336 matches a draft keyed
+ * pre-v339 one no current fingerprint can equal (legacyFingerprintV2Sql): a purge recorded before v339 matches a draft keyed
  * by the current fingerprint, and a purge recorded after matches a draft keyed by the claim's old one. A fact probe reads
  * `fact_purges`, a take probe `take_purges`. No set order.
  */
@@ -201,4 +201,14 @@ export async function readMovedBeliefLifetimes(exec: LegacyUnscopedRead, pageIds
       l.page_lifetime::text AS page_lifetime FROM belief_page_lifetimes l JOIN pages p ON p.id = l.page_id AND p.slug = l.slug
       WHERE l.page_id = ANY($1::int[]) AND l.ended_at IS NULL`, [[...pageIds]]);
   return rows.map(r => ({ ...r, page_id: Number(r.page_id) }));
+}
+
+/** One coverage event of a source (belief/coverage-report.ts coverageIntervals). */
+export interface BeliefCoverageEventRow { id: number; event_type: string; recorded_at: string; value: unknown; cause: unknown; incarnation: string }
+
+/** The coverage events of the source's current incarnation, in id order (belief/coverage-report.ts coverageIntervals and coverageAt). */
+export async function readBeliefCoverageEvents(exec: Pick<SqlExecutor, 'executeRaw'>, sourceId: string): Promise<BeliefCoverageEventRow[]> {
+  return exec.executeRaw<BeliefCoverageEventRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
+    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
+    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
 }

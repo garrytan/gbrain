@@ -12,12 +12,14 @@
 //!   re-opens a hold when the same content arrives again.
 //!
 //! Ids come from the `write_gate_receipts` and `write_gate_holds` counters and start at 1. Neither
-//! table has a foreign key in Postgres, so a source or page delete leaves these rows; a source
-//! delete (`sources::delete_source_record`) removes the source's holds with their receipts through
-//! [`remove_source_holds`], as `removedSourceScrubCtes` does.
+//! table has a foreign key in Postgres, so a source or page delete leaves these rows. A page purge's
+//! sweep removes the holds of its slug and the receipts that name it (`write_gate/purge.rs`); a
+//! source delete (`sources::delete_source_record`) removes the source's holds with their receipts
+//! through [`remove_source_holds`], as `removedSourceScrubCtes` does.
 
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
@@ -25,6 +27,8 @@ use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+mod purge;
 
 const RECEIPT: u8 = 0x02;
 const RECEIPT_TARGET: u8 = 0x03;
@@ -519,6 +523,15 @@ fn all_holds(read: &dyn KvRead) -> Result<Vec<HoldRecord>> {
     failure.map_or(Ok(out), Err)
 }
 
+/// A page purge receipt's probe of the write-gate holds (`countPurgeStoreProbe` on `write_gate_holds`): how many holds of
+/// `source_id` name `slug`, in any status.
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    Ok(all_holds(read)?
+        .iter()
+        .filter(|h| h.source_id == source_id && h.slug == slug)
+        .count())
+}
+
 /// The `scrub_write_gate_holds` and `scrub_write_gate_receipts` steps of a source delete
 /// (`removedSourceScrubCtes`): every hold of `source_id`, whatever its status, with its dedupe
 /// entry and the receipts whose target is that hold (`target_table = 'write_gate_holds'`).
@@ -928,6 +941,33 @@ impl Store {
             Ok(true)
         })
     }
+}
+
+/// The `write_gate_holds` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), every source's, in
+/// id order.
+pub(crate) fn probe_holds(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<HoldRecord>(read, &[keys::TRUST, HOLD], &mut |_, h| {
+        f(ProbeRow {
+            source_id: Some(h.source_id.clone()),
+            cells: vec![
+                ("kind", ProbeCell::text(&h.kind)),
+                ("source_id", ProbeCell::text(&h.source_id)),
+                ("slug", ProbeCell::text(&h.slug)),
+                ("fingerprint", ProbeCell::text(&h.fingerprint)),
+                ("payload", ProbeCell::jsonb(&h.payload)),
+                (
+                    "write_origin",
+                    ProbeCell::opt_jsonb(h.write_origin.as_ref()),
+                ),
+                ("tier", ProbeCell::text(&h.tier)),
+                ("reason_families", ProbeCell::text_array(&h.reason_families)),
+                ("reasons", ProbeCell::text_array(&h.reasons)),
+                ("request_id", ProbeCell::opt_text(h.request_id.as_deref())),
+                ("status", ProbeCell::text(&h.status)),
+                ("decided_by", ProbeCell::opt_text(h.decided_by.as_deref())),
+            ],
+        })
+    })
 }
 
 #[cfg(test)]

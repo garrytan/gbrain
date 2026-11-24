@@ -3,9 +3,9 @@
  * source a user can save to commits on every engine and never stays queued.
  *
  * Fail-first: on rust-engine/main 0ce95bbf7f and rust-engine/bound-write-rust 3d53109dc0 every case here fails on the
- * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust. Until then case 3 carries a
- * `rustPendingStop` pin (case 2's pin is gone: the Rust createVersion member serves the preimage option, so the write commits) (harness.ts): on Rust the write ends write_pending behind exactly the named typed refusal. The
- * pin fails when that refusal changes or goes away, so the owner's fix lane removes it.
+ * Rust arm only. Each fix lane keeps its case as written and makes it pass on Rust. Case 2's pin is gone (the Rust
+ * createVersion member serves the preimage option, so the write commits), and so is case 3's: the chronicle decision
+ * runs through typed members (rust-engine/chronicle-decision-rust), so the page commits on every arm.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: (1) a put_page to a git-rooted source that no writer claimed commits the page and writes its file on
@@ -17,7 +17,8 @@
  *    owner_unavailable (unbound_source); (2) the Rust createVersion member refuses the `preimage` option
  *    (import-file.ts), and coordinator.ts finishUnpublishedFailure releases a publication-stage capability refusal
  *    back to queued with no attempt limit, so the write and every write behind it stay write_pending; (3) the
- *    chronicle activation is a raw config INSERT (chronicle/ledger.ts), refused on Rust the same way.
+ *    chronicle decision ran raw SQL (chronicle/ledger.ts), refused on Rust the same way; it now runs through typed
+ *    engine members, so case 3 commits on every arm (test/engine-parity/chronicle-decision.test.ts).
  *  - Why existing coverage misses it: test/persistence-*.test.ts run on PGLite and Postgres only, and the Rust arm of
  *    the other parity cases never writes to an unclaimed rooted source, updates a page through put_page, or writes a
  *    chronicle-shaped page.
@@ -77,8 +78,14 @@ describe('the bench save failures', () => {
           // managed mode (capability managed_persistence, held in store-capabilities.ts), so the claim refuses by name and
           // nothing is written.
           if (backend === 'rust') {
-            expect(out).toEqual({ put: { ok: false, code: 'engine_capability_missing' }, page: false, file: false });
-            throw (put as { error?: unknown }).error;
+            // Named stop, by design (Garry, B2, Nov 22): managed_persistence refused by design on Rust (B2) until the
+            // Rust engine carries managed mode. A capability refusal takes the in-test pin (harness.ts: assert the
+            // refusal, rethrow it), so the Rust arm counts the case as stopped and never as equal.
+            const refusal = (put as { error?: { detail?: unknown } }).error;
+            expect({ ...out, managedPersistence: String(refusal?.detail ?? '').includes('capability=managed_persistence') },
+              'managed_persistence refused by design on Rust (B2)').toEqual(
+              { put: { ok: false, code: 'engine_capability_missing' }, page: false, file: false, managedPersistence: true });
+            throw refusal;
           }
           const rule = backend === 'postgres'
             ? { put: { ok: false, code: 'owner_unavailable' }, page: false, file: false }
@@ -104,9 +111,7 @@ describe('the bench save failures', () => {
     } finally { await disposePersistenceConsumer(engine); }
   });
 
-  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['readPageSnapshot'],
-    rustPendingStop: { capability: 'raw_sql', member: 'executeRaw', site: 'src/core/chronicle/ledger.ts', frame: 'src/core/chronicle/ledger.ts',
-      owner: 'lane 7, rust-engine/chronicle-decision-rust', due: '5 PM PST Nov 22' } }, async (engine) => {
+  parityTest('case 3: a new conversation part (chronicle-shaped) commits', { methods: ['readPageSnapshot'] }, async (engine) => {
     try {
       const big = '---\ntitle: Conv\ntype: conversation\n---\n' + 'User: hello there, this is a long line of conversation text.\n'.repeat(90);
       const part = await run(engine, 'put_page', { slug: 'conversations/conv-example/part-1', content: big });

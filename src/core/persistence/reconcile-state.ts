@@ -183,9 +183,9 @@ function insideGitCheckout(root: string): boolean {
 export function missingFileRoute(sourceId: string, slug: string, rel: string, state: ReturnType<typeof canonicalDeletionState>): string {
   const fileDrift = `gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer database`;
   const ghosts = `gbrain repair ghost-pages --source ${sourceId}`;
-  if (state === 'in_head') return `${rel} is deleted in the worktree but still committed, so this is not file drift: commit the deletion (sync then imports it), or remove the page with ${ghosts}; to keep the page, restore the file from Git (git checkout -- ${rel}) and sync.`;
+  if (state === 'in_head') return `${rel} is deleted in the worktree but still committed, so this is not file drift: to keep the page, restore the file from Git (git checkout HEAD -- '${rel}') and sync; to remove it, commit the deletion and sync (${ghosts} lists it apart and removes nothing while HEAD still holds the file).`;
   if (state === 'gone') return `${rel} is gone from the last commit. Preview the resolution with ${fileDrift} (recreates the file from the page) or with --prefer file (soft-deletes the page), then apply the printed command after the user decides.`;
-  return `Git could not say whether the deletion of ${rel} is committed. If it is (gone from HEAD), preview ${fileDrift} or --prefer file; if it is deleted only in the worktree, commit the deletion or remove the page with ${ghosts}.`;
+  return `Git could not say whether the deletion of ${rel} is committed. If it is (gone from HEAD), preview ${fileDrift} or --prefer file; if it is deleted only in the worktree, restore it (git checkout HEAD -- '${rel}') or commit the deletion and sync.`;
 }
 /** The refusal for a canonical file that is gone, routed by where its deletion stands in Git (#6712 wave). */
 function missingCanonicalFile(sourceId: string, slug: string, root: string, path: string): OperationError {
@@ -370,7 +370,7 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   // A page stored in segments (`body_storage`) is reconciled from its materialized body; its snapshot pins the body generation.
   strictReconcileKeys(value.preimages.database, ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals', 'globalPurges', 'bodyGeneration'],
     ['page', 'tags', 'revision', 'sourceIncarnation', 'withdrawals']);
-  if (value.preimages.database.globalPurges !== undefined) strictReconcileKeys(value.preimages.database.globalPurges, ['count', 'latest', 'world_only', 'rows'], ['count', 'latest', 'world_only']);
+  if (value.preimages.database.globalPurges !== undefined) strictReconcileKeys(value.preimages.database.globalPurges, ['count', 'latest', 'world_only']);
   strictReconcileKeys(value.preimages.database.page, ['id', 'slug', 'source_id', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter',
     'content_hash', 'source_path', 'knowledge_revision', 'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at', 'updated_at_iso',
     'deleted_at', 'effective_date', 'effective_date_source', 'import_filename', 'salience_touched_at', 'source_kind', 'source_uri', 'ingested_via',
@@ -401,9 +401,7 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
     }
   }
   for (const conflict of value.conflicts as unknown[]) strictReconcileKeys(conflict, ['path', 'file', 'database']);
-  for (const withdrawal of [...value.preimages.database.withdrawals as unknown[], ...(value.preimages.database.globalPurges?.rows ?? []) as unknown[]]) {
-    strictReconcileKeys(withdrawal, ['visibility', 'fact_hash', 'withdrawn_at', 'purged'], ['visibility', 'fact_hash', 'withdrawn_at']);
-  }
+  for (const withdrawal of value.preimages.database.withdrawals as unknown[]) strictReconcileKeys(withdrawal, ['visibility', 'fact_hash', 'withdrawn_at', 'purged'], ['visibility', 'fact_hash', 'withdrawn_at']);
   return JSON.parse(stableJson(value)) as ReconcileArtifact;
 }
 

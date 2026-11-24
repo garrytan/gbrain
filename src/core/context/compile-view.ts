@@ -109,6 +109,7 @@ export interface CompileViewEngine {
   readPageSnapshotsBatch?: BrainEngine['readPageSnapshotsBatch'];
   /** Fence-row normalization for that overlay; absent → such a page renders without an excerpt. */
   normalizeFenceLines?: BrainEngine['normalizeFenceLines'];
+  listGlobalPurgeWithdrawals?: BrainEngine['listGlobalPurgeWithdrawals'];
   capabilities?: BrainEngine['capabilities'];
 }
 
@@ -308,11 +309,12 @@ function renderEntry(page: Page, lead: string | null, relationshipNote?: string)
  */
 async function entryLead(engine: CompileViewEngine, page: Page): Promise<string | null> {
   const segmented = isSegmentedPage(page);
-  if (segmented && (!engine.executeRaw || !engine.readPageSnapshotsBatch || !engine.normalizeFenceLines)) return null;
+  if (segmented && (!engine.executeRaw || !engine.readPageSnapshotsBatch || !engine.normalizeFenceLines || !engine.listGlobalPurgeWithdrawals)) return null;
   const reader = { executeRaw: (sql: string, params?: unknown[]) => engine.executeRaw!(sql, params),
     readPageSnapshotsBatch: (...args: Parameters<BrainEngine['readPageSnapshotsBatch']>) => engine.readPageSnapshotsBatch!(...args),
     normalizeFenceLines: (...args: Parameters<BrainEngine['normalizeFenceLines']>) => engine.normalizeFenceLines!(...args),
-    capabilities: engine.capabilities ?? new Set<Capability>(['raw_sql']) } as Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'capabilities'>;
+    listGlobalPurgeWithdrawals: (...args: Parameters<BrainEngine['listGlobalPurgeWithdrawals']>) => engine.listGlobalPurgeWithdrawals!(...args),
+    capabilities: engine.capabilities ?? new Set<Capability>(['raw_sql']) } as Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals' | 'capabilities'>;
   const lead = await pageLeadSource(reader, page);
   return segmented ? overlaidBoundedPrefix(reader, { slug: page.slug, source_id: page.source_id ?? 'default', compiled_truth: lead }) : lead;
 }

@@ -28,7 +28,8 @@ use super::belief_lifetimes::{canonical_uuid, cast_uuid};
 use crate::cli_reads::entities::arrow_text;
 use crate::env::parse_iso;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
-use crate::kv::{KvWrite, scan_prefix};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::next_id;
 use crate::{Store, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -468,6 +469,43 @@ pub(crate) fn commit_mark_at(
     Ok(crate::get_json::<CommitMark>(read, &key)?.map(|m| m.observed_at_us))
 }
 
+/// The `belief_events` rows of `source_id` as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), across
+/// its incarnations, in incarnation and id order. A pure read of the store's own events: the receipt's ledger report reads the
+/// recorded values through `listBeliefEventsForPurgeProbe` instead, which this probe does not need. The event key reads as `bytea` text.
+pub(crate) fn probe_events(read: &dyn KvRead, source_id: &str, f: EachRow) -> Result<()> {
+    let prefix = part_key(&[keys::TRUST, EVENTS, EVENT], &[source_id], None);
+    each_json::<EventRecord>(read, &prefix, &mut |_, e| {
+        f(ProbeRow {
+            source_id: Some(e.source_id.clone()),
+            cells: vec![
+                ("event_key", ProbeCell::bytea_hex(&e.event_key)),
+                ("source_id", ProbeCell::text(&e.source_id)),
+                ("slug", ProbeCell::text(&e.slug)),
+                ("subject_kind", ProbeCell::text(&e.subject_kind)),
+                ("subject_key", ProbeCell::text(&e.subject_key)),
+                ("event_type", ProbeCell::text(&e.event_type)),
+                ("origin", ProbeCell::text(&e.origin)),
+                ("trust_tier", ProbeCell::text(&e.trust_tier)),
+                ("writer_tier", ProbeCell::opt_text(e.writer_tier.as_deref())),
+                ("tier_basis", ProbeCell::text(&e.tier_basis)),
+                ("visibility", ProbeCell::text(&e.visibility)),
+                ("value", ProbeCell::opt_jsonb(e.value.as_ref())),
+                ("value_hash", ProbeCell::opt_text(e.value_hash.as_deref())),
+                ("prior_hash", ProbeCell::opt_text(e.prior_hash.as_deref())),
+                ("state_hash", ProbeCell::text(&e.state_hash)),
+                ("cause", ProbeCell::jsonb(&e.cause)),
+                ("claim_fp", ProbeCell::opt_text(e.claim_fp.as_deref())),
+                (
+                    "redacted_fields",
+                    e.redacted_fields
+                        .as_deref()
+                        .map_or(ProbeCell::Null, ProbeCell::text_array),
+                ),
+            ],
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,6 +529,44 @@ mod tests {
             base[k] = v.clone();
         }
         serde_json::from_value(base).unwrap()
+    }
+
+    #[test]
+    fn the_table_probe_reads_a_sources_events_with_the_key_as_bytea_text_and_stops_when_asked() {
+        use crate::facts::purge_probe::test_support::render;
+        let store = store();
+        let rows = [
+            row(
+                "0a",
+                1,
+                json!({ "value": "{\"fact\":\"The harbor will reopen\"}" }),
+            ),
+            row("0b", 2, json!({ "redacted_fields": null })),
+            row("0c", 3, json!({ "source_id": "other" })),
+        ];
+        store.insert_belief_events(&rows).unwrap();
+        let read = store.read().unwrap();
+        let mine = render(usize::MAX, |f| probe_events(&*read, "default", f));
+        assert_eq!(mine.len(), 2);
+        assert!(
+            mine[0].starts_with("default|event_key=\\x0a;source_id=default;slug=people/a;"),
+            "{}",
+            mine[0]
+        );
+        assert!(
+            mine[0].contains(r#"value={"fact": "The harbor will reopen"}"#),
+            "{}",
+            mine[0]
+        );
+        assert!(
+            mine[0].contains("redacted_fields={f}") && mine[1].contains("redacted_fields=NULL")
+        );
+        assert!(mine[0].contains("writer_tier=NULL") && mine[0].contains("cause={}"));
+        assert_eq!(render(1, |f| probe_events(&*read, "default", f)).len(), 1);
+        assert_eq!(
+            render(usize::MAX, |f| probe_events(&*read, "nobody", f)).len(),
+            0
+        );
     }
 
     #[test]

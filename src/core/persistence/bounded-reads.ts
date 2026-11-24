@@ -101,13 +101,17 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
-  'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readCredentialMemberId', 'readLinkedMember', 'readFolderAccess',
+  'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readCredentialMemberId', 'readAccessTokenAttest', 'readOauthClientAttest', 'readLinkedMember', 'readFolderAccess',
   'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
-  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSegmentedLivePage', 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots',
-  'listForcedCutSeqs', 'readSegmentedVersionBodyBytes']);
+  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots',
+  'readJournalCeiling', 'sweepJournalChunk',
+  'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
+  'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
+  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe',
+  'readSegmentedLivePage']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

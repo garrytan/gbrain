@@ -118,7 +118,7 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
     const sourcePath = level.slugMode === 'source-root' ? holdPath(entry) : entry.path;
     const same = await fileMatchesSnapshot(engine, entry.slug!, bytes.toString('utf8'), snapshot, sourcePath, activePack).catch(() => false);
     if (!same) { verdicts.set(entry.path, { refused: 'content_differs' }); continue; }
-    const backed = await ghostFileBacked(engine, { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! }, owner);
+    const backed = await ghostFileBacked(engine, { source_id: level.sourceId, slug: entry.slug!, path: holdPath(entry), revision: entry.revision!, page_id: entry.pageId! }, owner, provenance.get(entry.path));
     verdicts.set(entry.path, backed ? { commit: parent.commit, blob_oid: parent.oid! } : { refused: 'database_ahead_of_file' });
   }
   return verdicts;

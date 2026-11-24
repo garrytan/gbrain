@@ -7,7 +7,7 @@
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
  * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody, and the fact purge's
  * lockBodyStagingState, deleteUnstagedSegmentChunks and deleteRewrittenSegmentDerivations.
- * stageSegmentChunks refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
+ * stageSegmentChunks keeps a text vector a chunk carries (a vector a replace reuses) and refuses an image vector.
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -18,7 +18,7 @@
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
   SegmentChunkInput, SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../../page-body/types.ts';
-import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
+import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow } from '../../page-body/derivations.ts';
 import type { RewrittenDerivationsDelete } from '../../engine-sql/segmented-purge-writes.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
@@ -250,7 +250,9 @@ export const upsertSegmentDerivations: StoreMember<[rows: readonly SegmentDeriva
   if (rows.length === 0) return;
   const sent = rows.map(row => ({ ...row, segmentSha256: hex(row.segmentSha256), contextHash: hex(row.contextHash),
     output: row.output ?? null, receipt: row.receipt ?? null }));
-  await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent));
+  // The store drops a row a recorded fact purge sweep refuses (the trigger on page_segment_derivations) and stores the others.
+  const refused = await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent)) as number;
+  if (refused > 0) throw new DerivationWriteRefused(refused);
 };
 
 export const retireSegmentDerivations: StoreMember<[pageId: number, live: readonly number[], opts?: { kind?: SegmentDerivationKind }], number> =

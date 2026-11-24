@@ -22,6 +22,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult } from '../types.ts';
 import { chunkVisibleFilter } from './safe-chunks.ts';
 import { readEdgeResolution } from '../chunkers/symbol-resolver.ts';
@@ -105,8 +106,9 @@ export async function expandAnchors(
           seen.set(r.id, { chunk_id: r.id, score: baseScore, hop: 0, source: 'anchor' });
         }
       }
-    } catch {
-      // Ignore — execution continues without the near-symbol anchors.
+    } catch (e) {
+      // Execution continues without the near-symbol anchors; an engine that cannot run the lookup refuses instead.
+      rethrowCapabilityRefusal(e);
     }
   }
 
@@ -128,7 +130,8 @@ export async function expandAnchors(
           direction: 'both',
           limit: NEIGHBOR_CAP_PER_HOP,
         });
-      } catch {
+      } catch (e) {
+        rethrowCapabilityRefusal(e);
         continue;
       }
 
@@ -177,8 +180,9 @@ export async function expandAnchors(
                 [unresolvedTargets],
               );
           for (const r of resolved) directChunkIds.push(r.id);
-        } catch {
-          // best-effort
+        } catch (e) {
+          // best-effort, but an engine that cannot run the lookup refuses
+          rethrowCapabilityRefusal(e);
         }
       }
 

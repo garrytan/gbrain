@@ -23,6 +23,13 @@ const rows = <T>(list: Row[]): T[] => list.map(row => withDates(row, POOL_DATES)
 export const readFactsEmbeddingColumn: Member<'readFactsEmbeddingColumn'> = async brain =>
   storeCall({ member: 'readFactsEmbeddingColumn' }, () => brain.readFactsEmbeddingColumn());
 
+/** The facts arm's source-page read (BrainEngine listFactSourcePages), from the store's facts and pages (facts/recall.rs). */
+export const listFactSourcePages: Member<'listFactSourcePages'> = async (brain, ids) => {
+  if (!ids.length) return [];
+  if (!ids.every(Number.isSafeInteger)) refuseMember('listFactSourcePages', 'a fact id that is not an integer');
+  return await storeCall({ member: 'listFactSourcePages' }, () => brain.listFactSourcePages([...ids])) as Awaited<ReturnType<BrainEngine['listFactSourcePages']>>;
+};
+
 export const listNearestFacts: Member<'listNearestFacts'> = async (brain, q) => {
   const member = 'listNearestFacts';
   if (q.vector.type !== 'halfvec') refuseMember(member, 'a vector-typed facts embedding column');

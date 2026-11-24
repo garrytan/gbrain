@@ -679,4 +679,36 @@ mod tests {
         assert_eq!(page.updated_us, "1700000000123456");
         assert!(store.restore_page_updated_at(id, "x").is_err());
     }
+
+    #[test]
+    fn the_projection_page_reads_back_the_live_segmented_page() {
+        let store = crate::test_support::store();
+        let id = published(&store);
+        assert_eq!(
+            store
+                .read_segmented_projection_page("default", "notes/none")
+                .unwrap(),
+            None
+        );
+        let page = store
+            .read_segmented_projection_page("default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (page.id, page.body_generation, page.body_bytes),
+            (id, 1, Some(8))
+        );
+        assert_eq!(page.text_projection_revision, None);
+        store
+            .seal_segmented_page(id, "", Some(&page.knowledge_revision))
+            .unwrap();
+        let sealed = store
+            .read_segmented_projection_page("default", "notes/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sealed.text_projection_revision.as_deref(),
+            Some(page.knowledge_revision.as_str())
+        );
+    }
 }

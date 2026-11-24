@@ -26,7 +26,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { createHash } from 'node:crypto';
 import { renderFactsTable } from '../src/core/facts-fence.ts';
 import { FACT_SPACE_CLASS, normalizeLoweredClaim } from '../src/core/facts/withdrawal-schema.ts';
-import { overlayCanonicalBodies, type OverlayEngine } from '../src/core/page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../src/core/page-state/snapshot.ts';
 import type { PageSnapshot } from '../src/core/page-state/types.ts';
 import { overlayStoreSnapshot, type StoreSnapshot } from '../src/core/rust-engine/snapshot-overlay.ts';
 
@@ -89,17 +89,20 @@ describe('a segmented page read with a subject-* purge crosses the owner socket 
     normalizeFenceLines: async (bodies: string[], timelines: string[]) => bodies.map((body, i) => ({ i: i + 1, body: fold(body), timeline: fold(timelines[i]!) })),
     executeRaw: () => { throw new Error('the engine has no SQL'); },
     capabilities: new Set(),
-  } as unknown as OverlayEngine;
+    // The '*' tombstones by fence hash, as the Rust store's listGlobalPurgeWithdrawals answers them.
+    listGlobalPurgeWithdrawals: async (_sourceId: string, hashes: string[]) =>
+      hashes.includes(claimHash('Drinks green tea')) ? [{ visibility: 'private', fact_hash: claimHash('Drinks green tea'), withdrawn_at: '2026-11-23T20:00:00.000Z', purged: true }] : [],
+  } as unknown as Parameters<typeof overlayCanonicalBodiesTyped>[0];
   const lead = `Lead.\n\n${renderFactsTable(['Drinks green tea', 'Prefers the aisle seat'].map((claim, i) => ({
     rowNum: i + 1, claim, kind: 'fact' as const, confidence: 1, visibility: 'private' as const, notability: 'medium' as const, active: true, context: '' })))}\n`;
 
-  test('the lead overlay still drops the purged claim after the snapshot went through the wire', async () => {
+  test('the lead overlay drops the purged claim after the snapshot went through the wire, through the typed purge lookup', async () => {
     const stored: StoreSnapshot = { page: segmentedPage('notes/large') as never, tags: [], revision: REVISION, sourceIncarnation: '1', withdrawals: [],
       globalPurges: { count: 1, latest: '2026-11-23T20:00:00.000Z', world_only: false },
       globalPurgeRows: [{ visibility: 'private', fact_hash: claimHash('Drinks green tea'), withdrawn_at: '2026-11-23T20:00:00.000Z', purged: true }] };
-    const snapshot: PageSnapshot = crossTheSocket(await overlayStoreSnapshot(noSql.normalizeFenceLines, stored));
+    const snapshot: PageSnapshot = crossTheSocket(await overlayStoreSnapshot(noSql.normalizeFenceLines as never, stored));
     expect(snapshot.globalPurges?.count).toBe(1);
-    const out = await overlayCanonicalBodies(noSql, lead, '', snapshot.withdrawals, { sourceId: 'default', marker: snapshot.globalPurges });
+    const out = await overlayCanonicalBodiesTyped(noSql, lead, '', snapshot.withdrawals, { sourceId: 'default', marker: snapshot.globalPurges });
     expect(rows(out.compiled_truth)).toHaveLength(1);
     expect(out.compiled_truth).toContain('Prefers the aisle seat');
     expect(out.compiled_truth).not.toContain('Drinks green tea');

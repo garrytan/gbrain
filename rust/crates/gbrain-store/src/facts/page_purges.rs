@@ -131,6 +131,46 @@ pub(crate) fn source_purges(
         .collect())
 }
 
+/// Every tombstone of one source, or of all sources when `source_id` is `None`, with its source and content hash, in
+/// key order.
+fn purge_rows(
+    read: &dyn KvRead,
+    source_id: Option<&str>,
+    op: &str,
+) -> Result<Vec<(String, String, PagePurgeRecord)>> {
+    let prefix = match source_id {
+        Some(source) => source_prefix(source),
+        None => vec![keys::FACT, ROW],
+    };
+    let mut rows = Vec::new();
+    let mut failed = None;
+    scan_prefix(read, &prefix, false, &mut |k, v| {
+        // The key is `F 0x0C source \0 content_hash \0`.
+        let mut parts = k[2..].split(|b| *b == 0);
+        let (Some(source), Some(hash)) = (parts.next(), parts.next()) else {
+            return true;
+        };
+        match serde_json::from_slice::<PagePurgeRecord>(v) {
+            Ok(record) => rows.push((
+                String::from_utf8_lossy(source).into_owned(),
+                String::from_utf8_lossy(hash).into_owned(),
+                record,
+            )),
+            Err(e) => {
+                failed = Some(e);
+                return false;
+            }
+        }
+        true
+    })?;
+    match failed {
+        Some(e) => Err(StoreError::invalid(format!(
+            "{op}: corrupt page purge record: {e}"
+        ))),
+        None => Ok(rows),
+    }
+}
+
 /// The shadow seed (`seed.rs`): stores a tombstone copied from another engine, with its request id and time. `false`
 /// when the tombstone is already stored.
 pub(crate) fn seed_purge(
@@ -261,6 +301,72 @@ impl Store {
     pub fn count_page_purge_tombstones(&self, source_id: &str, slug: &str) -> Result<u64> {
         let rows = source_purges(&*self.read()?, source_id, "countPagePurgeTombstones")?;
         Ok(rows.iter().filter(|(s, _)| s == slug).count() as u64)
+    }
+
+    /// `listPagePurgeTombstones`: `{ content_hash, slug }` of the source's tombstones, newest first (equal times in
+    /// content-hash order), up to `limit`.
+    pub fn list_page_purge_tombstones(
+        &self,
+        source_id: &str,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let op = "listPagePurgeTombstones";
+        no_nul(op, &[("sourceId", source_id)])?;
+        let limit = usize::try_from(limit)
+            .map_err(|_| StoreError::invalid(format!("{op}: LIMIT must not be negative")))?;
+        let mut rows = purge_rows(&*self.read()?, Some(source_id), op)?;
+        rows.sort_by_key(|(_, _, r)| std::cmp::Reverse(r.purged_at_us));
+        Ok(rows
+            .into_iter()
+            .take(limit)
+            .map(|(_, hash, r)| serde_json::json!({ "content_hash": hash, "slug": r.slug }))
+            .collect())
+    }
+
+    /// `listPagePurgeRows`: `{ source_id, slug, content_hash, request_id, purged_at }` of the tombstones of the source
+    /// (of every source when `source_id` is `None`), newest first (equal times in source and content-hash order), up
+    /// to `limit`; `purged_at` as ISO text.
+    pub fn list_page_purge_rows(
+        &self,
+        source_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<serde_json::Value>> {
+        let op = "listPagePurgeRows";
+        no_nul(op, &[("sourceId", source_id.unwrap_or(""))])?;
+        let limit = usize::try_from(limit)
+            .map_err(|_| StoreError::invalid(format!("{op}: LIMIT must not be negative")))?;
+        let mut rows = purge_rows(&*self.read()?, source_id, op)?;
+        rows.sort_by_key(|(_, _, r)| std::cmp::Reverse(r.purged_at_us));
+        Ok(rows
+            .into_iter()
+            .take(limit)
+            .map(|(source, hash, r)| {
+                serde_json::json!({ "source_id": source, "slug": r.slug, "content_hash": hash,
+                    "request_id": r.request_id, "purged_at": crate::env::iso(r.purged_at_us) })
+            })
+            .collect())
+    }
+
+    /// `deletePagePurgeTombstones`: removes the source's tombstones under the slug and returns each one's request id
+    /// (null when it has none), in content-hash order. The caller holds the source's write lock: the store admits one
+    /// write transaction at a time.
+    pub fn delete_page_purge_tombstones(
+        &self,
+        source_id: &str,
+        slug: &str,
+    ) -> Result<Vec<Option<String>>> {
+        let op = "deletePagePurgeTombstones";
+        no_nul(op, &[("sourceId", source_id), ("slug", slug)])?;
+        self.write(|tx| {
+            let mut requests = Vec::new();
+            for (_, hash, record) in purge_rows(&*tx, Some(source_id), op)? {
+                if record.slug == slug {
+                    tx.delete(&row_key(source_id, &hash))?;
+                    requests.push(record.request_id);
+                }
+            }
+            Ok(requests)
+        })
     }
 
     fn write_page_purges(&self, op: &str, row: &PagePurgeUpsert, keep_time: bool) -> Result<()> {

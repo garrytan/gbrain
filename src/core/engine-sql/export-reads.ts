@@ -56,6 +56,7 @@ export interface ExportWithdrawalRow { visibility: string; fact_hash: string; wi
 
 /** The source's withdrawals and purge tombstones, by visibility, fact hash and subject. */
 export async function listExportWithdrawals(tx: Raw, sourceId: string): Promise<ExportWithdrawalRow[]> {
+  // A UNION's ORDER BY takes only output column names, so the byte order sorts the wrapped union.
   return tx.executeRaw<ExportWithdrawalRow>(`SELECT * FROM (SELECT visibility,fact_hash,withdrawn_at,subject,false AS purged
     FROM fact_withdrawals WHERE source_id=$1
     UNION ALL SELECT visibility,fact_hash,purged_at,subject,true FROM fact_purges WHERE source_id=$1) w

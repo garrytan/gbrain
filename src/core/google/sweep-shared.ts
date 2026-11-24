@@ -58,6 +58,10 @@ export interface GoogleSyncSummary {
   /** #5012: reply-owed loops the detector withheld this sweep, by reason (counts only). */
   loopsWithheld: Record<string, number>;
   failedFiles: number;
+  /** GST-3452: the sweep stopped at a provider usage or rate limit; the run still ends partial. */
+  limitStopped?: boolean;
+  /** GST-3452: items that failed on that limit (each also counted in failedFiles). */
+  limitedItems?: number;
   /** Threads per ingest tier, when the source sorts threads into tiers (ingest-tiers.ts). */
   ingestTiers?: Record<string, number>;
 }

@@ -1,3 +1,5 @@
+import { alsoPrefixes } from './slug-params.ts';
+import { normalizeSlug } from '../utils.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { recordFunnelEvent } from '../funnel.ts';
 import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
@@ -74,7 +76,7 @@ function quoteTakes<T extends { claim: string; page_slug: string; trust_tier: st
 /** #8377: a claim or source an agent copied out of a quoted takes read is written without the fence. */
 function unquotedTakeParams(ctx: OperationContext, p: Record<string, unknown>): Record<string, unknown> {
   if (ctx.remote === false) return p;
-  const slug = String(p.slug).toLowerCase();
+  const slug = normalizeSlug(String(p.slug));
   const unquote = (key: string) => typeof p[key] === 'string' ? { [key]: unquoteTranscriptText(p[key] as string, slug) } : {};
   return { ...p, ...unquote('claim'), ...unquote('source') };
 }
@@ -189,6 +191,7 @@ const takes_scorecard: Operation = {
         ...await readPolicyOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
+        ...(typeof p.domain_prefix === 'string' ? alsoPrefixes('domainPrefixAlso', p.domain_prefix) : {}),
         since: p.since as string | undefined,
         until: p.until as string | undefined,
       },
@@ -370,15 +373,23 @@ const think: Operation = {
     // Persist if --save was passed locally
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
+    // GST-3612: a managed save or take accepted but still publishing keeps the answer; the warning names its receipt.
+    const { acceptedPendingReceipt } = await import('../persistence/accepted-pending.ts');
+    const pendingWarning = (code: string) => (e: unknown): null => {
+      const receipt = acceptedPendingReceipt(e);
+      if (!receipt) throw e;
+      result.warnings.push(`${code}: ${receipt.request_id}`);
+      return null;
+    };
     if (safeSave) {
       const persisted = await persistSynthesis(ctx.engine, result, {
         // '__all__' is a read scope, not a write destination: an unscoped save keeps the default source.
         sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
         ...(thinkScope.allowedSources ? { allowedSources: thinkScope.allowedSources } : {}),
-      });
-      savedSlug = persisted.slug;
-      evidenceInserted = persisted.evidenceInserted;
-      for (const w of persisted.warnings) result.warnings.push(w);
+      }).catch(pendingWarning('SAVE_PENDING'));
+      savedSlug = persisted?.slug;
+      evidenceInserted = persisted?.evidenceInserted ?? 0;
+      for (const w of persisted?.warnings ?? []) result.warnings.push(w);
     }
 
     // #2556: `take` was gated (safeTake) but never EXECUTED — runThink ignores
@@ -393,11 +404,11 @@ const think: Operation = {
         const { persistTakeFromSynthesis } = await import('../think/persist-take.ts');
         const persisted = await persistTakeFromSynthesis(ctx.engine, result, {
           anchor: String(p.anchor),
-          sourceId: ctx.sourceId,
+          sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
           lockTimeoutMs: 2000,
-        });
-        takeRow = persisted.take_row;
-        for (const w of persisted.warnings) result.warnings.push(w);
+        }).catch(pendingWarning('TAKE_PENDING'));
+        takeRow = persisted?.take_row ?? null;
+        for (const w of persisted?.warnings ?? []) result.warnings.push(w);
       }
     }
 

@@ -6,7 +6,7 @@
  * source's withdrawals under subject `*` or the slug, then the slug's purge tombstones) and, when the source has a
  * subject-`*` tombstone, the `globalPurges` marker and every such tombstone in `globalPurgeRows`. This side keeps the
  * `*` tombstones whose hash a fence claim of the page has (`fenceClaimHashes`, as `resolveGlobalPurges` does), keeps
- * `globalPurgeRows` on the snapshot's marker as `rows` (for the overlay of other text), and, on a page that is not
+ * `globalPurgeRows` (the overlay of other text reads them through listGlobalPurgeWithdrawals), and, on a page that is not
  * segmented, strikes withdrawn fence rows and drops purged ones from the truth and timeline (`overlayWithdrawalBody`).
  * A segmented page keeps its ledger rows and is never read as a whole body (its body getters refuse page_body_segmented),
  * as the SQL engines leave it. A segmented page's seal overlays its timeline lead the same way (`overlayStoreLead`).
@@ -18,9 +18,9 @@
  * `\s` (U+0085, U+1680, U+00A0) never decide a match. One normalize call per read, made only when the snapshot has ledger
  * rows to apply and a fence to apply them to.
  */
-import { overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
+import { fenceClaimHashes, overlayWithdrawalBody } from '../facts/withdrawal-overlay.ts';
+import type { BrainEngine } from '../engine.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { namedGlobalPurges, type OverlayEngine } from '../page-state/snapshot.ts';
 import type { PageSnapshot, PageWithdrawal } from '../page-state/types.ts';
 import type { StoreBrain } from './store.ts';
 import { storeCall } from './store-members/common.ts';
@@ -29,7 +29,7 @@ import { storeCall } from './store-members/common.ts';
 export type StoreSnapshot = PageSnapshot & { globalPurgeRows?: PageWithdrawal[] };
 
 /** The store's fence normalization, bound to its brain (store-members/cli-reads-export.ts `normalizeFenceLines`). */
-export type NormalizeFence = OverlayEngine['normalizeFenceLines'];
+export type NormalizeFence = BrainEngine['normalizeFenceLines'];
 
 /** The store's `normalizeFenceLines` of `brain`, as the overlay reads it. */
 export const storeNormalizer = (brain: StoreBrain): NormalizeFence => (bodies, timelines) =>
@@ -39,17 +39,17 @@ const hasFence = (text: string | null | undefined): boolean => typeof text === '
 
 /** `withdrawals` plus the subject-`*` tombstones whose hash a fence claim of the fingerprinted `texts` has. */
 function withNamedPurges(withdrawals: PageWithdrawal[], globalPurgeRows: PageWithdrawal[] | undefined, texts: string[]): PageWithdrawal[] {
-  const named = namedGlobalPurges(globalPurgeRows, texts);
+  const hashes = new Set(fenceClaimHashes(texts));
+  const named = (globalPurgeRows ?? []).filter((row) => hashes.has(row.fact_hash));
   return named.length ? [...withdrawals, ...named] : withdrawals;
 }
 
-/** The snapshot with the marker's rows kept (the store's `globalPurgeRows`), and its ledger rows listed. */
+/** The snapshot without the store's `globalPurgeRows`, which it keeps aside for this overlay, and its ledger rows listed. */
 function keepMarkerRows(snapshot: StoreSnapshot): { rest: PageSnapshot; withdrawals: PageWithdrawal[]; globalPurgeRows: PageWithdrawal[] | undefined } {
   const { globalPurgeRows, ...stored } = snapshot;
-  // The snapshot keeps the marker (as on PGLite), with the rows the store answered as its plain `rows`: a later overlay of
-  // other text (a segment, a restage) names its tombstones from them (overlayCanonicalBodies), on this side of the
-  // owner socket or the other.
-  const rest: PageSnapshot = stored.globalPurges && globalPurgeRows ? { ...stored, globalPurges: { ...stored.globalPurges, rows: globalPurgeRows } } : stored;
+  // The snapshot keeps the marker as PGLite does; a later overlay of other text (a segment, a restage) names its
+  // tombstones through listGlobalPurgeWithdrawals (overlayCanonicalBodiesTyped).
+  const rest: PageSnapshot = stored;
   return { rest, withdrawals: rest.withdrawals ?? [], globalPurgeRows };
 }
 

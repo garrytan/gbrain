@@ -1296,6 +1296,9 @@ pub struct GetChunksOptions {
     /// `requireSafeChunks`: only a page past the chunker-version fence (`safeChunksFilter(p)`)
     /// has chunks to read.
     pub require_safe_chunks: bool,
+    /// `excludePrivate`: only a page the page policy keeps (`facts/privacy.rs` `page_hidden`) has
+    /// chunks to read.
+    pub exclude_private: Option<crate::facts::PrivacyPolicy>,
 }
 
 /// The page's visible chunks as `getChunks` returns them, with their vectors when `with_vectors`. A sealed read takes
@@ -1490,6 +1493,14 @@ impl Store {
             };
             if options.seal {
                 refuse_seal(&*tx, &page, slug, source)?;
+            } else if segmented(&page) {
+                // A plain write would replace the chunks of the page's live segments: refused before any write.
+                return Err(StoreError::new(
+                    INVALID_STATE,
+                    format!(
+                        "upsertChunks refuses segmented page {slug} (source={source}): its chunks are written through its segments"
+                    ),
+                ));
             }
             if let Some(expected) = &options.expected_revision {
                 if !crate::env::is_uuid(expected) {
@@ -1574,12 +1585,18 @@ impl Store {
         let mut seen = HashSet::new();
         sources.retain(|id| seen.insert(id.clone()));
         let mut rows: Vec<(DocumentKey, String, Value)> = Vec::new();
+        let mut owner_only = crate::facts::OwnerOnlyCache::default();
         for source in sources {
             // The slug is matched as written, and a soft-deleted page is read like a live one: PGLite's
             // chunk read has neither a case fold nor a `deleted_at` filter.
             let Some(page) = read_page(&*read, &source, slug)? else {
                 continue;
             };
+            if let Some(policy) = &options.exclude_private
+                && owner_only.page_hidden(&*read, &page, policy)?
+            {
+                continue;
+            }
             if !options.include_unsealed
                 && page.text_projection_revision.as_deref()
                     != Some(page.knowledge_revision.as_str())
@@ -2331,6 +2348,42 @@ mod seal_guard_tests {
                 after.text_projection_revision,
                 page.text_projection_revision
             );
+        }
+    }
+
+    /// A plain (unsealed) `upsertChunks` on a segmented page would replace the chunks of its live segments, so it is
+    /// refused before any chunk or page field is written, for a write with chunks and for the empty write that only
+    /// removes them.
+    #[test]
+    fn plain_upsert_refuses_a_segmented_page_before_it_touches_a_chunk() {
+        let store = crate::test_support::store();
+        let page = segmented(&store);
+        let before = stored_texts(&store, page.id);
+        assert!(!before.is_empty());
+        for chunks in [
+            Vec::new(),
+            vec![ChunkInput {
+                chunk_text: "inline".into(),
+                ..ChunkInput::default()
+            }],
+        ] {
+            let err = store
+                .upsert_chunks("big", &chunks, &UpsertChunksOptions::default())
+                .unwrap_err();
+            assert_eq!(err.code, crate::error::INVALID_STATE);
+            assert_eq!(
+                err.message,
+                "upsertChunks refuses segmented page big (source=default): its chunks are written through its segments"
+            );
+            assert_eq!(stored_texts(&store, page.id), before);
+            let after = read_page(&*store.read().unwrap(), DEFAULT_SOURCE, "big")
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                after.text_projection_revision,
+                page.text_projection_revision
+            );
+            assert_eq!(after.chunker_version, page.chunker_version);
         }
     }
 
