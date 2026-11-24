@@ -576,6 +576,7 @@ test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/engine-swap-managed-storage.test.ts
 test/engine-swap-refresh-drain.test.ts
+test/enrich-owner-contact.test.ts
 test/entity-company-auto-link.test.ts
 test/entity-dedupe-decisions.test.ts
 test/entity-dedupe-person-confirm.test.ts
@@ -627,6 +628,7 @@ test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
 test/ghost-pages-git-canonical-7967.test.ts
+test/ghost-pages-move-evidence.test.ts
 test/ghost-pages-only-copy-gst3637.test.ts
 test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
@@ -795,6 +797,7 @@ test/large-pages/segmented-switch.test.ts
 test/large-pages/segmented-think-compile-leads.serial.test.ts
 test/large-pages/segmented-timeline-heap.test.ts
 test/large-pages/segmented-timeline-retract-versions.test.ts
+test/large-pages/segmented-timeline-stale-row.test.ts
 test/large-pages/segmented-versions.test.ts
 test/large-pages/segmented-withdrawal-mirror.test.ts
 test/large-pages/segmented-withdrawn-fence-delete.test.ts
@@ -809,6 +812,8 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/learning-duplicates.test.ts
+test/learning-ledger.test.ts
 test/link-context-world-rows-2957.test.ts
 test/link-cross-source.test.ts
 test/link-dates-per-row-gst2228.test.ts

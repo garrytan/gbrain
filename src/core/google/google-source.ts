@@ -282,9 +282,9 @@ async function processThread(
  * and throwing this; reaching here means the client's own retry budget was
  * exhausted, not that the thread is bad.
  */
-function threadFailureMessage(tid: string, rateLimited: boolean, e: unknown): string {
+function threadFailureMessage(tid: string, notCounted: boolean, usageLimit: boolean, e: unknown): string {
   return (
-    `[google] thread ${tid} failed${rateLimited ? ' (rate limited; not counted toward a hold)' : ''}: ` +
+    `[google] thread ${tid} failed${usageLimit ? ' (rate limited; not counted toward a hold)' : notCounted ? ' (not counted toward a hold)' : ''}: ` +
     `${e instanceof Error ? e.message : String(e)}`
   );
 }
@@ -375,14 +375,15 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
     const classified = await g.holds.fail(tid, e, { version, slug: seen.thread ? threadRelPath(seen.thread).replace(/\.md$/, '') : null,
       meta: { sender: last?.from ?? null, subject: first?.subject ?? null, upstream_at: last ? last.dateIso : null } });
     const rateLimited = classified.scope === 'rate_limit';
+    const usageLimit = rateLimited && isUsageLimit(e);
     g.summary.failedFiles++;
-    g.deps.log(threadFailureMessage(tid, rateLimited, e));
+    g.deps.log(threadFailureMessage(tid, rateLimited, usageLimit, e));
     if (wasHeld && !rateLimited) return { kind: 'skipped' };
-    if (rateLimited && isUsageLimit(e)) {
+    if (usageLimit) {
       g.summary.limitStopped = true;
       g.summary.limitedItems = (g.summary.limitedItems ?? 0) + 1;
     } else g.summary.status = 'partial';
-    return { kind: rateLimited ? 'rate_limited' : 'failed' };
+    return { kind: usageLimit ? 'rate_limited' : 'failed' };
   }
 }
 
@@ -966,7 +967,21 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   const log = (msg: string): void => {
     process.stderr.write(msg + '\n');
   };
-  const { entry, tokens, reader } = await resolveSyncAccess(cfg, opts, log, fetchImpl, vaultOverride);
+  // GST-3452: a usage limit already spent before any mail is read (gbrain.io answers the identity reads too) stops the run
+  // as a usage limit with nothing written, so the next sync resumes; any other failure here still throws.
+  const usageLimitStop = (e: unknown): SyncResult => {
+    log(`[google] stopped at a usage limit before reading mail: ${e instanceof Error ? e.message : String(e)}; the next sync resumes`);
+    return { status: 'partial', fromCommit: null, toCommit: '', added: 0, modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0,
+      pagesAffected: [], stopped_on: 'usage_limit' };
+  };
+  let access: Awaited<ReturnType<typeof resolveSyncAccess>>;
+  try {
+    access = await resolveSyncAccess(cfg, opts, log, fetchImpl, vaultOverride);
+  } catch (e) {
+    if (isUsageLimit(e)) return usageLimitStop(e);
+    throw e;
+  }
+  const { entry, tokens, reader } = access;
   const clientArgs = [tokens, fetchImpl ?? fetch, log, entry.meta.client_id] as const;
   const gmail: GmailReader = reader ?? new GmailClient(...clientArgs);
   const calendar = new CalendarClient(...clientArgs);
@@ -1025,7 +1040,12 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
   // #5686: every enabled service reads as the pinned account; checked before any service runs.
   if (managed && reader) {
     // Every gbrain.io answer names its mailbox and the reader refuses a mismatch; the profile read proves the terminal answers.
-    await reader.getProfile(opts.signal ? { signal: opts.signal } : {});
+    try {
+      await reader.getProfile(opts.signal ? { signal: opts.signal } : {});
+    } catch (e) {
+      if (isUsageLimit(e)) return usageLimitStop(e);
+      throw e;
+    }
     await managed.assertAccount({ kind: 'google', email: cfg.account });
   } else if (managed) {
     const { email } = await resolveGoogleAccount({ gmail: gmail as GmailClient, calendar, people, userinfo: googleUserinfo(tokens, fetchImpl ?? fetch) }, activeServices, opts.signal);

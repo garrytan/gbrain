@@ -583,7 +583,14 @@ export interface EnrichCandidatesOpts {
   /** Body-length (chars) below which a page is "thin". */
   thinThreshold: number;
   /** Ordering signal. Whitelisted via ENRICH_ORDER_SQL. */
-  order: 'inbound-links' | 'updated' | 'salience';
+  order: 'inbound-links' | 'updated' | 'salience' | 'owner-contact';
+  /**
+   * `owner-contact` only: the owner's own page. A candidate linked to or from
+   * it scores one more point. The caller resolves it (trusted local only, see
+   * `src/core/identity/owner.ts`); omitted, no candidate gets the point.
+   */
+  ownerSlug?: string;
+  ownerSourceId?: string;
   /** Max rows to return. */
   limit: number;
   /**
@@ -608,6 +615,8 @@ export interface EnrichCandidate {
   body_len: number;
   /** Source-correct inbound-link count (excludes `link_source='mentions'`). */
   inbound_count: number;
+  /** `owner-contact` order only: the score it ranked by (see engine-sql/salience.ts). */
+  contact_score?: number;
 }
 
 /**
@@ -620,6 +629,7 @@ export const ENRICH_ORDER_SQL: Record<EnrichCandidatesOpts['order'], string> = {
   'inbound-links': 'inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
   'updated':       'p.updated_at DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
   'salience':      'p.emotional_weight DESC, inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
+  'owner-contact': 'contact_score DESC, inbound_count DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC',
 };
 
 /**
