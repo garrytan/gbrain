@@ -20,7 +20,7 @@ import { appendLedgerRows } from '../../src/shadow/ledger.ts';
 import { readEpochRecall, RECALL_REFERENCE_LIMIT, type RankedKey } from '../../src/shadow/recall.ts';
 import { evaluateReadiness } from '../../src/core/engine-swap/readiness.ts';
 import { buildEvidenceStatus } from '../../src/shadow/evidence.ts';
-import { batch, gate, sample, sleep, startRig, until, type Rig, type RigOptions } from './shadow-stable-harness.ts';
+import { batch, gate, sample, sleep, startRig, until, untilNotMoved, type Rig, type RigOptions } from './shadow-stable-harness.ts';
 import { installFixtureChunks } from './page-projection.ts';
 
 export const ALICE = { identity: ['member:alice-example'], hidePrivate: true, restricted: true, applyRemoteReadPolicy: true };
@@ -86,13 +86,15 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     await (caller ? withCallerAccess(caller, read) : read());
     return { rig, rows: await rig.finish() };
   }
+  /** A positive outcome (a violation found, a row cleared) asked again from a new capture when an unrelated commit moved the first (harness `untilNotMoved`). */
+  const unmoved = <R extends { rows: Array<Record<string, unknown>> }>(run: () => Promise<R>): Promise<R> => untilNotMoved(run, (r) => r.rows[0]?.reason === 'privacy_check_moved' || r.rows[0]?.rerun === 'skipped:moved');
 
   describe('the per-item privacy check', () => {
     for (const [name, slug] of [['a same-source private page', 'priv/a'], ['a member-restricted page', 'mem/a'], ['a folder-restricted page', 'partners/x'], ['a page derived from private content', 'summary/x']] as const) {
       test(`${name} that Rust shows and the primary did not is privacy_diverged and pauses mirroring`, async () => {
         const seen = await withCallerAccess(ALICE, () => ctx.primary().listPages({ limit: 100, excludePrivate: true }));
         expect(seen.map((r) => r.slug)).not.toContain(slug); // the primary hid it from this caller
-        const { rig, rows } = await leak(ALICE, [...seen.map((r) => r.slug), slug]);
+        const { rig, rows } = await unmoved(() => leak(ALICE, [...seen.map((r) => r.slug), slug]));
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({ op: 'listPages', outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' });
         expect(rig.stoppedBy).toBe('privacy_diverged');
@@ -104,7 +106,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await privacyFixture(ctx.primary());
       const open = (await ctx.primary().listPages({ limit: 100, excludePrivate: true })).map((r) => r.slug);
       expect(open).not.toContain('priv/a'); // the baseline policy hides it
-      const { rows } = await leak(null, [...open, 'priv/a']);
+      const { rows } = await unmoved(() => leak(null, [...open, 'priv/a']));
       expect(rows[0]).toMatchObject({ outcome: 'privacy_diverged', reason: 'row_not_readable_by_caller' });
     });
 
@@ -303,7 +305,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     };
 
     test('every extra row passed the check: a reported ranking difference, counted per member, and out of diverged_unexplained_7d', async () => {
-      const r = await ranked((theirs, spare) => [...theirs, spare]);
+      const r = await unmoved(() => ranked((theirs, spare) => [...theirs, spare]));
       expect(r.rows[0]).toMatchObject({ op: 'searchVector', outcome: 'diff', reason: 'extra_rows_cleared', private_read: true });
       expect(r.reads.diverged_unexplained_7d).toBe(0);
       expect(r.evidence.ranking_differences).toEqual({ searchVector: 1 });
@@ -311,7 +313,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
     });
 
     test('one extra row the caller may not read pauses mirroring and makes criterion 3 NOT READY', async () => {
-      const r = await ranked((theirs, _spare, ids) => [...theirs, { ...theirs[0], page_id: ids['priv/a'], slug: 'priv/a', source_id: 'default', chunk_id: 987_654 }]);
+      const r = await unmoved(() => ranked((theirs, _spare, ids) => [...theirs, { ...theirs[0], page_id: ids['priv/a'], slug: 'priv/a', source_id: 'default', chunk_id: 987_654 }]));
       expect(r.rows[0]).toMatchObject({ outcome: 'privacy_diverged' });
       expect(r.stopped).toBe('privacy_diverged');
       expect(r.reads.diverged_unexplained_7d).toBe(1);
@@ -421,7 +423,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
         await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
         try {
-          const r = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n === 1) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } });
+          const r = await unmoved(() => ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n === 1) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } }));
           expect(r.rows[0]).toMatchObject({ op: 'searchVector', outcome: 'diff', reason: 'extra_rows_cleared', rerun: 'differed' }); // the rerun's own check held
           expect(r.reads.diverged_unexplained_7d).toBe(0);
           expect(r.evidence.ranking_differences).toEqual({ searchVector: 1 });
@@ -433,7 +435,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
         await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
         try {
-          const r = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n <= 2) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (${n})`); } });
+          const r = await unmoved(() => ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n <= 2) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (${n})`); } }));
           expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' }); // asks 1 and 2 moved, ask 3 held
           const never = await ranked(clearing, { settle: true, onPrivacyAsk: async (n) => { if (n <= 4) await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (${n})`); } });
           expect(never.rows[0]).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:moved' }); // the first check and the three reruns moved: no clearance
@@ -452,8 +454,8 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           await ctx.primary().executeRaw(`DROP TABLE IF EXISTS ${probe}`);
           await ctx.primary().executeRaw(`CREATE TABLE ${probe} (x int)`);
           try {
-            const n = noisy(quietAt);
-            const r = await n.run();
+            let n = noisy(quietAt);
+            const r = cleared ? await unmoved(() => { n = noisy(quietAt); return n.run(); }) : await n.run(); // a sample that is to clear is asked again when an unrelated commit moved it
             if (cleared) {
               expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared', rerun: 'differed' });
               expect(r.reads.diverged_unexplained_7d).toBe(0);
@@ -477,10 +479,10 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           const spin = (): void => { if (running) readFile(import.meta.path, () => { io++; setImmediate(spin); }); };
           spin();
           let first: { at: number; ticks: number; io: number } | undefined; let second: { at: number; ticks: number; io: number } | undefined;
-          const r = await ranked(clearing, { settle: true, child: { random: () => 0.5, sleep: undefined }, noRecall: true, onPrivacyAsk: async (n) => { // the real timer: the first check moves, the rerun asks after the wait
+          const r = await unmoved(() => { first = second = undefined; return ranked(clearing, { settle: true, child: { random: () => 0.5, sleep: undefined }, noRecall: true, onPrivacyAsk: async (n) => { // the real timer: the first check moves, the rerun asks after the wait
             const mark = { at: Date.now(), ticks, io };
             if (n === 1) { first = mark; await ctx.primary().executeRaw(`INSERT INTO ${probe} VALUES (1)`); } else if (n === 2) second = mark;
-          } });
+          } }); });
           running = false; clearInterval(timer);
           expect(r.rows[0]).toMatchObject({ outcome: 'diff', reason: 'extra_rows_cleared' });
           expect(second!.at - first!.at).toBeGreaterThanOrEqual(450); // it waited 0.5 s
@@ -804,10 +806,12 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const sql: string[] = []; // the statements the reference run sends through its read transaction
       const reads = { ...real, read: <T>(fn: Parameters<typeof real.read<T>>[0]) => real.read((tx, q) => fn(new Proxy(tx, { get: (t, p) => (p === 'executeRaw' ? (text: string, ...a: never[]) => { sql.push(text); return (t.executeRaw as Function).call(t, text, ...a); } : Reflect.get(t, p, t)) }) as BrainEngine, q)) };
       try {
-        const samples = new SampleRegistry();
-        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100) }; // the filters of the caller's own read apply
-        const reference = await handler(ask) as RankedKey[];
+        const { handler, ask, reference } = await untilNotMoved(async () => { // an unrelated commit moves the token: asked again from a new capture
+          const samples = new SampleRegistry();
+          const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+          const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100) }; // the filters of the caller's own read apply
+          return { handler, ask, reference: await handler(ask) as RankedKey[] };
+        });
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
         expect(reference).toHaveLength(Math.min(RECALL_REFERENCE_LIMIT, 12)); // asked for more than the caller's ten, so a tie at the cutoff is visible
@@ -837,8 +841,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const deleted = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
         await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`);
         await expect(handler(240_000)({ id: 3, kind: 'vector', sid: deleted })).rejects.toMatchObject({ code: 'moved' });
-        const still = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
-        expect(await handler(360_000)({ id: 4, kind: 'vector', sid: still })).toBeInstanceOf(Array); // unchanged since the capture: scored as before
+        expect(await untilNotMoved(async () => handler(360_000)({ id: 4, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100) }))).toBeInstanceOf(Array); // unchanged since the capture: scored as before (asked again from a new capture when an unrelated commit moved it)
       } finally { await reads.close(); await primary.executeRaw(`DELETE FROM pages WHERE slug = 'vec/late'`); }
     });
 
@@ -856,8 +859,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:carol-example'] WHERE rule_id = 'r1'`); // the policy moves; no page, chunk, link, source or config row does
         await expect(handler(0)({ id: 1, kind: 'vector', sid: captured })).rejects.toMatchObject({ code: 'moved' });
         await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`);
-        const still = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
-        expect(await handler(120_000)({ id: 2, kind: 'vector', sid: still })).toBeInstanceOf(Array); // control: unchanged since the capture
+        expect(await untilNotMoved(async () => handler(120_000)({ id: 2, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100) }))).toBeInstanceOf(Array); // control: unchanged since the capture (asked again from a new capture when an unrelated commit moved it)
       } finally { await reads.close(); await primary.executeRaw(`UPDATE access_rules SET readable_by = ARRAY['member:bob-example'] WHERE rule_id = 'r1'`); }
     });
 
@@ -978,6 +980,8 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           await fn({ primary, reads, watch, top: chunkOf.get(3)!, ids, check });
         } finally { await reads.close(); }
       };
+      /** An outcome that refused because the token moved: asked again from a new capture when it was an unrelated commit (harness `untilNotMoved`). */
+      const unproven = (o: { vector: string; privacy: string }): boolean => o.vector === 'moved' || o.privacy === 'privacy_check_moved';
       const PROVEN: { vector: 'proven' | 'moved'; privacy: string } = { vector: 'proven', privacy: 'clean' };
       const MOVED: { vector: 'proven' | 'moved'; privacy: string } = { vector: 'moved', privacy: 'privacy_check_moved' };
       const literalOf = (seed: number): string => `[${Array.from(vec(seed)).join(',')}]`;
@@ -993,12 +997,15 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
 
       test('a write that moves the WAL position but commits nothing between the capture and the check leaves the proof standing: a logical message, then a plain read', async () => {
         await probing(async ({ primary, watch, check }) => {
-          const token = await watch.live();
           const lsn = async (): Promise<string> => String((await primary.executeRaw<{ l: string }>('SELECT pg_current_wal_insert_lsn()::text AS l'))[0]!.l);
-          const before = await lsn();
-          await primary.executeRaw(`SELECT pg_logical_emit_message(false, 't', 'x')`); // WAL, no transaction, no data
-          expect(await lsn()).not.toBe(before); // the position moved
-          expect(await check(token)).toEqual(PROVEN); // and nothing the check judges did
+          const out = await untilNotMoved(async () => {
+            const token = await watch.live();
+            const before = await lsn();
+            await primary.executeRaw(`SELECT pg_logical_emit_message(false, 't', 'x')`); // WAL, no transaction, no data
+            expect(await lsn()).not.toBe(before); // the position moved
+            return check(token);
+          }, unproven);
+          expect(out).toEqual(PROVEN); // and nothing the check judges did
         });
       });
 
@@ -1007,14 +1014,17 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           const snapshot = async (): Promise<string> => String((await primary.executeRaw<{ s: string }>('SELECT pg_current_snapshot()::text AS s'))[0]!.s);
           const lsn = async (): Promise<string> => String((await primary.executeRaw<{ l: string }>('SELECT pg_current_wal_insert_lsn()::text AS l'))[0]!.l);
           let pruned = false;
-          for (let attempt = 0; attempt < 6 && !pruned; attempt++) {
+          let moves = 0; // attempts an unrelated commit moved: asked again from a new capture, up to 5
+          for (let attempt = 0; attempt < 12 && moves < 5 && !pruned; attempt++) {
             for (let i = 0; i < 3; i++) await primary.executeRaw('ANALYZE content_chunks'); // each one leaves the old statistics rows dead
             const token = await watch.live();
             const [l0, s0] = [await lsn(), await snapshot()];
             await primary.executeRaw('SELECT count(*) FROM pg_statistic'); // the read may prune the dead rows it finds: WAL, no xid
             if (await lsn() === l0) continue; // nothing was pruned this time: try again with more dead rows
-            expect(await snapshot()).toBe(s0); // the position moved and the snapshot did not
-            expect(await check(token)).toEqual(PROVEN);
+            if (await snapshot() !== s0) { moves++; continue; } // a commit that is none of this test's moved the snapshot
+            const out = await check(token); // the position moved and the snapshot did not
+            if (unproven(out)) { moves++; continue; }
+            expect(out).toEqual(PROVEN);
             pruned = true;
           }
           expect(pruned).toBe(true);
@@ -1024,54 +1034,64 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       test('a transaction that began before the capture, holds an xid below xmax and commits after it: the commit moves nothing but its own xid, which the token lists (Postgres only)', async () => {
         if (ctx.dialect !== 'postgres') return;
         await probing(async ({ primary, watch, check, top }) => {
-          const other = await connectOther();
-          const began = gate(); const commit = gate();
-          let xid = '';
-          try {
-            const writer = other.transaction(async (tx) => {
-              await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(90)]);
-              xid = String((await tx.executeRaw<{ x: string }>('SELECT pg_current_xact_id()::text AS x'))[0]!.x);
-              began.open(); await commit.wait;
-            });
-            await began.wait;
-            for (let i = 0; i < 3; i++) await primary.executeRaw('SELECT pg_current_xact_id()'); // later transactions finish: xmax is now above the writer's xid
-            const token = await watch.live();
-            expect(BigInt(token.split('|')[0]!)).toBeGreaterThan(BigInt(xid));
-            expect(token.split('|')[1]!.split(',')).toContain(xid); // listed: it is the only thing that can show its commit
-            expect(await check(token)).toEqual(PROVEN); // not yet committed
-            commit.open(); await writer;
-            const xmaxNow = String((await primary.executeRaw<{ x: string }>('SELECT pg_snapshot_xmax(pg_current_snapshot())::text AS x'))[0]!.x);
-            expect(xmaxNow).toBe(token.split('|')[0]!); // xmax did not move: only the list can see this commit
-            expect(await check(token)).toEqual(MOVED);
-          } finally { commit.open(); await other.disconnect(); await restore(primary, top); }
+          const run = async () => {
+            const other = await connectOther();
+            const began = gate(); const commit = gate();
+            let xid = '';
+            try {
+              const writer = other.transaction(async (tx) => {
+                await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(90)]);
+                xid = String((await tx.executeRaw<{ x: string }>('SELECT pg_current_xact_id()::text AS x'))[0]!.x);
+                began.open(); await commit.wait;
+              });
+              await began.wait;
+              for (let i = 0; i < 3; i++) await primary.executeRaw('SELECT pg_current_xact_id()'); // later transactions finish: xmax is now above the writer's xid
+              const token = await watch.live();
+              expect(BigInt(token.split('|')[0]!)).toBeGreaterThan(BigInt(xid));
+              expect(token.split('|')[1]!.split(',')).toContain(xid); // listed: it is the only thing that can show its commit
+              const before = await check(token); // not yet committed
+              commit.open(); await writer;
+              const xmaxNow = String((await primary.executeRaw<{ x: string }>('SELECT pg_snapshot_xmax(pg_current_snapshot())::text AS x'))[0]!.x);
+              return { before, held: xmaxNow === token.split('|')[0]!, after: await check(token) }; // xmax did not move: only the list can see this commit
+            } finally { commit.open(); await other.disconnect(); await restore(primary, top); }
+          };
+          const r = await untilNotMoved(run, (o) => unproven(o.before) || !o.held); // an unrelated commit moves xmax or the first check: the whole run again
+          expect(r.before).toEqual(PROVEN);
+          expect(r.held).toBe(true);
+          expect(r.after).toEqual(MOVED);
         });
       }, 60_000);
 
       test('a subtransaction (SAVEPOINT) cannot become visible on its own: released while the top-level transaction runs it is still proven, and the top-level commit is what moves it (Postgres only)', async () => {
         if (ctx.dialect !== 'postgres') return;
         await probing(async ({ primary, watch, check, top }) => {
-          const other = await connectOther();
-          const began = gate(); const released = gate(); const commit = gate(); const go = gate();
-          try {
-            const writer = other.transaction(async (tx) => {
-              await tx.executeRaw(`UPDATE content_chunks SET modality = modality WHERE id = $1`, [top]); // the top-level xid
-              began.open(); await go.wait;
-              await tx.executeRaw('SAVEPOINT inner_work');
-              await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(91)]); // written under the subtransaction's own xid
-              await tx.executeRaw('RELEASE SAVEPOINT inner_work'); // the subtransaction "commits" into its parent
-              released.open(); await commit.wait;
-            });
-            await began.wait;
-            const token = await watch.live();
-            expect(token.split('|')[1]).not.toBe(''); // the top-level xid is listed (a subtransaction's xid never is)
-            go.open(); await released.wait;
-            const seen = await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]);
-            expect(seen[0]!.e).not.toBe(literalOf(91)); // the released subtransaction's write is not visible
-            expect(await check(token)).toEqual(PROVEN);
-            commit.open(); await writer;
-            expect((await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]))[0]!.e).toBe(literalOf(91));
-            expect(await check(token)).toEqual(MOVED);
-          } finally { commit.open(); await other.disconnect(); await restore(primary, top); }
+          const run = async () => {
+            const other = await connectOther();
+            const began = gate(); const released = gate(); const commit = gate(); const go = gate();
+            try {
+              const writer = other.transaction(async (tx) => {
+                await tx.executeRaw(`UPDATE content_chunks SET modality = modality WHERE id = $1`, [top]); // the top-level xid
+                began.open(); await go.wait;
+                await tx.executeRaw('SAVEPOINT inner_work');
+                await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(91)]); // written under the subtransaction's own xid
+                await tx.executeRaw('RELEASE SAVEPOINT inner_work'); // the subtransaction "commits" into its parent
+                released.open(); await commit.wait;
+              });
+              await began.wait;
+              const token = await watch.live();
+              expect(token.split('|')[1]).not.toBe(''); // the top-level xid is listed (a subtransaction's xid never is)
+              go.open(); await released.wait;
+              const seen = await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]);
+              expect(seen[0]!.e).not.toBe(literalOf(91)); // the released subtransaction's write is not visible
+              const before = await check(token);
+              commit.open(); await writer;
+              expect((await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]))[0]!.e).toBe(literalOf(91));
+              return { before, after: await check(token) };
+            } finally { commit.open(); await other.disconnect(); await restore(primary, top); }
+          };
+          const r = await untilNotMoved(run, (o) => unproven(o.before)); // an unrelated commit moved the first check: the whole run again
+          expect(r.before).toEqual(PROVEN);
+          expect(r.after).toEqual(MOVED);
         });
       }, 60_000);
 
@@ -1082,10 +1102,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
           try {
             await other.executeRaw('DROP TABLE IF EXISTS gbrain_token_probe');
             await other.executeRaw('CREATE TABLE gbrain_token_probe (x int)');
-            const token = await watch.live();
-            expect(await check(token)).toEqual(PROVEN); // control: nothing committed anywhere
-            await other.executeRaw('INSERT INTO gbrain_token_probe VALUES (1)');
-            expect(await check(token)).toEqual(MOVED);
+            const r = await untilNotMoved(async () => {
+              const token = await watch.live();
+              const control = await check(token); // control: nothing committed anywhere
+              await other.executeRaw('INSERT INTO gbrain_token_probe VALUES (1)');
+              return { control, after: await check(token) };
+            }, (o) => unproven(o.control)); // an unrelated commit moved the control: the whole run again
+            expect(r.control).toEqual(PROVEN);
+            expect(r.after).toEqual(MOVED);
           } finally { await other.executeRaw('DROP TABLE IF EXISTS gbrain_token_probe').catch(() => undefined); await other.disconnect(); }
         });
       });
@@ -1116,7 +1140,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
             expect(blind.split('|')[1]).toBe('!');
             await other.executeRaw(`COMMIT PREPARED '${gid}'`);
             expect(await check(blind)).toEqual(MOVED);
-            expect(await check(await watch.live())).toEqual(PROVEN); // control: a fresh token, nothing prepared
+            expect(await untilNotMoved(async () => check(await watch.live()), unproven)).toEqual(PROVEN); // control: a fresh token, nothing prepared
           } finally {
             await primary.executeRaw(`ROLLBACK PREPARED '${gid}'`).catch(() => undefined);
             await other.executeRaw('ROLLBACK').catch(() => undefined);
@@ -1189,8 +1213,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await expect(during).rejects.toMatchObject({ code: 'moved' });
         // control: none at either end, the reference is used
         prepared = 0;
-        const c = samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100);
-        expect(await handler({ id: 3, kind: 'vector', sid: c, phase: 'sample' })).toBeInstanceOf(Array);
+        expect(await untilNotMoved(async () => handler({ id: 3, kind: 'vector', sid: samples.add({ op: 'searchVector', args, at: Date.now(), lsn: await watch.live() }, 100), phase: 'sample' }))).toBeInstanceOf(Array);
       } finally { await real.close(); }
     });
 
@@ -1210,8 +1233,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const boosted = new Set((await primary.executeRaw<{ id: number }>(`SELECT c.id FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug LIKE 'boost/%'`)).map((r) => String(r.id)));
         const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
         const samples = new SampleRegistry();
-        const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const reference = await handler({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), lsn: await createLsnWatch(reads).live() }, 100) }) as RankedKey[];
+        const reference = await untilNotMoved(async () => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never })({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), lsn: await createLsnWatch(reads).live() }, 100) }) as Promise<RankedKey[]>); // asked again from a new capture when an unrelated commit moved it
         expect(reference.slice(0, 10).filter((r) => boosted.has(r.k))).toHaveLength(10); // the true top ten, all beyond the raw-similarity window
         const windowed = await primary.searchVector(vec(3), { ...opts, limit: 50 });
         expect(windowed.slice(0, 10).filter((r) => boosted.has(String(r.chunk_id))).length).toBeLessThan(10); // the engine's candidate window never saw them
@@ -1248,11 +1270,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const primary = ctx.primary();
       await vectorFixture(primary);
       const full = await primary.searchVector(vec(3), { limit: 12 });
-      const rig = await start();
-      rig.rust.searchVector = async () => [...full.slice(0, 9), full[10]]; // Rust misses the tenth true neighbour and returns the eleventh
-      await rig.engine.searchVector(vec(3), { limit: 10 });
-      const epoch = readEpoch(rig.dir)?.epoch_id ?? (await until(() => readEpoch(rig.dir) !== null), readEpoch(rig.dir)!.epoch_id);
-      await until(() => (readEpochRecall(rig.dir, epoch)?.length ?? 0) === 1);
+      const { rig, epoch } = await untilNotMoved(async () => { // the whole read again with a new child when an unrelated commit kept every run of the first from being scored
+        const rig = await start();
+        rig.rust.searchVector = async () => [...full.slice(0, 9), full[10]]; // Rust misses the tenth true neighbour and returns the eleventh
+        await rig.engine.searchVector(vec(3), { limit: 10 });
+        const epoch = readEpoch(rig.dir)?.epoch_id ?? (await until(() => readEpoch(rig.dir) !== null), readEpoch(rig.dir)!.epoch_id);
+        const scored = await until(() => (readEpochRecall(rig.dir, epoch)?.length ?? 0) === 1).then(() => true, () => false);
+        return { rig, epoch, scored };
+      }, (r) => !r.scored);
       await rig.engine.searchVector(vec(3), { limit: 10 });
       await sleep(300);
       expect(readEpochRecall(rig.dir, epoch)).toMatchObject([{ vector: 0.9, primary: 1, ref_size: 10 }]);

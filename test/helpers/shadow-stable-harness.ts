@@ -123,3 +123,27 @@ export const gate = () => { let open!: () => void; const wait = new Promise<void
 export const batch = (seq: number, items: unknown[]) => ({ seq, committed_at: Date.now(), items: items as never });
 /** One read through the wrapped primary, which the child compares against the Rust fake. */
 export const sample = (rig: Rig) => rig.engine.listPages({ limit: 100 });
+
+/**
+ * A commit that is none of the test's own (autovacuum, another session on a shared cluster) moves the primary's freshness token, and a
+ * check that expects a POSITIVE outcome (proven, clean, cleared, a violation found) is then asked again from a new capture, read and check, as
+ * production does when it reruns a moved sample. Runs `attempt` up to `attempts` times: `moved(result)` says a result was refused as moved,
+ * and an attempt that throws an error coded `moved` counts too. Fails when every attempt moved. A test that expects `moved` never uses this:
+ * it must see it on the first try.
+ */
+export async function untilNotMoved<T>(attempt: () => Promise<T>, moved: (result: T) => boolean = () => false, attempts = 5): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const result = await attempt();
+      if (!moved(result)) return result;
+      last = result;
+    } catch (error) {
+      if ((error as { code?: string } | null)?.code !== 'moved') throw error;
+      last = error;
+    }
+  }
+  let shown: string;
+  try { shown = JSON.stringify(last) ?? String(last); } catch { shown = String(last); }
+  throw new Error(`the freshness token moved on all ${attempts} attempts; the last one: ${shown.slice(0, 600)}`);
+}

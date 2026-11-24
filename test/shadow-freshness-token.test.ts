@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { composeToken, parseToken, widenXid, xmaxMoved } from '../src/shadow/checks.ts';
+import { untilNotMoved } from './helpers/shadow-stable-harness.ts';
 
 const RANGE = 4294967296n;
 
@@ -39,5 +40,20 @@ describe('freshness token with transaction ids past the first epoch', () => {
     expect(widenXid(3n, 3n * RANGE - 5n)).toBe(3n * RANGE + 3n); // already in the next epoch
     expect(widenXid(10n, 10n)).toBe(10n); // epoch zero
     expect(widenXid(0n, 2n ** 53n + 2n ** 32n - (2n ** 53n % RANGE))).toBe(2n ** 53n + 2n ** 32n - (2n ** 53n % RANGE)); // exact beyond Number precision
+  });
+});
+
+describe('asking a positive outcome again when an unrelated commit moved it', () => {
+  test('a moved result or an error coded moved is asked again, up to 5 times; any other error goes straight out', async () => {
+    let calls = 0;
+    expect(await untilNotMoved(async () => ++calls, (n) => n < 3)).toBe(3);
+    calls = 0;
+    expect(await untilNotMoved(async () => { if (++calls < 5) throw Object.assign(new Error('moved'), { code: 'moved' }); return 'ok'; })).toBe('ok');
+    calls = 0;
+    await expect(untilNotMoved(async () => ++calls, () => true)).rejects.toThrow('moved on all 5 attempts');
+    expect(calls).toBe(5);
+    calls = 0;
+    await expect(untilNotMoved(async () => { calls++; throw Object.assign(new Error('x'), { code: 'broken' }); })).rejects.toThrow('x');
+    expect(calls).toBe(1);
   });
 });
