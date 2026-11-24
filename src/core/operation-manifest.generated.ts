@@ -8113,7 +8113,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "positional": [
         "ids"
       ]
-    }
+    },
+    "area": "insights"
   },
   {
     "name": "learned_undo",
@@ -8142,6 +8143,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "positional": [
         "ids"
       ]
-    }
+    },
+    "area": "insights"
   }
 ];

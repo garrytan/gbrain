@@ -36,6 +36,8 @@
       "edit_page",
       "extract_entities",
       "extract_facts",
+      "learned_keep",
+      "learned_undo",
       "list_write_conflicts",
       "log_ingest",
       "loops_close",

@@ -161,6 +161,7 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   code_traversal_cache_clear: 'cache', migrate_embeddings: 'embeddings', schema_apply_mutations: 'schema pack',
   run_onboard: 'onboarding job', run_skillopt: 'skill optimizer',
   loops_close: 'open-loop rows', loops_mute: 'open-loop rows', loops_unmute: 'open-loop rows',
+  learned_keep: 'learning ledger rows', learned_undo: 'learning ledger rows; a filled-in page is put back through revert_version, which refuses every segmented page',
   questions_pin: 'pinned questions', questions_refresh: 'pinned questions', questions_unpin: 'pinned questions',
   storage_register: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
   storage_update: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
