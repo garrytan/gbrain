@@ -127,6 +127,7 @@ import {
   type BrainFirstOutcome,
 } from '../core/setup/brain-first.ts';
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
+import { HISTORY_VALUE_FLAGS, historyFor, parseHistoryFlags, recordHistoryReceipt, withHistoryDecision, type HistoryFlags, type HistoryOutcome } from './setup-history.ts';
 import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { isInteractive } from '../core/interaction.ts';
 
@@ -192,6 +193,13 @@ Flags:
                        member. With --serves several and --shape company or both, an entry
                        with no member is tied to the brain owner.
   --no-stdio-member    Remove --stdio-member from this harness's entry, or leave it unbound.
+  --history WHAT       claude-code or codex, a brain this setup created: none (skip for this run),
+                       decline (never offer again), latest (the newest session) or 1-30 (days).
+                       Unset, a new brain offers the newest session first and the rest of the
+                       last 30 days on a second yes; off a terminal the offer is a decision
+                       (accept: --history-decision ID). Private archive source only, no model.
+  --history-dir DIR    Read DIR/claude-code, DIR/codex and DIR/openclaw instead of the harness folders.
+  --no-extract         Import without deriving links.
 
   --remove             Remove exactly what setup wrote (unchanged entries only), the
                        brain-first instruction block included. The brain and your
@@ -342,9 +350,11 @@ interface SetupFlags {
   transcripts?: string | null;
   /** GST-2731: --team, the company part lives on a shared brain; setup prints the route and creates nothing for it. */
   team?: boolean;
+  /** Onboarding PR 1: --history, --history-dir, --history-decision and --no-extract (setup-history.ts). */
+  historyImport: HistoryFlags;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner']);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner', ...HISTORY_VALUE_FLAGS]);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -382,6 +392,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (shared) return `--stdio-member refused: ${shared} is installed on this host, and its sessions serve several people, so a stdio entry bound to one member is not something setup writes here; give each person their own key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> per person); nothing was written`;
   const layout = parseLayoutFlags(value, (f) => args.includes(f), positionals[0]);
   if (typeof layout === 'string') return layout;
+  const historyImport = parseHistoryFlags(args, value, positionals[0]);
+  if (typeof historyImport === 'string') return historyImport;
   if (layout.brain && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return '--shape shapes the brain behind gbrain setup claude-code or codex (not --instructions-only or --remove); nothing was written';
   const workspace = value('--workspace');
   if (workspace !== undefined && !workspace.startsWith('/') && !workspace.startsWith('~')) return '--workspace needs an absolute path';
@@ -441,6 +453,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(stdioMember !== undefined ? { stdioMember } : {}),
     noStdioMember,
     ...layout,
+    historyImport,
   };
 }
 
@@ -686,7 +699,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     let notices: Notice[] = [];
     const result = await applyClaudeSetup(plan, consent, {
       pluginOwner, brainCreated: brainCreate, abortAfter: process.env.GBRAIN_SETUP_ABORT_AFTER,
-      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'claude-code'); } : undefined,
+      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'claude-code'); historyReceipt(launcher, 'claude-code', flags, out); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     const serves = servesApply(flags, launcher, 'claude-code', servesPlan, true, binding);
@@ -706,8 +719,9 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
     const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
-    const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: layout.notices(notices), notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome });
+    const history = await historyStep('claude-code', flags, launcher, brainCreate, !!liveOwner, scope === 'project' ? ['--scope', 'project'] : []);
+    const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes,
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome, history });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -794,6 +808,16 @@ function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): No
     return [...setupFirstRunNotices(doc.notices ?? [], HARNESS_LABEL[harness], { reportBack: wakeshiftPublished() }), ...(hosted ? [hosted] : [])];
   } catch { process.stderr.write(initOut); return hosted ? [hosted] : []; }
 }
+
+/** Onboarding PR 1: the install receipt, written once right after this run's gbrain init (setup-history.ts). */
+function historyReceipt(launcher: string, harness: SetupHarnessId, flags: SetupFlags, out: Out): void {
+  const r = recordHistoryReceipt(launcher, harness, flags);
+  if (!r.ok) say(out, `note: the history import will not be offered (${r.code}: ${r.message})`);
+}
+
+const historyStep = (harness: SetupHarnessId, flags: SetupFlags, launcher: string, brainCreate: boolean, liveServe: boolean, extra: string[]): Promise<HistoryOutcome | null> =>
+  historyFor({ harness, launcher, flags: { ...flags.historyImport, notes: flags.notes, dryRun: flags.dryRun }, brainCreate, json: flags.json, liveServe,
+    setupArgv: ['gbrain', 'setup', harness, ...extra, ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])] });
 
 async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
   const paths = codexSetupPaths(flags.name);
@@ -891,7 +915,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     let notices: Notice[] = [];
     const result = await applyCodexSetup(plan, consent, {
       pluginOwner, brainCreated: brainCreate, abortAfter: process.env.GBRAIN_SETUP_ABORT_AFTER,
-      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'codex'); } : undefined,
+      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'codex'); historyReceipt(launcher, 'codex', flags, out); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
@@ -913,8 +937,9 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
     const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
     const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+    const history = await historyStep('codex', flags, launcher, brainCreate, !!liveOwner, []);
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
-      steps: result.steps, states, verify, notices: layout.notices(notices), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome });
+      steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome, history });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('codex', turnHook, ['gbrain', 'setup', 'codex']), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -1369,10 +1394,11 @@ async function finish(out: Out, doc: {
   serves?: ServesOutcome | null;
   launcher?: string;
   layout?: LayoutOutcome | null;
+  history?: HistoryOutcome | null;
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
-  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) ? 1 : 0;
+  const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) ? 1 : doc.history?.exit ?? 0;
   const plugins = harness === 'claude-code' && !doc.remove ? claudeCodeChannelPlugins() : [];
   const exposure = plugins.length ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: plugins, serves: exposureServesVia(doc.launcher) }) : null;
   const notices = exposure ? [...doc.notices, exposure] : doc.notices;
@@ -1383,6 +1409,7 @@ async function finish(out: Out, doc: {
       steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, skills: doc.skills ?? null, ...(doc.resolver ? { skill_resolver: doc.resolver } : {}), ...(doc.turnHook ? { turn_hook_check: doc.turnHook } : {}), states: doc.states, state, verify: doc.verify,
       ...(doc.serves ? { serves: doc.serves } : {}),
       ...(doc.layout ? { brain_layout: doc.layout } : {}),
+      ...(doc.history ? { history: { ...doc.history, lines: undefined } } : {}),
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
       notes: doc.notes, notices: notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
@@ -1402,6 +1429,7 @@ async function finish(out: Out, doc: {
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
   if (state && !doc.remove) say(out, `Opt-ins (nothing is on until you turn it on): keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel: ${docsUrl('INSTALL_FOR_AGENTS.md#opt-ins')}`);
+  for (const line of doc.history?.lines ?? []) say(out, line);
   writeCliNotices(notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   if (doc.resolver?.error) return refuse(resolverRefusal(doc.resolver), out);
