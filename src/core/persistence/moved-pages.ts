@@ -139,7 +139,7 @@ function firstBlobPaths(root: string, blobs: string[]): Map<string, string[]> | 
   return paths;
 }
 
-/** Same-name files linked to a ghost are read for at most this many paths per ghost; past it, a common name proves nothing. */
+/** Same-name files linked to a ghost are read for at most this many paths per ghost; past it, their linkage is unknown (`linked` null), so the ghost is kept. */
 const SAME_NAME_LINK_LIMIT = 5;
 
 /**
@@ -211,7 +211,7 @@ export async function readMoveCandidates(engine: BrainEngine, input: { sourceId:
     const sameName = named(ghost).filter(path => !found.some(candidate => candidate.path === path));
     if (sameName.length) {
       const added = sameName.length <= SAME_NAME_LINK_LIMIT ? git(input.root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', '-1', `${ghost.deletion.commit}^`, '--', ...literalPathspecs([ghost.path])])?.trim() || null : null;
-      for (const path of sameName) add('same_file_name', path, sameName.length <= SAME_NAME_LINK_LIMIT ? linkedByHistory(input.root, path, added, ghost.deletion.commit) : false);
+      for (const path of sameName) add('same_file_name', path, sameName.length <= SAME_NAME_LINK_LIMIT ? linkedByHistory(input.root, path, added, ghost.deletion.commit) : null);
     }
     if (found.length) result.found.set(ghost.page_id, found);
   }

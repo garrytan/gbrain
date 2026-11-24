@@ -306,4 +306,14 @@ A line added at the move.
     expect((fold.details as { pairs: unknown[] }).pairs[0]).toMatchObject({ survivor: { slug: 'archive/older' }, evidence: 'same_commit' });
     expect((await runner(engine, 'moved-pages', { slugs: ['notes/alpha'], expect: fold.preview_hash, yes: true })).outcomes).toEqual({ folded: 1 });
   }, opts(backend, { 'archive/older.md': OLDER })));
+
+  test(`${backend}: a ghost with more same-name files than the history read covers is kept (move_unproven), never soft-deleted`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    commit(root, {}, 'remove the old copy', ['notes/alpha.md']);
+    const preview = await runner(engine, 'ghost-pages');
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'move_unproven', detail: expect.stringContaining('same_file_name') });
+    expect(await live(engine, 'notes/alpha')).toBe(true);
+  }, opts(backend, Object.fromEntries([1, 2, 3, 4, 5, 6].map(n => [`shelf-${n}/alpha.md`, `---\ntitle: Shelf ${n}\n---\n\nShelf note ${n}.\n`])))));
 }
