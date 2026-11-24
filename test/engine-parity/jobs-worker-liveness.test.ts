@@ -101,28 +101,56 @@ async function quietly<T>(run: () => Promise<T>): Promise<{ value: T; errors: st
 describe('engine parity: a minion worker stays alive and releases a claim as every engine does', () => {
   parityTest('a worker runs past more than three health intervals without going unhealthy and still finishes a job',
     { methods: ['pingStore', 'admitJob', 'claimNextJob', 'completeJob', 'getJob'], timeout: 90_000 }, async (engine) => {
-      const worker = new MinionWorker(engine, {
+      // Count the probes that completed, through a wrapper that still calls the engine's own pingStore.
+      let completedProbes = 0;
+      const counted = new Proxy(engine, {
+        get(target, prop) {
+          const value = Reflect.get(target, prop, target);
+          if (prop === 'pingStore') {
+            return async (opts?: { signal?: AbortSignal; direct?: boolean }) => {
+              await (value as BrainEngine['pingStore']).call(target, opts);
+              completedProbes++;
+            };
+          }
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const worker = new MinionWorker(counted, {
         queue: 'default', concurrency: 1, pollInterval: 25, maxRssMb: 0, healthCheckInterval: 20, dbFailExitAfter: 3,
         dbProbeTimeoutMs: 1_000,
       });
       worker.register('noop', async () => {});
       const unhealthy: UnhealthyReason[] = [];
       worker.on('unhealthy', info => unhealthy.push(info));
+      const until = async (done: () => boolean | Promise<boolean>, ms: number): Promise<boolean> => {
+        const deadline = Date.now() + ms;
+        while (Date.now() < deadline) {
+          if (await done()) return true;
+          await Bun.sleep(10);
+        }
+        return await done();
+      };
+      let ready = false;
+      worker.on('ready', () => { ready = true; });
       const { value } = await quietly(async () => {
         const run = worker.start();
-        // Twenty-five health intervals, where three failed probes end a worker.
-        await Bun.sleep(500);
-        const id = await add(engine, 'noop');
-        let status = '';
-        for (let i = 0; i < 200 && status !== 'completed'; i++) {
-          status = String((await engine.getJob(id))?.status);
-          if (status !== 'completed') await Bun.sleep(25);
+        try {
+          const isReady = await until(() => ready || unhealthy.length > 0, 10_000);
+          // Three failed probes end a worker; more than three completed ones show the probe keeps answering.
+          const probed = await until(() => completedProbes >= 4 || unhealthy.length > 0, 10_000);
+          const afterProbes = completedProbes;
+          const id = await add(engine, 'noop');
+          const finished = await until(async () => String((await engine.getJob(id))?.status) === 'completed' || unhealthy.length > 0, 10_000);
+          const status = String((await engine.getJob(id))?.status);
+          return {
+            isReady, probed, atLeastFourProbes: afterProbes >= 4, finished, status, unhealthy: unhealthy.map(u => u.reason),
+          };
+        } finally {
+          worker.stop();
+          await run;
         }
-        worker.stop();
-        await run;
-        return { status, unhealthy: unhealthy.map(u => u.reason) };
       });
-      expect(value).toEqual({ status: 'completed', unhealthy: [] });
+      expect(value).toEqual({ isReady: true, probed: true, atLeastFourProbes: true, finished: true, status: 'completed', unhealthy: [] });
       return value;
     });
 
@@ -195,6 +223,21 @@ describe('engine parity: a minion worker stays alive and releases a claim as eve
         held, afterWrongToken, afterDefer, afterAgain, errors: [wrongToken.errors, defer.errors, again.errors],
         directStale, directDeferred, directAgain,
       };
+    });
+
+  parityTest('quiet hours skip on a claim: PGLite and Postgres log the engine error and go on; a Rust refusal is not swallowed',
+    { methods: ['admitJob', 'claimNextJob', 'getJob'] }, async (engine) => {
+      const { id, job } = await active(engine, 'skip-me', 'w1:a');
+      const v = view(id);
+      const worker = new MinionWorker(engine, { queue: 'default', concurrency: 1 }) as unknown as WorkerInternals;
+      await worker.queue.ensureSchema();
+      // No catch here: on Rust the capability refusal of the first statement must reach the caller (the case then ends on it).
+      const skip = await quietly(() => worker.handleQuietHoursDefer(job, 'w1:a', 'skip'));
+      const after = v(await engine.getJob(id));
+      // The SQL engines refuse the lock-clearing UPDATE of an active row (the queue-protocol trigger), log it and resolve.
+      expect(after?.status).toBe('active');
+      expect(skip.errors.length).toBe(1);
+      return { after, errors: skip.errors };
     });
 
   parityTest('pingStore answers on the default and the direct lane, and rejects once the store is closed',
