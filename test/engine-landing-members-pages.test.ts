@@ -62,8 +62,9 @@ let eventSeq = 0;
 /** A belief event row as the append builds it; every field has a default, so a test names only what it checks. */
 function beliefRow(over: Partial<BeliefEventInsertRow> = {}): BeliefEventInsertRow {
   eventSeq += 1;
+  const seqHex = eventSeq.toString(16).padStart(8, '0');
   return {
-    event_key: eventSeq.toString(16).padStart(8, '0'), source_id: 'default', source_incarnation: incarnation, page_lifetime: null, slug: 'belief/default',
+    event_key: seqHex, source_id: 'default', source_incarnation: incarnation, page_lifetime: null, slug: 'belief/default',
     subject_kind: 'page', subject_key: 'belief/default', event_type: 'created', origin: 'live', trust_tier: 'unknown', writer_tier: null, tier_basis: 'row',
     visibility: 'private', publication_id: randomUUID(), ord: 0, source_time: null, valid_from: null, valid_until: null, value: JSON.stringify({ n: eventSeq }),
     value_hash: null, prior_hash: null, state_hash: 'state', cause: '{}', claim_fp: null, purged: false, redacted_fields: null, ...over,
