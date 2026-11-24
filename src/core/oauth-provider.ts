@@ -45,7 +45,7 @@ import { grantValidationContext, insertClientGrant, type GrantClientMetadata } f
 import { manualClientGrant } from './grants/register-grant.ts';
 import type { ClientGrant, GrantValidationContext } from './grants/model.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from './grants/legacy-token.ts';
-import { clientReadShared, tokenReadSources } from './grants/read-shared.ts';
+import { clientReadShared, sourceReadsFor, tokenReadSources } from './grants/read-shared.ts';
 import { NO_SOURCES } from './source-id.ts';
 
 /**
@@ -976,7 +976,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         allowedSources = allowedSources.filter(id => (row.active_read_sources as string[]).includes(id));
         if (allowedSources.length === 0) effectiveScopes.length = 0;
       }
-      const shared = await clientReadShared(this.sql, currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine)).member?.id ?? null);
+      const shared = await clientReadShared(sourceReadsFor(this.engine, this.sql), currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine)).member?.id ?? null);
       // v0.42.72.0: slug-prefix write binding. Array (even empty — the
       // fence treats [] as deny-all, matching submit_agent's fail-closed
       // posture) when the client carries a binding; undefined when the
@@ -1087,7 +1087,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // #3242 parity: hasSourceGrant=false only on the historical no-grant
         // floor, the one case that may widen unqualified reads.
-        ...await tokenReadSources(this.sql, grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine)).member?.id ?? null, this.engine),
+        ...await tokenReadSources(sourceReadsFor(this.engine, this.sql), grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine)).member?.id ?? null),
         takesHoldersAllowList: grant.takesHolders ?? undefined,
         ...(storedMinTrust(legacyRows[0].min_trust) ? { minTrust: storedMinTrust(legacyRows[0].min_trust) } : {}),
         ...privatePagesAuth(grant),
