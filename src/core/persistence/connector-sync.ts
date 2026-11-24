@@ -1239,13 +1239,13 @@ export class ManagedConnectorSync {
 /**
  * The managed connector sync's freshness stamp: sets the source's last sync time to the database clock and, when the run
  * saw newer content, its newest content time (null or absent keeps the stored value), only while the source is still the
- * incarnation the run bound. Runs inside the caller's transaction: `stampFreshness` (a run whose checkpoint save was
- * skipped, in a coordinated write) and the `connector_v2_checkpoint` publication below (a fresh checkpoint). Callers do
- * not read the result.
+ * incarnation the run bound (`markSourceSynced` with `incarnation` and `newestContentAt`, engine-sql/sources.ts, so a Rust
+ * brain stamps too). Runs inside the caller's transaction: `stampFreshness` (a run whose checkpoint save was skipped, in
+ * a coordinated write) and the `connector_v2_checkpoint` publication below (a fresh checkpoint). Returns whether the
+ * source was stamped; callers do not read it, as they did not read the raw statement's rows.
  */
-export async function stampConnectorFresh(tx: BrainEngine, sourceId: string, incarnation: string, newestContentAt?: string | null): Promise<unknown> {
-  return tx.executeRaw('UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-    [sourceId, incarnation, newestContentAt ?? null]);
+export async function stampConnectorFresh(tx: BrainEngine, sourceId: string, incarnation: string, newestContentAt?: string | null): Promise<boolean> {
+  return tx.markSourceSynced(sourceId, { incarnation, newestContentAt: newestContentAt ?? null });
 }
 
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {

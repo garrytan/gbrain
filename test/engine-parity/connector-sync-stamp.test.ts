@@ -51,7 +51,7 @@ async function stamps(engine: BrainEngine, sourceId: string): Promise<{ synced: 
 
 describe('engine parity: a managed connector run stamps its source fresh', () => {
   parityTest('the connector stamp in a coordinated write sets the sync and newest content times only for the run\'s incarnation', {
-    methods: ['readSourceMembership', 'getSource', 'listSourceRecords'],
+    methods: ['markSourceSynced', 'readSourceMembership', 'getSource', 'listSourceRecords'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'feed-c', {}, '/srv/brain/feed-c');
     const incarnation = (await engine.readSourceMembership('feed-c'))!.incarnation;
@@ -76,7 +76,7 @@ describe('engine parity: a managed connector run stamps its source fresh', () =>
   });
 
   parityTest('the connector stamp of a fresh checkpoint publication sets the times and keeps the newest content time for null', {
-    methods: ['readSourceMembership', 'getSource', 'listSourceRecords'],
+    methods: ['markSourceSynced', 'readSourceMembership', 'getSource', 'listSourceRecords'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'feed-d', {}, '/srv/brain/feed-d');
     const incarnation = (await engine.readSourceMembership('feed-d'))!.incarnation;
