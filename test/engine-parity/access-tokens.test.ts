@@ -48,7 +48,7 @@ import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { createSource, parityArms } from './harness.ts';
-import { migrateLegacyTokens, rescopeLegacyToken, type RescopeTokenArgs } from '../../src/core/grants/legacy-token.ts';
+import { migrateLegacyTokens, rescopeLegacyToken, resolveRescopeTarget, type RescopeTokenArgs } from '../../src/core/grants/legacy-token.ts';
 import type { Server } from 'node:http';
 import express from 'express';
 import { buildServeHttpApp } from '../../src/commands/serve-http.ts';
@@ -303,6 +303,43 @@ describe('engine parity: access_tokens members', () => {
       out.migrateAgain = shown(await migrateLegacyTokens(engine, { dryRun: false }));
       const [a] = await engine.lockActiveAccessTokens({ name: 'legacy-a' });
       out.legacyA = { source_grant: a.source_grant, source_id: a.source_id, federated_read: a.federated_read, takes_holders: a.takes_holders, grant_revision: Number(a.grant_revision) };
+      return out;
+    });
+
+  // gbrain auth rescope <name>: the bare name is a token name, an OAuth client id or a client name; both kinds matching refuses.
+  parityTest('resolveRescopeTarget names a token, a client by id or by name, and refuses a name that matches both, two clients, or nothing',
+    { methods: ['insertAccessToken', 'insertOauthClient', 'revokeAccessToken'] }, async (engine) => {
+      const client = (id: string, name: string, extra: Record<string, unknown> = {}) => engine.insertOauthClient({ client_id: id, client_name: name, ...extra });
+      await insert(engine, 'tok-only', 'h-rt-only');
+      await client('client-a', 'Client A');
+      await client('client-b', 'Client B');
+      await insert(engine, 'both-name', 'h-rt-both');
+      await client('client-both', 'both-name');
+      await insert(engine, 'client-c', 'h-rt-both-id');
+      await client('client-c', 'Client C');
+      await client('twin-1', 'twins');
+      await client('twin-2', 'twins');
+      const gone = await insert(engine, 'revoked-tok', 'h-rt-gone');
+      await engine.revokeAccessToken(gone.id);
+      await client('soft-client', 'soft', { deleted_at: new Date('2026-01-02T03:04:05Z') });
+      const out: Record<string, unknown> = {};
+      for (const name of ['tok-only', 'client-a', 'Client B', 'both-name', 'client-c', 'twins', 'revoked-tok', 'soft-client', 'soft', 'nobody', 'CLIENT-A']) {
+        out[name] = await resolveRescopeTarget(engine, name).then(r => r, (error: { code?: unknown; message: string; reasons?: unknown }) => {
+          if (error.code === 'engine_capability_missing') throw error;
+          // The client list has no promised order, so the ids a refusal names are compared sorted.
+          return { code: error.code, message: error.message.replace(/\(([^)]*)\)/, (_, ids: string) => `(${ids.split(', ').sort().join(', ')})`), reasons: error.reasons };
+        });
+      }
+      const neither = (name: string) => ({ code: 'invalid_grant', message: `No active token or OAuth client named "${name}" (see gbrain auth list and gbrain auth clients)`, reasons: [] });
+      const both = (name: string, clientId: string) => ({ code: 'invalid_grant', reasons: ['rescope_target_ambiguous'],
+        message: `"${name}" names both a legacy token and an OAuth client; pass --token ${name} or --client ${clientId}` });
+      // The same answers on every arm, and these are the answers PGLite gave before the lookup was typed.
+      expect(out).toEqual({
+        'tok-only': { kind: 'token' }, 'client-a': { kind: 'client', clientId: 'client-a' }, 'Client B': { kind: 'client', clientId: 'client-b' },
+        'both-name': both('both-name', 'client-both'), 'client-c': both('client-c', 'client-c'),
+        twins: { code: 'invalid_grant', reasons: ['rescope_target_ambiguous'], message: '"twins" names 2 OAuth clients (twin-1, twin-2); pass --client <client-id> from gbrain auth clients' },
+        'revoked-tok': neither('revoked-tok'), 'soft-client': neither('soft-client'), soft: neither('soft'), nobody: neither('nobody'), 'CLIENT-A': neither('CLIENT-A'),
+      });
       return out;
     });
 
