@@ -7,7 +7,7 @@
 //!
 //! Members: recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
 //! pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage
-//! (`src/core/engine-sql/telemetry.ts`).
+//! readMcpRequestLogPage (`src/core/engine-sql/telemetry.ts`).
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`, then the table's sub-tag):
 //! - `a 0x01 <date> 0x00 <mode> 0x00 <intent>` -> `SearchRecord` (JSON). The text parts are the
@@ -41,8 +41,14 @@ const OP_CUTOFF: &str = "readMcpLogPruneCutoff";
 const OP_PRUNE: &str = "pruneMcpRequestLogBatch";
 const OP_USAGE: &str = "readClientOpUsage";
 const OP_LIFETIME: &str = "readMcpLifetimeUsage";
+const OP_COUNT: &str = "countMcpRequestsLastDay";
+const OP_COUNT_BY_TOKEN: &str = "countMcpRequestsLastDayByToken";
+const OP_PAGE: &str = "readMcpRequestLogPage";
 const LOG_ID_COUNTER: &str = "next_mcp_request_id";
 const DAY_US: i128 = 86_400_000_000;
+/// The write states still in flight, and the states of a write that ended without committing (`readPendingWriteHealth`).
+const PENDING_STATES: &[&str] = &["queued", "deferred", "running", "recovering"];
+const ENDED_UNCOMMITTED: &[&str] = &["conflict", "failed", "cancelled"];
 /// The `timestamptz` range in Unix microseconds: 4714-11-24 BC 00:00:00 UTC up to (not including)
 /// 294277-01-01 UTC, Postgres's `MIN_TIMESTAMP` and `END_TIMESTAMP` moved from the 2000 epoch.
 const TIMESTAMP_MIN_US: i128 = -212_760_172_800_000_000;
@@ -190,7 +196,7 @@ pub(crate) fn pg_timestamptz_text(micros: i64) -> String {
     text
 }
 
-fn log_prefix() -> [u8; 2] {
+pub(crate) fn log_prefix() -> [u8; 2] {
     [keys::TELEMETRY, keys::TELEMETRY_MCP_REQUEST]
 }
 
@@ -222,6 +228,7 @@ pub(crate) struct LogRecord {
     pub latency_ms: Option<i32>,
     pub status: String,
     pub error_message: Option<String>,
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub params: Option<Value>,
     pub created_us: i64,
 }
@@ -259,6 +266,36 @@ pub struct McpRequestLogInput {
     pub error_message: Option<String>,
     pub params: Option<Value>,
     pub created_at: Option<String>,
+}
+
+/// `readMcpRequestLogPage` arguments: the admin request list's filters (null reads every row) and
+/// its page. `limit` and `offset` are JavaScript numbers.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpRequestLogPageInput {
+    pub token_name: Option<String>,
+    pub operation: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<f64>,
+    pub offset: Option<f64>,
+}
+
+/// A `LIMIT` / `OFFSET` value as Postgres binds a JavaScript number: a whole `bigint`, not negative.
+fn page_bound(name: &str, value: Option<f64>) -> Result<usize> {
+    let value = value.unwrap_or(0.0);
+    if !value.is_finite() || value.fract() != 0.0 || value.abs() >= 9.2e18 {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{OP_PAGE}: {name} is not a bigint: {value}"),
+        ));
+    }
+    if value < 0.0 {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            format!("{OP_PAGE}: {} must not be negative", name.to_uppercase()),
+        ));
+    }
+    Ok(usize::try_from(value as i64).unwrap_or(usize::MAX))
 }
 
 /// Whether a JSON value holds a NUL character, which `jsonb` refuses.
@@ -707,6 +744,172 @@ impl Store {
             .collect())
     }
 
+    /// `countMcpRequestsLastDay(kind)`: the request log rows created after `now - 24 hours`: `all` counts every row,
+    /// `traffic` leaves out the `surface_change` audit rows, `errors` is the traffic whose status is not a success or an
+    /// admitted pending write. Any other kind refuses with `invalid_argument`.
+    pub fn count_mcp_requests_last_day(&self, kind: &str) -> Result<i64> {
+        if !["all", "traffic", "errors"].contains(&kind) {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                format!("{OP_COUNT}: unknown kind \"{kind}\""),
+            ));
+        }
+        let cutoff = self.env.now_micros() - DAY_US as i64;
+        let read = self.read()?;
+        let mut count = 0_i64;
+        for (_, row) in read_log(&*read)? {
+            if row.created_us <= cutoff {
+                continue;
+            }
+            if kind != "all" && row.operation == "surface_change" {
+                continue;
+            }
+            if kind == "errors" && SUCCESS_STATUSES.contains(&row.status.as_str()) {
+                continue;
+            }
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// `readPendingWriteHealth()`: `{ pending_writes, oldest_pending_write_age_seconds, pending_writes_later_failed }`.
+    /// The writes in `queued`, `deferred`, `running` or `recovering`, and the whole seconds since the oldest of them was
+    /// created (0 with none, Postgres's `floor(extract(epoch FROM now() - min(created_at)))`); then the distinct
+    /// requests in `conflict`, `failed` or `cancelled` whose request id an `accepted_pending` log row created after
+    /// `now - 24 hours` names in `params.write_request_id`.
+    pub fn read_pending_write_health(&self) -> Result<Value> {
+        let now = self.env.now_micros();
+        let cutoff = now - DAY_US as i64;
+        let read = self.read()?;
+        let requests = crate::persistence::all_requests(&*read)?;
+        let mut pending = 0_i64;
+        let mut oldest: Option<i64> = None;
+        for r in &requests {
+            if PENDING_STATES.contains(&r.state.as_str()) {
+                pending += 1;
+                oldest = Some(oldest.map_or(r.created_at_us, |o| o.min(r.created_at_us)));
+            }
+        }
+        let mut named: BTreeSet<String> = BTreeSet::new();
+        for (_, row) in read_log(&*read)? {
+            if row.created_us <= cutoff || row.status != "accepted_pending" {
+                continue;
+            }
+            if let Some(id) = row
+                .params
+                .as_ref()
+                .and_then(|p| p.get("write_request_id"))
+                .and_then(Value::as_str)
+            {
+                named.insert(id.to_string());
+            }
+        }
+        let later_failed = requests
+            .iter()
+            .filter(|r| {
+                ENDED_UNCOMMITTED.contains(&r.state.as_str()) && named.contains(&r.request_id)
+            })
+            .map(|r| r.id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len();
+        let age = oldest.map_or(0, |o| (now - o).div_euclid(1_000_000));
+        Ok(json!({
+            "pending_writes": pending,
+            "oldest_pending_write_age_seconds": age,
+            "pending_writes_later_failed": later_failed,
+        }))
+    }
+
+    /// `countMcpRequestsLastDayByToken(tokenNames)`: `{ token_name, requests }` per asked token that has a request
+    /// created after `now - 24 hours`, in token byte order. A NULL-token row never matches; a NUL in a name refuses with
+    /// `invalid_argument`.
+    pub fn count_mcp_requests_last_day_by_token(
+        &self,
+        token_names: Option<&[Option<String>]>,
+    ) -> Result<Vec<Value>> {
+        let asked: BTreeSet<&str> = token_names
+            .unwrap_or_default()
+            .iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        for name in &asked {
+            no_nul(OP_COUNT_BY_TOKEN, &[("tokenNames", name)])?;
+        }
+        if asked.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cutoff = self.env.now_micros() - DAY_US as i64;
+        let read = self.read()?;
+        let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+        for (_, row) in read_log(&*read)? {
+            let Some(token) = row.token_name else {
+                continue;
+            };
+            if row.created_us > cutoff && asked.contains(token.as_str()) {
+                *counts.entry(token).or_insert(0) += 1;
+            }
+        }
+        Ok(counts
+            .into_iter()
+            .map(|(token_name, requests)| json!({ "token_name": token_name, "requests": requests }))
+            .collect())
+    }
+
+    /// `readMcpRequestLogPage(spec)`: `{ rows, total }`. `rows` is the page of request log rows,
+    /// newest `created_at` first (ties by the higher id first, where Postgres leaves them in no
+    /// set order), whose token, operation and status equal each given filter byte for byte; each
+    /// row's `agent_name` falls back to its token name. `total` counts every row the filters match.
+    /// A negative offset or limit refuses with `invalid_argument`, as Postgres refuses it, and so
+    /// does a NUL in a filter.
+    pub fn read_mcp_request_log_page(&self, input: &McpRequestLogPageInput) -> Result<Value> {
+        for (name, value) in [
+            ("tokenName", &input.token_name),
+            ("operation", &input.operation),
+            ("status", &input.status),
+        ] {
+            if let Some(value) = value {
+                no_nul(OP_PAGE, &[(name, value.as_str())])?;
+            }
+        }
+        let limit = page_bound("limit", input.limit)?;
+        let offset = page_bound("offset", input.offset)?;
+        let matches = |want: &Option<String>, have: Option<&str>| {
+            want.as_deref().is_none_or(|w| have == Some(w))
+        };
+        let read = self.read()?;
+        let mut rows: Vec<LogRecord> = read_log(&*read)?
+            .into_iter()
+            .map(|(_, row)| row)
+            .filter(|row| {
+                matches(&input.token_name, row.token_name.as_deref())
+                    && matches(&input.operation, Some(row.operation.as_str()))
+                    && matches(&input.status, Some(row.status.as_str()))
+            })
+            .collect();
+        let total = rows.len();
+        rows.sort_by(|a, b| b.created_us.cmp(&a.created_us).then(b.id.cmp(&a.id)));
+        let page: Vec<Value> = rows
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|row| {
+                json!({
+                    "id": row.id,
+                    "agent_name": row.agent_name.clone().or_else(|| row.token_name.clone()),
+                    "token_name": row.token_name,
+                    "operation": row.operation,
+                    "latency_ms": row.latency_ms,
+                    "status": row.status,
+                    "params": row.params,
+                    "error_message": row.error_message,
+                    "created_at": iso(row.created_us),
+                })
+            })
+            .collect();
+        Ok(json!({ "rows": page, "total": total }))
+    }
+
     /// `readMcpRollupPrunedBefore()`: the newest `pruned_through` of the tally (null when nothing
     /// was pruned) and the store clock, as ISO text.
     pub fn read_mcp_rollup_pruned_before(&self) -> Result<Value> {
@@ -718,6 +921,26 @@ impl Store {
             .max();
         Ok(json!({ "pruned_before": newest.map(iso), "now": iso(now) }))
     }
+}
+
+/// The `mcp_request_log` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(read_log(read)?
+        .into_iter()
+        .map(|(_, r)| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("params", ProbeCell::opt_jsonb(r.params.as_ref())),
+                (
+                    "error_message",
+                    ProbeCell::opt_text(r.error_message.as_deref()),
+                ),
+            ],
+        })
+        .collect())
 }
 
 /// The shadow follow (`seed/follow.rs`): removes the rollup row of `token_name`. `false` when there
@@ -963,6 +1186,135 @@ mod tests {
                 .code,
             INVALID_ARGUMENT
         );
+    }
+
+    #[test]
+    fn counts_the_last_day_by_kind_and_by_token() {
+        let s = store();
+        for (token, op, status, age) in [
+            (Some("token-a"), "search", "success", 0.5),
+            (Some("token-a"), "search", "error", 0.25),
+            (Some("token-a"), "search", "accepted_pending", 0.1),
+            (Some("token-b"), "get_page", "auth_failed", 0.5),
+            (None, "search", "error", 0.5),
+            (Some("token-a"), "surface_change", "success", 0.5),
+            (Some("token-a"), "search", "error", 2.0),
+            (Some("token-b"), "get_page", "success", 30.0),
+        ] {
+            s.log_mcp_request(&request(token, op, status, age)).unwrap();
+        }
+        assert_eq!(s.count_mcp_requests_last_day("all").unwrap(), 6);
+        assert_eq!(s.count_mcp_requests_last_day("traffic").unwrap(), 5);
+        assert_eq!(s.count_mcp_requests_last_day("errors").unwrap(), 3);
+        assert_eq!(
+            s.count_mcp_requests_last_day("nope").unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+        let ask = vec![
+            Some("token-b".to_string()),
+            None,
+            Some("token-a".to_string()),
+            Some("nobody".to_string()),
+        ];
+        let rows = s.count_mcp_requests_last_day_by_token(Some(&ask)).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                json!({ "token_name": "token-a", "requests": 4 }),
+                json!({ "token_name": "token-b", "requests": 1 })
+            ]
+        );
+        assert!(
+            s.count_mcp_requests_last_day_by_token(None)
+                .unwrap()
+                .is_empty()
+        );
+        let nul = vec![Some("a\0b".to_string())];
+        assert_eq!(
+            s.count_mcp_requests_last_day_by_token(Some(&nul))
+                .unwrap_err()
+                .code,
+            INVALID_ARGUMENT
+        );
+    }
+
+    #[test]
+    fn request_log_page_filters_orders_newest_first_and_counts_every_match() {
+        let s = store();
+        let at = |us: i64| Some(iso(1_786_363_200_000_000 + us));
+        for (token, agent, op, status, us) in [
+            (Some("token-a"), Some("agent-fork"), "search", "success", 1),
+            (Some("token-a"), None, "search", "error", 3),
+            (Some("token-b"), None, "get_page", "success", 2),
+            (None, None, "search", "success", 4),
+        ] {
+            s.log_mcp_request(&McpRequestLogInput {
+                token_name: token.map(str::to_string),
+                agent_name: agent.map(str::to_string),
+                operation: Some(op.to_string()),
+                status: Some(status.to_string()),
+                created_at: at(us),
+                ..McpRequestLogInput::default()
+            })
+            .unwrap();
+        }
+        // Two rows at the same instant: the higher id comes first.
+        for _ in 0..2 {
+            s.log_mcp_request(&McpRequestLogInput {
+                token_name: Some("token-c".into()),
+                operation: Some("query".into()),
+                status: Some("success".into()),
+                created_at: at(0),
+                ..McpRequestLogInput::default()
+            })
+            .unwrap();
+        }
+        let page =
+            |spec: Value| s.read_mcp_request_log_page(&serde_json::from_value(spec).unwrap());
+        let all = page(json!({ "limit": 50, "offset": 0 })).unwrap();
+        assert_eq!(all["total"], 6);
+        let ids: Vec<u64> = all["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect();
+        assert_eq!(ids, vec![4, 2, 3, 1, 6, 5]);
+        assert_eq!(
+            all["rows"][2]["agent_name"], "token-b",
+            "no agent name falls back to the token"
+        );
+        assert_eq!(all["rows"][3]["agent_name"], "agent-fork");
+        assert_eq!(
+            all["rows"][0]["agent_name"],
+            Value::Null,
+            "no token and no agent stays null"
+        );
+        assert_eq!(all["rows"][0]["created_at"], "2026-08-10T12:00:00.000004Z");
+
+        let filtered = page(json!({ "tokenName": "token-a", "operation": "search", "status": "error", "limit": 50, "offset": 0 })).unwrap();
+        assert_eq!(filtered["total"], 1);
+        assert_eq!(filtered["rows"][0]["id"], 2);
+
+        let second = page(json!({ "operation": "search", "limit": 2, "offset": 2 })).unwrap();
+        assert_eq!(second["total"], 3, "the total counts past the page");
+        assert_eq!(second["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(second["rows"][0]["id"], 1);
+        assert!(
+            page(json!({ "limit": 50, "offset": 100 })).unwrap()["rows"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        for bad in [
+            json!({ "limit": 50, "offset": -50 }),
+            json!({ "limit": -1, "offset": 0 }),
+            json!({ "limit": 50, "offset": 0.5 }),
+            json!({ "status": "a\0b", "limit": 50, "offset": 0 }),
+        ] {
+            assert_eq!(page(bad).unwrap_err().code, INVALID_ARGUMENT);
+        }
     }
 
     #[test]

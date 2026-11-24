@@ -1,0 +1,4 @@
+**Connector syncs on a distant database spend fewer round trips per item, so re-checking contacts that a previous run already wrote runs about 1.3 times faster.**
+
+### Fixed
+- A managed connector sync (Google, GitHub and the rest) re-read the same run-wide rows (its lock, the source row, the owner binding, the writer grant, the mirror and slug-root modes) up to nine times for every page it read or wrote. Each is now read once per page read or write, and read again after the sync waits for an earlier write to finish; the checks that guard a write still run under their locks when the write is admitted and published. An unchanged contact now costs about 40 database statements instead of 52, and a contact written for the first time about 187 instead of 190. On a Supabase pooler about 30 ms away, re-checking a contacts page that a previous run already wrote drops from roughly 1.5 s to about 1.2 s per contact (#9990).

@@ -44,6 +44,22 @@ impl Brain {
         })
     }
 
+    /// `readNewestTimelineEntryId(sourceId, slug, date, summary)`: resolves the newest matching
+    /// entry's id, or null.
+    #[napi]
+    pub fn read_newest_timeline_entry_id<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        date: String,
+        summary: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_newest_timeline_entry_id(&source_id, &slug, &date, &summary)
+        })
+    }
+
     /// `getTimeline(slug, { limit?, sourceId?, sourceIds?, after?, before? }?)`: newest first.
     /// `date` is `YYYY-MM-DD` and `created_at` an ISO string; the shell makes them `Date`s.
     #[napi]

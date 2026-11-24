@@ -1,0 +1,4 @@
+---
+kind: add
+---
+Three new tables, engine_writer_observations, engine_writer_sessions and engine_writer_coverage_gaps, and one function, gbrain_note_writer, are added to every brain by a schema migration. They stay empty unless you turn on Rust engine shadow mode (gbrain engine shadow start). While shadow mode is on, each gbrain process that writes to the brain notes one row (its host id, the name its database connections carry, its command kind, its gbrain version, and when it first and last wrote), at most every 10 minutes and after its write committed. On a Postgres brain, shadow start also adds one trigger to every brain table that records which database connections write (never failing a write, and waiting at most 50 ms on its own tables), and shadow stop removes those triggers. They hold no page content, paths or query text.

@@ -332,7 +332,8 @@ import { v328 } from './v328-owner-only-reads-complete.ts';
 import { v329 } from './v329-serves-since-subsecond.ts';
 import { v330 } from './v330-entity-identity-reviews-evidence.ts';
 import { v331 } from './v331-access-read-log.ts';
-import { v332 } from './v332-pages-spelling-key-index.ts';
+import { v332 } from './v332-engine-writer-observations.ts';
+import { v333 } from './v333-hold-page-id.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -664,4 +665,5 @@ export const MIGRATIONS: Migration[] = [
   v330,
   v331,
   v332,
+  v333,
 ];

@@ -126,6 +126,14 @@ describe('#3943 — config get redacts sensitive values by default (--raw opts o
     expect(logs.join('\n')).not.toContain('pw3943');
   });
 
+  test('database_url whose password holds a raw @ prints no part of the password', async () => {
+    writeFileConfig({ engine: 'pglite', database_url: ['postgresql://user:pw', 'tail3943', 'host/db'].join('@') });
+    const { logs, exit } = await runGet({}, 'database_url');
+    expect(exit).toBeNull();
+    expect(logs).toContain('postgresql://***@host/db');
+    expect(logs.join('\n')).not.toContain('tail3943');
+  });
+
   test('--raw before the key still resolves the key and prints the verbatim secret', async () => {
     writeFileConfig({ engine: 'pglite', anthropic_api_key: 'sk-ant-test3943-raw-optout' });
     const { logs, exit } = await runGet({}, 'anthropic_api_key', { before: ['--raw'] });

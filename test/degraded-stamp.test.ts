@@ -5,8 +5,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { Notice } from '../src/core/agent-output.ts';
-import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine } from '../src/core/degraded-stamp.ts';
+import { DEGRADED_STAMP_PREFIX, degradedStampFor, degradedStampLine, emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY } from '../src/core/degraded-stamp.ts';
 import { withDegradedStamp } from '../src/cli/op-notices.ts';
+import { recallInteropNotices } from '../src/core/interop-notices.ts';
 
 const reasons = (op: string, result: unknown, meta: Record<string, unknown> | null = null, notices: Notice[] = []) =>
   degradedStampFor(op, result, meta, notices)?.reasons ?? null;
@@ -28,6 +29,31 @@ describe('clean results carry no stamp', () => {
 
   test('info notices and degraded notices about something other than this result do not stamp', () => {
     expect(reasons('search', [], retrieval([]), [notice('search_filter_hint', 'info'), notice('no_worker'), notice('write_capacity_backpressure')])).toBeNull();
+  });
+
+  test('a brain keyless on purpose (embedding_disabled) is not degraded; a missing provider still is', () => {
+    for (const op of ['search', 'query', 'find_experts']) {
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }]))).toBeNull();
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'no_provider' }]))).toEqual(['embed_unavailable']);
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }, { stage: 'keyword_arm_failed' }]))).toEqual(['keyword_arm_failed']);
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }, { stage: 'keyword_zero' }]))).toBeNull();
+      expect(reasons(op, [], retrieval([{ stage: 'embed_unavailable', reason: 'no_provider' }, { stage: 'keyword_zero' }]))).toEqual(['embed_unavailable', 'keyword_zero']);
+    }
+    expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' }, retrieval([{ stage: 'embed_unavailable', reason: 'embedding_disabled' }]))).toBeNull();
+    expect(reasons('recall', { facts_degraded: { reason: 'keyword_only_embedding_disabled' } })).toBeNull();
+    expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' }, retrieval([{ stage: 'keyword_candidates_incomplete', reason: 'timeout' }])))
+      .toEqual(['keyword_candidates_incomplete']);
+    expect(reasons('recall', { search_degraded: 'keyword_only_no_embedding_provider' })).toEqual(['embed_unavailable']);
+  });
+
+  test('the stamp and the degraded_recall notice agree on a brain keyless on purpose, find_experts included', () => {
+    for (const op of ['search', 'query', 'find_experts']) {
+      for (const reason of ['embedding_disabled', 'no_provider']) {
+        const meta = retrieval([{ stage: 'embed_unavailable', reason }, { stage: 'keyword_zero' }]);
+        const noticed = recallInteropNotices(op, [], meta, {}, { transport: 'stdio' }).some(n => n.code === 'degraded_recall');
+        expect([op, reason, noticed]).toEqual([op, reason, reasons(op, [], meta) !== null]);
+      }
+    }
   });
 
   test('search_exact paging (the caller\'s limit) is not degradation', () => {
@@ -57,8 +83,6 @@ describe('every degradation class stamps with a stable code', () => {
 
   test('recall keyword-only markers and question ranking name the same condition as search', () => {
     expect(reasons('recall', { search_degraded: 'keyword_only_no_embedding_provider' })).toEqual(['embed_unavailable']);
-    expect(reasons('recall', { search_degraded: 'keyword_only_embedding_disabled' })).toEqual(['embed_unavailable']);
-    expect(reasons('recall', { facts_degraded: { reason: 'keyword_only_embedding_disabled' } })).toEqual(['embed_unavailable']);
     expect(reasons('recall', { facts_degraded: { reason: 'embed_timeout', unembedded: 3 } })).toEqual(['embed_timeout', 'facts_unembedded']);
     expect(reasons('recall', { facts_degraded: { reason: 'facts_read_failed' } })).toEqual(['facts_read_failed']);
   });
@@ -126,5 +150,24 @@ describe('the one-line marker and the CLI placement', () => {
   test('no stamp leaves the output untouched', () => {
     expect(withDegradedStamp({ facts: [] }, true, null)).toEqual({ result: { facts: [] } });
     expect(withDegradedStamp([], false, { reasons: [] })).toEqual({ result: [] });
+  });
+});
+
+describe('the empty line on a brain keyless on purpose', () => {
+  test('it scopes the negative to what this caller can read, since restricted pages it cannot read may hold the words', () => {
+    expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).toContain('and no page this caller can read holds these words');
+    expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).not.toContain('and no page holds these words');
+  });
+
+  test('it scopes the negative to the search\'s own filters, since a source, type or where filter can leave out a readable page that has the words', () => {
+    expect(KEYWORD_ONLY_BY_CHOICE_EMPTY).toContain('within this search\'s filters');
+  });
+
+  test('it is used only when the keyword arm itself found nothing, never for a page past the end or hits a later step dropped', () => {
+    const byChoice = { stage: 'embed_unavailable', reason: 'embedding_disabled' };
+    expect(emptyRetrievalStages([byChoice, { stage: 'keyword_zero' }])).toEqual({ stages: [], byChoice: true });
+    expect(emptyRetrievalStages([byChoice])).toEqual({ stages: [], byChoice: false });
+    expect(emptyRetrievalStages([{ stage: 'embed_unavailable', reason: 'no_provider' }, { stage: 'keyword_zero' }]))
+      .toEqual({ stages: ['embed_unavailable', 'keyword_zero'], byChoice: false });
   });
 });

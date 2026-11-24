@@ -873,6 +873,20 @@ export async function resolveSourceWithTier(
   return resolved;
 }
 
+/**
+ * True when `err` is an engine capability refusal (a Rust store answering no raw SQL) and the lookup it stopped could
+ * have chosen a source other than `default`: the user selected one (GBRAIN_SOURCE, a .gbrain-source dotfile, the
+ * sources.default config) or the brain holds any other source (a registered local_path, the sole-non-default tier).
+ * The caller must then refuse rather than fall back to the cross-source view, which would read the wrong source.
+ */
+export async function refusedSourceTarget(engine: BrainEngine, err: unknown, cwd: string = hookSessionCwd()): Promise<boolean> {
+  if ((err as { code?: unknown } | null)?.code !== 'engine_capability_missing') return false;
+  if (ambientSourceEnv({}) || readDotfileWalk(cwd)) return true;
+  if (await engine.getConfig('sources.default').catch(() => 'unreadable')) return true;
+  const sources = await engine.listAllSources({ includeArchived: true }).catch(() => null);
+  return sources === null || sources.some((s) => s.id !== 'default');
+}
+
 async function resolveSourceWithTierChain(
   engine: BrainEngine,
   explicit: string | null | undefined,
