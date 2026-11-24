@@ -56,6 +56,7 @@ import { nativeFileTarget } from '../persistence/native-file-target.ts';
 import { clearDeletionHold, readSyncImportProvenance } from '../persistence/sync-holds.ts';
 import { readRevisionAttestations } from '../persistence/sync-pass.ts';
 import { blobBeforeDeletion, readDeletionProvenance, type DeletionProvenance } from '../persistence/sync-origin-evidence.ts';
+import { syncGit } from '../persistence/sync-discovery.ts';
 import { readMoveCandidates, readMovedPage, type MoveCandidate, type MovedPageVerdict } from '../persistence/moved-pages.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -236,6 +237,7 @@ export const ghostPagesRepair: RepairHandler = {
       throw previewChangedError(opts.expect, command);
     }
     if (massGhosts(approved.items.length, scan.file_backed) && !massReconcileAllowed()) throw massRefusal(sourceId, approved.items.length, scan.file_backed);
+    await primeGhostMoves(engine, sourceId, scan.root!, approved.items.map(({ selection: _selection, owner: _owner, ...ghost }) => ghost));
     const items = approved.items.map(({ selection: _selection, owner, ...ghost }, index) => item(ghost, owner, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
   },
@@ -296,14 +298,15 @@ export const movedPagesCommand = (ghost: GhostPage) => `gbrain repair moved-page
 /**
  * Why a ghost is kept from soft-delete for its move, or null: `moved_to` when a proven move pairs it with a live page that
  * holds every line of it (and no other ghost of the read claims that page), `move_unproven` when Git could not read where it
- * went, or a file Git renamed it to, or that holds or started from its last committed content, exists without a proven fold.
- * A same-name file alone does not keep it.
+ * went, or a file in HEAD (imported or not) that Git renamed it to, that holds or started from its last committed content, or
+ * that has its name and that Git added between the old file's add and its deletion, exists without a proven fold. A
+ * same-name file Git does not link to it does not keep it.
  */
 function moveCode(move: GhostMove | undefined): GhostMoveCode | null {
   if (!move) return null;
   if (move.unread || move.shared) return MOVE_UNPROVEN_CODE;
   if (move.verdict.verdict === 'moved') return MOVED_TO_CODE;
-  return move.candidates.some(candidate => candidate.match !== 'same_file_name') ? MOVE_UNPROVEN_CODE : null;
+  return move.candidates.some(candidate => candidate.match !== 'same_file_name' || candidate.linked !== false) ? MOVE_UNPROVEN_CODE : null;
 }
 
 /** The move read for each committed-deletion ghost with a candidate or an unreadable history: one candidate read per call, then the moved-pages verdict per ghost. */
@@ -324,17 +327,37 @@ async function readGhostMoves(engine: BrainEngine, sourceId: string, root: strin
   return moves;
 }
 
-/** Whether the ghost's move keeps it from soft-delete now: the apply's own check, so an approval saved before a move (or before this check) cannot remove it. */
-async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<RepairItemOutcome | null> {
+/** Move reads of one apply run, keyed by checkout root and HEAD: a read depends on Git only once candidates are named, so one HEAD shares it. */
+const runMoves = { key: '', moves: new Map<string, GhostMove | undefined>() };
+const headOf = (root: string) => { try { return syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { return null; } };
+const moveKey = (ghost: GhostPage) => `${ghost.page_id}:${ghost.revision}:${ghost.path}`;
+
+/** Reads the moves of every ghost an apply is about to retire in one pass, so each item's veto reuses it at the same HEAD. */
+async function primeGhostMoves(engine: BrainEngine, sourceId: string, root: string, ghosts: GhostPage[]): Promise<void> {
+  const head = headOf(root);
+  if (!head || !ghosts.length) return;
+  const moves = await readGhostMoves(engine, sourceId, root, ghosts, await readDeletionProvenance(root, ghosts.map(ghost => ghost.path)));
+  runMoves.key = `${root}\0${head}`;
+  runMoves.moves = new Map(ghosts.map(ghost => [moveKey(ghost), moves.get(ghost.page_id)]));
+}
+
+/**
+ * Whether the ghost's move keeps it from soft-delete now: the soft-delete's own check (ghost-pages, file-drift --prefer file
+ * and the managed preparer), so an approval saved before a move, or before this check, cannot remove it.
+ */
+export async function ghostMoveVeto(engine: BrainEngine, ghost: GhostPage, owner: GhostOwner): Promise<(RepairItemOutcome & { reason: GhostMoveCode; detail: { message: string } }) | null> {
   const binding = await getWorktreeBinding(engine, ghost.source_id, owner.host_id);
   if (!binding?.local_path) return null;
   const root = join(binding.local_path, binding.relative_path);
-  const move = (await readGhostMoves(engine, ghost.source_id, root, [ghost], await readDeletionProvenance(root, [ghost.path]))).get(ghost.page_id);
+  const head = headOf(root);
+  const cached = head !== null && runMoves.key === `${root}\0${head}` && runMoves.moves.has(moveKey(ghost));
+  const move = cached ? runMoves.moves.get(moveKey(ghost))
+    : (await readGhostMoves(engine, ghost.source_id, root, [ghost], await readDeletionProvenance(root, [ghost.path]))).get(ghost.page_id);
   const code = moveCode(move);
   return code ? { applied: false, outcome: 'refused', reason: code, detail: { message: ghostMoveDetail(ghost, move!) } } : null;
 }
 
-const candidateList = (move: { candidates: MoveCandidate[] }) => move.candidates.map(candidate => `${candidate.slug} (${candidate.path}, ${candidate.match})`).join(', ');
+const candidateList = (move: { candidates: MoveCandidate[] }) => move.candidates.map(candidate => `${candidate.slug ?? 'no page yet'} (${candidate.path}, ${candidate.match})`).join(', ');
 
 function ghostMoveDetail(ghost: GhostPage, move: GhostMove): string {
   if (move.unread) return `file ${ghost.path} is gone, and Git could not read whether it moved (the HEAD listing or the history read failed); not soft-deleted. Preview again, or decide with the user`;
