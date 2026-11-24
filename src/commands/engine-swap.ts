@@ -100,6 +100,13 @@ export function renderPlanText(p: SwapPlan): string {
     `Expected write pause: about ${p.write_pause.seconds} s (${p.write_pause.basis})`,
     ...p.blockers.map(b => `Blocked: ${b.reason} (${b.detail}): ${SWAP_RECOVERY[b.reason].blocker}`),
     p.reason ? `A run would refuse with engine_swap_refused (${p.reason}): ${SWAP_RECOVERY[p.reason].blocker}` : 'READY is evidence, not permission: the swap needs its own approval.',
+    `Way back: ${p.way_back.statement}`,
+    ...p.way_back.known_limits.map(l => `Known limit: ${l}`),
+    `Failback accepted losses (counted by its plan): ${p.way_back.accepted_losses.join(', ')}`,
+    p.way_back.losses
+      ? `Failback does not carry (no Rust read call), ${p.way_back.losses.not_carried_tables.length} table(s): ${p.way_back.losses.not_carried_tables.join(', ') || 'none'}; fields: ${Object.entries(p.way_back.losses.not_carried_fields).map(([t, c]) => c.map(x => `${t}.${x}`).join(', ')).join(', ') || 'none'}`
+      : 'Failback does not carry: unknown (the schema of this brain could not be read).',
+    p.way_back.fingerprint_rule,
     'Nothing was written.',
   ];
   return lines.filter(Boolean).join('\n');

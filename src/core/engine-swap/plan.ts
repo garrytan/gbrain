@@ -8,6 +8,8 @@
  * but not run.
  */
 import { createHash } from 'node:crypto';
+import { FAILBACK_ACCEPTED_LOSSES, FAILBACK_KNOWN_LIMITS, FINGERPRINT_RULE_TEXT, WAY_BACK_TEXT } from './failback.ts';
+import { failbackLosses, type FailbackLosses } from './failback-read.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { EngineCapabilities } from '../engine-capabilities.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
@@ -54,7 +56,18 @@ export interface SwapPlan {
   write_pause: WritePauseEstimate;
   /** What the Rust engine cannot serve for this brain yet; a run refuses while any is listed. */
   blockers: SwapBlocker[];
+  /** The way back (not bound by the plan hash): failback's closed loss list, accepted losses, known limits and rules. */
+  way_back: WayBack;
   plan_hash: string;
+}
+
+export interface WayBack {
+  statement: string;
+  accepted_losses: readonly string[];
+  /** Null when the primary's schema could not be read; the plan text says so. */
+  losses: FailbackLosses | null;
+  known_limits: readonly string[];
+  fingerprint_rule: string;
 }
 
 export interface SwapPlanInputs {
@@ -137,6 +150,13 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     capability_report: capabilityReport(String(engine.kind)),
     write_pause: await estimateWritePause(engine),
     blockers: await swapBlockers(engine, { remoteMcpConfigured: !!deps.remoteMcpConfigured, rustServes: deps.rustServes }),
+    way_back: await wayBack(engine),
   };
   return { ...base, plan_hash: planHash(base) };
+}
+
+async function wayBack(engine: BrainEngine): Promise<WayBack> {
+  let losses: FailbackLosses | null = null;
+  try { losses = await failbackLosses(engine); } catch { losses = null; }
+  return { statement: WAY_BACK_TEXT, accepted_losses: FAILBACK_ACCEPTED_LOSSES, losses, known_limits: FAILBACK_KNOWN_LIMITS, fingerprint_rule: FINGERPRINT_RULE_TEXT };
 }

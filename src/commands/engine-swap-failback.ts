@@ -19,7 +19,7 @@ import { postgresSessionsInUse } from '../core/engine-swap/pg-checkpoint.ts';
 import { findSwapRecordPath, readSwapRecord, swapRunDir, type SwapRecord } from '../core/engine-swap/record.ts';
 import { swapRefusal } from '../core/engine-swap/refusals.ts';
 import { routeOverrideRefusal, savedDatabaseUrl, subprocessProber, type RouteProber } from '../core/engine-swap/route.ts';
-import { planFailback, runFailback, type FailbackDeps, type FailbackPlan } from '../core/engine-swap/failback.ts';
+import { FINGERPRINT_RULE_TEXT, planFailback, runFailback, type FailbackDeps, type FailbackPlan } from '../core/engine-swap/failback.ts';
 import { shadowBrainKey } from '../shadow/state.ts';
 import type { ServiceDefinition } from '../core/engine-swap/plan.ts';
 
@@ -92,7 +92,6 @@ function writersOf(rust: BrainEngine, primary: BrainEngine, record: SwapRecord, 
   };
 }
 
-const FINGERPRINT_RULE = 'Fingerprint rule (the probe\'s own rule, both directions): where the old primary\'s lower() or whitespace class differs from the Rust engine on some characters, failback stops only if a stored fact holds one; with no such character, any probe mismatch stops it. Stock Postgres differs on dozens of rare characters (for example U+0085), so its probe always reports mismatches; a brain whose facts hold none of them is not affected.';
 
 export function renderFailbackPlan(p: FailbackPlan): string {
   const kd = (d: { add: number; change: number; remove: number }) => `${d.add} added, ${d.change} changed, ${d.remove} removed`;
@@ -105,7 +104,7 @@ export function renderFailbackPlan(p: FailbackPlan): string {
     `Not carried (no Rust read call), ${p.losses.not_carried_tables.length} table(s), kept as they were at the swap: ${p.losses.not_carried_tables.join(', ') || 'none'}`,
     `Not carried fields (pre-swap value kept, the column default for new rows): ${fields.join(', ') || 'none'}`,
     ...p.known_limits.map(l => `Known limit: ${l}`),
-    FINGERPRINT_RULE,
+    FINGERPRINT_RULE_TEXT,
     'Writes go only to the fenced old primary, as the swap run; the Rust store is not changed and stays as a recovery point.',
     'Nothing was written.',
   ].join('\n');

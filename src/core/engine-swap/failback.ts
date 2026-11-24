@@ -39,6 +39,12 @@ export const FAILBACK_KNOWN_LIMITS = [
   'Files with no page are not listed by any Rust read call (listFiles is not served); their rows keep the state they had at the swap.',
 ] as const;
 
+/** The fingerprint guard's rule, in plain words, for the swap and failback plans and the guide. */
+export const FINGERPRINT_RULE_TEXT = 'Fingerprint rule (the probe\'s own rule, both directions): where the Postgres or PGLite engine\'s lower() or whitespace class differs from the Rust engine on some characters, the run stops only if a stored fact holds one; with no such character, any probe mismatch stops it. Stock Postgres differs on dozens of rare characters (for example U+0085, next line), so its probe always reports mismatches; a brain whose facts hold none of them is not affected.';
+
+/** Stated in the swap plan: after a swap the old engine falls behind, and failback is the way back. */
+export const WAY_BACK_TEXT = 'After a swap, the old engine is not kept current; failback (gbrain engine swap --to <old engine>) copies the Rust store back under a write fence.';
+
 export interface FailbackDeps {
   /** The old primary, connected as the swap run (its connect gate exempts the run). */
   primary: BrainEngine;
