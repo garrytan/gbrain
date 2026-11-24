@@ -785,10 +785,10 @@ describe('access reads', () => {
   test('readOauthClient reads the whole client row and answers null for an unknown client', async () => {
     await raw(
       `INSERT INTO oauth_clients (client_id, client_name, scope, grant_types, client_id_issued_at, source_id, may_act_for, bound_slug_prefixes)
-       VALUES ('whole-client', 'Whole client', 'read', '{client_credentials}', 1700000000, 'other', '{member-a}', '{notes/}')`);
+       VALUES ('whole-client', 'Whole client', 'read', '{client_credentials}', 1234, 'other', '{member-a}', '{notes/}')`);
     const row = await engine.readOauthClient('whole-client');
     expect(row).toMatchObject({
-      client_id: 'whole-client', client_name: 'Whole client', scope: 'read', grant_types: ['client_credentials'], client_id_issued_at: 1700000000,
+      client_id: 'whole-client', client_name: 'Whole client', scope: 'read', grant_types: ['client_credentials'], client_id_issued_at: 1234,
       source_id: 'other', may_act_for: ['member-a'], bound_slug_prefixes: ['notes/'], deleted_at: null, grant_revision: 0, private_pages: 'none',
       delegated_namespace: 'prefixes',
     });

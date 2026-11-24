@@ -2,7 +2,7 @@
  * Credentials over `access_tokens` and `oauth_clients`: the token list, the revokes, the client delete, the active-token
  * grant reads, the liveness checks the wake drain runs, the client column probes, the scoped-client insert, its
  * lifetime write and the lifetime-clamp audit read. SQL once for both engines. Each text is its caller's statement byte
- * for byte (auth.ts and token-mint.ts at 2156121155 and 837c389e52, grants/service.ts insertClientGrant, oauth-provider.ts
+ * for byte (auth.ts and token-mint.ts, grants/service.ts insertClientGrant, oauth-provider.ts
  * registerClientManual, wakeshift/drain.ts principalLive); a template statement became the positional text the
  * scalar-only SqlQuery sent. The Rust store keeps access tokens and OAuth clients (rust/docs/store/access-tokens.md,
  * oauth-clients.md) but no grant audit, so it reads no lifetime clamp and writes no register audit row. The
