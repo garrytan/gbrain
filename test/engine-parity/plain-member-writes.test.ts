@@ -21,6 +21,7 @@ import { createSource, parityArms, resetArm, type ParityBackend } from './harnes
 import { testBackends } from '../helpers/test-backends.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setMemberLabelledOnly } from '../../src/core/access/labelled-only.ts';
+import { setOwner } from '../../src/core/access/owner.ts';
 import { attestedCallerAccess } from '../../src/core/access/actor.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
@@ -31,13 +32,13 @@ import type { AuthInfo } from '../../src/core/ops/contract.ts';
 const { parityTest, arms } = parityArms(testBackends());
 const SRC = 'work';
 
-/** The outcome of one tool call by `member`'s bound token: 'written', or the error code it was refused with. */
 async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> {
   await createSource(engine, backend, SRC);
   for (const id of ['alice-example', 'bob-example', 'carol-example']) await addMember(engine, id);
   await setMemberLabelledOnly(engine, 'carol-example', true, { remote: false });
 }
 
+/** The outcome of one tool call by `member`'s bound token: 'written', or the error code it was refused with. */
 async function write(engine: BrainEngine, member: string, tool: 'put_page' | 'capture', slug: string): Promise<string> {
   const minted = await mintLegacyToken(engine, { name: `k-${member}-${tool}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
   await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
@@ -55,6 +56,7 @@ describe('engine parity: a plain member writes on a brain with a labelled-only m
     await seed(engine, backend);
     const attested = async (member: string) =>
       (await attestedCallerAccess(engine, { system: 'qm', external_id: `ext-${member}`, member }, [`member:${member}`])).labelledOnly;
+    await setOwner(engine, 'alice-example'); // an owner is named, so the write check reads it and leaves bob in
     const out = {
       bobPut: await write(engine, 'bob-example', 'put_page', 'notes/by-bob'),
       bobCapture: await write(engine, 'bob-example', 'capture', 'inbox/by-bob'),
@@ -63,6 +65,19 @@ describe('engine parity: a plain member writes on a brain with a labelled-only m
     expect(out).toEqual({ bobPut: 'written', bobCapture: 'written', attested: { bob: false, carol: true } });
     return out;
   });
+
+  // Row 32e-d-1 (a named loss): the owner's own remote put_page reads the stored page's privacy with raw SQL
+  // (page-visibility.ts ownerRewriteOf), so on Rust it is refused loudly; PGLite and Postgres write it.
+  test('loss (32e-d-1): the owner\'s own remote put_page is refused on Rust and written elsewhere', async () => {
+    for (const arm of arms()) {
+      await resetArm(arm);
+      await seed(arm.engine, arm.backend);
+      await setOwner(arm.engine, 'alice-example');
+      const outcome = await write(arm.engine, 'alice-example', 'put_page', 'notes/by-alice');
+      expect({ backend: arm.backend, outcome }).toEqual({ backend: arm.backend, outcome: arm.backend === 'rust' ? 'engine_capability_missing' : 'written' });
+    }
+    expect(arms().length).toBeGreaterThan(0);
+  }, 120_000);
 
   test('a labelled-only member\'s unlabelled put_page is refused on every arm (on Rust loudly: row 32e-b)', async () => {
     for (const arm of arms()) {
