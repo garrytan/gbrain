@@ -536,7 +536,10 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
       // trust_scan scans pages, facts, takes and timeline entries, and a new Rust brain records the write gate's
       // scan baseline as v227 does, so it counts what PGLite counts.
-      untypedWarnings: [],
+      // write_gate_holds_stranded (master, commands/doctor/checks/write-gate-holds-stranded.ts) reads the held rows through raw SQL
+      // behind its own catch, so on a Rust brain it warns in its own words instead of naming the refusal. New from master at sync 14;
+      // it needs typed members for its three reads (owner: doctor family, lane 18).
+      untypedWarnings: ['write_gate_holds_stranded'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
       // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
@@ -559,7 +562,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // do on PGLite. entity_duplicates is gone too: the store serves listIdentityDecisions and the entity key rows.
       // git_held_files is gone from this list: its readers-key hold count and candidate pages are typed members Rust
       // serves (countReadersNoncanonicalHolds, listReaderCandidatePages), so the check answers as it does on PGLite.
-      typedRefusals: [],
+      // access_disabled_member_credentials (master #9586, GBRA-585) reads disabled members' credentials through raw SQL; it stops on the
+      // typed raw_sql refusal on a Rust brain (owner: access family, lane 15).
+      typedRefusals: ['access_disabled_member_credentials'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
