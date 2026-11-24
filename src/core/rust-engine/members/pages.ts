@@ -257,6 +257,7 @@ export const PAGES_MEMBERS = {
   countLiveFileBackedPages: 'pages',
   listRepairScanPages: 'pages',
   listFileTombstones: 'pages',
+  listUnreviewedSyncTombstones: 'pages',
   listTwinMergeLosers: 'pages',
   listContactRowPages: 'pages',
   listSplitFactsPages: 'pages',

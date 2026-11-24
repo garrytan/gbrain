@@ -9780,6 +9780,7 @@
         "listUnreadablePrivacyHoldIds": "none",
         "listUnretiredPagesBySlugPattern": "none",
         "listUnreviewedJobs": "none",
+        "listUnreviewedSyncTombstones": "none",
         "listUntiledSegmentedPageRows": "none",
         "listUntiledSegmentedPages": "none",
         "listUnverifiedArchivedSourceIds": "none",

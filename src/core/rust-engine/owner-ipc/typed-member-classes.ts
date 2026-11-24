@@ -225,7 +225,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSegmentedLabelPages', 'listSegmentedPageSlugs', 'listSourceHoldRecords', 'listSourceManagedSyncFailures', 'listSourceOAuthClients',
   'listSplitFactsPages', 'listStaleAtoms', 'listStaleChunkVectors', 'listTakePointers',
   'listTakeRowNums', 'listTakeSupersedeReceipts', 'listTimelineHistoryPages', 'listTimelineMarkupRows',
-  'listTimelineVersionWitnesses', 'listTwinMergeLosers', 'listUnexpiredFactIds', 'listUntiledSegmentedPages',
+  'listTimelineVersionWitnesses', 'listTwinMergeLosers', 'listUnexpiredFactIds', 'listUntiledSegmentedPages', 'listUnreviewedSyncTombstones',
   'listUnverifiedArchivedSourceIds', 'listVersionsAfter', 'listVersionsByChangeReason', 'listWriteRequestsByRequestIds',
   'probeProjectionWindowCandidates', 'probeTornPages', 'readArchivedVersionBody', 'readBeliefFactsById',
   'readBeliefRedactions', 'readBeliefStateRows', 'readBeliefTombstones', 'readChunkKeepState',

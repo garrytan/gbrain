@@ -553,7 +553,7 @@ src/core/persistence/skill-activation.ts	execute_raw	11
 src/core/persistence/soak-counters.ts	execute_raw	3
 src/core/persistence/source-lifecycle.ts	execute_raw	33
 src/core/persistence/sync-cursor-key.ts	execute_raw	7
-src/core/persistence/sync-delete-tombstones.ts	execute_raw	2
+src/core/persistence/sync-delete-tombstones.ts	execute_raw	1
 src/core/persistence/sync-discovery.ts	execute_raw	6
 src/core/persistence/sync-drain.ts	execute_raw	2
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
