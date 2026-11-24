@@ -430,10 +430,10 @@ describe('engine parity: oauth_clients rows and constraints', () => {
     });
 
   // `gbrain agent register` end to end, through the function the CLI calls: its client and grant rows and its register audit row.
-  parityTest('agent register: the CLI function stores the client, its grant at revision 1 and the register audit row',
+  parityTest('agent register: the CLI function stores the client, its grant at revision 1 and the register audit row, with a named or a derived workspace source',
     { methods: ['insertOauthClientGrant', 'readOauthClient', 'listOauthGrantAudit'] }, async (engine, backend) => {
       await setup(engine, backend);
-      // Once on a named write source, once on the default derived workspace source, which the register creates.
+      // Once on a named write source, once on the coding-agent preset, whose derived `<name>-workspace` write source the register creates.
       const register = async (name: string, ...extra: string[]) => {
         const out: string[] = [];
         const realExit = process.exit, realLog = console.log, realError = console.error;
@@ -451,7 +451,33 @@ describe('engine parity: oauth_clients rows and constraints', () => {
           audit: await audit(engine, result.client_id!),
         };
       };
-      return { named: await register('named-agent', '--source', 'src-a', '--federated-read', 'src-a,src-b'), workspace: await register('ws-agent') };
+      return { named: await register('named-agent', '--source', 'src-a', '--federated-read', 'src-a,src-b'), workspace: await register('ws-agent', '--preset', 'coding-agent', '--federated-read', 'src-b') };
+    });
+
+  // Two registers of one name started together: the per-name advisory lock holds the second on PGLite and Postgres; on Rust the
+  // store's single writer does (rust/crates/gbrain-store/src/occ_kv.rs begin_exclusive, taken by transactions.rs begin_transaction).
+  parityTest('agent register: two registers of the same name started together store one client, and the other is refused as a duplicate',
+    { methods: ['insertOauthClientGrant', 'listOauthClients'] }, async (engine, backend) => {
+      await setup(engine, backend);
+      const rounds = [];
+      for (let round = 0; round < 5; round++) {
+        const out: string[] = [];
+        const realExit = process.exit, realLog = console.log, realError = console.error;
+        process.exit = ((code?: number) => { throw Object.assign(new Error(`exit ${code}`), { code: 'test_exit' }); }) as typeof process.exit;
+        console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
+        console.error = () => undefined;
+        try {
+          const argv = [`race-${round}`, '--harness', 'claude-code', '--url', 'http://127.0.0.1:9/mcp', '--allow-old-serve', '--json', '--source', 'src-a'];
+          await Promise.allSettled([runAgentRegister(engine, argv), runAgentRegister(engine, argv)]);
+        } finally { process.exit = realExit; console.log = realLog; console.error = realError; }
+        const results = out.map(line => JSON.parse(line) as { ok: boolean; reason?: string });
+        rounds.push({
+          ok: results.filter(r => r.ok).length, refused: results.filter(r => !r.ok).map(r => r.reason),
+          stored: (await engine.listOauthClients()).filter(c => c.client_name === `race-${round}` && c.deleted_at == null).length,
+        });
+      }
+      expect(rounds.every(r => r.ok === 1 && r.stored === 1 && r.refused.join() === 'duplicate_name')).toBe(true);
+      return rounds;
     });
 
   parityTest('revoke a client: the delete returns the client once, it is no longer live, and its ttl write finds no row',
