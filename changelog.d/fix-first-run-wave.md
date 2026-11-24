@@ -3,3 +3,5 @@
 ### Fixed
 - gbrain setup and gbrain init relay their whole first-run summary to the user instead of cutting it at 1,000 characters.
 <!-- behavior-change: show_user_relay_whole_gbra789 -->
+- Search and query on a brain with embeddings off on purpose no longer report pages "held from embedding" as degraded coverage or point at gbrain embed --held.
+<!-- behavior-change: keyless_no_embedding_held_notice_gbra789 -->

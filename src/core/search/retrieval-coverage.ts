@@ -23,6 +23,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { budgetRowAppliesFilter } from '../page-size-policy.ts';
+import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { projectionClassSql, textClassSql } from '../page-state/projection-class.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { servedTextProjectionFilter } from './safe-chunks.ts';
@@ -154,8 +155,12 @@ export function countPendingProjections(engine: Pick<BrainEngine, 'executeRaw'>,
     `NOT ${servedTextProjectionFilter('p')} AND ${projectionClassSql('p', 's')} NOT IN ('protected','archived')`, true);
 }
 
-/** Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good. */
-export function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+/**
+ * Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of
+ * embedding for good. Null on a brain with embeddings off on purpose, where a held page is no degradation.
+ */
+export async function countEmbeddingHeld(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+  if (await embeddingsDisabled(engine)) return null;
   return countInScope(engine, scope, relevance, 'JOIN page_embedding_budget b ON b.page_id = p.id',
     `${budgetRowAppliesFilter('b', 'p')} AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
 }
