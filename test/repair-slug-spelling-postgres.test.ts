@@ -26,7 +26,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { withStoredSlug } from '../src/core/utils.ts';
 import { bareBody, delivered, HELD, holdFenceRow, ROWS } from './helpers/hold-page-id-fixture.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
-import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { encodedPostgres, isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -150,6 +150,24 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
     expect(out.text).not.toContain(HELD);
     expect(out.text).not.toContain(later);
   }), 60_000);
+
+  test('on a database whose encoding is not UTF8, the upgrade completes without the spelling index and the repair refuses before reading anything', () => withEnv(env, async () => {
+    _resetCliExitVerdictForTests();
+    const db = await encodedPostgres(process.env.DATABASE_URL!, 'SQL_ASCII');
+    try {
+      await db.engine.initSchema();
+      const [{ version }] = await db.engine.executeRaw<{ version: string }>("SELECT value AS version FROM config WHERE key='version'");
+      const { LATEST_SCHEMA_VERSION } = await import('../src/core/schema-migrations/latest.generated.ts');
+      const index = await db.engine.executeRaw("SELECT 1 FROM pg_indexes WHERE indexname='idx_pages_spelling_key'");
+      await db.engine.executeRaw("INSERT INTO sources(id,name,config) VALUES('enc','enc','{}')");
+      await db.engine.putPage('notes/seed-enc', { type: 'note', title: 'Enc page', compiled_truth: 'x', timeline: '' }, { sourceId: 'enc' });
+      await db.engine.executeRaw("UPDATE pages SET slug='Notes/Enc' WHERE slug='notes/seed-enc'");
+      const error = await repairJson(['slug-spelling', '--source', 'enc'], db.engine).then(() => undefined, e => e as OperationError);
+      const slugs = (await db.engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id='enc'")).map(r => r.slug);
+      expect({ version, index: index.length, code: error?.code, names: `${error?.message}`.includes('SQL_ASCII'), slugs })
+        .toEqual({ version: String(LATEST_SCHEMA_VERSION), index: 0, code: 'slug_spelling_encoding', names: true, slugs: ['Notes/Enc'] });
+    } finally { await disposePersistenceConsumer(db.engine); await db.close(); }
+  }), 300_000);
 
   describe('a role that row-level security keeps from a guard table', () => {
     const suffix = randomUUID().replaceAll('-', '').slice(0, 10);
