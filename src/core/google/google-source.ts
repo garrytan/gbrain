@@ -289,6 +289,9 @@ function threadFailureMessage(tid: string, rateLimited: boolean, e: unknown): st
   );
 }
 
+/** GST-3452: a provider usage or rate limit (gbrain.io's allowance, Google's quota): the sweep stops and the next sync resumes. */
+const isUsageLimit = (e: unknown): boolean => e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited');
+
 /**
  * #5581: current mail must be imported down to this far below the newest
  * message before a sweep may call the source fresh. A new install's history
@@ -375,7 +378,10 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
     g.summary.failedFiles++;
     g.deps.log(threadFailureMessage(tid, rateLimited, e));
     if (wasHeld && !rateLimited) return { kind: 'skipped' };
-    g.summary.status = 'partial';
+    if (rateLimited && isUsageLimit(e)) {
+      g.summary.limitStopped = true;
+      g.summary.limitedItems = (g.summary.limitedItems ?? 0) + 1;
+    } else g.summary.status = 'partial';
     return { kind: rateLimited ? 'rate_limited' : 'failed' };
   }
 }
@@ -612,7 +618,7 @@ async function retierPrivatePages(g: GmailSweep): Promise<'aborted' | void> {
       if (deps.managed) rethrowConnectorWriteError(e);
       failed++;
       deps.log(`[google] re-tiering thread ${tid} as private failed (retried next sweep): ${e instanceof Error ? e.message : String(e)}`);
-      if (e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited')) break;
+      if (isUsageLimit(e)) break;
       continue;
     }
     if (typeof seen.slug !== 'string') {
@@ -1055,7 +1061,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('contacts', e);
         serviceErrors.push(`contacts: ${e instanceof Error ? e.message : String(e)}`);
-        summary.status = 'partial';
+        if (isUsageLimit(e)) summary.limitStopped = true;
+        else summary.status = 'partial';
         if (isCredentialError(e)) log(e.toHuman());
         else log(`[google] contacts sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -1072,7 +1079,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('calendar', e);
         serviceErrors.push(`calendar: ${e instanceof Error ? e.message : String(e)}`);
-        summary.status = 'partial';
+        if (isUsageLimit(e)) summary.limitStopped = true;
+        else summary.status = 'partial';
         if (isCredentialError(e)) log(e.toHuman());
         else log(`[google] calendar sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -1090,7 +1098,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         // last_sync_at over them would blind the staleness gate (H1).
         gmailSweepOk = await sweepGmail({ deps, gmail, state, activePack, summary, countedSlugs, holds, walked: new Set() }, async () => {
           // #5581: current mail is complete but the backfill is not: bank freshness now, while the managed lease can still write.
-          if (managed && summary.status !== 'partial' && !opts.signal?.aborted) {
+          if (managed && summary.status !== 'partial' && !summary.limitStopped && !opts.signal?.aborted) {
             await managed.saveState(state, true, new Date(state.gmail_newest_ms ?? Date.now()).toISOString());
           }
         });
@@ -1103,7 +1111,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
         if (managed) rethrowConnectorWriteError(e);
         serviceFailed('gmail', e);
         serviceErrors.push(`gmail: ${e instanceof Error ? e.message : String(e)}`);
-        summary.status = 'partial';
+        if (isUsageLimit(e)) summary.limitStopped = true;
+        else summary.status = 'partial';
         if (isCredentialError(e)) log(e.toHuman());
         else log(`[google] gmail sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -1119,6 +1128,8 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     else if (problems.length === 0 && state.api_access) state.api_access = null;
     if (grantedScopes.length > 0 && missingServices.length > 0) summary.status = 'partial';
     if (opts.signal?.aborted) summary.status = 'partial';
+    const stoppedOnUsageLimit = summary.limitStopped === true && summary.status === 'synced' && summary.failedFiles === (summary.limitedItems ?? 0);
+    if (summary.limitStopped) summary.status = 'partial';
     if (opts.full && summary.status === 'synced') state.last_full_at = new Date().toISOString();
 
     // #5867 managed-only 30-day catch-up and the #5868 one-shot backfill marker; never on an aborted sweep.
@@ -1215,6 +1226,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
       embedded: summary.embedded,
       pagesAffected: summary.pagesAffected,
       ...(summary.failedFiles > 0 ? { failedFiles: summary.failedFiles } : {}),
+      ...(stoppedOnUsageLimit && !holds.summary().held ? { stopped_on: 'usage_limit' as const } : {}),
       ...(loopsEnqueue ? { loops_enqueue: loopsEnqueue } : {}),
       ...connectorHoldsResult(sourceId, holds.summary()),
     };
