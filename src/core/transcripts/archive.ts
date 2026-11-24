@@ -651,15 +651,16 @@ async function readReaders(engine: BrainEngine, readers: ArchiveReader[], scanOp
 
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
-  const enabled = await archiveEnabled(engine);
-  if (!enabled && !dryRun) {
+  const off = async () => {
     await reconcileArchiveAudience(engine, opts.sourceId);
     return emptyResult(opts.mode, {
       source_id: await configuredSource(engine, opts.sourceId),
       message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on (a shared brain is only offered it).',
       fix: offFix,
     });
-  }
+  };
+  const enabled = await archiveEnabled(engine);
+  if (!enabled && !dryRun) return off();
   const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
   if (dryRun) return archiveSource(engine, opts, { enabled, sourceId, privacy });
   const { opError } = await import('../ops/contract.ts');
@@ -671,16 +672,17 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
   try {
     return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, async signal => {
-      // The audience is read again under the lock: a member add or audience change that finished after the read above
-      // re-scoped under this lock and recorded the brain shared, so writing with the earlier read would publish pages
-      // with no readers.
+      // The audience and the archive switch are read again under the lock: a member add or audience change that finished
+      // after the reads above re-scoped under this lock and recorded the brain shared, so writing with the earlier reads
+      // would publish pages with no readers, or archive a shared brain whose unset switch now resolves off.
       const locked = await effectiveSource(engine, opts.sourceId);
       if (locked.sourceId !== sourceId) {
         throw opError('archive_audience_changed', 'The brain\'s audience changed while the conversation archive was starting, so it now archives into source ' + locked.sourceId + ' instead of ' + sourceId + '; this run read and wrote nothing.',
           'Rerun gbrain transcripts archive run.');
       }
       if (locked.privacy.unproven) throw unproven();
-      return archiveSource(engine, opts, { enabled, sourceId, privacy: locked.privacy, signal });
+      if (!await archiveEnabled(engine)) return off();
+      return archiveSource(engine, opts, { enabled: true, sourceId, privacy: locked.privacy, signal });
     });
   } catch (err) {
     if (!(err instanceof LockUnavailableError)) throw err;
