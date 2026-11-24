@@ -72,10 +72,11 @@ describe('gbrain dedupe classes with a page stored in segments', () => {
     expect(await dedupe(['confirm'])).toContain('bob-example');
   }, 300_000);
 
-  test('a chat page only a window of which can be read, or that the reader refuses, is set aside and listed; the run goes on', async () => {
+  test('a chat page stored in segments that only a window of can be read, or whose read fails, is set aside and listed; the run goes on', async () => {
     for (const fake of [
       async () => ({ body: '', window: { totalBytes: 30 * MB, fallbackDate: null } }),
       async () => { throw opError('page_body_segmented', 'stored in segments', 'read it in pieces'); },
+      async () => { throw new Error('Page 1 is not a segmented page.'); },
     ]) {
       const spy = spyOn(conversationBody, 'readConversationInput').mockImplementation(fake as never);
       try {

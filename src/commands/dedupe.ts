@@ -596,7 +596,7 @@ function classesText(r: ClassesReport): string {
   lines.push(`  left out: ${r.skipped.already_linked} already linked, ${r.skipped.decided_apart} you recorded as different, ${r.skipped.large_groups} name group(s) of more than 10 pages, ${r.skipped.no_class} with names that disagree and nothing shared`);
   lines.push(`  evidence read: ${r.email.pages} email page(s); ${r.messaging.pages} chat page(s) in ${r.messaging.chats} chat(s), ${r.messaging.one_to_one} one-to-one${r.messaging.too_large ? `, ${r.messaging.too_large} too large to read` : ''}; Signal has no reader`);
   const seg = r.messaging.segmented_page;
-  if (seg.read || seg.set_aside) lines.push(`  chat pages stored in segments: ${seg.read} read whole, ${seg.set_aside} set aside (over 24 MiB or not readable as one body; their chats add no evidence)${seg.set_aside ? ': ' + seg.pages.map(p => `${p.source_id}:${p.slug}`).join(', ') : ''}`);
+  if (seg.read || seg.set_aside) lines.push(`  chat pages stored in segments: ${seg.read} read whole, ${seg.set_aside} set aside (over 24 MiB or not readable as one body; their chats add no evidence)${seg.set_aside ? ': ' + seg.pages.slice(0, 20).map(p => `${p.source_id}:${p.slug}`).join(', ') + (seg.set_aside > 20 ? ` and ${seg.set_aside - 20} more (--json lists every one)` : '') : ''}`);
   if (r.exa.mode === 'off') lines.push('  web search: off (add --exa)');
   else {
     const x = r.exa;

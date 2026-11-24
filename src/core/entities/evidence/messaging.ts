@@ -4,7 +4,8 @@
  *
  * Pages, read through the conversation parser's body reader, which reads a page stored in segments whole up to 24 MiB;
  * a larger one, which that reader gives only as its newest window, is set aside and listed (a window can hide speakers,
- * which would make a group chat read as one-to-one), as is any page it refuses: `type: imessage` day pages (core/imessage/render.ts: `**Speaker** (time):` anchors; a one-to-one chat shows
+ * which would make a group chat read as one-to-one; such a page's segments are not read), as is a page stored in segments
+ * that fails to read: `type: imessage` day pages (core/imessage/render.ts: `**Speaker** (time):` anchors; a one-to-one chat shows
  * its handle only where the Mac had no name, so the same chat key can show the handle on older days and the name on
  * newer ones) and chat pages under a `conversations/` folder, parsed by core/conversation-parser without any model
  * (iMessage, WhatsApp and the other export layouts it knows). An export page counts as one-to-one only when it has
@@ -25,7 +26,6 @@ import type { BrainEngine } from '../../engine.ts';
 import type { Page } from '../../types.ts';
 import { parseConversation } from '../../conversation-parser/parse.ts';
 import { ConversationBodyTooLargeError, readConversationInput } from '../../conversation-parser/body.ts';
-import { OperationError } from '../../ops/contract.ts';
 import { isSegmentedPage } from '../../page-body/page-shape.ts';
 import { namesAgree } from '../name-variants.ts';
 import { handleOf, type PersonPage } from './people.ts';
@@ -95,16 +95,16 @@ export async function readMessagingIndex(engine: BrainEngine, countryCode: strin
     if (page.frontmatter?.transcript_import || page.slug.startsWith('conversations/days/')) continue;
     let body: string;
     try {
-      const input = await readConversationInput(engine, page);
+      const input = await readConversationInput(engine, page, { priorFacts: async () => 1 });
       if (input.window) { index.segmented.set_aside.push({ source_id: page.source_id!, slug: page.slug }); continue; }
       body = input.body;
+      if (isSegmentedPage(page) && !input.sidecar) index.segmented.read++;
     } catch (e) {
-      if (e instanceof OperationError && e.canonicalCode === 'page_body_segmented') { index.segmented.set_aside.push({ source_id: page.source_id!, slug: page.slug }); continue; }
-      if (!(e instanceof ConversationBodyTooLargeError)) throw e;
-      index.too_large++;
+      if (e instanceof ConversationBodyTooLargeError) { index.too_large++; continue; }
+      if (!isSegmentedPage(page)) throw e;
+      index.segmented.set_aside.push({ source_id: page.source_id!, slug: page.slug });
       continue;
     }
-    if (isSegmentedPage(page)) index.segmented.read++;
     const parsed = speakersOf(page, body);
     index.pages++;
     if (!parsed) continue;
