@@ -28,9 +28,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod held;
 mod receipt;
 mod tier;
 pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
+pub use held::HeldTimelineSpec;
 pub(crate) use tier::TimelineTrust;
 
 pub(crate) const NEXT_TIMELINE_ID: &str = "next_timeline_id";
@@ -362,7 +364,7 @@ pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result
 /// `privateTimelineEventFilterForCaller(te)`: an entry with no event page passes. Otherwise its
 /// event page, read by id whatever its source or deleted state (the SQL is an `EXISTS` on the id
 /// alone), must exist and pass the page policy.
-fn event_visible(
+pub(crate) fn event_visible(
     read: &dyn KvRead,
     entry: &TimelineRecord,
     policy: &PrivacyPolicy,
@@ -469,6 +471,35 @@ impl Store {
                 },
             )
         })
+    }
+
+    /// `readNewestTimelineEntryId(sourceId, slug, date, summary)`: the id of the newest entry of the
+    /// page (deleted or not) on `date` whose summary is `summary`, event rows included; null when
+    /// the page or such an entry is missing. A bad date fails, as the `$3::date` cast does.
+    pub fn read_newest_timeline_entry_id(
+        &self,
+        source_id: &str,
+        slug: &str,
+        date: &str,
+        summary: &str,
+    ) -> Result<Option<u64>> {
+        no_nul(
+            "readNewestTimelineEntryId",
+            &[
+                ("sourceId", source_id),
+                ("slug", slug),
+                ("summary", summary),
+            ],
+        )?;
+        let date = parse_date(date)?;
+        let read = self.read()?;
+        let Some(page) = read_page(&*read, source_id, slug)? else {
+            return Ok(None);
+        };
+        let rows = page_entries(&*read, page.id, Some(&date), Some(&date), 1, &|row| {
+            Ok(row.summary == summary)
+        })?;
+        Ok(rows.first().map(|row| row.id))
     }
 
     /// `addTimelineEntriesBatch`: rows whose page is missing or soft-deleted are skipped. Returns
@@ -596,7 +627,7 @@ impl Store {
 /// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
 /// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
 /// this engine has no such rows.
-fn eligible_page(page: &PageRecord) -> bool {
+pub(crate) fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
 

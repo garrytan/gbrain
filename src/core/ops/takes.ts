@@ -389,15 +389,23 @@ const think: Operation = {
     // Persist if --save was passed locally
     let savedSlug: string | undefined;
     let evidenceInserted = 0;
+    // GST-3612: a managed save or take accepted but still publishing keeps the answer; the warning names its receipt.
+    const { acceptedPendingReceipt } = await import('../persistence/accepted-pending.ts');
+    const pendingWarning = (code: string) => (e: unknown): null => {
+      const receipt = acceptedPendingReceipt(e);
+      if (!receipt) throw e;
+      result.warnings.push(`${code}: ${receipt.request_id}`);
+      return null;
+    };
     if (safeSave) {
       const persisted = await persistSynthesis(ctx.engine, result, {
         // '__all__' is a read scope, not a write destination: an unscoped save keeps the default source.
         sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
         ...(thinkScope.allowedSources ? { allowedSources: thinkScope.allowedSources } : {}),
-      });
-      savedSlug = persisted.slug;
-      evidenceInserted = persisted.evidenceInserted;
-      for (const w of persisted.warnings) result.warnings.push(w);
+      }).catch(pendingWarning('SAVE_PENDING'));
+      savedSlug = persisted?.slug;
+      evidenceInserted = persisted?.evidenceInserted ?? 0;
+      for (const w of persisted?.warnings ?? []) result.warnings.push(w);
     }
 
     // #2556: `take` was gated (safeTake) but never EXECUTED — runThink ignores
@@ -412,11 +420,11 @@ const think: Operation = {
         const { persistTakeFromSynthesis } = await import('../think/persist-take.ts');
         const persisted = await persistTakeFromSynthesis(ctx.engine, result, {
           anchor: String(p.anchor),
-          sourceId: ctx.sourceId,
+          sourceId: ctx.sourceId === ALL_SOURCES ? undefined : ctx.sourceId,
           lockTimeoutMs: 2000,
-        });
-        takeRow = persisted.take_row;
-        for (const w of persisted.warnings) result.warnings.push(w);
+        }).catch(pendingWarning('TAKE_PENDING'));
+        takeRow = persisted?.take_row ?? null;
+        for (const w of persisted?.warnings ?? []) result.warnings.push(w);
       }
     }
 

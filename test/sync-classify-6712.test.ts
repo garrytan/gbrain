@@ -65,7 +65,11 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
   const region = `${fileSame ? 'F' : 'f'}${dbSame ? 'D' : 'd'}${proof ? 'P' : 'p'}`;
   switch (region) {
     case 'FDP': return obligation ? 'reparse' : 'matched';
-    case 'FdP': case 'Fdp': return adoptable ? 'adopt' : 'db_ahead';
+    case 'FdP': case 'Fdp': {
+      if (adoptable) return 'adopt';
+      const keepDbWrite = !s.attested && s.record?.revision != null && s.keepDb && s.mode === 'committed' && s.dirty === 'clean';
+      return s.hold?.retried && !keepDbWrite && !s.attested && !s.dbOnly ? 'drift' : 'db_ahead';
+    }
     case 'fDP': case 'fdP': return adoptable ? 'adopt' : 'import';
     case 'fdp':
       if (s.record?.revision == null && s.level === s.baseline && !s.hold?.unscreened && !s.hold?.retried) return 'legacy_unverified';
@@ -88,6 +92,10 @@ describe('rows (v3.2 §2.3)', () => {
     ['1 a re-screen-due hold does not settle: the pass re-runs it', { hold: { atLevel: true, rescreenDue: true, retried: false } }, 'held', false],
     ['1 a re-screen-due hold on a page-less file is held, not imported or legacy (b2)', { hold: { atLevel: true, rescreenDue: true, retried: false }, page: null, record: null }, 'held', false],
     ['1 a hold over a database-ahead level stands (never imported over)', { hold: { atLevel: false, rescreenDue: false, retried: false }, page: { live: true, revision: 'R2', originMatches: true } }, 'held', true],
+    ['1 a database-ahead hold someone asked to re-screen re-runs as database-side drift (its guarded import)', { hold: { atLevel: true, rescreenDue: false, retried: true }, page: { live: true, revision: 'R2', originMatches: true } }, 'drift', false],
+    ['1 a retried database-ahead hold over a pending door write stands (the database copy waits for its Git publish)', { hold: { atLevel: true, rescreenDue: false, retried: true }, page: { live: true, revision: 'R2', originMatches: true }, attested: { hash: null, arm1: false } }, 'held', true],
+    ['1 a retried database-ahead hold on a storage.db_only page stands (the database is canonical)', { hold: { atLevel: true, rescreenDue: false, retried: true }, page: { live: true, revision: 'R2', originMatches: true }, dbOnly: true }, 'held', true],
+    ['1 a re-screen-due database-ahead hold nobody asked to re-screen stands', { hold: { atLevel: true, rescreenDue: true, retried: false }, page: { live: true, revision: 'R2', originMatches: true } }, 'held', true],
     ['2 spelling', { spelling: true }, 'spelling', false],
     ['3 untracked: committed, not in T, no live page', { tree: null, level: null, page: null, record: null }, 'untracked', true],
     ['4 kept: live, committed, absent from T, file present', { tree: null, level: null, present: true, dirty: null }, 'kept', true],
@@ -135,6 +143,11 @@ describe('rows (v3.2 §2.3)', () => {
     expect(got.cls).toBe(cls);
     expect(got.settled).toBe(settled);
     expect(reference(at(patch))).toBe(cls);
+  });
+
+  test('a retried hold on a strict source keeps a pending door write and a db_only page', () => {
+    for (const v of [{ dbOnly: true as const }, { attested: { hash: null, arm1: false } }])
+      expect(classifySyncPath(at({ ...v, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: false, retried: true } }), { strict: true })).toMatchObject({ cls: 'held', settled: true, action: 'none' });
   });
 
   test('drift side: unknown without a record revision; db_ahead sub-labels', () => {
