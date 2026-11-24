@@ -9,6 +9,7 @@
  *   conflict_found  pending claim_conflicts proposals created in the window; older proposals stay a count
  *   page_filled     pages enrich wrote in the window, pointing at the page version that holds the prior revision
  *   promise_found   open loops of kind commitment_owed_to_me created in the window
+ *   duplicate_to_confirm  the top five person groups of the dedupe preview, by owner contact (duplicates.ts)
  *
  * The window starts an hour before the previous pass (learning.derive.watermark), at most seven days back. Each kind
  * inserts at most MAX_PER_KIND rows per pass; a truncated pass keeps the old watermark, so the next pass continues.
@@ -24,6 +25,7 @@ import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
 import { ENRICHED_BY } from '../../commands/enrich.ts';
 import { CLAIM_CONFLICT_SWEEP_SQL, CONFLICT_BACKLOG_SQL, LEARNING_KINDS, learningTablePresent, notRecordedSql, type LearningKind } from './kinds.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { recordDuplicateQuestions } from './duplicates.ts';
 
 export const LEARNING_WATERMARK_KEY = 'learning.derive.watermark';
 export const LEARNING_WINDOW_MAX_MS = 7 * 86_400_000;
@@ -81,7 +83,8 @@ const PRUNE_SQL = `DELETE FROM learning_items li WHERE li.state IN ('pending', '
      (li.target_table = 'facts' AND NOT EXISTS (SELECT 1 FROM facts t WHERE t.id = li.target_id))
   OR (li.target_table = 'decide_proposals' AND NOT EXISTS (SELECT 1 FROM decide_proposals t WHERE t.id = li.target_id))
   OR (li.target_table = 'open_loops' AND NOT EXISTS (SELECT 1 FROM open_loops t WHERE t.id = li.target_id))
-  OR (li.target_table = 'page_versions' AND NOT EXISTS (SELECT 1 FROM page_versions t WHERE t.id = li.target_id)))
+  OR (li.target_table = 'page_versions' AND NOT EXISTS (SELECT 1 FROM page_versions t WHERE t.id = li.target_id))
+  OR (li.target_table = 'pages' AND NOT EXISTS (SELECT 1 FROM pages t WHERE t.id = li.target_id)))
   RETURNING li.id`;
 
 /** The learning_derive phase. `runId` is the cycle's run id (src/core/cycle.ts mints one per cycle). */
@@ -118,13 +121,20 @@ export async function runPhaseLearningDerive(engine: BrainEngine, opts: { runId:
     const [backlog] = await engine.executeRaw<{ n: number | string }>(CONFLICT_BACKLOG_SQL, [null]);
     const pruned = opts.dryRun ? 0 : (await engine.executeRaw(PRUNE_SQL)).length;
     if (!opts.dryRun && truncated.length === 0 && failed.length === 0) await engine.setConfig(LEARNING_WATERMARK_KEY, now.toISOString());
+    let duplicates: Awaited<ReturnType<typeof recordDuplicateQuestions>> | undefined;
+    try {
+      duplicates = await recordDuplicateQuestions(engine, opts);
+    } catch (e) {
+      rethrowCapabilityRefusal(e);
+      failed.push({ kinds: ['duplicate_to_confirm'], error: e instanceof Error ? e.message : String(e) });
+    }
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     const conflictBacklog = Number(backlog?.n ?? 0);
     for (const f of failed) console.warn(`[learning_derive] ${f.kinds.join('/')} not recorded this pass: ${f.error}`);
     return {
       phase: 'learning_derive', status: failed.length ? 'warn' : 'ok', duration_ms: 0,
-      summary: `${opts.dryRun ? 'dry-run: would record' : 'recorded'} ${total} learning item(s)${conflictBacklog ? `; ${conflictBacklog} older claim conflict(s) wait as a count` : ''}${failed.length ? `; not recorded: ${failed.flatMap(f => f.kinds).join(', ')}` : ''}`,
-      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated, ...(failed.length ? { failed } : {}) },
+      summary: `${opts.dryRun ? 'dry-run: would record' : 'recorded'} ${total} learning item(s)${duplicates?.recorded ? ` and ${duplicates.recorded} possible duplicate person group(s) to confirm` : ''}${conflictBacklog ? `; ${conflictBacklog} older claim conflict(s) wait as a count` : ''}${failed.length ? `; not recorded: ${failed.flatMap(f => f.kinds).join(', ')}` : ''}`,
+      details: { run_id: opts.runId, since, dry_run: opts.dryRun, recorded: counts, conflict_backlog: conflictBacklog, pruned, truncated, ...(duplicates ? { duplicates } : {}), ...(failed.length ? { failed } : {}) },
     };
   } catch (e) {
     rethrowCapabilityRefusal(e);

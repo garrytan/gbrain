@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind } from '../core/entities/duplicates.ts';
+import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind, type EntityPage } from '../core/entities/duplicates.ts';
 import { autoLinkCompanies } from '../core/entities/company-auto-link.ts';
 import { canonicalOf, decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
@@ -84,7 +84,7 @@ const memberText = (m: IdentityMemberRef) => `${m.source_id}:${m.slug}`;
 const contactOnly = (g: DuplicateGroup) => g.evidence.some(e => e.rule === 'contact_key_only');
 const sharesId = (g: DuplicateGroup) => g.evidence.some(e => e.matcher === 'shared_key' && e.key_class === 'exclusive');
 
-interface Scan { result: DuplicateResult; read: IdentityDecisionsRead; kindOf: Map<string, EntityKind> }
+export interface Scan { result: DuplicateResult; read: IdentityDecisionsRead; kindOf: Map<string, EntityKind>; pages: Map<string, EntityPage> }
 
 /** Confirmed on its own, after reading its hint line: contact-only groups, and person groups that share an id (gate_rev 7). */
 const confirmAlone = (s: Scan, g: DuplicateGroup) => contactOnly(g) || (s.kindOf.get(g.id) === 'person' && sharesId(g));
@@ -94,11 +94,15 @@ async function readDecisions(engine: BrainEngine): Promise<IdentityDecisionsRead
   return engine.listIdentityDecisions();
 }
 
-async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; sourceId?: string } = {}): Promise<Scan> {
+/** The preview: every current group with confirmed and rejected ones left out. Read-only; learning_derive and learned read it too. */
+export async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; sourceId?: string } = {}): Promise<Scan> {
   const read = await readDecisions(engine);
-  const { result, kindOf } = await findTypedDuplicateGroups(engine, { ...opts, decided: decidedSets(read) });
-  return { result, read, kindOf };
+  const { result, kindOf, pages } = await findTypedDuplicateGroups(engine, { ...opts, decided: decidedSets(read) });
+  return { result, read, kindOf, pages };
 }
+
+/** Whether `gbrain dedupe confirm <id>` takes this group; every current group takes reject. */
+export const confirmable = (g: DuplicateGroup) => g.kind === 'cross_source' && CONFIRMABLE.has(g.class);
 
 export async function runDedupe(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
