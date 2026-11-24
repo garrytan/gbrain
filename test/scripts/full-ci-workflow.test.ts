@@ -45,7 +45,7 @@ const step = (job: Job, name: string) => job.steps!.find(s => s.name === name)!;
 const bash = (script: string, env: Record<string, string>, cwd = root) =>
   spawnSync('bash', ['-c', script], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
 
-const CHEAP = ['changes', 'cheap-tier', 'dependency-audit', 'enumeration-census-tests', 'executed-receipts', 'gitleaks', 'security-regressions', 'stress-changed-tests', 'typecheck', 'verify'];
+const CHEAP = ['changes', 'cheap-tier', 'dependency-audit', 'enumeration-census-tests', 'executed-receipts', 'gitleaks', 'security-regressions', 'stress-changed-tests', 'typecheck', 'unit-suite-gate', 'verify'];
 const FULL_ONLY = ['serial-tests', 'slow-brainbench-e2e', 'brainbench', 'slow-entity-resolve-perf', 'test', 'admin-browser',
   'shared-skills-compatibility', 'coverage-report', 'test-status', 'full-suite'];
 

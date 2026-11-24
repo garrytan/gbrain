@@ -360,7 +360,7 @@ test/scripts/full-ci-workflow.test.ts	full-ci label lifetime	4	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/gh-issue-agent-filed.test.ts	agent-filed label	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
-test/scripts/macos-runner-events.test.ts	(file-level)	3	readFileSync
+test/scripts/macos-runner-events.test.ts	(file-level)	5	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/native-setup-toolchain.test.ts	scripts/native/setup-toolchain.ts download budget	4	readFileSync
 test/scripts/nightly-e2e.test.ts	full E2E shard classification (#6040)	2	readFileSync
@@ -400,6 +400,7 @@ test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	read
 test/scripts/tier2-openclaw-mcp.test.ts	Tier 2 OpenClaw MCP wiring (#8002)	9	readFileSync
 test/scripts/ubi-runner-run.test.ts	run leftover line	2	readFileSync
 test/scripts/ubicloud-typecheck-state.test.ts	(file-level)	3	readFileSync
+test/scripts/unit-suite-gate.test.ts	test.yml unit-suite-gate job	3	readFileSync
 test/search/graph-signals-wire-integration.test.ts	v0.40.4 — source-grep regression guard	1	source-surface-helper
 test/serve-behavior-notice-6543.test.ts	(file-level)	3	readFileSync
 test/serve-http-admin-route-guard.test.ts	(file-level)	6	readFileSync

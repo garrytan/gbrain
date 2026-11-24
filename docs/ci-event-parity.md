@@ -31,6 +31,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `test.yml`, `persistence-validation.yml` | Cheap tier on pull requests: no unit shards, serial, slow, BrainBench, admin-browser, shared-skills, coverage or `test-status`; of the persistence lanes only the crash robot and convergence, and those and the native cells only when the diff selects them | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `full-suite`), every push to master, the merge queue and the nightly Test schedule |
 | `test.yml` | `enumeration-census-tests` on pull requests that aren't doc-only | Named exception ([below](#enumeration-and-census-tests)): pull requests only, an early copy of files the unit shards already run | The full-ci dispatch, every push to master, the merge queue and the nightly Test schedule run every one of these files in the unit shards |
 | `e2e.yml` | No `pull_request` trigger | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `e2e-full-suite`), every push to master, the merge queue and the nightly E2E schedule |
+| `test.yml` | `unit-suite-gate`: every event; named `unit-suite-not-run` on a pull request that changes more than changelog entries or release stamps and on a scoped dispatch | Named exception ([below](#unit-suite-gate)) | The full-ci dispatch on the head, every push to master, the merge queue and the nightly Test schedule |
 | `test.yml`, `e2e.yml` | A push to master skips its full lanes when it reuses a passed full-suite run of its exact tree | Named exception ([below](#master-push-reuse)) | The reused run (same tree, full profile); schedules never reuse |
 | `persistence-validation.yml` | `convergence` selected on pull requests by `scripts/ci-convergence-scope.sh` (test.yml `changes`; never by `package.json` alone) | Named exception | Every merge-queue run and every push to master; the nightly cell runs in `convergence-nightly.yml` |
 | `openclaw-skill-resolver-bench.yml` | The skill-resolver plugin's labelled-set bench in a real OpenClaw gateway (`scripts/bench/openclaw-skill-resolver-real.ts`), idle and loaded: dispatch only (run by hand after a resolver change), reports numbers and gates nothing | Named exception | Itself (a manual dispatch) |
@@ -121,6 +122,32 @@ OpenClaw context-engine startup cell, which flaps (#6143, GST-3494). A red
 advisory cell still shows on the run, so read it before landing a change to
 native, lock or OpenClaw code. Every other native cell still gates.
 `test/scripts/macos-runner-events.test.ts` checks which cells are advisory.
+
+## Unit suite gate
+
+`unit-suite-gate` in `test.yml` is one check with a fixed name (no Bun version
+or shard count) that says whether the unit suite, the `test` shards, passed. It
+runs on every event (`if: always()`) and fails when the suite failed, was
+cancelled, or was skipped with no reason. It passes when the suite passed or
+was rightly skipped:
+
+- a push to master that reuses a passed full run of its exact tree
+  ([below](#master-push-reuse));
+- a pull request that changes only changelog entries (`changelog.d/*.md`,
+  `CHANGELOG.md`), or only those plus release stamps: `VERSION` and the ship
+  policy's `stamp_files` with every changed line matching a `stamp_patterns`
+  line. The `changes` job classifies the pull request's files
+  (`bun scripts/ci-unit-suite-gate.ts scope`); a file list it cannot read in
+  full, a file without a patch, a rename and any other line count as code, so
+  a release PR that also regenerates `src/core/behavior-changes.generated.ts`
+  still needs the full-ci dispatch.
+
+On any other pull request, and on a native-only, race-hunt or stress dispatch,
+the job is named `unit-suite-not-run` and passes, so it never reports
+`unit-suite-gate` for a run that did not judge the suite; the full-ci dispatch
+on the head reports it. `test/scripts/unit-suite-gate.test.ts` covers the
+scope, the verdict on each event, the CLI on a skipped-suite path and a
+failing-suite path, and the job's name expression.
 
 ## Enumeration and census tests
 
