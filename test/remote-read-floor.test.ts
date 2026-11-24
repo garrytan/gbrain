@@ -15,6 +15,7 @@ import { privatePagesFilterFragment, privateProvenanceFilterFragment, remoteProv
 
 /** file, enclosing top-level declaration, fragment: why it stays plain. */
 const PLAIN: Record<string, string> = {
+  'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/commands/sources-add-next.ts noGrantFloorNext privatePagesFilterFragment': 'local CLI hint after sources add; never a remote read',
   'src/core/ai/decide/egress.ts visiblePages privatePagesFilterFragment': 'egress policy: which pages may leave the machine, judged as world',
   'src/core/belief/backfill.ts preparePage privatePagesFilterFragment': 'maintenance: stamps the ledger visibility of each page',
