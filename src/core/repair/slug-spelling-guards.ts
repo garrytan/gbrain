@@ -13,17 +13,26 @@
  *
  * Every table the carry reads must be fully visible to the running role: row-level security can show it fewer rows (or
  * none), which would copy too little and let the move commit with a guard left behind. No policy check proves a policy
- * shows every row, so `assertGuardTablesReadable` refuses whenever row security applies to a guard table for the role.
+ * shows every row, so `assertGuardTablesReadable` refuses whenever row security applies to any brain table for the role.
  *
  * The caller runs the carry inside the page's maintenance transaction, under both page locks.
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 /**
- * The tables the preview and the move read or write as the running role: the pages and their other spellings, the source,
- * the attachments re-keyed with the page, and the purge tombstones the carry copies.
+ * The brain's tables (the current schema) that row-level security applies to for the running role, in name order. The move
+ * reads and re-keys many tables through `updateSlug` and the belief batch it runs in (pages, facts, withdrawals, aliases,
+ * the rename history, attachments, purge tombstones, the page lifetime), so the check covers every table rather than a
+ * list that a new re-key could outgrow.
  */
-const GUARD_TABLES = ['fact_purges', 'files', 'pages', 'sources', 'take_purges'] as const;
+/** The tables the move reads or re-keys by slug (SLUG_COLUMNS_MOVED, the source and the belief batch); a refusal names these first. */
+const MOVE_TABLES = new Set(['belief_events', 'belief_page_lifetimes', 'fact_purges', 'fact_withdrawals', 'facts', 'files', 'page_aliases', 'pages',
+  'secret_store_occurrence', 'slug_aliases', 'slug_rename_history', 'sources', 'take_purges']);
+
+async function rowSecurityBrainTables(db: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
+  return (await db.executeRaw<{ t: string }>(`SELECT c.relname::text AS t FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') AND pg_catalog.row_security_active(c.oid) ORDER BY 1`)).map(row => row.t);
+}
 
 /**
  * The tables of `tables` that row-level security applies to for the running role, in name order. A policy's existence does
@@ -34,19 +43,24 @@ export async function rowSecurityTables(db: Pick<BrainEngine, 'executeRaw'>, tab
 }
 
 /**
- * Refuses (`writer_coordinator_required`, nothing written) when row-level security applies to any table of `GUARD_TABLES`
- * for the running role: a page, another spelling of its name, an attachment or a tombstone the role cannot see would be
- * missed (a collision taken for a free name, an attachment or a guard left on the old spelling), so only a role row security
- * does not apply to (the table owner without FORCE ROW LEVEL SECURITY, or a BYPASSRLS role) may preview or move a page.
+ * Refuses (`writer_coordinator_required`, nothing written) when row-level security applies to any table of the brain for
+ * the running role: a page, another spelling of its name, a fact, a withdrawal, an alias, an attachment or a tombstone the
+ * role cannot see would be missed (a collision taken for a free name, or a row left on the old spelling), so only a role row
+ * security does not apply to (the owner of every table without FORCE ROW LEVEL SECURITY, or a BYPASSRLS role) may preview
+ * or move a page.
  */
 export async function assertGuardTablesReadable(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
-  const hidden = await rowSecurityTables(tx, GUARD_TABLES);
-  if (!hidden.length) return;
+  const all = await rowSecurityBrainTables(tx);
+  if (!all.length) return;
+  // Name the tables the move itself reads or re-keys first; the rest only by count.
+  const named = all.filter(t => MOVE_TABLES.has(t));
+  const rest = all.length - named.length;
+  const hidden = rest ? [...named, `${rest} other table${rest === 1 ? '' : 's'}`] : named;
   const error = new OperationError('writer_coordinator_required',
-    `Pages of source ${sourceId} were not moved: row-level security applies to ${hidden.join(', ')} for this database role, so the repair cannot prove it sees every page, attachment and purge tombstone it must check or carry; nothing was written.`,
+    `Pages of source ${sourceId} were not moved: row-level security applies to ${hidden.join(', ')} for this database role, so the repair cannot prove it sees every row it must check or move with the page; nothing was written.`,
     `Run the repair as the owner of ${hidden.join(', ')} (with FORCE ROW LEVEL SECURITY off) or as a role with BYPASSRLS; then preview again.`,
     'docs/guides/repair.md#slug-spelling');
-  error.fix = { consent: [], actor: 'user', why: 'Row-level security can hide rows from the running role: a hidden page with the same name would be taken for a free name, and a hidden attachment or purge tombstone would stay on the old spelling, so a purged claim could be saved again under the normal name.',
+  error.fix = { consent: [], actor: 'user', why: 'Row-level security can hide rows from the running role: a hidden page with the same name would be taken for a free name, and a hidden fact, withdrawal, alias, attachment or purge tombstone would stay on the old spelling, so a withdrawn or purged claim could come back under the normal name.',
     user_message: `Run gbrain repair slug-spelling as the owner of ${hidden.join(', ')} or as a database role with BYPASSRLS.`, requires_exclusive: false };
   throw error;
 }

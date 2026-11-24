@@ -6,7 +6,7 @@
 - `gbrain doctor` warns `legacy_slug_spellings` with how many such pages each source has and the command to preview.
 - A moved page keeps its protections: purged facts and takes stay refused under the normal name, and the move waits for an edit already under way instead of moving a page that changed.
 - A page with a held (quarantined) write moves like any other, and the held write stays hidden on the moved page, including one written under the old spelling while or after the move runs. Held writes are not changed: `gbrain trust review` lists them as before.
-- The repair refuses, before moving anything, when row-level security applies for the database role to the pages, attachments, sources or purge tables it reads; run it as the table owner or a role with BYPASSRLS. The doctor check then says the count is unknown instead of ok.
+- The repair refuses, before moving anything, when row-level security applies for the database role to any table of the brain; run it as the table owner or a role with BYPASSRLS. The doctor check then says the count is unknown instead of ok.
 - Another stored spelling of the same name stops the move even when the preview's scan did not reach it.
 - On a managed brain the repair is unavailable and says a person is needed; the page stays readable and editable by its stored spelling.
 
