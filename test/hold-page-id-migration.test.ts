@@ -20,8 +20,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runMigrations } from '../src/core/migrate.ts';
-import { LATEST_SCHEMA_VERSION } from '../src/core/schema-migrations/latest.generated.ts';
+import { LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { bareBody, expectHeldHidden, HELD, holdFenceRow, ROWS } from './helpers/hold-page-id-fixture.ts';
@@ -207,7 +206,7 @@ for (const backend of backends) {
 
       const columns = (await engine.executeRaw<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_name='write_gate_holds' AND column_name IN ('page_id','page_candidates') ORDER BY 1")).map(c => c.column_name);
       expect(columns).toEqual(['page_candidates', 'page_id']);
-      expect(await engine.getConfig('version')).toBe(String(LATEST_SCHEMA_VERSION));
+      expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
       expect((await holdStates(engine, sourceId)).find(s => s.id === Number(old!.id))).toMatchObject({ page_id: null, page_candidates: null, slug: 'notes/early' });
       const indexes = (await engine.executeRaw<{ indexname: string }>("SELECT indexname FROM pg_indexes WHERE tablename='write_gate_holds'")).map(i => i.indexname);
       expect(indexes).toContain('write_gate_holds_bound_dedupe_idx');
