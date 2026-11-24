@@ -272,7 +272,6 @@ src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
 src/core/grants/rescope.ts	sql_template	7
 src/core/grants/service.ts	sql_template	11	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
-src/core/grants/shared-exposure.ts	execute_raw	1	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
 src/core/guests/admission.ts	execute_raw	3
 src/core/guests/marker.ts	execute_raw	1
@@ -429,7 +428,6 @@ src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	2
 src/core/persistence/moved-pages.ts	execute_raw	1
 src/core/persistence/noop-kernel.ts	execute_raw	2
-src/core/persistence/origin-guard.ts	execute_raw	1
 src/core/persistence/origin-index.ts	execute_raw	2
 src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
@@ -443,7 +441,7 @@ src/core/persistence/physical-root.ts	execute_raw	13
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
-src/core/persistence/prepared-maintenance.ts	execute_raw	12
+src/core/persistence/prepared-maintenance.ts	execute_raw	13	batch 12 sync 14: master's maintenance reads (GST-3637, #10182) add raw sites the trunk typed elsewhere; 14 on master, 12 on trunk, 13 after the merge
 src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
 src/core/persistence/purge-deleted.ts	execute_raw	7	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
@@ -476,7 +474,7 @@ src/core/persistence/sync-freshness.ts	execute_raw	3
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	9
+src/core/persistence/sync-holds.ts	execute_raw	6
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
 src/core/persistence/sync-markers.ts	execute_raw	9
@@ -612,7 +610,7 @@ src/core/shared-skills/source-opt-out.ts	execute_raw	2
 src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
 src/core/slack/slack-source.ts	execute_raw	3
-src/core/sources-ops.ts	execute_raw	2	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
+src/core/sources-ops.ts	execute_raw	1	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
@@ -685,4 +683,3 @@ src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed ke
 src/commands/doctor/checks/access-reach.ts	execute_raw	6	reads sources, access_member_sources, pages, access_members, access_tokens and oauth_clients for the read-only doctor reach checks (access_shared_source_unread, access_disabled_member_credentials; GST-2994, #9586, open before this ratchet landed); no typed engine method exists yet
 src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	3	read-only doctor check: a row-security visibility preflight, one keyset read of held rows and one per-batch page and rename lookup; all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
 src/core/ops/slug-params.ts	execute_raw	1	one bounded read for stored spellings of a slug that normalize to the asked one (slug_reads_normal_form); an engine without raw reads skips it; moves behind a typed engine member with the key migration
-src/core/takes-horizon.ts	execute_raw	4

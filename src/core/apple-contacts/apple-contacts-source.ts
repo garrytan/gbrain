@@ -401,7 +401,6 @@ async function runInner(engine: BrainEngine, sourceId: string, cfg: AppleContact
     state.item_holds = holds.finish();
     await save(true);
     await holds.complete();
-    // Best effort, as before, but a refused stamp is logged instead of hidden: the run itself succeeded.
     if (!managed) await engine.markSourceSynced(sourceId).catch((e: unknown) => log(`[apple-contacts] ${sourceId}: the last sync time was not recorded (${e instanceof Error ? e.message : String(e)})`));
   } catch (error) {
     if (stopsRun(error) && !(error as { name?: string }).name?.startsWith('Lock')) {

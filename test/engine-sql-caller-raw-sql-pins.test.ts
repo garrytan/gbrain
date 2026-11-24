@@ -11,7 +11,6 @@
  *    and these members live outside them.
  *  - Seam: the fake postgres.js driver (test/helpers/fake-postgres-sql.ts) records the text; no database runs.
  */
-import { retiredPageSql } from '../src/core/entities/resolve.ts';
 import { describe, expect, test } from 'bun:test';
 import { makeEngineWithFake, runCase, withPinnedSqlEnvironment, type SqlCase } from './helpers/postgres-engine-sql-cases.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
