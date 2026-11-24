@@ -20,7 +20,7 @@ import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
 import { gateField, gateInput, heldOutcome, loadWriteGateConfig } from '../trust/gate-outcomes.ts';
 import { finishOwnerAcceptedTake, ownerAcceptedTake, recordContestedTake, supersessionGuarded } from '../trust/supersede-handlers.ts';
-import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
+import { storedTrustTier, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import { contestHeldRows } from '../trust/fence-guard.ts';
 import { ownerAcceptedRemoval } from '../trust/held-removals.ts';
 import { transitionTrustProposal } from '../trust/proposals.ts';
@@ -113,11 +113,14 @@ export async function heldTakeRows(engine: BrainEngine, sourceId: string, slug: 
       ...(t.resolved_by ? { resolvedBy: t.resolved_by } : {}) } : {}) }));
 }
 
-/** `editBody`: a same-page edit published with the takes change (consolidation closes its fenced facts here). */
-export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
-  try { return await prepare(engine,row,config,editBody); } catch (error) { return fail(error); }
+/**
+ * `editBody`: a same-page edit published with the takes change (consolidation closes its fenced facts here).
+ * `declared` (GST-3612): a maintenance writer's derived tier, which the write gate and the supersession guard see instead of the request channel's.
+ */
+export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string, declared?: WriteTrust): Promise<PreparedMutation> {
+  try { return await prepare(engine,row,config,editBody,declared); } catch (error) { return fail(error); }
 }
-async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
+async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string, declared?: WriteTrust): Promise<PreparedMutation> {
   const stored = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!stored || stored.page.id !== row.page_id) throw takesRefusal('page_identity_changed','The accepted page no longer exists.',row,
     `Page ${row.slug} was deleted or replaced after the takes request was accepted.`);
@@ -153,7 +156,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   let oldRow: number | undefined;
   let removedRow: number | undefined;
   // #5575: the takes write's declared tier (ENG-18) for the guarded supersession and the write gate.
-  const trust = requestChannelTrust(row) ?? { tier: 'unknown' as const, origin: null };
+  const trust = declared ?? requestChannelTrust(row) ?? { tier: 'unknown' as const, origin: null };
   let contestedOld: { id: number; tier: string } | undefined;
   let acceptedProposal: { id: number; newId: number; newRow: number } | null = null;
   let acceptedRemoval: number | null = null;
