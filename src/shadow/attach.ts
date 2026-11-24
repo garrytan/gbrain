@@ -53,7 +53,7 @@ export interface AttachedShadow<E extends BrainEngine> {
   reconciler?: Reconciler;
   /** Notes this process's committed writes for swap eligibility (writer-observations.ts). */
   observer: WriterObserver;
-  /** The WAL position every sample is captured with (checks.ts `createLsnWatch`). */
+  /** The freshness token every sample is captured with (checks.ts `createLsnWatch`). */
   lsnWatch: LsnWatch;
 }
 
@@ -70,7 +70,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   });
   const samples = new SampleRegistry();
   let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
-  let watch: LsnWatch | undefined; // the primary's WAL position, set once the child's read source exists
+  let watch: LsnWatch | undefined; // the primary's freshness token, set once the child's read source exists
   const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor, samples, generation: () => generation(), lsn: () => watch?.current() });
   const sink = {
     counters: queue.counters,
@@ -101,7 +101,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   let own: ReadSource | undefined;
   const askReads: ReadSource = reads ?? { pauseMs: 0, read: (fn) => (own ??= openReadSource(engine)).read(fn), close: async () => { await own?.close(); } };
   watch = createLsnWatch(askReads);
-  void watch.ready(); // the first WAL position, so a sample captured a moment later has one to be held to
+  void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
   const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
   const follower = reads ? new ShadowFollower({
     reads, send: (line) => supervisor.send(line), rpc,

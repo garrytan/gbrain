@@ -28,7 +28,7 @@ export interface CapturedRead {
   at: number;
   /** The serving process's write generation before the primary read started (MirrorQueue.token). */
   gen?: number;
-  /** The primary's WAL position (pg_current_wal_insert_lsn) the serving process knew before the primary read started (MirrorQueue.token). */
+  /** The primary's freshness token (checks.ts `createLsnWatch`; the field is still called `lsn`) the serving process knew before the primary read started (MirrorQueue.token). */
   lsn?: string;
 }
 
@@ -116,7 +116,7 @@ export interface MirrorQueueOptions {
   samples?: SampleRegistry;
   /** The serving process's write generation, read the moment a read is captured (follower.published). */
   generation?: () => number | undefined;
-  /** The primary's WAL position, as last read: never newer than the read it is taken for (checks.ts `createLsnWatch`). */
+  /** The primary's freshness token, as last read: never newer than the read it is taken for (checks.ts `createLsnWatch`). */
   lsn?: () => string | undefined;
 }
 
@@ -160,7 +160,7 @@ export class MirrorQueue {
   }
 
   /**
-   * What the serving process knew BEFORE a primary read started (its write generation, the primary's WAL position): the wrapper takes it
+   * What the serving process knew BEFORE a primary read started (its write generation, the primary's freshness token): the wrapper takes it
    * ahead of the call and hands it back in the capture. It is never taken later: a token adopted after the read's snapshot could
    * name a newer corpus than the one the answer came from, and a sample without one is never proven unchanged.
    */

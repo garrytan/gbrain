@@ -46,9 +46,9 @@ export const SHADOW_HEARTBEAT_MS = 5_000;
 export const SHADOW_CHILD_EXIT_DEADLINE_MS = 30_000;
 /** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
 export const SHADOW_CHILD_STALL_LIMIT = 4;
-/** Runs of one sample (the first check, then reruns from a new WAL position) before one that keeps moving stays unresolved. */
+/** Runs of one sample (the first check, then reruns from a new freshness token) before one that keeps moving stays unresolved. */
 export const RERUN_ATTEMPTS = 3;
-/** Waits before a run that follows a check whose WAL position moved: the 1st, 2nd and 3rd such move. Each is scaled by 1 +/- RERUN_BACKOFF_JITTER; the worst total (13.1 s) stays inside RERUN_BACKOFF_TOTAL_MS. */
+/** Waits before a run that follows a check whose freshness token moved: the 1st, 2nd and 3rd such move. Each is scaled by 1 +/- RERUN_BACKOFF_JITTER; the worst total (13.1 s) stays inside RERUN_BACKOFF_TOTAL_MS. */
 export const RERUN_BACKOFF_MS: readonly number[] = [500, 2_000, 8_000];
 export const RERUN_BACKOFF_JITTER = 0.25;
 export const RERUN_BACKOFF_TOTAL_MS = 15_000;
@@ -418,7 +418,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   /**
    * One stable rerun (checks.ts `stableRerun`): both engines read again at a generation the barrier proved quiet. A rerun whose
-   * proof that nothing was written moved (the primary's WAL position changed before its check ended, or a write landed after
+   * proof that nothing was written moved (the primary's freshness token changed before its check ended, or a write landed after
    * the barrier) is run again, from a new position, up to RERUN_ATTEMPTS times, each after a growing wait (RERUN_BACKOFF_MS); a sample still moving then stays unresolved
    * (`skipped:moved`), which counts as unexplained.
    */

@@ -955,6 +955,177 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       }
     }, 60_000);
 
+    describe('the freshness token holds over writes that commit nothing, and refuses every commit', () => {
+      type Probe = { primary: BrainEngine; reads: ReturnType<typeof openReadSource>; watch: ReturnType<typeof createLsnWatch>; top: number; ids: Record<string, number>; check: (token: string) => Promise<{ vector: 'proven' | 'moved'; privacy: string }> };
+      /** The primary, a read source and a check that asks the vector reference and the privacy question of a sample held to `token`. */
+      const probing = async (fn: (p: Probe) => Promise<void>): Promise<void> => {
+        const primary = ctx.primary();
+        const chunkOf = await vectorFixture(primary);
+        const ids = await privacyFixture(primary);
+        const reads = openReadSource(primary);
+        try {
+          const watch = createLsnWatch(reads);
+          const samples = new SampleRegistry();
+          const args = encodeValue([vec(3), { limit: 10, excludePrivate: true }]);
+          let clock = 0;
+          const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) }); // the reference's one-a-minute gate opens for each
+          const check: Probe['check'] = async (token) => {
+            const sid = samples.add({ op: 'searchVector', args, result: [], at: Date.now(), lsn: token }, 100);
+            const vector = await handler({ id: 1, kind: 'vector', sid, phase: 'sample' }).then(() => 'proven' as const, (e: { code?: string }) => { if (e.code !== 'moved') throw e; return 'moved' as const; });
+            const answer = await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [{ payload: 'p', id: ids['open/a'] }] }) as { verdict: string };
+            return { vector, privacy: answer.verdict };
+          };
+          await fn({ primary, reads, watch, top: chunkOf.get(3)!, ids, check });
+        } finally { await reads.close(); }
+      };
+      const PROVEN: { vector: 'proven' | 'moved'; privacy: string } = { vector: 'proven', privacy: 'clean' };
+      const MOVED: { vector: 'proven' | 'moved'; privacy: string } = { vector: 'moved', privacy: 'privacy_check_moved' };
+      const literalOf = (seed: number): string => `[${Array.from(vec(seed)).join(',')}]`;
+      const connectOther = async (database?: string) => {
+        const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
+        const other = new PostgresEngine();
+        const url = new URL((ctx.primary() as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl!);
+        if (database) url.pathname = `/${database}`;
+        await other.connect({ engine: 'postgres', database_url: url.toString(), poolSize: 1 } as never);
+        return other;
+      };
+      const restore = (primary: BrainEngine, top: number): Promise<unknown> => primary.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(3)]);
+
+      test('a write that moves the WAL position but commits nothing between the capture and the check leaves the proof standing: a logical message, then a plain read', async () => {
+        await probing(async ({ primary, watch, check }) => {
+          const token = await watch.live();
+          const lsn = async (): Promise<string> => String((await primary.executeRaw<{ l: string }>('SELECT pg_current_wal_insert_lsn()::text AS l'))[0]!.l);
+          const before = await lsn();
+          await primary.executeRaw(`SELECT pg_logical_emit_message(false, 't', 'x')`); // WAL, no transaction, no data
+          expect(await lsn()).not.toBe(before); // the position moved
+          expect(await check(token)).toEqual(PROVEN); // and nothing the check judges did
+        });
+      });
+
+      test('a read that prunes dead catalog rows (WAL with no transaction id) between the capture and the check leaves the proof standing', async () => {
+        await probing(async ({ primary, watch, check }) => {
+          const snapshot = async (): Promise<string> => String((await primary.executeRaw<{ s: string }>('SELECT pg_current_snapshot()::text AS s'))[0]!.s);
+          const lsn = async (): Promise<string> => String((await primary.executeRaw<{ l: string }>('SELECT pg_current_wal_insert_lsn()::text AS l'))[0]!.l);
+          let pruned = false;
+          for (let attempt = 0; attempt < 6 && !pruned; attempt++) {
+            for (let i = 0; i < 3; i++) await primary.executeRaw('ANALYZE content_chunks'); // each one leaves the old statistics rows dead
+            const token = await watch.live();
+            const [l0, s0] = [await lsn(), await snapshot()];
+            await primary.executeRaw('SELECT count(*) FROM pg_statistic'); // the read may prune the dead rows it finds: WAL, no xid
+            if (await lsn() === l0) continue; // nothing was pruned this time: try again with more dead rows
+            expect(await snapshot()).toBe(s0); // the position moved and the snapshot did not
+            expect(await check(token)).toEqual(PROVEN);
+            pruned = true;
+          }
+          expect(pruned).toBe(true);
+        });
+      });
+
+      test('a transaction that began before the capture, holds an xid below xmax and commits after it: the commit moves nothing but its own xid, which the token lists (Postgres only)', async () => {
+        if (ctx.dialect !== 'postgres') return;
+        await probing(async ({ primary, watch, check, top }) => {
+          const other = await connectOther();
+          const began = gate(); const commit = gate();
+          let xid = '';
+          try {
+            const writer = other.transaction(async (tx) => {
+              await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(90)]);
+              xid = String((await tx.executeRaw<{ x: string }>('SELECT pg_current_xact_id()::text AS x'))[0]!.x);
+              began.open(); await commit.wait;
+            });
+            await began.wait;
+            for (let i = 0; i < 3; i++) await primary.executeRaw('SELECT pg_current_xact_id()'); // later transactions finish: xmax is now above the writer's xid
+            const token = await watch.live();
+            expect(BigInt(token.split('|')[0]!)).toBeGreaterThan(BigInt(xid));
+            expect(token.split('|')[1]!.split(',')).toContain(xid); // listed: it is the only thing that can show its commit
+            expect(await check(token)).toEqual(PROVEN); // not yet committed
+            commit.open(); await writer;
+            const xmaxNow = String((await primary.executeRaw<{ x: string }>('SELECT pg_snapshot_xmax(pg_current_snapshot())::text AS x'))[0]!.x);
+            expect(xmaxNow).toBe(token.split('|')[0]!); // xmax did not move: only the list can see this commit
+            expect(await check(token)).toEqual(MOVED);
+          } finally { commit.open(); await other.disconnect(); await restore(primary, top); }
+        });
+      }, 60_000);
+
+      test('a subtransaction (SAVEPOINT) cannot become visible on its own: released while the top-level transaction runs it is still proven, and the top-level commit is what moves it (Postgres only)', async () => {
+        if (ctx.dialect !== 'postgres') return;
+        await probing(async ({ primary, watch, check, top }) => {
+          const other = await connectOther();
+          const began = gate(); const released = gate(); const commit = gate(); const go = gate();
+          try {
+            const writer = other.transaction(async (tx) => {
+              await tx.executeRaw(`UPDATE content_chunks SET modality = modality WHERE id = $1`, [top]); // the top-level xid
+              began.open(); await go.wait;
+              await tx.executeRaw('SAVEPOINT inner_work');
+              await tx.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(91)]); // written under the subtransaction's own xid
+              await tx.executeRaw('RELEASE SAVEPOINT inner_work'); // the subtransaction "commits" into its parent
+              released.open(); await commit.wait;
+            });
+            await began.wait;
+            const token = await watch.live();
+            expect(token.split('|')[1]).not.toBe(''); // the top-level xid is listed (a subtransaction's xid never is)
+            go.open(); await released.wait;
+            const seen = await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]);
+            expect(seen[0]!.e).not.toBe(literalOf(91)); // the released subtransaction's write is not visible
+            expect(await check(token)).toEqual(PROVEN);
+            commit.open(); await writer;
+            expect((await primary.executeRaw<{ e: string }>(`SELECT embedding::text AS e FROM content_chunks WHERE id = $1`, [top]))[0]!.e).toBe(literalOf(91));
+            expect(await check(token)).toEqual(MOVED);
+          } finally { commit.open(); await other.disconnect(); await restore(primary, top); }
+        });
+      }, 60_000);
+
+      test('a write in another database of the cluster that commits between the capture and the check counts as moved (Postgres only)', async () => {
+        if (ctx.dialect !== 'postgres') return;
+        await probing(async ({ primary, watch, check }) => {
+          const other = await connectOther('postgres');
+          try {
+            await other.executeRaw('DROP TABLE IF EXISTS gbrain_token_probe');
+            await other.executeRaw('CREATE TABLE gbrain_token_probe (x int)');
+            const token = await watch.live();
+            expect(await check(token)).toEqual(PROVEN); // control: nothing committed anywhere
+            await other.executeRaw('INSERT INTO gbrain_token_probe VALUES (1)');
+            expect(await check(token)).toEqual(MOVED);
+          } finally { await other.executeRaw('DROP TABLE IF EXISTS gbrain_token_probe').catch(() => undefined); await other.disconnect(); }
+        });
+      });
+
+      test('COMMIT PREPARED between the capture and the check: a transaction prepared before the capture blinds the token, one prepared after it is listed by its xid (Postgres with max_prepared_transactions > 0 only)', async () => {
+        if (ctx.dialect !== 'postgres') return;
+        const allowed = Number((await ctx.primary().executeRaw<{ n: string }>(`SELECT current_setting('max_prepared_transactions') AS n`))[0]!.n);
+        if (allowed === 0) { console.warn('skipped: this cluster has max_prepared_transactions = 0'); return; }
+        await probing(async ({ primary, watch, check, top }) => {
+          const other = await connectOther();
+          const gid = `gbrain_token_${process.pid}`;
+          try {
+            // prepared after the capture: the transaction began before it, so its xid is in the token
+            await other.executeRaw('BEGIN');
+            await other.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(92)]);
+            const token = await watch.live();
+            expect(token.split('|')[1]).not.toBe('');
+            await other.executeRaw(`PREPARE TRANSACTION '${gid}'`);
+            expect(await check(token)).toEqual(MOVED); // prepared: never proven
+            await other.executeRaw(`COMMIT PREPARED '${gid}'`);
+            expect(await check(token)).toEqual(MOVED); // committed: its xid, listed in the token, has committed
+            await restore(primary, top);
+            // prepared before the capture: blind, and still refused once it is committed
+            await other.executeRaw('BEGIN');
+            await other.executeRaw(`UPDATE content_chunks SET embedding = $2::vector WHERE id = $1`, [top, literalOf(93)]);
+            await other.executeRaw(`PREPARE TRANSACTION '${gid}'`);
+            const blind = await watch.live();
+            expect(blind.split('|')[1]).toBe('!');
+            await other.executeRaw(`COMMIT PREPARED '${gid}'`);
+            expect(await check(blind)).toEqual(MOVED);
+            expect(await check(await watch.live())).toEqual(PROVEN); // control: a fresh token, nothing prepared
+          } finally {
+            await primary.executeRaw(`ROLLBACK PREPARED '${gid}'`).catch(() => undefined);
+            await other.executeRaw('ROLLBACK').catch(() => undefined);
+            await other.disconnect(); await restore(primary, top);
+          }
+        });
+      }, 60_000);
+    });
+
     test('a session of another role that the reading role cannot see into makes the token blind, and a blind token is never proven (Postgres only)', async () => {
       if (ctx.dialect !== 'postgres') return;
       const primary = ctx.primary();

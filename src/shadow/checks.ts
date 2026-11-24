@@ -10,9 +10,9 @@
  *            policy fragment (private-visibility.ts `privatePagesFilterForCaller`) under the captured `CallerAccess`, the
  *            primary's safe-chunk fence when its read asked for it, and the chunk visibility the primary used. The answer is a
  *            verdict (`clean` with `complete`, `violation`, `moved`), never content. It is `moved` unless this process can PROVE
- *            nothing was written since the primary read started: the primary's WAL position (`pg_current_wal_insert_lsn()`, `createLsnWatch`),
- *            known before that read started, must be the same at the end of the check (any table, the catalog, or a change
- *            undone again moves it); its own write generation (follower.published, read live before and after the check) must
+ *            nothing was written since the primary read started: the primary's freshness token (`createLsnWatch`: the snapshot's xmax and the transactions in progress),
+ *            known before that read started, must still hold at the end of the check (a commit to any table, the catalog, or a change
+ *            undone again moves it; a read pruning dead rows, a checkpoint or a vacuum does not); its own write generation (follower.published, read live before and after the check) must
  *            equal the one captured with the sample, no page or access row may carry a time later than the read, and the access
  *            tables' generation must hold across the check. The child then runs both engines again from a new position, up to 3 times. Without proof the child calls the sample inconclusive, never clean.
  *   rerun    The stable-generation barrier for a mismatch that nothing explains (plan decision 7). When everything published
@@ -26,7 +26,7 @@
  *   vector   The exact reference of a vector sample (recall.ts), at most one a minute: the engine's own exact statement
  *            (`exactSql`: no candidate window, `ORDER BY (distance) + 0`) with its filters, scoring, per-page collapse and
  *            tie-break, run here on a reference-only path. The engine's search itself is not touched. The reference is refused
- *            (`moved`) unless the WAL position and the write generation are the ones the sample was held to, at the end of the run
+ *            (`moved`) unless the freshness token and the write generation are the ones the sample was held to, at the end of the run
  *            (the same proof as the privacy question); the child then runs both engines and the reference again, up to 3 times.
  */
 import type { BrainEngine } from '../core/engine.ts';
@@ -73,60 +73,82 @@ const CHANGED_AFTER_SQL = `SELECT (EXISTS (SELECT 1 FROM pages WHERE updated_at 
   OR EXISTS (SELECT 1 FROM access_pending_coverage WHERE created_at > to_timestamp($1::double precision / 1000.0))
   OR EXISTS (SELECT 1 FROM access_policy_revisions WHERE created_at > to_timestamp($1::double precision / 1000.0) OR applied_at > to_timestamp($1::double precision / 1000.0))) AS changed`;
 
-/** The primary's WAL insert position now (pg_current_wal_insert_lsn; PGLite has it too): the insert position, because a commit made with `synchronous_commit=off` is visible before its WAL is written out, never before it is inserted. */
-const LSN_SQL = `SELECT pg_current_wal_insert_lsn()::text AS lsn`;
 /**
- * The transactions in progress now, as xid8 text, and how many other client sessions this role cannot see into. A snapshot's xip list
- * holds the in-progress xids BELOW its xmax only; a transaction that began after the last completed one (an xid at or above xmax) is
- * invisible to the snapshot and unlisted, so the xids the sessions are running (pg_stat_activity.backend_xid, widened with the
- * snapshot's epoch) are listed as well. Each such transaction may have inserted its COMMIT record already and still not be visible.
-
- * A prepared (two-phase) transaction is in neither list (its xid may be at or above xmax and no session runs it): while any exists the token is blind too.
- * A session this role may not see into (a role that is neither a superuser nor in pg_read_all_stats sees every other session with all columns NULL) makes the token blind (`!`), which is never proven: such a role clears nothing.
+ * What the freshness token is made of. A committed change to any table or to the catalog (a policy altered in place) needs a transaction
+ * that commits, and a commit is the one step that makes data visible to a later read: it moves `xmax` of the primary's transaction
+ * snapshot (`pg_snapshot_xmax(pg_current_snapshot())`, one more than the newest transaction that has finished, in the whole cluster) when its
+ * xid is at or above the captured one, and a transaction that was already running at the capture (below `xmax`, or not yet visible) is
+ * listed by its xid and asked about at the end. Writes that carry no xid and change no data a read could see (a read pruning dead rows,
+ * a checkpoint, a standby snapshot, a vacuum of another database, a hint bit) move the WAL position but never the snapshot's xmax, and so move nothing here.
+ * The snapshot's xids are xid8 (an epoch and a 32-bit xid): they are kept and compared whole, as BigInt, never as 32-bit values.
  */
-const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap, pg_snapshot_xmax(pg_current_snapshot())::text::bigint AS xm)
+const XIP_SQL = `WITH s AS (SELECT pg_current_snapshot() AS snap)
   SELECT
-    (SELECT string_agg(x, ',') FROM (
-      SELECT x::text AS x FROM s, pg_snapshot_xip(s.snap) x
-      UNION
-      SELECT (CASE WHEN c > xm + 2147483648 THEN c - 4294967296 WHEN c < xm - 2147483648 THEN c + 4294967296 ELSE c END)::text
-        FROM (SELECT (xm / 4294967296) * 4294967296 + a.backend_xid::text::bigint AS c, xm FROM pg_stat_activity a, s WHERE a.backend_xid IS NOT NULL AND a.pid <> pg_backend_pid()) t
-    ) u) AS xids,
+    (SELECT pg_snapshot_xmax(snap)::text FROM s) AS xmax,
+    (SELECT string_agg(x::text, ',') FROM s, pg_snapshot_xip(s.snap) x) AS xip,
+    (SELECT string_agg(a.backend_xid::text, ',') FROM pg_stat_activity a WHERE a.backend_xid IS NOT NULL AND a.pid <> pg_backend_pid()) AS backend,
     (SELECT count(*) FROM pg_stat_activity WHERE backend_type IS NULL AND pid <> pg_backend_pid())::int AS blind,
     (SELECT count(*) FROM pg_prepared_xacts)::int AS prepared`; // a row this role may not see has every column NULL, its backend type too
-const lsnOf = async (tx: BrainEngine): Promise<string> => String((await tx.executeRaw<{ lsn: string }>(LSN_SQL))[0]?.lsn);
+
+const XID_RANGE = 4294967296n;
 
 /**
- * The freshness token: the insert position, then (a transaction later, so its snapshot is never older than that position) the xids in
- * progress (XIP_SQL). A transaction whose COMMIT record is inserted before the position but that becomes visible only after (a commit_delay, a
- * synchronous standby wait) leaves the position unchanged, so it must be listed here to be seen. Any transaction that commits after
- * the position was read inserts a COMMIT record past it and moves it. Read in two reads, one transaction each, in that order.
+ * A running session's 32-bit xid (pg_stat_activity.backend_xid) as an xid8: it takes the epoch of `xmax` (an in-progress xid is within
+ * half a range of it), the one before or the one after when that puts it more than half a range away.
+ */
+export function widenXid(xid: bigint, xmax: bigint): bigint {
+  const c = (xmax / XID_RANGE) * XID_RANGE + (xid % XID_RANGE);
+  return c > xmax + XID_RANGE / 2n ? c - XID_RANGE : c < xmax - XID_RANGE / 2n ? c + XID_RANGE : c;
+}
+
+/** The token text: `<xmax>|<xid>,<xid>...`, or `<xmax>|!` when it is blind (never proven). */
+export function composeToken(xmax: bigint, xids: bigint[], blind: boolean): string {
+  return `${xmax}|${blind ? '!' : [...new Set(xids)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).join(',')}`;
+}
+
+/** The parts of a token, or null for text that is not one (never proven). */
+export function parseToken(token: string | undefined): { xmax: bigint; xids: bigint[]; blind: boolean } | null {
+  if (token === undefined) return null;
+  const cut = token.indexOf('|');
+  if (cut < 0 || !/^[0-9]+$/.test(token.slice(0, cut))) return null;
+  const rest = token.slice(cut + 1);
+  if (rest === '!') return { xmax: BigInt(token.slice(0, cut)), xids: [], blind: true };
+  const parts = rest === '' ? [] : rest.split(',');
+  if (!parts.every((x) => /^[0-9]+$/.test(x))) return null;
+  return { xmax: BigInt(token.slice(0, cut)), xids: parts.map((x) => BigInt(x)), blind: false };
+}
+
+/** The snapshot has moved past the captured one when its xmax is anything but the captured xmax (it only grows). */
+export const xmaxMoved = (captured: bigint, now: bigint): boolean => now !== captured;
+
+/**
+ * The freshness token (see XIP_SQL), taken in ONE statement so the xmax and the xids in progress come from the same snapshot: the xids of
+ * the snapshot, the xids the sessions are running (pg_stat_activity.backend_xid: the top-level xid, the one whose commit makes a
+ * subtransaction's writes visible), and whether a prepared (two-phase) transaction exists or a session cannot be seen into (blind, `!`: never proven).
  */
 async function captureToken(reads: ReadSource): Promise<string> {
-  const lsn = await reads.read(lsnOf);
-  const [row] = await reads.read((tx) => tx.executeRaw<{ xids: string | null; blind: number; prepared: number }>(XIP_SQL));
-  const xids = row?.xids ?? '';
-  return `${lsn}|${Number(row?.blind) > 0 || Number(row?.prepared) > 0 ? '!' : xids}`;
+  const [row] = await reads.read((tx) => tx.executeRaw<{ xmax: string; xip: string | null; backend: string | null; blind: number; prepared: number }>(XIP_SQL));
+  if (!row || !/^[0-9]+$/.test(String(row.xmax))) throw new Error('no snapshot');
+  const xmax = BigInt(row.xmax);
+  const list = (text: string | null | undefined): bigint[] => (text ? text.split(',').map((x) => BigInt(x)) : []);
+  const xids = [...list(row.xip), ...list(row.backend).map((x) => widenXid(x, xmax))];
+  return composeToken(xmax, xids, Number(row.blind) > 0 || Number(row.prepared) > 0);
 }
 
 /**
- * True only when nothing was written and nothing became visible since `token` was captured: the insert position is the same and no
- * transaction listed in it has committed now (one that is no longer known counts as committed). Called after the data a check judges
- * has been read, so anything that becomes visible later does not touch what was read. A token that is not one (a sample captured
- * before any was known) is never proven.
+ * True only when nothing was written and nothing became visible since `token` was captured: the snapshot's xmax is the captured one, no
+ * transaction listed in it has committed now (one that is no longer known counts as committed) and no prepared transaction exists. Called
+ * after the data a check judges has been read, so anything that becomes visible later does not touch what was read. A token that is not one
+ * (a sample captured before any was known) is never proven.
  */
 async function unchangedSince(reads: ReadSource, token: string | undefined): Promise<boolean> {
-  if (token === undefined) return false;
-  const cut = token.indexOf('|');
-  if (cut < 0) return false;
-  if ((await reads.read(lsnOf)) !== token.slice(0, cut)) return false;
-  const rest = token.slice(cut + 1);
-  if (rest.includes('!')) return false; // sessions of other roles that this one cannot see into: nothing can be proven
-  const xips = rest.split(',').filter((x) => x !== '');
-  const [row] = await reads.read((tx) => tx.executeRaw<{ moved: boolean; prepared: boolean }>(
-    `SELECT COALESCE((SELECT bool_or(COALESCE(pg_xact_status(x::xid8), 'committed') NOT IN ('in progress', 'aborted')) FROM unnest($1::text[]) x), false) AS moved,
-      EXISTS (SELECT 1 FROM pg_prepared_xacts) AS prepared`, [xips])); // a prepared transaction at the end of the check: never proven, whatever it was at the capture
-  return row?.moved === false && row?.prepared === false;
+  const t = parseToken(token);
+  if (!t || t.blind) return false; // sessions of other roles that this one cannot see into, or a prepared transaction at the capture: nothing can be proven
+  const [row] = await reads.read((tx) => tx.executeRaw<{ xmax: string; moved: boolean; prepared: boolean }>(
+    `SELECT pg_snapshot_xmax(pg_current_snapshot())::text AS xmax,
+      COALESCE((SELECT bool_or(COALESCE(pg_xact_status(x::xid8), 'committed') NOT IN ('in progress', 'aborted')) FROM unnest($1::text[]) x), false) AS moved,
+      EXISTS (SELECT 1 FROM pg_prepared_xacts) AS prepared`, [t.xids.map(String)])); // a prepared transaction at the end of the check: never proven, whatever it was at the capture
+  return !!row && /^[0-9]+$/.test(String(row.xmax)) && !xmaxMoved(t.xmax, BigInt(row.xmax)) && row.moved === false && row.prepared === false;
 }
 
 /**
@@ -181,7 +203,7 @@ async function policySnapshot(reads: ReadSource, access: Partial<CallerAccess> |
     changed: base ? (await tx.executeRaw<{ changed: boolean }>(CHANGED_AFTER_SQL, [base.at + 1]))[0]?.changed === true : true,
   }));
   const gen1 = generation();
-  // The proof: nothing was written between the position known before the primary read started and the end of this check (any table, the catalog, or a change undone again).
+  // The proof: nothing was committed between the token known before the primary read started and the end of this check (any table, the catalog, or a change undone again).
   const held = await unchangedSince(reads, base?.lsn);
   const unproven = !base || base.lsn === undefined || (hasFollower && base.gen === undefined);
   const moved = unproven || !held || changed || (hasFollower && (gen0 !== base?.gen || gen1 !== base?.gen)) || before !== await accessGeneration();
@@ -244,7 +266,7 @@ export interface AskDeps {
   now?: () => number;
   /** Seam for tests; default `RERUN_DEADLINE_MS`. */
   deadlineMs?: number;
-  /** The WAL position watch (`createLsnWatch`); the same one the mirror queue captures with each sample. Default: one over `reads`. */
+  /** The freshness token watch (`createLsnWatch`); the same one the mirror queue captures with each sample. Default: one over `reads`. */
   watch?: LsnWatch;
 }
 
@@ -289,7 +311,7 @@ async function stableRerun(d: AskDeps, watch: LsnWatch, sid: string, sample: Sam
  * (`exactSql`, bound with no candidate window) keeps the caller's filters, the source boosts, the per-page collapse and the
  * tie-break; asked for `RECALL_REFERENCE_LIMIT` rows so a tie at the cutoff is visible. The answers the sample holds were
  * read from the position the sample (or, for `phase: 'rerun'`, its rerun) was held to: the reference is refused (`moved`) unless
- * the primary's WAL position at the end of the run is that position, and this process's write generation is the one captured.
+ * the primary's freshness token at the end of the run still holds, and this process's write generation is the one captured.
  */
 async function vectorReference(d: AskDeps, sample: Sample, phase: 'sample' | 'rerun', attemptId?: unknown): Promise<RankedKey[]> {
   const [embedding, opts] = decodeValue(sample.args) as [Float32Array, SearchOpts | undefined];

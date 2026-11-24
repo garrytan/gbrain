@@ -33,7 +33,7 @@ export interface ShadowSink {
   offer(capture: () => CapturedRead, op?: string): void;
   /** Notes one call of an operation class on the per-operation meter (mirror.ts `UsageMeter`); a sink without one skips it. */
   use?(op: string, field: UsageField): void;
-  /** The generation and WAL position known BEFORE a read starts (mirror.ts `MirrorQueue.token`); a sink without one leaves the sample unproven. */
+  /** The generation and freshness token known BEFORE a read starts (mirror.ts `MirrorQueue.token`); a sink without one leaves the sample unproven. */
   token?(): { gen?: number; lsn?: string };
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;

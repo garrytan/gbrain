@@ -2116,21 +2116,24 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   and only when nothing the policy reads changed since the read. A Rust row is held when it is byte-equal to a primary row in every
   field but the ranking ones; a row with a primary row's page and chunk but another payload (a substituted title or flag), or one
   that claims a chunk without a numeric chunk id, is never cleared and the diff counts. A new row is judged on the primary with the
-  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by the primary's WAL position
-  (`pg_current_wal_insert_lsn()`, the insert position: a commit made with `synchronous_commit=off` is visible before its WAL is written out, never before it is inserted), read BEFORE the primary read started (never a newer one) and read again at the end of the check, must be
-  the same, no transaction that was in progress at the capture (its xid, from the snapshot and from `pg_stat_activity`, because a
-  transaction can insert its COMMIT record and become visible later with no further WAL, as under `commit_delay` or a synchronous
-  standby wait) may have committed by then, and this process's write generation must be the
-  same (the privacy check also needs the access tables' generation to hold, and no page or access row to carry a time later than the read). A role that is neither a superuser nor in `pg_read_all_stats` cannot see other sessions' transactions: its token is blind
-  and clears nothing. Any committed write to any table, to the
-  catalog (a policy altered in place) or a change undone again (A, B, A) moves it, in this database or any other of the same
-  cluster. When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included, so it waits at most twice). Each run after a move
+  read policy, the safe-chunk fence the read asked for and the chunk visibility the primary used. "Nothing changed" is proven by a freshness token taken from the primary BEFORE the primary read started (never a newer one) and
+  checked again at the end of the check. The token is the transaction snapshot's upper bound (`pg_snapshot_xmax(pg_current_snapshot())`, one more than the
+  newest transaction that has finished anywhere in the cluster, kept as the whole 64-bit `xid8` and never cut to 32 bits) and the list of transactions in progress at that moment (the snapshot's
+  own list and the one each session is running; a subtransaction becomes visible only with its top-level transaction, so that is the one listed), all
+  from one query. It holds only if the upper bound is the same, none of the listed transactions has committed (one that is no longer
+  known counts as committed), no prepared (two-phase) transaction exists, and this process's write generation is the
+  same (the privacy check also needs the access tables' generation to hold, and no page or access row to carry a time later than the read). A transaction
+  that commits has to finish, and finishing moves the upper bound or ends a listed transaction, so any committed write to any table, to the
+  catalog (a policy altered in place) or a change undone again (A, B, A) moves the token, in this database or any other of the same
+  cluster, including a commit made with `synchronous_commit=off` or held back by `commit_delay` or a synchronous standby. What does not move it is
+  what changes nothing a read can see: a read that prunes dead rows, a checkpoint, a standby snapshot, a plain vacuum, a logical message. A role that is neither a superuser nor in
+  `pg_read_all_stats` cannot see other sessions' transactions, so its token is blind and clears nothing, and a prepared transaction at the capture blinds it too.
+  When it moved, both engines and the reference are run again from a new position, up to 3 times (a recall score gets 3 runs in all, the first included, so it waits at most twice). Each run after a move
   starts only after a wait that grows (about 0.5 s, then 2 s, then 8 s, each varied by up to a quarter either way, about 13 s at most for one sample), so a short burst of writes
-  (a checkpoint, a vacuum, a batch job) can pass. The wait is a timer in the shadow child: it blocks neither the serving process nor the child's comparison of new reads (other reruns queue behind it), and it ends at once when the child is told to stop.
+  (a batch job, a bulk import) can pass. The wait is a timer in the shadow child: it blocks neither the serving process nor the child's comparison of new reads (other reruns queue behind it), and it ends at once when the child is told to stop.
   It does not touch the 30 s limit of each run, and a rerun that is waiting holds its place in the queue of 64. A sample still moving
   after that stays unresolved (`skipped:moved`) and counts into `reads.diverged_unexplained_7d` (criterion 3). So busy brains clear
-  fewer samples; an idle one clears them all (on an 8-core test machine an idle PGLite brain never moved, an idle Postgres moved in 2 to 5% of 1 s windows,
-  and under one write every 2 seconds a sample moved in about 10% of 250 ms windows and 50% of 1 s windows). Waiting helps when writes come in bursts or at irregular times, because the later reruns land in quieter moments; it cannot help when the cluster writes all the time, and on a busy shared cluster some samples still stay unresolved and count under criterion 3.
+  fewer samples; an idle one clears them all, because a read of its own no longer moves the token. Waiting helps when writes come in bursts or at irregular times, because the later reruns land in quieter moments; it cannot help when the cluster writes all the time, and on a busy shared cluster some samples still stay unresolved and count under criterion 3.
   Each rerun is its own attempt, with its own answer and position; the follow-up questions name the attempt, and an unknown or dropped one is never proven. A list of more than 2,000 row identities, or one holding anything invalid,
   is never complete. The vector reference is the engine's own exact statement with no candidate
   window and is used only when the same proof holds from the sample's capture to the end of the reference run; otherwise the sample is
