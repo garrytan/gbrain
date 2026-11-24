@@ -3,7 +3,7 @@
  * purge's gone-page expiry (src/core/engine-sql/facts-trust.ts and facts-purge.ts), served from the facts store
  * (rust/crates/gbrain-store/src/facts/rest_sites.rs). A member not exported here refuses with `engine_capability_missing`.
  *
- * Served: `listClaimConflictPairs`, `countClaimConflictPairs`, `listUnarchivedSourceIds` (the store's unarchived source
+ * Served: `listClaimConflictPairs`, `countClaimConflictPairs`, `listAllUnarchivedSourceIds` (the store's unarchived source
  * list), `readLiveFactEntityPage`, `listContestedProposalPairs`, `lockAgentWritebackSetting` and `expireFactsOfGonePages`.
  *
  * `readLiveFactEntityPage` under `excludePrivate` serves the remote read floor for a caller with no widening member pages,
@@ -25,8 +25,8 @@ export const countClaimConflictPairs: Member<'countClaimConflictPairs'> = (brain
   storeCall({ member: 'countClaimConflictPairs', sourceId }, () => brain.countClaimConflictPairs({ sourceId, auditSources }));
 
 /** The unarchived sources by id: the store's `listActiveSourceIds`, the same `{ id }` rows. */
-export const listUnarchivedSourceIds: Member<'listUnarchivedSourceIds'> = brain =>
-  storeCall({ member: 'listUnarchivedSourceIds' }, () => brain.listActiveSourceIds());
+export const listAllUnarchivedSourceIds: Member<'listAllUnarchivedSourceIds'> = brain =>
+  storeCall({ member: 'listAllUnarchivedSourceIds' }, () => brain.listActiveSourceIds());
 
 export const readLiveFactEntityPage: Member<'readLiveFactEntityPage'> = (brain, sourceId, slug, excludePrivate) => {
   const member = 'readLiveFactEntityPage';

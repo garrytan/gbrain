@@ -81,7 +81,7 @@ pub struct CoverageQuery {
 
 /// Every fact row of every source, source by source. A fact names a source that exists, so this
 /// is every row of the `facts` table.
-fn every_fact(read: &dyn KvRead) -> Result<Vec<FactRecord>> {
+pub(crate) fn every_fact(read: &dyn KvRead) -> Result<Vec<FactRecord>> {
     let mut out = Vec::new();
     for source in all_sources(read)? {
         out.extend(source_rows(read, &source.id)?);

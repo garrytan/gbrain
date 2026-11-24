@@ -39,6 +39,7 @@ export interface ExtractionOutcomeRow { slug: string; source: string; source_ses
  * slug, the rows of `preferredSource` first within a page.
  */
 export async function listFreshExtractionOutcomes(raw: EngineRawRead, sourceId: string, slugs: string[], sources: string[], preferredSource: string): Promise<ExtractionOutcomeRow[]> {
+  // The slug order never reaches output: the caller keeps the first row per slug in a Map, and the CASE alone ranks the rows of one slug.
   return raw<ExtractionOutcomeRow>(
     `SELECT source_markdown_slug AS slug, source, source_session
        FROM facts
@@ -229,12 +230,12 @@ export async function findBulkFactDays(raw: EngineRawRead, sourceIds: string[] |
       HAVING count(*) >= ${rule.min_facts}::int AND count(*) >= t.n * ${rule.min_share}::float8 AND count(DISTINCT a.entity_slug) >= ${rule.min_entities}::int
     )
     SELECT b.source_id, to_char(b.day, 'YYYY-MM-DD') AS day, b.n::int AS facts, b.entities::int AS entities, b.source_facts::int AS source_facts,
-           (SELECT json_agg(json_build_object('source', s.source, 'facts', s.n) ORDER BY s.n DESC, s.source)
+           (SELECT json_agg(json_build_object('source', s.source, 'facts', s.n) ORDER BY s.n DESC, s.source COLLATE "C")
               FROM (SELECT a.source, count(*)::int AS n FROM active a WHERE a.source_id = b.source_id AND a.day = b.day
-                     GROUP BY a.source ORDER BY count(*) DESC, a.source LIMIT ${TOP_SOURCES}) s) AS top_sources,
+                     GROUP BY a.source ORDER BY count(*) DESC, a.source COLLATE "C" LIMIT ${TOP_SOURCES}) s) AS top_sources,
            (SELECT count(*)::int FROM active a WHERE a.source_id = b.source_id AND a.day = b.day AND ${trustedSql(claimDateSql('a.fact', 'b.day'))}) AS dated_claims
       FROM bulk b
-     ORDER BY b.source_id, b.day`);
+     ORDER BY b.source_id COLLATE "C", b.day`);
   return raw<BulkDayRow>(text, params);
 }
 
@@ -374,8 +375,8 @@ export async function listRootPageSlugsAfter(raw: EngineRawRead, sourceId: strin
          AND deleted_at IS NULL
          AND slug NOT LIKE '%/%'
          AND slug <> ALL($3::text[])
-         AND slug > $4
-       ORDER BY slug ASC
+         AND slug COLLATE "C" > $4
+       ORDER BY slug COLLATE "C" ASC
        LIMIT $2`,
     [sourceId, take, held, after],
   );
@@ -578,7 +579,7 @@ export async function scanUnfencedFactRows(raw: EngineRawRead, sourceId: string)
   return raw<UnfencedScanRow>(`SELECT f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, f.dimension, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists,
     EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
-    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug NULLS FIRST, f.id`, [sourceId]);
+    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`, [sourceId]);
 }
 
 /**
@@ -591,7 +592,7 @@ export async function listHeldFactRows(raw: EngineRawRead, sourceId: string, day
   f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to, EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page_exists, f.source_markdown_slug AS from_slug,
       to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
      FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND (hp.slug = 'memory/unattributed' OR hp.slug LIKE '%/memory/unattributed')) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug, f.id`, [sourceId, days]);
+      AND f.entity_slug IS NOT NULL AND NOT (f.entity_slug = 'memory/unattributed' OR f.entity_slug LIKE '%/memory/unattributed') ORDER BY f.entity_slug COLLATE "C", f.id`, [sourceId, days]);
 }
 
 /** The source's fenced, unexpired facts whose page is missing or soft-deleted, by id, with the page slug they sit on. */

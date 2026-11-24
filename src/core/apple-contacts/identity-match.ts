@@ -53,7 +53,7 @@ export async function exactPersonMatches(engine: BrainEngine, sourceId: string, 
   const phoneKeys = [...new Set(phones.map(p => canonicalPhone(p, countryCode)).filter((p): p is string => !!p))];
   if (!emailKeys.length && !phoneKeys.length) return { pages: [], truncated: false };
   const sourceIds = (await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE archived IS NOT TRUE AND id <> $1 AND COALESCE(config->>'kind','') NOT IN (${CONNECTOR_KINDS_SQL}) ORDER BY id`, [sourceId])).map(r => r.id);
+    `SELECT id FROM sources WHERE archived IS NOT TRUE AND id <> $1 AND COALESCE(config->>'kind','') NOT IN (${CONNECTOR_KINDS_SQL}) ORDER BY id COLLATE "C"`, [sourceId])).map(r => r.id);
   if (!sourceIds.length) return { pages: [], truncated: false };
   const { text, params } = exactIdentityStatement({
     probes: { titleKeys: [], titleRaw: '', basenames: [], aliasKeys: [], emails: [...new Set([...emails.map(e => e.trim()), ...emailKeys])],

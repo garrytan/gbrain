@@ -295,7 +295,7 @@ describe('engine parity: dream-cycle statements', () => {
     await engine.putPage('atoms/imported', atom('Imported', { concepts: ['z'], imported_from: 'elsewhere' }));
     await engine.putPage('atoms/note', note('Note', 'Not an atom', { concepts: ['n'] }));
     const atoms = (await engine.listDreamAtomPages('default'))
-      .map(row => ({ slug: row.slug, title: row.title, body: row.compiled_truth, frontmatter: fm(row.frontmatter), private: row.private }))
+      .map(row => ({ slug: row.slug, title: row.title, body: row.compiled_truth, revision: /^\d+$/.test(row.revision), frontmatter: fm(row.frontmatter), private: row.private }))
       .sort((a, b) => a.slug.localeCompare(b.slug));
     expect(atoms.map(a => a.slug)).toEqual(['atoms/one', 'atoms/priv']);
     // An atom is a derived page: the privacy filter reads it as private whatever its frontmatter says.

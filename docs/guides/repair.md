@@ -3724,8 +3724,9 @@ printed for unknown pages.
 two-sided change as `file_drift` with a `side` (`both`: the file and the page
 both changed since the last import; `unknown`: the page has no import record
 to tell; `deleted`: one side is a deletion) and, for a deleted side, a
-`state`: `tombstone_edited` (the page was deleted and the file was edited),
-`purged_differs` (a purged page's file differs from what was purged) or
+`state`: `tombstone_edited` (the page was deleted and the file was edited, or
+[came back as it was](#file-drift-restored)), `purged_differs` (a purged page's
+file differs from what was purged, or came back after the delete removed it) or
 `file_gone` (the file was deleted and the page changed). `gbrain sources status
 <id> --json` lists each held file with both. `--held` selects those holds:
 
@@ -3741,6 +3742,20 @@ and a deleted side refuses without `--state`
 ([`file_drift_state_required`](error-codes.md#file_drift_state_required)):
 the two `--prefer` values do opposite things in each state. Those two refusals
 apply to a `--prefer` preview only.
+
+<a id="file-drift-restored"></a>**A file restored after `gbrain delete`.** When
+`gbrain delete` removed the page's file and the same file comes back (for
+example `git checkout -- <path>` or a commit that re-adds it), the next managed
+sync holds it `file_drift` on the deleted side with `restored: true`:
+`tombstone_edited` while the page is soft-deleted, `purged_differs` after the
+retention purge. The page stays deleted until you pick a side: `--prefer file`
+restores the page (or, once purged, imports the file as a new page) and
+`--prefer database` keeps the deletion and removes the file. Sync never brings
+the page back by itself. `gbrain sources status <id>` and doctor
+(`git_held_files`) list the hold with the command that resolves it. A deletion that stands settles with no hold:
+a delete whose removal of the file is not committed yet, a delete that left the
+file (`sync.write_through` off, a read-only mirror), a `--purge` delete, and a
+git-canonical (strict) source.
 
 <a id="file-drift-compare"></a>**Compare before you pick a side** (GST-2568). Any selection (`--slug`,
 `--request`, `--all-drifted` or `--held`, with its narrowing flags) without
@@ -4346,6 +4361,19 @@ Each file gets one minimal line change in one class:
 | `safe` | Quote a value exactly as gbrain already reads it, strip NUL bytes, swap the outer quotes of a nested quoted value. Every parsed value stays the same. | Included. |
 | `interpretive` | Fold unquoted continuation lines into the value above, keep the later of a duplicated key, quote an unclosed `[`/`{` or a `#`-leading title, insert a missing closing `---`, remove a `slug:` line that names another page, re-import a page from its file, re-bind a held rename to the old page's current revision. | Only with `--include-ambiguous`. |
 | `needs_review` | No rule fixes it (mis-indented YAML, a protected key such as `visibility`, an import that would keep page data the file does not carry, a file over the [page size limit](memory-boundaries.md#large-page-limits)). | Never written. The preview names the exact manual fix. |
+
+A file held for something other than its frontmatter (a `file_drift` hold of a
+deleted or purged page, a `page_identity_changed` hold such as two spellings of
+one path, an origin conflict, a write that raced the database) is
+`needs_review` with that hold's own fix, for example the
+[`repair file-drift --held`](#file-drift-held) preview (`--side deleted`
+restores or keeps a deleted page after you decide): importing it would decide
+that hold without you. So is any file whose import would bring a
+deleted page back (`page_deleted`: restore it with `gbrain restore` first) or
+re-create a purged one (`page_purged`). So are two files whose paths differ
+only by case and name one page (`notes/Standup.md` and `notes/standup.md`), held or
+not: importing one would pick a spelling. Frontmatter repair never imports
+any of these.
 
 Two passes: when interpretive candidates exist, the safe preview's
 `next_actions` carry both the safe apply and the `--include-ambiguous` preview.

@@ -48,17 +48,22 @@ export function managedModeFromRows<T extends { enabled: unknown }>(rows: Readon
   if (rows.length !== 1 || !row || typeof row.enabled !== 'boolean') throw unknownManagedModeRefusal(rows, context);
   return row as T & { enabled: boolean };
 }
-/** True for a Rust brain, which has no SQL dialect and is never managed (its persistence rows come from typed members). */
+/** True for a Rust brain, which has no SQL dialect (its persistence rows come from typed members). */
 function isRustBrain(engine: RawSqlEngine): boolean {
   return (engine as { kind?: unknown }).kind === 'rust';
 }
 /**
- * A Rust brain's singleton as a fresh SQL brain stores it: its own brain id, unmanaged, epoch 1, protocol floor 1 and
- * skill bundles off. With no brain id the row is missing, so the strict readers refuse as they do on a SQL brain.
+ * A Rust brain's singleton from the brain row of its writer admin state: its own brain id, its stored mode and epoch,
+ * protocol floor 1 and skill bundles off. With no brain id the row is missing, so the strict readers refuse as they do
+ * on a SQL brain.
  */
 async function rustPersistenceBrainRows(engine: RawSqlEngine): Promise<PersistenceBrainRow[]> {
-  const brainId = await (engine as unknown as Pick<BrainEngine, 'readPersistenceBrainId'>).readPersistenceBrainId();
-  return brainId ? [{ brain_id: brainId, enabled: false, mode_epoch: '1', skill_bundles_enabled: false, writer_protocol_floor: 1 }] : [];
+  const state = JSON.parse(await (engine as unknown as Pick<BrainEngine, 'readWriterAdminState'>).readWriterAdminState()) as {
+    brain: { id: string; enabled: boolean; mode_epoch: number | string; skill_bundles_enabled: boolean; writer_protocol_floor: number } | null;
+  };
+  const brain = state.brain;
+  return brain ? [{ brain_id: brain.id, enabled: brain.enabled, mode_epoch: String(brain.mode_epoch),
+    skill_bundles_enabled: brain.skill_bundles_enabled, writer_protocol_floor: brain.writer_protocol_floor }] : [];
 }
 /** Whether the brain is managed: `true` or `false` from a well-formed singleton, `storage_error` otherwise; a query error propagates. */
 export async function readManagedMode(engine: RawSqlEngine, opts: ManagedModeReadOptions = {}): Promise<boolean> {
@@ -91,4 +96,17 @@ export async function readPersistenceBrain(engine: RawSqlEngine, opts: ManagedMo
   const sql = opts.lock ? `${PERSISTENCE_BRAIN_SQL} FOR ${opts.lock.toUpperCase()}` : PERSISTENCE_BRAIN_SQL;
   const rows = await engine.executeRaw<Omit<PersistenceBrainRow, 'enabled'> & { enabled: unknown }>(sql, undefined, opts.signal ? { signal: opts.signal } : undefined);
   return managedModeFromRows(rows, opts.refusal);
+}
+/**
+ * The shared-skill columns `writer status` reports (undefined when the singleton is missing). A Rust brain answers
+ * from the row `rustPersistenceBrainRows` builds; SQL engines keep the statement.
+ */
+export async function readSharedSkillsState(engine: RawSqlEngine): Promise<{ writer_protocol_floor: number; skill_bundles_enabled: boolean } | undefined> {
+  if (isRustBrain(engine)) {
+    const [row] = await rustPersistenceBrainRows(engine);
+    return row ? { writer_protocol_floor: row.writer_protocol_floor ?? 1, skill_bundles_enabled: row.skill_bundles_enabled ?? false } : undefined;
+  }
+  const [row] = await engine.executeRaw<{ writer_protocol_floor: number; skill_bundles_enabled: boolean }>(
+    'SELECT writer_protocol_floor,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+  return row;
 }

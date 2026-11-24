@@ -17,15 +17,11 @@
 use crate::Store;
 use crate::error::Result;
 use crate::links::no_nul;
-use crate::page_body::{body_storage_columns, truth_lead};
+use crate::page_body::body_storage_columns;
 use crate::pages::all_pages;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
-
-/// `left(coalesce(compiled_truth, truth_lead), BOUNDED_PREFIX_BYTES)` (page-window/bounded-lead.ts):
-/// `left` counts code points.
-const BOUNDED_PREFIX_CHARS: usize = 64 * 1024;
 
 /// `countSegmentedCensusPages(sourceIds, checkedOutSourceIds)`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -33,13 +29,6 @@ const BOUNDED_PREFIX_CHARS: usize = 64 * 1024;
 pub struct SegmentedCensusQuery {
     pub source_ids: Vec<String>,
     pub checked_out_source_ids: Vec<String>,
-}
-
-/// `left(text, n)`: the first `n` code points.
-fn left(text: &str, n: usize) -> &str {
-    text.char_indices()
-        .nth(n)
-        .map_or(text, |(at, _)| &text[..at])
 }
 
 impl Store {
@@ -74,54 +63,10 @@ impl Store {
         Ok(json!({ "n": n }))
     }
 
-    /// `listFactsPageBodies()`: `{ slug, source_id, segmented, body }` for every live page of type
-    /// `facts`, by source id then slug in byte order.
-    pub fn list_facts_page_bodies(&self) -> Result<Vec<Value>> {
-        let read = self.read()?;
-        let mut pages: Vec<_> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| p.deleted_at_us.is_none() && p.page_type == "facts")
-            .collect();
-        pages.sort_by(|a, b| {
-            a.source_id
-                .as_bytes()
-                .cmp(b.source_id.as_bytes())
-                .then(a.slug.as_bytes().cmp(b.slug.as_bytes()))
-        });
-        let mut out = Vec::with_capacity(pages.len());
-        for page in pages {
-            let segmented = body_storage_columns(&*read, page.id)?.0 == "segmented";
-            let body = match page.compiled_truth.as_deref() {
-                Some(text) => Some(left(text, BOUNDED_PREFIX_CHARS).to_string()),
-                None => {
-                    truth_lead(&*read, page.id)?.map(|t| left(&t, BOUNDED_PREFIX_CHARS).to_string())
-                }
-            };
-            out.push(json!({
-                "slug": page.slug,
-                "source_id": page.source_id,
-                "segmented": segmented,
-                "body": body,
-            }));
-        }
-        Ok(out)
-    }
-
     /// `readFactTableCatalog()`: `{ facts: 'facts', attempts: 'fact_relink_attempts' }`.
     pub fn read_fact_table_catalog(&self) -> Result<Value> {
         // The open check: a closed store refuses, as every other read does.
         drop(self.read()?);
         Ok(json!({ "facts": "facts", "attempts": "fact_relink_attempts" }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::left;
-
-    #[test]
-    fn left_counts_code_points() {
-        assert_eq!(left("héllo", 2), "hé");
-        assert_eq!(left("ab", 5), "ab");
     }
 }

@@ -15,11 +15,10 @@
  *    listExtractorFactsForClassification over its write journal's requests (rust/docs/store/facts.md).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
- *  - Seam: recordPagePurge (harness.ts) writes a page_purges row with SQL, as the page purge sweep does; the Rust arm
- *    stops there on the typed raw_sql refusal, because no member writes that ledger on Rust. recordFenceRetirement
- *    (harness.ts) writes a facts-fence generation through the typed ledger writers the fence publish uses
- *    (activateGenerationRows, recordHeldGenerationRow), so every arm runs the listUnwithdrawnFacts cases. Every fact,
- *    page, loop and withdrawal is seeded through the typed members. The write journal behind listExtractorFactsForClassification's receipts (persistence_requests) has no
+ *  - Seam: page_purges rows are written through the typed upsertPagePurges the page purge sweep uses, on every arm.
+ *    recordFenceRetirement (harness.ts) writes a facts-fence generation through the typed ledger writers the fence
+ *    publish uses (activateGenerationRows, recordHeldGenerationRow), so every arm runs the listUnwithdrawnFacts cases.
+ *    Every fact, page, loop and withdrawal is seeded through the typed members. The write journal behind listExtractorFactsForClassification's receipts (persistence_requests) has no
  *    typed writer that can complete a request at a fact's expiry instant, so its case asserts the answer with no receipt;
  *    the receipt join is pinned by the store test rust/crates/gbrain-store/tests/facts_extractor_classify.rs. Generated
  *    values (ids) are compared by relation, never by value.
@@ -352,6 +351,92 @@ describe('engine parity: group 5 facts repair statements', () => {
     return { rows: view(rows), bySlug: view(bySlug), elsewhere };
   });
 
+  parityTest('listExtractorFactsForClassification carries the page, withdrawal, duplicate and fence evidence of each fact', {
+    methods: ['putPage', 'softDeletePage', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'listExtractorFactsForClassification'],
+  }, async (engine) => {
+    await engine.putPage('chats/two', note('Two', 'a chat'));
+    await engine.putPage('chats/deleted', note('Deleted', 'a chat'));
+    const ex = (text: string, slug: string, extra: Record<string, unknown> = {}) =>
+      fenced(engine, text, { source: EXTRACTOR, visibility: 'private', source_markdown_slug: slug, row_num: null, ...extra });
+    const twin = await ex('twin claim', 'chats/two');
+    await ex('twin claim', 'chats/two');
+    const lone = await ex('lone claim', 'chats/two', { entity_slug: 'people/ann' });
+    const retired = await ex('retired claim', 'chats/two', { context: 'retired: conversation-labels' });
+    const held = await fenced(engine, 'fence claim', { source: 'fence', visibility: 'world', source_markdown_slug: 'chats/two' });
+    const deleted = await ex('withdrawn claim', 'chats/deleted');
+    const nowhere = await ex('nowhere claim', 'chats/nowhere');
+    for (const id of [twin, lone, retired, held, deleted, nowhere]) expect(await engine.expireFact(id)).toBe(true);
+    expect(await engine.softDeletePage('chats/deleted')).toBeTruthy();
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn claim', '*', null)).toBe(true);
+    const rows = await engine.listExtractorFactsForClassification(['default'], null);
+    const one = await engine.listExtractorFactsForClassification(['default'], 'chats/two');
+    expect(rows.map(r => Number(r.id))).toEqual([deleted, nowhere, twin, lone]);
+    const view = (list: typeof rows) => list.map(({ id: _id, page_id, expired_at, ...r }) => ({ ...r, has_page: page_id !== null, expired: /^\d{4}-\d{2}-\d{2}T/.test(expired_at) }));
+    return { rows: view(rows), one: view(one) };
+  });
+
+  parityTest('countPurgedPageFacts counts the active page-extraction facts of a page that is gone', {
+    methods: ['putPage', 'softDeletePage', 'insertFact', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'countPurgedPageFacts'],
+  }, async (engine) => {
+    await engine.putPage('notes/soft', note('Soft', 'a page'));
+    expect(await engine.softDeletePage('notes/soft')).toBeTruthy();
+    const at = (text: string, context: string, extra: Record<string, unknown> = {}) => fact(engine, text, { source: 'mcp:put_page', context, ...extra });
+    await at('soft deleted page', 'notes/soft \u2014 a note');
+    await at('no slash', 'gone');
+    await at('whitespace', 'gone/a page');
+    await at('gone page', 'gone/page \u2014 a note');
+    await at('another', 'gone/other');
+    await at('sync import', 'gone/synced', { source: 'sync:import' });
+    await at('other source', 'gone/elsewhere', { source: 'mcp:other' });
+    await fenced(engine, 'on a page', { source: 'mcp:put_page', context: 'gone/held', source_markdown_slug: 'gone/held', visibility: 'private' });
+    await at('withdrawn', 'gone/withdrawn');
+    expect(await engine.insertFactWithdrawal('default', 'private', 'withdrawn', '*', null)).toBe(true);
+    expect(await engine.expireFact(await at('expired', 'gone/expired'))).toBe(true);
+    const counted = await engine.countPurgedPageFacts(['default'], 10);
+    const atCap = await engine.countPurgedPageFacts(['default'], 3);
+    const under = await engine.countPurgedPageFacts(['default'], 2);
+    const none = await engine.countPurgedPageFacts(['default'], 0);
+    const elsewhere = await engine.countPurgedPageFacts(['other'], 10);
+    expect({ counted, atCap, under, none, elsewhere }).toEqual({
+      counted: { evidenced: 0, ambiguous: 3, capped: false }, atCap: { evidenced: 0, ambiguous: 3, capped: false },
+      under: { evidenced: 0, ambiguous: 2, capped: true }, none: { evidenced: 0, ambiguous: 0, capped: true },
+      elsewhere: { evidenced: 0, ambiguous: 0, capped: false },
+    });
+    return { counted, atCap, under, none, elsewhere };
+  });
+
+  parityTest('countPurgedPageFacts counts a fact as evidenced when the purge ledger names its page after it was written', {
+    methods: ['insertFact', 'countPurgedPageFacts'],
+  }, async (engine, backend) => {
+    const at = (text: string, context: string) => fact(engine, text, { source: 'mcp:put_page', context });
+    await at('purged after', 'gone/purged \u2014 a note');
+    await at('bare purged after', 'bare');
+    await at('bare never purged', 'other');
+    await recordPagePurge(engine, backend, 'default', 'gone/purged', 'h1');
+    await recordPagePurge(engine, backend, 'default', 'bare', 'h2');
+    await recordPagePurge(engine, backend, 'default', 'gone/early', 'h3');
+    await recordPagePurge(engine, backend, 'default', 'early', 'h4');
+    // A purge in another source is no evidence for a fact of this one.
+    await createSource(engine, backend, 'other');
+    await recordPagePurge(engine, backend, 'other', 'other', 'h5');
+    // Written after the purge: the ledger row is no evidence for these. PGLite's now() ticks in whole milliseconds, and the
+    // evidence test is `purged_at >= created_at`, so a fact written in the purge's millisecond counted as evidenced (the
+    // CI failure on da99c637a7: evidenced 3, ambiguous 0). Let the clock move past the purges first.
+    const purgedBy = Date.now();
+    while (Date.now() <= purgedBy + 1) await Bun.sleep(1);
+    await at('slash written after the purge', 'gone/early');
+    await at('bare written after the purge', 'early');
+    const counted = await engine.countPurgedPageFacts(['default'], 10);
+    const capped = await engine.countPurgedPageFacts(['default'], 1);
+    const elsewhere = await engine.countPurgedPageFacts(['other'], 10);
+    const total = (c: { evidenced: number; ambiguous: number }) => c.evidenced + c.ambiguous;
+    expect({ counted, capped: { total: total(capped), capped: capped.capped }, elsewhere }).toEqual({
+      counted: { evidenced: 2, ambiguous: 1, capped: false }, capped: { total: 1, capped: true },
+      elsewhere: { evidenced: 0, ambiguous: 0, capped: false },
+    });
+    return { counted, capped: { total: total(capped), capped: capped.capped }, elsewhere };
+  });
+
   parityTest('listExtractorFactsForClassification marks a fact with no page as not on a deleted page', {
     methods: ['insertFacts', 'expireFact', 'listExtractorFactsForClassification'],
   }, async (engine) => {
@@ -434,23 +519,59 @@ describe('engine parity: group 5 facts repair statements', () => {
   });
 
   parityTest('countPurgedPageFacts takes a purge record of the head slug written after the fact as evidence', {
-    methods: ['insertFact', 'countPurgedPageFacts'],
+    methods: ['insertFact', 'upsertPagePurges', 'countPurgedPageFacts'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     const gone = (context: string, text: string) => fact(engine, text, { source: 'mcp:put_page', context });
-    await recordPagePurge(engine, backend, 'default', 'early', 'h-early', '2000-01-01T00:00:00Z');
-    await recordPagePurge(engine, backend, 'default', 'notes/early', 'h-notes-early', '2000-01-01T00:00:00Z');
+    const purge = (sourceId: string, slug: string, ...contentHashes: string[]) => engine.upsertPagePurges({ sourceId, contentHashes, slug, requestId: null });
+    await purge('default', 'early', 'h-early');
+    await purge('default', 'notes/early', 'h-notes-early');
+    await purge('default', 'moved', 'h-moved');
     await gone('purged \u2014 x', 'no slash, purged after');
     await gone('notes/purged \u2014 x', 'slash, purged after');
     await gone('early \u2014 x', 'no slash, purged before');
     await gone('notes/early \u2014 x', 'slash, purged before');
     await gone('elsewhere \u2014 x', 'purged in another source');
-    await recordPagePurge(engine, backend, 'default', 'purged', 'h-purged');
-    await recordPagePurge(engine, backend, 'default', 'notes/purged', 'h-notes-purged');
-    await recordPagePurge(engine, backend, 'other', 'elsewhere', 'h-elsewhere');
+    await gone('moved \u2014 x', 'its tombstone moved to another slug');
+    await gone('restamped \u2014 x', 'an earlier tombstone re-recorded under it after');
+    await purge('default', 'purged', 'h-purged');
+    await purge('default', 'notes/purged', 'h-notes-purged');
+    await purge('other', 'elsewhere', 'h-elsewhere');
+    // The conflict update moves h-moved to the new slug and time: 'moved' loses its tombstone, 'restamped' gains one.
+    await purge('default', 'restamped', 'h-moved');
     const counted = await engine.countPurgedPageFacts(['default'], 100);
-    expect(counted).toEqual({ evidenced: 2, ambiguous: 1, capped: false });
+    expect(counted).toEqual({ evidenced: 3, ambiguous: 1, capped: false });
     return { counted };
+  });
+
+  parityTest('upsertPagePurges tombstones a page body so no page of that source can store it again', {
+    methods: ['putPage', 'getPage', 'upsertPagePurges'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const body = note('Gone', 'a purged body');
+    await engine.putPage('notes/gone', body);
+    const hash = (await engine.getPage('notes/gone', { sourceId: 'default' }))?.content_hash;
+    expect(typeof hash).toBe('string');
+    const request = 'c0000000-0000-4000-8000-000000000001';
+    await engine.upsertPagePurges({ sourceId: 'missing', contentHashes: [], slug: 'notes/none', requestId: null });
+    await engine.upsertPagePurges({ sourceId: 'default', contentHashes: [hash!, 'h-other'], slug: 'notes/gone', requestId: request });
+    await engine.upsertPagePurges({ sourceId: 'default', contentHashes: [hash!], slug: 'notes/gone', requestId: request });
+    const refused = async (run: () => Promise<unknown>) => run().then(() => 'stored', (e: unknown) => /purged_content/.test(String((e as Error)?.message ?? e)) ? 'purged_content' : 'error');
+    const answers = {
+      // putPage is an upsert, so the purge trigger refuses the tombstoned body for every page of the source, the one
+      // that already holds it included; another source and another body are stored.
+      samePage: await refused(() => engine.putPage('notes/gone', body)),
+      newPage: await refused(() => engine.putPage('notes/copy', body)),
+      otherSource: await refused(() => engine.putPage('notes/copy', body, { sourceId: 'other' })),
+      changedBody: await refused(() => engine.putPage('notes/fresh', note('Fresh', 'another body'))),
+      repeatedHash: await refused(() => engine.upsertPagePurges({ sourceId: 'default', contentHashes: ['h-x', 'h-x'], slug: 'notes/x', requestId: null })),
+      notUuid: await refused(() => engine.upsertPagePurges({ sourceId: 'default', contentHashes: ['h-y'], slug: 'notes/y', requestId: 'nope' })),
+      missingSource: await refused(() => engine.upsertPagePurges({ sourceId: 'missing', contentHashes: ['h-z'], slug: 'notes/z', requestId: null })),
+      copy: (await engine.getPage('notes/copy', { sourceId: 'default' }))?.slug ?? null,
+    };
+    expect(answers).toEqual({ samePage: 'purged_content', newPage: 'purged_content', otherSource: 'stored', changedBody: 'stored',
+      repeatedHash: 'error', notUuid: 'error', missingSource: 'error', copy: null });
+    return answers;
   });
 
   parityTest('listUnwithdrawnFacts lists no fact when no facts-fence generation retired one', { methods: ['putPage', 'insertFacts', 'expireFact', 'listUnwithdrawnFacts'] }, async (engine) => {

@@ -802,15 +802,7 @@ export function engineStallProbe(engine: BrainEngine, sourceId?: string): StallP
       return (await listHostConsumers(engine, hostIdFor(engine)).catch(() => [])).some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live');
     },
     ...(sourceId ? { async head() {
-      const [row] = await engine.executeRaw<{ head_state: string; head_claim_phase: unknown; head_token: string | null; head_lapsed: boolean | null; head_kind: string | null; head_request_id: string | null;
-        head_write_request_id: string | null }>(
-        `SELECT h.state AS head_state, h.id::text AS head_request_id, h.request_id::text AS head_write_request_id, h.claim_phase AS head_claim_phase, h.execution_token::text AS head_token,
-           (h.claim_expires_at IS NOT NULL AND h.claim_expires_at < now()) AS head_lapsed, h.intent->>'kind' AS head_kind
-         FROM persistence_source_bindings b
-         JOIN sources s ON s.id = b.source_id AND s.incarnation = b.source_incarnation
-         JOIN LATERAL (SELECT e.id, e.request_id, e.state, e.claim_phase, e.execution_token, e.claim_expires_at, e.intent FROM persistence_requests e
-           WHERE e.worktree_id = b.worktree_id AND e.state IN ('queued','running','recovering') ORDER BY (e.state <> 'running'), e.sequence LIMIT 1) h ON true
-         WHERE b.source_id = $1`, [sourceId], { timeoutMs: HEAD_READ_TIMEOUT_MS, signal: AbortSignal.timeout(HEAD_READ_TIMEOUT_MS + 500) });
+      const row = await engine.readSyncHeadRequestRow(sourceId, { timeoutMs: HEAD_READ_TIMEOUT_MS, signal: AbortSignal.timeout(HEAD_READ_TIMEOUT_MS + 500) });
       if (!row) return null;
       const { hostIdFor } = await import('./identity.ts');
       const bound = { timeoutMs: HEAD_READ_TIMEOUT_MS, signal: AbortSignal.timeout(HEAD_READ_TIMEOUT_MS + 500) };
@@ -829,7 +821,7 @@ export function deadlinePassed(deadlineAtMs: number | undefined, now = Date.now(
 export function passRoundLine(event: Parameters<NonNullable<SyncOpts['onProgress']>>[0]): string | null {
   const r = event.round;
   if (!r) return null;
-  if (event.phase === 'managed_sync.round_level') return `[sync] pass round ${r.round}: read ${r.paths} path(s) at ${r.target.slice(0, 8)} in ${formatDuration(Math.round((r.read_ms ?? 0) / 1000))}; settling them next.`;
+  if (event.phase === 'managed_sync.round_level') return `[sync] pass round ${r.round}: read ${r.paths} path(s) at ${r.target.slice(0, 8)} in ${formatDuration(Math.round((r.read_ms ?? 0) / 1000))}${r.patched ? ' (patched the previous read)' : ''}; settling them next.`;
   if (event.phase === 'managed_sync.round_admit') return `[sync] pass round ${r.round}: importing ${r.imports ?? 0} file(s) and deleting ${r.deletes ?? 0} page(s)${r.in_flight ? ` (${r.in_flight} write(s) already in flight)` : ''}; progress lines follow as pages commit.`;
   return null;
 }
@@ -1249,11 +1241,7 @@ export interface ManagedSyncBacklog {
  * a legacy cursor entry of the same source.
  */
 export async function readManagedSyncBacklog(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncBacklog[]> {
-  const rows = await engine.executeRaw<{ header: { sourceId: string; index: number; total: number; done?: boolean; discoveredAt?: string; progress?: { startedAt: number; startIndex: number; lastAt: number; lastIndex: number };
-    counts?: { held?: number }; processingOptions?: { noEmbed?: boolean; noExtract?: boolean; noSchemaPack?: boolean }; syncOptions?: Parameters<typeof managedSyncResumeArgs>[0]['syncOptions'] } }>(
-    `SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'
-      AND EXISTS (SELECT 1 FROM sources s WHERE s.id = completed_keys->0->>'sourceId'
-        AND s.incarnation::text = COALESCE(completed_keys->0->>'incarnation', s.incarnation::text))`);
+  const rows = (await engine.listManagedSyncBacklogHeaders()).map(header => ({ header }));
   const { readPassReadings, passResumeArgs, passStuck, passStuckSince } = await import('./sync-pass-readers.ts');
   const passes: ManagedSyncBacklog[] = (await readPassReadings(engine, { sourceIds })).filter(r => !r.health.nothing_pending).map(({ source_id, row, head, health }) => {
     const t = row.value.telemetry, args = passResumeArgs(source_id, row), stuck = passStuck(health) ? health.reason as 'blocked' | 'not_converged' | 'settle_mismatch' : null;

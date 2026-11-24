@@ -25,9 +25,8 @@ export const ORIGIN_TWINS_AUTO_RESOLVE_KEY = 'sync.origin_twins.auto_resolve';
 export const ORIGIN_TWIN_REASON = 'origin_twin';
 
 /** Whether a page carries the `origin_twin` marker (file-target preparation honours it). */
-export async function isOriginTwinPage(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ database_only_reason: string | null }>('SELECT database_only_reason FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
-  return row?.database_only_reason === ORIGIN_TWIN_REASON;
+export async function isOriginTwinPage(engine: Pick<BrainEngine, 'readPageDatabaseOnlyReason'>, sourceId: string, slug: string): Promise<boolean> {
+  return await engine.readPageDatabaseOnlyReason(sourceId, slug) === ORIGIN_TWIN_REASON;
 }
 
 /** The read-only preview of every twin group of a source (`gbrain repair origin-twins`). */

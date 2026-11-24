@@ -34,6 +34,7 @@ import { gitRootAbove } from './access-serves.ts';
 import { READERS_MAX_PAGES } from '../core/repair/readers.ts';
 import { callReadersFor, parseCallAttendees } from '../core/meetings/attendees.ts';
 import { boundedBodyPrefixSql } from '../core/page-window/bounded-lead.ts';
+import { requireRawSql } from '../core/rust-engine/errors.ts';
 
 export const PROPOSAL_FIELDS = ['participants', 'attendees', 'to', 'from', 'cc'] as const;
 export const PROPOSAL_DIR = 'visibility-proposals';
@@ -104,6 +105,9 @@ function assertOutsideGit(dir: string): void {
 
 /** The proposal; writes only the slugs files. `out`: their directory (default <configDir>/visibility-proposals). */
 export async function proposeVisibility(engine: BrainEngine, opts: { source?: string; out?: string } = {}): Promise<VisibilityProposal> {
+  // The page read below builds the private-visibility predicate, the open-page test and the bounded body prefix in SQL;
+  // an engine without raw SQL (the Rust engine) refuses by name before any read, and nothing is written.
+  requireRawSql(engine, 'repair propose visibility');
   const lineage = await membersReadLineageOn(engine);
   const serves = await brainServes(engine);
   if (serves.serves === 'one') {

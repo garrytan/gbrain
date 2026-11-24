@@ -11,7 +11,6 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::purge::SourceArgs;
 use gbrain_store::facts::purge_receipt::{
     FactContextsQuery, NearestPurgeQuery, PageSourcePathsQuery, ProseHitsQuery, ResidueQuery,
     SegmentedBodiesQuery,
@@ -82,19 +81,6 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageSourcePathsQuery = required(args, "listPageSourcePathsForPurge args")?;
             s.list_page_source_paths_for_purge(&a)
-        })
-    }
-
-    /// `countLegacyDerivedPages(sourceId)`: resolves the count.
-    #[napi]
-    pub fn count_legacy_derived_pages<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: SourceArgs = required(args, "countLegacyDerivedPages args")?;
-            s.count_legacy_derived_pages(&a.source_id)
         })
     }
 

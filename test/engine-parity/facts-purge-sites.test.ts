@@ -3,7 +3,7 @@
  * held-fact-move.ts and purge-verify.ts (engine-sql/facts-purge.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: expireFactsOfGonePages, readPurgeSourceLocalPath, insertReasonPurgeTombstones, listGitEffectsCarryingReason,
+ *  - Contract: expireFactsOfGonePages, readPurgeSourceLocalPath, listGitEffectsCarryingReason,
  *    listPageGitEffectsForStrip, setPurgeEffectData, listPageChangeReasons, listRequestsRecordingReasons, heldEntityPageDeleted,
  *    heldTargetPageLive, readHeldAccessState, listHeldMoveRows, listStruckHeldRows, readHeldRowVisibility, heldMoveDue,
  *    readHeldConfigValue, readHeldPageLocation, readHeldVersionsEdited, listSegmentedPageBodies, listSegmentedVersionBodies,
@@ -156,14 +156,6 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     };
     expect(answers).toEqual({ scan: ['/parity/checkout', null, null], receipt: ['/parity/checkout', null, null] });
     return answers;
-  });
-
-  parityTest('insertReasonPurgeTombstones counts the (commit, path) pairs it adds and none it already holds', { methods: ['insertReasonPurgeTombstones'] }, async (engine) => {
-    const first = await engine.insertReasonPurgeTombstones(SRC, ['c1', 'c2'], ['a.md', 'b.md']);
-    const again = await engine.insertReasonPurgeTombstones(SRC, ['c1', 'c2'], ['a.md', 'b.md']);
-    const partial = await engine.insertReasonPurgeTombstones(SRC, ['c2', 'c3'], ['b.md', 'c.md']);
-    expect({ first, again, partial }).toEqual({ first: 2, again: 0, partial: 1 });
-    return { first, again, partial };
   });
 
   parityTest('the Git effect reads lock the effects that carry a reason or name a page, and setPurgeEffectData rewrites one effect\'s data', {

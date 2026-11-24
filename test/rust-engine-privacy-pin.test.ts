@@ -162,4 +162,12 @@ describe('the no-caller page policy PGLite renders, against privacy.rs', () => {
     expect(storePagePolicy('searchKeyword', true)).toEqual({ honorAliases: true, entityPrivacy: true, ownerOnly: 'closed' });
     expect(storePagePolicy('searchKeyword', false)).toBeUndefined();
   });
+
+  test('the store reads the lineage form under both member names (the trunk\'s fn and master\'s lineage)', () => {
+    // Master's member (StoreOwnerOnly in its private-provenance.ts) sends the v320 lineage form as `lineage`; the trunk's
+    // sends `fn`. A store that drops either name rejects every privacy-filtered read from that member with
+    // invalid_argument. The behaviour is held by the master-wire case in test/engine-parity/owner-only-reads.test.ts.
+    const form = OWNER_ONLY_RUST.slice(OWNER_ONLY_RUST.indexOf('pub enum OwnerOnlyForm'));
+    expect(form, `owner_only.rs no longer reads master's \`lineage\` as the fn form. ${HOW}`).toMatch(/#\[serde\(alias = "lineage"\)\]\s*Fn,/);
+  });
 });

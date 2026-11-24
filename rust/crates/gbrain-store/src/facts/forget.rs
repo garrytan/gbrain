@@ -16,7 +16,6 @@
 use super::generations::covers_fact;
 use super::{read_fact, time_arg, write_fact};
 use crate::Store;
-use crate::env::iso;
 use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::links::no_nul;
 use crate::trust::fingerprint::{fact_fingerprint, fact_fingerprint_v1};
@@ -71,26 +70,6 @@ pub(super) fn fact_number(op: &str, id: f64) -> Result<Option<u64>> {
 }
 
 impl Store {
-    /// `readFactForForget`: `{ id, source_id, entity_slug, row_num, source_markdown_slug, expired_at, visibility }`
-    /// (`expired_at` as an ISO instant or null), or `None` for an id that names no fact.
-    pub fn read_fact_for_forget(&self, args: &ForgetReadArgs) -> Result<Option<Value>> {
-        let Some(id) = fact_number("readFactForForget", args.id)? else {
-            return Ok(None);
-        };
-        let read = self.read()?;
-        Ok(read_fact(&*read, id)?.map(|f| {
-            json!({
-                "id": f.id,
-                "source_id": f.source_id,
-                "entity_slug": f.entity_slug,
-                "row_num": f.row_num,
-                "source_markdown_slug": f.source_markdown_slug,
-                "expired_at": f.expired_at_us.map(iso),
-                "visibility": f.visibility,
-            })
-        }))
-    }
-
     /// `expireFactSuperseded`: `valid_until = COALESCE(validUntil, GREATEST(valid_from, LEAST(COALESCE(valid_until,
     /// now), now)))`, `expired_at = now`, for an unexpired fact only.
     pub fn expire_fact_superseded(&self, args: &ExpireSupersededArgs) -> Result<()> {

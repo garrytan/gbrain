@@ -166,7 +166,7 @@ export async function runPageToAliasCore(
       compiled_truth: string;
       frontmatter: Record<string, unknown> | string | null;
     }>(
-      `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug LIMIT ${limit}`,
+      `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT ${limit}`,
       [rule.from_type, effectiveSourceId],
     );
     const would_alias = rows.length;

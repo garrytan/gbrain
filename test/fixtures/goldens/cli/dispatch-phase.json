@@ -2131,9 +2131,21 @@
         "thinClientRoutedSubcommands": []
       },
       "waiting": {
-        "hasSwitchCase": true,
-        "phase": "post-connect",
-        "preConnectRules": [],
+        "hasSwitchCase": false,
+        "phase": "pre-connect-own-engine",
+        "preConnectRules": [
+          {
+            "condition": "command === 'waiting'",
+            "connectsEngine": true,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": [
+              "waiting"
+            ]
+          }
+        ],
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },

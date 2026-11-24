@@ -22,7 +22,7 @@
 //! bytes, as the parity brains' `C` collation orders them.
 
 use super::withdrawal_guard::preserve_withdrawal;
-use super::{bigint, read_fact, source_rows, write_fact};
+use super::{bigint, read_fact, write_fact};
 use crate::Store;
 use crate::error::Result;
 use crate::kv::KvRead;
@@ -31,7 +31,7 @@ use crate::pages::read_page;
 use crate::sources::{all_sources, read_source};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// `listFenceRewriteRows(sourceId, ids)` and `listExpiredFactIds(sourceId, ids)`.
 #[derive(Debug, Clone, Deserialize)]
@@ -179,41 +179,6 @@ impl Store {
             }
             Ok(changed)
         })
-    }
-
-    /// `listPagelessEntityFacts(sourceIds)`: per `(source_id, entity_slug)` with no live page of that slug in the
-    /// source, `ids` (the facts with no `row_num`, by id; none when there are none) and `fenced` (the facts with one),
-    /// ordered by source then slug.
-    pub fn list_pageless_entity_facts(&self, a: &SourceIdsArgs) -> Result<Vec<Value>> {
-        const OP: &str = "listPagelessEntityFacts";
-        let sources = source_set(OP, &a.source_ids)?;
-        let read = self.read()?;
-        let mut out = Vec::new();
-        for source_id in &sources {
-            let mut groups: BTreeMap<String, (Vec<u64>, u64)> = BTreeMap::new();
-            for row in source_rows(&*read, source_id)? {
-                let Some(entity) = row.entity_slug.as_deref() else {
-                    continue;
-                };
-                let group = groups.entry(entity.to_string()).or_default();
-                match row.row_num {
-                    None => group.0.push(row.id),
-                    Some(_) => group.1 += 1,
-                }
-            }
-            for (slug, (ids, fenced)) in groups {
-                if live_page(&*read, source_id, &slug)? {
-                    continue;
-                }
-                out.push(json!({
-                    "source_id": source_id,
-                    "slug": slug,
-                    "ids": id_list(ids),
-                    "fenced": fenced,
-                }));
-            }
-        }
-        Ok(out)
     }
 
     /// `listSourceIncarnations(sourceIds)`: `SELECT id, incarnation::text FROM sources WHERE id = ANY(sourceIds) ORDER

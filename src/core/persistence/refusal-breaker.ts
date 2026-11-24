@@ -39,7 +39,7 @@ async function priorRefusals(engine: BrainEngine, input: { principal: Principal;
     FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent IS NOT NULL AND NOT compacted AND digest=$3
       AND principal_kind=$4 AND principal_id=$5 AND state IN ('failed','conflict') AND error_code IS NOT NULL
       AND completed_at > now()-($6::double precision*interval '1 hour')
-    GROUP BY error_code ORDER BY count(*) DESC LIMIT 1`, [input.sourceId, input.slug, input.digest, input.principal.kind, input.principal.id, REFUSAL_BREAKER_WINDOW_HOURS]);
+    GROUP BY error_code ORDER BY count(*) DESC, error_code COLLATE "C" LIMIT 1`, [input.sourceId, input.slug, input.digest, input.principal.kind, input.principal.id, REFUSAL_BREAKER_WINDOW_HOURS]);
   return row ? { count: Number(row.count), error_code: row.error_code, request_id: row.request_id, detail_origin: row.detail_origin } : null;
 }
 
@@ -66,11 +66,7 @@ export interface SuppressedWrite { source_id: string; slug: string; error_code: 
 export async function listSuppressedWrites(engine: BrainEngine, sourceId: string, limit = 20): Promise<SuppressedWrite[]> {
   const threshold = await readRefusalBreakerThreshold(engine);
   if (threshold <= 0) return [];
-  const rows = await engine.executeRaw<{ slug: string; error_code: string; refusals: string; last_request_id: string; cause: string | null }>(`SELECT slug,error_code,
-      count(*)::text AS refusals,(array_agg(request_id::text ORDER BY sequence DESC))[1] AS last_request_id,(array_agg(error_detail->>'origin' ORDER BY sequence DESC))[1] AS cause
-    FROM persistence_requests WHERE source_id=$1 AND intent IS NOT NULL AND NOT compacted AND operation='submit_job' AND state IN ('failed','conflict')
-      AND error_code IS NOT NULL AND completed_at > now()-($2::double precision*interval '1 hour')
-    GROUP BY slug,digest,error_code HAVING count(*) >= $3 ORDER BY slug LIMIT $4`, [sourceId, REFUSAL_BREAKER_WINDOW_HOURS, threshold, limit]);
+  const rows = await engine.listRefusalBreakerRows(sourceId, REFUSAL_BREAKER_WINDOW_HOURS, threshold, limit);
   return rows.map(row => ({ source_id: sourceId, slug: row.slug, error_code: row.error_code, refusals: Number(row.refusals), last_request_id: row.last_request_id, cause: row.cause,
     exit: row.cause === 'canonical_file_missing'
       ? `gbrain sources reconcile ${sourceId} ${row.slug} --brain host --preview (import the deletion or restore the file)`

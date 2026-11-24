@@ -5,7 +5,7 @@
 //! Each read applies the caller's page policy when the TypeScript member sends one
 //! (`storePagePolicy` with caller readers), as the SQL adds `privatePagesFilterForCaller('p')`.
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-ops.md):
-//! - no `page_mention_state` rows: with mention types, every readable page owes a mention pass;
+//! - the mention due test reads the pass's page state (`mention_state.rs`);
 //! - no `links_extract_failure` rows: no page is held from link extraction.
 //!
 //! Keys: none of its own. It reads the page, page-id, chunk, extraction, wanted-link and source
@@ -32,6 +32,9 @@ pub struct RankCoverageInput {
     pub source_id: String,
     pub version_ts: Option<String>,
     pub mention_types: Option<Vec<String>>,
+    /// `MENTION_EXTRACTOR_VERSION` and `ALIAS_DERIVATION_VERSION`, sent by the TypeScript member.
+    pub mention_version: i64,
+    pub alias_version: i64,
     pub exclude_private: Option<PrivacyPolicy>,
 }
 
@@ -114,7 +117,7 @@ impl Store {
     /// `readRankCoverage`: over the pages of `source_id` the caller may read (live, not
     /// quarantined, in an unarchived source, not hidden by its page policy), whether any still owes
     /// link extraction (`staleForExtractionSql`, guest sources never stale) and, with
-    /// `mention_types`, whether any owes a mention pass (here: any readable page at all).
+    /// `mention_types`, whether any owes a mention pass or, being of those types, an alias refresh.
     pub fn read_rank_coverage(&self, input: &RankCoverageInput) -> Result<RankCoverageRow> {
         let version = version_us(input.version_ts.as_deref())?;
         let read = self.read()?;
@@ -133,7 +136,23 @@ impl Store {
                 readable.push(page);
             }
         }
-        let mention_due = input.mention_types.is_some() && !readable.is_empty();
+        let mut mention_due = false;
+        if let Some(types) = &input.mention_types {
+            for page in &readable {
+                let state = crate::mention_state::read_page_state(read, page.id)?;
+                if crate::mention_state::mention_due(state.as_ref(), page, input.mention_version)
+                    || (types.contains(&page.page_type)
+                        && crate::mention_state::alias_due(
+                            state.as_ref(),
+                            page,
+                            input.alias_version,
+                        ))
+                {
+                    mention_due = true;
+                    break;
+                }
+            }
+        }
         let guests = guest_sources(read, &readable)?;
         let wanted = stale_origin_page_ids(read, None)?;
         let mut link_behind = false;

@@ -29,9 +29,8 @@ export function connectorConfigDigest(config: object): string {
  * (`gbrain sync --source <id>` passes the account check), changes the config,
  * or archives the source.
  */
-export async function connectorAccountMismatches(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Map<string, ConnectorAccountMismatch>> {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null; config: unknown }>(
-    'SELECT id,incarnation::text AS incarnation,local_path,config FROM sources WHERE archived IS NOT TRUE');
+export async function connectorAccountMismatches(engine: Pick<BrainEngine, 'executeRaw' | 'readDoctorSources'>): Promise<Map<string, ConnectorAccountMismatch>> {
+  const sources = await engine.readDoctorSources('live_incarnations');
   const keyed = new Map(sources.filter(s => isConnectorSourceKind(parseSourceConfig(s.config).kind))
     .map(s => [connectorStateKey(s.id, s.incarnation), s]));
   const found = new Map<string, ConnectorAccountMismatch>();

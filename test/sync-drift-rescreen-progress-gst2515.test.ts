@@ -50,17 +50,15 @@ async function versionOneHolds(engine: BrainEngine, root: string): Promise<void>
   expect(await versions(engine)).toEqual({ v1: HOLDS });
 }
 
-/** Each history read (a cat-file of <commit>~k:<path> specs) takes delayMs longer, as one does on a deep history; counts the paths read. */
+/** Each history read (a `git log --raw` of held paths, GST-3328) takes delayMs longer, as one does on a deep history; counts the paths read. */
 function slowHistoryReads(delayMs: number): { paths: () => number } {
   let paths = 0;
   __setSyncGitStreamForTests(async (root, args, opts) => {
-    if (args[0] !== 'cat-file' || opts.stdin === undefined || typeof opts.stdin === 'string' || Buffer.isBuffer(opts.stdin) || Symbol.asyncIterator in opts.stdin) return hardenedGitStream(root, args, opts);
-    const stdin = [...opts.stdin as Iterable<Buffer | string>].map(line => line.toString());
-    const specs = stdin.join('').split('\n').filter(Boolean);
-    if (!specs.some(spec => /~\d+:/.test(spec))) return hardenedGitStream(root, args, { ...opts, stdin });
-    paths += specs.filter(spec => /~0:/.test(spec)).length;
+    const held = args[0] === 'log' && args.includes('--raw') ? args.slice(args.indexOf('--') + 1).filter(arg => arg.startsWith(':(literal)') && arg.endsWith('.md')) : [];
+    if (!held.length) return hardenedGitStream(root, args, opts);
+    paths += held.length;
     await new Promise(resolve => setTimeout(resolve, delayMs));
-    return hardenedGitStream(root, args, { ...opts, stdin });
+    return hardenedGitStream(root, args, opts);
   });
   return { paths: () => paths };
 }

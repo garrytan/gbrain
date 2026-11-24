@@ -36,10 +36,13 @@ interface Pin {
 
 const PINS: Pin[] = [
   {
+    // Main join (da99c637a7): the cli-members line's callers (agent-session-facts.ts:334 and captured-facts.ts:238 at
+    // de72811022) sorted `ORDER BY id COLLATE "C"`; the join re-applied that byte order to main's member, so the pin
+    // carries it too.
     from: 'src/core/repair/agent-session-facts.ts:334 activeSources; src/core/repair/captured-facts.ts:238 activeSources',
     member: 'listActiveSourceIds',
     runs: [{ run: e => e.listActiveSourceIds(), params: undefined }],
-    text: `SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id`,
+    text: `SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"`,
   },
   {
     from: 'src/core/repair/agent-session-facts.ts:338 brainId; src/core/repair/captured-facts.ts:254 plan; src/core/repair/captured-facts.ts:283 plan (emptyHash)',
@@ -128,6 +131,9 @@ const PINS: Pin[] = [
     text: `SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NOT NULL`,
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (facts-rehome.ts:65 at de72811022) sorted `f.source_id
+    // COLLATE "C", f.entity_slug COLLATE "C"`; the join re-applied that byte order to main's member, so the pin
+    // carries it too.
     from: 'src/core/repair/facts-rehome.ts:57 classifyPagelessEntities',
     member: 'listPagelessEntityFacts',
     runs: [{ run: e => e.listPagelessEntityFacts(['s1', 's2']), params: [['s1', 's2']] }],
@@ -139,9 +145,11 @@ const PINS: Pin[] = [
      WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
      GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id, f.entity_slug`,
+     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`,
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (facts-rehome.ts:86 at de72811022) sorted `ORDER BY id
+    // COLLATE "C"`; the join re-applied that byte order to main's member, so the pin carries it too.
     from: 'src/core/repair/facts-rehome.ts:85 sourcesOf',
     member: 'listSourceIncarnations',
     runs: [{ run: e => e.listSourceIncarnations(['s1']), params: [['s1']] }],
@@ -278,10 +286,19 @@ FROM f n JOIN f o
          AND ((tp.target_id = o.id AND tp.related_id = n.id) OR (tp.target_id = n.id AND tp.related_id = o.id)))`,
   },
   {
+    // Main join (da99c637a7): the cli-members line's caller (claim-conflicts.ts:125 at de72811022) sorted `ORDER BY id
+    // COLLATE "C"`; the join re-applied that byte order to main's member, so the pin carries it too.
     from: 'src/core/facts/claim-conflicts.ts:125 runClaimConflicts',
-    member: 'listUnarchivedSourceIds',
-    runs: [{ run: e => e.listUnarchivedSourceIds(), params: undefined }],
-    text: `SELECT id FROM sources WHERE NOT archived ORDER BY id`,
+    member: 'listUnarchivedSourceRows',
+    runs: [{ run: e => e.listUnarchivedSourceRows(), params: undefined }],
+    // The byte-order pass (source-id-order-collation guard, commit 5065136f1f) added COLLATE "C" to the member's one read.
+    text: `SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"`,
+  },
+  {
+    from: 'src/core/engine-sql/facts-trust.ts listAllUnarchivedSourceIds (the same read as listUnarchivedSourceRows, byte order)',
+    member: 'listAllUnarchivedSourceIds',
+    runs: [{ run: e => e.listAllUnarchivedSourceIds(), params: undefined }],
+    text: `SELECT id FROM sources WHERE NOT archived ORDER BY id COLLATE "C"`,
   },
 ];
 

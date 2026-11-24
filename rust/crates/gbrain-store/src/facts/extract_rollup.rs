@@ -2,7 +2,7 @@
 //! `upsertExtractRollup` (src/core/engine-sql/extract-bookkeeping.ts) and the two doctor reads of
 //! it, `readExtractRollup7d` and `listRecordedHaltReasons7d` (doctor's `extract_health` check).
 //!
-//! Key: `F 0x11 kind\0 source_id\0 day\0` (`day` as `YYYY-MM-DD`), one [`RollupRecord`] per
+//! Key: `F 0x12 kind\0 source_id\0 day\0` (`day` as `YYYY-MM-DD`), one [`RollupRecord`] per
 //! `(kind, source_id, day)`, the table's primary key. The table has no foreign key, so deleting a
 //! source keeps its rows, as in Postgres.
 //!
@@ -34,7 +34,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 /// The byte after `keys::FACT` that marks an extract rollup row.
-const EXTRACT_ROLLUP: u8 = 0x11;
+const EXTRACT_ROLLUP: u8 = 0x12;
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
 /// One `extract_rollup_7d` row besides its key.

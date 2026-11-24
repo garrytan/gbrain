@@ -14,7 +14,6 @@ import type { BrainEngine, FactRow } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
-import { sqlQueryForEngine } from '../sql-query.ts';
 import { sharedReadSources } from '../grants/read-shared.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import { getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '../ai/gateway.ts';
@@ -86,7 +85,7 @@ export async function namesakesOrMerge(ctx: OperationContext, candidates: Entity
   const write = ctx.auth?.sourceId;
   const other = candidates?.length === 2 && candidates.some(c => c.source_id === write) ? candidates.find(c => c.source_id !== write) : undefined;
   if (!other || !write || ctx.auth?.readShared !== true) return { ambiguousEntity: candidates, mergedSources: null };
-  const shared = await sharedReadSources(sqlQueryForEngine(ctx.engine), ctx.auth.member?.id ?? null).catch(() => null);
+  const shared = await sharedReadSources(ctx.engine, ctx.auth.member?.id ?? null).catch(() => null);
   return shared && !shared.includes(write) && shared.includes(other.source_id)
     ? { ambiguousEntity: null, mergedSources: [write, other.source_id] } : { ambiguousEntity: candidates, mergedSources: null };
 }

@@ -137,8 +137,7 @@ fn extractor_facts_carry_their_page_withdrawal_duplicate_fence_and_receipt_evide
     );
     expire(&store, unreceipted, Some(&failed_at));
 
-    // Withdrawn under `*`, with an active duplicate and a fence row on the page. The duplicate is
-    // saved before the withdrawal: the insert guard saves one inserted after it expired.
+    // Withdrawn under `*`, with an active duplicate and a fence row on the page.
     let withdrawn = fact(&store, "Cy sings", json!({}));
     expire(&store, withdrawn, None);
     // The duplicate is saved before the withdrawal: a claim written after it is saved expired

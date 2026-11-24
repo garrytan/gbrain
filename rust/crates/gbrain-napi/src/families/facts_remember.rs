@@ -16,7 +16,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::remember_reads::{
     AcceptedMarkArgs, ClaimWithdrawalArgs, ExpireSupersededFactArgs, FactIdArgs, LinkArgs,
-    MemberWithdrawalArgs, PairFactArgs, ProvenanceArgs, ReplacementPairArgs, ReplacementTargetArgs,
+    MemberWithdrawalArgs, PairFactArgs, ReplacementPairArgs, ReplacementTargetArgs,
     RestoreSupersededFactArgs, RetireArgs, RowsByIdsArgs, SourcedFactArgs,
 };
 
@@ -71,19 +71,6 @@ impl Brain {
         self.run(env, move |s| {
             let a: RetireArgs = required(args, "listFactsToRetireFromPage args")?;
             s.list_facts_to_retire_from_page(&a)
-        })
-    }
-
-    /// `listFactProvenance(args)`: resolves the provenance of each fact.
-    #[napi]
-    pub fn list_fact_provenance<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: ProvenanceArgs = required(args, "listFactProvenance args")?;
-            s.list_fact_provenance(&a)
         })
     }
 

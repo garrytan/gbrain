@@ -93,14 +93,6 @@ pub struct RetireArgs {
     pub pattern: String,
 }
 
-/// `listFactProvenance(sourceId, ids)`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProvenanceArgs {
-    pub source_id: String,
-    pub ids: Vec<f64>,
-}
-
 /// `listFactRowsByIds(sourceIds, ids)`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -305,21 +297,6 @@ impl Store {
                 })
             })
             .collect())
-    }
-
-    /// `listFactProvenance`: `{ id, source }` of each fact of the source named in `ids`, in id order.
-    pub fn list_fact_provenance(&self, args: &ProvenanceArgs) -> Result<Vec<Value>> {
-        const OP: &str = "listFactProvenance";
-        no_nul(OP, &[("sourceId", &args.source_id)])?;
-        let ids = id_set(OP, &args.ids)?;
-        let read = self.read()?;
-        let mut out = Vec::new();
-        for id in ids {
-            if let Some(f) = read_fact(&*read, id)?.filter(|f| f.source_id == args.source_id) {
-                out.push(json!({ "id": f.id, "source": f.source }));
-            }
-        }
-        Ok(out)
     }
 
     /// `listFactRowsByIds`: the whole rows of these ids within these sources, in id order.

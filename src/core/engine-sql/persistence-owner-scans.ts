@@ -112,7 +112,7 @@ export function listResumableRefreshes<R = Record<string, unknown>>(exec: Legacy
   return exec.executeRaw<R & { stale: boolean }>(RESUMABLE_REFRESHES_SQL, [hostId, budgetMs], opts);
 }
 
-export const SOURCE_LAST_COMMITS_SQL = 'SELECT last_commit FROM sources WHERE id=ANY($1::text[]) ORDER BY id';
+export const SOURCE_LAST_COMMITS_SQL = 'SELECT last_commit FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"';
 
 /** The last commit of each named source that exists (null before its first sync), in source id order. */
 export function listSourceLastCommits(exec: LegacyUnscopedRead, sourceIds: readonly string[], opts?: QueryOpts): Promise<{ last_commit: string | null }[]> {

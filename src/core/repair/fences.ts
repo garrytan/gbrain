@@ -228,7 +228,7 @@ const previewFix = (sourceId: string, path: string | null, slug: string): Action
 
 /** The hash a preview of this selection prints when it finds nothing to repair. */
 async function emptyPlanHash(engine: BrainEngine, scope: RepairScope, selection: Selection): Promise<string> {
-  const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sourcesRows = await engine.listSourceIncarnations(scope.source_ids);
   return previewHash({ kind: 'fences-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: [] });
 }
 
@@ -351,7 +351,7 @@ export const fencesRepair: RepairHandler = {
     }
     let waiting = 0;
     for (const entry of [...approved].reverse()) { if (entry.tier === 'llm') waiting++; entry.llm_waiting = entry.tier === 'llm' ? waiting : 0; }
-    const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sourcesRows = await engine.listSourceIncarnations(scope.source_ids);
     const hash = previewHash({ kind: 'fences-v1', brain_id: scope.brain_id, sources: sourcesRows, selection, items: approved });
     if (approved.length && !opts?.apply) await saveApprovedSet<ApprovedSetItem>(engine, { command: 'fences', hash }, approved.map(entry => ({ ...entry, selection })));
     const partial = runs.some(run => !run.complete);

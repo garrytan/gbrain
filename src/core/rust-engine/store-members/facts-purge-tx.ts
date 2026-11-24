@@ -32,52 +32,10 @@ export const listPurgeStreamSlugs: Member<'listPurgeStreamSlugs'> = async (brain
   return storeCall({ member: 'listPurgeStreamSlugs' }, () => brain.listPurgeStreamSlugs({ ids }));
 };
 
-export const deletePurgedFacts: Member<'deletePurgedFacts'> = async (brain, factIds, sourceId) => {
-  const ids = wholeIds('deletePurgedFacts', factIds);
-  if (!ids.length) return 0;
-  return storeCall({ member: 'deletePurgedFacts', sourceId }, () => brain.deletePurgedFacts({ sourceId, ids }));
-};
-
 export const listPurgedPageRevisions: Member<'listPurgedPageRevisions'> = async (brain, sourceId, pageIds) => {
   const ids = wholeIds('listPurgedPageRevisions', pageIds);
   if (!ids.length) return [];
   return storeCall({ member: 'listPurgedPageRevisions', sourceId }, () => brain.listPurgedPageRevisions({ sourceId, ids }));
-};
-
-export const listPagesForPurgeRewrite: Member<'listPagesForPurgeRewrite'> = async (brain, sourceId, pageIds) => {
-  const ids = wholeIds('listPagesForPurgeRewrite', pageIds);
-  if (!ids.length) return [];
-  const rows = await storeCall({ member: 'listPagesForPurgeRewrite', sourceId }, () => brain.listPagesForPurgeRewrite({ sourceId, ids }));
-  return (rows as Array<Record<string, unknown>>).map(row => withDates(row, PAGE_DATES));
-};
-
-export const deletePurgedTakes: Member<'deletePurgedTakes'> = async (brain, takeIds) => {
-  const ids = wholeIds('deletePurgedTakes', takeIds);
-  if (!ids.length) return 0;
-  return storeCall({ member: 'deletePurgedTakes' }, () => brain.deletePurgedTakes({ ids }));
-};
-
-export const deletePurgeTrustProposals: Member<'deletePurgeTrustProposals'> = async (brain, sourceId, factIds, takeIds) => {
-  const facts = wholeIds('deletePurgeTrustProposals', factIds);
-  const takes = wholeIds('deletePurgeTrustProposals', takeIds);
-  return storeCall({ member: 'deletePurgeTrustProposals', sourceId }, () => brain.deletePurgeTrustProposals({ sourceId, factIds: facts, takeIds: takes }));
-};
-
-export const deletePurgeOpenLoops: Member<'deletePurgeOpenLoops'> = async (brain, sourceId, factIds) => {
-  const ids = wholeIds('deletePurgeOpenLoops', factIds);
-  return storeCall({ member: 'deletePurgeOpenLoops', sourceId }, () => brain.deletePurgeOpenLoops({ sourceId, ids }));
-};
-
-export const deletePurgeWriteGateHolds: Member<'deletePurgeWriteGateHolds'> = (brain, sourceId, factHash) =>
-  storeCall({ member: 'deletePurgeWriteGateHolds', sourceId }, () => brain.deletePurgeWriteGateHolds({ sourceId, factHash }));
-
-export const deletePurgeWriteGateReceipts: Member<'deletePurgeWriteGateReceipts'> = (brain, factIds, takeIds, holdIds) =>
-  storeCall({ member: 'deletePurgeWriteGateReceipts' }, () =>
-    brain.deletePurgeWriteGateReceipts({ factIds: [...factIds], takeIds: [...takeIds], holdIds: [...holdIds] }));
-
-export const updatePageBodyForPurge: Member<'updatePageBodyForPurge'> = async (brain, sourceId, pageId, compiled, timeline, hash) => {
-  const [id] = wholeIds('updatePageBodyForPurge', [pageId]);
-  await storeCall({ member: 'updatePageBodyForPurge', sourceId }, () => brain.updatePageBodyForPurge({ sourceId, pageId: id, compiled, timeline, hash }));
 };
 
 export const setPurgeVersionBody: Member<'setPurgeVersionBody'> = async (brain, versionId, compiled, timeline) => {
@@ -87,12 +45,6 @@ export const setPurgeVersionBody: Member<'setPurgeVersionBody'> = async (brain, 
 
 export const redactVersionChangeReasons: Member<'redactVersionChangeReasons'> = async (brain, sourceId, needle, reasonNeedle) =>
   (await storeCall({ member: 'redactVersionChangeReasons', sourceId }, () => brain.redactVersionChangeReasons({ sourceId, needle, reasonNeedle })) as number[]).map(Number);
-
-export const deletePurgedChunks: Member<'deletePurgedChunks'> = async (brain, pageIds) => {
-  const ids = wholeIds('deletePurgedChunks', pageIds);
-  if (!ids.length) return 0;
-  return storeCall({ member: 'deletePurgedChunks' }, () => brain.deletePurgedChunks({ ids }));
-};
 
 export const expireDerivedFacts: Member<'expireDerivedFacts'> = async (brain, factIds, sourceId) => {
   const ids = wholeIds('expireDerivedFacts', factIds);
@@ -134,9 +86,6 @@ export const deletePageViewDigests: Member<'deletePageViewDigests'> = async () =
 
 /** take_proposals: written only by cycle/propose-takes.ts and cycle/propose-takes-failures.ts (executeRaw inserts). */
 export const deletePurgeTakeProposals: Member<'deletePurgeTakeProposals'> = async () => 0;
-
-/** core_edit_notices: written only by persistence/core-guard.ts prepareCoreGuard (an executeRaw insert). */
-export const blankPurgeCoreEditNotices: Member<'blankPurgeCoreEditNotices'> = async () => 0;
 
 /** The re-derive queue (generations/needs_rederive.rs); an empty id list writes nothing, as the SQL inserts no row. */
 export const markNeedsRederive: Member<'markNeedsRederive'> = async (brain, table, ids, sourceId, requestId, reason, hiddenNow) => {

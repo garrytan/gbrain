@@ -253,13 +253,13 @@ impl Store {
     /// `countActiveConversationFacts(sourceId, slug)`.
     pub fn count_active_conversation_facts(&self, a: &ConversationPageArgs) -> Result<i64> {
         a.check("countActiveConversationFacts")?;
-        self.count_page_rows(a, |r| derived_row(r) && r.expired_at_us.is_none())
+        self.count_conversation_page_rows(a, |r| derived_row(r) && r.expired_at_us.is_none())
     }
 
     /// `countPageConversationFacts(sourceId, slug)`.
     pub fn count_page_conversation_facts(&self, a: &ConversationPageArgs) -> Result<i64> {
         a.check("countPageConversationFacts")?;
-        self.count_page_rows(a, derived_row)
+        self.count_conversation_page_rows(a, derived_row)
     }
 
     /// `countConversationWindowFacts(sourceId, slug, key)`.
@@ -272,7 +272,7 @@ impl Store {
             source_id: a.source_id.clone(),
             slug: a.slug.clone(),
         };
-        self.count_page_rows(&page, |r| {
+        self.count_conversation_page_rows(&page, |r| {
             r.conversation_slot()
                 && r.expired_at_us.is_none()
                 && anchored(r)
@@ -290,7 +290,7 @@ impl Store {
             source_id: a.source_id.clone(),
             slug: a.slug.clone(),
         };
-        self.count_page_rows(&page, |r| {
+        self.count_conversation_page_rows(&page, |r| {
             derived_row(r)
                 && r.expired_at_us.is_none()
                 && (!anchored(r)
@@ -298,7 +298,7 @@ impl Store {
         })
     }
 
-    fn count_page_rows(
+    fn count_conversation_page_rows(
         &self,
         a: &ConversationPageArgs,
         keep: impl Fn(&FactRecord) -> bool,

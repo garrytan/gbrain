@@ -21,6 +21,7 @@
 import type { BrainEngine, CycleLockFilter, CycleLockRow } from '../engine.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { QueryOpts, SqlExecutor } from './executor.ts';
+import { LEASE_BEACON_QUEUE } from '../minions/protected-names.ts';
 
 /** `INSERT ... ON CONFLICT`: take a free lock, or steal an expired one whose holder has not refreshed within the grace. */
 const ACQUIRE_SQL = `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at, acquisition_token)
@@ -150,6 +151,43 @@ export const ASSERT_LEASE_SQL = 'SELECT 1 FROM gbrain_cycle_locks WHERE id=$1 AN
  */
 export function assertCycleLease(exec: Pick<BrainEngine, 'executeRaw'>, lockId: string, acquisitionToken: string): Promise<boolean> {
   return exec.executeRaw(ASSERT_LEASE_SQL, [lockId, acquisitionToken]).then(rows => rows.length > 0);
+}
+
+// ---------------------------------------------------------------- the drain lease's holder record
+// `src/core/persistence/sync-lease.ts`: one `gbrain-drain-lease` minion row per drain lease, keyed by the lease token,
+// carrying the holder's kind, id and version under `data.drain_lease_beacon`. No worker serves the queue.
+
+/** The beacon (`data->'drain_lease_beacon'`) of the holder record carrying `lockToken`, or null. */
+export async function readDrainLeaseBeacon(exec: LegacyUnscopedRead, lockToken: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<{ meta: Record<string, unknown> | string | null }>(
+    "SELECT data->'drain_lease_beacon' AS meta FROM minion_jobs WHERE queue=$1 AND lock_token=$2", [LEASE_BEACON_QUEUE, lockToken]);
+  return typeof row?.meta === 'string' ? JSON.parse(row.meta) : row?.meta ?? null;
+}
+
+/** What a drain lease's holder record carries: the source, the lease token, the beacon and the lease's TTL in minutes. */
+export interface DrainLeaseHolderRecord { sourceId: string; lockToken: string; beacon: { kind: string; id: string | null; version: string }; ttlMinutes: number }
+
+/**
+ * Writes the holder record of a drain lease, in one statement: the source's former `sync` holder records go first (the
+ * insert reads the delete's count), then the new row: active, application authority, one attempt, `max_stalled` 0,
+ * removed on completion or failure, locked by the lease token until the TTL ahead.
+ */
+export async function writeDrainLeaseHolder(exec: SqlExecutor, record: DrainLeaseHolderRecord): Promise<void> {
+  await exec.executeRaw(`WITH gone AS (DELETE FROM minion_jobs WHERE queue=$1 AND name='sync' AND data->>'sourceId'=$5 RETURNING 1)
+    INSERT INTO minion_jobs(name,queue,status,submission_authority,data,max_attempts,max_stalled,lock_token,lock_until,started_at,remove_on_complete,remove_on_fail)
+    SELECT 'sync',$1,'active','{"version":1,"kind":"application"}'::jsonb,$2::text::jsonb,1,0,$3,now()+make_interval(mins => $4),now(),true,true FROM (SELECT count(*) FROM gone) g`,
+    [LEASE_BEACON_QUEUE, JSON.stringify({ sourceId: record.sourceId, drain_lease_beacon: record.beacon }), record.lockToken, record.ttlMinutes, record.sourceId]);
+}
+
+/** Renews the holder record carrying `lockToken`: `lock_until` the TTL ahead, `updated_at` now. */
+export async function refreshDrainLeaseHolder(exec: SqlExecutor, lockToken: string, ttlMinutes: number): Promise<void> {
+  await exec.executeRaw(`UPDATE minion_jobs SET lock_until=now()+make_interval(mins => $3),updated_at=now() WHERE queue=$1 AND lock_token=$2`,
+    [LEASE_BEACON_QUEUE, lockToken, ttlMinutes]);
+}
+
+/** Deletes the holder record carrying `lockToken` (the lease's release). */
+export async function releaseDrainLeaseHolder(exec: SqlExecutor, lockToken: string): Promise<void> {
+  await exec.executeRaw('DELETE FROM minion_jobs WHERE queue=$1 AND lock_token=$2', [LEASE_BEACON_QUEUE, lockToken]);
 }
 
 function assertNever(value: never): never {

@@ -123,9 +123,13 @@ export interface ClaimRelease { id: string; token: string | null; reason: string
 /** An expired-claim release: this consumer's host id, whether a claim that expired while preparing counts an attempt, and the dead owners. */
 export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[] }
 
-/** Source `sourceId`'s membership, or null; `lock` reads it FOR SHARE (admission holds it until the transaction ends). */
-export async function readSourceMembership(exec: SqlExecutor, sourceId: string, opts: { lock?: boolean } = {}): Promise<SourceMembership | null> {
-  const sql = opts.lock ? 'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE' : 'SELECT incarnation,archived FROM sources WHERE id=$1';
+/**
+ * Source `sourceId`'s membership, or null; `lock` reads it FOR SHARE (admission holds it until the transaction ends),
+ * and `'update'` FOR UPDATE (a policy change that compares and replaces the source's policy epoch).
+ */
+export async function readSourceMembership(exec: SqlExecutor, sourceId: string, opts: { lock?: boolean | 'update' } = {}): Promise<SourceMembership | null> {
+  const sql = opts.lock === 'update' ? 'SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE'
+    : opts.lock ? 'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE' : 'SELECT incarnation,archived FROM sources WHERE id=$1';
   const [row] = await exec.executeRaw<SourceMembership>(sql, [sourceId]);
   return row ?? null;
 }
@@ -171,6 +175,18 @@ export async function insertTopologyChange(exec: SqlExecutor, row: TopologyChang
 export function findTopologyChanges(exec: LegacyUnscopedRead, principalId: string, requestIds: string[]): Promise<Array<{ request_id: string }>> {
   return exec.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=ANY($2::uuid[]) LIMIT 1',
     [principalId, requestIds]);
+}
+
+/**
+ * The topology recovery scan (topology-recovery.ts recoverSourceTopologies): the changes with a recovery record whose
+ * worktree host `hostId` owns, after cursor `after` (a change id, or null), in id order, at most `limit`.
+ */
+export const TOPOLOGY_RECOVERIES_SQL = `SELECT c.* FROM persistence_topology_changes c
+    JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
+    WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND ($2::uuid IS NULL OR c.id>$2::uuid)
+    ORDER BY c.id LIMIT $3`;
+export function listTopologyRecoveries(exec: LegacyUnscopedRead, hostId: string, after: string | null, limit: number): Promise<TopologyChange[]> {
+  return exec.executeRaw<TopologyChange>(TOPOLOGY_RECOVERIES_SQL, [hostId, after, limit]);
 }
 
 /** Whether a claim would find a row now (read-only: no lock and no claim); `priority` is the switch's environment override. */

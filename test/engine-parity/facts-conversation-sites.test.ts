@@ -581,10 +581,8 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return out;
   });
 
-  // Named Rust stop: restrictFolder (harness.ts) seeds the folder rule through executeRaw, which the Rust engine refuses.
-  // origin/rust-engine/access-rule-writes-3 f659822218 seeds Rust through putAccessPolicyState and
-  // putAccessPendingCoverage (store is_folder_restricted, access_rules.rs) and reaches main through lane 2's
-  // cli-members-next; then Rust listEntityHintPages reads is_folder_restricted and this case goes equal.
+  // restrictFolder (harness.ts) seeds the folder rule on every arm; the Rust listEntityHintPages reads the store's folder
+  // rules and pending prefixes (facts/repair.rs folder_restricted), so the case is equal on all three arms.
   parityTest('listEntityHintPages reads the live pages of the slugs with their retired and folder-restricted flags', {
     methods: ['putPage', 'softDeletePage', 'listEntityHintPages'],
   }, async (engine, backend) => {

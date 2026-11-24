@@ -38,6 +38,7 @@ import { FENCE_RULES_VERSION } from './normalize.ts';
 import { FENCE_VERSION } from './refusal.ts';
 import { FENCE_REASONS } from './reasons.ts';
 import { fenceStep, pageHasFenceText } from './tier1.ts';
+import type { FenceCensusPage, FenceCensusSource } from '../engine-sql/fence-census.ts';
 import {
   clearCandidateParts, readCandidateRecords, readScanRecord, upsertCandidatePart, writeScanRecord,
   type CandidateFinding, type CandidateLocation, type CandidateRecord, type FileFinding, type PageFinding, type ScanRecord,
@@ -45,7 +46,8 @@ import {
 import type { FenceCtx, FencePage, FenceReason, FenceTier } from './types.ts';
 import { gitChildEnv } from '../git-env.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig'>;
+type Exec = Pick<BrainEngine, 'getConfig' | 'readGitHoldRecords' | 'listFenceCandidateRecords' | 'listFenceCensusSources' | 'readFencePassHorizon' | 'listFenceCensusPagesById'
+  | 'listFenceCensusPagesUpdated' | 'listLiveFencePageIds' | 'readFenceScanRecord' | 'writeFenceScanRecord' | 'upsertFenceCandidatePart' | 'clearFenceCandidateParts'>;
 
 export const FENCE_TIERS: readonly FenceTier[] = ['deterministic', 'resolver', 'llm', 'manual'];
 /** The fence rules a stored finding was judged with; a change restarts the scans. */
@@ -88,39 +90,18 @@ export function judgeFences(page: FencePage, ctx: FenceCtx): Pick<CandidateFindi
     location: { fence: at.fence, section: at.section, rows: [...at.rows], columns: [...at.columns], line: at.line } };
 }
 
-interface CensusSource { id: string; incarnation: string; local_path: string | null }
+type CensusSource = FenceCensusSource;
 
 async function censusSources(engine: Exec, sourceIds?: readonly string[]): Promise<CensusSource[]> {
-  return engine.executeRaw<CensusSource>(`SELECT id, incarnation::text AS incarnation, local_path FROM sources
-    WHERE archived IS NOT TRUE AND incarnation IS NOT NULL AND ($1::text[] IS NULL OR id=ANY($1::text[])) ORDER BY id`, [sourceIds ? [...sourceIds] : null]);
+  return engine.listFenceCensusSources(sourceIds ?? null);
 }
 
 const hasCheckout = (source: CensusSource) => !!source.local_path && isAbsolute(source.local_path) && existsSync(source.local_path) && statSync(source.local_path).isDirectory();
 
 /** Where the next incremental pass starts: this moment, or the start of the oldest writer transaction still open, minus the grace. */
-async function passHorizon(engine: Exec, graceMs: number): Promise<string> {
-  const grace = Math.max(0, Math.floor(graceMs));
-  try {
-    const [row] = await engine.executeRaw<{ at: string }>(`SELECT (LEAST(now(), COALESCE((SELECT min(xact_start) FROM pg_stat_activity
-        WHERE datname=current_database() AND backend_xid IS NOT NULL AND pid<>pg_backend_pid()), now())) - ($1::int * interval '1 millisecond'))::text AS at`, [grace]);
-    return row!.at;
-  } catch {
-    const [row] = await engine.executeRaw<{ at: string }>(`SELECT (now() - ($1::int * interval '1 millisecond'))::text AS at`, [grace]);
-    return row!.at;
-  }
-}
+const passHorizon = (engine: Exec, graceMs: number): Promise<string> => engine.readFencePassHorizon(graceMs);
 
-interface PageRow {
-  id: number; slug: string; type: string; frontmatter: Record<string, unknown> | null; source_path: string | null; content_hash: string | null;
-  updated_at: string; live: boolean; compiled_truth: string | null; timeline: string | null;
-}
-
-const FENCED = (column: string) => `(strpos(${column},'gbrain:facts:')>0 OR strpos(${column},'gbrain:takes:')>0)`;
-/** Page columns for judging; bodies only for live markdown pages that mention a fence marker. */
-const PAGE_COLUMNS = `id, slug, type, frontmatter, source_path, content_hash, updated_at::text AS updated_at,
-  (deleted_at IS NULL AND page_kind='markdown') AS live,
-  CASE WHEN deleted_at IS NULL AND page_kind='markdown' AND (${FENCED('compiled_truth')} OR ${FENCED('timeline')}) THEN compiled_truth END AS compiled_truth,
-  CASE WHEN deleted_at IS NULL AND page_kind='markdown' AND (${FENCED('compiled_truth')} OR ${FENCED('timeline')}) THEN timeline END AS timeline`;
+type PageRow = FenceCensusPage;
 
 /** Judges a batch of stored pages and stores what changed. */
 async function judgePages(engine: Exec, source: CensusSource, rows: readonly PageRow[], at: string): Promise<void> {
@@ -148,8 +129,7 @@ async function scanPages(engine: Exec, source: CensusSource, progress: ScanProgr
   const pages = progress.record.pages;
   while (!pages.backfill.done) {
     if (opts.now().getTime() >= opts.deadline) return false;
-    const rows = await engine.executeRaw<PageRow>(`SELECT ${PAGE_COLUMNS} FROM pages WHERE source_id=$1 AND id>$2 ORDER BY id LIMIT $3`,
-      [source.id, pages.backfill.after_id, opts.batchSize]);
+    const rows = await engine.listFenceCensusPagesById(source.id, pages.backfill.after_id, opts.batchSize);
     await judgePages(engine, source, rows, opts.now().toISOString());
     if (rows.length) pages.backfill.after_id = Number(rows[rows.length - 1]!.id);
     if (rows.length < opts.batchSize) Object.assign(pages.backfill, { done: true, completed_at: opts.now().toISOString() });
@@ -160,9 +140,7 @@ async function scanPages(engine: Exec, source: CensusSource, progress: ScanProgr
     if (opts.now().getTime() >= opts.deadline) return false;
     pages.pass ??= { lower: pages.watermark ?? await passHorizon(engine, opts.lateCommitGraceMs), next: await passHorizon(engine, opts.lateCommitGraceMs), after: null };
     const pass = pages.pass;
-    const rows = await engine.executeRaw<PageRow>(`SELECT ${PAGE_COLUMNS} FROM pages WHERE source_id=$1 AND updated_at>=$2::timestamptz
-      AND ($3::timestamptz IS NULL OR (updated_at, id) > ($3::timestamptz, $4::int)) ORDER BY pages.updated_at, pages.id LIMIT $5`,
-    [source.id, pass.lower, pass.after?.at ?? null, pass.after?.id ?? 0, opts.batchSize]);
+    const rows = await engine.listFenceCensusPagesUpdated(source.id, pass.lower, pass.after, opts.batchSize);
     await judgePages(engine, source, rows, opts.now().toISOString());
     if (rows.length) pass.after = { at: rows[rows.length - 1]!.updated_at, id: Number(rows[rows.length - 1]!.id) };
     const caughtUp = rows.length < opts.batchSize;
@@ -349,8 +327,7 @@ function holdTier(hold: GitHoldRecord, file: FileFinding | undefined): FenceTier
 export async function listFenceCandidates(engine: Exec, sourceIds?: readonly string[]): Promise<FenceCandidate[]> {
   const records = await readCandidateRecords(engine, sourceIds);
   const pageIds = records.flatMap(r => r.page ? [r.page.page_id] : []);
-  const live = new Set((pageIds.length ? await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE id=ANY($1::int[]) AND deleted_at IS NULL', [pageIds]) : [])
-    .map(row => Number(row.id)));
+  const live = new Set(await engine.listLiveFencePageIds(pageIds));
   const out = new Map<string, FenceCandidate>();
   const byPath = new Map<string, FenceCandidate>();
   const key = (sourceId: string, k: string) => `${sourceId}\u0000${k}`;

@@ -42,9 +42,14 @@ export interface HeldGenerationListRow {
 export interface HeldGenerationProposalRow { proposal: unknown[] | null; hold_id: string }
 
 /** A source id and its incarnation as text. */
+export interface SourceIncarnationListRow { id: string; incarnation: string }
+
 const GENERATION_ITEMS_SQL = 'SELECT generation_id, item_key, identity_hash, action, preimage FROM derived_generation_items WHERE generation_id = ANY($1::bigint[]) ORDER BY generation_id, item_key COLLATE "C"';
 
 const HELD_PROPOSAL_SQL = `SELECT proposal, hold_id FROM derived_generations WHERE id=$1 AND state='held'`;
+
+const SOURCE_INCARNATIONS_SQL = 'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"';
+
 
 const NO_FILTER = sqlFragment``;
 const RUN_FILTER = (runId: string) => sqlFragment` AND g.run_id = ${runId}`;
@@ -137,3 +142,7 @@ export async function readHeldGenerationProposal(raw: EngineRawRead, id: number)
   return row ?? null;
 }
 
+/** The incarnation of each known source of `sourceIds`, in id order. */
+export async function listGenerationSourceIncarnations(raw: EngineRawRead, sourceIds: readonly string[]): Promise<SourceIncarnationListRow[]> {
+  return raw<SourceIncarnationListRow>(SOURCE_INCARNATIONS_SQL, [sourceIds]);
+}

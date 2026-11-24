@@ -1,97 +1,180 @@
 /**
- * BrainEngine parity — a whole forget of one fact (forgetFactInFence, src/core/facts/forget.ts) on every engine.
+ * BrainEngine parity — the legacy fence helper a forget shares with supersession and retirement.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: forgetting an active fact that sits on no page withdraws its claim (the ledger covers it), expires it and
- *    reports the legacy path; forgetting it again reports already_expired; a supersession and a retirement expire it
- *    without a withdrawal (the claim stays savable) and a supersession with a date ends it there; an id of another
- *    source or a missing id is not_found and changes nothing. The outcomes are equal on every engine arm (PGLite always;
- *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
- *  - Regression: readFactForForget, expireFactSuperseded and expireFactAtDate refused on a Rust brain, so the first read
- *    of a forget stopped before any decision.
- *  - Why existing coverage misses it: test/engine-parity/withdrawal-forget.test.ts drives recordFactWithdrawal only, after
- *    the reads this function makes first, and forget-members.test.ts drives the members one by one.
- *  - Seam: none. Facts come from typed members; the forget runs whole on the arm's engine. Ids differ between arms, so
- *    facts are named by text.
+ *  - Contract: `forgetFactInFence` (facts/forget.ts) withdraws, supersedes (to a given end) or retires a fenced claim
+ *    on a source without a checkout, expires it and strikes its row in the stored body; a second expiry answers
+ *    `already_expired`, and an unknown id or one outside the caller's source answers `not_found`. The answers are
+ *    equal on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1),
+ *    except the segmented gap below. The forget operation (operations.ts `forget`) on an inline page commits, expires
+ *    the claim, strikes its fence row and rebuilds the page's chunks after the commit, equal on every arm.
+ *  - Regression: `forgetFactInFence` read the fact, expired it and read the stored body through raw SQL, which the
+ *    Rust engine refuses, so on a Rust brain every withdrawal, supersession and retirement through it stopped before
+ *    it expired anything.
+ *  - Why existing coverage misses it: test/engine-parity/forget-commit.test.ts commits a withdrawal through the typed
+ *    ledger members, and test/engine-parity/withdrawal-forget.test.ts drives recordFactWithdrawal on a fact with no
+ *    page; neither calls `forgetFactInFence`, the path facts/retire.ts and facts/write-single.ts take.
+ *  - Seam: the page and its fact rows are seeded with `importFromContent` and `insertFacts` under operator trust, not
+ *    `put_page`. `forgetFactInFence` is called directly, as its callers do; their own reads are not in this file.
+ *    Ids and times differ between arms, so they are folded out; the supersession's end is a fixed date and is compared.
+ *    The segmented page is published with test/helpers/page-body-fixtures.ts `publishSegmentedPage` (typed body
+ *    members), and on Rust only the segmented case calls rewriteLiveSegmentedFences itself after write_pending.
+ *  - Known gap: on a segmented page the forget operation answers write_pending on Rust (the case's comment names the
+ *    statement); the case counts as stopped in rust-tally.tsv and compares equal once Rust commits.
  */
-import { afterAll, describe, expect } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { afterAll, afterEach, describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { parseFactsFence } from '../../src/core/facts-fence.ts';
+import { rewriteLiveSegmentedFences } from '../../src/core/page-body/segment-rewrite.ts';
 import { forgetFactInFence } from '../../src/core/facts/forget.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
-import { createSource, parityArms } from './harness.ts';
+import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { publishSegmentedPage, segmentText } from '../helpers/page-body-fixtures.ts';
 
 const { parityTest } = parityArms(testBackends());
 const SRC = 'default';
+const SLUG = 'people/alice-example';
+const SEGMENTED = 'people/bob-example';
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
+const opened: BrainEngine[] = [];
 
-// The operation case configures the process-global gateway; put back the preload's baseline for the next file.
+afterEach(async () => {
+  for (const engine of opened.splice(0)) await disposePersistenceConsumer(engine).catch(() => undefined);
+});
+
+// The cases configure the process-global gateway; put back the preload's baseline for the next file.
 afterAll(() => resetGateway());
 
-describe('engine parity: a whole forget of one fact', () => {
-  parityTest('forgets, supersedes and retires facts that sit on no page, and refuses what is out of scope', {
-    methods: ['readFactForForget', 'expireFactSuperseded', 'insertFact', 'listFactsByEntity', 'hasCoveringFactWithdrawal', 'readWithdrawalAnchor'],
-  }, async (engine: BrainEngine, backend) => {
-    await createSource(engine, backend, 'other');
-    const mk = async (fact: string, sourceId = SRC) => (await engine.insertFact(
-      { fact, source: 'mcp:remember', entity_slug: 'people/a', visibility: 'world', valid_from: new Date('2026-01-01T00:00:00Z') } as never,
-      { source_id: sourceId })).id;
-    const ids = {
-      forgotten: await mk('forgotten claim'), superseded: await mk('superseded claim'), retired: await mk('retired claim'),
-      elsewhere: await mk('claim in other source', 'other'),
-    };
-    const out = {
-      forget: await forgetFactInFence(engine, ids.forgotten, { sourceId: SRC }),
-      again: await forgetFactInFence(engine, ids.forgotten, { sourceId: SRC }),
-      superseded: await forgetFactInFence(engine, ids.superseded, { sourceId: SRC, supersededBy: { rowNum: null, validUntil: new Date('2026-02-01T00:00:00Z') } }),
-      retired: await forgetFactInFence(engine, ids.retired, { sourceId: SRC, retired: 'source changed' }),
-      wrongSource: await forgetFactInFence(engine, ids.elsewhere, { sourceId: SRC }),
-      missing: await forgetFactInFence(engine, 999_999, { sourceId: SRC }),
-    };
-    const rows = await engine.listFactsByEntity(SRC, 'people/a', { activeOnly: false, limit: 100 } as never);
-    const state = rows.map(r => ({ fact: r.fact, expired: r.expired_at != null, valid_until: r.valid_until == null ? null : new Date(r.valid_until as never).toISOString().slice(0, 10) }))
-      .sort((a, b) => a.fact.localeCompare(b.fact));
-    const otherRows = await engine.listFactsByEntity('other', 'people/a', { activeOnly: false, limit: 100 } as never);
-    const today = new Date().toISOString().slice(0, 10);
-    const anchors = { forgotten: await engine.readWithdrawalAnchor(ids.forgotten, SRC), superseded: await engine.readWithdrawalAnchor(ids.superseded, SRC), retired: await engine.readWithdrawalAnchor(ids.retired, SRC) };
-    expect(out.forget).toEqual({ ok: true, path: 'legacy_db', reason: 'forgotten' });
-    expect(out.again.path).toBe('already_expired');
-    expect([out.wrongSource.path, out.missing.path]).toEqual(['not_found', 'not_found']);
-    expect(anchors).toEqual({ forgotten: { withdrawn: true }, superseded: { withdrawn: false }, retired: { withdrawn: false } });
-    expect(state).toEqual([
-      { fact: 'forgotten claim', expired: true, valid_until: today },
-      { fact: 'retired claim', expired: true, valid_until: today },
-      { fact: 'superseded claim', expired: true, valid_until: '2026-02-01' },
-    ]);
-    return { out, state, anchors, otherExpired: otherRows.map(r => r.expired_at != null) };
+const CLAIMS = ['Prefers the window seat', 'Walks to work', 'Drinks green tea', 'Reads before bed'];
+
+const fence = (claims: readonly string[]) => `<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+${claims.map((c, i) => `| ${i + 1} | ${c} | preference | 1.0 | world | medium | 2026-01-01 |  | chat |  |`).join('\n')}
+<!--- gbrain:facts:end -->`;
+
+/** An inline page holding `claims` in its fence, with one fact row per claim, written under operator trust. */
+async function seed(engine: BrainEngine, claims: readonly string[]): Promise<Map<string, number>> {
+  opened.push(engine);
+  configureGateway({ embedding_identity_unverified: true, env: { ...process.env } });
+  const content = `---\ntitle: Alice\ntype: person\n---\n\n# Alice\n\n## Facts\n\n${fence(claims)}\n\n` +
+    '## Notes\n\nNotes on hiring and the budget review.\n';
+  await importFromContent(engine, SLUG, content, { sourceId: SRC, noEmbed: true });
+  await engine.transaction(async (tx) => {
+    await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+      ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'operator_curated' })]);
+    await tx.insertFacts(claims.map((fact, i) => ({ fact, entity_slug: SLUG, source_markdown_slug: SLUG, row_num: i + 1,
+      kind: 'preference', visibility: 'world', source: 'chat', valid_from: new Date(Date.UTC(2026, 0, 1)) })) as never,
+    { source_id: SRC });
   });
-  parityTest('the forget_fact operation forgets a fact end to end, and answers not_found for a missing one', {
-    methods: ['insertFact', 'listFactsByEntity', 'readWithdrawalAnchor'],
-    timeout: 180_000,
-  }, async (engine: BrainEngine) => {
-    configureGateway({ embedding_identity_unverified: true, env: { ...process.env } });
-    const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SRC } as unknown as OperationContext;
-    try {
-      const { id } = await engine.insertFact(
-        { fact: 'an operation claim', source: 'mcp:remember', entity_slug: 'people/a', visibility: 'world', valid_from: new Date('2026-01-01T00:00:00Z') } as never,
-        { source_id: SRC });
-      const forget = (await operationsByName.forget_fact.handler(ctx, { id } as never)) as Record<string, unknown>;
-      const missing = await operationsByName.forget_fact.handler(ctx, { id: 999_999 } as never).then((r) => r as Record<string, unknown>, (e: Error & { code?: string }) => ({ refused: e.code ?? e.message }));
-      const rows = await engine.listFactsByEntity(SRC, 'people/a', { activeOnly: false, limit: 10 } as never);
-      const out = {
-        forget: { ok: forget.expired, path: forget.path, reason: forget.reason, persistence: forget.persistence, writeThrough: forget.write_through },
-        missing: 'refused' in missing ? missing : { path: missing.path, expired: missing.expired },
-        expired: rows.map((r) => r.expired_at != null),
-        withdrawn: await engine.readWithdrawalAnchor(id, SRC),
-      };
-      expect(out.forget).toMatchObject({ ok: true, path: 'legacy_db', persistence: { mode: 'database' } });
-      expect(out.expired).toEqual([true]);
-      expect(out.withdrawn).toEqual({ withdrawn: true });
-      return out;
-    } finally {
-      await disposePersistenceConsumer(engine).catch(() => undefined);
-    }
-  });
+  const rows = await engine.listFactsForPage(SRC, SLUG);
+  return new Map(rows.map(r => [r.fact, Number(r.id)]));
+}
+
+const iso = (v: Date | string | null) => v === null ? null : new Date(v).toISOString();
+
+/** The page's fact rows (claim, expired) and its stored fence rows (claim, live, context), with ids folded out. */
+async function pageState(engine: BrainEngine) {
+  const facts = (await engine.listFactsForPage(SRC, SLUG)).map(f => ({ fact: f.fact, expired: f.expired_at !== null }));
+  const page = await engine.getPage(SLUG, { sourceId: SRC });
+  const fenceRows = parseFactsFence(page?.compiled_truth ?? '').facts.map(f => ({
+    rowNum: f.rowNum, claim: f.claim, active: f.active, context: (f.context ?? '').replace(/\d{4}-\d{2}-\d{2}/g, 'DATE'),
+  }));
+  return { facts, fenceRows };
+}
+
+describe('a whole forget', () => {
+  parityTest('forgetFactInFence withdraws a fenced claim on a source without a checkout',
+    { methods: ['readFactForForget', 'listFactsForPage', 'getPage'], timeout: 180_000 },
+    async (engine) => {
+      const ids = await seed(engine, CLAIMS.slice(0, 2));
+      const withdrawn = await forgetFactInFence(engine, ids.get(CLAIMS[0])!, { sourceId: SRC });
+      return { withdrawn, ...await pageState(engine) };
+    });
+
+  parityTest('forgetFactInFence supersedes to a given end and retires on a source without a checkout',
+    { methods: ['readFactForForget', 'expireFactSuperseded', 'listFactsForPage', 'getPage'], timeout: 180_000 },
+    async (engine) => {
+      const ids = await seed(engine, CLAIMS);
+      const id = (claim: string) => ids.get(claim)!;
+      const end = new Date(Date.UTC(2026, 5, 1));
+      const superseded = await forgetFactInFence(engine, id(CLAIMS[1]), { supersededBy: { rowNum: null, validUntil: end } });
+      const retired = await forgetFactInFence(engine, id(CLAIMS[2]),
+        { sourceId: SRC, retired: 'source item deleted' });
+      const again = await forgetFactInFence(engine, id(CLAIMS[1]), { supersededBy: { rowNum: null } });
+      const missing = await forgetFactInFence(engine, Math.max(...ids.values()) + 1000);
+      const elsewhere = await forgetFactInFence(engine, id(CLAIMS[3]), { sourceId: 'other-source' });
+      const [supersededRow] = (await engine.listFactsForPage(SRC, SLUG)).filter(f => f.fact === CLAIMS[1]);
+      const supersededEnd = iso(supersededRow?.valid_until ?? null);
+      // The fact read the helper starts from, ids and times folded out.
+      const read = await engine.readFactForForget(id(CLAIMS[1]));
+      const target = read && { ...read, id: Number(read.id) === id(CLAIMS[1]), expired_at: read.expired_at !== null };
+      const unknown = await engine.readFactForForget(Math.max(...ids.values()) + 1000);
+      return { superseded, retired, again, missing, elsewhere, supersededEnd, target, unknown, ...await pageState(engine) };
+    });
+
+  parityTest('the forget operation commits on an inline page, expires the claim and strikes its fence row',
+    { methods: ['listFactsForPage', 'getPage', 'getChunks'], timeout: 180_000 }, async (engine) => {
+      const ids = await seed(engine, CLAIMS.slice(0, 2));
+      const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SRC } as unknown as OperationContext;
+      const forget = await operationsByName.forget.handler(ctx, { id: String(ids.get(CLAIMS[0])), request_id: randomUUID(), wait_ms: 30_000 }) as Record<string, unknown>;
+      // The struck claim leaves the page's chunks once the post-commit projection rebuild installs the new body.
+      const chunks = (await engine.getChunks(SLUG, { sourceId: SRC })).map(c => c.chunk_text);
+      return { state: forget.state, ...await pageState(engine), chunks };
+    });
+
+  // Known gap until rust-engine/segment-embed reaches main: on a segmented page the forget's withdrawal rewrites the
+  // live fence through rewriteLiveSegmentedFences (page-body/segment-rewrite.ts:174, called from facts/withdrawal.ts),
+  // which reads the page with raw SQL. On Rust the write is accepted and stays queued, so the operation answers
+  // write_pending and the claim is not expired. The case then runs that one rewrite, so it ends on the raw_sql refusal
+  // the queued write is held on and counts as stopped in rust-tally.tsv. Once Rust commits, the case compares equal and
+  // the tally row changes, so the flip cannot be missed.
+  parityTest('the forget operation on a segmented page commits and expires the claim (Rust: write_pending, pinned)',
+    { methods: ['createSegmentedPageShell', 'flipBodyGeneration', 'listFactsForPage'], timeout: 180_000 }, async (engine) => {
+      opened.push(engine);
+      configureGateway({ embedding_identity_unverified: true, env: { ...process.env } });
+      const { pageId } = await publishSegmentedPage(engine, SEGMENTED, [segmentText(`# Bob\n\n## Facts\n\n${fence(CLAIMS.slice(0, 2))}\n`),
+        segmentText('## Notes\n\nNotes on the budget review.\n')]);
+      await engine.transaction(async (tx) => {
+        await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'],
+          ['operator_curated', 'operator_curated', JSON.stringify({ channel: 'operator_curated' })]);
+        await tx.insertFacts(CLAIMS.slice(0, 2).map((fact, i) => ({ fact, entity_slug: SEGMENTED, source_markdown_slug: SEGMENTED, row_num: i + 1,
+          kind: 'preference', visibility: 'world', source: 'chat', valid_from: new Date(Date.UTC(2026, 0, 1)) })) as never, { source_id: SRC });
+      });
+      const facts = async () => (await engine.listFactsForPage(SRC, SEGMENTED)).map(f => ({ fact: f.fact, expired: f.expired_at !== null }));
+      const [target] = (await engine.listFactsForPage(SRC, SEGMENTED)).filter(f => f.fact === CLAIMS[0]);
+      const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SRC } as unknown as OperationContext;
+      let state: unknown;
+      try {
+        state = (await operationsByName.forget.handler(ctx, { id: String(target!.id), request_id: randomUUID(), wait_ms: 30_000 }) as Record<string, unknown>).state;
+      } catch (e) {
+        if ((e as { writeError?: string }).writeError !== 'write_pending' || engine.kind !== 'rust') throw e;
+        expect(await facts()).toEqual([{ fact: CLAIMS[0], expired: false }, { fact: CLAIMS[1], expired: false }]);
+        await rewriteLiveSegmentedFences(engine, pageId, async fence => fence);
+        throw new Error('rewriteLiveSegmentedFences ran on Rust; the queued forget should commit now, so remove this branch');
+      }
+      return { state, facts: await facts() };
+    });
+
+  // forget.ts's file-mirror stamp (expireFactAtDate) binds today's 'YYYY-MM-DD' text, as master did; the server casts it
+  // (UTC on every arm here: PGLite's default zone, the test database's zone and the Rust store's). A supersession's
+  // end (expireFactSuperseded) is an ISO time, kept as given; an already-expired row is left as it was.
+  parityTest('expireFactAtDate takes a day text as that midnight and expireFactSuperseded an ISO time as that instant',
+    { methods: ['expireFactAtDate', 'expireFactSuperseded', 'listFactsForPage'], timeout: 180_000 },
+    async (engine) => {
+      const ids = await seed(engine, CLAIMS.slice(0, 3));
+      await engine.expireFactAtDate(ids.get(CLAIMS[0])!, '2026-06-01');
+      await engine.expireFactSuperseded(ids.get(CLAIMS[1])!, '2026-03-04T05:06:07.000Z');
+      await engine.expireFactAtDate(ids.get(CLAIMS[0])!, '2026-07-01');
+      await engine.expireFactSuperseded(ids.get(CLAIMS[1])!, null);
+      const ends = (await engine.listFactsForPage(SRC, SLUG)).map(f => ({ fact: f.fact, end: iso(f.valid_until ?? null), expired: f.expired_at !== null }))
+        .filter(f => f.fact !== CLAIMS[2]);
+      expect(ends.map(e => e.end)).toEqual(['2026-06-01T00:00:00.000Z', '2026-03-04T05:06:07.000Z']);
+      return { ends };
+    });
 });

@@ -13,9 +13,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::dream_reads::{
-    CommittedOutputsQuery, DreamProvenanceCountQuery, DreamProvenanceStamp, LaterRequestsQuery,
-};
+use gbrain_store::dream_reads::{DreamProvenanceCountQuery, DreamProvenanceStamp};
 use gbrain_store::facts::PrivacyPolicy;
 
 #[napi]
@@ -317,31 +315,5 @@ impl Brain {
         id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_dream_deferral_receipt(&id))
-    }
-
-    /// `listLaterPersistenceRequests(query)`: the journal rows, timestamps ISO.
-    #[napi]
-    pub fn list_later_persistence_requests<'env>(
-        &self,
-        env: &'env Env,
-        query: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let q: LaterRequestsQuery = required(query, "listLaterPersistenceRequests query")?;
-            s.list_later_persistence_requests(&q)
-        })
-    }
-
-    /// `listCommittedOutputRequests(query)`: `[{ request }]`, timestamps ISO.
-    #[napi]
-    pub fn list_committed_output_requests<'env>(
-        &self,
-        env: &'env Env,
-        query: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let q: CommittedOutputsQuery = required(query, "listCommittedOutputRequests query")?;
-            s.list_committed_output_requests(&q)
-        })
     }
 }

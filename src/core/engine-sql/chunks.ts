@@ -440,7 +440,9 @@ export async function getChunks(
         JOIN pages p ON p.id = cc.page_id
         ${trustedSql(chunkManifestJoin('p', 'cc', 'm', opts?.chunkManifest ?? true))}
         WHERE ${chunkReadWhere(slug, scope, opts)}`;
-      const order = trustedSql(chunkDocumentOrder('cc', 'm'));
+      // A read over several sources finds one page per source, and their chunks tie on document order (chunk 0 of each
+      // page), so the source id, in byte order, breaks the tie and every engine returns the same order.
+      const order = trustedSql(`${chunkDocumentOrder('cc', 'm')}, p.source_id COLLATE "C"`);
       const range = opts?.indexRange;
       if (range?.ordinal) {
         const { rows } = await exec.run(sqlFragment`
@@ -1043,7 +1045,7 @@ export async function listEmbeddingStateRows(exec: ScopedRead, column: string,
          WHERE p.deleted_at IS NULL AND ${NO_CHUNK_ROWS}${scope}
       ) r
      WHERE r.state = ANY(${[...opts.states]}::text[])
-     ORDER BY r.state, r.source_id, r.slug
+     ORDER BY r.state COLLATE "C", r.source_id COLLATE "C", r.slug COLLATE "C"
      LIMIT ${opts.limit}`);
   return rows.map(row => normalizeStateRow(row));
 }

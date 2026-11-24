@@ -1,206 +1,164 @@
-//! Group 5 facts member `probePurgeDerivations` (src/core/engine-sql/facts-purge.ts): one batch of the
-//! fact purge receipt's derivation probe over the stored derivation results (`page_segment_derivations`).
-//!
-//! The batch is the source's derivation rows (on live or soft-deleted pages, as the SQL joins pages
-//! without a `deleted_at` test) after the cursor `(page, pipeline, occurrence)`, in that order, at most
-//! `rows`. For each row:
-//! - `swept`: the page is one of `pageIds`, the page is soft-deleted, or no live published manifest row
-//!   backs the row's occurrence with its segment hash (`derivationSweepScopeSql`);
-//! - `candidate`: the row's output and receipt jsonb text, joined by a space, then `lower()` and the
-//!   fold (`ς` to `σ`, `i̇` to `i`), is `LIKE` one of `patterns` (`derivationClaimCandidateSql`);
-//! - `hit`: a candidate that has one string value or object key, at any depth of the output or the
-//!   receipt, which passes the same prefilter and whose folded `gbrain_fact_normalize` text, padded
-//!   with a space on each side, holds one of `needles` (`derivationHoldsClaimSql`).
-//!
-//! The result is `{ scanned, normalized, swept, kept, last_page, last_pipeline, last_occurrence }`:
-//! the batch size, the candidates, the hits in and out of the sweep scope, and the batch's last key
-//! (`last_occurrence` as text), nulls for an empty batch. A SQL NULL column is `Value::Null` and adds
-//! the empty text, as `COALESCE(output::text, '')` does.
-//!
-//! Pipelines are the lower-case ASCII derivation kinds, so byte order is the collation order. A cursor
-//! that names a page but not a pipeline or occurrence compares as the SQL row comparison does: a later
-//! page is after it, the same page is not (`NULL`). An occurrence that is not a bigint refuses, as
-//! `::bigint` does. A `LIKE` pattern that ends with the escape character refuses, as Postgres does.
+//! The rows a purge verification's inventory probe searches in the stores the probe reads whole tables of
+//! (`countPurgeProbe` on a `probed_reported` inventory table, src/core/deletion-inventory.ts). Each owning module
+//! returns its rows as [`ProbeRow`]s: the row's `source_id` (when the table has one) and each probed column as the
+//! text Postgres prints for `col::text`, or the raw bytes of a `bytea` column. `purge_plan.rs` matches the needles.
 
-use crate::Store;
-use crate::cli_reads::pg_text::{jsonb_text, pg_lower};
+use crate::cli_reads::pg_text::jsonb_text;
 use crate::error::{Result, StoreError};
-use crate::facts::{fact_normalize, like};
-use crate::generations::hop_limit;
-use crate::links::no_nul;
-use crate::page_body::{ProbeDerivation, live_segment_backs, probe_derivations};
-use crate::pages::all_pages;
-use serde::Deserialize;
-use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use crate::kv::{KvRead, scan_prefix};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
-/// `probePurgeDerivations(sourceId, needles, pageIds, patterns, cursor, rows)`; the cursor comes as its
-/// three parts, each null when there is no cursor.
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct DerivationProbeQuery {
-    pub source_id: String,
-    pub needles: Vec<String>,
-    pub page_ids: Vec<i64>,
-    pub patterns: Vec<String>,
-    pub cursor_page: Option<i64>,
-    pub cursor_pipeline: Option<String>,
-    pub cursor_occurrence: Option<String>,
-    pub rows: i64,
+/// One probed column of a row.
+pub(crate) enum ProbeCell {
+    /// SQL NULL: matches no needle.
+    Null,
+    /// The column as `col::text` prints it.
+    Text(String),
+    /// A `bytea` column: matched byte for byte.
+    Bytes(Vec<u8>),
 }
 
-/// `foldSql(lower(text))`.
-fn lower_folded(text: &str) -> String {
-    pg_lower(text).replace('ς', "σ").replace("i\u{307}", "i")
-}
+impl ProbeCell {
+    pub(crate) fn text(text: &str) -> Self {
+        ProbeCell::Text(text.to_string())
+    }
 
-/// `foldSql(lower(text)) LIKE ANY (patterns)`.
-fn has_words(text: &str, patterns: &[String]) -> Result<bool> {
-    let folded = lower_folded(text);
-    for pattern in patterns {
-        if like(&folded, pattern, false)? {
-            return Ok(true);
+    pub(crate) fn opt_text(text: Option<&str>) -> Self {
+        text.map_or(ProbeCell::Null, ProbeCell::text)
+    }
+
+    /// A `jsonb` column: the text Postgres prints for it.
+    pub(crate) fn jsonb(value: &Value) -> Self {
+        ProbeCell::Text(jsonb_text(value))
+    }
+
+    pub(crate) fn opt_jsonb(value: Option<&Value>) -> Self {
+        value.map_or(ProbeCell::Null, ProbeCell::jsonb)
+    }
+
+    /// A `jsonb` column the store keeps as JSON text: printed as Postgres prints the parsed value.
+    pub(crate) fn opt_jsonb_text(text: Option<&str>) -> Self {
+        match text {
+            None => ProbeCell::Null,
+            Some(t) => serde_json::from_str::<Value>(t)
+                .map_or_else(|_| ProbeCell::text(t), |v| ProbeCell::jsonb(&v)),
         }
     }
-    Ok(false)
+
+    /// A `text[]` column: Postgres's array literal (`{a,"b c"}`).
+    pub(crate) fn text_array(items: &[String]) -> Self {
+        ProbeCell::Text(array_literal(items))
+    }
 }
 
-/// The string values and object keys at every depth of `value` (`strict $.**`).
-fn texts<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
-    match value {
-        Value::String(s) => out.push(s),
-        Value::Array(items) => items.iter().for_each(|v| texts(v, out)),
-        Value::Object(map) => {
-            for (k, v) in map {
-                out.push(k);
-                texts(v, out);
+/// One row a probe searches.
+pub(crate) struct ProbeRow {
+    /// The row's `source_id`; `None` when the table has no such column.
+    pub source_id: Option<String>,
+    pub cells: Vec<(&'static str, ProbeCell)>,
+}
+
+/// Every record stored under `prefix`, decoded.
+pub(crate) fn json_rows<T: DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<T>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, prefix, false, &mut |_, v| {
+        match serde_json::from_slice::<T>(v) {
+            Ok(row) => out.push(row),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
+}
+
+/// `array_out` of a `text[]`: an element is double-quoted when it is empty, is `NULL` in any case, or holds a
+/// brace, comma, quote, backslash or white space; inside quotes a quote or backslash is backslash-escaped.
+fn array_literal(items: &[String]) -> String {
+    let mut out = String::from("{");
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let quote = item.is_empty()
+            || item.eq_ignore_ascii_case("null")
+            || item.chars().any(|c| {
+                matches!(
+                    c,
+                    '{' | '}' | ',' | '"' | '\\' | ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c'
+                )
+            });
+        if !quote {
+            out.push_str(item);
+            continue;
+        }
+        out.push('"');
+        for c in item.chars() {
+            if c == '"' || c == '\\' {
+                out.push('\\');
             }
+            out.push(c);
         }
-        _ => {}
+        out.push('"');
     }
+    out.push('}');
+    out
 }
 
-/// `COALESCE(col::text, '')`.
-fn column_text(value: &Value) -> String {
-    match value {
-        Value::Null => String::new(),
-        other => jsonb_text(other),
-    }
-}
-
-/// `derivationHoldsClaimSql` for a candidate row.
-fn holds_claim(d: &ProbeDerivation, needles: &[String], patterns: &[String]) -> Result<bool> {
-    let mut found = Vec::new();
-    texts(&d.output, &mut found);
-    texts(&d.receipt, &mut found);
-    for text in found {
-        if has_words(text, patterns)? {
-            let padded = format!(" {} ", lower_folded(&fact_normalize(text)));
-            if needles.iter().any(|n| padded.contains(n.as_str())) {
-                return Ok(true);
-            }
+/// Standard base64 (padding optional), as the jobs store keeps attachment bytes; `None` when it is not base64.
+pub(crate) fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    fn value(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some(u32::from(c - b'A')),
+            b'a'..=b'z' => Some(u32::from(c - b'a') + 26),
+            b'0'..=b'9' => Some(u32::from(c - b'0') + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
         }
     }
-    Ok(false)
+    let body = text.trim_end_matches('=').as_bytes();
+    let mut out = Vec::with_capacity(body.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for &c in body {
+        acc = (acc << 6) | value(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
-/// Whether key `(page, pipeline, occurrence)` is after the cursor; `None` is SQL NULL.
-fn after_cursor(
-    page: i64,
-    pipeline: &str,
-    occurrence: i64,
-    cursor: &(i64, Option<String>, Option<i64>),
-) -> bool {
-    use std::cmp::Ordering::{Equal, Greater, Less};
-    match page.cmp(&cursor.0) {
-        Greater => true,
-        Less => false,
-        Equal => match cursor.1.as_deref().map(|c| pipeline.cmp(c)) {
-            Some(Greater) => true,
-            Some(Equal) => cursor.2.is_some_and(|c| occurrence > c),
-            Some(Less) | None => false,
-        },
-    }
-}
-
-impl Store {
-    /// `probePurgeDerivations(sourceId, needles, pageIds, patterns, cursor, rows)`.
-    pub fn probe_purge_derivations(&self, q: &DerivationProbeQuery) -> Result<Value> {
-        let op = "probePurgeDerivations";
-        no_nul(
-            op,
-            &[
-                ("sourceId", &q.source_id),
-                (
-                    "cursor pipeline",
-                    q.cursor_pipeline.as_deref().unwrap_or(""),
-                ),
-            ],
-        )?;
-        for text in q.needles.iter().chain(&q.patterns) {
-            no_nul(op, &[("a needle or pattern", text)])?;
+/// The rows of an inventory table this store probes whole; `None` for a table it does not probe this way.
+pub(crate) fn table_rows(
+    read: &dyn KvRead,
+    table: &str,
+    source_id: &str,
+) -> Result<Option<Vec<ProbeRow>>> {
+    Ok(Some(match table {
+        "calibration_profiles" => {
+            crate::eval_capture::calibration_profiles::purge_probe_rows(read)?
         }
-        let limit = hop_limit(q.rows)?;
-        let occurrence = match &q.cursor_occurrence {
-            None => None,
-            Some(text) => Some(text.trim().parse::<i64>().map_err(|_| {
-                StoreError::invalid(format!(
-                    "{op}: cursor occurrence \"{text}\" is not a bigint"
-                ))
-            })?),
-        };
-        let cursor = q
-            .cursor_page
-            .map(|page| (page, q.cursor_pipeline.clone(), occurrence));
-        let scope: BTreeSet<i64> = q.page_ids.iter().copied().collect();
-        let read = self.read()?;
-        let mut pages: Vec<_> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| p.source_id == q.source_id)
-            .collect();
-        pages.sort_by_key(|p| p.id);
-        let (mut scanned, mut normalized, mut swept, mut kept) = (0i64, 0i64, 0i64, 0i64);
-        let mut last: Option<(u64, String, i64)> = None;
-        'pages: for page in &pages {
-            for d in probe_derivations(&*read, page.id)? {
-                if scanned as usize >= limit {
-                    break 'pages;
-                }
-                if cursor
-                    .as_ref()
-                    .is_some_and(|c| !after_cursor(page.id as i64, &d.kind, d.occurrence_id, c))
-                {
-                    continue;
-                }
-                scanned += 1;
-                let in_scope = scope.contains(&(page.id as i64))
-                    || page.deleted_at_us.is_some()
-                    || !live_segment_backs(&*read, page.id, d.occurrence_id, &d.segment_sha256)?;
-                let joined = format!("{} {}", column_text(&d.output), column_text(&d.receipt));
-                if has_words(&joined, &q.patterns)? {
-                    normalized += 1;
-                    if holds_claim(&d, &q.needles, &q.patterns)? {
-                        if in_scope {
-                            swept += 1;
-                        } else {
-                            kept += 1;
-                        }
-                    }
-                }
-                last = Some((page.id, d.kind, d.occurrence_id));
-            }
-        }
-        let (last_page, last_pipeline, last_occurrence) = match last {
-            Some((page, pipeline, occurrence)) => {
-                (json!(page), json!(pipeline), json!(occurrence.to_string()))
-            }
-            None => (Value::Null, Value::Null, Value::Null),
-        };
-        Ok(json!({
-            "scanned": scanned, "normalized": normalized, "swept": swept, "kept": kept,
-            "last_page": last_page, "last_pipeline": last_pipeline, "last_occurrence": last_occurrence,
-        }))
-    }
+        "decision_receipts" => crate::eval_capture::decide_store::purge_probe_receipt_rows(read)?,
+        "dream_verdicts" => crate::dream::purge_probe_rows(read)?,
+        "eval_candidates" => crate::eval_capture::purge_probe_rows(read)?,
+        "eval_contradictions_cache" => crate::contradictions::purge_probe_cache_rows(read)?,
+        "eval_contradictions_runs" => crate::contradictions::purge_probe_run_rows(read)?,
+        "fact_relink_attempts" => super::relink::purge_probe_rows(read, source_id)?,
+        "ingest_log" => crate::stats::purge_probe_rows(read)?,
+        "mcp_request_log" => crate::telemetry::purge_probe_rows(read)?,
+        "minion_attachments" => crate::jobs::purge_probe_attachment_rows(read)?,
+        "minion_inbox" => crate::jobs::purge_probe_inbox_rows(read)?,
+        "minion_jobs" => crate::jobs::purge_probe_job_rows(read)?,
+        "persistence_topology_changes" => crate::persistence::purge_probe_topology_rows(read)?,
+        "subagent_messages" => crate::jobs::purge_probe_message_rows(read)?,
+        "subagent_tool_executions" => crate::jobs::purge_probe_tool_rows(read)?,
+        _ => return Ok(None),
+    }))
 }
 
 #[cfg(test)]
@@ -208,31 +166,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_cursor_compares_as_a_sql_row_comparison() {
-        let full = (5, Some("links".to_string()), Some(9));
-        assert!(after_cursor(6, "a", 0, &full));
-        assert!(!after_cursor(4, "z", 99, &full));
-        assert!(after_cursor(5, "mentions", 0, &full));
-        assert!(after_cursor(5, "links", 10, &full));
-        assert!(!after_cursor(5, "links", 9, &full));
-        let open = (5, None, None);
-        assert!(after_cursor(6, "a", 0, &open));
-        assert!(!after_cursor(5, "z", 99, &open));
+    fn array_literal_quotes_as_postgres_prints() {
+        let items = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(array_literal(&[]), "{}");
+        assert_eq!(array_literal(&items(&["a", "b"])), "{a,b}");
+        assert_eq!(
+            array_literal(&items(&["b c", "", "NuLL", "say \"hi\"", r"a\b", "x,y"])),
+            r#"{"b c","","NuLL","say \"hi\"","a\\b","x,y"}"#
+        );
     }
 
     #[test]
-    fn a_claim_must_fill_whole_words_of_one_text() {
-        let d = ProbeDerivation {
-            kind: "links".into(),
-            occurrence_id: 1,
-            segment_sha256: String::new(),
-            output: json!({ "items": [{ "excerpt": "She PLAYS oboe, daily" }], "plays oboes": 1 }),
-            receipt: Value::Null,
-        };
-        let patterns = vec!["%plays%oboe%".to_string()];
-        assert!(holds_claim(&d, &[" plays oboe ".into()], &patterns).unwrap());
-        assert!(!holds_claim(&d, &[" plays oboes daily ".into()], &patterns).unwrap());
-        assert!(!holds_claim(&d, &[], &patterns).unwrap());
-        assert_eq!(lower_folded("ΚΩΣΤΑΣ ς"), "κωστασ σ");
+    fn base64_decodes_with_and_without_padding() {
+        assert_eq!(decode_base64("aGk=").unwrap(), b"hi");
+        assert_eq!(decode_base64("aGk").unwrap(), b"hi");
+        assert_eq!(decode_base64("c2F5cyBoaQ==").unwrap(), b"says hi");
+        assert!(decode_base64("a*b").is_none());
     }
 }

@@ -274,9 +274,10 @@ async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, backend: str
   try {
     out = await run();
   } catch (error) {
-    const req = (error as { writeRequest?: { blocked_reason?: unknown; write_error?: unknown } })?.writeRequest;
-    const stopped = req?.blocked_reason === 'engine_capability_missing' || req?.write_error === 'engine_capability_missing';
-    if (stopped && w.refusal() !== null) {
+    const request = (error as { writeRequest?: { blocked_reason?: unknown; write_error?: unknown } })?.writeRequest;
+    // A refused preparation step parks the request as blocked, or ends it failed with the typed refusal as its write error.
+    const blocked = request?.blocked_reason ?? request?.write_error;
+    if (blocked === 'engine_capability_missing' && w.refusal() !== null) {
       if (backend === 'rust') expect(w.refusalSite()).toMatch(RUST_KNOWN_STOP);
       throw w.refusal();
     }

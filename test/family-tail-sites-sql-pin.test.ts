@@ -49,6 +49,9 @@ interface Pin {
 }
 
 // ─── edge-contradictions.ts:201 the candidate query ──────────────────────
+// Main join (da99c637a7): the cli-members line's caller (edge-contradictions.ts:213 and :222 at de72811022) broke the
+// subject-cap ties with `from_page_id, link_type COLLATE "C"` and sorted the result with `l.link_type COLLATE "C"` and
+// `t.slug COLLATE "C"`; the join re-applied that tie-break and byte order to main's member, so the pin carries it too.
 const TODAY = '2026-11-19';
 const candidateText = (isPersonF: string, isPersonT: string, n: { types: number; prefixes: number; max: number; cut1: number; cut2: number }) => `WITH live AS (
        SELECT lr.* FROM link_relationships lr
@@ -62,7 +65,7 @@ const candidateText = (isPersonF: string, isPersonT: string, n: { types: number;
      ), multi AS (
        SELECT source_id, from_page_id, link_type FROM live
         GROUP BY 1, 2, 3 HAVING count(DISTINCT to_page_id) >= 2
-        ORDER BY max(refreshed_at) DESC LIMIT $${n.max}
+        ORDER BY max(refreshed_at) DESC, from_page_id, link_type COLLATE "C" LIMIT $${n.max}
      )
      SELECT l.source_id, l.from_page_id, l.to_page_id, l.link_type, l.valid_ranges::text AS valid_ranges,
             l.last_start, l.recorded_at, l.evidence_hash,
@@ -71,7 +74,7 @@ const candidateText = (isPersonF: string, isPersonT: string, n: { types: number;
        JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
          AND ($${n.cut1}::timestamptz IS NULL OR f.links_extracted_at >= $${n.cut2}::timestamptz)
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-      ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`;
+      ORDER BY l.from_page_id, l.link_type COLLATE "C", l.last_start NULLS FIRST, t.slug COLLATE "C"`;
 
 const PROPOSAL = {
   sourceId: 'default', fromPageId: 1, aToPageId: 2, bToPageId: 3, linkType: 'works_at', evidenceHash: 'h', status: 'proposed',

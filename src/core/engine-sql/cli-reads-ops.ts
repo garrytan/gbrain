@@ -21,9 +21,38 @@ import { privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy } from 
 import { activationSuppressedSql, deletedPageProjectionHiddenSql } from '../eligibility/sql.ts';
 import { heldRowSql } from '../eligibility/fence-overlay.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+import { pageTypeProbeStatement } from '../search/page-type-probe.ts';
+import { longPageSizeStatement, type LongPageSizeRow } from '../search/long-page-sizes.ts';
+import type { PageReadScope } from '../types.ts';
 
 /** The engine's `executeRaw` (bound), with the two bounds these reads use. */
-export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean }) => Promise<R[]>;
+export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean; prepare?: boolean }) => Promise<R[]>;
+
+/** Whether each type set has a page `scope` reads live, and (when one has none) the types such pages have. */
+export type { LongPageSizeRow };
+export interface PageTypeProbe { present: boolean[]; available: string[] | null }
+
+/**
+ * The type-filter probe (search/page-type-probe.ts): `present[i]` is whether a live page `scope` reads has a type in
+ * `sets[i]` (false for an empty set); `available` lists at most 500 distinct types of such pages, in no set order, when
+ * a non-empty set has none, else null. JIT off and planned for its parameters on every call (ops/search-type-filter.ts).
+ */
+export async function probePageTypes(raw: EngineRawRead, sets: readonly (readonly string[])[], scope: PageReadScope): Promise<PageTypeProbe> {
+  const stmt = pageTypeProbeStatement(sets, scope);
+  if (!stmt) return { present: sets.map(() => false), available: null };
+  const [row] = await raw<Record<string, unknown>>(stmt.text, stmt.params, { jitOff: true, prepare: false });
+  return {
+    present: sets.map((set, i) => set.length > 0 && row?.[`t${i}`] === true),
+    available: Array.isArray(row?.available) ? row.available as string[] : null,
+  };
+}
+
+/** The long-page size preflight (search/long-page-sizes.ts): each served page's stored body length in characters and bytes. */
+export async function readLongPageSizes(raw: EngineRawRead, ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }): Promise<LongPageSizeRow[]> {
+  const { text, params } = longPageSizeStatement(ids, scope, opts.includeTimeline);
+  const rows = await raw<LongPageSizeRow>(text, params);
+  return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
+}
 
 /** One batch of the exact-phrase scan; null when the phrase has no searchable word (the statement builder's null). */
 export async function scanExactBatch(raw: EngineRawRead, opts: ExactScanOpts, afterPageId: number, batchPages: number, timeoutMs: number): Promise<ExactBatchRow[] | null> {
@@ -177,7 +206,7 @@ export async function listExtractionPendingPages(raw: EngineRawRead, opts: { sou
        WHERE ${trustedSql(unverifiedExtractionFragment('p'))}
          ${trustedSql(buildVisibilityClause('p', 's'))}
          ${srcClause}
-       ORDER BY p.created_at DESC
+       ORDER BY p.created_at DESC, p.id DESC
        LIMIT ${opts.limit} OFFSET ${opts.offset}`);
   return raw<ExtractionPendingRow>(text, params);
 }
@@ -254,7 +283,7 @@ export async function listWantedPages(raw: EngineRawRead, opts: { sourceId?: str
     ), grouped AS (
       SELECT target_source_id, target_ref, min(ref_kind) AS ref_kind,
         count(DISTINCT (origin_source_id, origin_slug))::int AS referenced_by,
-        jsonb_agg(jsonb_build_object('slug', origin_slug, 'source_id', origin_source_id) ORDER BY origin_slug) AS origins,
+        jsonb_agg(jsonb_build_object('slug', origin_slug, 'source_id', origin_source_id) ORDER BY origin_slug COLLATE "C") AS origins,
         coalesce(jsonb_agg(DISTINCT link_type) FILTER (WHERE link_type <> ''), '[]'::jsonb) AS link_types,
         min(first_seen_at) AS first_seen, max(checked_at) AS last_checked
       FROM wanted GROUP BY target_source_id, target_ref
@@ -265,8 +294,8 @@ export async function listWantedPages(raw: EngineRawRead, opts: { sourceId?: str
     SELECT g.*, (SELECT jsonb_agg(jsonb_build_object('slug', m.slug, 'source_id', m.source_id))
         FROM (SELECT m.slug, m.source_id FROM pages m WHERE g.ref_kind = 'name' AND m.source_id = g.target_source_id
           AND regexp_replace(m.slug, '^.*/', '') = g.target_ref AND m.deleted_at IS NULL${matchPrivacy}
-          ORDER BY m.slug LIMIT 3) m) AS matches
-    FROM grouped g ORDER BY g.referenced_by DESC, g.target_source_id, g.target_ref
+          ORDER BY m.slug COLLATE "C" LIMIT 3) m) AS matches
+    FROM grouped g ORDER BY g.referenced_by DESC, g.target_source_id COLLATE "C", g.target_ref COLLATE "C"
     LIMIT ${opts.limit} OFFSET ${opts.offset}`);
   const rows = await raw<WantedPageRawRow>(page.text, page.params);
   const iso = (value: Date | string) => (value instanceof Date ? value : new Date(value)).toISOString();

@@ -1,5 +1,5 @@
 /**
- * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
+ * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact, expireFactSuperseded, expireFactAtDate,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
  * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages, restoreFactPreimage, listFactIdsBySourcePrefix,
@@ -170,6 +170,16 @@ export const expireFact: Member<'expireFact'> = (brain, id, opts) => {
   return storeCall({ member: 'expireFact' }, () => brain.expireFact({
     id, supersededBy: o.supersededBy, at: iso(o.at ?? new Date()), successorFrom: iso(o.successorFrom),
   }));
+};
+
+/** forget's supersession or retirement expiry (engine-sql/facts-trust.ts): ends the fact at `validUntil`, else at its own earlier end or now. */
+export const expireFactSuperseded: Member<'expireFactSuperseded'> = async (brain, factId, validUntil) => {
+  await storeCall({ member: 'expireFactSuperseded' }, () => brain.expireFactUntil({ id: factId, until: validUntil }));
+};
+
+/** forget's file-mirror stamp (engine-sql/facts-trust.ts): ends the fact at the day text, which the store reads as UTC midnight. */
+export const expireFactAtDate: Member<'expireFactAtDate'> = async (brain, factId, today) => {
+  await storeCall({ member: 'expireFactAtDate' }, () => brain.expireFactUntil({ id: factId, until: today }));
 };
 
 export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sourceId, entitySlug, opts) => {

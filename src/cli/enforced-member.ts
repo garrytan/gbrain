@@ -175,11 +175,11 @@ export async function enforcedAccess(engine: BrainEngine, command: string): Prom
       const { member: id } = await memberIdentity(engine, member);
       if (id === member && await ownerMemberId(engine) !== member) {
         const base = await remoteCallerAccess(engine, undefined, [], 'stdio', null, member);
-        const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources');
+        const sources = await engine.listSourceIds();
         resolved = {
           member,
           access: { ...base, identity: [...base.identity ?? []], satisfiedRuleIds: [...base.satisfiedRuleIds ?? []], hidePrivate: true, owner: false, privateReadableSources: [], applyRemoteReadPolicy: false },
-          hiddenSources: await hiddenPersonalSources(engine, sources.map(s => s.id), member, false),
+          hiddenSources: await hiddenPersonalSources(engine, sources, member, false),
         };
       }
     }
@@ -302,7 +302,11 @@ function syncSourceArg(command: string, args: readonly string[]): string | null 
   return source ?? '';
 }
 
-export interface EnforcedScope { sourceId?: string; localFederatedSourceIds?: string[]; config?: import('../core/config.ts').GBrainConfig }
+export interface EnforcedScope {
+  sourceId?: string; localFederatedSourceIds?: string[]; config?: import('../core/config.ts').GBrainConfig;
+  /** Receives the dispatch's `_meta.retrieval`, when it set one, so the CLI can read what the lookup reported (entity_lookup_failed). */
+  retrieval?: (meta: unknown) => void;
+}
 
 /**
  * A read answered as the in-process stdio MCP server bound to the member would answer it, unpacked to the operation's
@@ -325,6 +329,7 @@ export async function enforcedRead(engine: BrainEngine, command: string, opName:
     ...(federated ? { localFederatedSourceIds: federated } : {}),
   });
   const text = out.content?.[0]?.text ?? '';
+  if (out._meta?.retrieval !== undefined) scope.retrieval?.(out._meta.retrieval);
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { parsed = text; }
   if (out.isError) {

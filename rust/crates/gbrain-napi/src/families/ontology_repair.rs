@@ -10,7 +10,6 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::captured::SourceIdsArgs;
 use gbrain_store::facts::ontology_repair::{IdsArgs, RekeyArgs, RepointArgs, RestoreArgs};
 
 #[napi]
@@ -64,19 +63,6 @@ impl Brain {
         self.run(env, move |s| {
             let a: IdsArgs = required(args, "deleteRekeyLosers args")?;
             s.delete_rekey_losers(&a)
-        })
-    }
-
-    /// `listOntologyFactCandidates({ sourceIds })`: resolves the candidate rows by id.
-    #[napi]
-    pub fn list_ontology_fact_candidates<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: SourceIdsArgs = required(args, "listOntologyFactCandidates args")?;
-            s.list_ontology_fact_candidates(&a)
         })
     }
 

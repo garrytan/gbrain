@@ -27,7 +27,6 @@ use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::kv::KvRead;
 use crate::links::no_nul;
-use crate::trust::withdrawals::withdrawn_claim;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -304,9 +303,9 @@ impl Store {
         let trust = &self.write_trust()?;
         self.write(|tx| {
             let mut referrers: BTreeMap<u64, Option<u64>> = BTreeMap::new();
-            for (&id, &keep) in &keep_of {
-                for referrer in ids_under(&*tx, &refs_prefix(id))? {
-                    referrers.entry(referrer).or_insert(keep);
+            for (id, keep) in &keep_of {
+                for referrer in ids_under(&*tx, &refs_prefix(*id))? {
+                    referrers.entry(referrer).or_insert(*keep);
                 }
             }
             for (referrer, keep) in referrers {
@@ -326,7 +325,7 @@ impl Store {
         let ids = id_set(OP, &a.ids)?;
         let trust = &self.write_trust()?;
         self.write(|tx| {
-            for &id in &ids {
+            for id in ids.iter().copied() {
                 let Some(old) = read_fact(&*tx, id)? else {
                     continue;
                 };
@@ -350,7 +349,7 @@ impl Store {
         let ids = id_set(OP, &a.ids)?;
         let trust = &self.write_trust()?;
         self.write(|tx| {
-            for &id in &ids {
+            for id in ids.iter().copied() {
                 if let Some(old) = read_fact(&*tx, id)?
                     && old.dimension.is_some()
                 {
@@ -359,54 +358,6 @@ impl Store {
             }
             Ok(())
         })
-    }
-
-    /// `listOntologyFactCandidates(sourceIds)`: the ontology rows of these sources that are fence-held or sit off their
-    /// own provenance and are not conversation slots, by id.
-    pub fn list_ontology_fact_candidates(
-        &self,
-        a: &super::captured::SourceIdsArgs,
-    ) -> Result<Vec<Value>> {
-        const OP: &str = "listOntologyFactCandidates";
-        let mut sources = BTreeSet::new();
-        for id in &a.source_ids {
-            no_nul(OP, &[("sourceIds", id.as_str())])?;
-            sources.insert(id.clone());
-        }
-        let read = self.read()?;
-        let mut out: Vec<(u64, Value)> = Vec::new();
-        for source_id in &sources {
-            for f in source_rows(&*read, source_id)? {
-                let Some(entity) = f.entity_slug.as_deref() else {
-                    continue;
-                };
-                if f.dimension.is_none()
-                    || f.conversation_slot()
-                    || !(f.row_num.is_some()
-                        || f.source_markdown_slug.as_deref() != Some(f.source.as_str()))
-                {
-                    continue;
-                }
-                out.push((
-                    f.id,
-                    json!({
-                        "id": f.id,
-                        "source_id": f.source_id,
-                        "entity_slug": entity,
-                        "dimension": f.dimension,
-                        "source": f.source,
-                        "page": f.source_markdown_slug,
-                        "row_num": f.row_num,
-                        "expired_at": expiry_text(&f),
-                        "withdrawn": withdrawn_claim(&*read, &f.source_id, &f.visibility, &f.fact, Some(entity))?,
-                        "consolidated": f.consolidated_into.is_some(),
-                        "duplicate": duplicate(&*read, &f)?,
-                    }),
-                ));
-            }
-        }
-        out.sort_by_key(|(id, _)| *id);
-        Ok(out.into_iter().map(|(_, v)| v).collect())
     }
 
     /// `restoreOntologyFact(row)`: sets `row_num` null, `source_markdown_slug` to the row's `source` and `expired_at`

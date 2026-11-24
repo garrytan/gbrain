@@ -53,10 +53,15 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 mod event_rows;
+mod repair_reads;
 mod site_reads;
 pub use event_rows::{
     EventProjectionIdSpec, EventProjectionRestoreSpec, EventProjectionRowsSpec,
     EventProjectionSlugsSpec,
+};
+pub use repair_reads::{
+    ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
+    TimelineRowRewrite,
 };
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
@@ -259,7 +264,7 @@ impl Joined {
             "summary": self.entry.summary,
             "detail": self.entry.detail,
             "source": self.entry.source,
-            "trust_tier": "unknown",
+            "trust_tier": self.entry.trust.tier().as_str(),
             "page_id": self.entry.page_id,
             "page_slug": self.page_slug,
             "event_page_id": self.entry.event_page_id,

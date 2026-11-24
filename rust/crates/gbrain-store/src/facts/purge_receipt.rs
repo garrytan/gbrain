@@ -114,15 +114,6 @@ fn source_pages(pages: Vec<PageRecord>, source_id: &str) -> BTreeMap<u64, PageRe
         .collect()
 }
 
-/// `frontmatter->>'dream_generated' = 'true'`.
-fn dream_generated(page: &PageRecord) -> bool {
-    match page.frontmatter.get("dream_generated") {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => s == "true",
-        _ => false,
-    }
-}
-
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct NearestPurgeQuery {
@@ -223,25 +214,6 @@ impl Store {
             .take(PATH_LIMIT)
             .map(|p| json!({ "source_path": p }))
             .collect())
-    }
-
-    /// `countLegacyDerivedPages(sourceId)`.
-    pub fn count_legacy_derived_pages(&self, source_id: &str) -> Result<u64> {
-        no_nul("countLegacyDerivedPages", &[("sourceId", source_id)])?;
-        let read = self.read()?;
-        let mut n = 0;
-        for page in all_pages(&*read)? {
-            if page.source_id != source_id
-                || page.deleted_at_us.is_some()
-                || !(page.page_type == "atom" || dream_generated(&page))
-            {
-                continue;
-            }
-            if !Store::derived_has_inputs(&*read, "pages", &page.id.to_string())? {
-                n += 1;
-            }
-        }
-        Ok(n)
     }
 
     /// `vacuumPurgedTables(withQueryCache)`: the open check; the store has nothing to vacuum.

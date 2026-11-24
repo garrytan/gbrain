@@ -9,8 +9,8 @@
 //! withdrawals, any other row by subject `*`, its entity, or, on an unbacked name key, any subject but an
 //! owned memory page. It then sets `expired_at` to that time and clamps `valid_until` to it.
 //!
-//! `write_fact` calls this on every insert (the withdrawal half of `gbrain_guard_inserted_facts`), after the
-//! purge refusal. Every update member whose `UPDATE` sets a watched column on a row it can leave active calls it
+//! `write_fact` runs the same guard on every insert and on an update that changes a watched column (`facts.rs`
+//! `preserve_withdrawal`). Every update member whose `UPDATE` sets a watched column on a row it can leave active calls it
 //! before `write_fact`: `rehomeEntityFacts` ([`super::captured`]), `restoreOntologyFact`, `placeRelinkedFact`,
 //! `linkConversationFact`, `restoreSupersededFact`, `restoreFactPreimage`, `migrateFactsToCanonical` and
 //! `adoptFactIntoFence` ([`super::write_path`]). The
@@ -22,7 +22,8 @@ use super::purge::earliest_withdrawal;
 use crate::error::Result;
 use crate::kv::KvRead;
 
-/// Applies the guard to `row`, the row about to be saved: a no-op for an expired row.
+/// Applies the guard to `row`, the row about to be saved: a no-op for an expired row. The reach of a withdrawal is
+/// [`earliest_withdrawal`], the one the `write_fact` guard uses.
 pub(crate) fn preserve_withdrawal(read: &dyn KvRead, row: &mut FactRecord) -> Result<()> {
     if row.expired_at_us.is_some() {
         return Ok(());

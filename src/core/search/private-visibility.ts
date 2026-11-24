@@ -151,13 +151,18 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
   return `(${alias}.folder_rule_ids IS NULL${listed}${lineage})${coverageSql(alias)}`;
 }
 
+/** A page under a pending prefix, or any page while the folder-rule state is unreadable, read live from the database. */
+export function liveCoverageSql(alias: string): string {
+  return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
+}
+
 /**
  * The pending or invalid prefixes of the current record as a conjunct (empty when none); an ill-formed entry hides
  * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden;
  * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
+  if (!callerAccessStore.getStore()) return liveCoverageSql(alias);
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'

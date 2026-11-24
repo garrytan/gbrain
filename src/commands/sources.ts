@@ -37,6 +37,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -59,7 +60,7 @@ import {
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
-import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { defaultGoogleAddTuning, parseGoogleAddFlag, preflightGoogleAccess } from './sources-google-flags.ts';
 import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
@@ -73,8 +74,8 @@ import {
   sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
@@ -152,6 +153,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '                    [--access gbrainio] [--gbrainio-command <path>]   (Gmail read through a gbrain.io terminal)\n' +
+        '                    [--private-senders-file <path>]   (threads with these addresses or @domains become owner-only pages)\n' +
         '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
@@ -330,51 +333,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         );
       }
     } catch { /* preflight is best-effort */ }
-    // Access-mode validation (default vault). command/env let a stack that
-    // already holds Google access (gog, gcloud, a credential gateway) drive
-    // this source without gbrain's OAuth flow; --account stays required as
-    // the IDENTITY (From/To matching, deep-link authuser).
-    if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
-      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
-      process.exit(2);
-    }
-    if (gAccess === 'command' && !gTokenCommand?.trim()) {
-      console.error('Error: --access command requires --token-command "<cmd that prints an access token>".');
-      process.exit(2);
-    }
-    if (gAccess === 'env' && !gTokenEnv?.trim()) {
-      console.error('Error: --access env requires --token-env <ENV_VAR_NAME>.');
-      process.exit(2);
-    }
-    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault')) {
-      console.error('Error: --token-command/--token-env require --access command or --access env.');
-      process.exit(2);
-    }
-    if (gAccess === undefined || gAccess === 'vault') {
-      // Fail fast at registration when the account has no vault entry — the
-      // alternative is a source that errors on every sync.
-      const { openVault, credentialId } = await import('../core/creds/vault.ts');
-      const entry = await openVault().get(credentialId('google', gAccount!));
-      if (!entry) {
-        console.error(
-          `Error: no connected Google account "${gAccount}" in the credential vault.\n` +
-            `Connect it first: gbrain google connect --account ${gAccount}\n` +
-            `(or use another access mode: --access command --token-command "<cmd>" | --access env --token-env <VAR>)`,
-        );
-        process.exit(2);
-      }
-    } else if (gAccess === 'command') {
-      // Probe the command once at registration so a typo fails HERE, not on
-      // every future sync. Best-effort: a transient failure only warns.
-      try {
-        const { CommandAccessProvider } = await import('../core/google/access.ts');
-        await new CommandAccessProvider(gTokenCommand!).getAccessToken();
-      } catch (e) {
-        console.error(`Warning: token command probe failed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the source is registered, but sync will fail until the command works.`);
-      }
-    } else if (gAccess === 'env' && !(process.env[gTokenEnv!] ?? '').trim()) {
-      console.error(`Warning: $${gTokenEnv} is not set in this shell — sync will fail until it carries a live access token.`);
-    }
+    await preflightGoogleAccess({ access: gAccess, tokenCommand: gTokenCommand, tokenEnv: gTokenEnv, account: gAccount!,
+      services: args.includes('--services') ? gServices : null, tuning: gTuning });
   }
   if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
     console.error('Error: --scope repos requires --repos owner/name,owner/name.');
@@ -423,10 +383,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       ? {
           google: {
             account: gAccount!,
-            services: gServices,
+            services: gAccess === 'gbrainio' ? ['gmail'] : gServices,
             ...gTuning,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
-            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
+            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env' | 'gbrainio',
             tokenCommand: gTokenCommand,
             tokenEnv: gTokenEnv,
           },
@@ -841,14 +801,11 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   class SourceReferencedError extends Error {}
   try {
     await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
-      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
-      if (cols.has('source_id')) {
+      // The oauth_clients.source_id column is read through the typed readOauthClientColumns member (a Rust store always has it).
+      const hasSourceColumn = (await preflightOauthClientColumns(tx)).has('source_id');
+      if (hasSourceColumn) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
-        const rows = await tx.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM oauth_clients WHERE source_id = $1`,
-          [id],
-        );
-        if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
+        if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
     }));
@@ -923,22 +880,14 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   // Loud-rejection on missing source. Closes the idempotent-pebble Failure
   // Modes "critical gap": pre-v0.40.3.0 there was no surface that wrote to
   // sources.contextual_retrieval_mode, so the silent-no-op via SQL UPDATE
-  // matching 0 rows was the failure mode the gap warning called out.
-  const exists = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE id = $1 LIMIT 1`,
-    [id],
-  );
-  if (exists.length === 0) {
+  // matching 0 rows was the failure mode the gap warning called out. The
+  // typed member checks and writes in one statement, on every engine.
+  if (!(await engine.setSourceContextualMode(id, clearing ? null : mode))) {
     console.error(`Error: source "${id}" not found.`);
     console.error(`  Run 'gbrain sources list' to see registered sources.`);
     process.exit(4);
   }
 
-  const newValue = clearing ? null : mode;
-  await engine.executeRaw(
-    `UPDATE sources SET contextual_retrieval_mode = $1 WHERE id = $2`,
-    [newValue, id],
-  );
   if (clearing) {
     console.log(`Cleared contextual_retrieval_mode for source "${id}" (NULL falls through to global mode).`);
   } else {
@@ -972,11 +921,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
     // the impact check above) and for "already archived" (UPDATE matched no
     // `archived = false` row). Distinguish them: already-archived is a
     // friendly idempotent no-op, not a reasonless failure.
-    const rows = await engine.executeRaw<{ archived: boolean }>(
-      `SELECT archived FROM sources WHERE id = $1`,
-      [id],
-    );
-    if (rows[0]?.archived) {
+    if ((await engine.listArchivedSourceRows()).some((r) => r.id === id)) {
       console.log(`Source "${id}" is already archived — nothing to do.`);
       console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
       return;

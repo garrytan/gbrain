@@ -18,11 +18,11 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{bigint, delete_fact, read_fact};
+use super::{bigint, read_fact};
 use crate::Store;
 use crate::error::Result;
 use crate::pages::{PageRecord, read_page_by_id};
-use crate::takes::{delete_take, read_take};
+use crate::takes::read_take;
 
 /// `listPurgeStreamSlugs({ factIds })` and `deletePurgedTakes({ takeIds })`.
 #[derive(Debug, Clone, Deserialize)]
@@ -84,27 +84,6 @@ impl Store {
         Ok(out)
     }
 
-    /// `deletePurgedFacts(factIds, sourceId)`.
-    pub fn delete_purged_facts(&self, a: &PurgeSourceIdsArgs) -> Result<u64> {
-        let ids = ids_of("deletePurgedFacts", &a.ids)?;
-        if ids.is_empty() {
-            return Ok(0);
-        }
-        let trust = &self.write_trust()?;
-        self.write(|tx| {
-            let mut deleted = 0;
-            for &id in &ids {
-                if let Some(row) = read_fact(&*tx, id)?
-                    && row.source_id == a.source_id
-                {
-                    delete_fact(tx, trust, &row)?;
-                    deleted += 1;
-                }
-            }
-            Ok(deleted)
-        })
-    }
-
     /// `listPurgedPageRevisions(sourceId, pageIds)`.
     pub fn list_purged_page_revisions(&self, a: &PurgeSourceIdsArgs) -> Result<Vec<Value>> {
         Ok(self
@@ -112,39 +91,6 @@ impl Store {
             .into_iter()
             .map(|p| json!({ "id": p.id, "slug": p.slug, "knowledge_revision": p.knowledge_revision }))
             .collect())
-    }
-
-    /// `listPagesForPurgeRewrite(sourceId, pageIds)`.
-    pub fn list_pages_for_purge_rewrite(&self, a: &PurgeSourceIdsArgs) -> Result<Vec<Value>> {
-        let pages = self.purge_pages("listPagesForPurgeRewrite", a)?;
-        let read = self.read()?;
-        let mut out = Vec::with_capacity(pages.len());
-        for page in pages {
-            let mut row = page.to_page_with_columns(&*read)?;
-            let mut tags = page.tags.clone();
-            tags.sort_by(|x, y| x.as_bytes().cmp(y.as_bytes()));
-            row["purge_tags"] = json!(tags);
-            out.push(row);
-        }
-        Ok(out)
-    }
-
-    /// `deletePurgedTakes(takeIds)`.
-    pub fn delete_purged_takes(&self, a: &PurgeIdsArgs) -> Result<u64> {
-        let ids = ids_of("deletePurgedTakes", &a.ids)?;
-        if ids.is_empty() {
-            return Ok(0);
-        }
-        self.write(|tx| {
-            let mut deleted = 0;
-            for &id in &ids {
-                if let Some(take) = read_take(&*tx, id)? {
-                    delete_take(tx, &take)?;
-                    deleted += 1;
-                }
-            }
-            Ok(deleted)
-        })
     }
 }
 
@@ -174,44 +120,7 @@ pub struct PurgeReceiptsArgs {
     pub hold_ids: Vec<String>,
 }
 
-/// The whole ids of `ids` as `bigint` values (any sign: a `bigint[]` bind keeps them).
-fn signed_ids(op: &str, name: &str, ids: &[f64]) -> Result<BTreeSet<i64>> {
-    ids.iter().map(|id| bigint(op, name, *id)).collect()
-}
-
-impl Store {
-    /// `deletePurgeTrustProposals(sourceId, factIds, takeIds)`.
-    pub fn delete_purge_trust_proposals(&self, a: &PurgeProposalsArgs) -> Result<u64> {
-        const OP: &str = "deletePurgeTrustProposals";
-        let facts = signed_ids(OP, "factIds", &a.fact_ids)?;
-        let takes = signed_ids(OP, "takeIds", &a.take_ids)?;
-        self.write(|tx| {
-            crate::trust::proposals::delete_proposals_naming(tx, &a.source_id, &facts, &takes)
-        })
-    }
-
-    /// `deletePurgeOpenLoops(sourceId, factIds)`.
-    pub fn delete_purge_open_loops(&self, a: &PurgeSourceIdsArgs) -> Result<u64> {
-        let facts = signed_ids("deletePurgeOpenLoops", "factIds", &a.ids)?;
-        self.write(|tx| super::loops::delete_loops_on_facts(tx, &a.source_id, &facts))
-    }
-
-    /// `deletePurgeWriteGateHolds(sourceId, factHash)`.
-    pub fn delete_purge_write_gate_holds(&self, a: &PurgeHoldsArgs) -> Result<Vec<String>> {
-        self.write(|tx| {
-            crate::trust::write_gate::delete_holds_with_fingerprint(tx, &a.source_id, &a.fact_hash)
-        })
-    }
-
-    /// `deletePurgeWriteGateReceipts(factIds, takeIds, holdIds)`.
-    pub fn delete_purge_write_gate_receipts(&self, a: &PurgeReceiptsArgs) -> Result<u64> {
-        let set = |ids: &[String]| ids.iter().cloned().collect::<BTreeSet<String>>();
-        let (facts, takes, holds) = (set(&a.fact_ids), set(&a.take_ids), set(&a.hold_ids));
-        self.write(|tx| {
-            crate::trust::write_gate::delete_receipts_naming(tx, &facts, &takes, &holds)
-        })
-    }
-}
+impl Store {}
 
 /// `updatePageBodyForPurge({ sourceId, pageId, compiled, timeline, hash })`.
 #[derive(Debug, Clone, Deserialize)]
@@ -251,50 +160,6 @@ fn check_failed(relation: &str, constraint: &str) -> crate::error::StoreError {
 }
 
 impl Store {
-    /// `updatePageBodyForPurge`: `UPDATE pages SET compiled_truth, timeline, content_hash, updated_at = now(),
-    /// text_projection_revision = NULL, embedding_signature = NULL WHERE source_id AND id`, deleted pages too. The
-    /// revision trigger moves the knowledge revision when a body column changed; a segmented page fails
-    /// `pages_body_storage_chk`, as the SQL does.
-    pub fn update_page_body_for_purge(&self, a: &PurgePageBodyArgs) -> Result<()> {
-        const OP: &str = "updatePageBodyForPurge";
-        let Ok(page_id) = u64::try_from(bigint(OP, "pageId", a.page_id)?) else {
-            return Ok(());
-        };
-        for (text, what) in [
-            (&a.compiled, "compiled"),
-            (&a.timeline, "timeline"),
-            (&a.hash, "hash"),
-        ] {
-            crate::links::no_nul(OP, &[(what, text.as_str())])?;
-        }
-        let now = self.env.now_micros();
-        self.write(|tx| {
-            let Some(mut page) = read_page_by_id(&*tx, page_id)? else {
-                return Ok(());
-            };
-            if page.source_id != a.source_id {
-                return Ok(());
-            }
-            if crate::page_body::read_body_state(&*tx, page.id)?
-                .is_some_and(|s| s.body_storage == "segmented")
-            {
-                return Err(check_failed("pages", "pages_body_storage_chk"));
-            }
-            if page.compiled_truth.as_deref() != Some(a.compiled.as_str())
-                || page.timeline.as_deref() != Some(a.timeline.as_str())
-            {
-                page.knowledge_revision = self.env.new_uuid();
-            }
-            page.compiled_truth = a.compiled.as_str().into();
-            page.timeline = a.timeline.as_str().into();
-            page.content_hash = Some(a.hash.clone());
-            page.updated_at_us = now;
-            page.text_projection_revision = None;
-            crate::embeddings::clear_signature(tx, page.id)?;
-            crate::pages::write_page_setting_vector(tx, &page)
-        })
-    }
-
     /// `setPurgeVersionBody`: `UPDATE page_versions SET compiled_truth, timeline WHERE id`. A segmented snapshot fails
     /// `page_versions_body_chk`, as the SQL does.
     pub fn set_purge_version_body(&self, a: &PurgeVersionBodyArgs) -> Result<()> {
@@ -366,33 +231,6 @@ impl Store {
             }
             redacted.sort_unstable();
             Ok(redacted)
-        })
-    }
-
-    /// `deletePurgedChunks(pageIds)`: deletes the chunks of the pages and voids the text projection of each page that had
-    /// one; how many chunks it deleted (the SQL returns one row per deleted chunk).
-    pub fn delete_purged_chunks(&self, a: &PurgeIdsArgs) -> Result<u64> {
-        let ids = ids_of("deletePurgedChunks", &a.ids)?;
-        if ids.is_empty() {
-            return Ok(0);
-        }
-        self.write(|tx| {
-            let mut deleted = 0;
-            for &id in &ids {
-                let chunks = crate::chunks::read_chunks(&*tx, id)?.len() as u64;
-                if chunks == 0 {
-                    continue;
-                }
-                crate::chunks::clear_chunks(tx, id)?;
-                deleted += chunks;
-                if let Some(mut page) = read_page_by_id(&*tx, id)?
-                    && page.text_projection_revision.is_some()
-                {
-                    page.text_projection_revision = None;
-                    crate::pages::write_page(tx, &page)?;
-                }
-            }
-            Ok(deleted)
         })
     }
 }

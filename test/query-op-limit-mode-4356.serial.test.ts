@@ -60,6 +60,7 @@ const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
 
 const engineStub = {
   getConfig: async () => null,
+  resolveCaseSensitiveAliases: async () => [],
   executeRaw: async () => [],
   // The query path's alias fan-out reads page titles through this typed member; none exist here.
   findPagesByTitles: async () => [],

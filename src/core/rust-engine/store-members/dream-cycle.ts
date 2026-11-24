@@ -64,9 +64,6 @@ export const countDreamProvenancePages: StoreMember<
   storeCall({ member: 'countDreamProvenancePages' }, () =>
     brain.countDreamProvenancePages({ sourceId, cycleDate, summarySlug, writtenSlugs: [...writtenSlugs] }));
 
-export const readDreamDeferralReceipt: StoreMember<[receiptId: string], DreamCycleSql.DreamDeferralReceipt | null> = (brain, receiptId) =>
-  storeCall({ member: 'readDreamDeferralReceipt' }, () => brain.readDreamDeferralReceipt(receiptId));
-
 export const listConsolidationClaimValues: StoreMember<[ids: number[]], DreamCycleSql.ConsolidationClaimValue[]> = (brain, ids) =>
   storeCall({ member: 'listConsolidationClaimValues' }, () => brain.listConsolidationClaimValues(numbers(ids)));
 
@@ -111,22 +108,6 @@ export const listSynthesisPageBodies: StoreMember<
   Array<{ slug: string; title: string | null; body: string | null }>
 > = (brain, sourceId, slugs) =>
   storeCall({ member: 'listSynthesisPageBodies' }, () => brain.listSynthesisPageBodies(sourceId, [...slugs]));
-
-export const listLaterPersistenceRequests: StoreMember<
-  [sourceId: string, incarnation: string, slug: string, sequence: number | string],
-  WriteRequest[]
-> = async (brain, sourceId, incarnation, slug, sequence) => {
-  const rows: unknown[] = await storeCall({ member: 'listLaterPersistenceRequests' }, () =>
-    brain.listLaterPersistenceRequests({ sourceId, incarnation, slug, sequence }));
-  return rows.map(row => requestRow<WriteRequest>(row)!);
-};
-
-export const listCommittedOutputRequests: StoreMember<
-  [requestIds: string[], sourceId: string, incarnation: string],
-  Array<{ request: WriteRequest }>
-> = (brain, requestIds, sourceId, incarnation) =>
-  storeCall({ member: 'listCommittedOutputRequests' }, () =>
-    brain.listCommittedOutputRequests({ requestIds: [...requestIds], sourceId, incarnation }));
 
 export const readDreamVerifyEpoch: StoreMember<[], unknown> = async brain =>
   date(await storeCall({ member: 'readDreamVerifyEpoch' }, () => brain.readDreamVerifyEpoch()));

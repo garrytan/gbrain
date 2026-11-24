@@ -11,25 +11,10 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::forget::{
-    ExpireAtDateArgs, ExpireSupersededArgs, ForgetReadArgs, WithdrawalAnchorArgs,
-};
+use gbrain_store::facts::forget::{ExpireAtDateArgs, ExpireSupersededArgs, WithdrawalAnchorArgs};
 
 #[napi]
 impl Brain {
-    /// `readFactForForget(args)`: resolves the forget columns of one fact, or null.
-    #[napi]
-    pub fn read_fact_for_forget<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: ForgetReadArgs = required(args, "readFactForForget args")?;
-            s.read_fact_for_forget(&a)
-        })
-    }
-
     /// `expireFactSuperseded(args)`: ends and expires an active fact; resolves null.
     #[napi]
     pub fn expire_fact_superseded<'env>(

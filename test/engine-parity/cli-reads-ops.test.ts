@@ -18,9 +18,9 @@ import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { chunk, installChunks, seedPage } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import type { ExactScanOpts } from '../../src/core/search/exact-scan.ts';
 import type { RankEntitiesStatementOpts } from '../../src/core/engine-sql/graph-rank.ts';
-import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { EXTRACTION_PROVENANCE_KEY, EXTRACTION_STATUS_KEY, PROVENANCE_AUTO_EXTRACTED, STATUS_UNVERIFIED } from '../../src/core/extraction-review.ts';
 
 const { parityTest } = parityArms(testBackends());

@@ -11,8 +11,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::purge_journal::BlockedPublicationQuery;
 use gbrain_store::facts::purge_tx::{
-    PurgeHoldsArgs, PurgeIdsArgs, PurgePageBodyArgs, PurgeProposalsArgs, PurgeReceiptsArgs,
-    PurgeSourceIdsArgs, PurgeVersionBodyArgs, RedactReasonsArgs,
+    PurgeIdsArgs, PurgeSourceIdsArgs, PurgeVersionBodyArgs, RedactReasonsArgs,
 };
 use gbrain_store::generations::needs_rederive::MarkRederiveArgs;
 use gbrain_store::page_body::{SegmentedVersionsQuery, UnreferencedTextsArgs};
@@ -32,19 +31,6 @@ impl Brain {
         })
     }
 
-    /// `deletePurgedFacts({ sourceId, ids })`: resolves how many facts it deleted.
-    #[napi]
-    pub fn delete_purged_facts<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeSourceIdsArgs = required(args, "deletePurgedFacts args")?;
-            s.delete_purged_facts(&a)
-        })
-    }
-
     /// `listPurgedPageRevisions({ sourceId, ids })`: resolves `[{ id, slug, knowledge_revision }]` by slug.
     #[napi]
     pub fn list_purged_page_revisions<'env>(
@@ -55,97 +41,6 @@ impl Brain {
         self.run(env, move |s| {
             let a: PurgeSourceIdsArgs = required(args, "listPurgedPageRevisions args")?;
             s.list_purged_page_revisions(&a)
-        })
-    }
-
-    /// `listPagesForPurgeRewrite({ sourceId, ids })`: resolves whole page rows with `purge_tags`, by slug.
-    #[napi]
-    pub fn list_pages_for_purge_rewrite<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeSourceIdsArgs = required(args, "listPagesForPurgeRewrite args")?;
-            s.list_pages_for_purge_rewrite(&a)
-        })
-    }
-
-    /// `deletePurgedTakes({ ids })`: resolves how many takes it deleted.
-    #[napi]
-    pub fn delete_purged_takes<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeIdsArgs = required(args, "deletePurgedTakes args")?;
-            s.delete_purged_takes(&a)
-        })
-    }
-
-    /// `deletePurgeTrustProposals({ sourceId, factIds, takeIds })`: resolves how many proposals it deleted.
-    #[napi]
-    pub fn delete_purge_trust_proposals<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeProposalsArgs = required(args, "deletePurgeTrustProposals args")?;
-            s.delete_purge_trust_proposals(&a)
-        })
-    }
-
-    /// `deletePurgeOpenLoops({ sourceId, ids })`: resolves how many loops it deleted.
-    #[napi]
-    pub fn delete_purge_open_loops<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeSourceIdsArgs = required(args, "deletePurgeOpenLoops args")?;
-            s.delete_purge_open_loops(&a)
-        })
-    }
-
-    /// `deletePurgeWriteGateHolds({ sourceId, factHash })`: resolves the deleted hold ids as text.
-    #[napi]
-    pub fn delete_purge_write_gate_holds<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeHoldsArgs = required(args, "deletePurgeWriteGateHolds args")?;
-            s.delete_purge_write_gate_holds(&a)
-        })
-    }
-
-    /// `deletePurgeWriteGateReceipts({ factIds, takeIds, holdIds })`: resolves how many receipts it deleted.
-    #[napi]
-    pub fn delete_purge_write_gate_receipts<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeReceiptsArgs = required(args, "deletePurgeWriteGateReceipts args")?;
-            s.delete_purge_write_gate_receipts(&a)
-        })
-    }
-
-    /// `updatePageBodyForPurge`: resolves null.
-    #[napi]
-    pub fn update_page_body_for_purge<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgePageBodyArgs = required(args, "updatePageBodyForPurge args")?;
-            s.update_page_body_for_purge(&a)
         })
     }
 
@@ -172,19 +67,6 @@ impl Brain {
         self.run(env, move |s| {
             let a: RedactReasonsArgs = required(args, "redactVersionChangeReasons args")?;
             s.redact_version_change_reasons(&a)
-        })
-    }
-
-    /// `deletePurgedChunks`: resolves how many chunks it deleted.
-    #[napi]
-    pub fn delete_purged_chunks<'env>(
-        &self,
-        env: &'env Env,
-        args: Value,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            let a: PurgeIdsArgs = required(args, "deletePurgedChunks args")?;
-            s.delete_purged_chunks(&a)
         })
     }
 

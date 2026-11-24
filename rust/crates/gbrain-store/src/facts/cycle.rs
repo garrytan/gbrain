@@ -3,16 +3,17 @@
 //! fence-repair and entity-card paths ran through `executeRaw`.
 //!
 //! Members: listActiveFactsForEntity, listFreshExtractionOutcomes, listFenceRowGroups, readFactSubject,
-//! listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
+//! readFactForForget, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
 //! listStoredFenceFactRows, countWorldFacts.
 //!
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
 //! statement selects. A statement with no `ORDER BY` returns its rows in key order here (the TypeScript callers do
 //! not depend on an order). Each fact row keeps its stamped `trust_tier`, and the write gate keeps its receipts
 //! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`) and hides a row a
-//! purge marked in `needs_rederive` (`generations/needs_rederive.rs`). The facts store keeps no folder rule or `page_readers` column
-//! (`privacy.rs`): a page names readers here only through a `readable_by` key. rust/docs/store/facts.md, "Group 5", lists what each member answers.
+//! purge marked in `needs_rederive` (`generations/needs_rederive.rs`). The facts store keeps no `page_readers` column
+//! (`privacy.rs`): a page names readers here only through a `readable_by` key, and sits under a folder through the store's folder rules. rust/docs/store/facts.md, "Group 5", lists what each member answers.
 
+use super::repair::folder_restricted;
 use super::{
     FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, hidden_by_deleted_page,
     hidden_by_policy, hidden_by_quarantine, page_rows, real,
@@ -306,6 +307,26 @@ impl Store {
         )
     }
 
+    /// `readFactForForget` (src/core/facts/forget.ts): `{ id, source_id, entity_slug, row_num, source_markdown_slug,
+    /// expired_at, visibility }` of fact `id`, `expired_at` as `iso` text the TypeScript member turns into a `Date`, or
+    /// null for no such row.
+    pub fn read_fact_for_forget(&self, id: f64) -> Result<Value> {
+        let read = self.read()?;
+        Ok(
+            fact_by_number(&*read, "readFactForForget", "id", id)?.map_or(Value::Null, |r| {
+                json!({
+                    "id": r.id,
+                    "source_id": r.source_id,
+                    "entity_slug": r.entity_slug,
+                    "row_num": r.row_num,
+                    "source_markdown_slug": r.source_markdown_slug,
+                    "expired_at": r.expired_at_us.map(iso),
+                    "visibility": r.visibility,
+                })
+            }),
+        )
+    }
+
     /// `listFactsForPage` (src/core/cycle/extract-facts.ts): the fence-owned rows of a page coordinate, by
     /// `row_num` (rows without one last) then id. Each row carries the 17 columns the statement selects and
     /// `has_embedding`; the times are `iso` text, which the TypeScript member turns into `Date`s.
@@ -393,10 +414,15 @@ impl Store {
             {
                 continue;
             }
-            // `readersSourcedFactSql`: the row's own page (deleted or not) names readers.
+            // `readersSourcedFactSql`: the row's own page (deleted or not) names readers or sits
+            // under a folder rule or a pending prefix.
             let readers = match &row.source_markdown_slug {
-                Some(slug) => read_page(&*read, &row.source_id, slug)?
-                    .is_some_and(|p| p.frontmatter.contains_key("readable_by")),
+                Some(slug) => match read_page(&*read, &row.source_id, slug)? {
+                    Some(p) => {
+                        p.frontmatter.contains_key("readable_by") || folder_restricted(&*read, &p)?
+                    }
+                    None => false,
+                },
                 None => false,
             };
             if !readers {

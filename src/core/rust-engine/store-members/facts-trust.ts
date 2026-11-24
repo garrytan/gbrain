@@ -3,7 +3,7 @@
  * (rust/crates/gbrain-store/src/facts/trust.rs and facts/saved_match.rs). A member not exported here refuses with
  * `engine_capability_missing`.
  *
- * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts` and `matchSavedFacts`. The pool's trust floor and
+ * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts`, `matchSavedFacts` and `countDerivedFactTaint`. The pool's trust floor and
  * flagged-fact suppression go to the store, which reads each fact's stamped `trust_tier` and its write-gate receipts. The
  * store answers the rest of the pool's read policy exactly when the world-only rule is the plain `world` one or a
  * widening the store models (fact-visibility.ts), the privacy policy is one the store models (private-provenance.ts),
@@ -20,6 +20,11 @@
  * `listRestatedPrivateCopies` is served by facts-trust-reads.ts; `readFactForOwnerAction`, `listStandingPreferences` and
  * `countDerivedFactTaint` by facts-trust-owner.ts. The `entity_ended` arm reads the withdrawal ledger through
  * `gbrain_fact_fingerprint`, which no store read joins yet.
+ *
+ * `readEntityNewestFacts` (search/entity-facts.ts) is served under the same rules: a remote caller reads the private-provenance
+ * policy, and a world-only one whose private-facts grant widens the visibility refuses.
+ *
+ * `matchHeadStems` stems with the store's `english` configuration; another FTS language refuses.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { grantedPrivateFactSql } from '../../access/member-facts.ts';
@@ -28,8 +33,8 @@ import { privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { CORRECTION_CUE } from '../../search/saved-facts-match.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
+import { poolArgs } from './fact-pool.ts';
 import { withDates } from '../store-codec.ts';
-import { poolArgs } from './fact-codec.ts';
 import { assertOwnerTierFloor } from '../../engine-sql/facts-trust.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -95,4 +100,26 @@ export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = async (brain, q)
   if (!q.ids.length) return [];
   assertOwnerTierFloor(q.floor);
   return storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+};
+
+export const readEntityNewestFacts: Member<'readEntityNewestFacts'> = async (brain, q) => {
+  const member = 'readEntityNewestFacts';
+  if (q.remote && q.worldOnly && grantedPrivateFactSql('f') !== 'FALSE') refuseMember(member, 'visibility widened by a private-facts grant');
+  const rows: Row[] = await storeCall({ member, sourceId: q.sourceId }, () => brain.readEntityNewestFacts({
+    sourceId: q.sourceId,
+    slugs: q.slugs,
+    // A local caller reads no visibility or private-provenance rule; a remote one reads privateFactFilterForReader('f').
+    excludePrivate: storePrivacyPolicy(member, q.remote, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    worldOnly: q.remote && q.worldOnly,
+    minTrust: q.minTrust || null,
+  }));
+  return rows.map(row => withDates(row, ['created_at']) as unknown as Awaited<ReturnType<BrainEngine['readEntityNewestFacts']>>[number]);
+};
+
+export const matchHeadStems: Member<'matchHeadStems'> = async (brain, heads, terms) => {
+  const member = 'matchHeadStems';
+  if (getFtsLanguage() !== 'english') refuseMember(member, `FTS language ${getFtsLanguage()}`);
+  if (heads.length === 0) return [];
+  const rows: Array<{ h: string; i: Array<number | string> }> = await storeCall({ member }, () => brain.matchHeadStems([...heads], [...terms]));
+  return rows.map(row => ({ h: row.h, i: row.i.map(Number) }));
 };

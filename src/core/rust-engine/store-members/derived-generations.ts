@@ -16,7 +16,7 @@ import {
 } from '../../engine-sql/generation-activations.ts';
 import {
   checkedRepairFilter, type GenerationRepairFilter, type GenerationRepairItemRow, type HeldGenerationListRow, type HeldGenerationProposalRow, type RestorableGenerationRow,
-  type UnmatchedGenerationRow,
+  type SourceIncarnationListRow, type UnmatchedGenerationRow,
 } from '../../engine-sql/generation-repair.ts';
 import type { FenceVersionBodyRow } from '../../engine-sql/generation-fence-evidence.ts';
 import { checkGenerationPageRowsQuery, type GenerationPageRow, type GenerationPageRowsQuery } from '../../engine-sql/generation-page-rows.ts';
@@ -154,6 +154,15 @@ export const listHeldGenerationRows: StoreMember<[sourceIds: readonly string[], 
 export const readHeldGenerationProposal: StoreMember<[id: number], HeldGenerationProposalRow | null> = async (brain, id) =>
   storeCall({ member: 'readHeldGenerationProposal' }, () => brain.readHeldGenerationProposal(id));
 
+/** The incarnation of each known source of `sourceIds`, in id order: one `readSourceIncarnation` per distinct id. */
+export const listGenerationSourceIncarnations: StoreMember<[sourceIds: readonly string[]], SourceIncarnationListRow[]> = async (brain, sourceIds) => {
+  const rows: SourceIncarnationListRow[] = [];
+  for (const id of [...new Set(sourceIds)].sort()) {
+    const row = await storeCall<{ incarnation: string } | null>({ member: 'listGenerationSourceIncarnations', sourceId: id }, () => brain.readSourceIncarnation(id));
+    if (row) rows.push({ id, incarnation: row.incarnation });
+  }
+  return rows;
+};
 
 /** The item keys of `itemKeys` that a generation of `key` not held records without retiring them. */
 export const listRecordedFenceItemKeys: StoreMember<[key: GenerationRowKey, itemKeys: readonly string[]], Array<{ item_key: string }>> =

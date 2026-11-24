@@ -244,23 +244,27 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('the lists stop at 100 rows after the readable filter, and the verify list at 1000', {
-    methods: ['upsertCliFileRow', 'listFileRowsForVerify', 'listReadableFileRows', 'listReadableFilePaths'],
+    methods: ['upsertCliFileRow', 'listFiles', 'listFileRowsForVerify', 'listReadableFileRows', 'listReadableFilePaths'],
   }, async (engine) => {
     await engine.putPage('apriv', note('Private', { visibility: 'private' }));
     await engine.upsertCliFileRow(row('apriv/file', { page_slug: 'apriv' }), { storage: 'local' });
     for (let n = 0; n < 101; n++) {
       await engine.upsertCliFileRow(row(`bulk/f${String(n).padStart(3, '0')}`, { page_slug: 'bulk' }), { storage: 'local' });
     }
-    const paths = (rows: Array<Record<string, unknown>>) => ({ count: rows.length, first: rows[0]?.storage_path, last: rows.at(-1)?.storage_path });
+    const paths = (rows: ReadonlyArray<{ storage_path?: unknown }>) => ({ count: rows.length, first: rows[0]?.storage_path, last: rows.at(-1)?.storage_path });
     const out = {
+      all: paths(await engine.listFiles({ pageSlug: null, limit: 100 })),
       verify: paths(await engine.listFileRowsForVerify()),
+      slug: paths(await engine.listFiles({ pageSlug: 'bulk', limit: 100 })),
       shown: paths(await engine.listReadableFileRows(undefined, false)),
       excluded: paths(await engine.listReadableFileRows(undefined, true)),
       pathsShown: paths(await engine.listReadableFilePaths(undefined, false)),
       pathsExcluded: paths(await engine.listReadableFilePaths(undefined, true)),
     };
     expect(out).toEqual({
+      all: { count: 100, first: 'apriv/file', last: 'bulk/f098' },
       verify: { count: 102, first: 'apriv/file', last: 'bulk/f100' },
+      slug: { count: 100, first: 'bulk/f000', last: 'bulk/f099' },
       shown: { count: 100, first: 'apriv/file', last: 'bulk/f098' },
       excluded: { count: 100, first: 'bulk/f000', last: 'bulk/f099' },
       pathsShown: { count: 100, first: 'apriv/file', last: 'bulk/f098' },
@@ -270,7 +274,7 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('a write that names a source or page that does not exist writes nothing, and a claim on a missing path is a no-op', {
-    methods: ['upsertRawFileRow', 'upsertOpFileRow', 'registerFileRow', 'claimFilePage', 'readFileOwner', 'upsertCliFileRow', 'listFileRowsForVerify'],
+    methods: ['upsertRawFileRow', 'upsertOpFileRow', 'registerFileRow', 'claimFilePage', 'readFileOwner', 'upsertCliFileRow', 'listFiles'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'other');
     await engine.putPage('notes/plan', note('Plan'));
@@ -281,7 +285,7 @@ describe('engine parity: files commands and file operations statements', () => {
       unknownSource: await outcome(() => engine.upsertRawFileRow({ ...base, source_id: 'never-made' }, { storage: 'git' })),
       unknownPage: await outcome(() => engine.upsertOpFileRow({ ...base, source_id: 'default', page_id: 999_999 }, { storage: 'local' })),
       registerUnknownPage: await outcome(() => engine.registerFileRow({ ...base, source_id: 'default', page_id: 999_999 }, { storage: 'local' })),
-      afterRefused: (await engine.listFileRowsForVerify()).length,
+      afterRefused: (await engine.listFiles({ pageSlug: null, limit: 100 })).length,
     };
     await engine.upsertCliFileRow({ ...base, page_slug: null }, { storage: 'local' });
     out.claimUnknownSource = await outcome(() => engine.claimFilePage(base.storage_path, 'never-made', here));
@@ -298,7 +302,7 @@ describe('engine parity: files commands and file operations statements', () => {
   });
 
   parityTest('a repeat upsert merges the new metadata keys into the stored object, in key order, and an operation upsert keeps the other keys', {
-    methods: ['upsertFile', 'upsertSyncFileRow', 'upsertOpFileRow', 'listFileRowsForVerify'],
+    methods: ['upsertFile', 'upsertSyncFileRow', 'upsertOpFileRow', 'listFiles'],
   }, async (engine) => {
     await engine.putPage('notes/plan', note('Plan'));
     const here = await pageId(engine, 'notes/plan');
@@ -306,9 +310,9 @@ describe('engine parity: files commands and file operations statements', () => {
     await engine.upsertSyncFileRow(row('object.bin', { filename: 'o.bin' }), { over: 'new', extra: { n: 1 } });
     await engine.upsertOpFileRow({ ...row('op.bin', { filename: 'op.bin', page_slug: 'notes/plan' }), source_id: 'default', page_id: here }, { b: 1, a: 2, ab: 3 });
     await engine.upsertOpFileRow({ ...row('op.bin', { filename: 'op.bin', page_slug: 'notes/plan' }), source_id: 'default', page_id: here }, { b: 9 });
-    const out = (await engine.listFileRowsForVerify()).map(shown);
+    const out = (await engine.listFiles({ pageSlug: null, limit: 100 })).map(shown);
     expect(out.map(r => [r.storage_path, r.metadata])).toEqual([
-      ['object.bin', { keep: 1, over: 'new', extra: { n: 1 } }], ['op.bin', { b: 9, a: 2, ab: 3 }],
+      ['op.bin', { b: 9, a: 2, ab: 3 }], ['object.bin', { keep: 1, over: 'new', extra: { n: 1 } }],
     ]);
     return out;
   });

@@ -64,8 +64,5 @@ export const countFactEmbeddingCoverage: Member<'countFactEmbeddingCoverage'> = 
 export const countSegmentedCensusPages: Member<'countSegmentedCensusPages'> = (brain, sourceIds, checkedOutSourceIds) =>
   storeCall({ member: 'countSegmentedCensusPages' }, () => brain.countSegmentedCensusPages({ sourceIds, checkedOutSourceIds }));
 
-export const listFactsPageBodies: Member<'listFactsPageBodies'> = (brain) =>
-  storeCall({ member: 'listFactsPageBodies' }, () => brain.listFactsPageBodies());
-
 export const readFactTableCatalog: Member<'readFactTableCatalog'> = (brain) =>
   storeCall({ member: 'readFactTableCatalog' }, () => brain.readFactTableCatalog());

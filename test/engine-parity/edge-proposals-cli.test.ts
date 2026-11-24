@@ -16,8 +16,8 @@
  *  - Why existing coverage misses it: test/edge-proposals-list-flags.test.ts and test/edge-proposals-json-bigint.test.ts
  *    check the flags and the id form against a recording stub, and no case ran the command on a Rust brain.
  *  - Seam: none. Pages come from putPage, proposals from recordEdgeProposal. The dated case runs the add_timeline_entry
- *    write to the end on every engine, so the subject page's timeline is compared too. On a Rust brain the write's page
- *    projection rebuild still stops at one named known stop (RUST_KNOWN_STOP), once per consumer drain that reaches it.
+ *    write to the end on every engine, so the subject page's timeline is compared too, and no engine refuses a raw-SQL
+ *    statement on the way (the page projection rebuild's window probe is a typed member on every engine).
  *    Ids differ between arms, so each output names a proposal by the row it seeded (P1 to P5), and a creation time by
  *    its form.
  */
@@ -119,20 +119,6 @@ function idNamed(labels: Map<number, string>, name: string): string {
   return String(found![0]);
 }
 
-/**
- * The one raw-SQL stop left in the dated case on Rust (owner: lane 3, cut 1, rust-engine/rust-rebuild-path, due 5 PM PST
- * Nov 23): the add_timeline_entry write rebuilds the page projections, and selectWindowJobs
- * (src/core/page-state/projections.ts, called from rebuildPendingPageProjections) probes the queued pages through
- * executeRaw. The rebuild logs the refusal and keeps the work queued, so the command still prints the same output.
- * Whichever of this change and lane 3's cut 1 lands second in rust-engine/main removes this pin; the case must then be
- * equal on all three arms. The pin fails as soon as Rust stops refusing there or refuses anywhere else; a refusal at
- * the stop repeats once per consumer drain that reaches it before the case ends.
- */
-const RUST_KNOWN_STOP = {
-  frames: [/at selectWindowJobs \([^)]*src\/core\/page-state\/projections\.ts:\d+:/, /at (?:async )?rebuildPendingPageProjections \([^)]*src\/core\/page-state\/projections\.ts:\d+:/],
-  message: "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.",
-};
-
 /** `engine`, keeping every raw-SQL refusal a call on it (or on a transaction handle it opens) raised, caught or not. */
 function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine {
   return new Proxy(engine, {
@@ -154,9 +140,6 @@ function keepingRefusals(engine: BrainEngine, refusals: unknown[]): BrainEngine 
     },
   });
 }
-
-/** The dated case's answer on the first non-Rust arm: the Rust arm compares with it before it stops on the pin. */
-let datedReference: unknown;
 
 describe('engine parity: gbrain edge-proposals', () => {
   parityTest('list, show and retry print the same text and JSON and set the same exit verdict', {
@@ -233,21 +216,7 @@ describe('engine parity: gbrain edge-proposals', () => {
     expect(JSON.parse(byArgs['show P2 --json']!.out).status).toBe('rejected');
     expect(snapshot?.page.timeline).toContain(`Started works_at [[${WIDGET}]]`);
     const value = { runs, timeline: snapshot?.page.timeline ?? null, body: snapshot?.page.compiled_truth ?? null };
-    const stops = refusals.map((e) => ({ message: (e as Error).message,
-      atKnownStop: RUST_KNOWN_STOP.frames.every((frame) => frame.test(String((e as Error).stack))) }));
-    if (backend !== 'rust') {
-      expect({ backend, rawSqlRefusals: stops }).toEqual({ backend, rawSqlRefusals: [] });
-      datedReference ??= value;
-      return value;
-    }
-    // The known stop (RUST_KNOWN_STOP): one or more refusals, every one at selectWindowJobs. The refused rebuild keeps the
-    // page queued, and each persistence consumer tick with upkeep starts the resident projection drain again
-    // (consumer.ts runResidentProjectionInvocation, polled every 250 ms), so a slow (loaded) run can retry the same stop
-    // before the case ends. Zero means lane 3's typed read is served: remove this pin and let the harness compare the case.
-    expect({ backend, refused: stops.length > 0 }).toEqual({ backend, refused: true });
-    expect({ backend, rawSqlRefusals: stops }).toEqual({ backend, rawSqlRefusals: stops.map(() => ({ message: RUST_KNOWN_STOP.message, atKnownStop: true })) });
-    expect({ backend, value }).toEqual({ backend, value: datedReference as typeof value });
-    // Every result above holds on Rust too; the arm still counts as stopped until the pin is removed.
-    throw refusals[0];
+    expect({ backend, rawSqlRefusals: refusals.map((e) => (e as Error).message) }).toEqual({ backend, rawSqlRefusals: [] });
+    return value;
   });
 });

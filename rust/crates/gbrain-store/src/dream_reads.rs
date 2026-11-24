@@ -10,7 +10,7 @@ use crate::env::{is_uuid, iso};
 use crate::error::{Result, StoreError};
 use crate::facts::{FactRecord, PrivacyPolicy, page_hidden, read_fact, write_fact};
 use crate::journal::RequestRecord;
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, read_page, versions_of, write_page};
 use crate::persistence::parse_timestamptz;
 use crate::takes::{page_takes, read_take, store_take};
@@ -64,9 +64,6 @@ pub struct CommittedOutputsQuery {
     pub incarnation: String,
 }
 
-/// The journal states `listLaterPersistenceRequests` counts as live or done.
-const LATER_STATES: &[&str] = &["queued", "running", "recovering", "committed"];
-
 /// `frontmatter ->> key`.
 fn fm_text(fm: &Map<String, Value>, key: &str) -> Option<String> {
     fm.get(key).and_then(jsonb_field_text)
@@ -90,20 +87,6 @@ fn uuid_bind(op: &str, text: &str) -> Result<String> {
             "{op}: invalid input syntax for type uuid: \"{text}\""
         )))
     }
-}
-
-/// Every journal request, in key order.
-fn all_requests(read: &dyn KvRead) -> Result<Vec<RequestRecord>> {
-    let mut out = Vec::new();
-    let mut failure = None;
-    scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
-        match serde_json::from_slice::<RequestRecord>(v) {
-            Ok(r) => out.push(r),
-            Err(e) => failure = Some(StoreError::from(e)),
-        }
-        failure.is_none()
-    })?;
-    failure.map_or(Ok(out), Err)
 }
 
 /// The facts of `ids` (a `bigint[]`), in id order.
@@ -446,69 +429,5 @@ impl Store {
         Ok(crate::get_json::<RequestRecord>(&*self.read()?, &keys::request(&id))?.map(|r| {
             json!({ "state": r.state, "error_code": r.error_code, "error_message": r.error_message })
         }))
-    }
-
-    /// `listLaterPersistenceRequests(...)`: the journal rows (`WriteRequest`) on the slug in the
-    /// source and incarnation after `sequence` that are live or committed, by sequence.
-    pub fn list_later_persistence_requests(&self, q: &LaterRequestsQuery) -> Result<Vec<Value>> {
-        const OP: &str = "listLaterPersistenceRequests";
-        let incarnation = uuid_bind(OP, &q.incarnation)?;
-        let after = match &q.sequence {
-            Value::Number(n) => n.as_i64().map(i128::from).or_else(|| {
-                n.as_f64()
-                    .filter(|f| f.fract() == 0.0 && f.is_finite())
-                    .map(|f| f as i128)
-            }),
-            Value::String(s) => s.trim().parse::<i64>().ok().map(i128::from),
-            _ => None,
-        }
-        .ok_or_else(|| {
-            StoreError::invalid(format!(
-                "{OP}: invalid input syntax for type bigint: {}",
-                q.sequence
-            ))
-        })?;
-        let mut rows: Vec<RequestRecord> = all_requests(&*self.read()?)?
-            .into_iter()
-            .filter(|r| {
-                r.source_id == q.source_id
-                    && r.source_incarnation.to_lowercase() == incarnation
-                    && r.slug == q.slug
-                    && i128::from(r.sequence) > after
-                    && LATER_STATES.contains(&r.state.as_str())
-            })
-            .collect();
-        rows.sort_by_key(|r| r.sequence);
-        Ok(rows.iter().map(RequestRecord::to_row).collect())
-    }
-
-    /// `listCommittedOutputRequests(...)`: `[{ request }]` of the committed `put_page` journal rows
-    /// of `requestIds` in the source and incarnation, newest sequence first.
-    pub fn list_committed_output_requests(&self, q: &CommittedOutputsQuery) -> Result<Vec<Value>> {
-        const OP: &str = "listCommittedOutputRequests";
-        let ids = q
-            .request_ids
-            .iter()
-            .map(|id| uuid_bind(OP, id))
-            .collect::<Result<HashSet<String>>>()?;
-        let incarnation = uuid_bind(OP, &q.incarnation)?;
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut rows: Vec<RequestRecord> = all_requests(&*self.read()?)?
-            .into_iter()
-            .filter(|r| {
-                r.source_id == q.source_id
-                    && ids.contains(&r.request_id.to_lowercase())
-                    && r.source_incarnation.to_lowercase() == incarnation
-                    && r.operation == "put_page"
-                    && r.state == "committed"
-            })
-            .collect();
-        rows.sort_by_key(|r| std::cmp::Reverse(r.sequence));
-        Ok(rows
-            .iter()
-            .map(|r| json!({ "request": r.to_row() }))
-            .collect())
     }
 }

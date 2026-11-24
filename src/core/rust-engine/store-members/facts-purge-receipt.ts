@@ -19,32 +19,11 @@ function requireCount(member: string, value: number): void {
   if (!Number.isInteger(value) || value < 0) refuseMember(member, 'a limit that is not a non-negative integer');
 }
 
-export const readPurgeSourceLocalPath: Member<'readPurgeSourceLocalPath'> = (brain, sourceId) =>
-  storeCall({ member: 'readPurgeSourceLocalPath' }, () => brain.readSourceLocalPath(sourceId));
-
 export const readPurgeReceiptSourcePath: Member<'readPurgeReceiptSourcePath'> = (brain, sourceId) =>
   storeCall({ member: 'readPurgeReceiptSourcePath' }, () => brain.readSourceLocalPath(sourceId));
 
-export const listSegmentedPageBodies: Member<'listSegmentedPageBodies'> = (brain, sourceId, limit) => {
-  requireCount('listSegmentedPageBodies', limit);
-  return storeCall({ member: 'listSegmentedPageBodies' }, () => brain.listSegmentedPageBodies({ sourceId, limit }));
-};
-
-export const listSegmentedVersionBodies: Member<'listSegmentedVersionBodies'> = (brain, sourceId, limit) => {
-  requireCount('listSegmentedVersionBodies', limit);
-  return storeCall({ member: 'listSegmentedVersionBodies' }, () => brain.listSegmentedVersionBodies({ sourceId, limit }));
-};
-
 export const listFactContextsForPurgeProbe: Member<'listFactContextsForPurgeProbe'> = (brain, sourceId, after) =>
   storeCall({ member: 'listFactContextsForPurgeProbe' }, () => brain.listFactContextsForPurgeProbe({ sourceId, after }));
-
-export const listPageSourcePathsForPurge: Member<'listPageSourcePathsForPurge'> = (brain, pageIds) => {
-  if (!pageIds.every((id) => Number.isInteger(id))) refuseMember('listPageSourcePathsForPurge', 'a page id that is not an integer');
-  return storeCall({ member: 'listPageSourcePathsForPurge' }, () => brain.listPageSourcePathsForPurge({ pageIds }));
-};
-
-export const countLegacyDerivedPages: Member<'countLegacyDerivedPages'> = (brain, sourceId) =>
-  storeCall({ member: 'countLegacyDerivedPages' }, () => brain.countLegacyDerivedPages({ sourceId }));
 
 /** `withQueryCache` names a table the store does not keep; the store has nothing to vacuum either way. */
 export const vacuumPurgedTables: Member<'vacuumPurgedTables'> = (brain) =>
@@ -55,11 +34,4 @@ export const listPageProseHits: Member<'listPageProseHits'> = (brain, store, sou
 
 export const countPurgeFingerprintResidue: Member<'countPurgeFingerprintResidue'> = (brain, sourceId, factHash, subject) =>
   storeCall({ member: 'countPurgeFingerprintResidue' }, () => brain.countPurgeFingerprintResidue({ sourceId, factHash, subject }));
-
-/** The store answers a NaN similarity as the text `NaN`; Postgres and PGLite return the float8 NaN. */
-export const listNearestFactsForPurge: Member<'listNearestFactsForPurge'> = async (brain, embedding, sourceId, model, fact) => {
-  const rows: Array<{ id: number; similarity: number | 'NaN'; contains_claim: boolean }> = await storeCall(
-    { member: 'listNearestFactsForPurge', sourceId }, () => brain.listNearestFactsForPurge({ embedding, sourceId, model, fact }));
-  return rows.map((r) => ({ ...r, similarity: r.similarity === 'NaN' ? Number.NaN : r.similarity }));
-};
 

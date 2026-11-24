@@ -41,4 +41,26 @@ describe('buildRetrievalReflexCheck', () => {
       rmSync(dir, { recursive: true, force: true });
     });
   });
+  // The Rust engine keeps one local data dir and binds the same resolve socket as PGLite, so with no socket it is
+  // the same informational "no serve" note, not a warning.
+  for (const engine of ['pglite', 'rust'] as const) {
+    test(`${engine} brain with no serve socket → ok info, path names the engine`, async () => {
+      const home = mkdtempSync(join(tmpdir(), 'rr-doctor-home-'));
+      try {
+        mkdirSync(join(home, '.gbrain'), { recursive: true });
+        writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine, database_path: join(home, 'brain') }));
+        await withEnv({ GBRAIN_RETRIEVAL_REFLEX: 'true', GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+          const c = buildRetrievalReflexCheck(null);
+          expect(c.status).toBe('ok');
+          expect(c.severity).toBe('info');
+          expect(c.readiness_state).toBe('not_applicable');
+          expect((c.details as any)?.engine).toBe(engine);
+          expect((c.details as any)?.path).toBe(`${engine} \u2014 serve IPC socket not present`);
+          expect(c.message).not.toContain('engine rust');
+        });
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  }
 });

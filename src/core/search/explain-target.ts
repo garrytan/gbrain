@@ -218,7 +218,7 @@ export async function probeTarget(query: ReadQuery, slug: string, policy: PageRe
        (SELECT COUNT(*)::int FROM content_chunks cc WHERE cc.page_id = p.id AND cc.embedding IS NOT NULL AND ${chunkGenerationFilter('p', 'cc', chunkManifest)}) AS embedded,
        ((p.text_projection_revision = p.knowledge_revision) IS TRUE) AS current,
        p.chunker_version
-     FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id`, params);
+     FROM pages p WHERE p.slug = $1 AND ${filter} ORDER BY p.source_id COLLATE "C"`, params);
   return rows.map(r => ({ source_id: r.source_id, chunks: Number(r.chunks), embedded: Number(r.embedded), current: r.current === true, chunker_version: r.chunker_version == null ? null : Number(r.chunker_version) }));
 }
 

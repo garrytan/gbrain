@@ -3,7 +3,9 @@
 //! `PageReadPolicy`), at most `limit`, in ask order. The quote reads (`listFactsFromQuotedPages`,
 //! `listOwnerTierFacts`) are `quote.rs`.
 //!
-//! See rust/docs/store/facts.md, "Quote and slot-history reads".
+//! The quote reads (`listFactsFromQuotedPages`, `listOwnerTierFacts`) are `facts/quote.rs`.
+//!
+//! See rust/docs/store/facts.md, "Slot-history reads".
 
 use std::collections::BTreeSet;
 
@@ -30,10 +32,12 @@ impl Store {
     pub fn list_readable_page_slugs(&self, q: &ReadablePageSlugsQuery) -> Result<Vec<String>> {
         no_nul("listReadablePageSlugs", &[("sourceId", &q.source_id)])?;
         let read = self.read()?;
-        // The SQL drops the scope's sources (`sourceId` / `sourceIds`): the page's source is `sourceId` alone.
+        // The SQL drops the scope's sources (`sourceId` / `sourceIds`): the page's source is `sourceId` alone. It
+        // does not read `requireSafeChunks` either (`pageReadFilter` has no safe-chunk clause).
         let scope = ChunkReadScope {
             source_id: None,
             source_ids: None,
+            require_safe_chunks: false,
             ..q.scope.clone()
         };
         let mut policy = PageReadPolicy::new(&*read);

@@ -1,6 +1,7 @@
 /** Trusted local administration, shared by direct CLI and its authenticated resident proxy. */
 import { isAbsolute, join } from 'node:path';
 import { claimedWorktreeRoot, inspectClaimedPhysicalRoot } from './topology-locks.ts';
+import { readTopologyRecoveryStops } from './topology-stop.ts';
 import { movedPhysicalRootRefusal } from './physical-root.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -11,13 +12,13 @@ import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
 import { writerDiagnostics } from './control.ts';
 import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, readManagedMode, storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from './ownership.ts';
-import { inspectPersistenceBrain } from './managed-mode.ts';
+import { inspectPersistenceBrain, readSharedSkillsState } from './managed-mode.ts';
 import { currentVerifiedLocalWriter, persistenceHome, readLocalWriter, registerLocalWriter, revokeLocalWriter, type LocalGrant, existingHostIdFor } from './identity.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
 import { assertWriterAdminState, requireWriterAdminIntent, writerAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
-import { assertWriterAdminUnlocked, readWriterAdminLock, setWriterAdminLock } from './admin-lock.ts';
+import { assertWriterAdminLockValue, readWriterAdminLockTyped, setWriterAdminLock, WRITER_ADMIN_LOCK_KEY } from './admin-lock.ts';
 import { listBlockingEffects } from './blocking-effects.ts';
 import { listWriterVersions } from './writer-versions.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -179,7 +180,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
   }
   // Early refusal before any native lock or preview; the checks inside each transaction stay authoritative.
-  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) await assertWriterAdminUnlocked(engine);
+  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) assertWriterAdminLockValue(await engine.getConfig(WRITER_ADMIN_LOCK_KEY));
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
   if (operation === 'writer_refresh') {
     keys(params, ['source_id', 'dry_run', 'resume', 'abandon', 'wait_drain_ms', 'fetch_timeout_ms']);
@@ -304,12 +305,9 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     bool(params, 'probe');
     const adminState = await writerAdminState(engine);
     const diagnostics = await writerDiagnostics(engine);
-    const bindings = await engine.executeRaw(`SELECT b.source_id,b.source_incarnation,b.worktree_id,b.relative_path,b.topology_generation::text AS topology_generation,
-      w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,w.manifest->>'prepared_at' AS prepared_at,h.local_path,h.git_durability,
-      CASE h.git_durability WHEN 'enabled' THEN 'on' WHEN 'disabled' THEN 'off' ELSE 'unknown' END AS git_durability_state FROM persistence_source_bindings b
-      JOIN persistence_worktrees w ON w.id=b.worktree_id
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
-      WHERE ($2::text IS NULL OR b.source_id=$2) ORDER BY b.source_id`, [existingHostIdFor(engine), params.source_id === undefined ? null : source(params.source_id)]);
+    // Bindings with this host's root, and the stopped retire requests, in one typed read (engine-sql/writer-status.ts).
+    const { bindings, topology_requests: topologyRequests } = await engine.readWriterStatusRows(existingHostIdFor(engine),
+      params.source_id === undefined ? null : source(params.source_id));
     let native: unknown;
     if (params.probe === true) {
       const { nativeLockCapability, tryAcquireNativeLock } = await import('./native-lock.ts');
@@ -323,9 +321,8 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       native = { ...capability, acquired: true, released: lock.released };
     }
     const onboarding = await writerOnboardingPreflight(engine, params.source_id as string | undefined);
-    const [sharedSkills] = await engine.executeRaw<{ writer_protocol_floor: number; skill_bundles_enabled: boolean }>(
-      'SELECT writer_protocol_floor,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
-    const adminLock = await readWriterAdminLock(engine);
+    const sharedSkills = await readSharedSkillsState(engine);
+    const adminLock = await readWriterAdminLockTyped(engine);
     const blockingEffects = await listBlockingEffects(engine, { sourceId: params.source_id as string | undefined, limit: 20 });
     const writerVersions = await listWriterVersions(engine);
     await assertWriterAdminState(engine, adminState, false);
@@ -345,9 +342,9 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       host: { host_id: existingHostIdFor(engine), ...await (await import('./consumer-diagnostics.ts')).hostConsumersReport(engine, existingHostIdFor(engine)) },
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
       // #8984: stopped remove/purge requests (retire admissions) and the ones a later lifecycle change superseded.
-      topology_requests: await engine.executeRaw(`SELECT request_id::text AS request_id,operation,source_id,source_incarnation::text AS source_incarnation,state,outcome->>'error' AS error,created_at::text AS created_at
-        FROM persistence_topology_changes WHERE ($1::text IS NULL OR source_id=$1) AND operation IN ('remove','purge') AND recovery IS NULL
-        AND (state='recovering' OR state='failed' AND outcome->>'error'='source_retire_superseded') ORDER BY created_at DESC LIMIT 20`, [params.source_id === undefined ? null : source(params.source_id)]),
+      topology_requests: topologyRequests,
+      // This host's recovering topology changes, and the named Rust stop that keeps them from converging (topology-stop.ts).
+      topology_recoveries: await readTopologyRecoveryStops(engine, existingHostIdFor(engine)),
       // Q1: each canonical checkout on this host against its last fetched upstream: commits it holds that the upstream lacks, and its porcelain.
       checkouts: await writerStatusCheckouts(bindings as Array<{ source_id: string; local_path: string | null }>),
       // #6317 (B4): per managed source, whether sync data moves (shares the reader of sources status, doctor and writer movement).

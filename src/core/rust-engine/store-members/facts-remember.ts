@@ -1,7 +1,7 @@
 /**
  * The facts members a remember, a proposal review, a page retire and a recall by id use, served from the facts store
  * (rust/crates/gbrain-store/src/facts/remember_reads.rs): `readFactEntitySlugById`, `readSupersessionReplacement`,
- * `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactProvenance`, `listFactRowsByIds`, `readFactVisibility`,
+ * `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactRowsByIds`, `readFactVisibility`,
  * `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`, `expireSupersededFact`, `restoreSupersededFact`,
  * `readReplacementTarget`, `readMemberPageWithdrawal` and `readClaimWithdrawal` (src/core/engine-sql/facts-trust.ts,
  * facts-recall.ts).
@@ -55,11 +55,6 @@ export const linkSupersededFact: Member<'linkSupersededFact'> = async (brain, ol
 
 export const listFactsToRetireFromPage: Member<'listFactsToRetireFromPage'> = async (brain, sourceId, session, slug, pattern) =>
   storeCall({ member: 'listFactsToRetireFromPage', sourceId }, () => brain.listFactsToRetireFromPage({ sourceId, session, slug, pattern }));
-
-export const listFactProvenance: Member<'listFactProvenance'> = async (brain, sourceId, ids) => {
-  for (const id of ids) wholeId('listFactProvenance', id);
-  return storeCall({ member: 'listFactProvenance', sourceId }, () => brain.listFactProvenance({ sourceId, ids }));
-};
 
 export const listFactRowsByIds: Member<'listFactRowsByIds'> = async (brain, sourceIds, ids) => {
   for (const id of ids) wholeId('listFactRowsByIds', id);

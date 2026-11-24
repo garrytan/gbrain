@@ -22,8 +22,8 @@
 //! - `listMergedEntityAliases(sourceId, slugs)`: for each distinct slug that is an alias with no
 //!   live page of its own and a live canonical page, `{ alias_slug, canonical_slug }`.
 //! - `listEntityHintPages(sourceId, slugs)`: the live pages among `slugs`, in page id order, each
-//!   `{ slug, type, frontmatter, retired, folder_restricted }`. The store keeps no folder access
-//!   rules (`isFolderRestricted` is false on this engine), so `folder_restricted` is false.
+//!   `{ slug, type, frontmatter, retired, folder_restricted }`. `folder_restricted` is
+//!   `folderRestrictedSql`: the page carries a stamped folder rule or sits under a pending prefix.
 //! - `readRelinkSource(sourceId)`: `{ incarnation, archived, local_path, kind }` (`config->>'kind'`),
 //!   null for an unknown source.
 //! - `readReextractOutcomeRow(sourceId, slug)`: on a live page, its newest unexpired terminal (v2)
@@ -435,18 +435,18 @@ impl Store {
             }
         }
         pages.sort_by_key(|p| p.id);
-        Ok(pages
-            .into_iter()
-            .map(|p| {
-                json!({
-                    "slug": p.slug,
-                    "type": p.page_type,
-                    "retired": retired(&p.frontmatter),
-                    "frontmatter": jsonb_order(Value::Object(p.frontmatter)),
-                    "folder_restricted": false,
-                })
-            })
-            .collect())
+        let mut out = Vec::with_capacity(pages.len());
+        for p in pages {
+            let folder_restricted = super::repair::folder_restricted(&*read, &p)?;
+            out.push(json!({
+                "slug": p.slug,
+                "type": p.page_type,
+                "retired": retired(&p.frontmatter),
+                "frontmatter": jsonb_order(Value::Object(p.frontmatter)),
+                "folder_restricted": folder_restricted,
+            }));
+        }
+        Ok(out)
     }
 
     /// `readRelinkSource(sourceId)`.

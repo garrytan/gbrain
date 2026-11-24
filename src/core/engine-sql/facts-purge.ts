@@ -234,16 +234,38 @@ export async function listSingleFactMetadata(raw: EngineRawRead, opts: { sourceI
   return raw<SingleFactMetadataRow>(text, params);
 }
 
-/** planUnfencedFacts: the active unfenced rows (no fence row, no ontology dimension) of one source or every source, with whether the entity has a live page, in byte order of source and entity (COLLATE "C", whatever the server locale), then id. */
-export async function listUnfencedFactRows(raw: EngineRawRead, opts: { sourceId?: string }): Promise<UnfencedFactRow[]> {
+/** Whether the entity a fact row names has a live page in the row's source. */
+const LIVE_ENTITY_PAGE = trustedSql('EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)');
+
+/** planUnfencedFacts (#10005): one group of the active unfenced rows (no fence row, no ontology dimension), by source, whether the row names an entity and whether that entity has a live page of the source. */
+export interface UnfencedFactGroup { source_id: string; has_entity: boolean; page_exists: boolean; n: number }
+
+/** planUnfencedFacts (#10005): the counts of the active unfenced rows of one source or every source per (source, has an entity, entity page is live), so the rows that can never be fenced are counted on the server and not transferred. */
+export async function countUnfencedFactGroups(raw: EngineRawRead, opts: { sourceId?: string }): Promise<UnfencedFactGroup[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT source_id, has_entity, page_exists, COUNT(*) AS n
+       FROM (SELECT f.source_id, f.entity_slug IS NOT NULL AS has_entity, ${LIVE_ENTITY_PAGE} AS page_exists
+               FROM facts f WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL${opts.sourceId !== undefined ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``}) c
+      GROUP BY source_id, has_entity, page_exists`);
+  return (await raw<{ source_id: string; has_entity: boolean; page_exists: boolean; n: number | string }>(text, params))
+    .map(row => ({ ...row, n: Number(row.n) }));
+}
+
+/**
+ * planUnfencedFacts: the active unfenced rows (no fence row, no ontology dimension) of one source or every source, with whether the entity has a live page, in byte order of source and entity (COLLATE "C", whatever the server locale), then id.
+ * With `fenceableSourceIds` (#10005) only the rows that name an entity with a live page, in those sources, come back (all with `page_exists` true).
+ */
+export async function listUnfencedFactRows(raw: EngineRawRead, opts: { sourceId?: string; fenceableSourceIds?: string[] }): Promise<UnfencedFactRow[]> {
+  const fenceable = opts.fenceableSourceIds;
+  if (fenceable !== undefined && fenceable.length === 0) return [];
+  const pageExists = fenceable !== undefined ? trustedSql('TRUE') : LIVE_ENTITY_PAGE;
   const { text, params } = renderFragment(sqlFragment`SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
             context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to,
-            EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
-              AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
+            ${pageExists} AS page_exists
        FROM facts f
       WHERE row_num IS NULL AND expired_at IS NULL AND dimension IS NULL
         ${opts.sourceId !== undefined ? sqlFragment`AND source_id = ${opts.sourceId}` : sqlFragment``}
+        ${fenceable !== undefined ? sqlFragment`AND source_id = ANY(${fenceable}::text[]) AND entity_slug IS NOT NULL AND ${LIVE_ENTITY_PAGE}` : sqlFragment``}
       ORDER BY source_id COLLATE "C", entity_slug COLLATE "C", id`);
   return raw<UnfencedFactRow>(text, params);
 }
@@ -287,6 +309,34 @@ export interface FactPurgeInsert {
 export async function insertFactPurge(raw: EngineRawRead, row: FactPurgeInsert): Promise<boolean> {
   const rows = await raw<{ inserted: number }>(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason) VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
     [row.sourceId, row.visibility, row.subject, row.factHash, row.requestId, row.actor, row.reason]);
+  return rows.length > 0;
+}
+
+/** A page purge's content-hash tombstones, the rows the page purge sweep writes into `page_purges`. */
+export interface PagePurgeUpsert { sourceId: string; contentHashes: string[]; slug: string; requestId: string | null }
+
+/** tombstonePage: records each content hash under the slug; a hash already tombstoned takes the new slug, request and time. */
+export async function upsertPagePurges(raw: EngineRawRead, row: PagePurgeUpsert): Promise<void> {
+  await raw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
+    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [row.sourceId, row.contentHashes, row.slug, row.requestId]);
+}
+
+/**
+ * The one writer of `take_purges`, in two forms. `claimHash` is one tombstone (purge_fact, and the belief purge replay,
+ * one per replayed hash); `pageId` tombstones the fingerprint of every take claim of that page (the page purge), under
+ * the same subject. `requestId` is the purge request the tombstones answer to, or null.
+ */
+export type TakePurgeInsert = { sourceId: string; subject: string; requestId: string | null }
+  & ({ claimHash: string; pageId?: undefined } | { pageId: number; claimHash?: undefined });
+
+/** The take tombstone writer: stores it (or one per distinct take claim of the page); false when every one already exists, or the page has no takes. */
+export async function insertTakePurge(raw: EngineRawRead, row: TakePurgeInsert): Promise<boolean> {
+  const rows = row.pageId === undefined
+    ? await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+      [row.sourceId, row.subject, row.claimHash, row.requestId])
+    : await raw<{ inserted: number }>(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
+      SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING RETURNING 1 AS inserted`,
+    [row.sourceId, row.subject, row.pageId, row.requestId]);
   return rows.length > 0;
 }
 
@@ -340,13 +390,6 @@ export interface PurgeGitEffectRow { id: string; state: string; request_id: stri
 export async function readPurgeSourceLocalPath(raw: EngineRawRead, sourceId: string): Promise<string | null> {
   const [source] = await raw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
   return source?.local_path ?? null;
-}
-
-/** recordReasonTombstones: records each (commit, path) pair, none twice; the number added. */
-export async function insertReasonPurgeTombstones(raw: EngineRawRead, sourceId: string, commits: string[], paths: string[]): Promise<number> {
-  return (await raw(`INSERT INTO reason_purge_tombstones(source_id, commit_sha, path)
-    SELECT $1, t.c, t.p FROM unnest($2::text[], $3::text[]) AS t(c, p) ON CONFLICT DO NOTHING RETURNING 1`,
-  [sourceId, commits, paths])).length;
 }
 
 /**
@@ -425,16 +468,16 @@ export async function heldTargetPageLive(raw: EngineRawRead, sourceId: string, s
 export async function listHeldMoveRows(raw: EngineRawRead, sourceId: string): Promise<HeldFactRow[]> {
   const { text } = renderFragment(sqlFragment`SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
-       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`);
+       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug COLLATE "C", f.entity_slug COLLATE "C", f.id`);
   return raw<HeldFactRow>(text, [sourceId]);
 }
 
 /** planHeldMoves: the struck held rows, one per holding page and row number; a row an active fact reuses is not struck. */
 export async function listStruckHeldRows(raw: EngineRawRead, sourceId: string): Promise<StruckHeldRow[]> {
-  const { text } = renderFragment(sqlFragment`SELECT DISTINCT ON (f.source_markdown_slug, f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
+  const { text } = renderFragment(sqlFragment`SELECT DISTINCT ON (f.source_markdown_slug COLLATE "C", f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
       WHERE ${onHolding} AND f.expired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id
         AND a.source_markdown_slug = f.source_markdown_slug AND a.row_num = f.row_num AND a.expired_at IS NULL)
-      ORDER BY f.source_markdown_slug, f.row_num, f.id DESC`);
+      ORDER BY f.source_markdown_slug COLLATE "C", f.row_num, f.id DESC`);
   return raw<StruckHeldRow>(text, [sourceId]);
 }
 
@@ -547,10 +590,12 @@ export async function listPageSourcePathsForPurge(raw: EngineRawRead, pageIds: n
 
 /** vectorProbe: the five same-model facts of the source nearest to `embedding`, and whether each contains the claim. */
 export async function listNearestFactsForPurge(raw: EngineRawRead, embedding: string, sourceId: string, model: string, fact: string): Promise<Array<{ id: number; similarity: number; contains_claim: boolean }>> {
-  return raw<{ id: number; similarity: number; contains_claim: boolean }>(`SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity,
-        strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
-      FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
-      ORDER BY embedding <=> $1::halfvec LIMIT 5`, [embedding, sourceId, model, fact]);
+  return raw<{ id: number; similarity: number; contains_claim: boolean }>(`SELECT id, similarity, contains_claim FROM (
+        SELECT id,(1-(embedding <=> $1::halfvec))::float8 AS similarity, embedding <=> $1::halfvec AS distance,
+          strpos(gbrain_fact_normalize(fact),gbrain_fact_normalize($4))>0 AS contains_claim
+        FROM facts WHERE source_id=$2 AND embedding_model=$3 AND embedding IS NOT NULL
+        ORDER BY embedding <=> $1::halfvec LIMIT 5) nearest
+      ORDER BY distance, id`, [embedding, sourceId, model, fact]);
 }
 
 /** verifyFactPurge: the live atom and dream pages of the source that no derivation edge explains. */
@@ -573,14 +618,14 @@ export type PageProseStore = 'pages' | 'content_chunks' | 'page_versions' | 'tim
 
 /** `$1` the source, `$2` the lowered needles; each lists the live pages whose own text in that store states one. */
 const PROSE_IN: Record<PageProseStore, string> = {
-  pages: `SELECT DISTINCT p.slug FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(p.compiled_truth),n)>0 OR strpos(lower(COALESCE(p.timeline,'')),n)>0) ORDER BY 1 LIMIT 20`,
-  content_chunks: `SELECT DISTINCT p.slug FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(c.chunk_text),n)>0) ORDER BY 1 LIMIT 20`,
-  page_versions: `SELECT DISTINCT p.slug FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(v.compiled_truth),n)>0 OR strpos(lower(COALESCE(v.timeline,'')),n)>0) ORDER BY 1 LIMIT 20`,
-  timeline_entries: `SELECT DISTINCT p.slug FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1
-        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(t.summary),n)>0 OR strpos(lower(COALESCE(t.detail,'')),n)>0) ORDER BY 1 LIMIT 20`,
+  pages: `SELECT * FROM (SELECT DISTINCT p.slug FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(p.compiled_truth),n)>0 OR strpos(lower(COALESCE(p.timeline,'')),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`,
+  content_chunks: `SELECT * FROM (SELECT DISTINCT p.slug FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(c.chunk_text),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`,
+  page_versions: `SELECT * FROM (SELECT DISTINCT p.slug FROM page_versions v JOIN pages p ON p.id=v.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(v.compiled_truth),n)>0 OR strpos(lower(COALESCE(v.timeline,'')),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`,
+  timeline_entries: `SELECT * FROM (SELECT DISTINCT p.slug FROM timeline_entries t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1
+        AND EXISTS (SELECT 1 FROM unnest($2::text[]) n WHERE strpos(lower(t.summary),n)>0 OR strpos(lower(COALESCE(t.detail,'')),n)>0)) q ORDER BY slug COLLATE "C" LIMIT 20`,
 };
 
 /** purgePageReceipt: the first 20 slugs, in order, of the source's live pages whose text in `store` states one of the lowered needles. */
@@ -603,17 +648,17 @@ export async function countPagePurgeTombstones(raw: EngineRawRead, sourceId: str
 /** The columns of a request the page purge receipt reads. */
 export type DeletePageRequestRow = Pick<WriteRequest, 'id' | 'request_id' | 'state' | 'source_id' | 'outcome'>;
 
-/** pageReceipt: the newest delete_page request with this request id, null for none. */
+/** pageReceipt: the newest delete_page request with this request id (the lowest id among equal created_at), null for none. */
 export async function readDeletePageRequest(raw: EngineRawRead, sourceId: string, requestId: string): Promise<DeletePageRequestRow | null> {
   const [row] = await raw<DeletePageRequestRow>(`SELECT id,request_id,state,source_id,outcome FROM persistence_requests
-    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC LIMIT 1`, [sourceId, requestId]);
+    WHERE source_id=$1 AND request_id=$2::uuid AND operation='delete_page' ORDER BY created_at DESC, id LIMIT 1`, [sourceId, requestId]);
   return row ?? null;
 }
 
 /** purgeCompletion: the request's effects in kind order, each with whether any target is parked. */
 export async function listPurgeEffects(raw: EngineRawRead, requestId: string): Promise<Array<{ kind: string; state: string; error_code: string | null; parked: boolean }>> {
   return raw<{ kind: string; state: string; error_code: string | null; parked: boolean }>(`SELECT kind,state,error_code,
-    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind`, [requestId]);
+    jsonb_array_length(COALESCE(data->'parked','[]'::jsonb))>0 AS parked FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"`, [requestId]);
 }
 
 /** purgeCompletion: the facts and takes that still carry the purged claim's fingerprint under `subject` ('*' for any), outcome markers apart. */
@@ -721,8 +766,8 @@ export async function findPurgeBlockedPublication(raw: EngineRawRead, sourceId: 
 
 /** rewritePageBodies: The source's pages with these ids, whole rows, each with its tags as `purge_tags`, in slug order. Reads pages and tags. */
 export async function listPagesForPurgeRewrite(raw: EngineRawRead, sourceId: string, pageIds: number[]): Promise<Array<Record<string, unknown>>> {
-  return raw<Record<string, unknown>>(`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
-    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug`, [sourceId, pageIds]);
+  return raw<Record<string, unknown>>(`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
+    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug COLLATE "C"`, [sourceId, pageIds]);
 }
 
 /** rewritePageBodies: Stores a page's body with the purged fence rows dropped, its content hash, and voids its text projection and embedding signature. Writes pages; run it in the purge transaction. */
@@ -795,11 +840,6 @@ export async function insertHoldingPagePurges(raw: EngineRawRead, sourceId: stri
   await raw(text, [sourceId, visibility, factHash, requestId, actor, reason, factIds]);
 }
 
-/** submitPurgeFactMutation: Stores the text-free take purge tombstone for the claim fingerprint under the subject, none twice. Writes take_purges; run it in the purge transaction. */
-export async function insertTakePurge(raw: EngineRawRead, sourceId: string, subject: string, claimHash: string, requestId: string): Promise<void> {
-  await raw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`, [sourceId, subject, claimHash, requestId]);
-}
-
 /** submitPurgeFactMutation: Deletes the takes with these ids; how many. Writes takes; run it in the purge transaction. */
 export async function deletePurgedTakes(raw: EngineRawRead, takeIds: number[]): Promise<number> {
   return (await raw(`DELETE FROM takes WHERE id=ANY($1::bigint[]) RETURNING id`, [takeIds])).length;
@@ -867,7 +907,7 @@ export async function deletePurgedChunks(raw: EngineRawRead, pageIds: number[]):
 
 /** submitPurgeFactMutation: The id, slug and knowledge revision of the source's pages with these ids, in slug order. Reads pages. */
 export async function listPurgedPageRevisions(raw: EngineRawRead, sourceId: string, pageIds: number[]): Promise<PurgedPageRevision[]> {
-  return raw<PurgedPageRevision>(`SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug`, [sourceId, pageIds]);
+  return raw<PurgedPageRevision>(`SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C"`, [sourceId, pageIds]);
 }
 
 /** submitPurgeFactMutation: Queues the withdrawal-mirror, git and embedding effects of the purge request under the source's current incarnation and worktree binding, none twice; `data` is the effect payload. Writes persistence_effects; run it in the purge transaction. */

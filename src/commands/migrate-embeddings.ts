@@ -630,7 +630,7 @@ export async function executeMigrationFlow(
     }
     if (expectedSources !== undefined) {
       if (tx) await tx.executeRaw('LOCK TABLE sources IN SHARE MODE');
-      const sources = await (tx ?? engine).executeRaw('SELECT id,incarnation::text,archived FROM sources ORDER BY id');
+      const sources = await (tx ?? engine).executeRaw('SELECT id,incarnation::text,archived FROM sources ORDER BY id COLLATE "C"');
       if (JSON.stringify(sources) !== expectedSources) throw new Error('Source census changed (including archive state); migration paused before further work. Inspect --status; use gbrain sources restore <id> deliberately only if restoring an archived source is intended.');
     }
   };
@@ -673,7 +673,7 @@ export async function executeMigrationFlow(
       heldLocks.push(lock);
     }
 
-    const lockedCensus = await engine.executeRaw<{ id: string; incarnation: string; archived: boolean }>('SELECT id,incarnation::text,archived FROM sources ORDER BY id');
+    const lockedCensus = await engine.executeRaw<{ id: string; incarnation: string; archived: boolean }>('SELECT id,incarnation::text,archived FROM sources ORDER BY id COLLATE "C"');
     if (JSON.stringify(lockedCensus.map(s => s.id).sort()) !== JSON.stringify(sourceIds)) {
       return { status: 'apply_failed', reason: 'Source census changed while acquiring locks; no embedding work performed. Retry the scoped preview.' };
     }

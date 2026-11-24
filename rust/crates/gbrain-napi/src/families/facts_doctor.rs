@@ -124,12 +124,6 @@ impl Brain {
         })
     }
 
-    /// `listFactsPageBodies()`: resolves `{ slug, source_id, segmented, body }` rows.
-    #[napi]
-    pub fn list_facts_page_bodies<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_facts_page_bodies())
-    }
-
     /// `readFactTableCatalog()`: resolves `{ facts, attempts }`.
     #[napi]
     pub fn read_fact_table_catalog<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

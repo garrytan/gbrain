@@ -38,7 +38,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
-   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
@@ -323,7 +323,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  with regressions auto-flagged (a 10% drop, or a 10% rise for a
+  lower-is-better metric such as burn, churn or cost, but not cost_savings), or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
   same data — read scope, visibility-filtered for remote callers.
@@ -1026,6 +1027,19 @@ The PATH line goes in `~/.profile`, which new login shells read. Bash skips `~/.
 Next, on Claude Code or Codex: `gbrain setup claude-code` (or `gbrain setup codex`), which needs no API
 key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --pglite --no-embedding` (Step 3).
 
+<a id="release-binary"></a>
+
+**A command scanner blocks the Bun installer or `bun install` (Hermes).** Some harnesses check each shell command before running it and refuse what they can't approve without a person. Hermes in single-query mode refuses `curl … | bash`, `bun install -g github:…` (its scanner, Tirith, can't finish a package lookup for a `github:` spec) and commands that append to a dotfile such as `~/.profile`. Install the release binary instead: one file built from the same release, which needs no Bun, no git and no package install. Run each line as its own command, exactly as written (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain --version
+~/.local/bin/gbrain init --pglite --no-embedding
+```
+
+`releases/latest` is the stable release. Use the absolute path `~/.local/bin/gbrain` in every command and MCP registration instead of editing shell profiles. Run each line as written: an added `2>&1`, `$(…)` or `{ …; }` group can make the scanner refuse a line it would otherwise pass. Then run `~/.local/bin/gbrain setup hermes`: it registers gbrain through Hermes's own `hermes mcp add` (no hand edit of Hermes's protected `config.yaml`), adds the brain-first rule and its per-turn hook, and checks the server with `hermes mcp test gbrain`. If it prints a `hermes mcp add` command instead, or (an older gbrain) says setup does not register Hermes's MCP server, run the registration command from [docs/mcp/HERMES.md](docs/mcp/HERMES.md#register-by-hand) with `~/.local/bin/gbrain` as the command. If the user would rather keep the Bun install, Hermes's own refusal names its setting for this: `approvals.single_query_mode: approve` in Hermes's config, which is the user's call. `gbrain upgrade` updates a release binary in place.
+
 > **If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`**
 > ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
 > Exit 0 means the schema is at head. Exit 1 with `migrations_pending` means it is still behind and another
@@ -1498,15 +1512,34 @@ model gbrain removed in v0.33, needs `gbrain skillpack migrate-fence` once.)
 > Postgres/Supabase engine, which tolerates concurrent connections. Details:
 > [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
 
-**If you are Hermes:** register gbrain as your MCP server:
+**If you are Hermes:** run setup by the path you installed gbrain at:
 
 ```bash
-printf 'Y\n' | hermes mcp add gbrain --env GBRAIN_HOME=$HOME --connect-timeout 60 --command $(which gbrain) --args serve --surface starter --advertise verbs
+~/.local/bin/gbrain setup hermes
 ```
 
-Keep `--args` last (everything after it becomes server argv) and verify with
-`hermes mcp test gbrain` — the add exits 0 even on failure. Full reference:
-[docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+It registers gbrain as your MCP server through Hermes's own `hermes mcp add`, so
+you never edit `config.yaml` yourself (Hermes refuses that edit), adds the
+brain-first rule and its per-turn hook (without them a new session seldom calls
+gbrain), and checks the server with `hermes mcp test gbrain`. If it prints a
+`hermes mcp add` command instead of registering, or (an older gbrain) says it does
+not register Hermes's MCP server, run the command in
+[Register by hand](docs/mcp/HERMES.md#register-by-hand) and verify with
+`hermes mcp test gbrain`. Full reference: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
+
+**If you are OpenClaw:** register gbrain as your MCP server, then add the
+brain-first rule:
+
+```bash
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs --env GBRAIN_HOME=$HOME
+gbrain setup openclaw
+```
+
+Run both lines. With only the first, the tools are registered but a new session
+answers from OpenClaw's own memory and chat history instead of gbrain. Once the
+gateway runs `gbrain serve`, use the MCP tools rather than the `gbrain` CLI on a
+PGLite brain (the CLI stops with `pglite_busy`). Full reference:
+[docs/mcp/OPENCLAW.md](docs/mcp/OPENCLAW.md).
 
 **If you are Grok Build** (xAI's `grok` CLI): register gbrain as your MCP server:
 
@@ -1590,7 +1623,7 @@ unit, cron entry, connector or dream schedule, and self-upgrade stays `notify`
 a brain without one. Turn each on only when the user asks:
 
 - **Keys and embeddings:** the key (Step 2), then
-  `gbrain init --force --embedding-model voyage:voyage-4 --embedding-dimensions 1024`.
+  `gbrain embeddings enable --embedding-model voyage:voyage-4 --embedding-dimensions 1024`.
 - **Autopilot** (Postgres): `gbrain autopilot --install --repo <path>`; PGLite uses `gbrain serve`.
 - **Dream schedule:** cron `0 2 * * * <wrapper> dream` ([wrapper](docs/guides/cron-schedule.md#calling-gbrain-unattended)).
 - **Connectors:** `gbrain connectors auth <provider>` ([guide](docs/guides/chat-connectors.md)).
@@ -1913,7 +1946,7 @@ Since 16 November 2026, stable comes with a written promise about what a script 
 - Search ranking, speed and the exact results of model-backed features.
 - Very large brains during an upgrade. The upgrade tests build small brains, on PGLite and on Postgres, with and without a git repository. The two-hour load test runs a 600,000-page brain on the new release but does not upgrade one. Until [#9192](https://github.com/garrytan/gbrain/issues/9192) is fixed, a large brain on a remote Postgres database can return no search results for hours after an upgrade while it catches up.
 
-**How it is checked.** Every pull request runs a check (`bun run check:public-surface`) against a list of the commands, MCP tools and their parameters, config keys and exit codes, built from the code into [docs/contracts/public-surface.json](contracts/public-surface.json). The list has the flags of every command defined as an operation, and of the 8 CLI-only commands (out of 132) that have a curated help record; the flags of the other 124, `recall` and `forget` among them, are checked in review. The check refuses a pull request that:
+**How it is checked.** Every pull request runs a check (`bun run check:public-surface`) against a list of the commands, MCP tools and their parameters, config keys and exit codes, built from the code into [docs/contracts/public-surface.json](contracts/public-surface.json). The list has the flags of every command defined as an operation, and of the 8 CLI-only commands (out of 132) that have a curated help record; the flags of the other 124, `recall` and `forget` among them, are checked in review. It also has the skill resolver surface that outside skill sets build on: the `gbrain skills index`, `resolve`, `library` and `pin` subcommands with all their flags, `gbrain skillpack health` and `doctor`, `gbrain setup --skill-loading`, the `skills.resolver.*` config keys `top_k`, `top_gate`, `pinned`, `pins.<catalog>`, `session_token_budget` and `per_harness.<harness>.dirs`, and the `block`, `no_skill` and `suggestions[].id` fields of `gbrain skills resolve --json`. The check refuses a pull request that:
 
 - drops one of them, or changes an exit code, before a [deprecations.d/](../deprecations.d/README.md) record for it has reached its `remove_after` date, unless the pull request adds a behaviour-change row marked `exception: security` or `exception: data-loss`;
 - adds a deprecation record whose date is less than 14 days away, or changes what a merged record names, or moves its date earlier;
@@ -1922,7 +1955,7 @@ Since 16 November 2026, stable comes with a written promise about what a script 
 
 What never reached stable isn't covered. The check compares with the list at the current stable release (the `stable` tag), so something added since then can be removed with no record. When the clone lacks the tag, the check fetches it from GitHub. In CI a fetch that fails or takes more than 20 seconds fails the check and asks for a rerun, so a missing tag never waives the rule; a local run without the tag says so and counts everything as on stable. Until a stable release carries the list, the check says so and counts everything as on stable; a revert then marks its behaviour-change row `exception: revert` and names the pull request it reverts.
 
-The rest is checked when the pull request is reviewed: `--json` fields, the page format, wording, what a command does beyond its name, and the part of the deprecation rule that asks for two stable releases. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
+The rest is checked when the pull request is reviewed: other `--json` fields, the page format, wording, what a command does beyond its name, and the part of the deprecation rule that asks for two stable releases. If a stable release breaks one of these rules anyway, that is a regression, and it is handled like any other: fixed, with the fix sent to stable as an important fix.
 
 ## How a release becomes stable
 
@@ -3647,7 +3680,8 @@ GBrain is MIT-licensed and free to self-host, and it starts with no API keys: se
 | How it connects | Agents |
 |---|---|
 | One command wires memory, hooks and instructions | [Claude Code](docs/mcp/CLAUDE_CODE.md) (`gbrain setup claude-code`), [Codex](docs/mcp/CODEX.md) (`gbrain setup codex`) |
-| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [Hermes](docs/mcp/HERMES.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
+| `gbrain setup hermes` registers MCP through Hermes's own CLI and adds the brain-first instructions | [Hermes](#hermes) |
+| MCP from its guide, then `gbrain setup <name>` adds the brain-first instructions | [OpenClaw](docs/mcp/OPENCLAW.md), [opencode](docs/mcp/OPENCODE.md), [Cursor](#connect-gbrain-to-your-ai-client-mcp) |
 | MCP from its guide | [ChatGPT](docs/mcp/CHATGPT.md), [Claude Desktop](docs/mcp/CLAUDE_DESKTOP.md), [Claude Cowork](docs/mcp/CLAUDE_COWORK.md), [Perplexity](docs/mcp/PERPLEXITY.md), [Grok Build](docs/mcp/GROK.md), [Grok Bot](docs/guides/grok-bot.md), [Muse](docs/guides/muse.md), [Windsurf and other stdio clients](#connect-gbrain-to-your-ai-client-mcp) |
 | Any other coding agent | Paste the [install prompt](#heres-how-to-self-host-it) below |
 
@@ -3673,7 +3707,7 @@ New releases come out many times a day, but the install command below gives you 
 > (codex mcp get gbrain >/dev/null 2>&1 || codex mcp add gbrain --url https://gbrain.io/mcp) && gbrain setup codex --instructions-only
 > ```
 >
-> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+> Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
 >
 > `gbrain setup <harness> --instructions-only` tells the agent the brain is there; agents seldom call an MCP server nobody told them about. It writes the [brain-first block](docs/guides/setup.md#brain-first-instructions) into `~/.claude/CLAUDE.md` or Codex's `AGENTS.md` (a non-empty `AGENTS.override.md` instead when Codex has one) with a per-turn rule hook, and leaves the MCP entry alone; the same command with `--no-instructions` added takes them out.
 >
@@ -3706,6 +3740,19 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 Keep my current identity and instructions, start keyless, and show me the
 search-mode choice. Verify a remember/recall round trip with real GBrain calls.
 ```
+
+### Hermes
+
+Hermes checks every shell command before it runs it, and with nobody there to approve (`hermes chat -q`, a gateway or cron run) it refuses the Bun installer and `bun install -g`. Install the release binary instead, one file that needs no Bun and no package install, and let setup register it through Hermes's own `hermes mcp add`. Run each line as its own command (Linux x64; on an Apple Silicon Mac use `gbrain-darwin-arm64`):
+
+```bash
+curl -fL --create-dirs -o ~/.local/bin/gbrain https://github.com/garrytan/gbrain/releases/latest/download/gbrain-linux-x64
+chmod +x ~/.local/bin/gbrain
+~/.local/bin/gbrain init --pglite --no-embedding
+~/.local/bin/gbrain setup hermes
+```
+
+Then start a new Hermes session. Setup registers the MCP server (`hermes mcp test gbrain` checks it) and adds the brain-first rule to `~/.hermes/SOUL.md` with a per-turn hook. Hermes's approval and command-scanner settings stay as they are; setup only records the approval for its own per-turn hook. If setup prints a `hermes mcp add` command instead of registering, run that command as printed. To paste it to Hermes instead, use the prompt above. Details: [docs/mcp/HERMES.md](docs/mcp/HERMES.md).
 
 Postgres, thin clients, API keys and upgrades: [docs/INSTALL.md](docs/INSTALL.md). Agents: [INSTALL_FOR_AGENTS.md](INSTALL_FOR_AGENTS.md). Memory-only walkthrough: [give your coding agent a memory](docs/tutorials/connect-coding-agent.md).
 
@@ -4965,9 +5012,15 @@ means the unclean-shutdown genesis is still active — see the ladder's rung 4).
 
 One gbrain process opens a PGLite brain at a time. While `gbrain serve` (stdio
 or `--http`) holds it, page and fact writes from the CLI (`gbrain put`,
-`gbrain remember`) go through the running server and work. Commands that need
-the database to themselves, which includes the admin commands
-(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and most reads,
+`gbrain remember`) and everyday reads (`gbrain find`, `list`, `search`, `query`,
+`get`, `tags`, `links`, `backlinks`, `timeline`, `history`, `graph`, `whois`,
+`entity`, `search-exact` and `gbrain waiting`) go through the
+running server and print what they print with no server running. A read run
+with a read-affecting `GBRAIN_*` variable or provider key the server does not
+share stays with the refusal below. Edits to `config.json` reach the server's
+answers only after the server restarts. Commands
+that need the database to themselves, which includes the admin commands
+(`gbrain access …`, `gbrain sources …`, `gbrain auth …`) and the remaining reads,
 refuse with `pglite_busy` reason `live_serve`. The refusal names the server's
 PID, and its fix is two steps: stop that server, then run the command again.
 Never remove the lock of a server that is still running.
@@ -5201,6 +5254,17 @@ holding the single-writer data-dir lock reports `locked_by_serve`
 (healthy-with-note) instead of hanging ~30 seconds and misreporting a healthy
 brain as broken. A failed probe returns a classified diagnosis (reason +
 remediation), not a raw error.
+
+A probe that reaches the brain also prints `brain_ref` (JSON `probe.brain_ref`, human line `Ref:`): a 16-character
+one-way digest of the brain's persistence identity (`persistence_brain.brain_id`), which a reviewed policy uses to
+name one brain, such as the engine swap's dated readiness override. The digest cannot be turned back into the
+identity, and the command never prints the identity itself. While `gbrain serve` holds a PGLite brain, the probe
+reads the reference that serve recorded at start and after each reconnect (`<data dir>.gbrain-brain-ref.json`, 0600, holding the reference and
+a digest of the serve's lock token, never the identity); a file another lock holder wrote is refused
+(`brain_ref_note: serve_brain_ref_stale`). Other notes, with `brain_ref: null`: `no_persistence_identity`,
+`brain_ref_unreadable`, `locked_by_other_process`, `serve_brain_ref_missing` (a serve from before this field).
+
+**Say to your agent:** *"Give me my brain's brain_ref from gbrain engine status, not its id."*
 
 ### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
 
@@ -5824,7 +5888,9 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `findCandidateDuplicates`, `consolidateFact`, `findTrajectory`, `getFactsHealth`, `pageCollapseFacts` and
   `migrateFactsToCanonical` (the `facts` capability); `mergeOntologyFact`, `getOntology`, `discoverOntologyDimensions`
   and `findOntologyConflicts` (`ontology`); `logEvalCandidate`, `listEvalCandidates`, `deleteEvalCandidatesBefore`,
-  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`). A caller policy these members cannot honour
+  `logEvalCaptureFailure` and `listEvalCaptureFailures` (`eval_capture`);
+  the four open-loop members `upsertOpenLoop`, `closeOpenLoop`, `listOpenLoops` and `readEntityOpenLoops`
+  (`facts`; `rust/docs/store/facts.md`). A caller policy these members cannot honour
   refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
   `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `salience`
@@ -5904,6 +5970,183 @@ runs on PGLite alone without the flag.
 - `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.
+
+### Topology recovery on the Rust engine
+
+A managed clone (`sources add --url`, `sources reclone`) and the recovery of an interrupted source lifecycle change need
+raw SQL, which the Rust engine never serves. It refuses them by name (`member=managed_source_clone` or
+`member=source_topology_recovery`, `written=nothing`) before any lock, row or directory is touched. Doctor warns
+`topology_recovery_stopped`; `sources writer status --json` lists `topology_recoveries`. Finish the change from a
+pglite or postgres engine.
+## Rust engine shadow mode
+
+Shadow mode checks the Rust engine against your real reads before you switch to it. It is off by default and changes
+nothing about how your brain answers: the primary engine (PGLite or Postgres) always answers first, and a sample of
+reads and searches is then replayed against the Rust engine in a separate, supervised child process. The child
+compares the two answers and records only content-free rows (time, operation, outcome, reason code, row counts, timings) in a local
+ledger. Nothing is written to the brain database, the config table or the brain repo; all shadow state lives in
+`~/.gbrain/shadow/<brain>/` (`$GBRAIN_HOME/.gbrain/shadow/<brain>/` when `GBRAIN_HOME` is set).
+
+**Say to your agent:** *"Turn on Rust engine shadow mode for my brain and show me the report."*
+
+```bash
+gbrain engine shadow seed [--json]                 # copy the brain into the Rust store once (shadow mode off)
+gbrain engine shadow start --plan                  # preview the plan and its plan_hash, writes nothing to the shadow directory or the brain's tables (also reports whether the brain can swap)
+gbrain engine shadow start --yes --expect <hash>   # turn it on (loads the Rust addon first; refuses without it)
+gbrain engine shadow reconcile [--full] [--json]   # compare the whole brain with the Rust store and repair differences
+gbrain engine shadow status [--json]
+gbrain engine shadow report [--json]               # prints the report; writes reports/provisional.{json,md} only once the shadow directory exists
+gbrain engine shadow stop [--delete]               # turn it off; --delete removes the shadow directory
+```
+
+- **Fail-open.** Mirroring never fails a primary call; a sampled read pays only the bounded copy described below. The queue is bounded (`--queue-bound`, default 256)
+  and sheds when full; reads inside a transaction are skipped; `--sample-rate` (default 0.1) picks which reads are
+  mirrored. Only sampled reads are copied, the arguments before the call and the result the moment the primary answers, so a caller that changes a result
+  afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
+  1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
+  call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
+  quiet so it is restarted. When a process closes, reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  child silent for 60 seconds is killed, and a privacy divergence pauses comparison.
+- **What a privacy divergence is.** Before any equality check, every row of the Rust result is tested against the call's own
+  arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
+  a source outside the call's scope, read the way the primary applies it: `sourceIds` first, else `sourceId`, else the
+  positional source of `listFactsByEntity` (first argument), `resolveSlugWithAlias` (second) and `findByTitleFuzzy` (fourth); an
+  empty `sourceIds` with no `sourceId` names no scope, so the read is unscoped, as in the primary. The row's `source_id`, and on a link its `from_source_id`, `to_source_id`
+  and `origin_source_id`, must all be in a `sourceIds` scope; a one-source link read checks only the end the primary scopes
+  (`getLinks` the from page, `getBacklinks` the to page). A hit is also a page row (one carrying `frontmatter`) that a call with
+  `excludePrivate` should hide: `visibility: private`, a pinned question, an unmarked atom, question or synthesized concept, or (with `visibility` unset) an
+  `access` or `confidentiality` alias the primary reads as private; an alias row counts only when the primary's own answer left it out,
+  because a brain can turn the aliases off and the child cannot read that setting.
+  Not checked, because the result carries nothing to check: `resolveSlugs`, `resolveSlugWithAlias`, `getTags`, `getTimeline`,
+  `getChunks`, `findByTitleFuzzy`, `getStats`, `countKeywordPages` and `searchTakes` rows have no source column, search rows only
+  when they carry `source_id`, and `excludePrivate` only on rows with `frontmatter` (so not facts, links, finds or search rows).
+  A leak in those shows as `diff`.
+- **Brains and deleting.** Each brain gets its own directory, keyed by its engine and where it lives: the database path for PGLite, or the host, port, database and user name for Postgres
+  (two Supabase projects behind one pooler differ by user name; the password is never part of it). `stop --delete`
+  removes the directory, and a child that is still running cannot write it back. The commands cover the host brain only:
+  with `--brain <id>` or `GBRAIN_BRAIN_ID` naming another brain they refuse and change nothing.
+- **Managed storage: reported, not refused.** Shadow mode gathers evidence on managed brains too; only the swap
+  refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow
+  mode never does). `start` (the preview, `--plan` and `--yes`) opens the brain database once, best-effort, and reads one
+  row: `persistence_brain.enabled`. A PGLite brain opens without recording its managed roots and without repairing a
+  damaged log, so the open writes no managed-root ownership marker or registry entry and moves no datastore file aside; like any PGLite open it takes the datastore's process lock and PGLite rewrites its control and log files until `start` closes the brain. A brain with an open repair episode is left unread (`repair_episode_open`), because a healthy open would close the episode and prune its backups. A managed brain prints `storage: this brain cannot swap while it uses managed
+  storage` in the plan and after `--yes`, and `state.json` records `storage: { managed: true, checked_at }` (`false` for
+  an unmanaged brain). A brain whose mode cannot be read (the database is down, another process holds a PGLite brain, a
+  PGLite path holds no brain which `start` never creates, or the row is missing or malformed) does not block `start`: it
+  prints `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
+  `{ managed: null, checked_at, reason }`, where `reason` is the error's code (`pglite_busy`, `no_brain`,
+  `storage_error`) or `open_failed` / `read_failed`, never free-form error text. `start` opens the database only for
+  this record, so it is the one place that needs the database reachable, and a failed open never changes the exit code.
+  `status --json` and the report carry the same record as `storage: { managed, checked_at, note, reason? }` (the
+  field a later command reads to know the brain cannot swap), where `note` is `this brain cannot swap while it uses
+  managed storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check
+  it` when `managed` is null, and null for an unmanaged brain; `storage` is null for a state written before the field
+  existed. `status` and the report print the note as a line. `status` and the report read the recorded value; they do
+  not open the database.
+- **Why this is safe for the primary.** `start` reads one row and writes no table row, source file, managed-root ownership marker or registry entry. Opening a PGLite brain still touches its own files: it takes the datastore's process lock (the `.gbrain-lock` folder and the `<datastore>.gbrain-owner.json` and `.gbrain-owner.lock` files beside it) until `start` closes the brain, and PGLite rewrites its control and log files (`global/pg_control`, `pg_wal/`), as any open of that brain does. The mirror replays sampled reads
+  into the Rust store under the shadow directory. Nothing in shadow mode writes a row to the primary database, or writes its worktrees, its
+  write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
+  applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
+  shows up as a difference or a miss in the counts, never as silent equality.
+- **No network in the background.** gbrain downloads no addon. `start --yes`, the child
+  and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
+  the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).
+- **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
+- **Evals.** `gbrain eval longmemeval` and `gbrain eval brainbench` take `--engine pglite|rust`. With `rust`, a missing
+  or mismatched addon stops the run with its code and reason, and so does a Rust store that cannot yet run the table
+  reset between fixtures (`rust_benchmark_unsupported`), so until the benchmark can reset a Rust store without raw SQL (the Rust engine never reports `raw_sql`) the flag
+  stops before any work. A longmemeval run records the engine in its resume hash, and the memory-trust brainbench
+  suites refuse `--engine rust` because they always build PGLite brains.
+- **Seed.** `seed` copies the brain into the Rust store once, from one read-only snapshot, and writes
+  `seed.json`: what it copied, the values the store could not keep, the unfinished jobs and segmented pages it left
+  behind, and the unseeded gap rows (tables the Rust store cannot serve yet; a swap is refused while any remain).
+  It refuses while shadow mode is on. To seed again, `stop --delete` and seed into the new directory.
+  Rust store layout: [rust/docs/store/seed.md](../rust/docs/store/seed.md).
+- **Managed storage: seeded, not refused.** Shadow mode gathers evidence on managed brains too; only the swap
+  refuses them (`engine_swap_refused`, reason `managed_storage`, which `gbrain engine swap` still returns and shadow mode
+  never does). `seed` and `seed --json` run on a managed brain and copy it like any other. Right before its snapshot, in
+  a statement of its own so a failed read cannot abort the snapshot, `seed` reads one row, `persistence_brain.enabled`,
+  and records `storage: { managed, checked_at, reason? }` in `seed.json`. A managed brain prints `storage: this brain
+  cannot swap while it uses managed storage`; `managed` is `false` for an unmanaged brain (no line). A mode that cannot be
+  read (another process holds a PGLite brain, or the row is missing or malformed) does not stop the seed: it prints
+  `storage: could not read whether this brain uses managed storage; the swap will check it (<reason>)` and records
+  `managed: null` with the error's code (`pglite_busy`, `storage_error`) or `read_failed`, never free-form error text. A
+  brain that cannot be opened at all cannot be read, so that is an error, not a mode: `seed` exits 1 with `could not open
+  the brain (<code>)` before it loads the addon or creates anything, and a PGLite path that holds no brain is never
+  created. `status --json` carries the record as `seed.storage: { managed, checked_at, note, reason? }` (null before a
+  seed, or for a seed written before the field existed), where `note` is `this brain cannot swap while it uses managed
+  storage` for a managed brain, `could not read whether this brain uses managed storage; the swap will check it` when
+  `managed` is null, and null for an unmanaged brain. `status` and the report print the note; the report's `seed.storage`
+  has the same shape. `seed` writes no table row, source file, managed-root ownership marker or registry entry, and it
+  never writes the primary's worktrees, write effects or writer coordination locks, so every `persistence_*` row and the
+  content root are byte-identical across it. Opening a PGLite brain still touches its own files: the open takes the
+  datastore's process lock (the `.gbrain-lock` folder and the `<datastore>.gbrain-owner.json` and `.gbrain-owner.lock`
+  files beside it) until `seed` closes the brain, and PGLite rewrites its control and log files (`global/pg_control`,
+  `pg_wal/`), as any open of that brain does. `seed` opens a PGLite brain without recording its managed roots and without
+  repairing a damaged log, so it moves no datastore file aside. A brain with an open repair episode is not opened
+  (`seed` exits 1 with `could not open the brain (repair_episode_open)`), because a healthy open would close the episode
+  and prune its repair backups. A repair episode recorded while `seed` waits for the datastore lock is left open too, and
+  its backups stay.
+- **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
+  read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
+  one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
+  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
+  the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
+  displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
+  only when a full reconcile pass that started after the session start has proven the store. A relation marked dirty
+  is settled by a pass for that relation that started after the mark. Only the process that owns the Rust store
+  applies writes. A second process cannot apply: its child leaves a line in `follower-invalidations.jsonl` (at most
+  one per second while it sees writes) and the owner reads those lines before it advances the watermark, treating the
+  second after each line as unproven. A write by a second process is therefore unproven for a short moment before its
+  line lands, and a read-only command leaves no line.
+- **Reconcile.** `reconcile` compares every seeded relation with the Rust store in 500-row key intervals and replaces
+  any interval that differs, then checks allocators and the fingerprint probe. Each interval is its own short read of
+  the primary (with a pause between intervals) and nothing is held open while the pass talks to the Rust store, so a
+  pass is not one snapshot: each interval is protected by the generation taken just before its read. `reconcile` and
+  `reconcile --full` both run a full pass. It needs the Rust store to be free (stop the serving process first). A full
+  pass also runs on its own a minute after a serving process starts if the watermark is still invalid, every 24 hours
+  while the follower runs, and again when the watermark is invalid and the last pass is over an hour old. A pass that
+  displaced rows does not restore the watermark; the relation gets another pass and the full restore waits for the
+  next full pass. A displaced page also marks `tags` dirty, because its tags go with it. An interval that already
+  matches is still rewritten, so its generation fence stops a follower read that began before the pass from
+  overwriting what the pass verified; every full pass therefore rewrites rows that were already correct.
+  **A seed written before follow existed has no digest entries**, so nothing is followed and `reconcile` refuses it:
+  `status` says the brain needs a reseed (`follower.state` is `needs_reseed`, with the steps in `follower.action`).
+  Reseed with `gbrain engine shadow stop --delete`, then `gbrain engine shadow seed`, then `gbrain engine shadow start`.
+- **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
+  `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
+  value), `queue_depth`, `applied_rows`, `coverage_watermark`; `reconcile.state` (`never_run`, `ok`, `repaired`,
+  `error`), `last_pass` (with `repaired_rows`, `repaired_by_relation` and `follower_misses`: repaired rows found while the
+  watermark claimed coverage), `consecutive_clean_full_passes`, `next_full_pass_due`; `fingerprints` (`checked_rows`,
+  `mismatches`, and a `probe`, described below); `allocators`;
+  `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
+  aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
+  this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
+  `write_comparisons` and `fingerprints` counts are totals for the current epoch; one epoch is one seed.
+- **Fingerprint probe.** Withdrawals and purge tombstones key on the fact fingerprint, so a primary whose `lower()` or
+  `[[:space:]]` answers differ from PGLite's (and Rust's) for some code point would fingerprint a claim holding it
+  differently, and a withdrawn fact would not match on Rust. At follower start and on each full pass the probe reads, in
+  one read-only set-based query, `lower(chr(cp))` and `chr(cp) ~ '[[:space:]]'` for every Unicode scalar value (surrogates
+  and U+0000 excluded) plus the word-final sigma rule, and compares them with PGLite's tables in
+  `rust/crates/gbrain-store/tests/fixtures/fact_fingerprints.json`. It also runs every hand row and every sixth seeded row of
+  that corpus through `gbrain_fact_fingerprint` and `gbrain_fact_fingerprint_v1` (texts as bind parameters, never logged).
+  If any code point differs it counts the stored `facts` rows whose claim holds one (a count, never the text). The query costs
+  about 0.5 s on Postgres 16 and 17 with a glibc database, 0.7 s with an ICU database and 0.7 s on PGLite, measured on a dev
+  container; it reads only. `probe` carries
+  `state` (`pass`, `fail`, `not_run`), `checked_at`, `server_version`, `mismatches` (the fixed 20-claim corpus against Rust), the
+  database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
+  `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
+  `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
+  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
+  differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
+  (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
+  holds one.
+- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
+  are not built yet, and the readiness decision come in later phases of the plan
+  (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
+  `capability_missing`.
 
 ## Adding a new engine
 
@@ -6109,10 +6352,12 @@ Timing knobs the drain uses:
 
 A long-running process (the serve, `gbrain sync --watch`) keeps the tree
 listing of the commit its last pass read and lists only what changed since
-(`git diff-tree`), still judging every path. It also keeps its last synced
-pass's pages-and-import-records read (`I⋈P`) and re-reads in its own
-snapshot only rows changed since. Any doubt reads whole: a new
-process, another source, a failed or unsynced pass, a read older than 10
+(`git diff-tree`), still judging every path. It also keeps its last
+pass's pages-and-import-records read (`I⋈P`), when that pass synced or stopped
+resumable, and re-reads in its own snapshot only rows changed since; a round
+whose `HEAD` moved since the pass's previous round patches that round's read
+the same way. Any doubt reads whole: a new
+process, another source, a failed pass, a read older than 10
 minutes, a change over a quarter of the tree or source (and over 2,000), counts
 that do not add up, a wide transaction-id span, pathspec characters in scope,
 or any error. Holds, markers, open work and the Git level are read every round.
@@ -7839,7 +8084,21 @@ note/conversation containers;
 most-recently-touched breaks ties within the same match shape. A non-entity
 exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
 runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
-`create_safety` hints.
+`create_safety` hints. A miss is an answer only when every lookup read ran: when
+a page-lookup read fails (the alias, exact title / slug, alias-hydrate or name-variant read, or a name-variant
+candidate's retirement or redirect-target read),
+the call still answers (`found: false` with whatever the other reads found, or
+the best hit they found) and is marked degraded with the stage
+`entity_lookup_failed` (reason `timeout` or `provider_error`) in
+`_meta.retrieval.degraded`, so MCP carries `_meta.degraded` and the
+`[gbrain degraded: entity_lookup_failed]` text block and the CLI carries a
+`degraded` key (`--json`) or the same line on stderr. Exit code stays 0, as for
+every degraded result; `GBRAIN_FAIL_ON_EMPTY=1` does not turn a failed lookup
+into `no_results`, also under `GBRAIN_ENFORCED_MEMBER`. A failed lookup is never "the entity does not exist": retry
+or run `gbrain doctor`. A brain without the `page_aliases` table (before its
+migration) is not degraded: the alias arm is empty by design. An engine that
+refuses raw reads ends the call on its typed `engine_capability_missing`
+refusal instead.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.
 Card: `{ entity{slug,title,type}, aka[], summary, last_touched{updated_at,
@@ -8719,7 +8978,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [Database unreachable or `GBRAIN_DB_ACCESS <reason>`](#database-unreachable) | `gbrain engine status --probe`, then `gbrain db-repair` (diagnose); `gbrain db-repair --yes` applies safe fixes | agent; `--yes` after the user agrees | none to diagnose; `--apply-rewrites` rewrites the config URL (undoable) | `gbrain engine status --probe --json` |
 | [PGLite `RuntimeError: Aborted()` at startup](#pglite-aborted) | automatic repair on the next command; else `gbrain pglite-repair --dry-run`, then `gbrain pglite-repair --yes` | agent; `--yes` after the user agrees | `destructive` (a WAL backup is kept and the restore command printed) | `gbrain doctor --only connection --json` |
 | [`expected N dimensions, not M` on import](#embedding-dimensions) | `gbrain doctor` prints the exact `gbrain config set …` or `gbrain migrate embeddings --to <provider:model>` command | agent, after the user agrees | `migrate embeddings`: `paid`, needs the brain's writer lock | `gbrain doctor --only embeddings,embedding_width_consistency --json` |
-| [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain init --force --embedding-model <provider:model> --path <brain path>` (keeps pages and facts) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --only embeddings --json` |
+| [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain embeddings enable --embedding-model <provider:model> --embedding-dimensions <N>` (keeps pages and facts; the same command on every engine) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --only embeddings --json` |
 | [Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`)](#doctor-residue) | preview `gbrain doctor --remediation-plan --json` or `gbrain repair`; then `gbrain repair <kind> --apply` | brain host, after the user agrees | `destructive` (rewrites derived rows) | `gbrain doctor --only timeline_history,derived_visibility,safe_index_pending --json` |
 | [Doctor `privacy_label_ignored`, or a write's `privacy_label_ignored` notice](#privacy-label-ignored) | `gbrain list --where <key>=<value> --json` (read-only), then add `visibility: private` to each page that should stay private | the agent, after the user agrees | none for the listing; the edit narrows who reads the page | `gbrain doctor --only privacy_label_ignored --json` |
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
@@ -8743,7 +9002,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [Doctor fails `runtime_build_skew`: serve, the jobs supervisor, workers and job children run different builds](#runtime-build-skew) | `gbrain upgrade --restart-only` restarts every listed process onto the installed build and verifies one build runs; it refuses with the exact step for a process it cannot restart (the check also prints the manual restart) | brain host, after the user agrees | none | `gbrain doctor --only runtime_build_skew --json` is ok |
 | [Doctor warns `host_identity_mismatch`, or maintenance jobs report `owner_unavailable` / `host_mismatch` for weeks](#host-identity-mismatch) | set `GBRAIN_HOME` on that process's supervisor to the value the check prints (the owner's home; config appends `.gbrain` itself) and restart it; never edit or delete a `host.json` | brain host, after the user agrees | `persistent_install` when it rewrites a service definition | `gbrain doctor --only host_identity_mismatch --json` |
 | [A pending write names a stale owner (`diagnostic.owner`), `--accept-pending` exits 10, or doctor warns `owner_host_stale`](#owner-host-stale) | run gbrain with the owner's `GBRAIN_HOME` (or bring the owner host back); the waiting writes are kept | brain host, after the user agrees | none | `gbrain doctor --only owner_host_stale --json` |
-| [Doctor warns `embedding_plane_disagreement`: the config file disables embeddings over a database with vectors](#embedding-plane-disagreement) | with the provider key set, run the `gbrain init --force --embedding-model …` the check prints (same model and width) | user (key), then agent | `credentials`, `paid` | `gbrain doctor --only embedding_plane_disagreement --json` |
+| [Doctor warns `embedding_plane_disagreement`: the config file disables embeddings over a database with vectors](#embedding-plane-disagreement) | with the provider key set, run the `gbrain embeddings enable --embedding-model …` the check prints (same model and width) | user (key), then agent | `credentials`, `paid` | `gbrain doctor --only embedding_plane_disagreement --json` |
+| [Doctor warns `topology_recovery_stopped` (Rust engine)](#topology-recovery-stopped) | finish the change from a pglite or postgres engine | brain host | none | `gbrain doctor --only topology_recovery_stopped --json` |
 | [`fence_repair` or chronicle refused `owner_unavailable`, reason `host_mismatch`](#owner-unavailable) | `gbrain sources writer status --source <id> --json` on the brain host (the owner host id); run the step there, or give the worker and the shell one `GBRAIN_HOME`. Never copy or regenerate `host.json`. Do not retry from the same host | brain host | none | `gbrain sources writer status --source <id> --json` shows this host's id as the owner |
 | [`owner_unavailable`, reason `transfer_in_progress` or `clone_in_progress`](#owner-unavailable) | wait 30 s and retry the same step; the worktree is draining for a writer transfer or recovering from a topology clone | agent | none | `gbrain sources writer status --source <id> --json` shows state `active` |
 | [A page write refused `owner_unavailable`, detail `unbound_source`, on a classic Postgres brain](write-refusals.md#unbound-sources-on-postgres) | don't retry; write the page as `<slug>.md` in the source's checkout, commit it, and run `gbrain sync --source <id>` (a remote agent gives those steps to the user); database-only pages or managed mode are the user's choice | agent, after the user agrees (remote: user) | none | `gbrain get <slug> --source <id>` |
@@ -8833,7 +9093,7 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 
 <a id="pglite-aborted"></a>**PGLite crashes at startup with `RuntimeError: Aborted()` (often right after a macOS upgrade)?** Not a macOS incompatibility — the OS-upgrade reboot killed gbrain mid-write and tore the data dir's WAL. gbrain repairs this automatically on the next command (data preserved, backup kept); if auto-repair is disabled or skipped, run `gbrain pglite-repair --dry-run` to diagnose and `gbrain pglite-repair --yes` to repair in place. Full recovery ladder (repair → rebuild → engine switch) in [`docs/ENGINES.md` — Troubleshooting: startup abort](../ENGINES.md#troubleshooting-startup-abort-runtimeerror-aborted) and [`docs/INSTALL.md`](../INSTALL.md#pglite-crashes-at-startup-runtimeerror-aborted).
 
-<a id="embedding-dimensions"></a>**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain migrate embeddings` command to repair the mismatch (`migrate embeddings` re-embeds through the provider: effect `paid`, ask the user first). You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys: set `VOYAGE_API_KEY` (or `OPENAI_API_KEY` / another provider key) in the environment — or in `~/.gbrain/config.json`, which init also reads — before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker (non-TTY auto-picks the Voyage default when its key is present). With no keys at all, init continues keyless (keyword-only search) with a loud notice; add a key later and re-run `gbrain init --force --embedding-model voyage:voyage-4` to enable embeddings (effects: `credentials` and `paid`, since every page is embedded through the provider; it needs the brain's writer lock, so stop a running `gbrain serve` first; pages and facts are kept), or pass `--no-embedding` up front to make keyless explicit. `gbrain config get embedding_disabled` reports whether embedding is off and which plane says so (the config file and the database setting; `true` on either turns it off); `gbrain config set embedding_disabled true|false` and `gbrain config unset embedding_disabled` change both, and the `init --force --embedding-model` enable path clears both. See [`docs/integrations/embedding-providers.md`](../integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](../operations/headless-install.md) for Docker/CI sequencing.
+<a id="embedding-dimensions"></a>**`gbrain import` fails with `expected N dimensions, not M`?** Run `gbrain doctor`. It will print the exact `gbrain config set ...` or `gbrain migrate embeddings` command to repair the mismatch (`migrate embeddings` re-embeds through the provider: effect `paid`, ask the user first). You should not need to delete `~/.gbrain`. Fresh `gbrain init --pglite` auto-detects your embedding provider from API keys: set `VOYAGE_API_KEY` (or `OPENAI_API_KEY` / another provider key) in the environment — or in `~/.gbrain/config.json`, which init also reads — before running init, or pass `--embedding-model <provider>:<model>` explicitly. With multiple keys set, init fires an interactive picker (non-TTY auto-picks the Voyage default when its key is present). With no keys at all, init continues keyless (keyword-only search) with a loud notice; add a key later and run `gbrain embeddings enable --embedding-model voyage:voyage-4` to enable embeddings (effects: `credentials` and `paid`, since every page is embedded through the provider; it needs the brain's writer lock, so stop a running `gbrain serve` first; pages and facts are kept), or pass `--no-embedding` up front to make keyless explicit. `gbrain config get embedding_disabled` reports whether embedding is off and which plane says so (the config file and the database setting; `true` on either turns it off); `gbrain config set embedding_disabled true|false` and `gbrain config unset embedding_disabled` change both, and the `embeddings enable` path clears both. See [`docs/integrations/embedding-providers.md`](../integrations/embedding-providers.md) for the full provider matrix and [`docs/operations/headless-install.md`](../operations/headless-install.md) for Docker/CI sequencing.
 
 <a id="embed-backfill-skipped"></a>**A sync job or `embed-backfill` job reports `embed_backfill_skipped` (reason `embedding_disabled`)?** Nothing is wrong: the brain is keyless by choice (`embedding_disabled`), so sync queues no embed-backfill and a backfill already queued ends on its first attempt without reading a page. Search stays keyword-only. The notice appears once per brain state (the first skip after the brain became keyless); its fix is the optional step that turns embedding on and names the provider key it needs (effects `credentials` and `paid`: ask the user first).
 
@@ -8890,6 +9150,8 @@ A `drain_stalled` stop with `cause: owner_wedged_here` is the same situation see
 <a id="runtime-build-skew"></a>**Doctor fails `runtime_build_skew` (several gbrain builds are running on this host)?** Run `gbrain upgrade --restart-only` after the user agrees: it restarts every gbrain process on this host onto the installed build and verifies one build runs and the warm CLI socket accepts it ([restart](upgrades-auto-update.md#restart)); `--dry-run --json` previews it. Each long-running process keeps the build it loaded when it started, but `gbrain jobs run-child` starts a fresh process from the install on disk for every job, so after a checkout reset, a pull or an upgrade on disk one host can run serve, the supervisor and its workers, and their job children on different builds. The check reads each process's own record: serve and the other resident consumers from their heartbeat rows (Postgres), the supervisor from its PID file, each `gbrain jobs work` from its worker-registry entry, and the job children from the `job_build_skew:` line a child writes into a job's history (`gbrain jobs get <id>`) when its build differs from its worker's. It fails when the running builds differ, warns when only a process's install holds another build, and lists every process with its pid and version (never a path). By hand, the message names one restart, serve first, then the supervisor, then a worker: restart serve with its service command, stop the supervisor with `gbrain jobs supervisor stop` and start it again with `gbrain jobs supervisor start --detach`, or stop a worker's pid (SIGTERM drains its jobs, and its supervisor starts a fresh one). A job child whose worker needs a readiness protocol or feature the child lacks refuses the job: the job is released without counting an attempt and the worker stops on a configuration block until it is restarted on one build. A process started before builds were recorded is named as unrecorded; restarting it makes it report one. `/health` on `gbrain serve --http` carries `build` (`version`, `installed_version`, `restart_pending`) on every 200. Verify with `gbrain doctor --only runtime_build_skew --json`.
 
 <a id="host-identity-mismatch"></a>**Doctor warns `host_identity_mismatch`, or fence repair, chronicle and other maintenance jobs have reported `owner_unavailable` with reason `host_mismatch` for days?** Host identity is a file, `host.json` under the persistence home (`GBRAIN_HOME`, else `$HOME/.gbrain`). A job worker or container launched with a different `HOME` or without `GBRAIN_HOME` mints a new identity after every restart and sees the binding as another host's, so its writes never reach the owner while every health signal stays green. Doctor flags it when this process's identity differs from the binding owner's and the owner's checkout resolves on this filesystem (same machine id or volume), or, for a container without a stable machine id, when the checkout is present at the binding's path and this `host.json` was minted after the binding under a different `HOME`/`GBRAIN_HOME`. The check names both files, the environment each was minted under (`minted_under: {home, gbrain_home, hostname, machine_id}`; `unknown` for a file minted before it was recorded) and the one-line fix: set `GBRAIN_HOME` on that process's supervisor to the owner's home (the printed value; config appends `.gbrain` itself) and restart it. Nothing re-derives or rewrites an existing `host.json`: re-owning the binding would break every other host sharing the brain. Verify with `gbrain doctor --only host_identity_mismatch --json`.
+
+<a id="topology-recovery-stopped"></a>**Doctor warns `topology_recovery_stopped`, or a clone refuses `member=managed_source_clone`?** The Rust engine stops these steps by name and writes nothing; finish the change from a pglite or postgres engine ([details](../ENGINES.md#topology-recovery-on-the-rust-engine)).
 
 <a id="owner-host-stale"></a>**A pending write names a stale owner in `diagnostic.owner`, `--accept-pending` still exits 10, or doctor warns `owner_host_stale`?** A managed source publishes only through the host that owns its checkout, named by its `host.json` identity. When a brain is moved or restored onto another machine, or a container restarts with a new `GBRAIN_HOME`, the new process gets a new identity and its writes queue for the old owner, which may never return. The receipt names that case: `diagnostic.reason` is `owner_unavailable` and a `diagnostic.owner` block, present whenever the owner is stale, carries its last recorded activity: its newest consumer heartbeat, its newest publication, or the time its consumer last stopped cleanly. Doctor names the owner host; receipts leave the host id out because they reach remote callers. It applies when the owner runs no live consumer and has been quiet for more than 24 hours, or at once on PGLite when this process holds the database file under a different identity; the owner host itself never sees it. `--accept-pending` and `GBRAIN_ACCEPT_PENDING=1` cover a write that will commit on its own, so a write with a `diagnostic.owner` block exits 10 with them, and the CLI says so. Nothing is lost: the writes stay queued with their request ids. Run `gbrain sources writer status --json` (read-only) to see the binding owner. Bring the owner host back, or run this process with the owner's `GBRAIN_HOME` (the parent of its `.gbrain` directory) and restart it. For servers and containers, keep `GBRAIN_HOME` on a persistent volume that is stable across restarts, or use sources with no checkout root, whose writes any consumer publishes. Never edit, copy or delete a `host.json`, and nothing claims or transfers ownership automatically. Verify with `gbrain doctor --only owner_host_stale --json`; [`host_identity_mismatch`](#host-identity-mismatch) covers an owner whose checkout this filesystem holds.
 
@@ -8981,6 +9243,7 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 | `local_path_missing` | This host owns the worktree but has no checkout path registered. | Register the checkout again on the brain host. |
 | `coordination_path_missing` | This host's registration has no coordination directory. | Repair the registration on the brain host. |
 | `not_sent`, `outcome_unknown` | The local owner's IPC lane did not take the write, or lost its acknowledgment. | `gbrain sources writer status --probe --json`; for `outcome_unknown` read the receipt (`gbrain write-request -- <id>`) before resubmitting. |
+| `earlier_call_running` | Rust brain only: the owner held this read back because an earlier write it would confirm is still running. Nothing ran, and the read tells nothing about that write. | Wait for the earlier call to end, then run the read again. Do not rerun the earlier write before the read answers. |
 
 A running sync is not one of these: `gbrain repair fences` now runs during a catch-up for every candidate the sync does not still name ([fence repair during a sync](repair.md#fence-repair-during-a-sync)), and a candidate it does name is `sync_in_progress`, not `owner_unavailable`.
 
@@ -9114,7 +9377,7 @@ records completion and leaves every page as it was.
 
 <a id="maintenance-write-drift"></a>**Writes to the same pages keep refusing `source_changed` with `file_database_drift`, or doctor `maintenance_write_drift` warns?** Each of those pages has a canonical file that differs from its database copy, usually from an edit outside a coordinated write, so every coordinated write to it refuses and leaves a conflict receipt. Maintenance now checks the file first: `synthesize_concepts` skips a drifted concept before any model call (the phase warns and names the commands below) and other maintenance writes refuse before admission, so the pile stops growing. To list the pages, run `gbrain sources reconcile <id> --brain host --audit --conflicts` (read-only; receipts per slug, whether the file still differs, its drift class and producer; MCP `list_write_conflicts` gives remote readers the database-derived part). Then preview `gbrain repair file-drift --source <id> --all-drifted --prefer file` (add `--class <name>` when the preview reports mixed classes, narrow it with `--only '<path glob>'` / `--skip '<path glob>'` over the canonical file paths, or pick pages with `--slug`), show the user the per-page `exceptions` (and, for `--prefer database`, any `kept_newer_file` page: a file edit sync never imported, which bulk keeps), and after they agree run the printed `--apply --expect <hash> --yes` command exactly as printed; without `--yes` it exits 3 with the consent message ([newer file changes](repair.md#file-drift-newer)). For derived pages under one directory, such as regenerated concepts: (6) preview `gbrain repair file-drift --source default --all-drifted --only 'concepts/**' --prefer database`, show the user the count, the exceptions and any `kept_newer_file` page, and after they agree run the apply command it prints (it ends in `--yes`), which applies exactly the previewed pages. To keep resolving such a directory with the database copy from now on, the user can declare it under `storage:` `keep_db:` in the source's gbrain.yml; the owner host's serve, jobs or autopilot consumer then reconciles drifted pages there at most 10 every 10 minutes, and doctor echoes the policy with its matched count and receipt cost ([keep_db](repair.md#file-drift-keep-db)). `--keep` is refused here: use `--prefer database` or `--prefer file`. See [file drift](repair.md#file-drift). **Say to your agent:** *"Which pages keep refusing source_changed? Preview resolving them and show me before you apply."*
 
-<a id="embedding-plane-disagreement"></a>**Doctor warns `embedding_plane_disagreement`, or a brain that had semantic search went keyword-only after a re-setup?** The config file says `embedding_disabled: true`, but the database does not disable embeddings and already holds vectors. A re-init from a new `GBRAIN_HOME` or a restarted container with no provider key in reach used to write that flag. Init now keeps the database's model and width when it holds vectors and prints the key to set; a fresh keyless install, a keyless brain with no vectors and an explicit `--no-embedding` still write the flag. The check prints the model and width the vectors use and the enable command for exactly that model (`gbrain init --force --embedding-model <model> --embedding-dimensions <N>`, with `--path` on PGLite; effects `credentials` and `paid`). Set the provider key, run it after the user agrees, then `gbrain embed --stale` embeds pages written meanwhile. Pages and vectors are kept. When the stored model is unrecorded, the check points at `gbrain migrate embeddings --status` first. Verify with `gbrain doctor --only embedding_plane_disagreement --json`.
+<a id="embedding-plane-disagreement"></a>**Doctor warns `embedding_plane_disagreement`, or a brain that had semantic search went keyword-only after a re-setup?** The config file says `embedding_disabled: true`, but the database does not disable embeddings and already holds vectors. A re-init from a new `GBRAIN_HOME` or a restarted container with no provider key in reach used to write that flag. Init now keeps the database's model and width when it holds vectors and prints the key to set; a fresh keyless install, a keyless brain with no vectors and an explicit `--no-embedding` still write the flag. The check prints the model and width the vectors use and the enable command for exactly that model (`gbrain embeddings enable --embedding-model <model> --embedding-dimensions <N>`, the same on every engine; effects `credentials` and `paid`). Set the provider key, run it after the user agrees, then `gbrain embed --stale` embeds pages written meanwhile. Pages and vectors are kept. When the stored model is unrecorded, the check points at `gbrain migrate embeddings --status` first. Verify with `gbrain doctor --only embedding_plane_disagreement --json`.
 
 <a id="embedding-identity-unqualified"></a>**`facts-absorb` dies with `embedding_configuration` ("records its embedding model without a provider") while `gbrain config get embedding_model` shows a valid `provider:model`, or doctor `embedding_identity_unqualified` warns?** The brain's database `config` row `embedding_model` holds a bare model name from an older install (for example `text-embedding-3-small`), and managed fact extraction reads only that row. `gbrain config set` cannot change it. The doctor check prints the preview with the configured model filled in: run `gbrain migrate embeddings --to <provider:model> --dry-run` (read-only), show the user the cost, and only after they approve run it without `--dry-run`, with `--yes --max-cost-usd <cap>`. It re-embeds active facts even when the model is unchanged, so it is a paid step. When no model is configured outside the database, the check asks for the provider-qualified id instead. **Say to your agent:** *"Why did facts extraction stop with an embedding configuration error?"*
 

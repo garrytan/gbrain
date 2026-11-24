@@ -1,5 +1,5 @@
 //! Group 5 facts member `probePurgeDerivations`, one batch of the fact purge receipt's derivation
-//! probe: one `#[napi] impl Brain` block over `gbrain_store::facts::purge_probe`
+//! probe: one `#[napi] impl Brain` block over `gbrain_store::facts::derivation_probe`
 //! (src/core/engine-sql/facts-purge.ts).
 
 use napi::Env;
@@ -8,7 +8,7 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::facts::purge_probe::DerivationProbeQuery;
+use gbrain_store::facts::derivation_probe::DerivationProbeQuery;
 
 #[napi]
 impl Brain {

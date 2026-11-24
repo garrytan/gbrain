@@ -14,8 +14,10 @@
  * incarnation with the same join it uses for `sync-hold`.
  */
 import type { BrainEngine } from '../engine.ts';
+import * as passReads from '../engine-sql/sync-hold-store.ts';
+import { MANAGED_SYNC_PASS_OP } from '../engine-sql/sync-hold-store.ts';
 
-export const MANAGED_SYNC_PASS_OP = 'managed-sync-pass';
+export { MANAGED_SYNC_PASS_OP } from '../engine-sql/sync-hold-store.ts';
 export const SYNC_ORIGIN_DELETED_OP = 'sync-origin-deleted';
 export const SYNC_DELETES_WITHHELD_OP = 'sync-deletes-withheld';
 export const SYNC_PASS_COST_OP = 'sync-pass-cost';
@@ -56,6 +58,8 @@ export interface PassConverged {
    * any an earlier stamp carried that has not committed). Until each effect commits the source is not idle; absent: none.
    */
   writeback?: string[];
+  /** LC-1: committed-mode paths a delete's uncommitted removal settled, with their disk stat; null overflowed (no idle). Absent: none. */
+  removal_pending?: Array<{ path: string; stat: string }> | null;
   parser_fp: string;
   pack: string | null;
   selection_fp: string;
@@ -129,6 +133,8 @@ export interface ManagedSyncPassValue {
      * step ends; status names it for a pass that stopped there.
      */
     step?: { name: 'level_read' | 'drift_history'; at: string; done?: number; total?: number };
+    /** GST-3534: the commits the pass's rounds read, and how many rounds read `I⋈P` whole or patched the previous read. */
+    levels?: { heads: number; whole: number; patched: number };
   };
 }
 
@@ -173,20 +179,23 @@ export const transientEnding = (telemetry: Pick<ManagedSyncPassValue['telemetry'
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 const iso = (value: Date | string) => new Date(value).toISOString();
 
+/** The pass row reads' typed members (engine-sql/sync-hold-store.ts); an executeRaw-only view runs the same statements. */
+type PassReader = Exec & Partial<Pick<BrainEngine, 'readSyncPassRow' | 'readLiveSyncPassRows'>>;
+
 /** The pass row of one incarnation, or null when no pass has run on it. */
 export async function readPassRow(engine: Exec, sourceId: string, incarnation: string): Promise<PassRow | null> {
-  const [row] = await engine.executeRaw<{ value: ManagedSyncPassValue | null; updated_at: Date | string; read_at: Date | string }>(
-    'SELECT completed_keys->0 AS value, updated_at, now() AS read_at FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [MANAGED_SYNC_PASS_OP, passFingerprint(sourceId, incarnation)]);
+  const reader: PassReader = engine;
+  const row = reader.readSyncPassRow ? await reader.readSyncPassRow<ManagedSyncPassValue>(sourceId, incarnation)
+    : await passReads.readSyncPassRow<ManagedSyncPassValue>(engine, sourceId, incarnation);
   return row?.value ? { value: row.value, updated_at: iso(row.updated_at), read_at: iso(row.read_at) } : null;
 }
 
 /** The pass rows of the sources' live incarnations (all sources when `sourceIds` is omitted), keyed by source id. */
 export async function readLivePassRows(engine: Exec, sourceIds?: readonly string[]): Promise<Map<string, PassRow>> {
-  const rows = await engine.executeRaw<{ source_id: string; value: ManagedSyncPassValue; updated_at: Date | string; read_at: Date | string }>(
-    `SELECT s.id AS source_id, c.completed_keys->0 AS value, c.updated_at, now() AS read_at FROM sources s
-       JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text
-      WHERE ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [MANAGED_SYNC_PASS_OP, sourceIds ? [...sourceIds] : null]);
-  return new Map(rows.filter(row => row.value).map(row => [row.source_id, { value: row.value, updated_at: iso(row.updated_at), read_at: iso(row.read_at) }]));
+  const reader: PassReader = engine;
+  const rows = reader.readLiveSyncPassRows ? await reader.readLiveSyncPassRows<ManagedSyncPassValue>(sourceIds ?? null)
+    : await passReads.readLiveSyncPassRows<ManagedSyncPassValue>(engine, sourceIds ?? null);
+  return new Map(rows.flatMap(row => row.value ? [[row.source_id, { value: row.value, updated_at: iso(row.updated_at), read_at: iso(row.read_at) }] as const] : []));
 }
 
 /**
@@ -198,15 +207,9 @@ export async function readLivePassRows(engine: Exec, sourceIds?: readonly string
  * (#7982) a row gone since the pin is never inserted back (a stop that lost its lease writes unfenced).
  */
 export async function writePassRow(tx: Exec, value: ManagedSyncPassValue, opts: { pin?: boolean; clock?: boolean; onlyOpen?: boolean } = {}): Promise<boolean> {
-  const json = opts.clock ? `jsonb_set($3::text::jsonb,'{telemetry,started_at}',to_jsonb(to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))` : '$3::text::jsonb';
-  const params = [MANAGED_SYNC_PASS_OP, passFingerprint(value.source_id, value.incarnation), JSON.stringify(value), opts.pin === true, value.lease_token];
-  const rows = opts.onlyOpen
-    ? await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array(${json}), updated_at=now()
-      WHERE op=$1 AND fingerprint=$2 AND ($4::boolean OR completed_keys->0->>'lease_token'=$5) AND completed_keys->0->'telemetry'->>'outcome'='open' RETURNING 1`, params)
-    : await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array(${json}),now())
-      ON CONFLICT (op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys, updated_at=now()
-        WHERE ($4::boolean OR op_checkpoints.completed_keys->0->>'lease_token'=$5) RETURNING 1`, params);
-  return rows.length > 0;
+  const writer: Exec & Partial<Pick<BrainEngine, 'writeSyncPassRow'>> = tx;
+  return writer.writeSyncPassRow ? writer.writeSyncPassRow(value.source_id, value.incarnation, value, opts)
+    : passReads.writeSyncPassRow(tx, value.source_id, value.incarnation, value, opts);
 }
 
 /** A pass row's health for the readers of design §3.7 (doctor movement and git-holds, the lease's progress, status). */

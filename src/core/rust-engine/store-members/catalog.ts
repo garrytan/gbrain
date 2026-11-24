@@ -56,7 +56,6 @@ export type CatalogSkipReason =
   | 'no_relation_catalog'
   | 'no_planner'
   | 'no_jsonb_storage'
-  | 'no_column_types'
   | 'no_row_policies'
   | 'no_server_settings'
   | 'no_relation_sizes'
@@ -69,7 +68,6 @@ const SKIP_TEXT: Readonly<Record<CatalogSkipReason, string>> = {
   no_relation_catalog: 'the Rust store has no Postgres catalog, and the relation catalog (rust/catalog/relations.json) does not exist yet',
   no_planner: 'the Rust store has no query planner or Postgres indexes',
   no_jsonb_storage: 'the Rust store keeps no Postgres JSONB columns',
-  no_column_types: 'the Rust store keeps no Postgres column types',
   no_row_policies: 'the Rust store has no row policies or event triggers',
   no_server_settings: 'the Rust store has no Postgres server settings',
   no_relation_sizes: 'the Rust store reports no table sizes, so the size is not measured',

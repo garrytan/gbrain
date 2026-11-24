@@ -52,12 +52,22 @@ export function requireTransactions(engine: object, step: string, why: string): 
 
 /**
  * The named refusal of a managed-checkout persistence step (worktree admission, the refresh barrier, an import hold,
- * grouped admission, the background owner check) on an engine without `managed_persistence` (the Rust engine). The
+ * grouped admission, the background owner check) on an engine without `managed_persistence`. The
  * step calls it before it reads or locks anything, so nothing of the write ran. PGLite, Postgres and transaction
  * handles (no capability set) pass.
  */
 export function requireManagedPersistence(engine: object, step: string, why: string): void {
   if (!managesWorktrees(engine)) throw capabilityMissing('managed_persistence', `${step} (${why})`);
+}
+
+/**
+ * The named refusal of a step that still runs raw SQL (a repair's page or fact write, a privacy scan, a twin fold, the
+ * refresh writer), on an engine without `raw_sql` (the Rust engine). The step calls it before it reads or writes, so
+ * `step` names what did not run. PGLite, Postgres and transaction handles (no capability set) pass, so no SQL engine
+ * path raises it. `capability` names a narrower missing family when there is one; `outcome` says what already ran.
+ */
+export function requireRawSql(engine: object, step: string, opts: { capability?: Capability; outcome?: CapabilityOutcome } = {}): void {
+  if (!reports(engine, 'raw_sql')) throw capabilityMissing(opts.capability ?? 'raw_sql', step, opts.outcome);
 }
 
 /**
@@ -70,8 +80,8 @@ export function managesWorktrees(engine: object): boolean {
 }
 
 /**
- * Whether `engine` serves raw SQL. The owner's idle probe asks it before its one raw statement, so an engine without
- * `raw_sql` (the Rust engine) answers from typed members. PGLite, Postgres and transaction handles answer true.
+ * Whether `engine` serves raw SQL. Callers with one raw statement ask it first, so an engine without `raw_sql` (the
+ * Rust engine) answers from typed members or refuses plainly. PGLite, Postgres and transaction handles answer true.
  */
 export function servesRawSql(engine: object): boolean {
   return reports(engine, 'raw_sql');

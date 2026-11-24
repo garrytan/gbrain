@@ -29,13 +29,7 @@ function readSources(grant: PrincipalGrant): string[] {
 async function attestReadVerdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   try {
-    const rows = await engine.executeRaw<{ kind: 'token' | 'client'; id: string; name: string; row: Record<string, unknown> }>(
-      `SELECT 'token' AS kind, t.id::text AS id, t.name, to_jsonb(t) AS row FROM access_tokens t
-        WHERE t.revoked_at IS NULL AND to_jsonb(t)->>'attest_actor' IS NOT NULL
-       UNION ALL
-       SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row FROM oauth_clients c
-        WHERE (to_jsonb(c)->>'deleted_at') IS NULL AND to_jsonb(c)->>'attest_actor' IS NOT NULL
-       ORDER BY 1, 3`);
+    const rows = await engine.listAttestCredentialRows();
     const credentials: Credential[] = await Promise.all(rows.map(async r => {
       const row = typeof r.row === 'string' ? JSON.parse(r.row) as Record<string, unknown> : r.row;
       const grant = r.kind === 'token' ? grantFromTokenRow(row) : grantFromClient(grantFromRow(row));

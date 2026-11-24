@@ -19,7 +19,8 @@ const PLAIN: Record<string, string> = {
   'src/core/ai/decide/egress.ts visiblePages privatePagesFilterFragment': 'egress policy: which pages may leave the machine, judged as world',
   'src/core/belief/backfill.ts preparePage privatePagesFilterFragment': 'maintenance: stamps the ledger visibility of each page',
   'src/core/belief/purge.ts registerVersionCarriers privatePagesFilterFragment': 'maintenance: classifies the purged versions',
-  'src/core/belief/state.ts readBeliefState privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
+  'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
+  'src/core/rust-engine/store-members/belief-ledger.ts readBeliefStateRows privatePagesFilterFragment': 'the Rust ledger state read: the stored world visibility, not a caller view',
   'src/core/engine-sql/dream-cycle.ts listDreamAtomPages privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is (moved from cycle/synthesize-concepts.ts runPhaseSynthesizeConcepts)',
   'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/engine-sql/identity-decisions.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: which duplicate-decision members may be written into the home repository, judged as world; local dedupe only',
@@ -34,6 +35,7 @@ const PLAIN: Record<string, string> = {
   'src/core/persistence/origin-twins.ts readOriginClaimants privatePagesFilterFragment': 'maintenance: classifies twin pages as private',
   'src/core/persistence/rows-behind.ts scanRowsBehind privatePagesFilterFragment': 'maintenance: lineage privacy of rows behind the projection',
   'src/core/rust-engine/store-members/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the Rust store derives the world flag of the page under the same policy; the read itself is gated by privatePagesFilterForCaller',
+  'src/core/rust-engine/store-members/entity-identities.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: the Rust store judges which duplicate-decision members may be written into the home repository under the same world policy as the SQL member; local dedupe only',
   'src/core/rust-engine/store-members/link-temporal.ts originPolicy privatePagesFilterFragment': 'write-side: the Rust store records whether a link origin is public under the same policy',
 };
 
