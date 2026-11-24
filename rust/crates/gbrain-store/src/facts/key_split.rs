@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(stored.format_version, 6);
         // The disk works again: the brain converts and answers as it would have.
         let store = open(&inner).unwrap();
-        assert_eq!(store.info().format_version, 7);
+        assert_eq!(store.info().format_version, FORMAT_VERSION);
         assert_eq!(answers(&store), expected());
     }
 
@@ -430,7 +430,7 @@ mod tests {
                 mute,
             );
             let store = open(&kv).unwrap_or_else(|e| panic!("format {version}: {e:?}"));
-            assert_eq!(store.info().format_version, 7);
+            assert_eq!(store.info().format_version, FORMAT_VERSION);
             let mutes = store.list_loop_suppressions("g1").unwrap();
             for (kind, value) in [("sender", ""), ("thread", "")] {
                 assert!(
