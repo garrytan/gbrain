@@ -105,11 +105,11 @@ export function quotePageText(text: string, slug: string, type: string | null | 
   return text ? fenceTranscriptText(isQuotedPageType(type) ? neutralizeToolCalls(text) : text, slug) : text;
 }
 
-/** Each page id's stored type (one query), for reads whose rows name only their page_id (get_timeline, get_chunks). */
-export async function pageTypesById(engine: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
+/** Each page id's stored type (one read), for reads whose rows name only their page_id (get_timeline, get_chunks). */
+export async function pageTypesById(engine: Pick<BrainEngine, 'listPageTypesByIds'>, ids: readonly number[]): Promise<ReadonlyMap<number, string | null>> {
   if (!ids.length) return new Map();
-  const rows = await engine.executeRaw<{ id: number | string; type: string | null }>('SELECT id, type FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(ids.map(Number))]]);
-  return new Map(rows.map(r => [Number(r.id), r.type]));
+  const rows = await engine.listPageTypesByIds(ids);
+  return new Map(rows.map(r => [r.id, r.type]));
 }
 
 /** The fact was saved by the conversation-facts extractor from such a page, by its stored `facts.source`. */

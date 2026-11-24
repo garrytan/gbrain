@@ -11,6 +11,7 @@ import type { Check } from '../../doctor.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { holdAppliesToPageSql } from '../../../core/write-gate-binding.ts';
 
 const LIMIT = 50;
 
@@ -20,7 +21,8 @@ async function runTrustReleaseUnpreviewed(ctx: DoctorContext): Promise<Check[]> 
     const rows = await connectedEngine(ctx).executeRaw<{ id: number; source_id: string; slug: string; row_num: number; hold_id: number; total: number }>(
       `SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.row_num, h.id AS hold_id, COUNT(*) OVER () AS total
          FROM facts f JOIN LATERAL (SELECT id FROM write_gate_holds WHERE kind = 'fact' AND status = 'released' AND source_id = f.source_id
-          AND slug = f.source_markdown_slug AND payload->>'row_num' = f.row_num::text
+          AND ${holdAppliesToPageSql('write_gate_holds', '(SELECT pg.id FROM pages pg WHERE pg.source_id = f.source_id AND pg.slug = f.source_markdown_slug)', 'f.source_markdown_slug')}
+          AND payload->>'row_num' = f.row_num::text
           AND request_id::text IS NOT DISTINCT FROM f.write_origin->>'request_id' ORDER BY id DESC LIMIT 1) h ON true
         WHERE f.trust_tier = 'user_confirmed' AND f.expired_at IS NULL AND f.write_origin->>'channel' = 'trust_release'
           AND f.write_origin->>'fields_previewed' IS NULL

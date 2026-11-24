@@ -21,6 +21,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -94,5 +95,58 @@ for (const backend of testBackends()) describe(`[${backend}] GBRA-133: sync.appl
     expect(await live(engine)).toEqual(['notes/b', 'notes/c', 'notes/d']);
     const again = await holds(engine);
     for (const slug of ['notes/b', 'notes/c', 'notes/d']) expect(again[`${slug}.md`]!.meta.held_deletion).toEqual(on[`${slug}.md`]!.meta.held_deletion);
+  }, { databaseUrl, setup }), 300_000);
+
+  test('keeps a held deletion whose file moved to another live page (file_moved), even when the page equals its last committed blob', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    mkdirSync(join(root, 'archive'), { recursive: true });
+    writeFileSync(join(root, 'archive/a.md'), note('notes/a', 'The committed body of notes/a.'));
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'copy a to the archive');
+    await performManagedSync(engine, OPTS);
+    const coordinated = (sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
+    await coordinated(`DELETE FROM op_checkpoints WHERE op='sync-import-provenance'
+      AND completed_keys->0->>'page_id' IN (SELECT id::text FROM pages WHERE source_id='default' AND slug='notes/a')`);
+    await coordinated(`UPDATE pages SET knowledge_revision = $1::uuid, revision_write_request_id = NULL, updated_at = now() - interval '1 hour'
+      WHERE source_id='default' AND slug='notes/a'`, [randomUUID()]);
+    git(root, 'rm', '-q', 'notes/a.md'); git(root, 'commit', '-qm', 'drop the old copy');
+    await engine.setConfig('sync.apply_held_deletions', 'true');
+    await performManagedSync(engine, OPTS);
+    expect(await live(engine)).toContain('notes/a');
+    expect((await holds(engine))['notes/a.md']?.meta.held_deletion?.refused).toBe('file_moved');
+  }, { databaseUrl, setup }), 300_000);
+
+  test('keeps a held deletion whose file moved in a commit that landed after the move check and before the deletion published', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    const coordinated = (sql: string, params: unknown[] = []) => engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
+    await coordinated(`DELETE FROM op_checkpoints WHERE op='sync-import-provenance'
+      AND completed_keys->0->>'page_id' IN (SELECT id::text FROM pages WHERE source_id='default' AND slug='notes/a')`);
+    await coordinated(`UPDATE pages SET knowledge_revision = $1::uuid, revision_write_request_id = NULL, updated_at = now() - interval '1 hour'
+      WHERE source_id='default' AND slug='notes/a'`, [randomUUID()]);
+    git(root, 'rm', '-q', 'notes/a.md');
+    writeFileSync(join(root, 'notes/b.md'), note('notes/b', 'An edit of notes/b in the same commit.'));
+    git(root, 'add', 'notes/b.md'); git(root, 'commit', '-qm', 'drop notes/a and edit notes/b');
+    await engine.setConfig('sync.apply_held_deletions', 'true');
+    let moved = false;
+    installFaultHook(point => {
+      if (point !== 'sync:batch_entries' || moved) return;
+      moved = true;
+      mkdirSync(join(root, 'archive'), { recursive: true });
+      writeFileSync(join(root, 'archive/a.md'), note('notes/a', 'The committed body of notes/a.'));
+      git(root, 'add', 'archive/a.md'); git(root, 'commit', '-qm', 'the same content lands elsewhere while the deletion waits');
+    });
+    let racing: Awaited<ReturnType<typeof performManagedSync>>;
+    try { racing = await performManagedSync(engine, OPTS); } finally { installFaultHook(undefined); }
+    expect(moved).toBe(true);
+    expect(racing.status).not.toBe('blocked_by_failures');
+    expect((await engine.executeRaw<{ body: string }>("SELECT compiled_truth AS body FROM pages WHERE source_id='default' AND slug='notes/b'"))[0]!.body)
+      .toContain('An edit of notes/b in the same commit.');
+    expect(await live(engine)).toContain('notes/a');
+    expect((await holds(engine))['notes/a.md']).toMatchObject({ code: 'file_drift', meta: { state: 'file_gone' } });
+    expect((await holds(engine))['notes/a.md']!.meta.held_deletion?.refused).toBeUndefined();
+    writeFileSync(join(root, 'notes/c.md'), note('notes/c', 'A later edit of notes/c.'));
+    git(root, 'add', 'notes/c.md'); git(root, 'commit', '-qm', 'a later commit, so the next sync reads the source');
+    await performManagedSync(engine, OPTS);
+    expect(await live(engine)).toContain('notes/a');
+    expect((await holds(engine))['notes/a.md']?.meta.held_deletion?.refused).toBe('file_moved');
   }, { databaseUrl, setup }), 300_000);
 });

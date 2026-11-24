@@ -522,6 +522,16 @@ More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple
 |---|---|---|---|---|---|---|
 | The change needs the owner's explicit approval before it can proceed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### archive_audience_changed
+
+<a id="archive_audience_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain's audience changed while the conversation archive was starting, so it now archives into another source; this run read and wrote nothing. | A run writes every page under the audience it reads while it holds its source lock; a brain that turned shared moves a checkout source's archive into its owner-only <source>-owner twin, so writing with the earlier read could publish pages other members read. | Rerun gbrain transcripts archive run. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
+
 ### archive_audience_unproven
 
 <a id="archive_audience_unproven"></a>
@@ -850,7 +860,7 @@ More: [docs/guides/bootstrap.md#cleanup-pending](../../docs/guides/bootstrap.md#
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The configured PGLite brain is not at its datastore path (an unmounted drive or a moved folder?), so doctor did not connect and created nothing there. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty brain is `gbrain init`, a decision for the user. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
+| The configured PGLite datastore (the host brain's, or the selected mount's) is not at its path, or its folder is empty (an unmounted drive or a moved folder?), so doctor refused before connecting and created nothing in the folder. | A health check never creates the thing it checks: connecting to a missing PGLite path would build a new empty brain there, migrate it and report it healthy while the real notes sit elsewhere. Creating a new empty datastore is the user's decision, since the old notes would not be in it: for the host brain it is `gbrain init --pglite --no-embedding --path <where>`; for a mount, `gbrain init` is not the way, because it rewrites the host brain's config. | Mount or reconnect the drive that holds the brain, move the folder back, or point `database_path` in the gbrain config at where the brain lives now; then run `gbrain doctor --only connection --json` again. | user | `gbrain doctor --json` | 1 | no |
 
 Reasons: `missing_brain`.
 
@@ -1666,15 +1676,25 @@ More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#m
 |---|---|---|---|---|---|---|
 | gbrain dedupe confirm, reject or reconcile refused because this brain's duplicate decisions are kept in git in its home source and this host sees no git work tree for that source, so nothing was written. | On a brain with a repository git is the record of every duplicate decision and the database only its projection; a decision written to the database alone would be dropped by the next sync of the checkout and lost with the database. | Run the command on the host that holds the checkout, or restore the checkout and run gbrain dedupe reconcile there. Run: gbrain sources list --json | user | `gbrain doctor --json` | 1 | no |
 
+### dedupe_exa_off
+
+<a id="dedupe_exa_off"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name plus one company or job title to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/duplicate-people.md#web-search-exa](../../docs/guides/duplicate-people.md#web-search-exa)
+
 ### dedupe_group_not_confirmable
 
 <a id="dedupe_group_not_confirmable"></a>
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
+| gbrain dedupe confirm refused a group it does not confirm: a conflict (an account or registry id disagrees), a thin page or a same-source group, a cross-source group holding two pages of one source, a group whose only shared keys are contact or handle keys or a person group that shares an account or registry id, given together with other groups, or a --join that would put two pages recorded as different people or companies in one identity; confirm and reject also refuse a group with a page in an owner-only, archived owner-only or removed source, or a page outside the default source that not every reader of it may read, on a brain whose default source has a repository. Nothing was written. | A conflict is never proposed, same-source duplicates are collapsed rather than linked, and a shared email, phone, X handle or domain alone is also carried by households, teams and family addresses, and a person's pages are never linked without the owner reading the pair, so those groups are read and confirmed one at a time. A decision file names every member's source and slug, so an owner-only page in one would be readable by anyone who reads the repository. | Confirm a contact-only group or a person group on its own (gbrain dedupe confirm <group-id>), read its hint line in gbrain dedupe confirm first, and leave conflicts, thin pages and same-source groups for review. For a group holding two pages of one source, collapse them if they are one page or record them as different with gbrain dedupe reject <their in_source group id> if they are not, then confirm the group the next preview shows. Run: gbrain dedupe confirm | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`.
+Reasons: `conflict`, `thin`, `in_source`, `contact_key_only_batch`, `owner_only_source`, `restricted_page`, `rejected_pair`, `person_id_batch`, `same_source_members`.
 
 ### dedupe_group_unknown
 
@@ -2096,16 +2116,6 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
 
-### engine_shadow_refused
-
-<a id="engine_shadow_refused"></a>
-
-| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
-|---|---|---|---|---|---|---|
-| `gbrain engine shadow start` or `seed` was refused before it wrote anything: this brain uses managed storage, which the Rust engine never holds. | A brain with managed storage can never swap to Rust, so a shadow on it measures nothing it could use. A brain whose mode cannot be read or opened is refused the same way rather than passed. | Ask the user; nothing was written. Run: gbrain sources writer status --probe --json | agent | `repeat the read that failed` | 3 | no |
-
-Reasons: `managed_storage`.
-
 ### engine_swap_refused
 
 <a id="engine_swap_refused"></a>
@@ -2114,11 +2124,13 @@ Reasons: `managed_storage`.
 |---|---|---|---|---|---|---|
 | The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `refresh_unsettled`, `managed_storage`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
 
 Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
 
 Override: reason `managed_storage`: consent, exit 3, not retryable.
+
+Override: reason `no_shadow`: consent, exit 3, not retryable.
 
 Override: reason `follower_behind`: retryable, exit 1, retryable.
 
@@ -2483,6 +2495,66 @@ More: [docs/guides/troubleshooting.md#foreign-table](../../docs/guides/troublesh
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The eval gate found retrieval regressions or correctness below its thresholds. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### gbrainio_account_mismatch
+
+<a id="gbrainio_account_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain.io answer named a different mailbox than the Google source reads, so nothing from it was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_command_failed
+
+<a id="gbrainio_command_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrainio command line read failed or printed an answer gbrain could not read; the range it was reading stays open for the next sync. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_command_missing
+
+<a id="gbrainio_command_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The gbrainio command line a gbrain.io Google source runs is not installed or not on PATH. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_limit_reached
+
+<a id="gbrainio_limit_reached"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain.io refused a mail read because a usage limit was reached; the unread range stays open and the next sync resumes it. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_not_connected
+
+<a id="gbrainio_not_connected"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The gbrain.io terminal ended, was never approved, or cannot read this mailbox. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### gbrainio_unsupported
+
+<a id="gbrainio_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A step that needs a Google token (attachment repair, the change feed) was asked of a source that reads mail through gbrain.io. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
 ### generation_fenced
 
@@ -4476,6 +4548,16 @@ More: [docs/guides/write-refusals.md#preparation_stalled](../../docs/guides/writ
 
 More: [docs/guides/repair.md#preview-changed](../../docs/guides/repair.md#preview-changed)
 
+### private_senders_unreadable
+
+<a id="private_senders_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Google source's private-senders file is missing, unreadable or empty, so the sync stopped before writing anything. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
 ### profile_incompatible
 
 <a id="profile_incompatible"></a>
@@ -5762,7 +5844,7 @@ More: [docs/guides/skill-resolver.md#skill_resolve_timeout](../../docs/guides/sk
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 2000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
+| A skill resolver setting is out of range (skills.resolver.session_token_budget must be 0 or 100-50000; top_k, min_match, pinned and per_harness must be valid) or GBRAIN_HOME is not an absolute path. | The request itself was wrong or no longer matches the brain; nothing was changed. | Fix the value in config.json under skills.resolver (default budget 8000), or GBRAIN_HOME. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/guides/skill-resolver.md#skill_resolver_config_invalid)
 
@@ -6404,7 +6486,7 @@ More: [docs/guides/write-refusals.md#sync_drain_lease_held](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A source's first sync is running (it holds a live sync lock inside the staleness ceiling) and no successful sync is recorded yet, so doctor sync_freshness warns instead of reading it as fresh. | A sync stamps last_sync_at only when it succeeds; a running sync is not a fresh source, and starting a second one beside it only contends for the lock. Over the staleness ceiling the lock reads as wedged (fail) instead. | Wait for the running sync, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
+| A source's first sync is running (it holds a live sync lock inside the staleness ceiling, or its sync job, started inside that ceiling, is running with a live job lock) and no successful sync is recorded yet, so doctor sync_freshness warns instead of reading it as fresh. | A sync stamps last_sync_at only when it succeeds; a running sync is not a fresh source, and starting a second one beside it only contends for the lock. Over the staleness ceiling the lock reads as wedged (fail) instead. | Wait for the running sync, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/troubleshooting.md#sync-freshness-no-successful-sync](../../docs/guides/troubleshooting.md#sync-freshness-no-successful-sync)
 
@@ -6426,7 +6508,7 @@ More: [docs/guides/write-refusals.md#sync_in_progress](../../docs/guides/write-r
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| No successful sync is recorded for a source (last_sync_at is NULL) and no sync of it is running; doctor sync_freshness fails with the last attempt's time, result and held files. | The attempt comes from the newest sync job and, on a managed brain, the source's sync status (read-only). `reason` names the state: no_attempt (nothing recorded: run a sync), attempt_queued (a job is queued: wait), holds_pending (held files: inspect them first), last_attempt_unsuccessful (inspect the job or failure, then retry). | Follow the check fix: it waits, inspects holds (gbrain sync status --source <id> --json) or retries (gbrain sync --source <id>) depending on the state. | agent | `gbrain doctor --json` | 1 | no |
+| No successful sync is recorded for a source (last_sync_at is NULL) and no sync of it is running, or its sync job has run past the staleness ceiling; doctor sync_freshness fails with the last attempt's time, result and held files. | The attempt comes from the newest sync job and, on a managed brain, the source's sync status (read-only). `reason` names the state: no_attempt (nothing recorded: run a sync), attempt_queued (a job is queued: wait), holds_pending (held files: inspect them first), last_attempt_unsuccessful (inspect the job or failure, then retry; also a sync job that keeps its job lock past the staleness ceiling, which is not finishing). | Follow the check fix: it waits, inspects holds (gbrain sync status --source <id> --json) or retries (gbrain sync --source <id>) depending on the state. | agent | `gbrain doctor --json` | 1 | no |
 
 Reasons: `no_attempt`, `attempt_queued`, `holds_pending`, `last_attempt_unsuccessful`.
 
@@ -6457,6 +6539,16 @@ Reasons: `checkout_missing`, `content_directory`, `plain_directory`.
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A sync pass's checkpoint did not publish because the pass that admitted it no longer holds the source (it ended, or another pass started); the next pass stamps its own checkpoint. | A pass's checkpoint is bound to its drain lease and pass row, so it can never publish after that pass ends. Its receipt is a conflict that records no managed-sync failure and reads superseded in gbrain sources writer failures; a pass that stops with the checkpoint still pending reports disposition superseded instead of a request to resume. | Nothing to repair or resubmit: the pages the pass committed stand. Let the next sync pass run (gbrain sync --source <id> --no-pull), and read gbrain sync status --source <id> --json to confirm the source converges. | agent | `repeat the read that failed` | 1 | no |
+
+### sync_usage_limited
+
+<a id="sync_usage_limited"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source has no successful sync yet and its last sync stopped only at a provider usage or rate limit, with nothing else failed or held, and such a run landed pages inside sync_freshness's fail age, so doctor sync_freshness warns instead of failing. | A connector whose provider caps reads per day (gbrain.io's allowance, Google's quota) can take several runs to finish a first sync. Each run ends partial and resumes where the last stopped; that is progress, not a broken source. Runs that hit the spent limit before landing anything keep the warning; once no limited run has landed pages inside the fail age, or a run fails items or holds files, the source reads sync_no_successful_sync again. | Wait for the next scheduled sync to resume, then run gbrain doctor --only sync_freshness --json again. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/troubleshooting.md#sync-freshness-no-successful-sync](../../docs/guides/troubleshooting.md#sync-freshness-no-successful-sync)
 
 ### tag_too_long
 

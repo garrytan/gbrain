@@ -104,7 +104,18 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
     ),
     (
         "timeline_entries",
-        follow(&["id", "page_id", "date", "event_page_id"], remove_timeline),
+        keyed(
+            &[
+                "id",
+                "page_id",
+                "date",
+                "summary",
+                "source",
+                "event_page_id",
+            ],
+            &[&["page_id", "date", "summary", "source"]],
+            remove_timeline,
+        ),
     ),
     (
         "slug_aliases",

@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
@@ -62,7 +63,7 @@ const receiptFix = (requestId: string): Action => readFix(`Reads postprocess req
   { argv: ['gbrain', 'write-request', '--', requestId] });
 
 /** The slug submitPageMutation journals for a client slug: it lowercases it (page-mutations.ts). */
-export const journaledPageSlug = (slug: string): string => slug.toLowerCase();
+export const journaledPageSlug = (slug: string): string => normalizeSlug(slug);
 
 /**
  * #6616: each child's completed `brain_put_page` call joined to the committed
