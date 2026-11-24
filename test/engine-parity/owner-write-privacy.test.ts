@@ -2,7 +2,8 @@
  * BrainEngine parity — the brain owner's own remote put_page, through the MCP dispatch a bound legacy token drives.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on every arm the owner's own put_page of a new page is written.
+ *  - Contract: on every arm the owner's own put_page of a new page is written, and the owner's put_page of an existing
+ *    private page whose content names no visibility leaves the page private.
  *  - Regression: the owner's write reads the stored page's privacy (persistence/page-visibility.ts ownerRewriteOf) with
  *    raw SQL, which the Rust engine refuses, so the owner's own remote put_page was refused with engine_capability_missing.
  *  - Why existing coverage misses it: plain-member-writes pinned the refusal as a named loss; the owner write
@@ -50,6 +51,24 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     const result = { out, hidden: await engine.readPagePrivacyHidden(SRC, 'notes/by-owner'), missing: await engine.readPagePrivacyHidden(SRC, 'notes/none') };
     expect(result).toEqual({ out: 'written', hidden: false, missing: null });
     return result;
+  });
+
+  parityTest('the owner\'s put_page rewrite of a private page, naming no visibility, leaves it private', { methods: ['putPage', 'getPage', 'readPagePrivacyHidden'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await engine.putPage('notes/diary', { type: 'note', title: 'Diary', compiled_truth: 'First entry.', timeline: '', frontmatter: { visibility: 'private' } }, { sourceId: SRC });
+    const out = await ownerPut(engine, 'notes/diary', '---\ntitle: Diary\n---\nSecond entry.', (await engine.getPage('notes/diary', { sourceId: SRC }))?.knowledge_revision);
+    const result = { out, visibility: (await engine.getPage('notes/diary', { sourceId: SRC }))?.frontmatter.visibility ?? null };
+    expect(result).toEqual({ out: 'written', visibility: 'private' });
+    return result;
+  });
+
+  parityTest('the owner\'s put_page over a page whose readers leave the owner out is refused alike', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    await addMember(engine, 'bob-example');
+    await engine.putPage('notes/vault', { type: 'note', title: 'Vault', compiled_truth: 'Bob only.', timeline: '', frontmatter: { visibility: 'private', readable_by: ['bob-example'] } }, { sourceId: SRC });
+    const out = await ownerPut(engine, 'notes/vault', '---\ntitle: Vault\n---\nTaken.', (await engine.getPage('notes/vault', { sourceId: SRC }))?.knowledge_revision);
+    expect(out).not.toBe('written');
+    return out;
   });
 
   // Not a parityTest: on Rust a non-owner member's call also reaches a labelled-only raw read that the dispatch swallows (row 32e-b),

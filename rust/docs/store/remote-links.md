@@ -21,9 +21,12 @@ An id that is not a bigint refuses with `invalid input syntax for type bigint: "
 
 The writer's read policy is gathered by `persistence/page-visibility.ts` (`writerReadPolicy`). The TypeScript member
 renders it as PGLite renders it and serves it only when the text equals the no-caller member-access rendering or a fresh
-record's rendering for the writer's one reader identity; the store then judges each page with `page_hidden`
-(facts/privacy.rs), as `readCallerPageAccess` does. Any other writer (folder rules, an owner record, a labelled-only
-grant, several identities, an empty policy object) refuses `engine_capability_missing` before any read.
+record's rendering for the writer's one reader identity, with or without the owner flag; the store then judges each page
+with `page_hidden` (facts/privacy.rs), as `readCallerPageAccess` does. The owner speaking for itself renders the identity
+text without the owner-only clause, which the store reads as no owner-only test, the answer PGLite gives the owner. Any
+other writer (folder rules, any other owner record, a labelled-only grant, several identities, an empty policy object)
+refuses `engine_capability_missing` before any read. The remote page write check (`authorizePageVisibility`) reads the
+live page against the writer's policy through this member.
 
 An OAuth client writer (the HTTP transport) is not served: `readWriterSlugFence` refuses for `oauth_client`, since the
 store keeps no OAuth client write grant yet.

@@ -1,5 +1,6 @@
-**On a Rust brain, the brain owner's own remote write of a new page is no longer refused.**
+**On a Rust brain, the owner's own remote writes and a plain member's rewrite of a page that names its readers now work.**
 
 ### Changed
-- On the Rust engine, the owner's own `put_page` of a new page through a bound token now works, with the same result as PGLite and Postgres. Before, it stopped with `engine_capability_missing` because the write check read the page's privacy with raw SQL. The check now asks the engine for it through a new typed read, `readPagePrivacyHidden`. Nothing to do on upgrade.
-- The owner's rewrite of a page that already exists and is private is still refused on the Rust engine. A follow-up change fixes that.
+- On the Rust engine, the owner's own `put_page` through a bound token now works, both for a new page and for a rewrite of a page that is already private, with the same result as PGLite and Postgres. A rewrite of a private page that names no visibility keeps it private. Before, it stopped with `engine_capability_missing` because the write check read the page's privacy with raw SQL.
+- A plain member's `put_page` over an existing page that names the member as a reader now works on the Rust engine too. The write check asked for the page with raw SQL, and now uses two typed reads, `readPagePrivacyHidden` and `readLinkTargetPages`. A page that has only a soft-deleted row is still judged by the old statement, so a write never republishes a deleted private page.
+- The Rust engine's check of a writer's read policy now also accepts the owner's own policy. Every other policy shape is still refused the same way. Nothing to do on upgrade.
