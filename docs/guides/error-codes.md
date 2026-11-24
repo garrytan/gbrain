@@ -5632,6 +5632,48 @@ More: [docs/guides/repair.md#setup-harness-unsupported](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | gbrain setup --serves several would turn a brain that serves one person shared while it holds pages no rule restricts, and nobody chose what happens to them, so setup wrote nothing. | Each member key setup mints reads every page no rule or readable_by restricts, so the owner's journal, DMs, chat, mail and conversation archive would reach every member; only the admin can decide that. | Run setup again with --labelled-only to keep that history private (each member reads only pages labelled for them) or with --open-history to let the members read it. Run: gbrain doctor --only open_shared_pages --json | agent | `repeat the read that failed` | 1 | no |
 
+### setup_history_decision_expired
+
+<a id="setup_history_decision_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The history import decision gbrain setup offered expired before it was answered, so nothing was imported. | A decision imports exactly the sessions its preview showed; an old preview no longer describes what is on disk, so it is never applied late. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_decision_unavailable
+
+<a id="setup_history_decision_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No pending history import decision with that id exists on this brain, so nothing was imported. | A decision belongs to one install and one preview; a newer preview replaces it and a no removes it. | Run gbrain setup again to preview the import and get a new decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_failed
+
+<a id="setup_history_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The history import gbrain setup ran wrote nothing: every reader or day it tried failed. | The import reads the previewed session files and writes through the conversation archive; a reader or write error is reported per harness and day. | Run gbrain transcripts archive status for each reader's error, then run gbrain setup again. Run: gbrain transcripts archive status --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
+### setup_history_ineligible
+
+<a id="setup_history_ineligible"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The setup history import runs only on a new personal install, and this brain is not one, so nothing was read or written. | An upgrade, a restored or imported brain, a pinned project and a team, shared or member-bound brain never get the import: it is offered once, to the owner of a brain setup just created, and never changes what other people can read. | Import history yourself with gbrain transcripts archive backfill --from YYYY-MM-DD, or gbrain transcripts ingest <export>. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `existing_brain`, `pages_present`, `shared_brain`, `audience_unproven`, `archive_off`, `pinned_source`, `team_brain`, `member_bound`.
+
+More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guides/conversation-archive.md#setup-history-import)
+
 ### setup_hosted_connection
 
 <a id="setup_hosted_connection"></a>
