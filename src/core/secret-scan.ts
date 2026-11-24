@@ -232,11 +232,7 @@ const BASIC_BARE = 'basic\\s{1,16})([A-Za-z0-9+/=]{16,2048})(?![A-Za-z0-9+/=])';
  */
 const URL_PASSWORD_PLACEHOLDER_RE = /^(?:<[^<>]*>|\$\{[^{}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\*+|[xX]+)$/;
 
-/**
- * `url_credentials` validate: the password is not a placeholder. A password
- * holding a raw `@` always counts as real, so neither a placeholder-shaped
- * first piece (`***@rest`) nor a placeholder-shaped whole (`<a@b>`) hides it.
- */
+/** `url_credentials` validate: the password is not a placeholder; one holding a raw `@` always counts as real. */
 function urlPasswordIsReal(value: string): boolean {
   const schemeEnd = value.indexOf('://') + 3;
   const colon = value.indexOf(':', schemeEnd);
@@ -380,11 +376,9 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   // per scheme occurrence is a constant; the precheck skips the regex on
   // lines with no `@` at all. A password over 256 chars is the accepted miss
   // (a JWT that long is still claimed by `jwt` above).
-  // A raw `@` inside the password: drivers split the userinfo at the LAST `@` of
-  // the authority, so the password may carry up to 8 more `@`-separated pieces
-  // that hold no `/`, `?` or `#` (still the authority). Stopping at the first
-  // `@` left the rest of such a password after the marker; an `@` in the path or
-  // query still ends nothing, because a piece cannot cross `/`, `?` or `#`.
+  // Drivers split the userinfo at the LAST `@` of the authority, so a password may
+  // carry up to 8 more raw-`@` pieces; a piece cannot cross `/`, `?` or `#`, so
+  // an `@` in the path or query never extends the match.
   {
     name: 'db_url_credentials',
     source:
