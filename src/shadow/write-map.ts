@@ -264,7 +264,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'declarePersistence', 'declareSyncImportPageCursor', 'deferProjectionJob', 'delayActiveJob', 'deleteAccessGroup',
   'deleteAccessMemberLink', 'deleteChunksForPages', 'deleteConsumerRow', 'deleteConversationOutcomeRows',
   'deleteDerivedAliasesForSlugs', 'deleteEventProjections', 'deleteExpiredOauthCredentials', 'deleteFactRelinkMemos',
-  'deleteGitHoldRow', 'deleteJobAttachment', 'deleteLinksById', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
+  'deleteGitHoldRow', 'deleteJobAttachment', 'deleteLinksById', 'deleteManagedSyncFailureObservation', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
   'deleteOAuthClient', 'deleteOauthClientCodes', 'deleteOauthClientRow', 'deleteOauthClientTokens', 'deleteOauthCode',
   'deleteOauthRefreshToken', 'deleteOauthTokenByHash', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
   'deleteOrphanBinding', 'deleteOrphanConnectorCheckpoint', 'deleteOrphanedAliases', 'deleteOwnedLinks',
