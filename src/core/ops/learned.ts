@@ -8,8 +8,7 @@
 import { opError, type Operation } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
-import { hasCapability } from '../engine-capabilities.ts';
-import { capabilityMissing } from '../rust-engine/errors.ts';
+import { sqlEngineKind } from '../sql-engine-kind.ts';
 import { learningTablePresent } from '../learning/kinds.ts';
 import { LEARNED_DEFAULT_LIMIT, LEARNED_MAX_LIMIT, readLearned } from '../learning/read.ts';
 import { learnedStats } from '../learning/stats.ts';
@@ -35,7 +34,7 @@ const learned: Operation = {
   annotations: { readOnlyHint: true },
   cliHints: { name: 'learned' },
   handler: async (ctx, p) => {
-    if (!hasCapability(ctx.engine, 'raw_sql')) throw capabilityMissing('raw_sql', 'learned');
+    sqlEngineKind(ctx.engine.kind, 'learned');
     let since: Date | undefined;
     if (p.since !== undefined && p.since !== null) {
       since = new Date(String(p.since));
