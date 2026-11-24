@@ -501,10 +501,12 @@ essentials follow.
   (`factsFenceSection`, `:889-896`, #6686).
 - Remote write-back keeps rows the writer could not see. When an untrusted caller
   writes a page back, `restoreHiddenFactRows` (`facts-fence.ts:606-649` at
-  `116d737413`) restores the stored rows whose visibility is not `world`, and a
-  caller row that reuses their number is renumbered. When the writer read the page
-  without its held rows (`restoreHeldRows`), world rows held from that writer are
-  restored as stored too, and a same-claim incoming row cannot reword them. The
+  `116d737413`) restores a stored row whose visibility is not `world` unless the
+  caller's row at its number has the same claim. A caller row at that number with a
+  different claim is renumbered, and one with the same claim is kept as written.
+  When the writer read the page without its held rows (`restoreHeldRows`), world
+  rows held from that writer are restored as stored too. A caller row with the
+  same claim at their number keeps only its own visibility. The
   merge runs per page column in `mergeHiddenFactRows`
   (`src/core/import-hidden-rows.ts:61-68`, called from `src/core/import-file.ts:443`,
   both at `116d737413`).

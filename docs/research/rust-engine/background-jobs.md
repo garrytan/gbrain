@@ -637,7 +637,7 @@ Per tick (`runAutopilotDaemon`, in order):
 | 23 | chronicle | global / paid | Default on | Life Chronicle event pages | LLM (chronicle extraction) |
 | 24 | facts_drain | global / paid | PGLite runs it (no job worker). Postgres skips it, but warns when facts-absorb jobs have waited past `GBRAIN_QUEUE_NO_WORKER_WARN_HOURS` (default 1) on a queue no worker serves (`src/core/cycle/facts-drain.ts:32`, `src/core/minions/no-worker.ts:53`) | Queued facts-absorb jobs | LLM |
 | 25 | conversation_facts_backfill | source / paid | Default off | Facts | LLM; brain-wide budget tracker |
-| 26 | enrich_thin | source / paid | Default off (`cycle.enrich_thin.enabled`); optional daily caps `cycle.enrich_thin.max_daily_cost_usd` and `max_daily_pages` per owner day, running total in `enrich_thin.daily_spend`; order is `owner-contact` when the owner's page resolves, else `inbound-links` (`src/core/cycle/enrich-thin.ts:87`, `:234`) | Enriched pages | Grounded synthesis (LLM) |
+| 26 | enrich_thin | source / paid | Default off (`cycle.enrich_thin.enabled`); optional daily caps `cycle.enrich_thin.max_daily_cost_usd` and `max_daily_pages` per owner day, running total in `enrich_thin.daily_spend`; with no `cycle.enrich_thin.order` set, the order is `owner-contact` when the owner's page resolves, else `inbound-links` (`src/core/cycle/enrich-thin.ts:87`, `:234`) | Enriched pages | Grounded synthesis (LLM) |
 | 27 | skillopt | global / paid | Default off | Skill files and proposals outside DB | $0.50 per skill, $2 brain-wide |
 | 28 | embed | global / paid | Skipped when `embedding_disabled` | Chunk embeddings (`runEmbedCore`, stale only) | Embedding provider |
 | 29 | orphans | global / free | Always | Read-only report | None |
@@ -942,7 +942,7 @@ Runner mechanics:
 
 ### 6. Extract, facts, and the cycle
 
-`gbrain cycle` runs phases in the order given by `ALL_PHASES` (`src/core/cycle.ts:130`): `lint`, `backlinks`, `sync`, `fence_repair`, `content_repair`, `unindexed_files`, `synthesize`, `extract`, `extract_facts`, then atom extraction, `resolve_symbol_edges`, `patterns`, `recompute_emotional_weight`, `consolidate`, `propose_takes`, `grade_takes`, `calibration_profile`, `edge_contradictions`, `claim_conflicts`, `drift` (opt-in), `standing_questions`, and later `embed`, `orphans` and `learning_derive`, then the purge phases.
+`gbrain cycle` runs phases in the order given by `ALL_PHASES` (`src/core/cycle.ts:133`): `lint`, `backlinks`, `sync`, `fence_repair`, `content_repair`, `unindexed_files`, `synthesize`, `extract`, `extract_facts`, then atom extraction, `resolve_symbol_edges`, `patterns`, `recompute_emotional_weight`, `consolidate`, `propose_takes`, `grade_takes`, `calibration_profile`, `edge_contradictions`, `claim_conflicts`, `drift` (opt-in), `standing_questions`, and later `embed`, `orphans` and `learning_derive`, then the purge phases.
 
 Lock: `gbrain_cycle_locks` row with TTL 5 min (Postgres, `LOCK_TTL_MINUTES` at `src/core/cycle.ts:689`), or `~/.gbrain/cycle.lock` on PGLite. DB-write phases hold the lock; read-only phases skip it.
 
