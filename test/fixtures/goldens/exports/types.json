@@ -328,7 +328,7 @@
           "readWedgeSignals: (queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal; }) => Promise<QueueWedgeSignals>",
           "readWithdrawalDiscovery: <K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K; }>) => Promise<WithdrawalDiscoveryRows[K]>",
           "readonly capabilities: EngineCapabilities",
-          "readonly kind: \"postgres\" | \"pglite\"",
+          "readonly kind: \"postgres\" | \"pglite\" | \"rust\"",
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshCycleLock: (lockId: string, opts: { holderPid: number; acquisitionToken: string; ttlMinutes: number; }, queryOpts?: { signal?: AbortSignal; }) => Promise<boolean>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
@@ -768,7 +768,7 @@
         "members": [
           "database_path?: string | undefined",
           "database_url?: string | undefined",
-          "engine?: \"postgres\" | \"pglite\" | undefined",
+          "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
           "pool_max?: number | undefined"
@@ -3153,7 +3153,7 @@
           "embedding_model?: string | undefined",
           "embedding_multimodal?: boolean | undefined",
           "embedding_multimodal_model?: string | undefined",
-          "engine: \"postgres\" | \"pglite\"",
+          "engine: \"postgres\" | \"pglite\" | \"rust\"",
           "eval?: { capture?: boolean; scrub_pii?: boolean; } | undefined",
           "expansion_model?: string | undefined",
           "google_api_key?: string | undefined",
@@ -4250,7 +4250,7 @@
           "readWedgeSignals: (queue: string, handlerNames: readonly string[], opts?: { signal?: AbortSignal; }) => Promise<QueueWedgeSignals>",
           "readWithdrawalDiscovery: <K extends WithdrawalDiscoveryKind>(read: Extract<WithdrawalDiscoveryRead, { kind: K; }>) => Promise<WithdrawalDiscoveryRows[K]>",
           "readonly capabilities: EngineCapabilities",
-          "readonly kind: \"postgres\" | \"pglite\"",
+          "readonly kind: \"postgres\" | \"pglite\" | \"rust\"",
           "reconnect: (ctx?: { error?: unknown; }) => Promise<void>",
           "refreshCycleLock: (lockId: string, opts: { holderPid: number; acquisitionToken: string; ttlMinutes: number; }, queryOpts?: { signal?: AbortSignal; }) => Promise<boolean>",
           "refreshPageBody: (slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string) => Promise<void>",
@@ -10480,7 +10480,7 @@
         "members": [
           "database_path?: string | undefined",
           "database_url?: string | undefined",
-          "engine?: \"postgres\" | \"pglite\" | undefined",
+          "engine?: \"postgres\" | \"pglite\" | \"rust\" | undefined",
           "keyword_statement_timeout_ms?: number | undefined",
           "pglite_shared_buffers?: string | undefined",
           "pool_max?: number | undefined"

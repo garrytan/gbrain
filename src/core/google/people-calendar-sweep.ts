@@ -24,6 +24,7 @@ import { classifyConnectorError } from '../connectors/item-holds.ts';
 import { assertConnectorIdentity } from '../connectors/connector-text.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { applyContactPage } from '../contact-page-apply.ts';
+import { slugifyPath } from '../sync.ts';
 
 import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
 import { CalendarClient, calendarUnreadableStatus, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, GoogleSyncTokenRejectedError, PeopleClient } from './google-clients.ts';
@@ -198,10 +199,10 @@ async function applyContact(deps: GoogleSyncDeps, c: ContactData,
     ),
     write: async (relPath, markdown) => {
       await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
-      sweep.touched.add(relPath.replace(/\.md$/, ''));
+      sweep.touched.add(slugifyPath(relPath));
     },
     remove: async (relPath) => {
-      await unlinkGoogleContactPage(deps.engine, deps.sourceId, relPath.replace(/\.md$/, ''));
+      await unlinkGoogleContactPage(deps.engine, deps.sourceId, slugifyPath(relPath));
       await deletePageByRelPath(deps, relPath, sweep.summary);
     },
     skippedHandAuthored: (relPath) => deps.log(`[google] skipping hand-authored ${relPath}`),
