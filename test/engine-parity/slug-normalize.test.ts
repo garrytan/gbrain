@@ -28,9 +28,6 @@
  *    before admission. When it does, Rust must delete the row it stored, by the spelling it stored.
  *  - get_page: member `readPageSnapshot`, option `resolveAlias` (Rust pages area, store-members/pages.ts):
  *    the Rust store does not serve resolveAlias on master yet, so the op refuses before any slug is read.
- *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
- *    lowercases a slug but does not compose it to NFC, so an NFD slug is stored as NFD and the NFC read
- *    misses it. Rust must compose to NFC in `validate_slug` and in its lowercased read lookups.
  *  - put refusal beside a composed twin, and the final-review reads (a Unicode-expansion spelling, out-of-scope rows crowding the
  *    candidates): the puts stop at `readPersistenceBrainId` as above, and the reads store their rows by renaming them, which stops at `executeRaw` / `raw_sql`.
  *  - legacy-spelling put refusal: member `readPersistenceBrainId`, capability `persistence_journal` (Rust
@@ -114,16 +111,11 @@ describe('engine parity: slug normal form', () => {
     return reads;
   });
 
-  parityTest('putPage stores an NFD slug in NFC, and an NFD wikilink names that page', { methods: ['putPage', 'getPage'] }, async (engine, backend) => {
+  parityTest('putPage stores an NFD slug in NFC, and an NFD wikilink names that page', { methods: ['putPage', 'getPage'] }, async (engine) => {
     const stored = await engine.putPage(NFD_ZOE, { type: 'person', title: 'Zoe', compiled_truth: 'Zoe.', timeline: '' });
     const extracted = await extractPageLinks('people/hal-example', `Hal knows [[${NFD_ZOE}]].`, {}, 'person', { resolve: async () => null });
     const targets = extracted.candidates.map(c => c.targetSlug);
     const found = await engine.getPage(targets[0]!);
-    if (backend === 'rust') {
-      // The exact Rust difference today: the NFD bytes are stored, so the NFC read misses the page.
-      expect({ stored: stored.slug, targets, found: found?.slug ?? null }).toEqual({ stored: NFD_ZOE, targets: [NFC_ZOE], found: null });
-      throw capabilityMissing('pages', 'putPage (a slug in Unicode NFC)', 'partial');
-    }
     expect({ stored: stored.slug, targets, found: found?.slug ?? null }).toEqual({ stored: NFC_ZOE, targets: [NFC_ZOE], found: NFC_ZOE });
     return { stored: stored.slug, targets, found: found?.slug ?? null };
   });
