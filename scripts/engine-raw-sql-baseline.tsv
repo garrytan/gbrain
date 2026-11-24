@@ -1042,7 +1042,7 @@ src/core/repair/segmented-tiling.ts	execute_raw	7
 src/core/repair/settle.ts	execute_raw	1
 src/core/repair/slug-autoheal.ts	execute_raw	1
 src/core/repair/slug-conflicts.ts	execute_raw	5
-src/core/repair/slug-spelling-guards.ts	execute_raw	5	Carrying purge tombstones to the moved page's normal name in the page's own transaction, plus the held-write read, the hold-row lock and the policy lookup that refuses an unreadable ledger first (lowered from 9: no hold is re-keyed or merged any more), like the sibling repairs; a typed method comes with the Rust store serving these members.
+src/core/repair/slug-spelling-guards.ts	execute_raw	3	Carrying purge tombstones to the moved page's normal name in the page's own transaction, plus the policy lookup that refuses a role row-level security keeps from the purge tables first (lowered from 5: the repair no longer reads or locks hold rows), like the sibling repairs; a typed method comes with the Rust store serving these members.
 src/core/repair/slug-spelling.ts	execute_raw	10	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity); a typed method comes with the Rust store serving these members.
 src/core/repair/split-facts.ts	execute_raw	3
 src/core/repair/stale-atoms.ts	execute_raw	3
