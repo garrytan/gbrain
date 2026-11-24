@@ -78,7 +78,8 @@ difference only shows that PGLite and Rust disagree.
   match. The usual cause is a conditional write whose expected revision was created after the snapshot: the replay
   passes the recorded revision as is, so such calls prove nothing either way.
 - Read-back sweeps read each written page in the source the write named. Batch writes are read back for every page their rows
-  name, and chunk writes are read back with their chunks and embeddings. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
+  name, and chunk writes are read back with their chunks and embeddings,
+  sealed or not. The sweep reads up to 5,000 pages; past that the report says `incomplete` and counts `sweep_skipped`. A page
   write whose page the replay cannot tell is counted as `writes_not_swept` and also makes the report `incomplete`.
 - A replay that fails for any reason other than a purge keeps its recording and copies for one retry the next night;
   a second failure retires them. A purge always deletes them.

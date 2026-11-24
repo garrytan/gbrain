@@ -55,7 +55,8 @@ function fakeEngine(opts: { dropWrites?: boolean; dropSource?: string; alterFron
     async getLinks() { return []; },
     async getBacklinks() { return []; },
     async getTimeline(slug: string) { return timeline.get(slug) ?? []; },
-    async getChunks(slug: string) { return chunks.get(slug) ?? []; },
+    // Like the real engines: chunks written but not sealed yet are read only with includeUnsealed.
+    async getChunks(slug: string, o?: { includeUnsealed?: boolean }) { return o?.includeUnsealed ? chunks.get(slug) ?? [] : []; },
     async upsertChunks(slug: string, rows: Array<{ chunk_text: string }>) { chunks.set(slug, rows.map(r => ({ chunk_text: opts.wrongChunks ? 'other text' : r.chunk_text }))); },
     async addTimelineEntriesBatch(rows: Array<{ slug: string; summary: string }>) {
       for (const r of rows) timeline.set(r.slug, [...(timeline.get(r.slug) ?? []), { summary: opts.wrongTimeline ? 'something else' : r.summary }]);

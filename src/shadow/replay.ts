@@ -480,7 +480,7 @@ export async function runReplayChild(runDir: string, deps: ChildDeps, now: () =>
     for (const entry of [...slugs].sort().slice(0, SWEEP_LIMIT)) {
       const [sourceId, slug] = JSON.parse(entry) as [string | null, string];
       for (const m of sweepMembers) {
-        const opts = { ...(sourceId ? { sourceId } : {}), ...(m === 'getChunks' ? { includeEmbedding: true } : {}) };
+        const opts = { ...(sourceId ? { sourceId } : {}), ...(m === 'getChunks' ? { includeEmbedding: true, includeUnsealed: true } : {}) };
         const rec = { member: m, args: Object.keys(opts).length ? [slug, opts] : [slug] } as CaptureRecord;
         const outs: Partial<Record<ArmName, Outcome>> = {};
         for (const a of arms) outs[a] = await callOn(engines[a], rec);
