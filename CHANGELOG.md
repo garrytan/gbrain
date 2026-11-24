@@ -10,6 +10,56 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.768.0] - 2026-11-24
+
+**The duplicate finder lists same-name pages of one source for collapsing even when a page in another source matches them, and confirm no longer links two pages of one source.**
+
+<!-- behavior-change: dedupe_same_source_split_gst3609 -->
+
+### Fixed
+- When a cross-source duplicate group holds two or more pages of one source, `gbrain dedupe --preview` and doctor `entity_duplicates` now also list those pages as their own same-source group, so they show up for collapsing. Before, they appeared only inside the cross-source group.
+- `gbrain dedupe confirm <id>` refuses a cross-source group that holds two pages of one source (`dedupe_group_not_confirmable`, reason `same_source_members`), and the confirm list leaves it out. Before, confirming it linked the two same-source pages as one identity. Collapse those pages first, and the next preview shows the cross-source group with one page per source.
+
+### For contributors
+- The `gbrain doctor --json` golden tests no longer fail on a slow CI runner. A doctor run past 10 s prints a `still reading doctor checks (N s so far)` progress line, and the test compares two captures byte for byte. The golden normalizer (test/helpers/doctor-json-golden.ts) now drops those lines and keeps every other stderr line.
+
+**`gbrain repair ghost-pages` no longer deletes pages that hold the only copy of their content: it removes a page only when a commit deleted its file.**
+
+<!-- behavior-change: ghost_pages_only_copy_gst3637 -->
+
+### Fixed
+- `gbrain repair ghost-pages` approved any page whose file was missing for a soft-delete, which autopilot purges after 72 hours. That included pages whose file no commit ever held, pages whose last import came from an uncommitted edit that the deleting commit never held, and pages whose file was only deleted in the working tree, so the page could be the only copy of its content. The preview now lists those pages apart, with a route to restore each, and never approves them: `ghost_never_committed` (write the file from the page with `gbrain repair file-drift --prefer database`, then commit and sync), `ghost_worktree_only` (`git checkout HEAD -- <path>` and sync, or commit the deletion) and `ghost_history_unknown` (Git cannot say which commit deleted the file). The apply refuses them too, so an approval saved before upgrading keeps the page.
+- `gbrain repair file-drift --prefer file` reads the same check and skips those pages with the same codes.
+- The route printed for a missing file whose history is still in HEAD, or unknown, now says to restore the file or commit the deletion, instead of pointing at `repair ghost-pages`.
+
+**`gbrain doctor` now warns when a held write no longer points at a live page, so you can see the quarantine a rename lifted.**
+
+### Added
+- New doctor check `write_gate_holds_stranded`. A fact or take the write gate holds names its page only by name, so after a page is renamed (a sync Git rename, `gbrain repair rename-identity`) the hold still names the old name and the page at the new name is no longer protected by it. The check lists those holds per source, separates a suspected rename from a soft-deleted page and from a name that never had a page (informational), and points at the read-only `gbrain trust review`.
+- When the scan stops at its 5000-row limit or its time limit, or cannot read the rename records, or runs as a database role that has row-level security active on them, or runs on an engine that refuses the read, the check warns that the count is unknown instead of reporting ok.
+
+### Not changed
+- This check detects the problem; it does not fix it. Releasing or dropping a hold does not restore the quarantine on the renamed page or take back text already delivered. Holds that follow a page id instead of a name are a separate, later change.
+
+**Database URLs no longer show part of a password that contains a raw @, and four small date and limit flags now refuse bad values instead of misreading them.**
+
+<!-- behavior-change: pg_url_raw_at_redaction_gst3639 -->
+<!-- behavior-change: strict_since_limit_values_gst3639 -->
+
+### Fixed
+- A database password containing a raw, unencoded `@` is now redacted whole. The redactor ended the password at its first `@`, while the database driver splits at the last one, so such a URL connected fine and the rest of the password showed after `***@` in `gbrain config get database_url`, `gbrain engine status --json`, `gbrain doctor`, and the init, db-repair and migrate-embeddings notes.
+- `--since` refuses a date that is not a real calendar day, such as `2026-02-30`, in `gbrain agent logs`, `gbrain access read-log`, `gbrain beliefs`, `gbrain repair` and `gbrain recall`, and in the recall tool's `since` parameter. Before, the date rolled over into March and the command quietly used another window.
+- `gbrain code-callers`, `code-callees`, `code-def` and `code-refs` refuse a `--limit` that is not a whole number of 1 or more, or that has no value, with an `invalid_params` usage error (exit 2). Before, `--limit abc` or `--limit -5` failed with an `unknown` server error, and `5abc`, `0` and `1.5` were quietly misread.
+- The `gbrain recall --today` heading shows the local date its window starts on. Before, it printed the UTC date, so in the evening west of UTC today's facts appeared under tomorrow's date.
+
+**The secret scanner now hides the whole password in a database or https URL when the password contains a raw @.**
+
+<!-- behavior-change: secret_scan_url_raw_at_gst3639 -->
+
+### Fixed
+- A password containing a raw, unencoded `@` inside a database URL (postgres, mysql, mongodb, redis, amqp, mssql) or an https URL in page text is now redacted whole. The scanner ended the password at its first `@`, while URL parsers and database drivers split at the last one before the host, so the rest of the password stayed visible after the redaction marker in the text gbrain redacts with it, such as search output and rendered transcripts. An `@` in the path or query still does not count as part of the password. Two shapes stay unrecognized: a password that starts with a raw `@`, and the part after the ninth raw `@` in one password.
+- A finding for such a URL now covers the whole password, so its fingerprint changes. An entry in `.gbrain-scan-allow` pinned to the old fingerprint no longer matches; add the new fingerprint the scanner reports.
+
 ## [0.60.767.0] - 2026-11-24
 
 **The mention pass records why it stopped and keeps draining on a large source, and mention links no longer land on pages merged into another page.**
