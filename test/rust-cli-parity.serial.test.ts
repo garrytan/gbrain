@@ -518,10 +518,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // access_pages_read_by_nobody, owner_identity and owner_only_marks_triggers are gone from this list: the doctor join
       // checks read through typed members the store serves (engine-sql/doctor-join.ts, doctor-acc.ts), so they answer as they
       // do on PGLite. entity_duplicates is gone too: the store serves listIdentityDecisions and the entity key rows.
-      // git_held_files warns with the typed refusal and says its health is unknown: its readers_noncanonical note reads the
-      // hold count and the stored pages through executeRaw (raw_sql, commands/doctor/checks/git-holds.ts
-      // readNoncanonicalReaders), which a Rust brain does not run. Loss row 44 in docs/designs/RUST_ENGINE.md.
-      typedRefusals: ['git_held_files'],
+      // git_held_files is gone from this list: its readers-key hold count and candidate pages are typed members Rust
+      // serves (countReadersNoncanonicalHolds, listReaderCandidatePages), so the check answers as it does on PGLite.
+      typedRefusals: [],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });

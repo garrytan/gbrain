@@ -49,6 +49,7 @@ export const DOCTOR_MEMBERS = {
   listBracketPathPages: 'health',
   listSlugPathCandidates: 'health',
   countAtomExtractionBacklog: 'health',
+  listAtomBacklogSourceIds: 'health',
   readProjectionBacklog: 'health',
   listGitImageHoldCounts: 'health',
   listTruncatedMarkdownBodies: 'health',
@@ -124,6 +125,8 @@ export const DOCTOR_MEMBERS = {
   readOldestSourceCreatedAt: 'sources',
   listVisibilityCandidatePages: 'health',
   countVisibilityNoncanonicalHolds: 'persistence_journal',
+  countReadersNoncanonicalHolds: 'persistence_journal',
+  listReaderCandidatePages: 'health',
   listContentBlockedReceipts: 'persistence_journal',
   listPassAdmittedReceipts: 'persistence_journal',
   // Doctor sync reads: the managed-sync cursor, failure and orphan statements doctor ran through executeRaw

@@ -25,6 +25,7 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSource, enableBeliefCoverage, parityArms } from './harness.ts';
+import { seedTypedEffects, seedTypedRequest, settleTypedEffects } from '../helpers/persistence-typed-seed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -323,19 +324,37 @@ describe('origin reads sort source ids by byte', () => {
   });
 
   parityTest('assertRevivalUnclaimed checks the sources of a revived slug in byte id order, so the refusal names the byte-first source', {
-    methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage', 'transaction', 'listRevivalPages'],
   }, async (engine, backend) => {
+    // In each source the revived page is deleted first, so the holder that takes over its file is the only live page of that origin.
     for (const id of ['ab', 'a-z']) {
       await createSource(engine, backend, id);
-      await engine.putPage('notes/revived', page('revived'), { sourceId: id });
-      await engine.putPage('notes/holder', page('holder'), { sourceId: id });
+      await engine.putPage('notes/revived', { ...page('revived'), source_path: 'notes/revived.md' } as never, { sourceId: id });
+      await engine.softDeletePage('notes/revived', { sourceId: id });
+      await engine.putPage('notes/holder', { ...page('holder'), source_path: 'notes/revived.md' } as never, { sourceId: id });
     }
-    await engine.executeRaw("UPDATE pages SET source_path = 'notes/revived.md' WHERE slug = 'notes/holder'");
-    await engine.executeRaw("UPDATE pages SET source_path = 'notes/revived.md', deleted_at = now() WHERE slug = 'notes/revived'");
     const refusal = await engine.transaction(tx => assertRevivalUnclaimed(tx, 'notes/revived')).then(() => null, (error: Error) => error);
     expect(refusal).not.toBeNull();
     expect(refusal!.message).toContain('source a-z ');
     return refusal!.message;
+  });
+});
+
+describe('the revival read sorts sources by byte', () => {
+  parityTest('listRevivalPages lists the tombstones of a slug by byte source id, of one source when named', {
+    methods: ['putPage', 'softDeletePage', 'listRevivalPages'],
+  }, async (engine, backend) => {
+    for (const id of ['ab', 'a-z', 'live']) {
+      await createSource(engine, backend, id);
+      await engine.putPage('notes/revived', { type: 'note', title: 'revived', compiled_truth: 'x', timeline: '' }, { sourceId: id });
+      if (id !== 'live') await engine.softDeletePage('notes/revived', { sourceId: id });
+    }
+    const all = (await engine.listRevivalPages('notes/revived', null)).map(row => row.source_id);
+    const one = (await engine.listRevivalPages('notes/revived', 'ab')).map(row => row.source_id);
+    const live = await engine.listRevivalPages('notes/revived', 'live');
+    expect(all).toEqual(['a-z', 'ab']);
+    expect({ one, live: live.length }).toEqual({ one: ['ab'], live: 0 });
+    return { all, one, live: live.length };
   });
 });
 
@@ -347,8 +366,7 @@ describe('manual link reads sort text keys by byte', () => {
     await createSource(engine, backend, SRC);
     await engine.putPage('people/from', page('from'), { sourceId: SRC });
     for (const slug of targets) await engine.putPage(slug, page(slug), { sourceId: SRC });
-    const [from] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, 'people/from']);
-    return Number(from!.id);
+    return Number((await engine.readPageSnapshot('people/from', { sourceId: SRC }))!.page.id);
   }
   const request = (operation: string, pageId: number, intent: Record<string, unknown>) => ({
     request_id: randomUUID(), operation, slug: 'people/from', source_id: SRC, page_id: pageId, intent,
@@ -379,14 +397,13 @@ describe('manual link reads sort text keys by byte', () => {
   });
 
   parityTest('a remove_link names the edges it kept for the page text in byte order of link type, then of source', {
-    methods: ['executeRaw', 'putPage', 'readPageSnapshot', 'transaction'], requires: 'raw_sql',
+    methods: ['putPage', 'readPageSnapshot', 'addLink', 'transaction'],
   }, async (engine, backend) => {
     const fromId = await linkFixture(engine, backend, ['people/target']);
     const kinds = ['ab', 'a-z', 'a.b', 'a_b'];
     for (const type of kinds) {
       for (const source of ['mentions', 'markdown', 'frontmatter']) {
-        await engine.executeRaw(`INSERT INTO links (from_page_id, to_page_id, link_type, link_source, context)
-          SELECT $1, t.id, $4, $5, '' FROM pages t WHERE t.source_id=$2 AND t.slug=$3`, [fromId, SRC, 'people/target', type, source]);
+        await engine.addLink('people/from', 'people/target', '', type, source, undefined, undefined, { fromSourceId: SRC, toSourceId: SRC });
       }
     }
     const prepared = await prepareManualLinkMutation(engine, request('remove_link', fromId, { to: 'people/target' }), { engine: engine.kind } as never);
@@ -421,19 +438,18 @@ describe('moved-page verdicts sort the pages they name by byte', () => {
     git('add', '-A'); git('commit', '-q', '-m', 'delete');
   }
 
+  /** A live page of SRC at `sourcePath` (putPage stores the path it is given), with frontmatter id `frontmatterId` when named. */
   async function livePage(engine: BrainEngine, slug: string, sourcePath: string, frontmatterId?: string) {
-    await engine.putPage(slug, page(slug), { sourceId: SRC });
-    await engine.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [SRC, slug, sourcePath]);
-    if (frontmatterId) await engine.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(COALESCE(frontmatter, '{}'::jsonb), '{id}', to_jsonb($3::text)) WHERE source_id=$1 AND slug=$2`, [SRC, slug, frontmatterId]);
-    const [row] = await engine.executeRaw<{ id: number; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]);
-    return { page_id: Number(row!.id), slug, revision: String(row!.revision), path: sourcePath };
+    await engine.putPage(slug, { ...page(slug), source_path: sourcePath, ...(frontmatterId ? { frontmatter: { id: frontmatterId } } : {}) } as never, { sourceId: SRC });
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId: SRC }))!;
+    return { page_id: Number(snapshot.page.id), slug, revision: String(snapshot.revision), path: sourcePath };
   }
 
   // Slugs whose first five differ between byte order and an en_US locale, which files `a-z` and `a/z` after `ae`.
   const SIX = ['a-z', 'a/z', 'ab', 'ac', 'ad', 'ae'];
 
   parityTest('a ghost page whose file name is shared names the byte-first five live pages, not the locale-first five', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'readPageSnapshot'],
   }, async (engine, backend) => inHome(async home => {
     await createSource(engine, backend, SRC);
     const root = join(home, 'repo');
@@ -448,7 +464,7 @@ describe('moved-page verdicts sort the pages they name by byte', () => {
   }));
 
   parityTest('a ghost page with no file-name match names the byte-first five live pages that share its frontmatter id', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'readPageSnapshot'],
   }, async (engine, backend) => inHome(async home => {
     await createSource(engine, backend, SRC);
     const root = join(home, 'repo');
@@ -463,7 +479,7 @@ describe('moved-page verdicts sort the pages they name by byte', () => {
   }));
 
   parityTest('a shared survivor lists the other deleted paths that still back a live page in byte path order', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'readPageSnapshot'],
   }, async (engine, backend) => inHome(async home => {
     await createSource(engine, backend, SRC);
     const root = join(home, 'repo');
@@ -484,24 +500,27 @@ describe('checkpoint and receipt listings sort their text keys by byte', () => {
   /** Inserts one op_checkpoints row. */
   const checkpoint = (engine: BrainEngine, op: string, fingerprint: string, record: Record<string, unknown>) =>
     engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)', [op, fingerprint, JSON.stringify([record])]);
+  /** The same row through the typed `writeOpCheckpointRecord`. */
+  const typedCheckpoint = (engine: BrainEngine, op: string, fingerprint: string, record: Record<string, unknown>) =>
+    engine.writeOpCheckpointRecord(op, fingerprint, [record]);
 
   parityTest('readResolutions returns the finished resolutions of one preview hash in byte fingerprint order', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['writeOpCheckpointRecord'],
   }, async (engine) => {
-    for (const fingerprint of MIXED_SLUGS) await checkpoint(engine, RESOLUTION_OP, fingerprint, { preview_hash: 'H', fingerprint });
-    await checkpoint(engine, RESOLUTION_OP, 'other', { preview_hash: 'not-H', fingerprint: 'other' });
+    for (const fingerprint of MIXED_SLUGS) await typedCheckpoint(engine, RESOLUTION_OP, fingerprint, { preview_hash: 'H', fingerprint });
+    await typedCheckpoint(engine, RESOLUTION_OP, 'other', { preview_hash: 'not-H', fingerprint: 'other' });
     const found = (await readResolutions(engine, 'H')).map(entry => (entry as unknown as { fingerprint: string }).fingerprint);
     expect(found).toEqual([...BYTE_SLUGS]);
     return found;
   });
 
   parityTest('listSuppressedWrites lists the slugs the breaker holds back in byte order, and its limit keeps the byte-first ones', {
-    methods: ['executeRaw', 'getConfig', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
-    const incarnation = await addSource(engine, 'ab');
+    methods: ['insertWriteRequest', 'completeWriteRow', 'getConfig', 'listRefusalBreakerRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'ab');
     for (const slug of MIXED_SLUGS) {
       for (let attempt = 0; attempt < 3; attempt++) {
-        await seedRequest(engine, { source: 'ab', incarnation, slug, operation: 'submit_job', state: 'failed', errorCode: 'revision_conflict', intent: {}, digest: `d-${slug}` });
+        await seedTypedRequest(engine, { source: 'ab', slug, operation: 'submit_job', state: 'failed', errorCode: 'revision_conflict', intent: {}, digest: `d-${slug}` });
       }
     }
     const all = (await listSuppressedWrites(engine, 'ab')).map(row => row.slug);

@@ -31,7 +31,8 @@
  * readMentionGenerations, readMentionPageRevisions, readPageRevisionForShare,
  * readLiveStoredBody, readNoopEmbeddingCandidates, readOAuthClientWriteGrant, readPairFactRow, readReplacementTarget,
  * readSourceMembership, readSourceState, readWorktreeAdmission, readWriterAdminState, selectClaimableEffect,
- * selectClaimableWrite, listSecretHoldingPages (the batch 6c secret store), and the credential, source and shared-skill row-lock reads the batch 10 lanes added (the list below).
+ * selectClaimableWrite, listSecretHoldingPages (the batch 6c secret store), the credential, source and shared-skill row-lock reads the batch 10 lanes added
+ * (the list below), and lockEffectRow.
  *
  * A constant that maps names to statements (`CREDENTIAL_SQL = { token_list: '...', client_token_ttl: '...' }`) is read per
  * statement: a function that names `CREDENTIAL_SQL.token_list` is charged with that statement, not with its siblings.
@@ -61,6 +62,8 @@ const LOCK_ONLY_READS: readonly string[] = [
   'lockActiveAccessTokens', 'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'readAccessTokenMemberGrant', 'readAccessTokenReceiptGrant', 'readCredentialBindingForUpdate', 'readLocalWriterMemberGrant', 'readOAuthClientMemberGrant', 'readOAuthClientReceiptGrant', 'readOauthClientForUpdate', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate', 'readScopeSourceConfigs', 'readSharedSkillDeliveryBatch', 'readSharedSkillMember', 'readSharedSkillPolicyRow', 'readSourceArchivedForShare',
   // Ours (the page purge port):
   'lockHeldConcept', 'lockLiveConceptMembers', 'lockSourceForUpdate',
+  // Added by the persistence byte-order lane: the parked-effect retry's read of the effect row it then requeues.
+  'lockEffectRow',
 ];
 
 /**

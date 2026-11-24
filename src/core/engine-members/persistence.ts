@@ -2,7 +2,7 @@
  * The persistence statements of BrainEngine: the write journal, sync holds, claims, housekeeping, effect worker and connect gate.
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancelResult, WriteCancellation, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, HeldCoverageRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancelResult, WriteCancellation, WriteCompletion, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldHitQuery, HeldHitRow } from '../engine-sql/persistence-journal.ts';
 import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer, ProducerVersionRow } from '../engine-sql/generation-atom-reads.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 import type * as ChronicleEventsSql from '../engine-sql/chronicle-events.ts';
@@ -47,6 +47,8 @@ export interface PersistenceMembers {
   readJournalLimitRows(): Promise<Array<{ key: string | null; value: string | null }>>;
   /** The current-incarnation hold rows (`record`, page `revision`) naming these page ids, in fingerprint order. */
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>>;
+  /** The holds naming a read's hit pages (`record`, page `revision`) in fingerprint order, then one row with how many held files could affect the read (stampHeldHits). */
+  readHeldHitRows<R = Record<string, unknown>>(query: HeldHitQuery): Promise<Array<HeldHitRow<R>>>;
   /** The held-file summary rows of live sources with at least one held file, in source order; null reads every source. */
   readHeldCoverageRows(sourceIds: string[] | null): Promise<HeldCoverageRow[]>;
   /** The held fence results of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first (`listFenceHolds`, engine-sql/fence-holds.ts). */
@@ -444,6 +446,14 @@ export interface PersistenceMembers {
    * is open), in kind order, or only its Git effect when `kind` is `'git'`. A non-uuid request id refuses.
    */
   readRequestEffects(requestId: string, kind?: 'git'): Promise<RequestEffectState[]>;
+  /** Request row `id` of `sourceId` (`SELECT *`), or null (retryParkedEffects). A non-uuid id refuses. */
+  readSourceRequestById<R = Record<string, unknown>>(sourceId: string, id: string): Promise<R | null>;
+  /** At most two request rows of `sourceId` admitted under client request id `requestId`; two mean it is ambiguous. A non-uuid id refuses. */
+  listSourceRequestsByRequestId<R = Record<string, unknown>>(sourceId: string, requestId: string): Promise<R[]>;
+  /** The effects of request row `requestRowId` that a parked-effect retry tracks, by kind in byte order (`SELECT *`). */
+  listRetryTrackedEffects<R = Record<string, unknown>>(requestRowId: string, parkedOnly: boolean, failedCodes: readonly string[]): Promise<R[]>;
+  /** Effect `id` (`SELECT *`) locked FOR UPDATE until the transaction ends, or null. */
+  lockEffectRow<R = Record<string, unknown>>(id: string | number): Promise<R | null>;
   /**
    * The stale queued and failed embedding effects of committed writes on `sourceIds` (or on a removed or replaced source
    * incarnation), in effect id order, leaving out a failed effect whose code is in `neverRetried`.

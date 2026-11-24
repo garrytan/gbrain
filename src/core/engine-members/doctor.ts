@@ -187,6 +187,8 @@ export interface DoctorMembers {
   listSlugPathCandidates(sourceIds: string[] | null): Promise<DoctorPagesSql.SlugPathCandidate[]>;
   /** Pages awaiting atom extraction (no atom of their current content yet, no held or tombstoned disposition) in the query's source scope; `opts.signal` cancels the count on the SQL engines. */
   countAtomExtractionBacklog(query: AtomBacklogSql.AtomBacklogQuery, opts?: { signal?: AbortSignal }): Promise<number>;
+  /** The sources with a live page, by id in byte order (the extract_atoms_backlog roster). */
+  listAtomBacklogSourceIds(): Promise<Array<{ source_id: string }>>;
   /** The projection queue by class (pending text, failed, sealable and reimport images, protected, archived) in a read scope, the age of the oldest job that needs work, and the database time of the count. */
   readProjectionBacklog(scope: PageReadScope): Promise<ProjectionBacklogSql.ProjectionBacklogCounts>;
   /** Unsupported-image holds (managed_image_sync_unsupported) per source's current incarnation among sourceIds; sources with none are not listed. */
@@ -325,6 +327,10 @@ export interface DoctorMembers {
   listVisibilityCandidatePages(sourceIds: readonly string[] | null): Promise<DoctorBrainSql.VisibilityCandidatePage[]>;
   /** Held files of non-archived sources that a git hold of `holdOp` records as `visibility_noncanonical`. */
   countVisibilityNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null): Promise<number>;
+  /** Held files of non-archived sources that a git hold of `holdOp` records as `readers_noncanonical`. */
+  countReadersNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null): Promise<number>;
+  /** Live pages of non-archived sources whose frontmatter names readers with a misspelled `readable_by` key. */
+  listReaderCandidatePages(sourceIds: readonly string[] | null): Promise<DoctorBrainSql.VisibilityCandidatePage[]>;
   /** The failed, conflicted or cancelled receipts that unfinished managed-sync cursors wait on. */
   listContentBlockedReceipts(): Promise<DoctorBrainSql.ContentBlockedReceipt[]>;
   /** The failed, conflicted or cancelled receipts a source's sync pass admitted (the receipt intent carries the pass id). */

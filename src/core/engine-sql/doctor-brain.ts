@@ -23,6 +23,7 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
 export const DOCTOR_BRAIN_MEMBERS: readonly string[] = [
   'listInterimStoredObjectCounts', 'readOldestSourceCreatedAt', 'listVisibilityCandidatePages',
   'countVisibilityNoncanonicalHolds', 'listContentBlockedReceipts', 'listPassAdmittedReceipts', 'listOrphanConnectorCheckpoints',
+  'countReadersNoncanonicalHolds', 'listReaderCandidatePages',
 ];
 
 /** A timestamp column as an engine returns it: a Date, or the text a driver without a timestamp codec gives. */
@@ -57,6 +58,18 @@ const LIST_VISIBILITY_CANDIDATE_PAGES_SQL = `SELECT p.source_id, p.slug, p.front
 const COUNT_VISIBILITY_NONCANONICAL_HOLDS_SQL = `SELECT count(*)::int AS n FROM op_checkpoints x
       JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
     WHERE x.op=$1 AND x.completed_keys->0->>'code'='visibility_noncanonical' AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`;
+
+// moved from commands/doctor/checks/git-holds.ts readNoncanonicalReaders unchanged (its first statement)
+const COUNT_READERS_NONCANONICAL_HOLDS_SQL = `SELECT count(*)::int AS n FROM op_checkpoints x
+      JOIN sources s ON x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
+    WHERE x.op=$1 AND x.completed_keys->0->>'code'='readers_noncanonical' AND s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`;
+
+// moved from commands/doctor/checks/git-holds.ts readNoncanonicalReaders unchanged (its second statement)
+const LIST_READER_CANDIDATE_PAGES_SQL = `SELECT p.source_id, p.slug, p.frontmatter
+    FROM pages p JOIN sources s ON s.id=p.source_id
+    WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE AND ($1::text[] IS NULL OR p.source_id=ANY($1::text[])) AND jsonb_typeof(p.frontmatter)='object'
+      AND EXISTS (SELECT 1 FROM jsonb_object_keys(p.frontmatter) k WHERE k<>'readable_by' AND regexp_replace(lower(k),'[-_[:space:]]+','','g')='readableby')
+    ORDER BY p.source_id, p.slug`;
 
 const LIST_CONTENT_BLOCKED_RECEIPTS_SQL = `SELECT c.completed_keys->0->>'sourceId' AS source_id,
       r.error_code, r.error_message, r.error_detail FROM op_checkpoints c JOIN persistence_requests r ON r.request_id::text = c.completed_keys->0->'pending'->>'requestId'
@@ -105,6 +118,17 @@ export async function listVisibilityCandidatePages(raw: EngineRawRead, sourceIds
 export async function countVisibilityNoncanonicalHolds(raw: EngineRawRead, holdOp: string, sourceIds: readonly string[] | null): Promise<number> {
   const [row] = await raw<{ n: number | string }>(COUNT_VISIBILITY_NONCANONICAL_HOLDS_SQL, [holdOp, sourceIds ? [...sourceIds] : null]);
   return Number(row?.n ?? 0);
+}
+
+/** Held files of non-archived sources that a git hold of `holdOp` records as `readers_noncanonical`. */
+export async function countReadersNoncanonicalHolds(raw: EngineRawRead, holdOp: string, sourceIds: readonly string[] | null): Promise<number> {
+  const [row] = await raw<{ n: number | string }>(COUNT_READERS_NONCANONICAL_HOLDS_SQL, [holdOp, sourceIds ? [...sourceIds] : null]);
+  return Number(row?.n ?? 0);
+}
+
+/** Live pages of non-archived sources whose frontmatter has a key other than `readable_by` that reads `readableby` once separators are dropped. */
+export async function listReaderCandidatePages(raw: EngineRawRead, sourceIds: readonly string[] | null): Promise<VisibilityCandidatePage[]> {
+  return raw<VisibilityCandidatePage>(LIST_READER_CANDIDATE_PAGES_SQL, [sourceIds ? [...sourceIds] : null]);
 }
 
 /** The failed, conflicted or cancelled receipts that unfinished managed-sync cursors wait on. */

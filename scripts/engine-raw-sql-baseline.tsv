@@ -41,7 +41,6 @@ src/commands/doctor/checks/folder-access.ts	execute_raw	1
 src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
 src/commands/doctor/checks/git-convergence.ts	execute_raw	1
-src/commands/doctor/checks/git-holds.ts	execute_raw	2	readNoncanonicalReaders: the read-only misspelled readers key count, the same shape as readNoncanonicalPrivate
 src/commands/doctor/checks/graph-embedding.ts	execute_raw	1
 src/commands/doctor/checks/guest-source.ts	execute_raw	2
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
@@ -405,7 +404,7 @@ src/core/persistence/diagnostics.ts	execute_raw	1
 src/core/persistence/drift-conflicts.ts	execute_raw	4
 src/core/persistence/effect-journal.ts	execute_raw	6
 src/core/persistence/effect-recovery.ts	execute_raw	16
-src/core/persistence/effect-retry.ts	execute_raw	14
+src/core/persistence/effect-retry.ts	execute_raw	10
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
 src/core/persistence/effects.ts	execute_raw	15
@@ -431,7 +430,6 @@ src/core/persistence/graduation-target.ts	driver_call	2
 src/core/persistence/graduation-target.ts	execute_raw	5
 src/core/persistence/graduation-verify.ts	execute_raw	15
 src/core/persistence/group-publish.ts	execute_raw	11
-src/core/persistence/held-reads.ts	execute_raw	1
 src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/identity.ts	execute_raw	3
 src/core/persistence/import-deferral.ts	execute_raw	1

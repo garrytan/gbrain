@@ -28,6 +28,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createSource, parityArms } from './harness.ts';
+import { seedTypedRequest } from '../helpers/persistence-typed-seed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { byteOrder, MIXED_IDS } from '../helpers/byte-order.ts';
@@ -82,6 +83,12 @@ async function counter(engine: BrainEngine, key: string, cols: { outstanding?: n
   [key, cols.outstanding ?? 0, cols.lifetime ?? 0, cols.terminal ?? 0]);
 }
 
+/** The same counter row as `counter`, through the typed counter members: create it, then add each column. */
+async function typedCounter(engine: BrainEngine, key: string, cols: { outstanding?: number; lifetime?: number; terminal?: number } = {}): Promise<void> {
+  await engine.lockPersistenceCounters([key]);
+  await engine.addPersistenceCounters(key, { outstanding_count: cols.outstanding ?? 0, lifetime_ids: cols.lifetime ?? 0, terminal_bytes: cols.terminal ?? 0 });
+}
+
 interface Req { principal?: string; source: string; slug?: string; state?: string; ageSql?: string; outcome?: unknown; worktree?: string; requestId?: string; errorCode?: string }
 /** One request row under the protocol the table's guard asks for. */
 async function request(engine: BrainEngine, r: Req): Promise<void> {
@@ -96,14 +103,14 @@ async function request(engine: BrainEngine, r: Req): Promise<void> {
 
 describe('doctor persistence reads sort text keys by byte', () => {
   parityTest('persistence_capacity, persistence_counter_drift and persistence_request_growth list counters by byte key', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['setConfig', 'lockPersistenceCounters', 'addPersistenceCounters', 'listCapacityCounters', 'readCounterDrift', 'listLifetimeCounters'],
   }, async engine => {
     const { checkPersistenceCapacity } = await import('../../src/commands/doctor/checks/persistence-capacity.ts');
     const { checkPersistenceCounterDrift } = await import('../../src/commands/doctor/checks/persistence-compaction.ts');
     const { requestGrowthCheck } = await import('../../src/commands/doctor/checks/persistence-requests.ts');
-    await setLimit(engine, 'persistence.limits.principal_lifetime_ids', 10);
+    await engine.setConfig('persistence.limits.principal_lifetime_ids', '10');
     const keys = MIXED_IDS.map(id => `principal:local_cli:${id}`);
-    for (const key of keys) await counter(engine, key, { lifetime: 9, terminal: 100 });
+    for (const key of keys) await typedCounter(engine, key, { lifetime: 9, terminal: 100 });
     const principals = (rows: { scope: string }[]) => rows.map(r => r.scope).filter(s => s.startsWith('principal:'));
     const capacity = await checkPersistenceCapacity(engine);
     const drift = await checkPersistenceCounterDrift(engine);
@@ -157,12 +164,12 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('local_edit_adoptions lists sources, and each source\'s paths, by byte', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+    methods: ['insertWriteRequest', 'completeWriteRow', 'listLocalEditAdoptions'],
   }, async (engine, backend) => {
     const { localEditAdoptionsEntry } = await import('../../src/commands/doctor/checks/local-edit-adoptions.ts');
     for (const id of SRC) await createSource(engine, backend, id);
     for (const id of SRC) {
-      for (const path of MIXED_IDS) await request(engine, { source: id, state: 'committed', outcome: { adopted_local_edit: { path: `${path}.md` } } });
+      for (const path of MIXED_IDS) await seedTypedRequest(engine, { source: id, principalId: 'doctor', slug: 'notes/x', digest: randomUUID(), state: 'committed', outcome: { adopted_local_edit: { path: `${path}.md` } } });
     }
     const [check] = await runEntry(localEditAdoptionsEntry, engine);
     const sources = detailsOf(check).sources as { source_id: string; paths: string[] }[];
@@ -211,10 +218,9 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('git_held_files names the stored pages asking for private, five at most, by byte source id then slug', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'listVisibilityCandidatePages', 'countReadersNoncanonicalHolds', 'listReaderCandidatePages'],
   }, async (engine, backend) => {
     const { gitHeldFilesCheck } = await import('../../src/commands/doctor/checks/git-holds.ts');
-    await needRawSql(engine);
     const slugs = ['ab', 'a/z', 'a-z'];
     for (const id of SRC) {
       await createSource(engine, backend, id);
@@ -229,16 +235,55 @@ describe('doctor persistence reads sort text keys by byte', () => {
     return out;
   });
 
+  parityTest('git_held_files counts the visibility and readers spelling holds of live sources at their incarnation', {
+    methods: ['readSourceMembership', 'writeOpCheckpointRecord', 'countVisibilityNoncanonicalHolds', 'countReadersNoncanonicalHolds'],
+  }, async (engine, backend) => {
+    const { GIT_HOLD_OP } = await import('../../src/core/engine-sql/persistence-journal.ts');
+    for (const id of SRC) await createSource(engine, backend, id);
+    const hold = async (fingerprint: string, source: string, code: string, incarnation?: string) =>
+      engine.writeOpCheckpointRecord(GIT_HOLD_OP, fingerprint, [{ source_id: source, incarnation: incarnation ?? (await engine.readSourceMembership(source))!.incarnation, code, path: `${fingerprint}.md` }]);
+    for (const [n, id] of SRC.entries()) {
+      await hold(`v-${n}`, id, 'visibility_noncanonical');
+      await hold(`r-${n}`, id, 'readers_noncanonical');
+    }
+    // A hold recorded under another incarnation of its source no longer counts.
+    await hold('v-stale', SRC[0], 'visibility_noncanonical', randomUUID());
+    const out = {
+      visibility: await engine.countVisibilityNoncanonicalHolds(GIT_HOLD_OP, null),
+      readers: await engine.countReadersNoncanonicalHolds(GIT_HOLD_OP, null),
+      scoped: await engine.countReadersNoncanonicalHolds(GIT_HOLD_OP, [SRC[0]]),
+    };
+    expect(out).toEqual({ visibility: 3, readers: 3, scoped: 1 });
+    return out;
+  });
+
+  parityTest('listAtomBacklogSourceIds and listReaderCandidatePages list sources and pages by byte', {
+    methods: ['putPage', 'listAtomBacklogSourceIds', 'listReaderCandidatePages'],
+  }, async (engine, backend) => {
+    for (const id of SRC) {
+      await createSource(engine, backend, id);
+      for (const slug of ['ab', 'a/z', 'a-z']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '', frontmatter: { 'Readable-By': ['member:x'] } }, { sourceId: id });
+      }
+    }
+    const sources = (await engine.listAtomBacklogSourceIds()).map(row => row.source_id).filter(id => (SRC as readonly string[]).includes(id));
+    const pages = (await engine.listReaderCandidatePages([...SRC])).map(row => `${row.source_id}:${row.slug}`);
+    expect(sources).toEqual(SRC_BYTES);
+    // The reader-candidate statement sorts by the database collation (no COLLATE "C"), so a non-C Postgres may list these
+    // in another order than PGLite and Rust; its rows are compared as a set, and the order goes in the swap report.
+    expect([...pages].sort()).toEqual(SRC.flatMap(id => ['ab', 'a/z', 'a-z'].map(slug => `${id}:${slug}`)).sort());
+    return { sources, count: pages.length };
+  });
+
   parityTest('contentBlockedSources lists the sources a failed content refusal stops by byte id', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+    methods: ['insertWriteRequest', 'completeWriteRow', 'writeOpCheckpointRecord', 'listContentBlockedReceipts'],
   }, async (engine, backend) => {
     const { contentBlockedSources } = await import('../../src/commands/doctor/checks/git-holds.ts');
     for (const id of SRC) {
       await createSource(engine, backend, id);
       const requestId = randomUUID();
-      await request(engine, { source: id, state: 'failed', requestId, errorCode: 'invalid_frontmatter' });
-      await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync',$1,$2::text::jsonb)`,
-        [id, JSON.stringify([{ sourceId: id, pending: { requestId }, done: false }])]);
+      await seedTypedRequest(engine, { source: id, principalId: 'doctor', digest: randomUUID(), state: 'failed', requestId, errorCode: 'invalid_frontmatter' });
+      await engine.writeOpCheckpointRecord('managed-sync', id, [{ sourceId: id, pending: { requestId }, done: false }]);
     }
     const blocked = await contentBlockedSources(engine);
     const out = blocked.map(b => b.source_id);
@@ -247,12 +292,12 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('content_hash_duplicates names a duplicate group\'s slugs by byte', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'listContentHashDuplicates'],
   }, async engine => {
     const { checkContentHashDuplicates } = await import('../../src/commands/doctor/checks/extraction-sync.ts');
     const slugs = ['ab11', 'a-z1', 'aa-1'];
-    for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '' });
-    await engine.executeRaw("UPDATE pages SET content_hash='same-content-hash' WHERE slug = ANY($1::text[])", [slugs]);
+    // putPage stores the content hash it is given, so three pages share one hash as an import of identical files leaves them.
+    for (const slug of slugs) await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `body of ${slug}`, timeline: '', content_hash: 'same-content-hash' });
     const check = await checkContentHashDuplicates(engine);
     const group = byteOrder(slugs).join(' == ');
     const out = { status: check.status, groups: detailsOf(check).sample_distinct_slug_groups, message: check.message.includes(`Sample: ${group}.`) };
@@ -261,10 +306,9 @@ describe('doctor persistence reads sort text keys by byte', () => {
   });
 
   parityTest('extract_atoms_backlog names the backlog sources by byte id in its drain hint', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'countAtomExtractionBacklog', 'listAtomBacklogSourceIds'],
   }, async (engine, backend) => {
     const { computeExtractAtomsBacklogCheck } = await import('../../src/commands/doctor.ts');
-    await needRawSql(engine);
     const home = mkdtempSync(join(tmpdir(), 'gbrain-collate-atoms-home-'));
     try {
       for (const id of SRC) {

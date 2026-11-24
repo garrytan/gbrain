@@ -487,8 +487,7 @@ async function countExtractAtomsBacklogBySource(
     // unscoped local/host path.
     const sources = sourceIds
       ? [...sourceIds].sort().map((source_id) => ({ source_id }))
-      // The typed roster (engine-sql/mention-reads.ts), so a Rust brain answers it; source ids are ASCII, so sort() is byte order.
-      : (await engine.listLivePageSourceIds()).map(row => row.id).sort().map((source_id) => ({ source_id }));
+      : await engine.listAtomBacklogSourceIds();
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);

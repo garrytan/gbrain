@@ -147,8 +147,7 @@ export async function bindOrigin(tx: BrainEngine, target: OriginTarget & { sourc
 
 /** Every soft-deleted page `restorePage(slug, opts)` would revive, guarded (a restore without a source revives the slug in every source). */
 export async function assertRevivalUnclaimed(tx: BrainEngine, slug: string, sourceId?: string): Promise<void> {
-  const rows = await tx.executeRaw<{ id: number; source_id: string }>(
-    'SELECT id, source_id FROM pages WHERE slug=$1 AND deleted_at IS NOT NULL AND ($2::text IS NULL OR source_id=$2) ORDER BY source_id COLLATE "C"', [slug, sourceId ?? null]);
+  const rows = await tx.listRevivalPages(slug, sourceId ?? null);
   for (const row of rows) await assertOriginUnclaimed(tx, { sourceId: row.source_id, pageId: Number(row.id), revive: true });
 }
 

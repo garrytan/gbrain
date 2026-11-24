@@ -28,6 +28,7 @@ export const PAGES_MEMBERS = {
   getPageSealState: 'pages',
   refreshPageOrigin: 'pages',
   readPageOrigin: 'pages',
+  listRevivalPages: 'pages',
   listOriginClaims: 'pages',
   bindPageOrigin: 'pages',
   detachPageOrigin: 'pages',

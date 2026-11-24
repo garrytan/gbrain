@@ -1510,6 +1510,7 @@ export class PostgresEngine implements BrainEngine {
   countAtomExtractionBacklog(query: AtomBacklogQuery, opts?: { signal?: AbortSignal }) {
     return atomBacklogImpl.countAtomExtractionBacklog((sql, params) => this.executeRaw(sql, params, opts?.signal ? { signal: opts.signal } : undefined), query);
   }
+  listAtomBacklogSourceIds() { return doctorSearchImpl.listAtomBacklogSourceIds(this.executeRaw.bind(this)); }
   readProjectionBacklog(scope: PageReadScope) { return projectionBacklogImpl.readProjectionBacklog(this.executeRaw.bind(this), scope); }
   listGitImageHoldCounts(sourceIds: string[]) { return doctorSearchImpl.listGitImageHoldCounts(this.executeRaw.bind(this), sourceIds); }
   listTruncatedMarkdownBodies() { return doctorSearchImpl.listTruncatedMarkdownBodies(this.executeRaw.bind(this)); }
@@ -1578,6 +1579,8 @@ export class PostgresEngine implements BrainEngine {
   readOldestSourceCreatedAt() { return doctorBrainImpl.readOldestSourceCreatedAt(this.executeRaw.bind(this)); }
   listVisibilityCandidatePages(sourceIds: readonly string[] | null) { return doctorBrainImpl.listVisibilityCandidatePages(this.executeRaw.bind(this), sourceIds); }
   countVisibilityNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null) { return doctorBrainImpl.countVisibilityNoncanonicalHolds(this.executeRaw.bind(this), holdOp, sourceIds); }
+  countReadersNoncanonicalHolds(holdOp: string, sourceIds: readonly string[] | null) { return doctorBrainImpl.countReadersNoncanonicalHolds(this.executeRaw.bind(this), holdOp, sourceIds); }
+  listReaderCandidatePages(sourceIds: readonly string[] | null) { return doctorBrainImpl.listReaderCandidatePages(this.executeRaw.bind(this), sourceIds); }
   listContentBlockedReceipts() { return doctorBrainImpl.listContentBlockedReceipts(this.executeRaw.bind(this)); }
   listPassAdmittedReceipts(sourceId: string, passId: string) { return doctorBrainImpl.listPassAdmittedReceipts(this.executeRaw.bind(this), sourceId, passId); }
   listManagedSyncCursorFailureRows(sourceIds: readonly string[] | null) { return doctorSyncImpl.listManagedSyncCursorFailureRows(this.executeRaw.bind(this), sourceIds); }
@@ -2024,6 +2027,7 @@ export class PostgresEngine implements BrainEngine {
   revokeLocalWriterRow(id: string) { return persistenceStateImpl.revokeLocalWriterRow(this.autocommitSql, id); }
   readJournalLimitRows() { return this.preparationRead(exec => persistenceJournalImpl.readJournalLimitRows(unscopedExecutor(exec, 'persistence: journal limit read ran unscoped through executeRaw'))); }
   readHeldPageRows<R = Record<string, unknown>>(pageIds: string[]) { return this.preparationRead(exec => persistenceJournalImpl.readHeldPageRows<R>(unscopedExecutor(exec, 'persistence: hold read ran unscoped through executeRaw'), pageIds)); }
+  readHeldHitRows<R = Record<string, unknown>>(query: persistenceJournalImpl.HeldHitQuery) { return this.preparationRead(exec => persistenceJournalImpl.readHeldHitRows<R>(unscopedExecutor(exec, 'persistence: held hit read ran unscoped through executeRaw'), query)); }
   readHeldCoverageRows(sourceIds: string[] | null) { return this.preparationRead(exec => persistenceJournalImpl.readHeldCoverageRows(unscopedExecutor(exec, 'persistence: hold summary read ran unscoped through executeRaw'), sourceIds)); }
   listFenceHoldRows(sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string) { return fenceHoldsImpl.listFenceHoldRows(this.executeRaw.bind(this), sourceIds, kinds, ownerKey); }
   readFenceOriginGone(sourceId: string, slug: string) { return fenceHoldsImpl.readFenceOriginGone(this.executeRaw.bind(this), sourceId, slug); }
@@ -2242,6 +2246,10 @@ export class PostgresEngine implements BrainEngine {
   listResumableRefreshes<R = Record<string, unknown>>(hostId: string, budgetMs: number) { return ownerScansImpl.listResumableRefreshes<R>(unscopedExecutor(this.engineSql, 'persistence: refresh resume scan ran unscoped through executeRaw'), hostId, budgetMs); }
   listSourceLastCommits(sourceIds: readonly string[]) { return ownerScansImpl.listSourceLastCommits(unscopedExecutor(this.engineSql, 'persistence: refresh resume source read ran unscoped through executeRaw'), sourceIds); }
   readRequestEffects(requestId: string, kind?: 'git') { return this.preparationRead(exec => effectScansImpl.readRequestEffects(unscopedExecutor(exec, 'persistence: receipt effect read ran unscoped through executeRaw'), requestId, kind)); }
+  readSourceRequestById<R = Record<string, unknown>>(sourceId: string, id: string) { return this.preparationRead(exec => effectScansImpl.readSourceRequestById<R>(unscopedExecutor(exec, 'persistence: retry request read ran unscoped through executeRaw'), sourceId, id)); }
+  listSourceRequestsByRequestId<R = Record<string, unknown>>(sourceId: string, requestId: string) { return this.preparationRead(exec => effectScansImpl.listSourceRequestsByRequestId<R>(unscopedExecutor(exec, 'persistence: retry request read ran unscoped through executeRaw'), sourceId, requestId)); }
+  listRetryTrackedEffects<R = Record<string, unknown>>(requestRowId: string, parkedOnly: boolean, failedCodes: readonly string[]) { return this.preparationRead(exec => effectScansImpl.listRetryTrackedEffects<R>(unscopedExecutor(exec, 'persistence: retry effect read ran unscoped through executeRaw'), requestRowId, parkedOnly, failedCodes)); }
+  lockEffectRow<R = Record<string, unknown>>(id: string | number) { return effectScansImpl.lockEffectRow<R>(unscopedExecutor(this.autocommitSql, 'persistence: effect lock ran unscoped through executeRaw'), id); }
   stampEffectClaim<R = Record<string, unknown>>(claim: effectWorkerImpl.EffectClaim) { return effectWorkerImpl.stampEffectClaim<R>(this, claim); }
   renewEffectClaim(claim: effectWorkerImpl.EffectClaimRef, opts?: { direct?: boolean }) { return effectWorkerImpl.renewEffectClaim((opts?.direct ? { executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => this.executeRawDirect<T>(sql, params) } : this), claim); }
   advanceEffectRow(claim: effectWorkerImpl.EffectClaimRef & { slug: string }) { return effectWorkerImpl.advanceEffectRow(this, claim); }
@@ -4887,6 +4895,7 @@ export class PostgresEngine implements BrainEngine {
     return pagesImpl.refreshPageOrigin(this.autocommitSql, slug, opts);
   }
   readPageOrigin(target: writeGuardsImpl.PageOriginTarget) { return this.preparationRead(exec => writeGuardsImpl.readPageOrigin(unscopedExecutor(exec, 'origin guard: page read ran unscoped through executeRaw'), target)); }
+  listRevivalPages(slug: string, sourceId: string | null) { return this.preparationRead(exec => writeGuardsImpl.listRevivalPages(unscopedExecutor(exec, 'origin guard: revival read ran unscoped through executeRaw'), slug, sourceId)); }
   listOriginClaims(sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }) { return writeGuardsImpl.listOriginClaims(this.autocommitSql, sourceId, spellings, opts); }
   bindPageOrigin(target: writeGuardsImpl.PageOriginTarget & { sourcePath: string; onlyIfUnset?: boolean; liveOnly?: boolean }) { return writeGuardsImpl.bindPageOrigin(this.autocommitSql, target); }
   detachPageOrigin(pageId: number, reason: string) { return writeGuardsImpl.detachPageOrigin(this.autocommitSql, pageId, reason); }
