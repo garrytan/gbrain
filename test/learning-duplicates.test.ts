@@ -153,6 +153,21 @@ for (const backend of testBackends()) {
       expect((await derive()).details.duplicates).toMatchObject({ recorded: 0 });
     });
 
+    test('an open question stays in the default note after it was shown and past the seven days, until it is answered', async () => {
+      for (const name of NAMES) await pair(name);
+      await derive();
+      const note = async (): Promise<LearnedView> => parse(await dispatchToolCall(engine, 'learned', { limit: 100 }, { remote: false }));
+      const shown = dupes(await note());
+      expect(shown).toHaveLength(5);
+      expect(dupes(await note()).map(i => i.id)).toEqual(shown.map(i => i.id));
+      await engine.executeRaw("UPDATE learning_items SET created_at = now() - interval '8 days'");
+      const later = dupes(await note());
+      expect(later.map(i => i.id)).toEqual(shown.map(i => i.id));
+      await cli(['reject', later[0]!.commands!.reject[3]!]);
+      expect((await derive()).details.duplicates).toMatchObject({ recorded: 1 });
+      expect(dupes(await note())).toHaveLength(5);
+    });
+
     test('answered groups never push open ones out of a short note, and the best-ranked shows first', async () => {
       for (const name of NAMES) await pair(name);
       await derive();

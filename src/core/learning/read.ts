@@ -69,6 +69,13 @@ const WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[])) AND l
   AND ($3::boolean = false OR (li.state = 'pending' AND li.shown_at IS NULL))`;
 
 /**
+ * Duplicate questions hold one of the five open slots until they are answered, so the default note keeps showing a
+ * pending one whether or not it was shown or is older than the window; `since` still bounds them by date.
+ */
+const QUESTION_WINDOW_SQL = `($1::text[] IS NULL OR li.source_id = ANY($1::text[]))
+  AND (CASE WHEN $3::boolean THEN li.state = 'pending' ELSE li.created_at >= $2::timestamptz END)`;
+
+/**
  * The window's pointers of the given kinds, picked first; each target is then a keyed LATERAL lookup, so a stale row
  * estimate (a bulk insert with no ANALYZE since) cannot turn the target joins into a scan of every fact and proposal.
  */
@@ -101,7 +108,8 @@ function queries(f: CallerFilters): Array<{ kinds: LearningKind[]; sql: string }
         JOIN pages p ON p.id = v.page_id
        WHERE p.deleted_at IS NULL AND ${f.pages.p}
        ORDER BY li.created_at DESC, li.id DESC LIMIT $4` },
-    { kinds: ['duplicate_to_confirm'], sql: `${windowed("'duplicate_to_confirm'", 'pages')} SELECT ${ITEM_COLUMNS}, li.target_id AS anchor_id
+    { kinds: ['duplicate_to_confirm'], sql: `WITH li AS MATERIALIZED (SELECT * FROM learning_items li WHERE li.kind = 'duplicate_to_confirm' AND li.target_table = 'pages' AND ${QUESTION_WINDOW_SQL})
+      SELECT ${ITEM_COLUMNS}, li.target_id AS anchor_id
         FROM li ORDER BY li.id ASC LIMIT GREATEST($4::int, ${DUPLICATE_ROWS_READ})` },
   ];
 }
@@ -209,7 +217,7 @@ async function thinContactsLine(engine: BrainEngine, now: Date): Promise<ThinCon
 }
 
 /**
- * The note: unseen pending items of the last seven days by default, or every item since `since`. Stamps shown_at on
+ * The note: unseen pending items of the last seven days by default (plus every open duplicate question), or every item since `since`. Stamps shown_at on
  * what it returns, only for a caller that reads the whole ledger (local, or the owner's token) or the unbound stdio pipe
  * of a brain with no owner (the user's own agent), and never for a local `--as` preview, so a narrower reader never
  * uses up the owner's unseen view.
