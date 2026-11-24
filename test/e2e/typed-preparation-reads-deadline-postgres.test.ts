@@ -164,6 +164,8 @@ const sweptReads: readonly LockedRead[] = [
   ['listChunkedOccurrences', 'content_chunks', 'unnest($2::bigint[])', e => e.listChunkedOccurrences(pageId, [1], 1)],
   ['readRetiredChunkVectors', 'content_chunks', 'FROM content_chunks c JOIN pages p', e => e.readRetiredChunkVectors(pageId, [1], 'embedding')],
   ['hasStaleSegmentChunks', 'content_chunks', 'WITH RECURSIVE occ(o)', e => e.hasStaleSegmentChunks(pageId, 1, [1])],
+  // The withdrawal overlay's '*' purge lookup (overlayCanonicalBodiesTyped), waiting on a locked fact_purges.
+  ['listGlobalPurgeWithdrawals', 'fact_purges', 'FROM fact_purges', e => e.listGlobalPurgeWithdrawals('default', ['h'], false)],
   // A row lock: a read-only deadline transaction would refuse it, so "with budget left answers" pins the read-write bound.
   ['lockRegisteredSourceIds', 'sources', 'FROM sources WHERE id = ANY', e => e.lockRegisteredSourceIds(['default'])],
 ];

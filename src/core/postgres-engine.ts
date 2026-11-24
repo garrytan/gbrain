@@ -1366,7 +1366,7 @@ export class PostgresEngine implements BrainEngine {
   readExportWithdrawalLedgerBytes(sourceId: string) { return this.engineRead(exec => exportReadsImpl.readExportWithdrawalLedgerBytes(exec, sourceId)); }
   listExportWithdrawals(sourceId: string) { return this.engineRead(exec => exportReadsImpl.listExportWithdrawals(exec, sourceId)); }
   readExportPageRows(ids: readonly string[]) { return exportReadsImpl.readExportPageRows(this, ids); }
-  normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]) { return exportReadsImpl.normalizeFenceLines(this, bodies, timelines); }
+  normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]) { return this.ownRawRead(exec => exportReadsImpl.normalizeFenceLines(exec, bodies, timelines)); }
   readSegmentedPageHead(pageId: number) { return this.ownRawRead(exec => exportReadsImpl.readSegmentedPageHead(exec, pageId)); }
   readSegmentedLivePage(pageId: number) { return this.ownRawRead(exec => segmentedWritesImpl.readSegmentedLivePage(exec, pageId)); }
   listChunkedOccurrences(pageId: number, occurrenceIds: readonly number[], generation: number) { return this.ownRawRead(exec => segmentedWritesImpl.listChunkedOccurrences(exec, pageId, occurrenceIds, generation)); }
@@ -2225,7 +2225,7 @@ export class PostgresEngine implements BrainEngine {
   moveTwinFacts(sourceId: string, twinSlug: string, survivorSlug: string) { return twinMergeMoves.moveTwinFacts(this, sourceId, twinSlug, survivorSlug); }
   movePageVersions(fromPageId: number, toPageId: number) { return twinMergeMoves.movePageVersions(this, fromPageId, toPageId); }
   recordRenameAlias(sourceId: string, oldSlug: string, newSlug: string) { return renameAliasRows.recordRenameAliasRows(this, sourceId, oldSlug, newSlug); }
-  listGlobalPurgeWithdrawals(sourceId: string, hashes: readonly string[], worldOnly: boolean) { return remirrorEffects.listGlobalPurgeWithdrawals(this, sourceId, hashes, worldOnly); }
+  listGlobalPurgeWithdrawals(sourceId: string, hashes: readonly string[], worldOnly: boolean) { return this.ownRawRead(exec => remirrorEffects.listGlobalPurgeWithdrawals(exec, sourceId, hashes, worldOnly)); }
   readSourceMembership(sourceId: string, opts?: { lock?: boolean | 'update' }) { return this.preparationRead(exec => persistenceClaimsImpl.readSourceMembership(exec, sourceId, opts), !!opts?.lock); }
   findTopologyChanges(principalId: string, requestIds: string[]) { return persistenceClaimsImpl.findTopologyChanges(unscopedExecutor(this.engineSql, 'persistence: topology probe ran unscoped through the transaction executeRaw'), principalId, requestIds); }
   readTopologyChangeDigest(requestId: string, sourceId: string) { return persistenceClaimsImpl.readTopologyChangeDigest(unscopedExecutor(this.engineSql, 'persistence: sources add replay read ran unscoped through executeRaw'), requestId, sourceId); }

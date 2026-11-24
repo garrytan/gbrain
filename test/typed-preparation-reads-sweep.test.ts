@@ -61,6 +61,10 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listChunkedOccurrences', 'FROM unnest($2::bigint[]) AS o', e => e.listChunkedOccurrences(1, [1], 1)],
   ['readRetiredChunkVectors', 'FROM content_chunks c JOIN pages p ON p.id = c.page_id', e => e.readRetiredChunkVectors(1, [1], 'embedding')],
   ['hasStaleSegmentChunks', 'WITH RECURSIVE occ(o) AS', e => e.hasStaleSegmentChunks(1, 1, [1])],
+  // The withdrawal overlay a page preparation runs on the incoming file (overlayCanonicalBodiesTyped in page-prepare.ts):
+  // the fence normalization and the '*' purge lookup, raw statements on the bounded view before they were typed.
+  ['normalizeFenceLines', 'string_to_array', e => e.normalizeFenceLines(['a'], [''])],
+  ['listGlobalPurgeWithdrawals', 'fact_purges', e => e.listGlobalPurgeWithdrawals('default', ['h'], false)],
   ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
   ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
   ['readJournalCeiling', 'SELECT max(sequence)::text AS ceiling FROM persistence_requests', e => e.readJournalCeiling('default')],
@@ -77,6 +81,10 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listChunkedOccurrences', 'FROM unnest($2::bigint[]) AS o', e => e.listChunkedOccurrences(1, [1], 1)],
   ['readRetiredChunkVectors', 'SELECT c.chunk_text, c.chunk_source', e => e.readRetiredChunkVectors(1, [1], 'embedding')],
   ['hasStaleSegmentChunks', 'WITH RECURSIVE occ(o) AS', e => e.hasStaleSegmentChunks(1, 1, [1])],
+  // The withdrawal overlay a page preparation runs on the incoming file (overlayCanonicalBodiesTyped in page-prepare.ts):
+  // the fence normalization and the '*' purge lookup, raw statements on the bounded view before they were typed.
+  ['normalizeFenceLines', 'string_to_array', e => e.normalizeFenceLines(['a'], [''])],
+  ['listGlobalPurgeWithdrawals', 'fact_purges', e => e.listGlobalPurgeWithdrawals('default', ['h'], false)],
   // The link preparation's alias and source slug reads (persistence/links-preparation.ts).
   ['readLiveSlugAliases', 'FROM slug_aliases a', e => e.readLiveSlugAliases('default', ['a'])],
   ['readSourceSlugProbe', 'hashtextextended(slug, 0)', e => e.readSourceSlugProbe('default', 0)],
