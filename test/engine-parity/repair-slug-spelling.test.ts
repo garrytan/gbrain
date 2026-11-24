@@ -70,7 +70,7 @@ describe('engine parity: repair slug-spelling', () => {
         const applied = await repairJson(engine, apply);
         const again = await repairJson(engine, apply);
         const after = await ids(['notes/pm-alpha', 'notes/pm-caf\u00e9']);
-        const slugs = (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages ORDER BY slug')).map(r => r.slug);
+        const slugs = (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages')).map(r => r.slug).sort(); // code-point order, whatever the database collation
         const result = { classes: Object.fromEntries((preview.listing ?? []).map(entry => [entry.item, entry.class])), applied: applied.applied, outcomes: applied.outcomes,
           again: { applied: again.applied, outcomes: again.outcomes }, sameIds: JSON.stringify(before) === JSON.stringify(after), slugs };
         expect(result).toEqual({
