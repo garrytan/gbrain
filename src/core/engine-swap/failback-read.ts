@@ -41,6 +41,17 @@ export const PAGE_FIELDS = [
   'type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'content_hash', 'effective_date', 'effective_date_source',
   'import_filename', 'source_path', 'source_kind', 'source_uri', 'ingested_via', 'ingested_at', 'created_at', 'updated_at',
 ] as const;
+const BODY_FIELDS = new Set<string>(['compiled_truth', 'timeline']);
+
+/** The page part without the body fields, for a comparison where either side keeps its body in segments. */
+function withoutBody(page: Record<string, Plain>): Record<string, Plain> {
+  const out: Record<string, Plain> = {};
+  for (const [k, v] of Object.entries(page)) if (!BODY_FIELDS.has(k) && k !== 'segmented') out[k] = v;
+  return out;
+}
+
+export function isSegmented(img: PageImage | null): boolean { return img?.parts.page.segmented === true; }
+
 const CHUNK_FIELDS = ['chunk_index', 'chunk_text', 'chunk_source', 'model', 'token_count', 'language', 'symbol_name', 'symbol_type',
   'start_line', 'end_line', 'parent_symbol_path', 'doc_comment', 'symbol_name_qualified', 'modality'] as const;
 const LINK_FIELDS = ['to_slug', 'to_source_id', 'link_type', 'context', 'link_source', 'origin_slug', 'origin_source_id', 'origin_field'] as const;
@@ -209,13 +220,15 @@ export async function readPageImage(engine: BrainEngine, ref: PageRef): Promise<
     engine.listFilesForPage(Number(page.id)),
   ]);
   const takes = await takesOf(engine, Number(page.id));
+  const segmented = page.body_storage === 'segmented';
   const orderedChunks = [...chunks].sort((a, b) => a.chunk_index - b.chunk_index);
   return {
     ref,
     id: Number(page.id),
     sealed: page.knowledge_revision != null && String(page.text_projection_revision) === String(page.knowledge_revision),
     parts: {
-      page: pick(page, PAGE_FIELDS),
+      // A page stored in segments has no one-string body (its getters throw); content_hash still covers its body.
+      page: segmented ? { ...pick(page, PAGE_FIELDS.filter(f => !BODY_FIELDS.has(f))), segmented: true } : pick(page, PAGE_FIELDS),
       tags: [...tags].sort(),
       links: sorted(links.map(l => pick({ ...l, to_source_id: l.to_source_id ?? ref.source_id }, LINK_FIELDS))),
       timeline: sorted(timeline.map(t => pick(t, ['date', 'source', 'summary', 'detail']))),
@@ -231,7 +244,10 @@ export async function readPageImage(engine: BrainEngine, ref: PageRef): Promise<
 /** The parts of a page that differ between the two images (`page` first). Embeddings compare by `embeddingsAgree`. */
 export function differingParts(a: PageImage | null, b: PageImage | null): PagePart[] {
   if (!a || !b) return a || b ? [...PAGE_PARTS] : [];
-  const out = PAGE_PARTS.filter(p => canonical(a.parts[p]) !== canonical(b.parts[p]));
+  const segmented = isSegmented(a) || isSegmented(b);
+  const out = PAGE_PARTS.filter(p => (p === 'page' && segmented
+    ? canonical(withoutBody(a.parts.page)) !== canonical(withoutBody(b.parts.page))
+    : canonical(a.parts[p]) !== canonical(b.parts[p])));
   if (!out.includes('chunks') && a.embeddings.some((e, i) => !embeddingsAgree(e, b.embeddings[i] ?? null))) out.push('chunks');
   return out;
 }

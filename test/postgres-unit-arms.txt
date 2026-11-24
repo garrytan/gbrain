@@ -195,6 +195,7 @@ test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
 test/engine-parity/withdrawal-discovery-reads.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-swap-failback.test.ts
 test/engine-swap-managed-storage.test.ts
 test/engine-swap-pg-fence.test.ts
 test/engine-swap-pg-source.test.ts

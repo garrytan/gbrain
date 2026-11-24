@@ -736,3 +736,5 @@ src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assert
 src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
 src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
+src/core/engine-swap/failback-copy.ts	writePage	call:putPage	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write
+src/core/engine-swap/failback-copy.ts	writePage	field	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write

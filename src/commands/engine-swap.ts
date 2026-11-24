@@ -21,7 +21,7 @@ import { existsSync, readdirSync, readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeCliError } from '../cli/cli-error.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
-import { loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { loadConfig, loadConfigFileOnly, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { noBrainError } from '../core/engine-connect.ts';
@@ -258,7 +258,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
   if (brainId !== HOST_BRAIN_ID) return writeError(mountedBrainError(brainId), parsed);
   if (parsed.status) {
     try {
-      const statusPath = failbackRecordPath(loadedConfig()) ?? swapRecordPath(brainKeyOf(loadedConfig()));
+      const statusPath = failbackRecordPath(loadConfigFileOnly() ?? loadedConfig()) ?? swapRecordPath(brainKeyOf(loadedConfig()));
       const record = readSwapRecord(statusPath);
       out(parsed.json ? JSON.stringify({ schema_version: 1, run: record }, null, 2) : renderStatus(record));
       return 0;

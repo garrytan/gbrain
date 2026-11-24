@@ -10,7 +10,7 @@
  */
 import { join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
+import { loadConfigFileOnly, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { noBrainError } from '../core/engine-connect.ts';
 import { opError } from '../core/ops/contract.ts';
 import { inspectLockHolder } from '../core/pglite-lock.ts';
@@ -116,7 +116,9 @@ function usage(message: string) {
 
 /** Runs failback; throws typed errors for the caller's writeError. Returns the exit code on success. */
 export async function runEngineFailback(args: FailbackArgs, io: FailbackIo, deps: FailbackCliDeps = {}): Promise<number> {
-  const config = loadConfig();
+  // The config file, not the environment: the file is what the swap switched, and an environment override of the
+  // route is refused separately (route_override) before any write.
+  const config = loadConfigFileOnly();
   if (!config) throw noBrainError();
   const recordPath = failbackRecordPath(config);
   const record = recordPath ? readSwapRecord(recordPath) : null;

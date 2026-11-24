@@ -28,7 +28,7 @@ import { readSwapRecord, REAL_FS, writeSwapRecord, type FailbackState, type Swap
 import { swapRefusal, type SwapRefusalReason } from './refusals.ts';
 import { restoreAuthority, switchAuthority, type RouteProber, type RouteProbe } from './route.ts';
 import { copyBack, diffBrains, mismatchesOf, type FailbackDiff, type Mismatch } from './failback-copy.ts';
-import { failbackLosses, hashOf, UnboundedReadError, type FailbackLosses } from './failback-read.ts';
+import { failbackLosses, hashOf, isSegmented, refKey, UnboundedReadError, type FailbackLosses } from './failback-read.ts';
 
 /** The losses failback accepts and shows with counts before it writes; every other loss is named in `losses`. */
 export const FAILBACK_ACCEPTED_LOSSES = ['page_version_collapse', 'new_row_ids'] as const;
@@ -115,6 +115,8 @@ async function readDiff(deps: FailbackDeps): Promise<FailbackDiff> {
 }
 
 function planOf(record: SwapRecord, diff: FailbackDiff, losses: FailbackLosses): FailbackPlan {
+  const segmented = diff.pages.filter(d => d.parts.includes('page') && (isSegmented(d.primary) || isSegmented(d.rust))).map(d => refKey(d.ref));
+  if (segmented.length) throw unavailable(`page(s) ${segmented.slice(0, 5).join(', ')}${segmented.length > 5 ? ', ...' : ''} keep their body in segments and changed on Rust; failback cannot rewrite a segmented body yet.`);
   if (diff.sources.remove.length) throw unavailable(`source(s) ${diff.sources.remove.join(', ')} exist on the old primary but not on the Rust engine; failback never deletes a source.`);
   return {
     run_id: record.run_id,

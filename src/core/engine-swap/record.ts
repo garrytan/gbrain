@@ -97,12 +97,14 @@ export function findSwapRecordPath(brainKey: string | null, rustStore?: string |
   if (!rustStore) return brainKey ? swapRecordPath(brainKey) : null;
   const root = join(configDir(), 'engine-swap');
   let keys: string[] = [];
+  // silent-read-ok: no engine-swap directory means no swap was ever recorded here; the brain's own path is the answer.
   try { keys = readdirSync(root).sort(); } catch { return brainKey ? swapRecordPath(brainKey) : null; }
   for (const key of keys) {
     const path = swapRecordPath(key);
     try {
       const record = readSwapRecord(path);
       if (record && resolve(record.rust_store) === resolve(rustStore)) return path;
+    // silent-read-ok: a record another build wrote (or a partial file) is not this store's record; the scan goes on.
     } catch { /* not a record this build reads: skip it */ }
   }
   return brainKey ? swapRecordPath(brainKey) : null;

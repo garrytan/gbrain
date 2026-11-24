@@ -10,62 +10,32 @@
  * the Rust engine (with the owner role the real engine reports), the route probe is injected; the config, the run
  * record lookup by store and the primary are real.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { GBrainConfig } from '../src/core/config.ts';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { runEngineSwap } from '../src/commands/engine-swap.ts';
-import { fencePrimary, markPrimaryCutover, primaryFenced } from '../src/core/engine-swap/fence.ts';
-import { writeSwapRecord, type SwapRecord } from '../src/core/engine-swap/record.ts';
+import { primaryFenced } from '../src/core/engine-swap/fence.ts';
+import { openFailbackCliWorld, type CliWorld } from './helpers/failback-world.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const RUN = '00000000-0000-4000-8000-00000000fc01';
 
-interface World { home: string; primary: PGLiteEngine; rust: PGLiteEngine; store: string; out: string[]; errors: unknown[] }
-let w: World | null = null;
-afterEach(async () => {
-  if (!w) return;
-  await w.rust.disconnect().catch(() => undefined);
-  await w.primary.disconnect().catch(() => undefined);
-  rmSync(w.home, { recursive: true, force: true });
-  w = null;
-});
+type World = CliWorld;
 
-async function world(): Promise<World> {
-  const home = mkdtempSync(join(tmpdir(), 'gbrain-failback-cli-'));
-  mkdirSync(join(home, '.gbrain'), { recursive: true });
-  const store = join(home, '.gbrain', 'shadow', 'pglite-abc', 'store');
-  writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'rust', database_path: store }));
-  const primary = new PGLiteEngine();
-  await primary.connect({});
-  await primary.initSchema();
-  const rust = new PGLiteEngine();
-  await rust.connect({});
-  await rust.initSchema();
-  for (const e of [primary, rust]) await e.putPage('notes/example', { type: 'note', title: 'Example', compiled_truth: 'Before.', timeline: '' });
-  for (const p of await primary.executeRaw<{ created_at: string; updated_at: string }>(`SELECT created_at::text AS created_at, updated_at::text AS updated_at FROM pages`)) {
-    await rust.executeRaw('UPDATE pages SET created_at = $1::timestamptz, updated_at = $2::timestamptz', [p.created_at, p.updated_at]);
-  }
-  for (const s of await primary.executeRaw<{ created_at: string }>(`SELECT created_at::text AS created_at FROM sources`)) {
-    await rust.executeRaw('UPDATE sources SET created_at = $1::timestamptz', [s.created_at]);
-  }
-  for (const c of await primary.executeRaw<{ key: string; value: string }>(`SELECT key, value FROM config WHERE key LIKE '%_at'`)) await rust.setConfig(c.key, c.value);
-  await fencePrimary(primary, RUN, { hostId: '00000000-0000-4000-8000-00000000fc02', config: { engine: 'pglite' } as unknown as GBrainConfig });
-  await markPrimaryCutover(primary, RUN);
-  const at = '2026-11-24T20:00:00.000Z';
-  const record: SwapRecord = {
-    version: 1, run_id: RUN, plan_hash: 'swapplan', policy_hash: 'policy', brain: { key: 'pglite-abc', engine: 'pglite', database_path: join(home, 'old.pglite') },
-    rust_store: store, shadow_dir: join(home, '.gbrain', 'shadow', 'pglite-abc'), state: 'succeeded', started_at: at, updated_at: at,
-    switch: { previous: { engine: 'pglite', database_path: join(home, 'old.pglite') }, at }, error: null,
-  };
-  writeSwapRecord(join(home, '.gbrain', 'engine-swap', 'pglite-abc', 'run.json'), record);
-  await rust.putPage('notes/example', { type: 'note', title: 'Example', compiled_truth: 'Edited on Rust.', timeline: '' });
-  w = { home, primary, rust, store, out: [], errors: [] };
-  return w;
+/** One world per test, opened in beforeAll and closed in afterAll. */
+function scenario(name: string, body: (x: World) => Promise<void>): void {
+  describe(name, () => {
+    let x: World;
+    beforeAll(async () => { x = await openFailbackCliWorld(RUN); }, 120_000);
+    afterAll(async () => {
+      await x?.rust.disconnect().catch(() => undefined);
+      await x?.primary.disconnect().catch(() => undefined);
+      if (x) rmSync(x.home, { recursive: true, force: true });
+    });
+    test(name, () => body(x), 120_000);
+  });
 }
 
 function cli(x: World, args: string[], over: { ownerRole?: 'owner' | 'client' } = {}): Promise<number> {
@@ -86,8 +56,7 @@ const configEngine = (x: World): string => JSON.parse(readFileSync(join(x.home, 
 const lastError = (x: World): OperationError => x.errors[x.errors.length - 1] as OperationError;
 
 describe('engine swap --to pglite (failback) CLI', () => {
-  test('--plan shows the copy, every accepted loss with its count and the fingerprint rule, and writes nothing', async () => {
-    const x = await world();
+  scenario('--plan shows the copy, every accepted loss with its count and the fingerprint rule, and writes nothing', async x => {
     expect(await cli(x, ['--to', 'pglite', '--plan'])).toBe(0);
     const text = x.out.join('\n');
     expect(text).toContain('Failback plan: rust -> pglite');
@@ -101,39 +70,35 @@ describe('engine swap --to pglite (failback) CLI', () => {
     expect((await x.primary.getPage('notes/example'))!.compiled_truth).toBe('Before.');
     expect(await primaryFenced(x.primary, RUN)).toBe(true);
     expect(configEngine(x)).toBe('rust');
-  }, 120_000);
+  });
 
-  test('a run without --yes gives confirmation_required with the plan hash', async () => {
-    const x = await world();
+  scenario('a run without --yes gives confirmation_required with the plan hash', async x => {
     expect(await cli(x, ['--to', 'pglite'])).toBe(3);
     expect(lastError(x).code).toBe('confirmation_required');
     expect(lastError(x).message).toMatch(/plan [0-9a-f]{16}/);
     expect(configEngine(x)).toBe('rust');
-  }, 120_000);
+  });
 
-  test('failback runs only to the engine the brain swapped from', async () => {
-    const x = await world();
+  scenario('failback runs only to the engine the brain swapped from', async x => {
     expect(await cli(x, ['--to', 'postgres', '--plan'])).toBe(2);
     expect(lastError(x).message).toContain('swapped from pglite');
-  }, 120_000);
+  });
 
-  test('another owner of the Rust store refuses failback with brain_in_use before any write', async () => {
-    const x = await world();
+  scenario('another owner of the Rust store refuses failback with brain_in_use before any write', async x => {
     expect(await cli(x, ['--to', 'pglite', '--plan', '--json'])).toBe(0);
     const hash = JSON.parse(x.out[x.out.length - 1]!).plan_hash as string;
     expect(await cli(x, ['--to', 'pglite', '--yes', '--expect', hash], { ownerRole: 'client' })).toBe(1);
     expect(lastError(x).reason).toBe('brain_in_use');
     expect((await x.primary.getPage('notes/example'))!.compiled_truth).toBe('Before.');
     expect(configEngine(x)).toBe('rust');
-  }, 120_000);
+  });
 
-  test('--yes --expect <hash> copies back, verifies and moves authority to the old engine', async () => {
-    const x = await world();
+  scenario('--yes --expect <hash> copies back, verifies and moves authority to the old engine', async x => {
     expect(await cli(x, ['--to', 'pglite', '--plan', '--json'])).toBe(0);
     const hash = JSON.parse(x.out[x.out.length - 1]!).plan_hash as string;
     expect(await cli(x, ['--to', 'pglite', '--yes', '--expect', hash])).toBe(0);
     expect((await x.primary.getPage('notes/example'))!.compiled_truth).toBe('Edited on Rust.');
     expect(configEngine(x)).toBe('pglite');
     expect(x.out.join('\n')).toContain('The brain runs on the pglite engine again');
-  }, 120_000);
+  });
 });

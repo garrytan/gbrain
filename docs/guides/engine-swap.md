@@ -2,14 +2,15 @@
 
 The Rust engine is opt-in. An existing brain moves to it by an engine swap, after a shadow has run beside the current
 engine long enough to prove it gives the same answers (docs/designs/RUST_ENGINE.md, "Shadow mode and swap"). This
-guide covers the read-only plan and the run for a PGLite brain. Failback (`--to pglite`) and swapping a Postgres brain
-arrive in a later release.
+guide covers the read-only plan, the run for a PGLite or Postgres brain, and failback, the way back to the old engine.
 
 **Say to your agent:** *"Is my brain ready to move to the Rust engine?"*
 
 **Say to your agent:** *"Show me the engine swap plan and what still blocks it."*
 
 **Say to your agent:** *"Move my brain to the Rust engine with the plan I just read."*
+
+**Say to your agent:** *"Move my brain back from the Rust engine to the engine it used before."*
 
 <a id="plan"></a>
 ## The plan
@@ -108,6 +109,64 @@ When the config file holds the Postgres `database_url`, the switch moves it into
 `--resume` re-checks what the previous steps left (the checkpoint hash, the fence) and continues from the recorded
 state. A checkpoint file the run wrote but never recorded is replaced, never trusted. A second run of the same brain
 is refused while one is recorded and not finished.
+
+<a id="fingerprint-rule"></a>
+### The fingerprint rule
+
+Facts are deduplicated by a fingerprint of their normalized text (lower case, collapsed whitespace). Before authority
+moves, in either direction, the run probes the Postgres or PGLite engine's fingerprint function against the Rust
+engine's. The rule is the probe's own:
+
+- If the server's `lower()` or whitespace class differs from the Rust engine on some characters, the run stops only
+  when a stored fact holds one of them (`fingerprint_semantics_differ`, with the count of such facts, never their text).
+- If no character differs, any mismatch in the probe's test corpus stops the run.
+
+Stock Postgres differs from the Rust engine on dozens of rare characters (for example U+0085, next line, which the
+Rust engine treats as whitespace and Postgres does not), on libc and ICU alike, so its probe always reports corpus
+mismatches. A brain whose facts hold none of those characters is not affected and swaps. PGLite differs on none.
+
+<a id="failback"></a>
+## Failback: back to the old engine
+
+After a swap, the old engine is not kept current; failback copies the Rust store back under a write fence.
+
+```bash
+gbrain engine swap --to pglite --plan              # or --to postgres: what is copied back, every loss; read only
+gbrain engine swap --to pglite --yes --expect <hash>
+gbrain engine swap --to pglite --resume            # finish a failback that stopped after its switch
+```
+
+`--to` must name the engine the brain swapped from. Failback needs a succeeded swap whose old primary still records the
+run at cutover (`failback_unavailable` otherwise). It reads the Rust engine only through the read calls it serves (the
+page, tags, links, timeline, chunks with embeddings, raw data, takes, files of each page, then facts, open loops,
+config keys and sources) and compares them with the same calls on the old primary. The Rust store's shadow digests
+are not used: writes made after the swap never update them.
+
+The plan shows, before anything is written:
+
+- how many pages changed, were added or were removed on Rust, and the same counts for facts, open loops, config keys
+  and sources;
+- the two accepted losses with their counts: `page_version_collapse` (a page changed on Rust gets one new version on
+  the old primary for all its Rust-side edits) and `new_row_ids` (a page created on Rust gets a new row id; facts,
+  takes and files keep theirs);
+- the closed list of what failback does not carry: every table of the old primary no Rust read call returns (its
+  rows stay as they were at the swap) and every column of a carried table no read call returns;
+- the known limits: the shadow digests above, and files with no page, which no Rust read call lists;
+- the [fingerprint rule](#fingerprint-rule).
+
+A run checks the plan hash (`preview_changed`), that no other process owns the Rust store or uses the old primary
+(`brain_in_use`) and the routes. Then, each step recorded in the swap's run record:
+
+1. **Copy.** Only what differs is written to the old primary, as the swap run, so its write fence lets these writes
+   and no others through. The Rust store is never written; it stays as a recovery point.
+2. **Verify.** Both engines are read again and must agree on every read call (`failback_mismatch` names the first
+   parts that differ), and the reverse fingerprint probe must pass.
+3. **Switch.** The config names the old engine again (and its saved Postgres `database_url`). A last read of both
+   engines must still agree, or the config goes back to the Rust engine.
+4. **Release and probe.** The write fence is dropped and the old primary's graduation row closed in one transaction,
+   and a fresh `gbrain` process must open the old engine.
+
+A brain that fails back can swap again later with a new plan.
 
 <a id="policy"></a>
 ## The readiness policy
@@ -236,8 +295,10 @@ A host would read something different through its planned credential. Needs the 
 <a id="fingerprint_semantics_differ"></a>
 ### `fingerprint_semantics_differ`
 
-The fingerprint probe failed: collation or server semantics differ between the engines. Report it; not retried until
-the engine or the source host changes.
+The fingerprint probe found a stored fact whose fingerprint would differ between the engines, or, on a server whose
+characters all agree, a probe mismatch (see [the fingerprint rule](#fingerprint-rule)). Stock Postgres reports corpus
+mismatches on rare characters; that alone does not refuse. Report it; not retried until the facts, the engine or the
+source host change.
 
 <a id="folder_rules_unserved"></a>
 ### `folder_rules_unserved`
@@ -269,6 +330,22 @@ A Postgres brain's recovery checkpoint cannot be taken: `pg_dump` is not install
 disk under the gbrain home has less free space than the database. The message names the version or the space needed.
 Nothing was written. Install the PostgreSQL client tools at the server's version or newer, or free the space, then run
 the swap again.
+
+<a id="failback_unavailable"></a>
+### `failback_unavailable`
+
+There is no finished swap to undo: no run record, a run that never switched, a config that does not name the Rust
+engine, or an old primary that does not record the run at cutover. It also refuses when a read call cannot return
+every row (a source removed on Rust, or 1000 or more open loops of one status in a source). Nothing was written. Read
+`gbrain engine swap --status` and report what it shows.
+
+<a id="failback_mismatch"></a>
+### `failback_mismatch`
+
+After the copy, a read call answered differently on the old primary than on the Rust engine. The Rust engine keeps
+authority and the old primary stays fenced with the partial copy, which no client reads. A write that reached the Rust
+engine during failback is the usual cause: stop every writer and run the failback plan again once; report a second
+mismatch.
 
 <a id="verification_incomplete"></a>
 ### `verification_incomplete`
