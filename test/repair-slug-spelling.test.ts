@@ -448,6 +448,31 @@ describe('guards that follow the page to its normal slug', () => {
 });
 
 describe('a recorded file the checkout does not have', () => {
+  test('a subfolder source in git-root slug mode compares the file in the checkout\'s own coordinates, and suggests a rename the checkout accepts', () => withEnv(env, async () => {
+    // The git repository holds the vault; the source is its notes/ folder, and git-root slugs keep the notes/ prefix.
+    const id = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+    const vault = join(home, id);
+    mkdirSync(join(vault, 'notes'), { recursive: true });
+    execFileSync('git', ['-C', vault, 'init', '-q', '-b', 'main']);
+    const root = join(vault, 'notes');
+    await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"slug_root_mode":"git-root"}')`, [id, root]);
+    // Already at the normal path: notes/alice.md in the repository, alice.md in the source folder.
+    const placed = await storeAs(id, 'NOTES/Alice');
+    writeFileSync(join(root, 'alice.md'), page('Alice', 'file body'));
+    await engine.executeRaw("UPDATE pages SET source_path='notes/alice.md' WHERE id=$1", [placed.id]);
+    // Not yet renamed: notes/Bob.md, which must become notes/bob.md.
+    const misplaced = await storeAs(id, 'NOTES/Bob');
+    writeFileSync(join(root, 'Bob.md'), page('Bob', 'file body'));
+    await engine.executeRaw("UPDATE pages SET source_path='notes/Bob.md' WHERE id=$1", [misplaced.id]);
+
+    const preview = await repairJson(previewArgs(id));
+    expect(classes(preview)).toEqual({ [`${id}:NOTES/Alice`]: 'move', [`${id}:NOTES/Bob`]: 'rename_file_first' });
+    const bob = (preview.details as { items: Array<{ slug: string; fix?: { argv?: string[] } }> }).items.find(item => item.slug === 'NOTES/Bob');
+    expect(bob?.fix?.argv).toEqual(['git', '-C', root, 'mv', 'Bob.md', 'bob.md']);
+    expect(await repairJson(applyArgs(id, preview.preview_hash))).toMatchObject({ applied: 1 });
+    expect(await row(id, 'notes/alice')).toMatchObject({ id: placed.id });
+  }), 60_000);
+
   test('a page that records its normal-path file with no such file in the checkout is rename_file_first and nothing moves', () => withEnv(env, async () => {
     const s = await newSource(true);
     const missing = await storeAs(s.id, 'Docs/Missing');
