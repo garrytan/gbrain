@@ -5,3 +5,5 @@
 
 ### Changed
 - The Rust brain's migration journal has new unit tests (an id is unique across sources, a switch keeps its receipts and update time, the newest unfinished migration is by creation time), and the whole migrate flow now has a parity test that runs on PGLite, Postgres and the Rust engine. No behavior change.
+
+<!-- behavior-change: access_migrate_refuses_non_owner_32h -->
