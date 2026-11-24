@@ -3738,7 +3738,8 @@ printed for unknown pages.
 
 <a id="file-drift-held"></a>**Held drift, one Decision at a time** (#6712). A managed sync holds a
 two-sided change as `file_drift` with a `side` (`both`: the file and the page
-both changed since the last import; `unknown`: the page has no import record
+both changed since the last import; `database`: only the page changed since
+the file was last imported; `unknown`: the page has no import record
 to tell; `deleted`: one side is a deletion) and, for a deleted side, a
 `state`: `tombstone_edited` (the page was deleted and the file was edited, or
 [came back as it was](#file-drift-restored)), `purged_differs` (a purged page's
@@ -3916,7 +3917,10 @@ them changed. A preview that finds nothing still prints an apply command; it
 applies nothing. Page and
 file agree when they differ only in formatting sync does not import (frontmatter
 key order or quoting, or a retype's database-only `legacy_type` stamp on a file that
-still names the old type). An apply refused before it published reserves no request
+still names the old type), or only in where the timeline is split (a page imported
+before v0.46.25.0 keeps a bare dated `## Timeline` section inside its stored body,
+which today's parser reads from the same file as the timeline; this covers pages
+stored inline on sources that are not read-only mirrors). An apply refused before it published reserves no request
 id, so the apply a fresh preview prints goes through. A page with
 no recorded file origin (no source path, and a source URI that is not a
 `file:` URI) is compared with, and adopts, the file at its slug path, spelled
@@ -3927,7 +3931,10 @@ the next sync re-screen every held `file_drift` page that is not a deletion
 once: a page that now agrees with its file is released with no commit and no
 change to its body, type or stamps (a stale stored copy of the `type` key is
 normalised away), and the sync prints `Released N held file(s) that no longer need a
-decision.` (JSON `holds_released`). A page a read-only mirror stored database-only (`mirror_read_only`)
+decision.` (JSON `holds_released`). The timeline-split reading above does not
+trigger that re-screen: a hold an earlier release wrote for such a page waits until
+`gbrain sources retry-held <id>` or a `release_hold` apply asks for it, so a plain
+sync never imports a file over a held page. A page a read-only mirror stored database-only (`mirror_read_only`)
 is compared with the file at its slug path once its source is writable again;
 the apply records that path and clears the stamp.
 
