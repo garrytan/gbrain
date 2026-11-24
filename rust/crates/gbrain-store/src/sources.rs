@@ -634,6 +634,67 @@ mod tests {
         );
     }
 
+    /// A value nested 127 levels deep: the deepest a client can send (napi boundary tests).
+    fn deep(levels: usize) -> serde_json::Value {
+        let mut v = serde_json::json!(1);
+        for _ in 0..levels {
+            v = serde_json::Value::Array(vec![v]);
+        }
+        v
+    }
+
+    #[test]
+    fn a_source_config_too_deep_to_read_back_is_refused_and_the_source_still_reads() {
+        let store = crate::test_support::store();
+        let wiki = super::SourceInput {
+            id: "wiki".into(),
+            ..Default::default()
+        };
+        store.upsert_source(&wiki).unwrap();
+        let mut patch = serde_json::Map::new();
+        patch.insert("x".into(), deep(127));
+        let refused = store.update_source_config("wiki", &patch).unwrap_err();
+        assert_eq!(refused.code, crate::error::INVALID_ARGUMENT, "{refused}");
+        let mut config = serde_json::Map::new();
+        config.insert("x".into(), deep(127));
+        let deep_create = super::SourceInput {
+            id: "deep".into(),
+            config: Some(config),
+            ..Default::default()
+        };
+        assert_eq!(
+            store.upsert_source(&deep_create).unwrap_err().code,
+            crate::error::INVALID_ARGUMENT
+        );
+        // Nothing unreadable was stored: both sources read, and the shallow config still writes.
+        assert!(store.get_source_by_id("wiki").unwrap().is_some());
+        assert!(store.get_source_by_id("deep").unwrap().is_none());
+        // The deepest config that still fits: the record, the config object and 125 arrays are 127 levels,
+        // the most serde_json reads back, and it does. One level more is refused.
+        let mut over = serde_json::Map::new();
+        over.insert("x".into(), deep(126));
+        assert_eq!(
+            store.update_source_config("wiki", &over).unwrap_err().code,
+            crate::error::INVALID_ARGUMENT
+        );
+        let mut edge = serde_json::Map::new();
+        edge.insert("x".into(), deep(125));
+        assert!(store.update_source_config("wiki", &edge).unwrap());
+        let row = store.get_source_by_id("wiki").unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&row).unwrap()["config"]["x"],
+            deep(125)
+        );
+        let mut shallow = serde_json::Map::new();
+        shallow.insert("x".into(), deep(100));
+        assert!(store.update_source_config("wiki", &shallow).unwrap());
+        let row = store.get_source_by_id("wiki").unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&row).unwrap()["config"]["x"],
+            deep(100)
+        );
+    }
+
     #[test]
     fn the_upstream_observation_lands_on_one_source_only() {
         let store = crate::test_support::store();
