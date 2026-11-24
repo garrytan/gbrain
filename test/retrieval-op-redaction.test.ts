@@ -177,6 +177,7 @@ const SWEEP: Record<string, Row> = {
   find_contradictions: { args: {}, content: false },
   find_experts: { args: { topic: 'PLANTMARK', limit: 10 } },
   find_trajectory: { args: { entity_slug: 'people/alice-example' } },
+  learned: { args: { since: '2000-01-01' }, content: false },
   code_callers: { skip: 'code-index fixture pipeline; code-intel suites own it' },
   code_callees: { skip: 'code-index fixture pipeline; code-intel suites own it' },
   code_def: { skip: 'code-index fixture pipeline; code-intel suites own it' },

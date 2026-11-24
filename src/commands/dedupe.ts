@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
-import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind } from '../core/entities/duplicates.ts';
+import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind, type EntityPage } from '../core/entities/duplicates.ts';
 import { autoLinkCompanies } from '../core/entities/company-auto-link.ts';
 import { canonicalOf, decidedSets, decisionId, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
@@ -114,7 +114,7 @@ const memberText = (m: IdentityMemberRef) => `${m.source_id}:${m.slug}`;
 const contactOnly = (g: DuplicateGroup) => g.evidence.some(e => e.rule === 'contact_key_only');
 const sharesId = (g: DuplicateGroup) => g.evidence.some(e => e.matcher === 'shared_key' && e.key_class === 'exclusive');
 
-interface Scan { result: DuplicateResult; read: IdentityDecisionsRead; kindOf: Map<string, EntityKind> }
+export interface Scan { result: DuplicateResult; read: IdentityDecisionsRead; kindOf: Map<string, EntityKind>; pages: Map<string, EntityPage> }
 
 /** Confirmed on its own, after reading its hint line: contact-only groups, and person groups that share an id (gate_rev 7). */
 const confirmAlone = (s: Scan, g: DuplicateGroup) => contactOnly(g) || (s.kindOf.get(g.id) === 'person' && sharesId(g));
@@ -126,11 +126,15 @@ async function readDecisions(engine: BrainEngine): Promise<IdentityDecisionsRead
   return engine.listIdentityDecisions();
 }
 
-async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; sourceId?: string } = {}): Promise<Scan> {
+/** The preview: every current group with confirmed and rejected ones left out. Read-only; learning_derive and learned read it too. */
+export async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; sourceId?: string } = {}): Promise<Scan> {
   const read = await readDecisions(engine);
-  const { result, kindOf } = await findTypedDuplicateGroups(engine, { ...opts, decided: decidedSets(read) });
-  return { result, read, kindOf };
+  const { result, kindOf, pages } = await findTypedDuplicateGroups(engine, { ...opts, decided: decidedSets(read) });
+  return { result, read, kindOf, pages };
 }
+
+/** Whether `gbrain dedupe confirm <id>` takes this group; every current group takes reject. */
+export const confirmable = (g: DuplicateGroup) => g.kind === 'cross_source' && CONFIRMABLE.has(g.class);
 
 export async function runDedupe(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
@@ -595,6 +599,8 @@ function classesText(r: ClassesReport): string {
   lines.push('  by class: ' + PAIR_CLASSES.map(c => `${c} ${r.classes[c]}`).join(', '));
   lines.push(`  left out: ${r.skipped.already_linked} already linked, ${r.skipped.decided_apart} you recorded as different, ${r.skipped.large_groups} name group(s) of more than 10 pages, ${r.skipped.no_class} with names that disagree and nothing shared`);
   lines.push(`  evidence read: ${r.email.pages} email page(s); ${r.messaging.pages} chat page(s) in ${r.messaging.chats} chat(s), ${r.messaging.one_to_one} one-to-one${r.messaging.too_large ? `, ${r.messaging.too_large} too large to read` : ''}; Signal has no reader`);
+  const seg = r.messaging.segmented_page;
+  if (seg.read || seg.set_aside) lines.push(`  chat pages stored in segments: ${seg.read} read whole, ${seg.set_aside} set aside (over 24 MiB or not readable as one body; their chats add no evidence)${seg.set_aside ? ': ' + seg.pages.slice(0, 20).map(p => `${p.source_id}:${p.slug}`).join(', ') + (seg.set_aside > 20 ? ` and ${seg.set_aside - 20} more (--json lists every one)` : '') : ''}`);
   if (r.exa.mode === 'off') lines.push('  web search: off (add --exa)');
   else {
     const x = r.exa;
