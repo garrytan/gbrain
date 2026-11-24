@@ -45,7 +45,7 @@ async function addSource(id: string) {
 }
 
 const connectorRun = (result: Record<string, unknown>): SyncResult => withConnectorPartialReason({ fromCommit: null, toCommit: '', added: 0, modified: 0,
-  deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], ...result } as SyncResult);
+  deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [], ...result } as unknown as SyncResult);
 
 async function addSyncJob(sourceId: string, status: string, partialOrResult: Record<string, unknown> | null,
   opts: { finishedHoursAgo?: number; lockMinutes?: number } = {}): Promise<number> {
