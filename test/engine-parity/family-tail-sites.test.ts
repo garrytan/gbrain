@@ -23,10 +23,7 @@
  *    relationship or names a private page to a remote caller in `most_connected`.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18),
  *    so no case compared them across engines.
- *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence; on a Rust brain that
- *    write queues on a refused link-preparation read, so those cases stop on that typed refusal: a named known stop at
- *    liveSlugAliases, persistence/links-preparation.ts:29, which lane 1 (rust-engine/wikilink-put-rust) serves; the pin
- *    comes out when that lands), links from addLink or
+ *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence), links from addLink or
  *    replaceDerivedLinks, takes from
  *    addTakesBatch, runs and queries from their typed writers. Ids differ between arms, so every case maps them to slugs or
  *    to the name of the row it seeded.
@@ -257,14 +254,6 @@ function watched(engine: BrainEngine) {
 }
 
 /**
- * Known stop on Rust (lane 1 owns it, on rust-engine/wikilink-put-rust): put_page's link preparation reads the live slug
- * aliases through executeRaw (liveSlugAliases, src/core/persistence/links-preparation.ts:29), so on a Rust brain a page
- * with links queues instead of landing, and the two apply-mode cases stop there. The pin fails as soon as that read is
- * served: the cases must then compare equal, and whichever of the two changes lands second removes this pin.
- */
-const RUST_KNOWN_STOP = /at liveSlugAliases \([^)]*src\/core\/persistence\/links-preparation\.ts:29:/;
-
-/**
  * Run a write that a missing capability can queue instead of refuse: put_page answers `write_pending` with
  * blocked_reason engine_capability_missing when a step of its link preparation is refused. The case then stops on
  * that typed refusal, which is what the queued write is waiting for.
@@ -277,14 +266,9 @@ async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, backend: str
     const request = (error as { writeRequest?: { blocked_reason?: unknown; write_error?: unknown } })?.writeRequest;
     // A refused preparation step parks the request as blocked, or ends it failed with the typed refusal as its write error.
     const blocked = request?.blocked_reason ?? request?.write_error;
-    if (blocked === 'engine_capability_missing' && w.refusal() !== null) {
-      if (backend === 'rust') expect(w.refusalSite()).toMatch(RUST_KNOWN_STOP);
-      throw w.refusal();
-    }
+    if (blocked === 'engine_capability_missing' && w.refusal() !== null) throw w.refusal();
     throw error;
   }
-  // The known stop above: reaching here on Rust means the read is served, so this pin has to go.
-  if (backend === 'rust') expect('the apply-mode case ran to the end on Rust').toBe('the case stops at liveSlugAliases (RUST_KNOWN_STOP)');
   return out;
 }
 

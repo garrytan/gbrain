@@ -113,7 +113,7 @@ test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts-unique-violation.test.ts	3	0
 test/engine-parity/facts.test.ts	37	0
-test/engine-parity/family-tail-sites.test.ts	6	6
+test/engine-parity/family-tail-sites.test.ts	8	4
 test/engine-parity/fence-overlay.test.ts	2	0
 test/engine-parity/fenced-import-purge.test.ts	1	0
 test/engine-parity/field-usage.test.ts	3	0
