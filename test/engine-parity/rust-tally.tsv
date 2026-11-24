@@ -187,7 +187,7 @@ test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
-test/engine-parity/link-reads.test.ts	15	1
+test/engine-parity/link-reads.test.ts	16	0
 test/engine-parity/link-temporal.test.ts	22	0
 test/engine-parity/links.test.ts	38	0
 test/engine-parity/list-reads.test.ts	2	0

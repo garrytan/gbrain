@@ -30,7 +30,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `listJunkEntityHubs({ edgeThreshold, maxChunks, limit })` | served |
 | `countEntityPages(filter, { sourceId?, excludeQuarantined? })` | served |
 | `entityGraphCoverage(filter)` | served |
-| `entityFeatureCoverage(filter, feature, { samplePercent? })` | served; a `samplePercent` refuses |
+| `entityFeatureCoverage(filter, feature, { samplePercent? })` | served; a `samplePercent` of 100 reads every page, a lower one refuses |
 | `countDatedMeetingPages()` | served |
 | `countForeignEdges(slug, sourceId, direction)` | served |
 | `listLivePageSummaries(scope?)` | served |
@@ -163,8 +163,9 @@ alone unless the statement also applies `pageReadFilter(.., live)`.
   fixtures (`tools/gbrain/test/`) or the person template. `withTimeline` counts pages with a timeline row.
 - `entityFeatureCoverage`: `{ sampleSize, matched }` over live, unquarantined entity pages in every source: the page
   count, and how many are the target of a link (`links`) or have a timeline row (`timeline`). PGLite and Postgres take
-  an optional `TABLESAMPLE BERNOULLI` percent; the store reads every page, so a `samplePercent` refuses with
-  `engine_capability_missing`.
+  an optional `TABLESAMPLE BERNOULLI` percent. The store reads every page: a `samplePercent` of 100 draws every row,
+  so it is served as the whole population; a lower one is a random draw and refuses with `engine_capability_missing`
+  (doctor and onboard sample only on Postgres). A percent outside (0, 100] fails with the SQL engines' message.
 - `countDatedMeetingPages`: live pages of type `meeting` with an effective date.
 - `countForeignEdges`: links of one page, whose other end is in another source; `in`, `out` or `both` (each link once).
 - `listLivePageSummaries`: `{ slug, type, quarantined }` for pages that are not soft-deleted and pass
