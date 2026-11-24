@@ -33,6 +33,7 @@ import type { OperationContext } from './ops/contract.ts';
 import { submitPageMutation } from './persistence/page-mutations.ts';
 import { waitForWrite } from './persistence/service.ts';
 import type { TakeProposalRow } from './engine-sql/take-proposals.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 export type { TakeProposalRow };
 
@@ -256,7 +257,10 @@ export async function acceptProposal(
       if (after.every(r => SETTLED_WITHOUT_COMMIT.has(r.state))) {
         try {
           await engine.releaseTakeProposalClaim(id, claimedAt);
-        } catch { /* compensation is best-effort */ }
+        } catch (c) {
+          // Compensation is best-effort, but an engine that cannot run it refuses: the claim stays stuck and must not look settled.
+          rethrowCapabilityRefusal(c);
+        }
       }
       throw e;
     }

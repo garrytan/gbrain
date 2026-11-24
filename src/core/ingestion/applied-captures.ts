@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const APPLIED_CAPTURE_TTL_DAYS = 90;
 
@@ -64,16 +65,12 @@ export async function saveAppliedCapture(exec: Exec, key: string, sourceId: stri
 }
 
 /** 90-day GC, called from the dream cycle's purge phase. Best-effort: 0 on any failure (a brain before v296 has no table). */
-export async function purgeStaleAppliedCaptures(engine: Exec, ttlDays = APPLIED_CAPTURE_TTL_DAYS): Promise<number> {
+export async function purgeStaleAppliedCaptures(engine: Pick<BrainEngine, 'purgeStaleAppliedCaptures'>, ttlDays = APPLIED_CAPTURE_TTL_DAYS): Promise<number> {
   try {
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `WITH deleted AS (
-         DELETE FROM ingest_applied_captures WHERE applied_at < now() - ($1 || ' days')::interval RETURNING 1
-       )
-       SELECT count(*)::text AS count FROM deleted`,
-      [String(ttlDays)]);
-    return Number(rows[0]?.count ?? 0);
-  } catch {
+    return await engine.purgeStaleAppliedCaptures(ttlDays);
+  } catch (e) {
+    // A brain before v296 has no table; an engine that cannot purge refuses instead of reporting 0.
+    rethrowCapabilityRefusal(e);
     return 0;
   }
 }

@@ -142,6 +142,7 @@ export const LEDGER_MEMBERS = {
 
   // Group D (trust tier reads)
   listCorePageRows: 'pages',
+  listPendingCoreEditNotices: 'pages',
   listTrustScanRows: 'facts',
   countUnscannedTrustRows: 'facts',
   readTrustScanCursor: 'facts',

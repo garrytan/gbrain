@@ -3,7 +3,7 @@
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
 import type { AbandonedTakeRow, HeldFenceTakeRow, HeldFenceTakeSpec, HolderResolvedTakeRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef, TakesLeavingFence } from '../engine-sql/takes-reads.ts';
-import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRowQuery, CorePageRow, CorePageRowSpec, CursorEditionRow, PageIdRef, PageVersionEditionRow, TrustScanRow, TrustScanRowSpec, TrustScanTable, UnscannedTrustSpec, ValidTimeIdentityRow, ValidTimeIdentitySpec, ValidTimePickSpec } from '../engine-sql/trust-tier-reads.ts';
+import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRowQuery, CoreEditNoticeRow, CorePageRow, CorePageRowSpec, CursorEditionRow, PageIdRef, PageVersionEditionRow, TrustScanRow, TrustScanRowSpec, TrustScanTable, UnscannedTrustSpec, ValidTimeIdentityRow, ValidTimeIdentitySpec, ValidTimePickSpec } from '../engine-sql/trust-tier-reads.ts';
 import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
@@ -373,6 +373,8 @@ export interface ReadStatementMembers {
   // Group D (trust tier reads): the stamped-tier reads of core memory, the trust scan, belief history, page history and valid time.
   /** The live `always_load` pages, by source then slug, with the trust columns a delivery read asks for. */
   listCorePageRows(spec: CorePageRowSpec): Promise<CorePageRow[]>;
+  /** The unacknowledged remote-edit notices of core pages, the newest per page, by source then slug in byte order, at most 50; only `sourceIds` when not null. */
+  listPendingCoreEditNotices(sourceIds: readonly string[] | null): Promise<CoreEditNoticeRow[]>;
   /** Rows of one scanned table above an id whose stored tier is listed, by id. */
   listTrustScanRows(spec: TrustScanRowSpec): Promise<TrustScanRow[]>;
   /** How many rows of one scanned table above an id (and at or below a ceiling) have a listed stored tier. */

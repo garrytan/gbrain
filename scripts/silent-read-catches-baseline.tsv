@@ -259,7 +259,6 @@ src/commands/frontmatter.ts#runGenerate>processFile	catch_empty	1
 src/commands/git.ts#untrackPageVerdict	promise_catch_empty	1
 src/commands/google-attachments.ts#runGoogleAttachments	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/commands/google.ts#readPending	catch_empty	1
-src/commands/google.ts#runGoogleStatus	capability_refusal_swallowed	1
 src/commands/google.ts#runGoogleStatus	catch_empty	1
 src/commands/graph-query.ts#countForeignEdges	catch_empty	1
 src/commands/graph-query.ts#runGraphQuery	catch_empty	1
@@ -464,7 +463,6 @@ src/core/access/requester-scope.ts#credentialScopeFor	catch_empty	1
 src/core/advisor/collect-chronicle.ts#collectChronicle.collect	capability_refusal_swallowed	1
 src/core/advisor/collect-chronicle.ts#collectChronicle.collect	catch_empty	2
 src/core/advisor/collect-mcp-client-fit.ts#collectMcpClientFit.collect	catch_empty	3
-src/core/advisor/collect-mcp-client-fit.ts#readClientSurfaces	capability_refusal_swallowed	1
 src/core/advisor/collect-mcp-client-fit.ts#readClientSurfaces	catch_empty	1
 src/core/advisor/collect-migration.ts#collectMigration.collect	catch_empty	1
 src/core/advisor/collect-schema-pack.ts#collectSchemaPack.collect	catch_empty	1
@@ -514,10 +512,7 @@ src/core/autopilot-heartbeat.ts#readDaemonStaleAfter	catch_empty	1
 src/core/autopilot-lock.ts#readProcessCommand	catch_empty	1
 src/core/autopilot-paths.ts#autopilotPauseReason	catch_empty	1
 src/core/autopilot-paths.ts#readInstallIdRecord	catch_empty	1
-src/core/backfill-base.ts#clearBackfillCheckpoint	capability_refusal_swallowed	1
-src/core/backfill-base.ts#clearBackfillCheckpoint	catch_empty	1
 src/core/backfill-base.ts#ensureBackfillIndex	capability_refusal_swallowed	1
-src/core/backfill-base.ts#getCheckpoint	capability_refusal_swallowed	1
 src/core/backfill-base.ts#getCheckpoint	catch_empty	1
 src/core/backfill-base.ts#runBackfill	capability_refusal_swallowed	2
 src/core/backfill-base.ts#runBackfill>writeBatch<anon@1>	capability_refusal_swallowed	2
@@ -602,7 +597,6 @@ src/core/brainstorm/orchestrator.ts#loadCalibrationContext	catch_empty	1
 src/core/budget/budget-tracker.ts#loadPricingOverrides	catch_empty	1
 src/core/budget/daily-ledger.ts#dailyLedger>dispatch	capability_refusal_swallowed	1
 src/core/budget/daily-ledger.ts#dailyLedger>dispatch	catch_empty	1
-src/core/budget/daily-ledger.ts#dailyLedger>release	capability_refusal_swallowed	1
 src/core/budget/daily-ledger.ts#dailyLedger>release	catch_empty	1
 src/core/budget/daily-ledger.ts#dailyLedger>reserve	capability_refusal_swallowed	1
 src/core/budget/daily-ledger.ts#dailyLedger>settle	capability_refusal_swallowed	1
@@ -640,7 +634,6 @@ src/core/connect-probe.ts#DEFAULT_DEPS.connectAndCall	catch_empty	1
 src/core/connection-audit.ts#tailRecentErrors	catch_empty	1
 src/core/connection-manager.ts#ConnectionManager.healthCheck	catch_empty	2
 src/core/connection-manager.ts#ConnectionManager.retire	promise_catch_empty	1
-src/core/connectors/api-source.ts#recordRateLimit	capability_refusal_swallowed	1
 src/core/connectors/api-source.ts#recordRateLimit	promise_catch_empty	1
 src/core/connectors/connector-hold-session.ts#ConnectorHoldSession.open	promise_catch_empty	2
 src/core/connectors/credentials.ts#loadCredential	catch_empty	1
@@ -725,7 +718,6 @@ src/core/contextual-retrieval-service.ts#resolveSynopsisMaxTokens	catch_empty	1
 src/core/conversation-parser/body.ts#resolveTranscriptPath	catch_empty	1
 src/core/conversation-parser/body.ts#resolveWithinRoot	catch_empty	1
 src/core/conversation-parser/llm-base.ts#runLlmCall	catch_empty	1
-src/core/core-memory.ts#pendingCoreNotices	capability_refusal_swallowed	1
 src/core/core-memory.ts#pendingCoreNotices	catch_empty	1	fixed on rust-engine/doctor-checks-2 e6a66e9306, not on master
 src/core/core-memory.ts#readCoreSettings	promise_catch_empty	3
 src/core/creds/providers/google.ts#fetchSendAsAliases	catch_empty	1
@@ -763,7 +755,6 @@ src/core/cycle/extract-atoms.ts#runPhaseExtractAtoms	catch_empty	2
 src/core/cycle/extract-atoms.ts#runPhaseExtractAtoms>recordItemFailureCount	capability_refusal_swallowed	1
 src/core/cycle/extract-atoms.ts#tombstonedTranscriptsForHashes	capability_refusal_swallowed	1
 src/core/cycle/filing-rules.ts#loadFromCandidates	catch_empty	1
-src/core/cycle/filing-rules.ts#resolveBrainRepoPath	capability_refusal_swallowed	1
 src/core/cycle/filing-rules.ts#resolveBrainRepoPath	catch_empty	1
 src/core/cycle/grade-takes.ts#GradeTakesPhase.process	promise_catch_empty	1
 src/core/cycle/grounding-decide.ts#embedWindows	catch_empty	1
@@ -923,7 +914,7 @@ src/core/git/push-credential.ts#readCredentialRefusalFile	catch_empty	1
 src/core/git/push-credential.ts#recordCredentialRefusalFile	catch_empty	1
 src/core/git/range-secret-scan.ts#pageWriteCommits	catch_empty	1
 src/core/git/range-secret-scan.ts#stagedScanPublishRefusal	catch_empty	1
-src/core/git/redact-finish.ts#secretPublishMaintenance	capability_refusal_swallowed	3
+src/core/git/redact-finish.ts#secretPublishMaintenance	capability_refusal_swallowed	2
 src/core/git/redact-finish.ts#secretPublishMaintenance	catch_empty	2
 src/core/git/redact-finish.ts#secretPublishMaintenance	promise_catch_empty	1
 src/core/git/redact-finish.ts#sourceRoots	capability_refusal_swallowed	1
@@ -939,7 +930,6 @@ src/core/google/counterparty.ts#emailAliasElsewhere	capability_refusal_swallowed
 src/core/google/file-modes.ts#scanGoogleFileModes	catch_empty	1
 src/core/google/google-clients.ts#GoogleApiClient.fetchJSON	promise_catch_empty	1
 src/core/google/google-source.ts#runGoogleSyncInner	catch_empty	2
-src/core/google/loop-catchup.ts#pendingLoopsExtractDepth	capability_refusal_swallowed	1
 src/core/google/loop-catchup.ts#pendingLoopsExtractDepth	catch_empty	1
 src/core/google/loop-detect.ts#upsertThreadLoop	catch_empty	1
 src/core/google/loops-exclusion.ts#excludedLabelTokens	catch_empty	1
@@ -947,8 +937,6 @@ src/core/google/loops-extract.ts#runLoopsExtract	catch_empty	1
 src/core/google/loops-reciprocity.ts#ownerWroteToFor	catch_empty	1
 src/core/google/loops-spend.ts#loopsSpendGate	catch_empty	1
 src/core/google/loops-spend.ts#readLoopsExtractDailyCap	catch_empty	1
-src/core/google/people-calendar-sweep.ts#calendarPageRelPathByEventId	capability_refusal_swallowed	1
-src/core/google/people-calendar-sweep.ts#contactPageRelPathByContactId	capability_refusal_swallowed	1
 src/core/grants/legacy-token.ts#resolveTokenGrant	catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master (the in-memory conversion authorizes identically)
 src/core/grants/legacy-token.ts#touchTokenLastUsed	promise_catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master
 src/core/grants/service.ts#readClientCatalogProvenance	catch_empty	1
@@ -971,7 +959,6 @@ src/core/import-file.ts#maybeOcrGated	catch_empty	1
 src/core/import-file.ts#maybeOcrGated>bump	catch_empty	1
 src/core/import-file.ts#ocrBudgetExceeded	catch_empty	1
 src/core/import-screen.ts#readImportSanityConfig>readKey	catch_empty	1
-src/core/ingestion/applied-captures.ts#purgeStaleAppliedCaptures	capability_refusal_swallowed	1
 src/core/ingestion/applied-captures.ts#purgeStaleAppliedCaptures	catch_empty	1
 src/core/ingestion/sources/gstack-learnings.ts#GstackLearningsSource.discoverPaths	catch_empty	1
 src/core/last-retrieved.ts#isTrackingEnabled	catch_empty	1
@@ -1096,22 +1083,17 @@ src/core/ops/get-page-projection.ts#pageTrustForRead	promise_catch_empty	1	audit
 src/core/ops/jobs.ts#emitNoWorkerNotice	capability_refusal_swallowed	1
 src/core/ops/jobs.ts#emitNoWorkerNotice	catch_empty	1
 src/core/ops/links.ts#hintScopedLinkMiss	catch_empty	1
-src/core/ops/loops.ts#deepLinksFor	capability_refusal_swallowed	1
 src/core/ops/loops.ts#deepLinksFor	catch_empty	1
-src/core/ops/loops.ts#open_loops.handler	capability_refusal_swallowed	1
 src/core/ops/loops.ts#open_loops.handler	catch_empty	1
 src/core/ops/loops.ts#sourceHasGoogleContent	catch_empty	1
-src/core/ops/loops.ts#withheldNoise	capability_refusal_swallowed	1
 src/core/ops/loops.ts#withheldNoise	catch_empty	1
 src/core/ops/pages.ts#get_page.handler	catch_empty	1
 src/core/ops/pages.ts#get_page.handler	promise_catch_empty	1	audit pages-13: readHeldPages fails open (file_held silently omitted); the other get_page catches are not named
 src/core/ops/persistence.ts#handler	promise_catch_empty	1
-src/core/ops/put-page-revision-source.ts#rethrowNamingRevisionSource	capability_refusal_swallowed	1
 src/core/ops/put-page-revision-source.ts#rethrowNamingRevisionSource	catch_empty	1
 src/core/ops/search.ts#emitFanoutNotices	promise_catch_empty	1
 src/core/ops/search.ts#evidenceOutput<anon@1>	promise_catch_empty	1	audit contract-10: the pageTrust lookup failure is dropped
 src/core/ops/search.ts#hasUnsealedPagesInScope	catch_empty	1
-src/core/ops/search.ts#prepareExplainTarget	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/ops/search.ts#query.handler	catch_empty	1
 src/core/ops/search.ts#query.handler	promise_catch_empty	2
 src/core/ops/search.ts#resolveSnippetCap	catch_empty	1
@@ -1122,8 +1104,6 @@ src/core/ops/takes.ts#countMcpResolved	catch_empty	1
 src/core/ops/whois.ts#whois.handler	promise_catch_empty	1
 src/core/output/post-write.ts#isLintOnPutPageEnabled	catch_empty	1
 src/core/output/post-write.ts#writeLocalLintLog	catch_empty	1
-src/core/output/writer.ts#WriteTxImpl.createEntity	capability_refusal_swallowed	1
-src/core/output/writer.ts#WriteTxImpl.createEntity	catch_empty	1
 src/core/owned-folder/destination.ts#defaultCheckout	promise_catch_empty	1
 src/core/owned-folder/remove.ts#pruneEmptyDirs	catch_empty	1
 src/core/owned-folder/remove.ts#removeOwnedFolder	catch_empty	1
@@ -1715,7 +1695,6 @@ src/core/sync-upstream-rewrite.ts#settleUpstreamAfterPull	catch_empty	1
 src/core/sync-upstream.ts#recordUpstreamObservation	catch_empty	1
 src/core/sync.ts#ownsGlobalSyncAnchor	catch_empty	1
 src/core/sync.ts#pruneDir	catch_empty	1
-src/core/synopsis-sweep.ts#readLastSynopsisSweep	capability_refusal_swallowed	1
 src/core/synopsis-sweep.ts#readLastSynopsisSweep	catch_empty	1
 src/core/tailscale.ts#findTailscaleBinary<anon@2>	catch_empty	1
 src/core/take-proposals.ts#acceptProposal	catch_empty	1

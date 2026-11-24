@@ -184,6 +184,7 @@ const OOS = {
 export const DOMAIN_OF: Record<string, string> = {
   'readSourcePurgeEpoch': OOS.callerRawSql,
   'listCorePageRows': OOS.trustTierReads,
+  'listPendingCoreEditNotices': OOS.trustTierReads,
   'listTrustScanRows': OOS.trustTierReads,
   'countUnscannedTrustRows': OOS.trustTierReads,
   'readTrustScanCursor': OOS.trustScan,
@@ -229,6 +230,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'hasWithdrawnFenceClaim': OOS.withdrawalFence,
   'closeOpenLoop': OOS.openLoops,
   'listOpenLoops': OOS.openLoops,
+  'countOpenLoopsByCounterpartyEmail': OOS.openLoops,
   'upsertOpenLoop': OOS.openLoops,
   'readBeliefTombstones': OOS.beliefLedger, 'readBeliefRedactions': OOS.beliefLedger, 'readLatestBeliefCoverage': OOS.beliefLedger, 'hasBeliefBaseline': OOS.beliefLedger, 'listBeliefBaselinePending': OOS.beliefLedger, 'countBeliefBaselineSlugs': OOS.beliefLedger,
   'insertBeliefRedaction': OOS.beliefLedger, 'releaseBeliefRedactions': OOS.beliefLedger, 'insertBeliefEvents': OOS.beliefLedger, 'markBeliefCommits': OOS.beliefLedger, 'readOpenBeliefLifetimes': OOS.beliefLedger, 'endBeliefLifetime': OOS.beliefLedger,
@@ -1559,6 +1561,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'deleteOpCheckpoint': OOS.writeMisc,
   'deleteOpCheckpointPaths': OOS.writeMisc,
   'purgeStaleCheckpoints': OOS.writeMisc,
+  'purgeStaleAppliedCaptures': OOS.writeMisc,
   'readHealthMemoClock': OOS.writeMisc,
   'listSynopsisSourceIds': OOS.writeMisc,
   'readSynopsisTierSources': OOS.synopsisTier,

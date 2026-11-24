@@ -464,6 +464,7 @@ export const FACTS_MEMBERS = {
   // open loops (engine-sql/open-loops.ts)
   upsertOpenLoop: 'facts',
   listOpenLoops: 'facts',
+  countOpenLoopsByCounterpartyEmail: 'facts',
   readEntityOpenLoops: 'facts',
   // loop mutes (engine-sql/loop-mutes.ts; key tag `F 0x10`, rust/docs/store/facts.md)
   addLoopSuppression: 'facts',
