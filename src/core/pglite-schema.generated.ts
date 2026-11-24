@@ -2994,7 +2994,7 @@ CREATE TABLE IF NOT EXISTS sync_notifier_sources (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Learning ledger (migration v332, nightly learning): pointers to what each cycle learned, no copied text.
+-- Learning ledger (migration v333, nightly learning): pointers to what each cycle learned, no copied text.
 CREATE TABLE IF NOT EXISTS learning_items (
   id                BIGSERIAL PRIMARY KEY,
   run_id            UUID NOT NULL,
