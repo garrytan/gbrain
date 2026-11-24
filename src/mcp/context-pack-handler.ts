@@ -30,7 +30,7 @@ import { corpusSpoolDir, parseWbFileName } from '../core/context/corpus-segments
 import { freezeSessionSource, resolveCorpusFileSource } from '../core/context/corpus-source.ts';
 import { loadCoreBlock } from '../core/core-memory.ts';
 import { opError } from '../core/ops/contract.ts';
-import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
+import { coreTrustIdentity, learnedLineFromEngine } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
 import { attachBrief, briefEnabled, resetBriefLedger, sessionStartBrief, SESSION_BRIEF_CUTOFF_MS, withBriefDeadline } from '../core/context/proactive-brief.ts';
 import { proactiveEligibility } from '../core/eligibility/registry.ts';
@@ -87,7 +87,8 @@ export function makeContextPackIpcHandler(
       const identity = await coreTrustIdentity(engine);
       // The OpenClaw lane reads the pressure gate on the same fetch; it checks remember's availability itself.
       const pressure = await readPressureGate(engine, true).catch(() => null);
-      const base = { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(pressure ? { pressure } : {}) };
+      const learned = await learnedLineFromEngine(engine, sessionSource);
+      const base = { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(pressure ? { pressure } : {}), ...(learned ? { learned } : {}) };
       if (identity !== null && identity === req.coreIdentity) return { ...base, coreTrust: { identity, unchanged: true } };
       const core = await coreForSession(engine, sessionSource);
       return { ...base, ...(core ? { core } : {}), ...(core && identity !== null ? { coreTrust: { identity, unchanged: false } } : {}) };
@@ -226,6 +227,11 @@ export function makeContextPackIpcHandler(
     // pack, inside what is left of a request-start cutoff. A compaction or
     // /clear re-entry is a context reset, so the session's ledger starts over.
     const isSessionStart = typeof req.trigger === 'string' && req.trigger.startsWith('session-start');
+    // Nightly learning: one count line per session (a compaction re-entry is the same session, so it gets none).
+    if (isSessionStart && req.trigger !== 'session-start:compact') {
+      const learned = await learnedLineFromEngine(engine, sessionSource);
+      if (learned) result.text = result.text ? `${learned.text}\n\n${result.text}` : learned.text;
+    }
     if (isSessionStart && await briefEnabled(engine)) {
       if (req.trigger === 'session-start:compact' || req.trigger === 'session-start:clear') resetBriefLedger(sessionSource, sessionId ?? undefined);
       const clock = { now: Date.now(), stopAt: startedAt + SESSION_BRIEF_CUTOFF_MS };

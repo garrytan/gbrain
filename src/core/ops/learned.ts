@@ -5,13 +5,30 @@
  * not seen yet. Never import from '../operations.ts' here (cycle).
  */
 
-import { opError, type Operation } from './contract.ts';
+import { opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { sourceScopeOpts } from './context.ts';
 import { sqlEngineKind } from '../sql-engine-kind.ts';
 import { learningTablePresent } from '../learning/kinds.ts';
 import { LEARNED_DEFAULT_LIMIT, LEARNED_MAX_LIMIT, readLearned } from '../learning/read.ts';
 import { learnedStats } from '../learning/stats.ts';
+import { keepItems, parseItemIds, undoItems } from '../learning/decide.ts';
+
+/** The ledger's sources this caller reads: every source for a local caller, the resolved scope for a remote one. */
+async function ledgerScope(ctx: OperationContext, name: string): Promise<string[] | null> {
+  sqlEngineKind(ctx.engine.kind, name);
+  if (!await learningTablePresent(ctx.engine)) {
+    throw opError('migrations_pending', "This brain has no learning ledger yet: its schema is older than the learned view.",
+      'Run gbrain apply-migrations --yes on the brain host, then let a dream cycle run.');
+  }
+  const scope = sourceScopeOpts(ctx);
+  if (ctx.remote !== false && !scope.sourceId && !scope.sourceIds) {
+    throw opError('permission_denied', `${name}: remote callers need a resolved source scope`,
+      'Pass a source this connection can read (fix lists them).',
+      { fix: readFix('Lists the sources this connection can read.', { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } }) });
+  }
+  return scope.sourceIds?.length ? scope.sourceIds : scope.sourceId ? [scope.sourceId] : null;
+}
 
 const learned: Operation = {
   name: 'learned',
@@ -34,7 +51,6 @@ const learned: Operation = {
   annotations: { readOnlyHint: true },
   cliHints: { name: 'learned' },
   handler: async (ctx, p) => {
-    sqlEngineKind(ctx.engine.kind, 'learned');
     let since: Date | undefined;
     if (p.since !== undefined && p.since !== null) {
       since = new Date(String(p.since));
@@ -48,20 +64,67 @@ const learned: Operation = {
       throw invalidParam(ctx, 'learned', 'limit', `learned: limit must be a whole number from 1 to ${LEARNED_MAX_LIMIT}, got ${JSON.stringify(p.limit)}`,
         { def: learned.params.limit, example: LEARNED_DEFAULT_LIMIT });
     }
-    if (!await learningTablePresent(ctx.engine)) {
-      throw opError('migrations_pending', "This brain has no learning ledger yet: its schema is older than the learned view.",
-        'Run gbrain apply-migrations --yes on the brain host, then let a dream cycle run.');
-    }
-    const scope = sourceScopeOpts(ctx);
-    if (ctx.remote !== false && !scope.sourceId && !scope.sourceIds) {
-      throw opError('permission_denied', 'learned: remote callers need a resolved source scope',
-        'Pass a source this connection can read (fix lists them).',
-        { fix: readFix('Lists the sources this connection can read.', { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } }) });
-    }
-    const sourceIds = scope.sourceIds?.length ? scope.sourceIds : scope.sourceId ? [scope.sourceId] : null;
+    const sourceIds = await ledgerScope(ctx, 'learned');
     if (p.stats === true) return { stats: await learnedStats(ctx.engine, ctx, { sourceIds, since }) };
     return readLearned(ctx.engine, ctx, { sourceIds, since, limit: Math.min(rawLimit, LEARNED_MAX_LIMIT) });
   },
 };
 
-export const learnedOperations: Operation[] = [learned];
+const IDS_EXAMPLE = '12,15';
+
+const learned_keep: Operation = {
+  name: 'learned_keep',
+  mutating: true,
+  idempotent: true,
+  outputRedaction: 'no_stored_text',
+  description:
+    'Keep items from the learned note: mark what the brain learned as right. Writes only the note\'s own record (no page or fact changes). ' +
+    'Takes item ids from learned (comma separated), or all for every pending change you can read from the last 7 days (up to 100). ' +
+    'Questions (facts that disagree, possible duplicate people) are answered, not kept.',
+  params: {
+    ids: { type: 'string', required: true, description: `Item ids from learned, comma separated (e.g. ${IDS_EXAMPLE}), or all.` },
+  },
+  scope: 'write',
+  annotations: { idempotentHint: true },
+  cliHints: { name: 'learned-keep', positional: ['ids'] },
+  handler: async (ctx, p) => {
+    const which = parseItemIds(p.ids);
+    if (which === null) {
+      throw invalidParam(ctx, 'learned_keep', 'ids', `learned_keep: ids must be item ids from learned or all, got ${JSON.stringify(p.ids)}`,
+        { def: learned_keep.params.ids, example: IDS_EXAMPLE });
+    }
+    const sourceIds = await ledgerScope(ctx, 'learned_keep');
+    return { action: 'keep', results: await keepItems(ctx.engine, ctx, sourceIds, which) };
+  },
+};
+
+const learned_undo: Operation = {
+  name: 'learned_undo',
+  mutating: true,
+  idempotent: true,
+  outputRedaction: 'no_stored_text',
+  description:
+    'Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), ' +
+    'a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, ' +
+    'with the commands to choose a version). For facts that disagree it rejects the newer fact on the brain host; for possible duplicate ' +
+    'people it returns the gbrain dedupe reject command for the brain host. Each result says what happened.',
+  params: {
+    ids: { type: 'string', required: true, description: `Item ids from learned, comma separated (e.g. ${IDS_EXAMPLE}).` },
+    reason: { type: 'string', description: 'Why it was wrong; recorded on the reversal (forget reason, loop note or revert reason).' },
+  },
+  scope: 'write',
+  annotations: { destructiveHint: true, idempotentHint: true },
+  cliHints: { name: 'learned-undo', positional: ['ids'] },
+  handler: async (ctx, p) => {
+    const ids = parseItemIds(p.ids);
+    if (ids === null || ids === 'all') {
+      throw invalidParam(ctx, 'learned_undo', 'ids', `learned_undo: ids must be item ids from learned (undo never takes all), got ${JSON.stringify(p.ids)}`,
+        { def: learned_undo.params.ids, example: IDS_EXAMPLE });
+    }
+    const sourceIds = await ledgerScope(ctx, 'learned_undo');
+    const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim().slice(0, 200) : null;
+    return { action: 'undo', results: await undoItems(ctx.engine, ctx, sourceIds, ids, reason) };
+  },
+};
+
+export const learnedOperations: Operation[] = [learned, learned_keep, learned_undo];

@@ -8090,5 +8090,58 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "name": "learned"
     },
     "area": "insights"
+  },
+  {
+    "name": "learned_keep",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Keep items from the learned note: mark what the brain learned as right. Writes only the note's own record (no page or fact changes). Takes item ids from learned (comma separated), or all for every pending change you can read from the last 7 days (up to 100). Questions (facts that disagree, possible duplicate people) are answered, not kept.",
+    "params": {
+      "ids": {
+        "type": "string",
+        "required": true,
+        "description": "Item ids from learned, comma separated (e.g. 12,15), or all."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "learned-keep",
+      "positional": [
+        "ids"
+      ]
+    }
+  },
+  {
+    "name": "learned_undo",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, with the commands to choose a version). For facts that disagree it rejects the newer fact on the brain host; for possible duplicate people it returns the gbrain dedupe reject command for the brain host. Each result says what happened.",
+    "params": {
+      "ids": {
+        "type": "string",
+        "required": true,
+        "description": "Item ids from learned, comma separated (e.g. 12,15)."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Why it was wrong; recorded on the reversal (forget reason, loop note or revert reason)."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "learned-undo",
+      "positional": [
+        "ids"
+      ]
+    }
   }
 ];

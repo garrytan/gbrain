@@ -153,6 +153,19 @@ for (const backend of testBackends()) {
       expect((await derive()).details.duplicates).toMatchObject({ recorded: 0 });
     });
 
+    test('undo on a duplicate question hands back the dedupe command; once answered there, the item closes and frees its slot', async () => {
+      for (const name of ['bob', 'carol']) await pair(name);
+      await derive();
+      const [item] = dupes(await local());
+      const undo = parse(await dispatchToolCall(engine, 'learned_undo', { ids: item!.id }, { remote: false }));
+      expect(undo.results).toEqual([{ id: item!.id, kind: 'duplicate_to_confirm', status: 'owner_command', reason: 'dedupe answers run on the brain host', command: item!.commands!.reject }]);
+      const state = async () => (await engine.executeRaw<{ state: string; decided_by: string | null }>('SELECT state, decided_by FROM learning_items WHERE id = $1', [item!.id]))[0];
+      expect(await state()).toEqual({ state: 'pending', decided_by: null });
+      await cli(['reject', item!.commands!.reject[3]!]);
+      expect((await derive()).details.duplicates).toMatchObject({ closed: 1, recorded: 0 });
+      expect(await state()).toEqual({ state: 'expired', decided_by: 'dedupe_preview' });
+    });
+
     test('an open question stays in the default note after it was shown and past the seven days, until it is answered', async () => {
       for (const name of NAMES) await pair(name);
       await derive();
