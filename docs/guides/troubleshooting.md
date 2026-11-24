@@ -835,7 +835,10 @@ standard` grades a full run instead), and prints one verdict in
 | 18 | `unknown` | nothing to act on, but a page-class check did not run fresh; `alert.consecutive_unknown` counts the runs in a row |
 
 `act` wins over `unknown`; both lists are always kept. Page on 17, and on 18
-from the second run in a row. Exit 1 means doctor itself failed. The counter
+from the second run in a row. Exit 1 means doctor itself failed. A configured
+PGLite datastore that is not there (an unmounted drive, a moved folder) is an
+`act`: exit 17 with an `alert.items` entry whose `code` is `brain_missing` and
+whose fix asks the user; doctor creates no datastore. The counter
 lives per brain in `doctor-alert-state.json` under the gbrain home; a
 read-only home still gets a verdict (`consecutive_unknown: null` when the
 state can be neither read nor written). Remote reports (`run_doctor`) omit

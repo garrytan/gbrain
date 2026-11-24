@@ -79,6 +79,7 @@ import { VERSION } from '../../version.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { HELD_DELETION_HEAD_MOVED } from './sync-page-fault.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -751,6 +752,15 @@ function keepDbOnlyLabels(root: string, slug: string, base: Snapshot | undefined
   return withStoredLabels(text, base.page.frontmatter as Record<string, unknown>, incoming ?? parseMarkdown(text, `${slug}.md`).frontmatter) ?? text;
 }
 
+/** GST-3648: a held deletion was checked for a move at the pass's target; a commit since then can move its file, so it publishes only while HEAD is still that target. */
+function assertHeldDeletionHeadUnmoved(root: string, row: WriteRequest, p: SyncIntent): void {
+  if (p.kind !== 'managed_sync_delete' || !p.heldDeletion) return;
+  let head: string | null = null;
+  try { head = syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { /* unreadable: refused below */ }
+  if (head !== p.target) throw syncPublicationRefusal('source_changed', HELD_DELETION_HEAD_MOVED, row, p,
+    `HEAD of ${row.source_id} is no longer ${p.target.slice(0, 12)}, the commit the deletion of ${row.slug} was checked against for a move, so it published nothing; the page stays live and the next pass checks it again.`);
+}
+
 /** #8729: a screen (`screening`) publishes nothing, so the segmented staging its import opened is aborted (unbounded: past the screen's deadline too) as soon as the import hands it over, never left live beside the admitted write's. */
 async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock: ClaimPhaseClock | undefined,
   screening: { unsaved: true } | undefined, at: { root?: string; trend?: FenceTrendPrefix }): Promise<SyncPreparedMutation> {
@@ -822,6 +832,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
           'sync.admission paused destructive sync writes before this deletion published.', row, p,
           `sync.admission is not normal, so the deletion of ${row.slug} in ${row.source_id} published nothing; the page stays live and the next pass re-reads the level.`);
       },
+      async () => assertHeldDeletionHeadUnmoved(root, row, p),
       async () => {
         // GBRA-133 S-22: a deletion whose name became a directory has no file to compare.
         if (p.path !== null && !p.body_ref && !p.committedOnly && (p.kind === 'managed_sync_delete' && directoryAt(root, p.path) ? null : syncRawHash(root, p.path)) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
