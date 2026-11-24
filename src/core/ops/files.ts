@@ -162,7 +162,8 @@ const file_upload: Operation = {
     try {
       // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id when that source has the page.
       // The row names the page's slug as it is now, read by its id (FOR SHARE waits for a rename in flight), not the slug read
-      // before the storage wait: a page renamed while the bytes uploaded is listed under its new slug.
+      // before the storage wait: a page renamed while the bytes uploaded is listed under its new slug, also when the row already
+      // existed (the conflict branch takes the resolved slug whenever the upload binds a page).
       // #4910: stamp the storage lane (doctor image_assets / files verify
       // classify on it) and merge metadata on conflict so legacy `{}` rows
       // heal on their next content change. Real object via executeRawJsonb —
@@ -177,6 +178,7 @@ const file_upload: Operation = {
            mime_type = EXCLUDED.mime_type,
            source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
            page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+           page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
            ${FILES_METADATA_MERGE_SQL}`,
         [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
         [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
