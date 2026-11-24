@@ -139,6 +139,22 @@ for (const kind of testBackends()) {
         expect(await proposals(slug)).toEqual([]);
       }, 120_000);
 
+      test('doctor directs later local stamp edits to manual review when there is no repair to apply', async () => {
+        const slug = 'inbox/later-local-edit';
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        await rewrite(slug, { ingested_via: 'manual' }, 'local_cli');
+
+        const check = await doctor();
+        expect(check.status).toBe('warn');
+        expect(check.details.sources[0]).toMatchObject({ needs_review: 1, pages: 1 });
+        const dry = await run(false);
+        expect(dry.affected).toBe(0);
+        expect(dry.residuals.needs_review).toBe(1);
+        expect(check.message).toContain('Review the page history manually');
+        expect(check.fix).toBeUndefined();
+      }, 120_000);
+
       test('apply restores the stamps and the marker, lowers the page, files a lower_page proposal; a rerun previews nothing', async () => {
         const slug = 'inbox/remote-restore';
         await seed(slug, STORED);

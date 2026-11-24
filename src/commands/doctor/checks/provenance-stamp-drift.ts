@@ -34,16 +34,23 @@ async function runProvenanceStampDrift(ctx: DoctorContext): Promise<Check[]> {
       return checks;
     }
     const total = found.reduce((sum, scan) => sum + pages(scan), 0);
-    const first = found[0]!;
-    const sample = first.items.find(item => item.verdict.class !== 'local')!;
+    const message = `${total} page(s) carry provenance stamps or a trust marker that a write removed before stamps became server-owned, or would re-read above their stored tier `
+      + `(${found.map(scan => `${scan.source_id}: ${pages(scan)}`).join('; ')}; e.g. ${found.flatMap(scan => scan.items.filter(item => item.verdict.class !== 'local').slice(0, 3).map(item => `${scan.source_id}:${item.slug}`)).slice(0, 5).join(', ')})${bounded}. `;
+    const first = found.find(scan => pages(scan) > scan.needs_review);
+    if (!first) {
+      checks.push({ name: 'provenance_stamp_drift', status: 'warn', details,
+        message: message + 'Review the page history manually. A later local edit changed the same field, so these pages have no automatic repair.' });
+      return checks;
+    }
+    const sample = first.items.find(item => item.verdict.class !== 'local' && item.verdict.class !== 'needs_review')!;
     const preview = ['gbrain', 'repair', 'provenance', '--source', first.source_id, '--json'];
+    const manual = found.reduce((sum, scan) => sum + scan.needs_review, 0);
     checks.push({ name: 'provenance_stamp_drift', status: 'warn', details,
-      message: `${total} page(s) carry provenance stamps or a trust marker that a write removed before stamps became server-owned, or would re-read above their stored tier `
-        + `(${found.map(scan => `${scan.source_id}: ${pages(scan)}`).join('; ')}; e.g. ${found.flatMap(scan => scan.items.filter(item => item.verdict.class !== 'local').slice(0, 3).map(item => `${scan.source_id}:${item.slug}`)).slice(0, 5).join(', ')})${bounded}. `
+      message: message + (manual ? `${manual} page(s) need manual review because a later local edit changed the same field. ` : '')
         + `Preview the repair with gbrain repair provenance --source ${first.source_id}; it lists each page and writes nothing. Applying it only lowers trust.`,
       fix: agentFix(preview, 'Lists each page with the stamps, marker and tier before and after; it writes nothing. Applying the repair is the user\'s call.',
         'provenance_stamp_drift', { ask_user: true, docs: DOCS,
-          user_message: `${total} page(s) (for example ${sample.slug}) lost the record of where they came from, so gbrain may trust them more than it should. `
+          user_message: `${total - manual} page(s) (for example ${sample.slug}) lost the record of where they came from, so gbrain may trust them more than it should. `
             + 'Should I show you the list and put the original record back? It only lowers trust, and you can undo each page in gbrain trust review.' }) });
   } catch (error) {
     checks.push(checkError('provenance_stamp_drift', 'check page history for provenance stamps and trust markers a write removed', error, { details: { docs: DOCS } }));
