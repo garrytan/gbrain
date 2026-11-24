@@ -83,6 +83,9 @@ const ROWS: readonly Row[] = [
   ['dream_synthesis_completions', 'out_of_scope', 'no_memory_text', 'source_id idempotency_key'],
   ['dream_verdicts', 'out_of_scope', 'probed_reported', 'file_path content_hash reasons content_type segments entities model', 'segments entities reasons'],
   ['drift_decisions', 'out_of_scope', 'probed_reported', 'reasoning applied_by', 'reasoning'],
+  ['engine_writer_coverage_gaps', 'out_of_scope', 'no_memory_text', 'code'],
+  ['engine_writer_observations', 'out_of_scope', 'no_memory_text', 'host_id application_name process_kind gbrain_version'],
+  ['engine_writer_sessions', 'out_of_scope', 'no_memory_text', 'application_name client_addr'],
   ['entity_identities', 'out_of_scope', 'no_memory_text', 'entity_id source_id established_by'],
   ['entity_identity_reviews', 'out_of_scope', 'no_memory_text', 'decision_id verdict members group_id entity_id canonical_source_id canonical_slug decided_by origin home_source_id git_blob evidence'],
   ['eval_candidates', 'out_of_scope', 'probed_reported', 'tool_name query retrieved_slugs source_ids detail detail_resolved salience_param recency_param salience_resolved recency_resolved salience_source recency_source embedding_column schema_pack_per_source', 'query'],
@@ -216,7 +219,9 @@ const ROWS: readonly Row[] = [
   ['wake_subscriptions', 'out_of_scope', 'no_memory_text', 'event target target_ref principal_kind principal_id member_id wake_user ws_subscription_id state delivered_marker last_error'],
   ['wake_terms_acceptances', 'out_of_scope', 'no_memory_text', 'principal_key terms_version'],
   ['wanted_links', 'out_of_scope', 'probed_reported', 'source_id producer ref_kind target_source_id target_ref link_type context', 'context'],
-  ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
+  ['write_gate_holds', 'swept', 'review_rows', 'kind source_id slug page_id page_candidates fingerprint payload write_origin tier reason_families reasons request_id status decided_by',
+    // The ids carry no text: the probe reads the columns it read before the hold followed the page id.
+    'kind source_id slug fingerprint payload write_origin tier reason_families reasons request_id status decided_by'],
   ['write_gate_receipts', 'out_of_scope', 'text_free_ledger', 'target_table target_id source_id content_hash tier verdict reason_families reasons request_id'],
 ];
 
@@ -274,6 +279,7 @@ export interface RustStoreEntry {
 type RustRow = [tag: string, kind: number | null, name: string, tables: string, index?: 'index', none?: [OutOfScopeReason, string]];
 const RUST_ROWS: readonly RustRow[] = [
   ['1', null, 'reason_tombstones', 'reason_purge_tombstones'],
+  ['3', null, 'secret_store', 'secret_store secret_store_occurrence'],
   ['A', 0x01, 'take', 'takes'],
   ['A', 0x02, 'take_by_row', 'takes', 'index'],
   ['A', 0x03, 'take_evidence', '', undefined, ['no_memory_text', 'synthesis_evidence rows: page ids, take row numbers and a citation index; the SQL table has no text-bearing column, so it has no row above']],
@@ -351,6 +357,7 @@ const RUST_ROWS: readonly RustRow[] = [
   ['x', null, 'access_members', 'access_members access_groups access_group_members access_member_links'],
   ['y', null, 'session_state', 'session_context_state'],
   ['z', null, 'access_rules', 'access_policy_state access_rules access_pending_coverage access_policy_revisions pages access_policy_migrations'],
+  ['~', null, 'family_escape', '', undefined, ['no_memory_text', 'the family escape: it only starts a two-byte family tag, and no record is written under ~ alone']],
 ];
 
 export const RUST_STORE_INVENTORY: readonly RustStoreEntry[] = RUST_ROWS.map(([tag, kind, name, tables, index, none]) => ({

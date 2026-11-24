@@ -50,7 +50,6 @@ type R = Record<string, unknown>;
 /** What the Rust arm still cannot serve on the purge path, in the order the check names them: member or site, owner and due date. */
 const RUST_KNOWN_STOP = [
   { name: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: 'lane 14 (doctor-checks-3 b78e56edb9, contains 8d4d809039)', due: '5 PM PST Nov 25' },
-  { name: '<anonymous> (persistence/coordinator.ts)', owner: 'lane 5 (bound-write-rust 075a30ef45)', due: '5 PM PST Nov 25' },
   { name: 'listBeliefEventsForPurgeProbe', owner: 'lane 3 (rust-belief-purge e211982aba)', due: '5 PM PST Nov 24' },
 ];
 

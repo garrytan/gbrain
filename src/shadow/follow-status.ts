@@ -12,6 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import type { ShadowState } from './state.ts';
 
@@ -26,7 +27,15 @@ export interface ProbeRecord {
 export interface Watermark { valid: boolean; through: string | null; invalidated_reason: string | null }
 export interface FollowerFile {
   version: 1;
+  /** Written as the seed id; the evidence epoch lives in evidence/epoch.json (evidence-epoch.ts), not here. */
   epoch_id: string;
+  /**
+   * The evidence epoch the probe, fingerprint totals, allocator result and lag histograms below were counted under
+   * (null: none was known; absent: written before the tag). The status reports them only for the current epoch.
+   */
+  evidence_epoch?: string | null;
+  /** The seed this follower state belongs to; the Rust store's calls and the status match on it. */
+  seed_id: string;
   epoch_started_at: string;
   updated_at: string;
   applied_rows: number;
@@ -53,6 +62,8 @@ export interface PassRecord {
   follower_misses: number;
   nonterminal_refresh_rows?: number; // full passes: primary refresh rows a swap must drain first
   error?: string;
+  /** The evidence epoch current when the pass finished; the status counts only passes of the current epoch. */
+  epoch_id?: string;
 }
 
 export const FRESH_FOLLOWER_MS = 60_000;
@@ -80,7 +91,8 @@ export const followerPath = (dir: string): string => join(dir, 'follower.json');
 export const passesPath = (dir: string): string => join(dir, 'reconcile', 'passes.jsonl');
 
 export function readFollowerFile(dir: string): FollowerFile | null {
-  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? parsed : null; } catch { return null; }
+  // A file written before `seed_id` existed named the seed in `epoch_id`.
+  try { const parsed = JSON.parse(readFileSync(followerPath(dir), 'utf8')) as FollowerFile; return parsed?.version === 1 ? { ...parsed, seed_id: parsed.seed_id ?? parsed.epoch_id } : null; } catch { return null; }
 }
 
 export function writeFollowerFile(dir: string, file: FollowerFile): void {
@@ -91,7 +103,8 @@ export function writeFollowerFile(dir: string, file: FollowerFile): void {
 
 export function appendPass(dir: string, pass: PassRecord): void {
   mkdirSync(join(dir, 'reconcile'), { recursive: true, mode: 0o700 });
-  appendFileSync(passesPath(dir), JSON.stringify(pass) + '\n', { mode: 0o600 });
+  const epoch_id = pass.epoch_id ?? readEpoch(dir)?.epoch_id;
+  appendFileSync(passesPath(dir), JSON.stringify(epoch_id ? { ...pass, epoch_id } : pass) + '\n', { mode: 0o600 });
 }
 
 export function readPasses(dir: string): PassRecord[] {
@@ -124,13 +137,20 @@ export interface FollowStatus {
 export function buildFollowStatus(dir: string, state: ShadowState | null, now: Date = new Date()): FollowStatus {
   const seed = readSeedRecord(dir);
   const file = seed ? readFollowerFile(dir) : null;
-  const live = file && file.epoch_id === seed?.seed_id ? file : null;
-  const passes = readPasses(dir);
+  const live = file && file.seed_id === seed?.seed_id ? file : null;
+  // The status's epoch is the evidence epoch (evidence-epoch.ts), not the seed; null until a child has opened one.
+  const epoch = readEpoch(dir);
+  // Readiness inputs count only under the current evidence epoch: the follower's probe, fingerprint totals, allocator result
+  // and lag histograms must be tagged with it, and a reconcile pass must have started and finished in it. With no epoch
+  // yet nothing is filtered (the status carries no epoch_id, so readiness reads it as missing).
+  const counted = live && (!epoch || live.evidence_epoch === epoch.epoch_id) ? live : null;
+  const everyPass = readPasses(dir);
+  const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;
   const last = passes.at(-1) ?? null;
   const fulls = passes.filter((p) => p.kind === 'full');
   let clean = 0;
   for (let i = fulls.length - 1; i >= 0 && fulls[i]!.repaired_rows === 0 && !fulls[i]!.error; i--) clean++;
-  const hours = Object.entries(live?.lag.hours ?? {}).filter(([h]) => Number(h) >= Math.floor(now.getTime() / 3_600_000) - 24);
+  const hours = Object.entries(counted?.lag.hours ?? {}).filter(([h]) => Number(h) >= Math.floor(now.getTime() / 3_600_000) - 24);
   const last24: number[] = [];
   for (const [, counts] of hours) counts.forEach((n, i) => { last24[i] = (last24[i] ?? 0) + n; });
   const fresh = live !== null && now.getTime() - Date.parse(live.updated_at) < FRESH_FOLLOWER_MS;
@@ -143,12 +163,13 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   else if (!watermark.valid) followerState = 'invalid';
   else if (queue > 0 || (live?.lag_ms ?? 0) > 0) followerState = 'behind';
   const lastFull = fulls.at(-1);
+  const lastFullEver = everyPass.filter((p) => p.kind === 'full').at(-1); // the primary's refresh rows are not epoch evidence
   const { error, nonterminal_refresh_rows: _refreshes, ...lastPass } = last ?? ({} as PassRecord);
   return {
-    epoch_id: seed?.seed_id ?? null,
-    epoch_started_at: seed?.finished_at ?? null,
+    epoch_id: epoch?.epoch_id ?? null,
+    epoch_started_at: epoch?.started_at ?? null,
     follower: {
-      state: followerState, action: followerState === 'needs_reseed' ? RESEED_STEPS : null, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(live?.lag.epoch ?? []),
+      state: followerState, action: followerState === 'needs_reseed' ? RESEED_STEPS : null, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(counted?.lag.epoch ?? []),
       queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,
     },
     reconcile: {
@@ -158,10 +179,10 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
     write_comparisons: { state: 'capability_missing', sample_rate: state?.sample_rate ?? null, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
-    fingerprints: { checked_rows: live?.fingerprints.checked_rows ?? 0, mismatches: live?.fingerprints.mismatches ?? 0, probe: live?.probe ?? NOT_RUN_PROBE },
+    fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },
-    allocators: live?.allocators ?? { verified: false, checked_at: null },
-    primary_refreshes: { nonterminal_rows: lastFull?.nonterminal_refresh_rows ?? null, checked_at: lastFull?.nonterminal_refresh_rows === undefined ? null : lastFull.finished_at },
+    allocators: counted?.allocators ?? { verified: false, checked_at: null },
+    primary_refreshes: { nonterminal_rows: lastFullEver?.nonterminal_refresh_rows ?? null, checked_at: lastFullEver?.nonterminal_refresh_rows === undefined ? null : lastFullEver.finished_at },
   };
 }
 

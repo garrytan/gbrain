@@ -152,6 +152,19 @@ impl Brain {
         })
     }
 
+    /// `retireSupersededFact(args)`: the remember consumer's supersede; resolves the row count.
+    #[napi]
+    pub fn retire_superseded_fact<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ExpireSupersededFactArgs = required(args, "retireSupersededFact args")?;
+            s.retire_superseded_fact(&a)
+        })
+    }
+
     /// `restoreSupersededFact(args)`: puts the old fact back; resolves the row count.
     #[napi]
     pub fn restore_superseded_fact<'env>(

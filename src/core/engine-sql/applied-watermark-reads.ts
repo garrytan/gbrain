@@ -5,6 +5,9 @@
  * The statement text is the caller's, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts), so PGLite and
  * Postgres answer exactly as before. A Rust brain answers from its source row and its stale-chunk list
  * (src/core/rust-engine/store-members/persistence.ts).
+ * `readSourceMovementRows` holds the three per-binding statements of persistence/sync-movement.ts readSourceMovement
+ * (the managed-sync watermark, the head request and the hold summary), also byte for byte; a Rust brain answers them
+ * from its request and op-checkpoint records (store-members/source-movement.ts).
  */
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
@@ -64,4 +67,45 @@ export async function readUnembeddedPageSummary(exec: HoldRead, sourceId: string
   const { text, params } = renderFragment(unembeddedPageSummaryFragment(sourceId, column));
   const [row] = await exec.executeRaw<UnembeddedPageSummary>(text, params);
   return row ?? { pages: 0, oldest: null, held: 0 };
+}
+
+/** $1 worktree, $2 source incarnation. The kind test matches the `persistence_requests_sync_watermark` predicate text, so the planner can prove the partial index applies. */
+export const MOVEMENT_WATERMARK_SQL = `SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
+        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`;
+/** $1 worktree: its head unfinished request, the running one first, then by sequence. */
+export const MOVEMENT_HEAD_SQL = `SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
+        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
+      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`;
+/** $1 source, $2 incarnation: the git hold summary's counters. */
+export const MOVEMENT_HOLD_SQL = `SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
+        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
+      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`;
+
+export interface MovementWatermarkRow { last_commit_at: unknown; admitted: number | string; admitted_since?: unknown }
+export interface MovementHeadRow { request_id: string; state: string; claim_phase: unknown; execution_token: string | null; claim_lapsed: boolean | null; publication_started: boolean | null }
+export interface MovementHoldRow { count: number | string | null; stalled: number | string | null; fences: number | string | null; concurrent: number | string | null; updated_at: unknown }
+/** One source binding's movement rows: the managed-sync watermark, the head request (or null) and the hold summary (or null). */
+export interface SourceMovementRows { watermark: MovementWatermarkRow | null; head: MovementHeadRow | null; hold: MovementHoldRow | null }
+export interface SourceMovementBinding { source_id: string; worktree_id: string; source_incarnation: string }
+
+/** The three movement statements of one source binding, in the order readSourceMovement ran them. */
+export async function readSourceMovementRows(exec: HoldRead, binding: SourceMovementBinding): Promise<SourceMovementRows> {
+  const [watermark] = await exec.executeRaw<MovementWatermarkRow>(MOVEMENT_WATERMARK_SQL, [binding.worktree_id, binding.source_incarnation]);
+  const [head] = await exec.executeRaw<MovementHeadRow>(MOVEMENT_HEAD_SQL, [binding.worktree_id]);
+  const [hold] = await exec.executeRaw<MovementHoldRow>(MOVEMENT_HOLD_SQL, [binding.source_id, binding.source_incarnation]);
+  return { watermark: watermark ?? null, head: head ?? null, hold: hold ?? null };
+}
+
+/** $1 source: the active `sync` job with a live lock that drains it (by its source id, or by its checkout for a job that names none), oldest first. */
+export const LIVE_SYNC_JOB_SQL = `SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
+    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`;
+
+/** The id of the active `sync` job with a live lock that drains `sourceId`, or null (persistence/sync-movement.ts liveSyncJob). */
+export async function readLiveSyncJobId(exec: HoldRead, sourceId: string): Promise<number | null> {
+  const [row] = await exec.executeRaw<{ id: number | string }>(LIVE_SYNC_JOB_SQL, [sourceId]);
+  return row ? Number(row.id) : null;
 }

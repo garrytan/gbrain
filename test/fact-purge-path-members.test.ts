@@ -264,8 +264,7 @@ describe('the fact purge calls only what the list names', () => {
     expect(stopEntries.filter(entry => !entry.owner || !entry.due || /undecided/i.test(`${entry.owner} ${entry.due}`)).map(purgeEntryName)).toEqual([]);
     const labelled = (names: string[]) => stopEntries.filter(entry => names.includes(purgeEntryName(entry))).map(entry => ({ name: purgeEntryName(entry), owner: entry.owner, due: entry.due }));
     const all = (names: string[], owner: string, due: string) => expect(labelled(names)).toEqual(names.map(name => ({ name, owner, due })));
-    all(['rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', 'occurrencesWithoutChunks (page-body/ingest.ts)', 'reuseSegmentChunkVectors (import-chunk-reuse.ts)',
-      'hasStaleChunks (page-body/projection.ts)', 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)'],
+    all(['rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)'],
     'trunk (segment-pending-stamp f71c844551, contains 34fa27c472)', '5 PM PST Nov 23');
     expect(PURGE_OWNERS.segmentedRewrite).toBe('trunk (segment-pending-stamp f71c844551, contains 34fa27c472)');
     expect([PURGE_DUE.nov23, PURGE_DUE.nov25]).toEqual(['5 PM PST Nov 23', '5 PM PST Nov 25']);

@@ -132,6 +132,11 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
               if (!thrown && !sql.includes('memory_proposals')) { thrown = true; return Promise.reject(injected); }
               return target.executeRaw(sql, params);
             };
+            // The stored principal's attest right is read through typed members (access/actor.ts attestRightOf).
+            if (prop === 'readAccessTokenAttest' || prop === 'readOauthClientAttest') return (...args: unknown[]) => {
+              if (!thrown) { thrown = true; return Promise.reject(injected); }
+              return (target[prop] as (...a: unknown[]) => Promise<unknown>)(...args);
+            };
             const value = Reflect.get(target, prop, target);
             return typeof value === 'function' ? value.bind(target) : value;
           },

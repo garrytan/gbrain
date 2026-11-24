@@ -654,6 +654,42 @@ pub(crate) fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> 
     write_take(tx, &stamped)
 }
 
+/// `gbrain repair secret-spans`' `UPDATE takes SET <column> = text, embedding = NULL, .., updated_at = now() WHERE id = id`
+/// (`setRedactedRowText`): the take's `claim`, `source` or `resolved_source` is rewritten and its embedding goes with it,
+/// since the vector was computed from the old text. A claim change counts in `claim_rev`; the tier is restamped only when
+/// the claim changed, as the trigger does, and a writer that keeps the tier (`withTrustKeep`) keeps it. An unknown id
+/// changes nothing.
+pub(crate) fn rewrite_take_column(
+    tx: &mut dyn KvWrite,
+    id: u64,
+    column: &str,
+    text: &str,
+    now_us: i64,
+) -> Result<()> {
+    let Some(old) = read_take(&*tx, id)? else {
+        return Ok(());
+    };
+    let mut new = old.clone();
+    match column {
+        "claim" => {
+            new.claim = text.to_owned();
+            if new.claim != old.claim {
+                new.claim_rev += 1;
+            }
+        }
+        "source" => new.source = Some(text.to_owned()),
+        "resolved_source" => new.resolved_source = Some(text.to_owned()),
+        other => {
+            return Err(StoreError::invalid(format!(
+                "setRedactedRowText: takes.{other} is not a column a redaction rewrites"
+            )));
+        }
+    }
+    new.updated_at_us = now_us;
+    crate::embeddings::remove_take_vector(tx, id)?;
+    store_take(tx, &new)
+}
+
 fn insert_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> {
     store_take(tx, take)?;
     tx.put(&row_key(take.page_id, take.row_num), &take.id.to_be_bytes())

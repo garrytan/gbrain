@@ -48,7 +48,7 @@ import { submitPageMutation } from '../../persistence/page-mutations.ts';
 import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteLabelsChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
-import { validateSlug } from '../../utils.ts';
+import { validateSlug, normalizeSlug } from '../../utils.ts';
 import { REVISION_BACKFILL_PENDING, RevisionBackfillPendingError } from '../../page-state/types.ts';
 import { appliedCaptureRequestPrefix, readAppliedCapture, recordAppliedCapture, saveAppliedCapture } from '../../ingestion/applied-captures.ts';
 
@@ -299,7 +299,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // nothing, so it never reverts a newer edit. Tombstones and jobs queued without a key keep their old behavior.
     const appliedKey = !isTombstone && job.idempotency_key ? job.idempotency_key : null;
     const managedOutcome = (outcome: { noop?: boolean; chunks?: number }) => captured(outcome.noop ? 'skipped' : 'imported', Number(outcome.chunks ?? 0));
-    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: slug.toLowerCase(), result: managedOutcome } : undefined;
+    const journal = managed ? { sourceIds: [...new Set([sourceId ?? 'default', 'default'])], slug: normalizeSlug(slug), result: managedOutcome } : undefined;
     const applied = appliedKey ? await readAppliedCapture<IngestCaptureResult>(engine, appliedKey, journal) : null;
     if (applied) return applied;
 

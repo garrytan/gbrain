@@ -306,7 +306,7 @@ export interface FactsStatementMembers {
   /** The trust proposals that name the page, one of its facts or one of its takes as target or related row; how many. Writes trust_proposals; run it in the purge transaction. */
   deletePurgedPageTrustProposals(sourceId: string, pageId: number, factIds: number[], takeIds: number[]): Promise<number>;
   /** The page's held writes (every hold of the slug in the source); their ids as text, in id order. Writes write_gate_holds; run it in the purge transaction. */
-  deletePurgedPageHolds(sourceId: string, slug: string): Promise<string[]>;
+  deletePurgedPageHolds(sourceId: string, slug: string, pageId?: number | null): Promise<string[]>;
   /** The gate receipts that name the page, one of its facts or takes, or one of its held writes (`holdIds`, as text); how many. Writes write_gate_receipts; run it in the purge transaction. */
   deletePurgedPageGateReceipts(pageId: number, factIds: number[], takeIds: number[], holdIds: string[]): Promise<number>;
   /** The page's facts (filed on it or extracted from it and filed on none); how many. Writes facts; run it in the purge transaction. */
@@ -344,7 +344,7 @@ export interface FactsStatementMembers {
   /** Deletes the volunteer log rows and gazetteer entries of `slugs` in the source; rows per store. Writes both; run it in the purge transaction. */
   deletePurgedNameStoreRows(sourceId: string, slugs: readonly string[]): Promise<PurgeStoresSql.PurgedNameStoreRows>;
   /** Empties the query cache; the rows removed, or null when the brain has no such table. Writes query_cache; run it in the purge transaction. */
-  clearQueryCache(): Promise<number | null>;
+  clearQueryCache(sourceId?: string): Promise<number | null>;
   // The reads a page purge's receipt and verification make on the brain's own tables (engine-sql/purge-receipt.ts).
   /** Whether `table` resolves as a relation on the connection's search path (to_regclass). Reads the catalog. */
   relationExists(table: string): Promise<boolean>;
@@ -782,6 +782,8 @@ export interface FactsStatementMembers {
   readPairFactRow(id: number, lock?: boolean): Promise<Record<string, unknown> | null>;
   /** Expires the old fact of an accepted supersede pair and links it to the new one; returns how many rows it touched. */
   expireSupersededFact(q: { oldId: number; sourceId: string; newId: number; until: string | null }): Promise<number>;
+  /** The remember consumer's supersede: expires the old fact now, links it to the new one, ends it at `until` when given; the row count. */
+  retireSupersededFact(q: { oldId: number | string; sourceId: string; newId: number; until: Date | null }): Promise<number>;
   /** Puts the old fact of an undone supersede pair back as it was; returns how many rows it touched. */
   restoreSupersededFact(q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number>;
   /** The columns a forget decides on, for one fact by id, or null. */
@@ -804,6 +806,8 @@ export interface FactsStatementMembers {
   readFactsEmbeddingColumn(): Promise<{ type: string; dims: number } | null>;
   /** The pool facts nearest a query embedding by cosine distance under the pool read policy. */
   listNearestFacts(q: FactsRecallSql.NearestFactsQuery): Promise<FactsRecallSql.PoolFactRow[]>;
+  /** The facts arm's source-page read (search/facts-arm.ts applyFactSourcePages): each fact's live holding page of its source, when that page is not its entity's. */
+  listFactSourcePages(ids: readonly number[]): Promise<FactsRecallSql.FactSourcePageRow[]>;
   /** Every active conversation slot row of the given slots under the pool read policy, by valid_from, id. */
   listSlotRows(scope: FactsTrustSql.FactPoolScope, slots: ReadonlyArray<{ source_id: string; entity_slug: string; dimension: string }>): Promise<FactsRecallSql.SlotFactRow[]>;
   /** The (source, entity) pairs among `keys` that hold an active pool fact and have no live page. */

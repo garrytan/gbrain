@@ -2,7 +2,7 @@
  * The facts members a remember, a proposal review, a page retire and a recall by id use, served from the facts store
  * (rust/crates/gbrain-store/src/facts/remember_reads.rs): `readFactEntitySlugById`, `readSupersessionReplacement`,
  * `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactRowsByIds`, `readFactVisibility`,
- * `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`, `expireSupersededFact`, `restoreSupersededFact`,
+ * `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`, `expireSupersededFact`, `retireSupersededFact`, `restoreSupersededFact`,
  * `readReplacementTarget`, `readMemberPageWithdrawal` and `readClaimWithdrawal` (src/core/engine-sql/facts-trust.ts,
  * facts-recall.ts).
  *
@@ -88,6 +88,13 @@ export const expireSupersededFact: Member<'expireSupersededFact'> = async (brain
   wholeId('expireSupersededFact', q.newId);
   instant('expireSupersededFact', 'an until', q.until);
   return storeCall({ member: 'expireSupersededFact', sourceId: q.sourceId }, () => brain.expireSupersededFact({ oldId: q.oldId, sourceId: q.sourceId, newId: q.newId, until: q.until }));
+};
+
+export const retireSupersededFact: Member<'retireSupersededFact'> = async (brain, q) => {
+  wholeId('retireSupersededFact', Number(q.oldId));
+  wholeId('retireSupersededFact', q.newId);
+  return storeCall({ member: 'retireSupersededFact', sourceId: q.sourceId }, () => brain.retireSupersededFact({ oldId: Number(q.oldId), sourceId: q.sourceId,
+    newId: q.newId, until: q.until === null ? null : q.until.toISOString() }));
 };
 
 export const restoreSupersededFact: Member<'restoreSupersededFact'> = async (brain, q) => {

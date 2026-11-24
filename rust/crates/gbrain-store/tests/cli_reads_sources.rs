@@ -6,6 +6,7 @@ mod common;
 use common::{TempDir, open};
 use gbrain_store::Store;
 use gbrain_store::cli_reads::sources::DefaultSourceSplit;
+use gbrain_store::facts::{ExpireFactArgs, InsertFactArgs, PrivacyPolicy};
 use gbrain_store::import_members::PageOriginRefresh;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
@@ -507,4 +508,143 @@ fn identity_reads_match_by_id_and_title_and_read_one_live_page() {
     );
     assert_eq!(store.read_page_identity(gone).unwrap(), None);
     assert_eq!(store.read_page_identity(999_999).unwrap(), None);
+}
+
+fn page_with(store: &Store, source_id: &str, slug: &str, frontmatter: serde_json::Value) {
+    let input: PageInput = serde_json::from_value(json!({
+        "type": "note", "title": slug, "compiled_truth": "body", "frontmatter": frontmatter,
+    }))
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({"sourceId": source_id})).unwrap();
+    store.put_page(slug, &input, &options).unwrap();
+}
+
+fn fact(store: &Store, source_id: &str, text: &str, visibility: &str) -> u64 {
+    let args: InsertFactArgs = serde_json::from_value(json!({
+        "input": {"fact": text, "source": "test", "visibility": visibility, "kind": "event"},
+        "sourceId": source_id,
+    }))
+    .unwrap();
+    store.insert_fact(&args).unwrap()["id"].as_u64().unwrap()
+}
+
+#[test]
+fn sources_not_readable_refuses_only_when_the_readable_sources_show_nothing_and_another_live_source_does()
+ {
+    let dir = TempDir::new("cli-src-not-readable");
+    let store = open(&dir);
+    let readable = vec!["default".to_string()];
+    let floor = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let refuses = |facts: bool, policy: Option<&PrivacyPolicy>| {
+        store
+            .read_sources_not_readable(&readable, facts, policy)
+            .unwrap()
+    };
+    // No page anywhere: nothing to refuse.
+    assert!(!refuses(false, None));
+    // Another source holds a page; default holds none.
+    source(&store, "team", None, json!({}));
+    page(&store, "team", "notes/t");
+    assert!(refuses(false, None));
+    // Readable pages that do not count: soft-deleted, quarantined, and (under the floor) private.
+    page(&store, "default", "notes/gone");
+    store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    page_with(&store, "default", "notes/q", json!({"quarantine": "bad"}));
+    page_with(
+        &store,
+        "default",
+        "notes/p",
+        json!({"visibility": "private"}),
+    );
+    assert!(refuses(false, Some(&floor)));
+    // Without the floor the private page counts.
+    assert!(!refuses(false, None));
+    // A private or expired fact does not count for recall; an active world fact does.
+    fact(&store, "default", "a private fact", "private");
+    let world = fact(&store, "default", "a world fact", "world");
+    assert!(refuses(false, Some(&floor)));
+    assert!(!refuses(true, Some(&floor)));
+    let expire: ExpireFactArgs = serde_json::from_value(json!({"id": world})).unwrap();
+    assert!(store.expire_fact(&expire).unwrap());
+    assert!(refuses(true, Some(&floor)));
+    // The other side counts only live, visible pages of sources that are not archived.
+    assert!(store.set_source_archived("team", true).unwrap());
+    assert!(!refuses(false, Some(&floor)));
+    source(&store, "other", None, json!({}));
+    page_with(&store, "other", "notes/oq", json!({"quarantine": "bad"}));
+    page_with(
+        &store,
+        "other",
+        "notes/op",
+        json!({"visibility": "private"}),
+    );
+    assert!(!refuses(false, Some(&floor)));
+    page(&store, "other", "notes/o");
+    assert!(refuses(false, Some(&floor)));
+    // A source named in `readable` is never the other side.
+    let both = vec!["default".to_string(), "other".to_string()];
+    assert!(!store.read_sources_not_readable(&both, false, None).unwrap());
+}
+
+#[test]
+fn an_orphan_source_binding_lists_by_source_id_and_deletes_once_orphaned() {
+    use gbrain_store::persistence::{SourceBindingInsert, WorktreeInsert};
+    let dir = TempDir::new("orphan-bindings");
+    let store = open(&dir);
+    let wt = "11111111-1111-4111-8111-111111111111";
+    store
+        .insert_worktree(
+            &serde_json::from_value::<WorktreeInsert>(json!({"id": wt, "ownerHostId": null}))
+                .unwrap(),
+        )
+        .unwrap();
+    source(&store, "live", None, json!({}));
+    let live_inc = store.get_source_by_id("live").unwrap().unwrap().incarnation;
+    for (id, inc) in [
+        ("ab", "22222222-2222-4222-8222-222222222222"),
+        ("a-z", "33333333-3333-4333-8333-333333333333"),
+        ("live", live_inc.as_str()),
+    ] {
+        store
+            .insert_source_binding(
+                &serde_json::from_value::<SourceBindingInsert>(json!({"sourceId": id, "incarnation": inc, "worktreeId": wt, "relativePath": ""}))
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let ids = |rows: Vec<serde_json::Value>| {
+        rows.iter()
+            .map(|r| r["source_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(store.list_orphan_bindings(None).unwrap()),
+        vec!["a-z", "ab"]
+    );
+    assert_eq!(
+        ids(store.list_orphan_bindings(Some(1)).unwrap()),
+        vec!["a-z"]
+    );
+    assert_eq!(
+        store.list_orphan_bindings(None).unwrap()[0]["reason"],
+        json!("source_removed")
+    );
+    assert!(!store.delete_orphan_binding("live", &live_inc).unwrap());
+    assert!(
+        !store
+            .delete_orphan_binding("ab", "44444444-4444-4444-8444-444444444444")
+            .unwrap()
+    );
+    assert!(
+        store
+            .delete_orphan_binding("ab", "22222222-2222-4222-8222-222222222222")
+            .unwrap()
+    );
+    assert_eq!(ids(store.list_orphan_bindings(None).unwrap()), vec!["a-z"]);
 }

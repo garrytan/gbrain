@@ -34,8 +34,6 @@ export const PURGE_OWNERS = {
   receipts: 'lane 13 step 3',
   /** The receipt's four reads (source-prose scan, source path, purge request, purge effects): rust-engine/rust-5a 90e7bea933 (not merged here). */
   receiptReads: 'lane 4 (rust-5a 90e7bea933)',
-  /** The `publication_started` stamp of a recovered purge's publication transaction: rust-engine/bound-write-rust 075a30ef45 (journal.markPublicationStarted; not merged here). */
-  publicationStamp: 'lane 5 (bound-write-rust 075a30ef45)',
   /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
@@ -69,7 +67,7 @@ export interface PurgePathMember<E extends string = 'retention'> extends Base<E>
 export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
-const { ours, receiptReads, publicationStamp, beliefProbe, factContextProbe, requestIndexes } = PURGE_OWNERS;
+const { ours, receiptReads, beliefProbe, factContextProbe, requestIndexes } = PURGE_OWNERS;
 const { nov24, nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
@@ -78,11 +76,9 @@ const RETENTION_STOPS: PurgePathSite[] = [
   ['releaseStaleHolds (persistence/derived-origin-hold.ts)', 'the stale-hold release (op_checkpoints UPDATE)'],
   ['readOwedPurges (persistence/derived-origin-hold.ts)', 'the owed-purge read'],
   ['pruneOwedPurges (persistence/derived-origin-hold.ts)', 'the owed-purge prune'],
-  ['readDerivedOriginParks (persistence/derived-origin-hold.ts)', 'the park read'],
   ['pruneDerivedOriginParks (persistence/derived-origin-hold.ts)', 'the park prune'],
   ['<anonymous> (repair/origin-carry.ts)', 'expiringOrigins: the expired-origin read'],
   ['selectPurgeCandidates (persistence/purge-deleted.ts)', 'the candidate selection'],
-  ['readPurgeParks (persistence/purge-parks.ts)', 'the purge park read'],
   ['prunePurgeParks (persistence/purge-parks.ts)', 'the purge park prune'],
   ['notePurgeSourceWriter (persistence/purge-parks.ts)', 'the source writer note'],
   ['readUnreviewedSyncTombstones (persistence/sync-delete-tombstones.ts)', 'the unreviewed sync tombstone read'],
@@ -94,7 +90,7 @@ const RETENTION_STOPS: PurgePathSite[] = [
  * SQL stubbed to answer nothing, reached none of them (it reached only the stops above and below).
  */
 const GUARDED_SITES: PurgePathSite[] = [
-  ['purgeSecretsForSlugs (secret-store/store.ts)', 'runs only when deletePurgedSlugStoreRows reports secret rows (the Rust store keeps none)'],
+  ['purgeSecretOccurrences (engine-sql/secret-store.ts)', 'runs only when deletePurgedSlugStoreRows reports secret rows (the Rust store keeps none)'],
   ['purgedFenceRows (facts/purge-overlay.ts)', 'an engine without raw_sql asks the typed isFactPurged'],
   ['intentCarriesPurgedContent (persistence/purged-intent.ts)', 'an engine without raw_sql asks the typed isFactPurged'],
   ['readPersistenceBrain (persistence/managed-mode.ts)', 'a Rust brain reads readManagedModeRows (isRustBrain branch)'],
@@ -134,9 +130,6 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   ...RETENTION_STOPS,
   // preparePagePurge: the request-index state read, then the origin-twin read.
   { site: 'readRequestIndexStates (persistence/checkpoint-validation.ts)', owner: requestIndexes, due: nov25, stop: 'the online-built request index read runs through raw SQL' },
-  // The publication transaction of a recovered journaled purge: the `publication_started` stamp (the exclusive source lock
-  // before it is the typed member `lockSourceForUpdate`).
-  { site: '<anonymous> (persistence/coordinator.ts)', owner: publicationStamp, due: nov25, stop: 'the publication transaction of a recovered purge stamps publication_started through raw SQL (UPDATE persistence_requests ... RETURNING *)' },
   // sweepPurgedPage: the generation-ledger scrub.
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.
@@ -164,11 +157,11 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     // the derived-origin carry: labels, parks, the owed-purge record
     'putPage', 'createVersion', 'addPageTagsById', 'pruneFrontmatterTags', 'replaceDerivedAliases', 'setPageAliases', 'upsertChunks',
     'deleteChunksExcept', 'getChunkReuseRows', 'moveChunkIndexes', 'findDuplicatePage', 'writePageLabelGuard', 'writeTextProjectionSeal',
-    'upsertDerivedOriginPark', 'recordOwedPurgeRows', 'listCheckoutFiles', 'hasWithdrawnFenceClaim',
+    'listDerivedOriginParks', 'listPurgeParks', 'upsertDerivedOriginPark', 'recordOwedPurgeRows', 'listCheckoutFiles', 'hasWithdrawnFenceClaim',
     // the belief ledger (a brain with belief events)
     'readBeliefFactsById', 'readBeliefStateRows', 'readOpenBeliefLifetimes', 'insertBeliefEvents', 'endBeliefLifetime', 'markBeliefCommits',
     // the persistence journal and consumer that run the purge request
-    'declarePersistence', 'insertWriteRequest', 'completeWriteRow', 'completeEffectRow', 'insertPublicationEffects', 'readWriteRequest',
+    'declarePersistence', 'publicationJournalStore', 'insertWriteRequest', 'completeWriteRow', 'completeEffectRow', 'insertPublicationEffects', 'readWriteRequest',
     'readWriteRequestById', 'readWriteRequestProgress', 'lockWriteRequest', 'lockWriteRequestsById', 'lockPageKeys', 'lockPersistenceCounters',
     'lockEffectGuard', 'lockSourceForUpdate', 'lockNoopEmbeddingWindow', 'hasClaimableWrite', 'hasRearmableTargets', 'selectClaimableWrite', 'selectClaimableEffect',
     'selectProjectionWindowJobs', 'listPendingSegmentedProjections', 'stampWriteClaim', 'stampEffectClaim', 'renewWriteClaim',

@@ -591,7 +591,7 @@ export async function prepareExplainTarget(
   const retry = { tool, arguments: explainRetryArgs(p) };
   let probe;
   try {
-    probe = await probeTarget((sql, params) => ctx.engine.executeRaw(sql, params), slug,
+    probe = await probeTarget(ctx.engine, slug,
       { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false }, await chunkManifestReads(ctx.engine));
   } catch (e) {
     // explain_target was asked for: an engine that cannot run the probe refuses instead of explaining nothing.

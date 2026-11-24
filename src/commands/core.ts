@@ -14,6 +14,7 @@
  * Marking writes go through put_page as the trusted local owner, so the
  * write-path guard (budget, page cap) applies to them like any other write.
  */
+import { normalizeSlug } from '../core/utils.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import {
@@ -23,6 +24,7 @@ import {
 import { serializePageToMarkdown } from '../core/markdown.ts';
 import { wholeBodySnapshot } from '../core/persistence/segmented-apply.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { capabilityMissing, servesRawSql } from '../core/rust-engine/errors.ts';
 import { CORE_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 
 export { CORE_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
@@ -139,7 +141,8 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
   const sub = args[0] as (typeof CORE_SUBCOMMANDS)[number] | undefined;
   const json = args.includes('--json');
   const sourceId = flag(args, '--source') ?? 'default';
-  const slug = positional(args);
+  const rawSlug = positional(args);
+  const slug = rawSlug === undefined ? rawSlug : normalizeSlug(rawSlug);
   const print = (value: unknown, text: () => string) => console.log(json ? JSON.stringify(value, null, 2) : text());
 
   switch (sub) {
@@ -187,6 +190,9 @@ export async function runCore(engine: BrainEngine, args: string[]): Promise<void
       const rawPriority = flag(args, '--priority');
       const priority = rawPriority === undefined ? undefined : Number(rawPriority);
       if (priority !== undefined && !Number.isInteger(priority)) { fail('--priority must be an integer (lower renders first; default 100).'); return; }
+      // `remove` also closes the page's pending remote-edit notices (core_edit_notices), which an engine without raw SQL
+      // does not keep: refuse there before the page is un-cored, so nothing is left half done.
+      if (sub === 'remove' && !servesRawSql(engine)) throw capabilityMissing('raw_sql', "core remove (closing the page's core edit notices)");
       try {
         const result = await setMarking(engine, sourceId, slug, { core: sub === 'add', ...(priority !== undefined ? { priority } : {}) });
         if (result === 'missing') { fail(`No live page ${sourceId}:${slug}.`, 'check the slug with gbrain get <slug> or create the page first'); return; }

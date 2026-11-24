@@ -112,7 +112,10 @@ left out). `listOrphanedChronicleOwners` keeps the live rows of the kind whose d
 `depth:`) has no live record and that hold at least one live item page, oldest `updated_at` first, then id, up to the
 limit; a negative limit refuses `INVALID_ARGUMENT` as Postgres refuses `LIMIT -1`. `listChronicleEventSlotRows` reads
 `frontmatter.event` `when`, `where` and `kind` as text (deleted pages included) in slug byte order; the SQL has no
-`ORDER BY`, and the caller folds the rows into a map. The chronicle ledger (`chronicle_page_state`) has no store yet:
+`ORDER BY`, and the caller folds the rows into a map. `listChronicleCoverageGapRows` (the chronicle advisor's
+coverage-gap read, `advisor/collect-chronicle.ts`) lists the live `meeting`, `conversation` and `calendar-event` pages
+of every source updated within 30 days of the store clock that own no timeline row with an event page, with
+`effective_date` as ISO text and `frontmatter->>'date'`/`'start'`, in page record order (the SQL has no `ORDER BY`). The chronicle ledger (`chronicle_page_state`) has no store yet:
 `listChronicleOwnedHashes` answers no hash and `hasChronicleSkipDecision` false, which is what a SQL brain answers for a
 page the ledger holds nothing for. The four projection members are in `timeline_queries.md`.
 

@@ -59,6 +59,50 @@ fn effect_chars(read: &dyn KvRead, data: &Value, source_id: Option<&str>) -> Res
         .sum())
 }
 
+/// `embeddingCandidateWhere(neverRetried)` without the source scope: an embedding effect with no recovery and no
+/// claim, failed (with an error code outside `never_retried`) or queued over an hour or re-queued by a repair, whose
+/// request committed. Returns the effect and its request.
+fn stale_embedding_effects(
+    read: &dyn KvRead,
+    now_us: i64,
+    never_retried: &[&str],
+) -> Result<Vec<(super::effects::EffectRecord, crate::journal::RequestRecord)>> {
+    let mut out = Vec::new();
+    for e in all_effects(read)? {
+        if e.kind != "embedding" || e.recovery.is_some() || e.execution_token.is_some() {
+            continue;
+        }
+        let stale = match e.state.as_str() {
+            "failed" => e
+                .error_code
+                .as_deref()
+                .is_some_and(|code| !never_retried.contains(&code)),
+            "queued" => {
+                e.updated_at_us < now_us - HOUR_US || e.data.get("repair_requeued_at").is_some()
+            }
+            _ => false,
+        };
+        if !stale {
+            continue;
+        }
+        let Some(r) = request_by_id(read, &e.request_id)? else {
+            continue;
+        };
+        if r.state == "committed" {
+            out.push((e, r));
+        }
+    }
+    out.sort_by_key(|(e, _)| e.id);
+    Ok(out)
+}
+
+/// The codes doctor's `stale_embedding_effects` never counts (`EMBEDDING_NEVER_RETRIED`, engine-sql/doctor-persistence.ts).
+const DOCTOR_NEVER_RETRIED: [&str; 2] = ["targets_parked", "embedding_zero_norm"];
+
+fn in_sources(source_ids: Option<&[String]>, source_id: &str) -> bool {
+    source_ids.is_none_or(|ids| ids.iter().any(|id| id == source_id))
+}
+
 pub(crate) fn list_embedding_candidates_in(
     read: &dyn KvRead,
     now_us: i64,
@@ -109,6 +153,48 @@ pub(crate) fn list_embedding_candidates_in(
 }
 
 impl Store {
+    /// `readStaleEmbeddingCounts(sourceIds)`: `{ count, failed, requeued }` over the stale embedding effects of committed
+    /// requests (`sourceIds` narrows them by the request's source): all, the failed, and the queued ones a repair re-queued.
+    pub fn read_stale_embedding_counts(&self, source_ids: Option<&[String]>) -> Result<Value> {
+        let rows =
+            stale_embedding_effects(&*self.read()?, self.env.now_micros(), &DOCTOR_NEVER_RETRIED)?;
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|(_, r)| in_sources(source_ids, &r.source_id))
+            .collect();
+        let failed = rows.iter().filter(|(e, _)| e.state == "failed").count();
+        let requeued = rows
+            .iter()
+            .filter(|(e, _)| e.state == "queued" && e.data.get("repair_requeued_at").is_some())
+            .count();
+        Ok(json!({ "count": rows.len(), "failed": failed, "requeued": requeued }))
+    }
+
+    /// `listStaleEmbeddingEffects(sourceIds)`: the first 10 of those effects by effect id, as
+    /// `{ effect_id, source_id, slug, request_id, state, updated_at }` (`updated_at` as `timestamptz::text`).
+    pub fn list_stale_embedding_effects(
+        &self,
+        source_ids: Option<&[String]>,
+    ) -> Result<Vec<Value>> {
+        let rows =
+            stale_embedding_effects(&*self.read()?, self.env.now_micros(), &DOCTOR_NEVER_RETRIED)?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_, r)| in_sources(source_ids, &r.source_id))
+            .take(10)
+            .map(|(e, r)| {
+                json!({
+                    "effect_id": e.id.to_string(),
+                    "source_id": r.source_id,
+                    "slug": r.slug,
+                    "request_id": r.request_id,
+                    "state": e.state,
+                    "updated_at": crate::cli_reads::pg_text::timestamptz_text(e.updated_at_us),
+                })
+            })
+            .collect())
+    }
+
     /// `listEmbeddingCandidates(sourceIds, neverRetried)`: the stale queued and failed embedding
     /// effects of committed requests on `source_ids`, or on a removed or replaced source
     /// incarnation, in effect id order.

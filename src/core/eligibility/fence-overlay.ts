@@ -37,6 +37,7 @@ import { worldOnlyFacts } from '../search/private-visibility.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { MANAGED_LINK_SOURCES, maskLinksFence } from '../links-fence.ts';
 import { ensureWellFormed } from '../text-safe.ts';
+import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 
 /** The origin slot of a fence trust marker: the chunk holds facts-fence rows, not page prose. */
 export const FENCE_TRUST_ORIGIN = 'facts-fence';

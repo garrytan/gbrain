@@ -352,6 +352,8 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /** More literal prefixes whose pages are listed too, with `slugPrefix`: one name stored under another spelling (see ops/slug-params.ts). */
+  slugPrefixAlso?: string[];
   /** Literal slug prefixes to omit before ordering/pagination. Opt-in: ordinary listings remain unrestricted. */
   excludeSlugPrefixes?: string[];
   /**
@@ -531,6 +533,8 @@ export interface SalienceOpts extends PageReadPolicy {
   limit?: number;
   /** Optional slug-prefix filter (e.g., `personal`, `wiki/people`). */
   slugPrefix?: string;
+  /** More prefixes read with `slugPrefix` (one name stored under another spelling). */
+  slugPrefixAlso?: string[];
   /**
    * v0.29.1 — recency-decay treatment for the salience formula's third term.
    *   - 'flat' (default): v0.29.0 behavior, `1.0 / (1 + days_old)` for every page

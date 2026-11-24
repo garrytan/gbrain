@@ -32,9 +32,7 @@ export async function previewRestore(engine: BrainEngine, id: string): Promise<R
   const slugs = [...new Set(occurrences.filter(o => o.slug && o.source_id === row.source_id).map(o => o.slug!))].sort();
   const pages: RestorePreview['pages'] = [];
   for (const slug of slugs) {
-    const [page] = await engine.executeRaw<{ revision: string; hit: boolean }>(
-      `SELECT knowledge_revision::text AS revision, (position($3 in coalesce(title,'') || coalesce(compiled_truth,'') || coalesce(timeline,'') || coalesce(frontmatter::text,'')) > 0
-         OR body_storage = 'segmented') AS hit FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [row.source_id, slug, marker]);
+    const page = await engine.readRestorePageHit(row.source_id, slug, marker);
     if (!page?.hit) continue;
     const fields = [...new Set(occurrences.filter(o => o.slug === slug).map(o => o.field))].sort();
     pages.push({ slug, revision: page.revision, fields });
@@ -57,7 +55,7 @@ export async function applyRestore(engine: BrainEngine, id: string, expect: stri
       const managed = await readManagedMode(tx, { refusal: { subject: 'secrets restore' } });
       const attribution = await maintenanceAttribution(tx);
       const write = () => withTrustKeep(tx, ['pages', 'facts', 'takes', 'timeline_entries'], async () => {
-        const [live] = await tx.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, page.slug]);
+        const live = await tx.readPageSnapshot(page.slug, { sourceId: row.source_id });
         if (!live || live.revision !== page.revision) return 'changed_since_preview' as const;
         return restoreMarkersOnPage(tx, row.source_id, page.slug, originals);
       });
@@ -73,7 +71,7 @@ export async function applyRestore(engine: BrainEngine, id: string, expect: stri
     throw opError('preview_changed', `${skipped.length} page(s) changed since the preview (${skipped.map(s => s.slug).join(', ')}); ${restored.length} page(s) were restored and the entry stays active.`,
       `Re-run the preview: ${preview.command}`);
   }
-  await engine.executeRaw("UPDATE secret_store SET status='allowed', updated_at=now() WHERE id=$1", [id]);
+  await engine.markSecretEntryAllowed(id);
   await (await import('./spool.ts')).refreshAllowedCache(engine).catch(() => undefined);
   secretsAudit.log({ ts: new Date().toISOString(), event: 'restore', id, source_id: row.source_id, rule: row.rule, actor, slugs: restored.map(r => r.slug) });
   return { id, restored, skipped, status: 'allowed' };

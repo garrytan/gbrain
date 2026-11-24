@@ -70,6 +70,7 @@ mod attachments;
 mod checks;
 mod client_grants;
 mod credential_binding;
+mod doctor_credentials;
 mod drain_lease;
 mod dream_reads;
 mod facts_extraction;
@@ -736,6 +737,26 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
         true
     })?;
     Ok(ids)
+}
+
+/// Calls `f` on each row with `status` as it loads, in id order. The row is dropped when `f` returns, so a caller that
+/// filters keeps only what it projects: one row's payload is held at a time, not the whole status.
+fn for_each_row_with_status(
+    read: &dyn KvRead,
+    status: &str,
+    f: &mut dyn FnMut(&JobRecord),
+) -> Result<()> {
+    for id in ids_under(read, &status_prefix(status))? {
+        if let Some(row) = load(read, id)? {
+            f(&row);
+        }
+    }
+    Ok(())
+}
+
+/// The `minion_jobs` rows with `status='active'`.
+pub(crate) fn active_job_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
+    rows_with_status(read, "active")
 }
 
 fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {

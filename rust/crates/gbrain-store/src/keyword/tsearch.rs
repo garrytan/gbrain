@@ -259,6 +259,12 @@ fn english_dict(ty: TokenType) -> Option<Dict> {
 /// without taking a position; a stopword takes a position and emits no word; a lexeme longer than
 /// `MAXSTRLEN` bytes (lowercasing can lengthen a token) takes its position and is dropped.
 fn parsetext(text: &str) -> Vec<ParsedWord> {
+    parsetext_in(text, false)
+}
+
+/// [`parsetext`] for `english`, or with `simple` for the `simple` configuration: every token type
+/// `english` maps goes to the `simple` dictionary (lowercased, no stemming, no stopwords).
+fn parsetext_in(text: &str, simple: bool) -> Vec<ParsedWord> {
     let mut out = Vec::new();
     let mut pos: u32 = 0;
     for (ty, token) in parse(text) {
@@ -267,7 +273,8 @@ fn parsetext(text: &str) -> Vec<ParsedWord> {
         if token.len() >= MAXSTRLEN {
             continue;
         }
-        let lexeme = match english_dict(ty) {
+        let dict = english_dict(ty).map(|d| if simple { Dict::Simple } else { d });
+        let lexeme = match dict {
             None => continue,
             Some(Dict::EnglishStem) => english_stem(token),
             Some(Dict::Simple) => {
@@ -327,6 +334,11 @@ fn make_tsvector(mut words: Vec<ParsedWord>) -> Result<TsVector> {
 /// `to_tsvector('english', text)`.
 pub(crate) fn to_tsvector(text: &str) -> Result<TsVector> {
     make_tsvector(parsetext(text))
+}
+
+/// `to_tsvector('simple', text)`.
+pub(crate) fn to_tsvector_simple(text: &str) -> Result<TsVector> {
+    make_tsvector(parsetext_in(text, true))
 }
 
 /// `setweight(vector, weight)`: every position gets the weight; lexemes without positions stay
@@ -489,6 +501,8 @@ pub(crate) struct TsQuery {
 /// final array is the reverse).
 struct QueryBuilder {
     pushed: Vec<QItem>,
+    /// Operands parse under the `simple` configuration instead of `english`.
+    simple: bool,
     /// `curop - op`: the bytes of operand text pushed so far (each operand plus its NUL).
     sumlen: usize,
 }
@@ -497,6 +511,7 @@ impl QueryBuilder {
     fn new() -> Self {
         QueryBuilder {
             pushed: Vec::new(),
+            simple: false,
             sumlen: 0,
         }
     }
@@ -537,7 +552,7 @@ impl QueryBuilder {
     /// `pushval_morph`: parse one operand's text and push its lexemes, joined by `qoperator`,
     /// with stopword placeholders for the stopwords between them.
     fn pushval_morph(&mut self, text: &str, qoperator: Op) -> Result<()> {
-        let words = parsetext(text);
+        let words = parsetext_in(text, self.simple);
         if words.is_empty() {
             self.push_stop();
             return Ok(());
@@ -798,6 +813,16 @@ fn cleanup_stopwords(query: &TsQuery) -> TsQuery {
 /// `plainto_tsquery('english', text)`.
 pub(crate) fn plainto_tsquery(text: &str) -> Result<TsQuery> {
     let mut b = QueryBuilder::new();
+    if !text.is_empty() {
+        b.pushval_morph(text, Op::And)?;
+    }
+    b.finish()
+}
+
+/// `plainto_tsquery('simple', text)`.
+pub(crate) fn plainto_tsquery_simple(text: &str) -> Result<TsQuery> {
+    let mut b = QueryBuilder::new();
+    b.simple = true;
     if !text.is_empty() {
         b.pushval_morph(text, Op::And)?;
     }

@@ -846,6 +846,15 @@ export async function expireSupersededFact(raw: EngineRawRead, q: { oldId: numbe
     [q.oldId, q.sourceId, q.newId, q.until])).length;
 }
 
+/**
+ * The remember consumer's supersede (persistence/memory-prepare.ts): expires the old fact now, links it to the new one and
+ * ends it at `until` when given (else keeps its end); returns how many rows it touched. Runs in the caller's transaction.
+ */
+export async function retireSupersededFact(raw: EngineRawRead, q: { oldId: number | string; sourceId: string; newId: number; until: Date | null }): Promise<number> {
+  return (await raw(`UPDATE facts SET expired_at=now(),superseded_by=$3,valid_until=COALESCE($4::timestamptz,valid_until)
+      WHERE id=$1 AND source_id=$2 AND expired_at IS NULL RETURNING id`, [q.oldId, q.sourceId, q.newId, q.until])).length;
+}
+
 /** Puts the old fact of an undone supersede pair back as it was (only while it still points at `expectedSupersededBy`); returns how many rows it touched. Runs in the caller's transaction. */
 export async function restoreSupersededFact(raw: EngineRawRead, q: { oldId: number; sourceId: string; expiredAt: string | null; validUntil: string | null; supersededBy: number | null; expectedSupersededBy: number | null }): Promise<number> {
   return (await raw(

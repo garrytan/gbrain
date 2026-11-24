@@ -33,6 +33,7 @@ import { readCheckoutHead } from '../core/checkout-head.ts';
 import { SYNC_ON_COMMIT_KEY } from '../core/sync-config-keys.ts';
 import { autopilotPaused } from '../core/autopilot-paths.ts';
 import { cooldownMinForCount, resolveFailureCooldownOpts } from './autopilot-fanout.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 /**
  * cycleOk is false only when the dispatch itself threw. health is the snapshot the plan routed on (null: the bounded
@@ -827,6 +828,9 @@ export async function submitAutoDrains(
         console.log(`[dispatch] job #${job.id} extract-atoms-drain (auto-drain: ${src.id}; backlog=${backlog})`);
       }
     } catch (e) {
+      // A capability refusal means the engine cannot run this pass at all: no source would ever be drained. Let it out
+      // (the gate in dispatchAutoDrain logs it) instead of skipping each source in turn.
+      rethrowCapabilityRefusal(e);
       logError('dispatch.auto-drain', e);
     }
   }
