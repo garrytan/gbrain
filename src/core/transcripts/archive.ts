@@ -667,8 +667,8 @@ async function readReaders(engine: BrainEngine, readers: ArchiveReader[], scanOp
 
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
-  const off = async () => {
-    await reconcileArchiveAudience(engine, opts.sourceId);
+  const off = async (holdsRunLock = false) => {
+    await reconcileArchiveAudience(engine, opts.sourceId, holdsRunLock);
     return emptyResult(opts.mode, {
       source_id: await configuredSource(engine, opts.sourceId),
       message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on (a shared brain is only offered it).',
@@ -697,7 +697,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
           'Rerun gbrain transcripts archive run.');
       }
       if (locked.privacy.unproven) throw unproven();
-      if (!await archiveEnabled(engine)) return off();
+      if (!await archiveEnabled(engine)) return off(sourceId === await configuredSource(engine, opts.sourceId));
       return archiveSource(engine, opts, { enabled: true, sourceId, privacy: locked.privacy, signal });
     });
   } catch (err) {
