@@ -4,10 +4,15 @@
 //! resolves plain JSON. Job rows carry timestamps as ISO strings; the shell makes them `Date`s
 //! (rust/docs/store/jobs.md).
 
+mod access_tokens;
 mod checks;
+mod credential_binding;
+mod credentials;
+mod grants;
 mod health;
 mod insight;
 mod ops;
+mod revocation;
 mod spend;
 mod spend_log;
 mod status;
@@ -15,7 +20,10 @@ mod subagent;
 mod wake;
 
 use gbrain_store::error::StoreError;
-use gbrain_store::jobs::{AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder};
+use gbrain_store::jobs::{
+    AdmitSpec, ClaimSpec, ListFilter, LockAcquire, LockFilter, LockHolder, PageLeaseHolder,
+    PageLeaseTake,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -44,10 +52,97 @@ impl Brain {
         })
     }
 
+    /// `readLiveJobIds(ids)`: the given ids whose job is still live, ascending.
+    #[napi]
+    pub fn read_live_job_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids = ids
+                .into_iter()
+                .map(|id| job_id(id, "readLiveJobIds"))
+                .collect::<Result<Vec<_>, _>>()?;
+            s.read_live_job_ids(&ids)
+        })
+    }
+
+    /// `readDrainLeaseBeacon(lockToken)`: the holder record's beacon, or null.
+    #[napi]
+    pub fn read_drain_lease_beacon<'env>(
+        &self,
+        env: &'env Env,
+        lock_token: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_drain_lease_beacon(&lock_token))
+    }
+
+    /// `writeDrainLeaseHolder(sourceId, lockToken, data, ttlMinutes)`: the new holder record's id.
+    #[napi]
+    pub fn write_drain_lease_holder<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        lock_token: String,
+        data: Value,
+        ttl_minutes: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_drain_lease_holder(&source_id, &lock_token, data, ttl_minutes)
+        })
+    }
+
+    /// `refreshDrainLeaseHolder(lockToken, ttlMinutes)`: how many holder records it renewed.
+    #[napi]
+    pub fn refresh_drain_lease_holder<'env>(
+        &self,
+        env: &'env Env,
+        lock_token: String,
+        ttl_minutes: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.refresh_drain_lease_holder(&lock_token, ttl_minutes)
+        })
+    }
+
+    /// `releaseDrainLeaseHolder(lockToken)`: how many holder records it deleted.
+    #[napi]
+    pub fn release_drain_lease_holder<'env>(
+        &self,
+        env: &'env Env,
+        lock_token: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.release_drain_lease_holder(&lock_token))
+    }
+
     /// `getJob(id)`: the row, or null.
     #[napi]
     pub fn get_job<'env>(&self, env: &'env Env, id: f64) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.get_job(job_id(id, "getJob")?))
+    }
+
+    /// `readJobDataByIdempotencyKey(key)`: `{ data }` of the row holding the key, or null.
+    #[napi]
+    pub fn read_job_data_by_idempotency_key<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.job_data_by_idempotency_key(&key))
+    }
+
+    /// `coalesceOnIdempotencyKey(key, authority)`: resolves `{ outcome: 'none'|'coalesced'|'released'|'conflict', row? }`.
+    #[napi]
+    pub fn coalesce_on_idempotency_key<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        authority: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.coalesce_on_idempotency_key(&key, Some(&authority))
+        })
     }
 
     /// `listJobs(filter?)`: newest first.
@@ -191,6 +286,48 @@ impl Brain {
         self.run(env, move |s| {
             let opts: LockHolder = required(opts, "deleteCycleLockIfStale opts")?;
             s.delete_cycle_lock_if_stale(&lock_id, &opts)
+        })
+    }
+
+    /// `takePageEmbeddingLease(leaseId, opts)`: whether the lease was free or expired and is now this holder's.
+    #[napi]
+    pub fn take_page_embedding_lease<'env>(
+        &self,
+        env: &'env Env,
+        lease_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: PageLeaseTake = required(opts, "takePageEmbeddingLease opts")?;
+            s.take_page_embedding_lease(&lease_id, &opts)
+        })
+    }
+
+    /// `renewPageEmbeddingLease(leaseId, opts)`: whether the row still carried this token.
+    #[napi]
+    pub fn renew_page_embedding_lease<'env>(
+        &self,
+        env: &'env Env,
+        lease_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: PageLeaseHolder = required(opts, "renewPageEmbeddingLease opts")?;
+            s.renew_page_embedding_lease(&lease_id, &opts)
+        })
+    }
+
+    /// `releasePageEmbeddingLease(leaseId, opts)`: this holder's row and every expired `embed-page:` row go.
+    #[napi]
+    pub fn release_page_embedding_lease<'env>(
+        &self,
+        env: &'env Env,
+        lease_id: String,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: PageLeaseHolder = required(opts, "releasePageEmbeddingLease opts")?;
+            s.release_page_embedding_lease(&lease_id, &opts)
         })
     }
 

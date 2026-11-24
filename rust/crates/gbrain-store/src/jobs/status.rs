@@ -113,7 +113,7 @@ fn cycle_row(row: &JobRecord) -> Value {
         "name": row.name,
         "status": row.status,
         "started_at": row.started_at.map(iso),
-        "result": row.result.as_ref().map(jsonb),
+        "result": row.result.as_ref().map(ordered),
     })
 }
 
@@ -292,6 +292,29 @@ impl Store {
         Ok(rows
             .into_iter()
             .map(|r| json!({ "id": r.id, "last_error": r.error_text }))
+            .collect())
+    }
+
+    /// `listBudgetOwners` (the rows it starts from): `{ owner_id, remaining_cents }` of the newest five rows that own
+    /// their budget (`budget_owner_job_id` is the row's id, `budget_remaining_cents` set) and are not `completed`,
+    /// `failed`, `dead` or `cancelled`, newest id first. The spend total needs the budget log, which this store does
+    /// not keep, so the JS member refuses when any row comes back.
+    pub fn list_budget_owner_jobs(&self) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut rows = all_rows(&*read)?;
+        rows.retain(|r| {
+            r.budget_remaining_cents.is_some()
+                && r.budget_owner_job_id == Some(r.id)
+                && !matches!(
+                    r.status.as_str(),
+                    "completed" | "failed" | "dead" | "cancelled"
+                )
+        });
+        rows.sort_by_key(|r| std::cmp::Reverse(r.id));
+        Ok(rows
+            .into_iter()
+            .take(5)
+            .map(|r| json!({ "owner_id": r.id, "remaining_cents": r.budget_remaining_cents }))
             .collect())
     }
 

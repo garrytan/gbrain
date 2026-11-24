@@ -1,6 +1,8 @@
-//! Jobs: `oauth_clients` spend columns and `mcp_spend_log` (rust/docs/store/spend-log.md). Same shape as `spend.rs`.
+//! Jobs: `oauth_clients` (every column) and `mcp_spend_log` (rust/docs/store/spend-log.md). Same shape as `spend.rs`.
 
-use gbrain_store::jobs::{ClientInsert, ClientReserve, GroupReserve, LogInsert};
+use gbrain_store::jobs::{
+    ClientInsert, ClientPatch, ClientPatchGuard, ClientReserve, GroupReserve, LogInsert,
+};
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -102,6 +104,59 @@ impl Brain {
         self.run(env, move |s| {
             let row: ClientInsert = required(row, "insertOauthClient row")?;
             s.insert_oauth_client(&row)
+        })
+    }
+
+    /// `readOauthClient(clientId)`: the whole row as an object (times as ISO text), or null.
+    #[napi]
+    pub fn read_oauth_client<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_oauth_client(&client_id))
+    }
+
+    /// `readOauthClientNames(ids)`: `[{ id, name }]` of the clients with those ids, by id.
+    #[napi]
+    pub fn read_oauth_client_names<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_oauth_client_names(&ids))
+    }
+
+    /// `listOauthClients()`: every client's whole row, by name then id in byte order.
+    #[napi]
+    pub fn list_oauth_clients<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_oauth_clients())
+    }
+
+    /// `listSourceOAuthClients(sourceId)`: `{ client_id, client_name, deleted }` of every client
+    /// that names the source, revoked ones included, by client id in byte order.
+    #[napi(js_name = "listSourceOAuthClients")]
+    pub fn list_source_oauth_clients<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_source_oauth_clients(&source_id))
+    }
+
+    /// `patchOauthClient(clientId, patch, guard)`: `{ row, before }` of the patched client, or null.
+    #[napi]
+    pub fn patch_oauth_client<'env>(
+        &self,
+        env: &'env Env,
+        client_id: String,
+        patch: Value,
+        guard: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let patch: ClientPatch = required(patch, "patchOauthClient patch")?;
+            let guard: ClientPatchGuard = required(guard, "patchOauthClient guard")?;
+            s.patch_oauth_client(&client_id, &patch, &guard)
         })
     }
 

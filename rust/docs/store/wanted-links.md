@@ -11,7 +11,7 @@ The store keeps one record per row (`crates/gbrain-store/src/wanted_links.rs`).
 | --- | --- | --- |
 | `brain.lockRegisteredSourceIds(sourceIds)` | the registered ids among `sourceIds`, sorted, once each. The store write is already exclusive, so nothing is locked. | `lockRegisteredSourceIds` |
 | `brain.replaceWantedLinkRows({ pageId, sourceId }, { rows, producers, readAt })` | the number of rows written. Rows of `producers` that `rows` does not name are deleted. Each row of `rows` is written, and an existing row keeps its id and `first_seen`. | `replaceWantedLinkRows` |
-| `brain.listWantedPages({ sourceId?, sourceIds?, excludePrivate?, limit, offset })` | `{ total, rows }`, each row in the final `WantedPageRow` shape that `listWantedPages` in `wanted-links-store.ts` returns | `listWantedPages` (engine member; `excludePrivate: true` is a typed `engine_capability_missing` refusal before the store is called) |
+| `brain.listWantedPages({ sourceId?, sourceIds?, excludePrivate?, limit, offset })` | `{ total, rows }`, each row in the final `WantedPageRow` shape that `listWantedPages` in `wanted-links-store.ts` returns | `listWantedPages` (engine member; `excludePrivate: true` sends the caller's page policy) |
 
 ## Write rules
 
@@ -33,7 +33,7 @@ The store keeps one record per row (`crates/gbrain-store/src/wanted_links.rs`).
 - `existing_matches` (name groups only) is the first 3 live pages, by slug, in the target source whose last slug segment equals the name.
 - Order: `referenced_by` descending, then `target_source_id`, then `target_ref`. `total` counts every group before `limit` and `offset`.
 - `first_seen` and `last_checked` are millisecond ISO strings. `last_checked` is `pending` when every row of the group is `-infinity`.
-- `excludePrivate: true` is refused with `invalid_argument`: the SQL arms take the caller's privacy filter as SQL.
+- `excludePrivate` carries the caller's page policy: an origin it hides does not count and a page it hides is no name match. A hidden live page still keeps its slug out of the targets, as in the SQL. A caller whose policy differs from the reader identity and private-readable grant gets `engine_capability_missing` from the TypeScript member.
 
 ## Keys and cascade
 
