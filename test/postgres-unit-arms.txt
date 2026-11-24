@@ -437,6 +437,7 @@ test/engine-parity/sync-run.test.ts
 test/engine-parity/sync-status-reads.test.ts
 test/engine-parity/take-held-rows.test.ts
 test/engine-parity/take-purge-ledger.test.ts
+test/engine-parity/take-purge-loop-mute-keys.test.ts
 test/engine-parity/take-purge-overlay.test.ts
 test/engine-parity/take-trust-fields.test.ts
 test/engine-parity/take-trust-reads.test.ts

@@ -29,8 +29,9 @@ use crate::{get_json, put_json};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// The byte after `keys::FACT` that marks a take purge tombstone.
-const TAKE_PURGE: u8 = 0x10;
+/// The byte after `keys::FACT` that marks a take purge tombstone. It stays `0x10`: the loop mutes,
+/// which shared it before store format 7, moved to `0x11` (`facts/loops/mutes.rs`).
+pub(crate) const TAKE_PURGE: u8 = 0x10;
 
 const PURGED_TAKE_MESSAGE: &str =
     "purged_content: this take claim was purged from this source and cannot be saved again";
