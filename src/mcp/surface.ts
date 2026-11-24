@@ -20,7 +20,7 @@
  * Resolution: stdio GBRAIN_SURFACE > --surface flag > config `mcp_surface` >
  * 'full' (resolveStdioSurface); `serve --http` ignores GBRAIN_SURFACE. Why
  * default full: a bare `serve` keeps existing advanced tooling, and the
- * registrations gbrain writes pin `REGISTRATION_SURFACE`
+ * registrations gbrain writes pin their harness's `registrationProfile`
  * (src/core/mcp-registration.ts) unless the user passes `--surface`.
  *
  * WP4 (D2 CEILING): on the OAuth HTTP transport the server-resolved surface is
@@ -158,7 +158,7 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
 
 /**
  * `--advertise`: the surface tools/list shows, narrower than what is callable.
- * Registrations gbrain writes pass `--advertise verbs` (REGISTRATION_ADVERTISE);
+ * Registrations gbrain writes on the starter profile pass `--advertise verbs` (STARTER_PROFILE);
  * absent, `mcp.advertised_surface` decides.
  */
 export function parseAdvertiseFlag(args: string[]): McpSurface | null {

@@ -276,11 +276,19 @@ codex mcp remove gbrain
   `GBRAIN_REMOTE_TOKEN` out of version control and prefer a scoped token if
   your host supports one.
 - Local stdio also works if you run the brain on the same machine:
-  `gbrain setup codex` registers `serve --surface starter --advertise verbs` behind
-  gbrain's launcher, so the session directory's `bunfig.toml` and `.env` never load
-  (`gbrain serve` registered with a bare `codex mcp add` loads them). That is the
-  daily-driver tool list every new registration gbrain writes pins (`request_tools`
-  reaches the rest; `--surface full` is the opt-in for every operation). A
+  `gbrain setup codex` registers `serve --surface full` behind gbrain's launcher, so
+  the session directory's `bunfig.toml` and `.env` never load (`gbrain serve`
+  registered with a bare `codex mcp add` loads them). Codex gets every tool listed
+  because it does not reload its tool list: a tool `request_tools` unlocks stays
+  uncallable there, and on [harness-evals#609](https://github.com/garrytan/harness-evals/pull/609)
+  the starter registration got 12 of 64 right calls against 62 on full, at about the
+  same cost per request. To keep the starter registration, pin it:
+  `gbrain setup codex --surface starter --advertise verbs`. A pinned entry (any
+  `--surface`) stays as it is on every re-run; an entry that follows the default
+  moves with it, and setup prints the move and the line that keeps the old one. A
+  receipt written before setup recorded this keeps its entry and prints the line
+  that would move it. `gbrain config set mcp.default_surface_codex starter` turns the
+  Codex default back without an upgrade (`config unset` restores full). A
   `GBRAIN_SURFACE` value in the Codex server entry's `env` table overrides the flag.
 - **PGLite brains are single-process.** PGLite is a single-writer embedded
   Postgres: the first running `gbrain serve` (the plugin's, or a stdio

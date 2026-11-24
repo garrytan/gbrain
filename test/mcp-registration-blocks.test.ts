@@ -33,7 +33,8 @@ describe('openclawThinClientBlock', () => {
   test('registers the thin client\'s stdio bridge with OpenClaw, launcher resolved on the OpenClaw machine', () => {
     const block = openclawThinClientBlock(OPTS);
     expect(block).toContain('# On the OpenClaw machine, install the gbrain CLI, then run:');
-    expect(block).toContain('openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs');
+    expect(block).toContain('openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg full');
+    expect(block).not.toContain('--advertise');
     expect(block).toContain("If gbrain's OpenClaw bundle plugin is installed there, it already registers");
     expect(block).toContain("OpenClaw's native remote MCP client (streamable HTTP + `openclaw mcp login`) is the other scoped");
     expect(block).not.toContain('FULL local DB access');

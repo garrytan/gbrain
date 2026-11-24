@@ -531,6 +531,8 @@ export interface GBrainConfig {
      * the initialize response byte-identical to the canonical contract.
      */
     instructions?: string;
+    /** I1: the profile `gbrain setup` registers per harness (full, or starter listing verbs); unset = shipped default (core/mcp-registration.ts). */
+    default_surface_claude_code?: 'full' | 'starter'; default_surface_codex?: 'full' | 'starter'; default_surface_hermes?: 'full' | 'starter';
     /**
      * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
      * default is OFF (absent key → OFF) so an upgrade never silently grants
@@ -1285,6 +1287,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'integrations.memorable.enabled',
   // MEMORY_VERBS v1 (Cathedral 1)
   'mcp_surface',
+  'mcp.default_surface_claude_code', 'mcp.default_surface_codex', 'mcp.default_surface_hermes', // I1: setup's per-harness default (file plane)
   'protocol_installed_at',
   'provider_chat_options',
   'storage',
