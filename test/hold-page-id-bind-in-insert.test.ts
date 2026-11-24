@@ -10,7 +10,8 @@
  *     binding.
  *  3. Why new: hold-page-id-lifecycle.test.ts pins what a hold is bound to, never how many statements the bind costs.
  *  4. Seams: the PGLite statement counter and the Postgres wire trace (test/helpers/statement-counter.ts); the rows are
- *     read directly only to state what a hold is bound to.
+ *     read directly only to state what a hold is bound to. Each counting window opens after the background-work drainers
+ *     settle, and the statements are compared by text as well as by number.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -20,6 +21,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { countPgliteStatements, readSqlTrace, type StatementRecord } from './helpers/statement-counter.ts';
+import { drainBackgroundWorkBeforeDisconnect } from '../src/core/background-work.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { bareBody, HELD, holdFenceRow, ROWS } from './helpers/hold-page-id-fixture.ts';
@@ -27,6 +29,20 @@ import { withEnv } from './helpers/with-env.ts';
 
 /** The statements one `putPage` of a new page sends, transaction control included: master's count for the same call. */
 const PUT_PAGE_STATEMENTS = 8;
+/**
+ * Those statements, each by its first three words (the Postgres wire trace cuts long texts, so no more is compared;
+ * transaction control by its first word). Asserting
+ * the list, not only its length, makes a failure name the statement that differs, including one some other work sent into
+ * the counting window.
+ */
+const PUT_PAGE_SHAPE = ['BEGIN', 'SELECT INCARNATION FROM', 'INSERT INTO PAGE_WRITE_GUARDS(SOURCE_INCARNATION,SLUG)', 'SELECT G.SLUG FROM',
+  'SELECT ID FROM', 'SELECT ID, SLUG,', 'WITH INS AS', 'COMMIT'];
+const shape = (records: readonly StatementRecord[]) => records.map(r => {
+  const words = r.sql.trim().split(/\s+/).slice(0, 3).join(' ').toUpperCase();
+  return /^(BEGIN|COMMIT)\b/.exec(words)?.[1] ?? words; // Postgres opens with BEGIN READ WRITE, PGLite with BEGIN
+});
+/** Lets fire-and-forget work an earlier step started settle (the drainers every disconnect runs), so the window counts only the call. */
+const settle = () => drainBackgroundWorkBeforeDisconnect();
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-hold-bind-'));
 const backends = testBackends();
@@ -36,7 +52,7 @@ beforeAll(async () => {
     const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
     brains.push({
       backend: 'pglite', engine, close: () => engine.disconnect(),
-      measure: async work => { const counter = countPgliteStatements(engine); try { await work(); } finally { counter.stop(); } return counter.records; },
+      measure: async work => { await settle(); const counter = countPgliteStatements(engine); try { await work(); } finally { counter.stop(); } return counter.records; },
     });
   }
   if (backends.includes('postgres')) {
@@ -45,6 +61,7 @@ beforeAll(async () => {
     brains.push({
       backend: 'postgres', engine: pg.engine, close: pg.close,
       measure: async work => {
+        await settle();
         const started = performance.timeOrigin + performance.now();
         await work();
         const ended = performance.timeOrigin + performance.now();
@@ -87,6 +104,7 @@ for (const backend of backends) {
       expect(await holdBinding(sourceId)).toEqual([await pageId(sourceId, 'people/waiting')]);
       const texts = records.map(r => r.sql);
       expect(texts.filter(t => BIND.test(t) && !/INSERT INTO pages/.test(t))).toEqual([]); // the wire trace cuts long texts, so the insert's own text is not asserted
+      expect(shape(records)).toEqual(PUT_PAGE_SHAPE);
       expect(records).toHaveLength(PUT_PAGE_STATEMENTS);
     });
 
@@ -94,6 +112,7 @@ for (const backend of backends) {
       const sourceId = await source();
       const records = await brain().measure(() => put(sourceId, 'people/free'));
       expect(await holdBinding(sourceId)).toEqual([]);
+      expect(shape(records)).toEqual(PUT_PAGE_SHAPE);
       expect(records).toHaveLength(PUT_PAGE_STATEMENTS);
     });
 
