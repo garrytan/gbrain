@@ -22,14 +22,18 @@
 //! The table has no foreign key to `sources` and no page or chunk key, so no cascade hook touches
 //! it: removing a source leaves its rows, as Postgres does.
 //!
-//! The TypeScript member (`store-members/code-traversal-cache.ts`) refuses what the store cannot
-//! hold the way Postgres does (a generation or `xmin_max` beyond 2^53, a `max_chunk_updated_at`
-//! that is not an ISO timestamp) and throws for what Postgres rejects as a bind. The store
-//! checks the same again for a caller that skips the shell.
+//! The TypeScript member (`store-members/code-traversal-cache.ts`) throws for what Postgres
+//! rejects as a bind and refuses a `max_chunk_updated_at` that Postgres might read but that is
+//! not an ISO timestamp. The store checks the same again for a caller that skips the shell.
+//!
+//! A generation or `xmin_max` crosses napi as a JavaScript number. Beyond 2^32 it arrives as a
+//! JSON float; a whole float in the `int8` range is the exact integer it names, so the store
+//! takes it as that integer (`whole_i64`), as Postgres binds it.
 
-use crate::dream::{jsonb, jsonb_check};
+use crate::dream::jsonb_check;
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
+use crate::jsonb::ordered;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::next_id;
@@ -50,6 +54,7 @@ pub(crate) struct CacheRecord {
     pub symbol_qualified: String,
     pub depth: i32,
     pub source_id: String,
+    #[serde(deserialize_with = "crate::jsonb::de_value")]
     pub response_json: Value,
     pub max_chunk_updated_at_us: i64,
     pub xmin_max: i64,
@@ -63,6 +68,31 @@ impl CacheRecord {
     }
 }
 
+/// An `int8` bind as napi hands a JavaScript number over: an integer, or a whole float in range.
+/// A whole double is exact, so this never rounds; a fraction or a value out of range is the bind
+/// error Postgres gives.
+fn whole_i64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<i64, D::Error> {
+    use serde::de::Error;
+    let n = serde_json::Number::deserialize(d)?;
+    if let Some(i) = n.as_i64() {
+        return Ok(i);
+    }
+    let f = n.as_f64().unwrap_or(f64::NAN);
+    // -2^63 is exact as a double; 2^63 is the first double out of range.
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    if f.fract() != 0.0 || !f.is_finite() {
+        return Err(D::Error::custom(format!(
+            "invalid input syntax for type bigint: \"{n}\""
+        )));
+    }
+    if !(-LIMIT..LIMIT).contains(&f) {
+        return Err(D::Error::custom(format!(
+            "value \"{n}\" is out of range for type bigint"
+        )));
+    }
+    Ok(f as i64)
+}
+
 /// The key of a read or write: the unique tuple, and the generation a read must match.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -70,6 +100,7 @@ pub struct CacheKeyInput {
     pub symbol_qualified: String,
     pub depth: i64,
     pub source_id: String,
+    #[serde(deserialize_with = "whole_i64")]
     pub cluster_generation: i64,
 }
 
@@ -80,10 +111,12 @@ pub struct CachePutInput {
     pub symbol_qualified: String,
     pub depth: i64,
     pub source_id: String,
+    #[serde(deserialize_with = "whole_i64")]
     pub cluster_generation: i64,
     pub response_json: Value,
     /// An ISO timestamp (`Date#toISOString`), the only form the shell lets through.
     pub max_chunk_updated_at: String,
+    #[serde(deserialize_with = "whole_i64")]
     pub xmin_max: i64,
 }
 
@@ -171,7 +204,7 @@ impl Store {
             .filter(|row| row.cluster_generation == key.cluster_generation)
             .map(|row| {
                 json!({
-                    "response_json": row.response_json,
+                    "response_json": crate::jsonb::ordered(&row.response_json),
                     "computed_at": iso(row.computed_at_us),
                     "cluster_generation": row.cluster_generation,
                 })
@@ -197,7 +230,7 @@ impl Store {
                 input.max_chunk_updated_at
             ))
         })?;
-        let response_json = jsonb(&input.response_json);
+        let response_json = ordered(&input.response_json);
         let now = self.env.now_micros();
         self.write(|tx| {
             // The SERIAL default runs before the conflict check, so the id is taken either way.

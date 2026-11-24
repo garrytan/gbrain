@@ -13,9 +13,12 @@ use napi_derive::napi;
 use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
-use gbrain_store::trust::tier_reads::{CorePageRowQuery, TrustScanQuery, VersionIdsQuery};
+use gbrain_store::trust::tier_reads::{
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, TrustScanQuery, VersionIdsQuery,
+};
 use gbrain_store::trust::valid_time::{
-    CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery, VersionEditionQuery,
+    AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
+    VersionEditionQuery,
 };
 
 #[napi]
@@ -85,6 +88,45 @@ impl Brain {
         })
     }
 
+    /// `listPageRefsByIds({ ids })`: resolves the source, slug and type of each listed page.
+    #[napi]
+    pub fn list_page_refs_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageIdsQuery = required(args, "listPageRefsByIds args")?;
+            s.list_page_refs_by_ids(&a)
+        })
+    }
+
+    /// `listPageTrustTiersByKey(refs)`: the id and stored tier of each named page, deleted or not.
+    #[napi]
+    pub fn list_page_trust_tiers_by_key<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<PageKeyRef> = required(refs, "listPageTrustTiersByKey refs")?;
+            s.list_page_trust_tiers_by_key(&refs)
+        })
+    }
+
+    /// `lockLivePagesByKey(refs)`: the named pages that are live.
+    #[napi]
+    pub fn lock_live_pages_by_key<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<PageKeyRef> = required(refs, "lockLivePagesByKey refs")?;
+            s.lock_live_pages_by_key(&refs)
+        })
+    }
+
     /// `listValidTimeIdentities(spec)`: resolves the live pages with a slug a valid-time read may follow.
     #[napi]
     pub fn list_valid_time_identities<'env>(
@@ -108,6 +150,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: ValidTimePickQuery = required(spec, "pickValidTimeEdition spec")?;
             s.pick_valid_time_edition(&a)
+        })
+    }
+
+    /// `listAmendmentsNotApplied(spec)`: resolves the amendment records an as-of edition does not fold in.
+    #[napi]
+    pub fn list_amendments_not_applied<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: AmendmentsQuery = required(spec, "listAmendmentsNotApplied spec")?;
+            s.list_amendments_not_applied(&a)
         })
     }
 

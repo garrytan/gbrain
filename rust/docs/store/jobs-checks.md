@@ -61,5 +61,5 @@ Accepted gaps (documented, not fixed in this family):
 - `since` must be `Date#toISOString` text on the Rust engine (above); the SQL engines accept any text
   PostgreSQL casts to `timestamptz`.
 - A child job whose parent carries a remote (OAuth client) authority is refused at `admitJob` on the Rust
-  engine and admitted on PGLite: the store has no OAuth tables yet, so it cannot check the parent's grant.
+  engine and admitted on PGLite: the store keeps OAuth clients, but `admitJob` does not read the parent's grant yet.
   The parity file builds its children under the application authority. This closes with the OAuth family.
