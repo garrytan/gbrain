@@ -1,8 +1,7 @@
 /**
  * #7973: a source registered as a plain directory (`gbrain sources add --path <dir> --force`, no Git checkout at or
  * above it) syncs without Git: each run imports the directory's files the way `gbrain import` does on a repo-less
- * brain, where the database is the record. There are no commits to diff, so a file removed from the directory keeps
- * its page (`gbrain delete` removes one), and no commit bookmark is written.
+ * brain. Managed brains reconcile missing canonical files through guarded soft-deletion; classic brains keep absent-file pages. No commit bookmark is written.
  */
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
@@ -20,6 +19,7 @@ import { assertSourceFilesystemActive } from '../../core/minions/source-filesyst
 import { currentJobSignal } from '../../core/minions/submission-authority.ts';
 import { buildPartialResult } from '../../core/sync-lock.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
+import { reconcilePlainDirectoryDeletes } from './plain-directory-deletes.ts';
 import { underGitCheckout } from '../../core/git-remote.ts';
 
 
@@ -64,7 +64,7 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   const sourceId = opts.sourceId ?? 'default';
   const exclude = await syncExcludePatterns(engine, opts.exclude);
   const empty = { fromCommit: null, toCommit: '', modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
-  serr(`[sync] ${root} is a plain directory, not a Git checkout, so sync imports its files into source ${sourceId}; a file removed from it keeps its page.`);
+  serr(`[sync] ${root} is a plain directory, not a Git checkout, so sync imports its files into source ${sourceId}; ${managed ? 'missing canonical files are soft-deleted (recoverable)' : 'absent files keep their pages (classic brain, no write receipts)'}.`);
   const { runImport, collectSyncableFiles, ImportAbortError } = await import('../import.ts');
   if (opts.dryRun) {
     const files = collectSyncableFiles(root, { strategy: opts.strategy ?? 'markdown', includeHidden: opts.includeHidden, metafilePages: await readMetafilePagesMode(engine) })
@@ -87,11 +87,12 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
       added: partial.imported, modified: 0, deleted: 0, renamed: 0, reason: 'timeout' });
   }
   if (result.errors > 0) return { ...empty, status: 'blocked_by_failures', added: result.imported, chunksCreated: result.chunksCreated, failedFiles: result.errors };
+  const deleted = await reconcilePlainDirectoryDeletes(engine, { ...opts, sourceId, exclude }, root, managed);
   // A managed brain fences source checkpoints to coordinated writers; the classic import stamps last_sync_at itself.
   if (managed) {
     const attribution = await maintenanceAttribution(engine);
     await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1', [sourceId]), attribution));
   }
-  return { ...empty, status: 'synced', added: result.imported, chunksCreated: result.chunksCreated, ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
+  return { ...empty, status: 'synced', deleted, added: result.imported, chunksCreated: result.chunksCreated, ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
     ...(result.privacy_label_notice ? { privacy_label_notice: result.privacy_label_notice } : {}) };
 }

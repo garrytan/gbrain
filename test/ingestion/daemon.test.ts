@@ -556,3 +556,18 @@ describe('daemon — tombstone dedup (#3756)', () => {
     await daemon.stop();
   });
 });
+
+test('watcher unlink replay dedups but a later deletion at the same path still dispatches', async () => {
+  const { logger } = makeCaptureLogger();
+  const { dispatch, recorded } = makeRecordingDispatcher();
+  const daemon = new IngestionDaemon({ engine: makeThrowingEngine(), logger, dispatch });
+  const { source, push } = makeControllableSource('watcher', 'file-watcher');
+  daemon.register({ source }); await daemon.start();
+  try {
+    const event = makeEvent({ kind: 'tombstone', slug: 'note', source_uri: '/tmp/note.md', untrusted_payload: false });
+    push(event); push(event);
+    push({ ...event, received_at: '2026-05-20T12:01:00Z' });
+    await flushMicrotasks();
+    expect(recorded).toHaveLength(2);
+  } finally { await daemon.stop(); }
+});

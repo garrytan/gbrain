@@ -87,7 +87,7 @@ export async function noteSyncOutOfSearch(engine: BrainEngine, args: string[]): 
 export async function reportAddOutcome(input: { id: string; chosen: boolean | null | undefined; federated: boolean; path: string | null; json: boolean; say: (line: string) => void }): Promise<RenderedNotice[] | undefined> {
   const { existsSync } = await import('node:fs');
   if (input.path && existsSync(input.path) && !(await import('../core/git-remote.ts')).inGitCheckout(input.path)) {
-    input.say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
+    input.say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and on managed brains a missing canonical file soft-deletes its page (recoverable); classic brains keep absent-file pages');
   }
   if (input.chosen != null) return undefined;
   if (input.federated) {

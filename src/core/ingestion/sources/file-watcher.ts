@@ -49,7 +49,8 @@ import {
   type IngestionSource,
   type IngestionSourceContext,
 } from '../types.ts';
-import { pruneDir } from '../../sync.ts';
+import { underGitCheckout } from '../../git-remote.ts';
+import { resolveSlugForPath, pruneDir } from '../../sync.ts';
 
 export interface FileWatcherSourceOpts {
   /** Source instance id. Defaults to 'file-watcher'. Use distinct ids when
@@ -225,10 +226,18 @@ export function createFileWatcherSource(opts: FileWatcherSourceOpts): IngestionS
         if (!isIncludedFile(path)) return;
         scheduleFlush(path, 'change', ctx);
       });
-      // Unlink events: we don't emit IngestionEvents for deletions in v1.
-      // The reconcile-on-sync path handles tombstones via the broader sync
-      // command — that's the canonical write-side delete signal. The daemon
-      // is for additive ingestion.
+      // A tombstone is a reconciliation wake-up, never permission to delete by slug alone.
+      // The handler rechecks registration, Git state and canonical-file absence under the normal sync path.
+      w.on('unlink', (path: string) => {
+        const entry = pending.get(path);
+        if (entry) clearTimeout(entry.timer);
+        pending.delete(path);
+        if (ctx.abortSignal.aborted || !isIncludedFile(path) || shouldIgnore(path) || underGitCheckout(brainDirAbs)) return;
+        ctx.emit({ source_id: id, source_kind: kind, source_uri: path, received_at: new Date().toISOString(),
+          content_type: 'text/markdown', content: path, content_hash: computeContentHash(path),
+          kind: 'tombstone', slug: resolveSlugForPath(relative(brainDirAbs, path)), untrusted_payload: false,
+          metadata: { source_root: brainDirAbs } });
+      });
 
       // Cooperate with daemon shutdown.
       ctx.abortSignal.addEventListener('abort', () => {

@@ -95,6 +95,9 @@ async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResul
   if (opts.repoPath) assertNotOwnedRoot(opts.repoPath, 'gbrain sync refuses the root');
   const plainRoot = await plainDirectorySyncRoot(engine, opts, managed);
   if (plainRoot) assertNotOwnedRoot(plainRoot, 'gbrain sync refuses the root');
+  if (plainRoot && !managed && !hasSourceFilesystemLock(plainRoot)) {
+    return withSourceFilesystemLock(engine, plainRoot, () => performSync(engine, opts), { signal: opts.signal });
+  }
   if (plainRoot) return finish(await performPlainDirectorySync(engine, opts, plainRoot, managed), true);
   if (managed) return performManagedBranch(engine, opts);
   const filesystemRoot = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');

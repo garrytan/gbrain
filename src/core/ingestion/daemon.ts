@@ -446,8 +446,9 @@ export class IngestionDaemon {
       // the same content_hash. The 'tombstone\0' prefix keeps the two key
       // spaces disjoint (slugs can't contain NUL — validateSlug rejects
       // control bytes; hex hashes trivially can't).
+      // Watcher unlinks are wake-ups: a restore followed by another unlink must reconcile again within the window.
       const dedupKey = effectiveEvent.kind === 'tombstone'
-        ? `tombstone\0${effectiveEvent.slug}`
+        ? `tombstone\0${effectiveEvent.slug}${sourceKind === 'file-watcher' ? `\0${effectiveEvent.source_uri}\0${effectiveEvent.received_at}` : ''}`
         : effectiveEvent.content_hash;
       const isNew = this.dedup.mark(sourceKind, dedupKey);
       if (!isNew) {

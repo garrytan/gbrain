@@ -32,6 +32,10 @@
  * pages to canonical homes later.
  */
 
+import { realpathSync } from 'node:fs';
+import { isAbsolute, relative } from 'node:path';
+import { performSync } from '../../../commands/sync.ts';
+import { plainDirectorySyncRoot } from '../../../commands/sync/plain-directory.ts';
 import { randomUUID } from 'node:crypto';
 import type { MinionJobContext } from '../types.ts';
 import type { BrainEngine } from '../../engine.ts';
@@ -165,6 +169,29 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   return stored?.revision ?? null;
 }
 
+/** Watcher ids identify emitters, not database sources: reconcile only the registered root, with no default fallback. */
+async function reconcileWatcherUnlink(engine: BrainEngine, event: IngestionEvent, job: MinionJobContext): Promise<number> {
+  const root = event.metadata?.source_root;
+  if (typeof root !== 'string' || !isAbsolute(root) || !isAbsolute(event.source_uri)) return 0;
+  const path = relative(root, event.source_uri);
+  if (!path || path.startsWith('..') || isAbsolute(path)) return 0;
+  let rootReal: string;
+  try { rootReal = realpathSync(root); } catch { return 0; }
+  const managed = await managedPersistenceEnabled(engine);
+  const sources = await engine.executeRaw<{ id: string; local_path: string }>(
+    'SELECT id,local_path FROM sources WHERE local_path IS NOT NULL AND NOT archived');
+  let deleted = 0;
+  for (const source of sources) {
+    if (typeof job.data.sourceId === 'string' && job.data.sourceId !== source.id) continue;
+    try { if (realpathSync(source.local_path) !== rootReal) continue; } catch { continue; }
+    const opts = { sourceId: source.id, noPull: true, noEmbed: true, signal: job.signal };
+    const registered = await plainDirectorySyncRoot(engine, opts, managed);
+    if (!registered || registered !== rootReal) continue;
+    deleted += (await performSync(engine, opts)).deleted;
+  }
+  return deleted;
+}
+
 export function makeIngestCaptureHandler(engine: BrainEngine) {
   return async function ingestCaptureHandler(job: MinionJobContext): Promise<IngestCaptureResult> {
     const data = job.data as { event?: unknown; slug?: unknown; sourceId?: unknown; writer?: unknown };
@@ -212,6 +239,12 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
           'deletes are only honored from trusted local emitters that set ' +
           'untrusted_payload: false on the event',
       );
+    }
+
+    if (isTombstone && event.source_kind === 'file-watcher') {
+      const deleted = await reconcileWatcherUnlink(engine, event, job);
+      return { slug, status: deleted ? 'deleted' : 'skipped', chunks: 0, untrusted_payload: false,
+        source_kind: event.source_kind, source_uri: event.source_uri };
     }
 
     if (!isText && !isTombstone) {

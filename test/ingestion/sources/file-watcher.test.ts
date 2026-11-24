@@ -8,6 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -38,6 +39,7 @@ function makeStubWatcher(): {
   watcher: FSWatcher;
   fireAdd: (path: string) => void;
   fireChange: (path: string) => void;
+  fireUnlink: (path: string) => void;
   fireReady: () => void;
   fireError: (err: Error) => void;
   closed: { current: boolean };
@@ -88,6 +90,7 @@ function makeStubWatcher(): {
     watcher: stub,
     fireAdd: (p: string) => emitter.emit('add', p),
     fireChange: (p: string) => emitter.emit('change', p),
+    fireUnlink: (p: string) => emitter.emit('unlink', p),
     fireReady: () => { state.readyFired = true; emitter.emit('ready'); },
     fireError: (err: Error) => {
       state.errorFired = err;
@@ -291,4 +294,28 @@ describe('FileWatcherSource — healthCheck', () => {
     expect(h.status).toBe('ok');
     await harness.stop();
   });
+});
+
+test('plain-folder unlink emits a trusted reconciliation tombstone and cancels a pending add', async () => {
+  const stub = makeStubWatcher();
+  const source = createFileWatcherSource({ brainDir: tmpRoot, debounceMs: 20, _watchFactory: () => stub.watcher });
+  const harness = new IngestionTestHarness();
+  const started = harness.run(source); stub.fireReady(); await started;
+  try {
+    const file = path.join(tmpRoot, 'note.md');
+    stub.fireAdd(file); stub.fireUnlink(file);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    expect(harness.events).toHaveLength(1);
+    expect(harness.events[0]).toMatchObject({ kind: 'tombstone', slug: 'note', untrusted_payload: false, metadata: { source_root: tmpRoot } });
+  } finally { await harness.stop(); }
+});
+
+test('Git watcher unlink keeps commit-driven deletion behavior', async () => {
+  execFileSync('git', ['init', '-q', tmpRoot]);
+  const stub = makeStubWatcher();
+  const source = createFileWatcherSource({ brainDir: tmpRoot, _watchFactory: () => stub.watcher });
+  const harness = new IngestionTestHarness();
+  const started = harness.run(source); stub.fireReady(); await started;
+  try { stub.fireUnlink(path.join(tmpRoot, 'note.md')); expect(harness.events).toHaveLength(0); }
+  finally { await harness.stop(); }
 });

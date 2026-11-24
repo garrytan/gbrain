@@ -1,0 +1,4 @@
+---
+kind: default
+---
+On managed brains only, syncing a registered plain-directory source now soft-deletes indexed pages whose canonical source files were removed, including renames treated as delete plus add. Managed sources keep database-only edits and shared skillpack pages; the existing delete limits still apply. A page is withdrawn only when a check of its own file reports it absent: a folder sync cannot read, or a root that is missing or empty (an unmounted volume), withdraws nothing until the removal is confirmed with GBRAIN_ALLOW_MASS_RECONCILE=1. Classic brains keep absent-file pages, since they have no write receipts proving a file existed. Git-source behavior is unchanged. Review missing files before the next sync; removed pages leave search and remain recoverable with gbrain restore until purged.
