@@ -27,7 +27,7 @@ import { localFederatedSourceIds, noGrantFederatedScope } from '../src/core/sour
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { setOwner } from '../src/core/access/owner.ts';
-import { bindMemberSource } from '../src/core/access/member-sources.ts';
+import { bindMemberSource, unbindMemberSource } from '../src/core/access/member-sources.ts';
 import { accessCheck } from '../src/commands/access.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -104,6 +104,19 @@ for (const kind of testBackends()) {
       expect(await seenBy('quin')).toEqual(readingExactly(['quin', 'team']));
       expect(await seenBy('pat')).toEqual(readingExactly(['pat', 'team']));
     }, 240_000);
+
+    test('think, a read marked mutating for its local save, keeps a default source bound to another member away', async () => {
+      await importFromContent(engine, 'chats/default-notes', '---\ntype: note\ntitle: chats/default-notes\n---\n# Chat\n\nThe plan zebracanarydefault is late.\n', { sourceId: 'default' });
+      await bindMemberSource(engine, PAGES.pat.member, 'default');
+      try {
+        const reads = async (who: string) => (await call(who, 'think', { question: 'zebracanarydefault' })).text.includes('chats/default-notes');
+        expect(await reads('quin')).toBe(false);
+        expect(await reads('pat')).toBe(true);
+        expect(await reads('owner')).toBe(true);
+      } finally {
+        await unbindMemberSource(engine, PAGES.pat.member, 'default', { apply: true });
+      }
+    }, 120_000);
 
     test('naming another member\'s personal source is refused like a source outside the grant', async () => {
       const named = await call('quin', 'get_page', { slug: PAGES.pat.slug, source_id: PAGES.pat.source });

@@ -1046,7 +1046,7 @@ export async function dispatchToolCall(
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
       // GST-3747: a read from a key bound to another member that reads the federated floor drops other members' personal sources too.
-      else if (readOnly) scoped = await memberFloorScope(engine, resolved, async () => boundMemberId(await boundIdentity(engine, opts.auth, opts.transport, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined)));
+      else if (readOnly || op?.scope === 'read') scoped = await memberFloorScope(engine, resolved, async () => boundMemberId(await boundIdentity(engine, opts.auth, opts.transport, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined)));
       if (roomDeclaration) scoped = { ...scoped, roomDeclaration, roomAttested: !!attested?.actor };
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
       // GST-363: on a brain that serves several people, a read from a connection bound to nobody is refused (or, in its grace, noticed) before any work.
