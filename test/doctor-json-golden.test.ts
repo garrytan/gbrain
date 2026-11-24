@@ -103,7 +103,7 @@ describe('gbrain doctor --json goldens (PGLite + early stops)', () => {
     const fast = DOCTOR_JSON.apply(run([start]));
     const slow = DOCTOR_JSON.apply(run([start, '[gbrain] still reading doctor checks (10 s so far); no result yet.', '[gbrain] still reading doctor checks (20 s so far); no result yet.']));
     expect(slow).toEqual(fast);
-    expect(fast.stderr).toEqual([start]);
+    expect((fast as { stderr: string[] }).stderr).toEqual([start]);
   });
 
   test('no config, unreachable Postgres, unreachable Postgres --fast', async () => {
