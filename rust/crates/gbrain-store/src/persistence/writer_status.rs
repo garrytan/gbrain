@@ -105,7 +105,7 @@ pub(crate) fn writer_diagnostic_rows_in(
 
     let blockers: Vec<Value> = requests
         .iter()
-        .filter(|r| outstanding(r) || r.blocked_reason.is_some())
+        .filter(|r| outstanding(r) || r.blocked_reason.is_some() || !extra_is_null(r, "recovery"))
         .take(100)
         .map(|r| {
             let expires = extra_time(r, "claim_expires_at");

@@ -42,11 +42,11 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 const REPAIR_IDS = ['ab', 'a0', 'a-c'];
 const REPAIR_SCOPE: RepairScope = { brain_id: 'host', source_ids: REPAIR_IDS };
 
-/** The sources' incarnation rows in the given id order (an unsorted read, ordered here). */
+/** The sources' incarnation rows in the given id order (one typed read per source). */
 async function incarnations(engine: BrainEngine, order: string[]): Promise<Array<{ id: string; incarnation: string }>> {
-  const rows = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[])', [order]);
-  return order.map((id) => ({ id, incarnation: rows.find((row) => row.id === id)!.incarnation }));
+  const rows: Array<{ id: string; incarnation: string }> = [];
+  for (const id of order) rows.push({ id, incarnation: (await engine.readSourceIncarnation(id))!.incarnation });
+  return rows;
 }
 
 /** The hash `gbrain repair loop-facts` prints for a scope with no drifted loops, over these source rows. */
@@ -97,7 +97,7 @@ describe('engine parity: callers that order sources', () => {
     return written;
   });
 
-  parityTest('a repair preview hashes the source incarnations in byte order, whatever the server locale', { methods: ['loopFactDrift', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('a repair preview hashes the source incarnations in byte order, whatever the server locale', { methods: ['loopFactDrift', 'readSourceIncarnation'] }, async (engine, backend) => {
     for (const id of REPAIR_IDS) await createSource(engine, backend, id, {});
     const plan = await loopFactsRepair.plan(engine, REPAIR_SCOPE, null, { apply: false });
     const sources = await incarnations(engine, ['a-c', 'a0', 'ab']);
@@ -105,7 +105,7 @@ describe('engine parity: callers that order sources', () => {
     return { items: plan.items.length, ids: sources.map((row) => row.id) };
   });
 
-  parityTest('a repair preview hash made in the old locale order is refused with preview_changed and "Re-run the preview"', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('a repair preview hash made in the old locale order is refused with preview_changed and "Re-run the preview"', { methods: ['readSourceIncarnation'] }, async (engine, backend) => {
     for (const id of REPAIR_IDS) await createSource(engine, backend, id, {});
     // The order an en_US.utf8 Postgres gave before the sort was collated: a hash printed by that preview.
     const oldHash = emptyLoopFactsHash(await incarnations(engine, ['a0', 'ab', 'a-c']));

@@ -82,6 +82,7 @@ describe('doctor page reads', () => {
       expect([...one.tl_head].length).toBe(1024);
       expect(all.find((r) => r.slug === 'notes/segmented')!.body_head).toBeNull();
       expect(all.find((r) => r.slug === 'notes/segmented')!.tl_head).toBe('');
+      expect(all.map((r) => `${r.slug}:${r.segmented}`).sort()).toEqual(['notes/one:false', 'notes/segmented:true', 'notes/three:false', 'notes/two:false']);
       expect(all.length).toBe(4);
       return { limited, all: bySlug(all) };
     },

@@ -29,6 +29,7 @@ import { derivationUnpricedModelEntry } from '../../src/commands/doctor/checks/d
 import { memberAccessEntry } from '../../src/commands/doctor/checks/member-access.ts';
 import { runDetect } from '../../src/core/schema-pack/detect.ts';
 import { readTerminalFailureSummary } from '../../src/core/persistence/terminal-failures.ts';
+import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -142,17 +143,32 @@ describe('in-statement samples and lists keep byte order', () => {
   });
 
   parityTest('the write-failure summary lists a source\'s recovery blockers by byte group key', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+    methods: ['readSourceMembership', 'insertWriteRequest', 'stampWriteClaim', 'publicationJournalStore', 'completeWriteRow', 'readTerminalFailureGroups'],
   }, async (engine) => {
-    // One recovery record per build, so each sits in its own group; the summary lists the groups in byte order.
-    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>(`SELECT incarnation::text AS incarnation FROM sources WHERE id = 'default'`);
-    for (const [i, build] of MIXED_IDS.entries()) {
+    // One recovery record per build, so each sits in its own group; the summary lists the groups in byte order. Each
+    // request is admitted by its build, claimed, records a publication recovery and commits with it still set, the way
+    // a write whose file publication was interrupted ends; every step is a typed journal member.
+    const { incarnation } = (await engine.readSourceMembership('default'))!;
+    for (const build of MIXED_IDS) {
+      const row = await engine.insertWriteRequest({
+        principalKind: 'local_cli', principalId: 'collate', requestId: randomUUID(), operation: 'put_page', sourceId: 'default',
+        sourceIncarnation: incarnation, pageId: null, slug: `notes/held-${build}`, worktreeId: null, topologyGeneration: null,
+        digest: randomUUID(), intent: { content: 'x' }, authority: {}, intentBytes: 0, terminalReservation: 0, targetKind: 'page',
+        protocolVersion: 1, admitterVersion: build, admitterHostId: null, counterKeys: [], clientRequestId: null,
+        state: 'queued', deferredRefreshId: null,
+      });
+      const token = randomUUID();
       await engine.transaction(async tx => {
-        await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
-        await tx.executeRaw(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,
-            intent_bytes,terminal_reservation,state,recovery,intent,completed_at,admitter_version)
-          VALUES ('local_cli','collate',$1::uuid,'put_page','default',$2::uuid,$3,$4,'{}'::jsonb,0,0,'committed',$5::text::jsonb,'{"content":"x"}'::jsonb,now(),$6)`,
-        [randomUUID(), incarnation, `notes/held-${build}`, randomUUID(), JSON.stringify({ version: 1, path: '/nonexistent/x.md', root: '/nonexistent', beforeHash: null, afterHash: 'a' }), build]);
+        await declarePersistenceProtocol(tx);
+        await tx.stampWriteClaim(row.id, token, 60_000, JSON.stringify({ phase: 'publishing' }));
+        const recorded = await (await tx.publicationJournalStore()).recordRecovery({ id: row.id, executionToken: token,
+          // The same record the raw seed stored: the summary reads only that one is present.
+          recovery: { version: 1, path: '/nonexistent/x.md', root: '/nonexistent', beforeHash: null, afterHash: 'a' } as never, bytes: 0, keys: [] }, true);
+        expect(recorded).toBe(true);
+        await tx.completeWriteRow({
+          id: row.id, state: 'committed', outcome: null, errorCode: null, errorMessage: null, consumerVersion: build, consumerHostId: null,
+          errorDetail: null, resultBytes: 0, counterKeys: [], intentBytes: 0, retainedBytes: 0, terminalReservation: 0, probePurges: false,
+        });
       });
     }
     const summary = await readTerminalFailureSummary(engine);

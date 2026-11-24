@@ -141,7 +141,7 @@ const whois: Operation = {
     await assertExplicitSourceLive(ctx, sourceIdParam);
     const sourceIds = scope.sourceIds ?? (scope.sourceId !== undefined
       ? [scope.sourceId]
-      : (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"')).map(r => r.id));
+      : (await ctx.engine.listAllSources()).map(r => r.id).sort());
     const { resolveEntityTypes } = await import('../schema-pack/entity-types.ts');
     const resolution = params.types
       ? { status: 'explicit' as const, filter: { types: params.types, per_source: [] } }

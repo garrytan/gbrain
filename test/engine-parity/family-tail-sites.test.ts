@@ -256,8 +256,9 @@ function watched(engine: BrainEngine) {
 
 /**
  * Run a write that a missing capability can queue instead of refuse: put_page answers `write_pending` with
- * blocked_reason engine_capability_missing when a step of its link preparation is refused. The case then stops on
- * that typed refusal, which is what the queued write is waiting for.
+ * blocked_reason engine_capability_missing when a step of its link preparation is refused. The Rust engine serves the
+ * live slug alias read of that preparation now (readLiveSlugAliases, caller-links-federate-rust), so the apply-mode
+ * cases run to the end on every arm; a refusal on any arm is a failure and reaches the harness as thrown.
  */
 async function orTheQueuedRefusal<T>(w: ReturnType<typeof watched>, run: () => Promise<T>): Promise<T> {
   try {

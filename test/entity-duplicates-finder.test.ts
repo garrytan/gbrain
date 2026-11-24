@@ -536,6 +536,18 @@ describe('same-source groups', () => {
     expect(g!.evidence.map(e => e.rule)).toEqual(expect.arrayContaining(['agent_wiki_copy', 'root_copy']));
   });
 
+  test('two same-name pages of one source in a cross-source group also group in their source', async () => {
+    await page('people/alice-example', 'person', 'Alice Example');
+    await page('people/alice-example-2', 'person', 'Alice Example');
+    await page('people/alice-example', 'person', 'Alice Example', {}, 'source-b');
+    const [g, ...rest] = await groups('in_source');
+    expect(rest).toEqual([]);
+    expect(members(g!)).toEqual(['default:people/alice-example', 'default:people/alice-example-2']);
+    expect(g!.class).toBe('likely');
+    expect(g!.evidence).toEqual([{ matcher: 'same_name', rule: 'strict_name' }]);
+    expect((await groups('cross_source')).map(members)).toEqual([['default:people/alice-example', 'default:people/alice-example-2', 'source-b:people/alice-example']]);
+  });
+
   test('distinct_from keeps two pages apart', async () => {
     await page('people/alice-example', 'person', 'Alice Example');
     await page('alice-example', 'person', 'Alice Example', { distinct_from: ['people/alice-example'] });

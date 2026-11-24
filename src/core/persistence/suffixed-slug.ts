@@ -29,6 +29,7 @@
  * with an advisory, like the rules above; nothing is ever redirected to the
  * folded slug's page.
  */
+import { normalizeSlug } from '../utils.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { ContentRefusal } from '../import-screen.ts';
 import { opError, type OperationContext, type OperationError } from '../ops/contract.ts';
@@ -119,7 +120,7 @@ async function liveExactRow(engine: BrainEngine, sourceId: string, slug: string)
 /** Dry-run form: reads the exact `(source_id, slug)` row itself. */
 export async function suffixedSlugDryRun(ctx: OperationContext, sourceId: string, slug: string, operation: SlugAdmissionOperation = 'put_page'): Promise<void> {
   if (suffixedSlugAdmission(ctx, slug, true, operation) === null) return;
-  suffixedSlugAdmission(ctx, slug, await liveExactRow(ctx.engine, sourceId, slug.toLowerCase()), operation);
+  suffixedSlugAdmission(ctx, slug, await liveExactRow(ctx.engine, sourceId, normalizeSlug(slug)), operation);
 }
 
 /**

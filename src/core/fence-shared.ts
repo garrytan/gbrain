@@ -129,6 +129,19 @@ export function parseStringCell(raw: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+const PLAIN_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+/**
+ * A numeric cell that is a plain number and nothing else, or `undefined`.
+ * `parseFloat` would read `0.7abc` as 0.7 and `50%` as 50 without a word.
+ */
+export function parsePlainNumberCell(raw: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!PLAIN_NUMBER_RE.test(trimmed)) return undefined;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /**
  * Escape a value for safe placement inside a pipe-separated cell. Replaces
  * literal `|` with `\|` and line breaks (`\r\n`, `\r`, `\n`) with `<br>` so

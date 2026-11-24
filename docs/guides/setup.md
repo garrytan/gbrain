@@ -373,6 +373,11 @@ client and from a compiled binary. The index names the absolute launcher the
 install recorded, so the index and the skills it loads come from the same
 gbrain. MCP `get_skill` is unchanged.
 
+A tool that reads gbrain's skill files from disk (for example `skills/conventions/`)
+can ask `gbrain bundled-skill --json` for `skills_root`, the skills folder of
+the gbrain that is running, instead of walking up from the binary. It is
+`null` for a single-file binary, whose skills are read with `--asset`.
+
 | | |
 |---|---|
 | Select | `--skill-loading off\|spring` on `gbrain setup <harness>` (`resolve` on `setup claude-code\|codex` turns on the per-turn skill resolver instead: [skill-resolver guide](skill-resolver.md#hook-lane-claude-code-and-codex); on `setup openclaw`, `resolve\|shadow` installs the [skill-resolver plugin](skill-resolver.md#openclaw-plugin)), `gbrain connect --install`, `gbrain connect --harness … --install` and `gbrain bootstrap harness`; or `GBRAIN_SKILL_LOADING`. Flag, then env, then the recorded choice, then `off`. |

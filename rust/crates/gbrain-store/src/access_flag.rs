@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 pub(crate) const RESTRICTIONS_PRESENT_KEY: &str = "access.restrictions_present";
 
 /// The meta record the open-time scan writes when it is done (`keys::meta`).
-const SCAN_DONE: &str = "access_flag_scan";
+pub(crate) const SCAN_DONE: &str = "access_flag_scan";
 
 /// Sets the flag when `record` carries a top-level `readable_by` frontmatter key and the flag is
 /// not already `'1'`.
@@ -386,14 +386,20 @@ mod tests {
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods and the commit onto the base store);
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
-        //   the format upgrade (no page records);
+        //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
+        //   purge tombstones, generations and oauth clients on it);
         // - `transactions.rs`: a transaction's exclusive base handle (its statements run through
         //   the bound arm of `Store::write`); a rollback writes its counters forward on that same
         //   handle, so it opens no second one;
         // - this module's open-time scan, the keyword index
-        //   repair (`keyword/index_build.rs`, postings only);
+        //   repair (`keyword/index_build.rs`, postings only) and the open-time repair of the
+        //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
-        //   whole files under `#[cfg(test)]`.
+        //   whole files under `#[cfg(test)]`;
+        // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
+        //   addon's records into an empty record file before any store opens it;
+        // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
+        //   transaction fail like a disk and passes every call on (4 calls and definitions).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
@@ -403,7 +409,10 @@ mod tests {
             ("kv.rs", 5),
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
+            ("page_body/purge_record.rs", 1),
             ("redb_kv.rs", 4),
+            ("seed/v0_60_766_tests.rs", 1),
+            ("test_support.rs", 4),
             ("transactions.rs", 1),
         ];
         let opens = |c: &str| {
@@ -425,7 +434,8 @@ mod tests {
 
         // Both arms of `Store::write` hand the closure to `write_chain`, which wraps it.
         let lib = code("lib.rs");
-        let write = &lib[lib.find("pub(crate) fn write<T>").unwrap()..];
+        // `write` and `write_as` both run through `write_under`, which owns the two arms.
+        let write = &lib[lib.find("fn write_under<T>").unwrap()..];
         let write = &write[..write.find("\n    }\n").unwrap()];
         assert_eq!(write.matches("write_chain(").count(), 2);
         let chain = &lib[lib.find("fn write_chain<T>").unwrap()..];

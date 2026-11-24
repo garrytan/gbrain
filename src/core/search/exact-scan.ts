@@ -59,6 +59,8 @@ export interface ExactScanOpts {
   sourceIds?: string[];
   types?: string[];
   slugPrefix?: string;
+  /** More prefixes searched with `slugPrefix` (one name stored under another spelling). */
+  slugPrefixAlso?: string[];
   excludeSlugPrefixes: string[];
   excludePrivate: boolean;
   remote: boolean;
@@ -133,7 +135,8 @@ export function buildExactBatchStatement(opts: ExactScanOpts, after: number, bat
   if (opts.sourceIds?.length) pageFilters.push('p.source_id = ANY(' + add(opts.sourceIds) + '::text[])');
   else if (opts.sourceId) pageFilters.push('p.source_id = ' + add(opts.sourceId));
   if (opts.types?.length) pageFilters.push('p.type = ANY(' + add(opts.types) + '::text[])');
-  if (opts.slugPrefix) pageFilters.push('p.slug LIKE ' + add(escapeLikePattern(opts.slugPrefix) + '%') + " ESCAPE '\\'");
+  if (opts.slugPrefix && opts.slugPrefixAlso?.length) pageFilters.push('p.slug LIKE ANY(' + add([opts.slugPrefix, ...opts.slugPrefixAlso].map(prefix => escapeLikePattern(prefix) + '%')) + '::text[])');
+  else if (opts.slugPrefix) pageFilters.push('p.slug LIKE ' + add(escapeLikePattern(opts.slugPrefix) + '%') + " ESCAPE '\\'");
   if (opts.excludePrivate) pageFilters.push(privatePagesFilterForCaller('p'));
   if (opts.minTrust) pageFilters.push(pageEligibleSql('p', { floor: opts.minTrust }));
   const hardExclude = buildHardExcludeClause('p.slug', opts.excludeSlugPrefixes);

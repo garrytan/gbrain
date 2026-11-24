@@ -1,3 +1,4 @@
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { isValidSourceId, ALL_SOURCES } from '../core/source-id.ts';
 import { isEngineDegraded } from '../core/degraded-marker.ts';
@@ -44,11 +45,10 @@ export async function assertStdioSourceBindable(
   if (isEngineDegraded(engine)) return;
   let rows: Array<{ id: string }>;
   try {
-    rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE id = $1 AND archived = false`,
-      [env],
-    );
+    rows = (await engine.listAllSources()).filter((s) => s.id === env);
   } catch (e) {
+    // A refused read is not a connectivity failure: the binding stays unchecked, so the server must not start on it.
+    rethrowCapabilityRefusal(e);
     // Fail-open by design (this guards config, not connectivity) — but never
     // silently: an operator debugging a blind stdio lane needs to know the
     // preflight did not run.

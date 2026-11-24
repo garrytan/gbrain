@@ -38,8 +38,8 @@ const HASH_EPHEMERAL_KEYS: &[&str] = &[
     "trust_tier",
 ];
 
-const NEXT_PAGE_ID: &str = "next_page_id";
-const NEXT_VERSION_ID: &str = "next_version_id";
+pub(crate) const NEXT_PAGE_ID: &str = "next_page_id";
+pub(crate) const NEXT_VERSION_ID: &str = "next_version_id";
 
 /// A text column of `pages` that PGLite lets be NULL: `compiled_truth` and `timeline` (migration v248).
 ///
@@ -1386,14 +1386,14 @@ pub(crate) fn put_page_in(
     Ok(record)
 }
 
-fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
+pub(crate) fn tag_change(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)
 }
 
-const TAG_ADDED: &str = "added";
-const TAG_FRONTMATTER: &str = "frontmatter";
+pub(crate) const TAG_ADDED: &str = "added";
+pub(crate) const TAG_FRONTMATTER: &str = "frontmatter";
 
 /// Adds `tags` to the page with PGLite's claim rules: an explicit add claims each tag `added`; a
 /// `frontmatter` claim marks a new tag and adopts only an unclaimed legacy one. A new tag
@@ -1700,6 +1700,12 @@ impl Store {
                 {
                     page.deleted_at_us = Some(now);
                     tag_change(tx, &*self.env, &mut page)?;
+                    // The page enters a fact purge's derivation sweep's scope: the sweep checks it again before it ends.
+                    crate::page_body::derivation_sweep::note_scope_entry(
+                        tx,
+                        &page.source_id,
+                        page.id,
+                    )?;
                     hidden.get_or_insert(page.slug);
                 }
             }
@@ -1997,19 +2003,19 @@ impl Store {
                 {
                     continue;
                 }
-                let mut versions: Vec<VersionRecord> = Vec::new();
+                // A row that does not parse is kept as `None` in key (id) order: it is never listed,
+                // and as a successor it counts as withholding, so the version before it shows no
+                // reason (fail closed) instead of taking the next readable row as its successor.
+                let mut versions: Vec<Option<VersionRecord>> = Vec::new();
                 scan_prefix(
                     &*read,
                     &keys::version_prefix(page.id),
                     false,
                     &mut |_, v| {
-                        if let Ok(row) = serde_json::from_slice::<VersionRecord>(v) {
-                            versions.push(row);
-                        }
+                        versions.push(serde_json::from_slice::<VersionRecord>(v).ok());
                         true
                     },
                 )?;
-                versions.sort_by_key(|v| v.id);
                 // A policy reader sees a version's reason only when its successor (the next
                 // version over every version of the page, never only the visible ones; the live
                 // page, which the page check above covers, for the newest) does not withhold it,
@@ -2018,14 +2024,17 @@ impl Store {
                     .iter()
                     .enumerate()
                     .map(|(i, row)| {
+                        let row = row.as_ref()?;
                         let withheld = policy.is_some_and(|policy| {
                             row.successor_pruned
                                 || versions.get(i + 1).is_some_and(|next| {
-                                    crate::facts::successor_withholds_reason(
-                                        &next.page_type,
-                                        &next.frontmatter,
-                                        policy,
-                                    )
+                                    next.as_ref().is_none_or(|next| {
+                                        crate::facts::successor_withholds_reason(
+                                            &next.page_type,
+                                            &next.frontmatter,
+                                            policy,
+                                        )
+                                    })
                                 })
                         });
                         if withheld {
@@ -2036,6 +2045,7 @@ impl Store {
                     })
                     .collect();
                 for (row, reason) in versions.into_iter().zip(reasons) {
+                    let Some(row) = row else { continue };
                     if !policy.is_some_and(|policy| {
                         crate::facts::caller_version_hidden(
                             &page,
@@ -2353,6 +2363,18 @@ pub(crate) fn snapshot_in(
     Ok(row)
 }
 
+/// The shadow seed (`seed.rs`): stores `row`, a snapshot copied from another engine with its own
+/// id and `snapshot_at`, where `snapshot_in` stores one. `false` when the page already holds that
+/// version. The caller checked the page.
+pub(crate) fn seed_version(tx: &mut dyn KvWrite, row: &VersionRecord) -> Result<bool> {
+    let key = keys::version(row.page_id, row.id);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, row)?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Search timeline: the timeline text of the page keyword vector.
 //
@@ -2445,6 +2467,11 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     crate::timeline::remove_page_timeline(tx, page.id)?;
     crate::timeline_queries::remove_event_projections(tx, page.id)?;
     crate::cascade::remove_page_rows(tx, page)?;
+    remove_page_record(tx, page)
+}
+
+/// A page's record, its index entries and its projection job.
+fn remove_page_record(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     let stored = read_page_by_id(&*tx, page.id)?;
     let stored = stored.as_ref().unwrap_or(page);
     index_origin(tx, Some(stored), None)?;
@@ -2454,9 +2481,77 @@ pub(crate) fn remove_page(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()>
     tx.delete(&keys::page_id(page.id))
 }
 
+/// The shadow follow (`seed/follow.rs`): removes what a page owns itself, so that a row of the same
+/// id can be stored in its place: the record with its index entries and projection job, the sealed
+/// search timeline, and the salience, extraction, contextual retrieval, embedding signature and
+/// body column records. Everything that hangs off the page (versions, chunks, links, timeline
+/// entries, takes, raw data, wanted links, the reconcile mark) stays readable.
+pub(crate) fn remove_page_own_state(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
+    forget_search_timeline(tx, page.id)?;
+    crate::extraction::remove_page_rows(tx, page)?;
+    crate::aliases::remove_page_rows(tx, page)?;
+    crate::page_body::clear_body_state(tx, page.id)?;
+    crate::salience::remove_page_rows(tx, page)?;
+    crate::embeddings::clear_page_signature(tx, page.id)?;
+    remove_page_record(tx, page)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A version whose successor row does not parse shows no reason under `excludePrivate`: the unreadable row is
+    /// never listed, and the next readable row is not taken as the successor (fail closed).
+    #[test]
+    fn get_versions_withholds_the_reason_before_an_unreadable_successor() {
+        let store = crate::test_support::store();
+        let page = put(&store, "notes/history");
+        for reason in ["made private: secret plan B", "opened again", "retitled"] {
+            store
+                .create_version_with("notes/history", None, Some(reason))
+                .unwrap();
+        }
+        let read = store.read().unwrap();
+        let ids: Vec<u64> = versions_of(&*read, page.id)
+            .unwrap()
+            .iter()
+            .map(|v| v.id)
+            .collect();
+        drop(read);
+        assert_eq!(ids.len(), 3);
+        // The middle version's record stops parsing (an invalid field), as a damaged row would.
+        store
+            .write(|tx| tx.put(&keys::version(page.id, ids[1]), br#"{"id":"not a number"}"#))
+            .unwrap();
+        let reasons = |policy: Option<crate::facts::PrivacyPolicy>| -> Vec<(u64, Value)> {
+            let opts = VersionsOptions {
+                include_body: Some(false),
+                exclude_private: policy,
+                ..VersionsOptions::default()
+            };
+            let rows = store.get_versions("notes/history", &opts).unwrap();
+            rows.iter()
+                .map(|v| (v["id"].as_u64().unwrap(), v["replaced_because"].clone()))
+                .collect()
+        };
+        let policy = crate::facts::PrivacyPolicy {
+            entity_privacy: true,
+            ..crate::facts::PrivacyPolicy::default()
+        };
+        assert_eq!(
+            reasons(Some(policy)),
+            vec![(ids[2], json!("retitled")), (ids[0], Value::Null)],
+            "the unreadable row is not listed and its predecessor's reason is withheld"
+        );
+        // A trusted read (no policy) keeps the stored reasons of the rows it can read.
+        assert_eq!(
+            reasons(None),
+            vec![
+                (ids[2], json!("retitled")),
+                (ids[0], json!("made private: secret plan B"))
+            ]
+        );
+    }
 
     fn put(store: &Store, slug: &str) -> PageRecord {
         let input = PageInput {

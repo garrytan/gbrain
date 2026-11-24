@@ -67,3 +67,6 @@ export const stripStaleFrontmatterKeys: StoreMember<[opts: { sourceId: string; i
   if (!Array.isArray(o.ids) || o.ids.length === 0) return 0;
   return storeCall({ member: 'stripStaleFrontmatterKeys', sourceId: o.sourceId as string | undefined }, () => brain.stripStaleFrontmatterKeys(o));
 };
+
+// The extract receipt write's page reads and the extract_rollup_7d day upsert (engine-sql/extract-bookkeeping.ts).
+export * from './extract-bookkeeping.ts';

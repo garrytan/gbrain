@@ -15,7 +15,6 @@ tools:
   - list_pages
   - get_timeline
 mutating: false
-upstream: briefing@fc834ee
 ---
 
 # Briefing Skill

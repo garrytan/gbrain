@@ -69,6 +69,13 @@ export const hasChronicleSkipDecision: Member<'hasChronicleSkipDecision'> = asyn
 export const listOrphanedChronicleOwners: Member<'listOrphanedChronicleOwners'> = async (brain, sourceId, kind, limit) =>
   storeCall({ member: 'listOrphanedChronicleOwners', sourceId }, () => brain.listOrphanedChronicleOwners({ sourceId, kind, limit }));
 
+/** The chronicle advisor's coverage-gap rows; the store answers `effective_date` as ISO text, read here as a Date. */
+export const listChronicleCoverageGapRows: Member<'listChronicleCoverageGapRows'> = async (brain) => {
+  const rows = await storeCall({ member: 'listChronicleCoverageGapRows' }, () => brain.listChronicleCoverageGapRows()) as Array<{
+    type: string; effective_date: string | null; effective_date_source: string | null; fm_date: string | null; fm_start: string | null }>;
+  return rows.map(r => ({ ...r, effective_date: r.effective_date == null ? null : new Date(r.effective_date) }));
+};
+
 /** The `frontmatter.event` when, where and kind of each page of `slugs`. */
 export const listChronicleEventSlotRows: Member<'listChronicleEventSlotRows'> = async (brain, sourceId, slugs) => {
   if (!slugs.length) return [];

@@ -104,7 +104,7 @@ describe('belief walks and cycle listings take pages by byte', () => {
     }
   });
 
-  parityTest('runPhantomRedirectPass walks root pages by byte and rotates its cursor through them', { methods: ['putPage', 'getPage', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('runPhantomRedirectPass walks root pages by byte and rotates its cursor through them', { methods: ['putPage', 'getPage', 'readOpCheckpointRecord', 'writeOpCheckpointRecord'], requires: 'raw_sql' }, async (engine) => {
     await put(engine, ROOT_SLUGS);
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-collate-phantom-'));
     try {

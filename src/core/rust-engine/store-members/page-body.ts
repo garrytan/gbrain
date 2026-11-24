@@ -7,7 +7,7 @@
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
  * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody, and the fact purge's
  * lockBodyStagingState, deleteUnstagedSegmentChunks and deleteRewrittenSegmentDerivations.
- * stageSegmentChunks refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
+ * stageSegmentChunks keeps a text vector a chunk carries (a vector a replace reuses) and refuses an image vector.
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -18,7 +18,7 @@
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
   SegmentChunkInput, SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../../page-body/types.ts';
-import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
+import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow } from '../../page-body/derivations.ts';
 import type { RewrittenDerivationsDelete } from '../../engine-sql/segmented-purge-writes.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
@@ -154,14 +154,15 @@ export const readSegmentedEmbedPage: StoreMember<[ref: SegmentedEmbedRef], Segme
  * The chunks get PGLite's normalisation (`prepareChunks`: model default, empty values to null, scrubbed text) plus
  * their place in the occurrence; `chunk_index` is the store's to pick. `opts.embeddingColumn` only picks the default
  * model label (PGLite's `column.embeddingModel || ...`); it is served for the store's one vector column and refused
- * for any other (`textColumnModel`).
+ * for any other (`textColumnModel`). A chunk that carries a vector (one reused from a retired row) keeps it, with its
+ * model and recorded input; an image vector is refused.
  */
 export const stageSegmentChunks: StoreMember<[pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: unknown }], number[]> =
   async (brain, pageId, generation, chunks, opts) => {
     const { embeddingColumn } = takeOptions('stageSegmentChunks', opts, ['embeddingColumn']);
     if (chunks.length === 0) return [];
     for (const chunk of chunks) {
-      if (chunk.embedding !== undefined || chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'chunk vectors are not stored');
+      if (chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'image vectors are not stored');
     }
     const columnModel = textColumnModel('stageSegmentChunks', embeddingColumn);
     const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })), columnModel);
@@ -240,7 +241,9 @@ export const upsertSegmentDerivations: StoreMember<[rows: readonly SegmentDeriva
   if (rows.length === 0) return;
   const sent = rows.map(row => ({ ...row, segmentSha256: hex(row.segmentSha256), contextHash: hex(row.contextHash),
     output: row.output ?? null, receipt: row.receipt ?? null }));
-  await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent));
+  // The store drops a row a recorded fact purge sweep refuses (the trigger on page_segment_derivations) and stores the others.
+  const refused = await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent)) as number;
+  if (refused > 0) throw new DerivationWriteRefused(refused);
 };
 
 export const retireSegmentDerivations: StoreMember<[pageId: number, live: readonly number[], opts?: { kind?: SegmentDerivationKind }], number> =

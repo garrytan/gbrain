@@ -6,8 +6,9 @@
 //!
 //! Members: countOffGridTakeWeights, countTakes, planFactPurgeTakes, listTakeRowsForPage,
 //! readTakeRowTrust, readTakeTrustRef, countMcpResolvedTakes, listTakeSupersessionCandidates,
-//! listTakePointers, listTakeSupersedeReceipts, setTakeSupersededBy, listTopResolvedTakesForHolder,
-//! listAbandonedTakes.
+//! readLiveTakePage (grade_takes' managed resolve), revertWaveTakeResolutions (`gbrain calibration
+//! --undo-wave`), listTakePointers, listTakeSupersedeReceipts, setTakeSupersededBy,
+//! listTopResolvedTakesForHolder, listAbandonedTakes.
 //!
 //! `readTakeRowTrust` and `readTakeTrustRef` are the take trust reads of the take write gate, the
 //! accepted-takes and lost-fence-rows repairs and the trust explainers. The tier reads as the column
@@ -171,6 +172,24 @@ pub struct McpResolvedInput {
     pub holders: Option<Vec<Option<String>>>,
     /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null reads every page.
     pub exclude_private: Option<PrivacyPolicy>,
+}
+
+/// `readLiveTakePage` input: the page, the take's row and the claim it was judged on.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LiveTakeAt {
+    pub page_id: i64,
+    pub row_num: i64,
+    pub claim: String,
+}
+
+/// `revertWaveTakeResolutions` input.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RevertResolutionsSpec {
+    pub take_ids: Vec<i64>,
+    pub resolved_by: String,
+    pub dry_run: bool,
 }
 
 impl Store {
@@ -536,6 +555,68 @@ impl Store {
         Ok(out)
     }
 
+    /// `readLiveTakePage(at)`: `{ slug, source_id }` of the page when it is not soft-deleted and its
+    /// take at the row still holds the claim, else `None`.
+    pub fn read_live_take_page(&self, at: &LiveTakeAt) -> Result<Option<Value>> {
+        no_nul("readLiveTakePage", &[("claim", &at.claim)])?;
+        let (Ok(page_id), Ok(row_num)) = (u64::try_from(at.page_id), i32::try_from(at.row_num))
+        else {
+            return Ok(None);
+        };
+        let read = self.read()?;
+        let Some(page) = read_page_by_id(&*read, page_id)? else {
+            return Ok(None);
+        };
+        if page.deleted_at_us.is_some() {
+            return Ok(None);
+        }
+        Ok(take_at(&*read, page_id, row_num)?
+            .filter(|t| t.claim == at.claim)
+            .map(|_| json!({ "slug": page.slug, "source_id": page.source_id })))
+    }
+
+    /// `revertWaveTakeResolutions(spec)`: the number of the takes that `resolvedBy` resolved; unless
+    /// a dry run, clears their seven resolution fields (a take another writer resolved keeps its
+    /// resolution). `updated_at` stays as it is, as the SQL leaves it.
+    pub fn revert_wave_take_resolutions(&self, spec: &RevertResolutionsSpec) -> Result<u64> {
+        no_nul(
+            "revertWaveTakeResolutions",
+            &[("resolved_by", &spec.resolved_by)],
+        )?;
+        let ids: BTreeSet<u64> = spec
+            .take_ids
+            .iter()
+            .filter_map(|&i| u64::try_from(i).ok())
+            .collect();
+        let matching = |read: &dyn KvRead| -> Result<Vec<TakeRecord>> {
+            let mut out = Vec::new();
+            for &id in &ids {
+                if let Some(t) = read_take(read, id)?
+                    && t.resolved_by.as_deref() == Some(spec.resolved_by.as_str())
+                {
+                    out.push(t);
+                }
+            }
+            Ok(out)
+        };
+        if spec.dry_run {
+            return Ok(matching(&*self.read()?)?.len() as u64);
+        }
+        self.write(|tx| {
+            let takes = matching(&*tx)?;
+            for mut take in takes.iter().cloned() {
+                take.resolved_at_us = None;
+                take.resolved_outcome = None;
+                take.resolved_quality = None;
+                take.resolved_value = None;
+                take.resolved_unit = None;
+                take.resolved_source = None;
+                take.resolved_by = None;
+                store_take(tx, &take)?;
+            }
+            Ok(takes.len() as u64)
+        })
+    }
     /// `listTakePointers(pageId)`: `[{ row_num, superseded_by }]`, every take on the page, in key
     /// order (the SQL has no `ORDER BY`; the repair reads it into a map).
     pub fn list_take_pointers(&self, page_id: u64) -> Result<Vec<Value>> {

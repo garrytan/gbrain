@@ -3,7 +3,7 @@
 //! the body a valid-time advisory compares, and probe segment storage (the TypeScript
 //! `engine-sql/write-guards.ts`).
 //!
-//! Members: readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
+//! Members: readPageOrigin, listRevivalPages, listOriginClaims, bindPageOrigin, stampPageIngest, sealImportedPage,
 //! readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage,
 //! detachPageOrigin, readPageDatabaseOnlyReason, bumpPageKnowledgeRevision, removePageFrontmatterKeys,
 //! setPageType.
@@ -201,6 +201,30 @@ impl Store {
             source_path: page.source_path,
             deleted_at: page.deleted_at_us.map(iso),
         }))
+    }
+
+    /// `listRevivalPages(slug, sourceId)`: `{ id, source_id }` of each soft-deleted page with `slug`
+    /// (of `source_id` only when given), the pages a restore of `slug` would revive, by source id in
+    /// byte order.
+    pub fn list_revival_pages(&self, slug: &str, source_id: Option<&str>) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut sources: Vec<String> = match source_id {
+            Some(id) => vec![id.to_owned()],
+            None => crate::sources::all_sources(&*read)?
+                .into_iter()
+                .map(|s| s.id)
+                .collect(),
+        };
+        sources.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        let mut out = Vec::new();
+        for source in sources {
+            if let Some(page) = read_page(&*read, &source, slug)?
+                && page.deleted_at_us.is_some()
+            {
+                out.push(serde_json::json!({ "id": page.id, "source_id": page.source_id }));
+            }
+        }
+        Ok(out)
     }
 
     /// `listOriginClaims(sourceId, spellings, opts)`: the live pages of the source that record any

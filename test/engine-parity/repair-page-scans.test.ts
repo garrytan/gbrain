@@ -13,7 +13,8 @@
  *    `countLiveFileBackedPages({ nonBlank })` now answer each of their query shapes (a page after an id, a legacy page
  *    with no origin, live file pages by slug, pages in any state by id). Merging a twin read what it would land on
  *    (links, link transitions, timeline entries and raw data already on the survivor) through `executeRaw` as well;
- *    `listTwinMergeLosers` answers it. The uncommitted-deletions scan read its tombstones (and whether a managed sync
+ *    `listTwinMergeLosers` answers it. The origin-twins verdict read each claimant's body digest, frontmatter id, trust tier,
+ *    privacy and slug-keyed withdrawals through `executeRaw` (`readOriginClaimants`); `listOriginClaimants` answers it. The uncommitted-deletions scan read its tombstones (and whether a managed sync
  *    made each one) through `executeRaw` too; `listFileTombstones` answers it, by id descending below a page id.
  *  - Why existing coverage misses it: test/repair-safe-chunks*.test.ts and test/origin-twins*.test.ts run on PGLite
  *    or Postgres only.
@@ -94,6 +95,31 @@ describe('engine parity: repair page scans', () => {
       ids, fileBacked: await engine.countLiveFileBackedPages('default'),
     };
     return { members, safeChunks: shape(await preview(engine, 'safe-chunks')), originTwins: await previewThenApply(engine, 'origin-twins') };
+  }));
+
+  parityTest('listOriginClaimants reads the verdict inputs of live pages: body digest, frontmatter id, trust tier, privacy and withdrawals or purges', {
+    methods: ['putPage', 'softDeletePage', 'insertFactWithdrawal', 'insertFactPurge', 'listRepairScanPages', 'listOriginClaimants'],
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
+    await put(engine, 'notes/claim-plain', 'markdown', 'notes/claim-plain.md');
+    await put(engine, 'notes/claim-id', 'markdown', 'notes/claim-id.md', { id: 'explicit-note-id' });
+    await put(engine, 'notes/claim-private', 'markdown', 'notes/claim-private.md', { visibility: 'private' });
+    await put(engine, 'notes/claim-withdrawn', 'markdown', 'notes/claim-withdrawn.md');
+    await put(engine, 'notes/claim-purged', 'markdown', 'notes/claim-purged.md');
+    await put(engine, 'notes/claim-gone', 'markdown', 'notes/claim-gone.md');
+    await engine.putPage('notes/claim-same-body', { type: 'note', title: 'x', compiled_truth: 'notes/claim-plain body.', timeline: 'tl', frontmatter: {} }, { sourceId: 'default' });
+    await engine.softDeletePage('notes/claim-gone', { sourceId: 'default' });
+    await engine.insertFactWithdrawal('default', 'private', 'a withdrawn claim', 'notes/claim-withdrawn', null);
+    await engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject: 'notes/claim-purged', factHash: 'f'.repeat(32), requestId: null, actor: null, reason: null } as never);
+    const pages = await engine.listRepairScanPages('default', { afterId: 0, limit: 50 });
+    const slugOf = new Map(pages.map(page => [Number(page.id), page.slug]));
+    const rows = await engine.listOriginClaimants('default', [...slugOf.keys(), 999_999].reverse());
+    const bySlug = Object.fromEntries(rows.map(row => [slugOf.get(row.id), { fm_id: row.fm_id, trust_tier: row.trust_tier, private: row.private, restricted: row.restricted, revision: typeof row.revision,
+      digest: row.body_hash === null ? null : row.body_hash.length }]));
+    const same = rows.filter(row => ['notes/claim-plain', 'notes/claim-same-body'].includes(slugOf.get(row.id)!)).map(row => row.body_hash);
+    expect(same[0]).toBe(same[1]);
+    expect(rows.map(row => row.id)).toEqual([...rows.map(row => row.id)].sort((a, b) => a - b));
+    return { listed: rows.length, bySlug, other: await engine.listOriginClaimants('other-example', [...slugOf.keys()]), none: await engine.listOriginClaimants('default', []) };
   }));
 
   parityTest('ghost-pages and legacy-twins read the same pages for each scan shape on every engine', {

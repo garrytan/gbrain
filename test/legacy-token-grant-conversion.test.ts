@@ -10,6 +10,7 @@
  * denied on the HTTP path; minting never writes a JSONB-only grant; doctor
  * reports the grant-mirror window end date.
  */
+import { readOnlySqlFor } from './helpers/read-only-sql.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -126,10 +127,7 @@ describe('on-read conversion fallback', () => {
 
   test('a read-only database still authorizes with the identical grant and leaves the row unconverted', async () => {
     const t = await olderBinaryToken({ takes_holders: ['world'], source_id: ['other', 'default'] });
-    const live = sqlQueryForEngine(engine);
-    const readOnly: SqlQuery = (strings, ...values) => /^\s*UPDATE/i.test(strings[0]!)
-      ? Promise.reject(Object.assign(new Error('cannot execute UPDATE in a read-only transaction'), { code: '25006' }))
-      : live(strings, ...values);
+    const readOnly = readOnlySqlFor(engine);
     const auth = await verify(t.token, readOnly);
     expect(auth).toMatchObject({ sourceId: 'other', allowedSources: ['other', 'default'], hasSourceGrant: true, takesHoldersAllowList: ['world'] });
     expect((await rowOf(t.id)).source_grant).toBeNull();

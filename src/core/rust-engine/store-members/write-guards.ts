@@ -1,5 +1,5 @@
 /**
- * The page write guards (BrainEngine readPageOrigin, listOriginClaims, bindPageOrigin, stampPageIngest,
+ * The page write guards (BrainEngine readPageOrigin, listRevivalPages, listOriginClaims, bindPageOrigin, stampPageIngest,
  * sealImportedPage, detachPageOrigin, readPageDatabaseOnlyReason, bumpPageKnowledgeRevision, removePageFrontmatterKeys, setPageType, readLivePageBody, readPageIndexingState, readInlinePageRegions, readStoredPageTier, hasSegmentStorage): the reads and
  * writes a page write runs around the page row (engine-sql/write-guards.ts on the SQL engines). The store runs one
  * write transaction at a time, so the advisory locks PGLite takes before it lists origin claims are already held,
@@ -7,7 +7,7 @@
  *
  * What each member answers and why: rust/docs/store/write-guards.md.
  */
-import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget } from '../../engine-sql/write-guards.ts';
+import type { ImportedPageSeal, InlinePageRegionsRow, LivePageBodyRow, OriginClaimRow, PageIndexingState, PageIngestStamp, PageOriginRow, PageOriginTarget, RevivalPageRow } from '../../engine-sql/write-guards.ts';
 import type { StoredBodyRow } from '../../engine-sql/facts-cycle.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -18,6 +18,11 @@ export const readPageOrigin: StoreMember<[target: PageOriginTarget], PageOriginR
     { id: number; slug: string; source_path: string | null; deleted_at: string | null } | null;
   return row && { id: Number(row.id), slug: row.slug, source_path: row.source_path, deleted_at: row.deleted_at === null ? null : new Date(row.deleted_at) };
 };
+
+/** The tombstones a restore of `slug` revives, by source id in byte order. */
+export const listRevivalPages: StoreMember<[slug: string, sourceId: string | null], RevivalPageRow[]> = async (brain, slug, sourceId) =>
+  ((await storeCall({ member: 'listRevivalPages', slug, sourceId: sourceId ?? undefined }, () => brain.listRevivalPages(slug, sourceId))) as Array<{ id: number; source_id: string }>)
+    .map(row => ({ id: Number(row.id), source_id: row.source_id }));
 
 export const listOriginClaims: StoreMember<[sourceId: string, spellings: readonly string[], opts: { lockKeys: readonly string[]; excludePageId?: number | null }], OriginClaimRow[]> =
   (brain, sourceId, spellings, opts) => storeCall({ member: 'listOriginClaims', sourceId },

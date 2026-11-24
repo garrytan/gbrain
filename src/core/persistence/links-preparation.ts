@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { ParsedPage } from '../import-file.ts';
 import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeResolver, type ExtractPageLinksOptions,
   type PageLinksResult } from '../link-extraction.ts';
@@ -24,28 +25,29 @@ const raced = (error: unknown): null => {
 
 async function liveSlugAliases(engine: BrainEngine, sourceId: string, targets: string[]): Promise<Map<string, string>> {
   if (!targets.length) return new Map();
-  const rows = await engine.readLiveSlugAliases(sourceId, [...new Set(targets)]);
-  return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
+  try {
+    const rows = await engine.readLiveSlugAliases(sourceId, targets);
+    return new Map(rows.map(row => [row.alias_slug, row.canonical_slug]));
+  } catch (error) {
+    if (isMissingSchemaObject(error, 'table', 'slug_aliases')) return new Map();
+    throw error;
+  }
 }
 
 interface SourceSlugIndex { count: number; hash: bigint; maxId: number; index: Map<string, string[]> }
 const sourceSlugIndexes = new WeakMap<BrainEngine, Map<string, Promise<SourceSlugIndex | null>>>();
-const SLUG_FINGERPRINT = 'count(*)::int AS n, coalesce(sum(hashtextextended(slug, 0)), 0)::text AS h, coalesce(max(id), 0)::int AS m';
-
 async function refreshSourceSlugIndex(engine: BrainEngine, sourceId: string, state: SourceSlugIndex | null): Promise<SourceSlugIndex> {
   if (state) {
-    const [probe] = await engine.executeRaw<{ n: number; h: string; m: number; added: string[]; added_h: string }>(`SELECT ${SLUG_FINGERPRINT},
-      coalesce(array_agg(slug) FILTER (WHERE id > $2), '{}') AS added, coalesce(sum(hashtextextended(slug, 0)) FILTER (WHERE id > $2), 0)::text AS added_h
-      FROM pages WHERE source_id=$1`, [sourceId, state.maxId]);
-    const hash = BigInt(probe!.h);
-    if (!probe!.added.length && probe!.n === state.count && hash === state.hash) return state;
-    if (probe!.n === state.count + probe!.added.length && hash === state.hash + BigInt(probe!.added_h)) {
-      return { count: probe!.n, hash, maxId: probe!.m, index: buildBasenameIndex(probe!.added, state.index) };
+    const probe = await engine.readSourceSlugProbe(sourceId, state.maxId);
+    const hash = BigInt(probe.hash);
+    if (!probe.added.length && probe.count === state.count && hash === state.hash) return state;
+    if (probe.count === state.count + probe.added.length && hash === state.hash + BigInt(probe.addedHash)) {
+      return { count: probe.count, hash, maxId: probe.maxId, index: buildBasenameIndex(probe.added, state.index) };
     }
   }
-  const [all] = await engine.executeRaw<{ n: number; h: string; m: number; slugs: string[] }>(
-    `SELECT ${SLUG_FINGERPRINT}, coalesce(array_agg(slug), '{}') AS slugs FROM pages WHERE source_id=$1`, [sourceId]);
-  return { count: all!.n, hash: BigInt(all!.h), maxId: all!.m, index: buildBasenameIndex(all!.slugs) };
+  // afterId 0: every page id is above it, so `added` is every slug.
+  const all = await engine.readSourceSlugProbe(sourceId, 0);
+  return { count: all.count, hash: BigInt(all.hash), maxId: all.maxId, index: buildBasenameIndex(all.added) };
 }
 
 /**

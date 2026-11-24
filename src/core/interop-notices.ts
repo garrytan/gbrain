@@ -43,7 +43,9 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   rescore_skipped: { why: 'the rescoring pass was skipped', fix: 'doctor' },
   vector_arm_failed: { why: 'the vector retrieval arm failed', fix: 'doctor' },
   keyword_arm_failed: { why: 'the keyword retrieval arm failed', fix: 'doctor' },
+  supersede_check_failed: { why: 'the check for pages a newer page replaced failed, so results may include outdated pages that are neither flagged superseded nor ranked below their replacement; if currency matters, repeat the call', fix: 'doctor' },
   title_arm_failed: { why: 'the title retrieval arm failed', fix: 'doctor' },
+  entity_lookup_failed: { why: 'the page lookup for this name failed, so "not found" cannot be told from a lookup that did not run; that is not evidence the entity is absent', fix: 'doctor' },
   budget_dropped_all: { why: 'the token budget dropped every result; raise the budget parameter to see them', fix: null },
   budget_truncated: { why: 'the token budget cut some results; raise the budget parameter to see more', fix: null },
   keyword_zero: { why: 'keyword matching found nothing for these terms', fix: null },
@@ -398,7 +400,7 @@ function factsDegradedReason(r: Record<string, unknown>): string | undefined {
 /** Did this call run keyword-only because the brain opted out of embedding (not a missing or failing provider)? */
 export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<string, unknown>): boolean {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
-  if (op === 'search' || op === 'query') {
+  if (op === 'search' || op === 'query' || op === 'find_experts') {
     const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
     return (retrieval?.degraded ?? []).some(d => d.reason === 'embedding_disabled');
   }
@@ -432,6 +434,15 @@ export function recallStagesFor(op: string, result: unknown, meta: Record<string
 }
 
 /**
+ * Ops whose keyword-only run on a brain that turned embeddings off on purpose is not degraded (degraded-stamp.ts
+ * stamps nothing for it either): their notice leaves out the keyword-only stage and the keyword arm finding nothing
+ * (`keyword_zero`, a true negative there), so a call with no other stage gets no `degraded_recall`. `_meta.retrieval`
+ * and recall's `search_degraded` still record that the search was keyword-only.
+ */
+const KEYWORD_ONLY_BY_CHOICE_OPS: ReadonlySet<string> = new Set(['search', 'query', 'find_experts', 'recall']);
+const KEYWORD_ONLY_STAGES: ReadonlySet<string> = new Set(['embed_unavailable', 'keyword_only_no_embedding_provider', 'keyword_zero']);
+
+/**
  * The MCP dispatch producer (one call per successful tool call): the
  * `degraded_recall` notice on search/query/recall/think/context_pack and
  * `source_binding_narrowed` on an empty bound stdio read. Never throws.
@@ -443,10 +454,14 @@ export function recallInteropNotices(
   try {
     const out: Notice[] = [];
     const entries = (meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined)?.degraded ?? [];
-    const stages = recallStagesFor(op, result, meta, opts.config).map(stage => entries.find(d => d.stage === stage) ?? stage);
+    const optedOut = embeddingOptedOutFor(op, result, meta);
+    const keywordOnlyByChoice = optedOut && KEYWORD_ONLY_BY_CHOICE_OPS.has(op);
+    const stages = recallStagesFor(op, result, meta, opts.config)
+      .filter(stage => !(keywordOnlyByChoice && KEYWORD_ONLY_STAGES.has(stage)))
+      .map(stage => entries.find(d => d.stage === stage) ?? stage);
     const { _meta: _ignored, ...args } = params;
     const coverage = (meta.retrieval as { coverage?: RetrievalCoverage } | undefined)?.coverage;
-    const degraded = degradedRecallNotice(stages, { ...opts, optedOut: embeddingOptedOutFor(op, result, meta), retry: { op, args }, coverage });
+    const degraded = degradedRecallNotice(stages, { ...opts, optedOut, retry: { op, args }, coverage });
     if (degraded) out.push(degraded);
     const narrowed = opts.transport === 'stdio' ? sourceBindingNarrowedNotice(op, params, result, opts.binding) : null;
     if (narrowed) out.push(narrowed);

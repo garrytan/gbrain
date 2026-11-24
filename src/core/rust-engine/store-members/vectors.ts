@@ -97,7 +97,7 @@ export const searchVector: StoreMember<[embedding: Float32Array, opts?: SearchOp
     console.warn(`[gbrain] Warning: search limit clamped from ${o.limit} to ${cap}`);
   }
   // `excludePrivate` is the page policy `buildVisibilityClause` adds; a caller whose policy is wider refuses.
-  const policy = storePagePolicy('searchVector', o.excludePrivate);
+  const policy = storePagePolicy('searchVector', o.excludePrivate, { callerReaders: true });
   const options = {
     limit,
     offset: jsNumber(Number(o.offset || 0)),

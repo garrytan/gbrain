@@ -146,18 +146,19 @@ describe('access reads sort text keys by byte', () => {
     return out;
   });
 
-  // These callers read through raw SQL, so a Rust brain stops on the typed raw_sql refusal.
+  // The member flags and the link are written through the typed writes `gbrain access member` uses; the token binding
+  // check reads the member through the engine, as its callers pass it.
   parityTest('the raw-SQL caller copies list member groups, member ids and sources by byte', {
-    methods: ['executeRaw', 'insertAccessMember'], requires: 'raw_sql',
+    methods: ['insertAccessMember', 'setAccessMemberLabelledOnly', 'insertAccessMemberLink', 'readAccessMembers'],
   }, async (engine, backend) => {
     for (const source of SOURCES) await createSource(engine, backend, source);
     for (const id of MIXED) await engine.insertAccessMember(member(id, { groups: GROUPS }));
     for (const id of MIXED) await engine.insertAccessMember(member(`x${id}`, { kind: 'audience' }));
-    await engine.executeRaw('UPDATE access_members SET labelled_only = true WHERE id = ANY($1::text[])', [MIXED]);
-    await engine.executeRaw("INSERT INTO access_member_links (system, external_id, member_id) VALUES ('qm', 'ext-1', 'ab')");
+    for (const id of MIXED) await engine.setAccessMemberLabelledOnly(id, true);
+    await engine.insertAccessMemberLink('qm', 'ext-1', 'ab');
     const checks = await accessLineageEntry.run({ engine } as unknown as DoctorContext) as Array<{ name: string; details?: { members?: string[] } }>;
     const out = {
-      verified: (await tokenMemberBinding(sqlQueryForEngine(engine), { member_id: 'ab' }, null)).member?.groups,
+      verified: (await tokenMemberBinding(sqlQueryForEngine(engine), { member_id: 'ab' }, null, engine)).member?.groups,
       linked: (await linkedMember(engine, 'qm', 'ext-1'))?.groups,
       labelledOnly: await labelledOnlyMemberIds(engine),
       audience: checks.find(c => c.name === 'access_audience_members')?.details?.members,
