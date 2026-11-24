@@ -323,7 +323,9 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
     };
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat });
     expect(chatCalled).toBe(false);
-    expect((await engine.getPage('concepts/theme'))?.frontmatter.synthesis_mode).toBe('deterministic_tier');
+    const page = await engine.getPage('concepts/theme');
+    expect(page?.frontmatter.synthesis_mode).toBe('deterministic_tier');
+    expect(page?.frontmatter.created).toBe(page?.frontmatter.synthesized_at);
     expect(result.details?.synthesis_mode_counts).toEqual({
       llm: 0,
       deterministic_tier: 1,
