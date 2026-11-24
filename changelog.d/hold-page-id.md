@@ -12,6 +12,5 @@ When the write gate holds a fact or take for your review, it now remembers which
 <!-- behavior-change: held_writes_follow_page_rename -->
 
 ### For contributors
-- Migration v337 adds `write_gate_holds.page_id` and `page_candidates`, with two disjoint partial unique indexes (bound on source, page id, fingerprint and detector version; unbound on source, slug, fingerprint and detector version). `recordWriteGateHold` takes an optional `pageId` that producers who already read the page pass; without it the page is found inside the same INSERT, with no page lock. The page-insert path binds waiting holds, `movePageIdReferences` carries holds with the page, and the purge sweeps delete by id (by slug only for unbound holds).
-- The migrations golden test ignores versions 332 to 336 while they are gaps, because those numbers belong to migrations landing on other branches.
+- Migration v332 adds `write_gate_holds.page_id` and `page_candidates`, with two disjoint partial unique indexes (bound on source, page id, fingerprint and detector version; unbound on source, slug, fingerprint and detector version). `recordWriteGateHold` takes an optional `pageId` that producers who already read the page pass; without it the page is found inside the same INSERT, with no page lock. The page-insert path binds waiting holds, `movePageIdReferences` carries holds with the page, and the purge sweeps delete by id (by slug only for unbound holds).
 - The Rust engine's own hold store and rename paths still have to match this: see the contract in the pull request description.

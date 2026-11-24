@@ -3,7 +3,7 @@
  * companions: test/hold-page-id-lifecycle.test.ts, test/hold-page-id.test.ts).
  *
  * Authoring gate
- *  1. Protects: (3) a release journaled before the v337 upgrade is refused when the upgrade marked its hold with candidate
+ *  1. Protects: (3) a release journaled before the v332 upgrade is refused when the upgrade marked its hold with candidate
  *     pages, at preparation and again under the final hold lock; (4) a hold whose origin page differs from the page its fact is
  *     about (a conversation extraction naming another entity) is still released onto that entity page, with its attribution
  *     unchanged; (5) a hold re-gated under a new name keeps its slug and payload coherent, so after further renames, and the

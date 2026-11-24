@@ -9,7 +9,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import type { WriteGateHold } from '../write-gate-store.ts';
 
-/** A hold as the owner-action adapters carry it: the binding fields are absent on a hold row read before v337. */
+/** A hold as the owner-action adapters carry it: the binding fields are absent on a hold row read before v332. */
 export type HoldPageInput = Pick<WriteGateHold, 'id' | 'source_id' | 'slug' | 'payload'> & { page_id?: number | null; page_candidates?: number[] | null };
 
 const str = (v: unknown) => (typeof v === 'string' && v ? v : null);

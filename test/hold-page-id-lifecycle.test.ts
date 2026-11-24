@@ -1,5 +1,5 @@
 /**
- * Quarantine holds follow their page: the hold lifecycle after the v337 column (plan decisions D, E, F, I, J, L;
+ * Quarantine holds follow their page: the hold lifecycle after the v332 column (plan decisions D, E, F, I, J, L;
  * companions: test/hold-page-id.test.ts for the rename paths, test/hold-page-id-migration.test.ts for the upgrade).
  *
  * Authoring gate

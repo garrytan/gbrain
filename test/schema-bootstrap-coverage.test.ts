@@ -247,8 +247,8 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // v302 (GST-2228): the blob's unique link_transitions_identity_idx includes
   // link_source, which only v302 adds to a brain at v204-v301.
   { kind: 'column', table: 'link_transitions', column: 'link_source' },
-  // v337: the blob's write_gate_holds_bound_dedupe_idx / _unbound_dedupe_idx / _page_idx name the hold's page binding
-  // columns, which only v337 adds to a brain at v227-v336.
+  // v332: the blob's write_gate_holds_bound_dedupe_idx / _unbound_dedupe_idx / _page_idx name the hold's page binding
+  // columns, which only v332 adds to a brain at v227-v331.
   { kind: 'column', table: 'write_gate_holds', column: 'page_id' },
   { kind: 'column', table: 'write_gate_holds', column: 'page_candidates' },
 ];
@@ -386,7 +386,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
         ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer) NULLS NOT DISTINCT;
 
-      -- v337 strip: a v227-v336 write_gate_holds has neither binding column; the blob's
+      -- v332 strip: a v227-v331 write_gate_holds has neither binding column; the blob's
       -- partial dedupe indexes name them, so bootstrap must re-add both before the replay.
       ALTER TABLE write_gate_holds DROP COLUMN IF EXISTS page_id;
       ALTER TABLE write_gate_holds DROP COLUMN IF EXISTS page_candidates;
@@ -510,7 +510,7 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
         ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer) NULLS NOT DISTINCT;
 
-      -- v337 strip: a v227-v336 write_gate_holds has neither binding column; the blob's
+      -- v332 strip: a v227-v331 write_gate_holds has neither binding column; the blob's
       -- partial dedupe indexes name them, so bootstrap must re-add both before the replay.
       ALTER TABLE write_gate_holds DROP COLUMN IF EXISTS page_id;
       ALTER TABLE write_gate_holds DROP COLUMN IF EXISTS page_candidates;

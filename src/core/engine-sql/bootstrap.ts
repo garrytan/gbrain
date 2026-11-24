@@ -328,8 +328,8 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
   // the replay (CREATE INDEX IF NOT EXISTS checks columns before the name).
   const needsLinkTransitionsLinkSource = probe.link_transitions_exists
     && !probe.link_transitions_link_source_exists;
-  // v337: the blob's write_gate_holds_bound_dedupe_idx / _unbound_dedupe_idx / _page_idx name page_id and
-  // page_candidates, columns only v337 adds, so a brain at v227-v336 would wedge on the replay.
+  // v332: the blob's write_gate_holds_bound_dedupe_idx / _unbound_dedupe_idx / _page_idx name page_id and
+  // page_candidates, columns only v332 adds, so a brain at v227-v331 would wedge on the replay.
   const needsWriteGateHoldsPageId = probe.write_gate_holds_exists
     && (!probe.write_gate_holds_page_id_exists || !probe.write_gate_holds_page_candidates_exists);
   return {
@@ -762,7 +762,7 @@ async function applyLaterColumnGaps(target: ForwardReferenceBootstrapTarget, gap
   }
 
   if (needsWriteGateHoldsPageId) {
-    // Columns only, exactly as v337 adds them (nullable, no default: metadata only); v337 still runs and backfills the
+    // Columns only, exactly as v332 adds them (nullable, no default: metadata only); v332 still runs and backfills the
     // page binding, then swaps the dedupe index for the two disjoint partial ones.
     await exec(`
       ALTER TABLE write_gate_holds ADD COLUMN IF NOT EXISTS page_id BIGINT;

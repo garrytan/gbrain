@@ -5,12 +5,7 @@
       17,
       18,
       19,
-      100,
-      332,
-      333,
-      334,
-      335,
-      336
+      100
     ],
     "helpers": {
       "ACTIVATION_SERVED_REVISION": "4ae2affe24656313c50011f09ed465dd8a9bc48b6d5af255ff39a06070d82e66",
@@ -113,7 +108,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 337,
+    "latest": 332,
     "records": [
       {
         "handler": {
@@ -5425,7 +5420,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 337
+        "version": 332
       }
     ],
     "versions": [
@@ -5755,7 +5750,7 @@
       329,
       330,
       331,
-      337
+      332
     ]
   },
   "normalizer": "migrations-record-v1"
