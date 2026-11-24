@@ -223,6 +223,58 @@ for (const backend of testBackends()) {
       expect(await snapshot()).toBe(before);
     });
 
+    /** A hold bound to page `pageId` (holds remember their page by id), named `slug` as it was when held. */
+    const boundHold = async (source: string, slug: string, pageId: string): Promise<string> => {
+      const rows = await engine.executeRaw<{ id: string }>(
+        `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, status, page_id)
+         VALUES ('fact', $1, $2, $3, 1, 'quarantine', '{}'::jsonb, 'held', $4::bigint) RETURNING id::text AS id`, [source, slug, `fp-${seq++}`, pageId]);
+      return `h${rows[0]!.id}`;
+    };
+    const pageId = async (source: string, slug: string): Promise<string> =>
+      (await engine.executeRaw<{ id: string }>('SELECT id::text AS id FROM pages WHERE source_id = $1 AND slug = $2', [source, slug]))[0]!.id;
+
+    describe('holds that follow their page', () => {
+      test('a bound hold at the old name of a renamed page is protected by its page, so the check reports ok', async () => {
+        await page('default', 'people/b');
+        await alias('default', 'people/a', 'people/b');
+        await history('default', 'people/a', 'people/b');
+        await boundHold('default', 'people/a', await pageId('default', 'people/b'));
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(check.severity).toBeUndefined();
+        expect(details(check)).toMatchObject({ complete: true, scanned: 1, stranded: { renamed: 0, page_deleted: 0, no_page: 0 }, items: [] });
+      });
+
+      test('a bound hold whose page exists is protected even when no rename record names the old slug', async () => {
+        await page('default', 'people/b');
+        await boundHold('default', 'people/a', await pageId('default', 'people/b'));
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(details(check)).toMatchObject({ stranded: { renamed: 0, page_deleted: 0, no_page: 0 }, items: [] });
+      });
+
+      test('an unbound hold that the rename record leads to a live page is protected too: readers match it there', async () => {
+        await page('default', 'people/b');
+        await history('default', 'people/a', 'people/c');
+        await history('default', 'people/c', 'people/b');
+        await hold('default', 'people/a');
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(details(check)).toMatchObject({ stranded: { renamed: 0, page_deleted: 0, no_page: 0 }, items: [] });
+      });
+
+      test('a bound hold whose page is soft-deleted is informational, even when the old slug leads to another live page', async () => {
+        await page('default', 'people/dead', true);
+        await page('default', 'people/other');
+        await alias('default', 'people/a', 'people/other');
+        await boundHold('default', 'people/a', await pageId('default', 'people/dead'));
+        const check = await run({ engine });
+        expect(check.status).toBe('ok');
+        expect(check.severity).toBe('info');
+        expect(details(check).stranded).toEqual({ renamed: 0, page_deleted: 1, no_page: 0 });
+      });
+    });
+
     describe('bounded scan', () => {
       test('exactly the row budget of held rows is a complete scan; the last row is still examined', async () => {
         await page('default', 'people/live');
