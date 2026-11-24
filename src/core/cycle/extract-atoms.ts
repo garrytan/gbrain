@@ -696,6 +696,25 @@ export async function resolveExtractAtomsModel(engine: BrainEngine): Promise<str
   return (await resolveExtractAtomsModelWithSource(engine)).model;
 }
 
+// The worker's own gateway decides: a route it cannot start (no credential)
+// is a configuration block, not an attempted provider call that failed.
+function providerNotConfiguredResult(
+  opts: { dryRun?: boolean; _chat?: unknown },
+  extractModel: string,
+  sourceId: string,
+): PhaseResult | null {
+  if (opts.dryRun || opts._chat || isGatewayAvailable('chat', extractModel)) return null;
+  const message = `extract_atoms: ${extractModel} cannot start on this worker (provider credentials are not configured); no provider call was made`;
+  console.error(`[extract_atoms] ${message}`);
+  return {
+    phase: 'extract_atoms',
+    status: 'warn',
+    duration_ms: 0,
+    summary: message,
+    details: { reason: 'provider_not_configured', source_id: sourceId, atoms_extracted: 0, model: extractModel, dry_run: false },
+  };
+}
+
 /**
  * v0.41 minimal extract_atoms body, rebuilt for v0.41.2.1.
  *
@@ -966,19 +985,8 @@ export async function runPhaseExtractAtoms(
   const costGate = resolveExtractAtomsCostGate(extractModel, resolveEmbedModelForCostGate(), pricingOverrides, { explicitBudget });
   const refused = await settleExtractAtomsCostGate(engine, sourceId, costGate, { budgetCap, extractModel, dryRun: opts.dryRun ?? false });
   if (refused) return refused;
-  // The worker's own gateway decides: a route it cannot start (no credential)
-  // is a configuration block, not an attempted provider call that failed.
-  if (!opts.dryRun && !opts._chat && !isGatewayAvailable('chat', extractModel)) {
-    const message = `extract_atoms: ${extractModel} cannot start on this worker (provider credentials are not configured); no provider call was made`;
-    console.error(`[extract_atoms] ${message}`);
-    return {
-      phase: 'extract_atoms',
-      status: 'warn',
-      duration_ms: 0,
-      summary: message,
-      details: { reason: 'provider_not_configured', source_id: sourceId, atoms_extracted: 0, model: extractModel, dry_run: false },
-    };
-  }
+  const notConfigured = providerNotConfiguredResult(opts, extractModel, sourceId);
+  if (notConfigured) return notConfigured;
   const budgetTracker = opts.attempt?.budgetTracker ?? new BudgetTracker({
     maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
