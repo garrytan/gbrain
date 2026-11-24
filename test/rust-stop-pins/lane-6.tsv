@@ -3,5 +3,3 @@
 # Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
 # A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
 # due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
-test/engine-parity/chunks.test.ts	the same slug in two sources keeps separate chunk sets under sourceId scoping	getChunks	lane 6 200f3b5c-066e-4cb5-90d3-8167781b7076	2026-11-26	Declines a chunk read over several sources; the store reads one source at a time.
-test/engine-parity/search-privacy.test.ts	getChunkPage: excludePrivate scoped to the other source, to the owner-only source and to a list of both	getChunkPage	lane 6 200f3b5c-066e-4cb5-90d3-8167781b7076	2026-11-26	Declines a chunk page read over several sources; the store reads one source at a time.

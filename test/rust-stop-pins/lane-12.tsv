@@ -3,5 +3,3 @@
 # Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
 # A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
 # due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
-test/engine-parity/jobs-queue.test.ts	retryJob runs a delegated client's retry policy through the retry transaction	retryJob	lane 12 7fea4b93-8b28-4041-bb15-18872c9c2bad	2026-11-26	Declines a delegated client's retry policy, which needs a database read the store does not offer.
-test/engine-parity/jobs.test.ts	admitJob runs a delegated client's lock and capacity check inside the admission	admitJob	lane 12 7fea4b93-8b28-4041-bb15-18872c9c2bad	2026-11-26	Declines a delegated client's admission check that spans several store calls.
