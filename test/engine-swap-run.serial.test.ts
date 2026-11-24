@@ -21,6 +21,8 @@ import { openReadSource } from '../src/shadow/read-pool.ts';
 import { runSwapStates, startRecord, type SwapRunDeps } from '../src/core/engine-swap/run.ts';
 import { readSwapRecord, REAL_FS, type SwapFs, type SwapState } from '../src/core/engine-swap/record.ts';
 import { primaryFenced } from '../src/core/engine-swap/fence.ts';
+import { planFailback, runFailback, verifyFailback } from '../src/core/engine-swap/failback.ts';
+import { readGraduationRow } from '../src/core/persistence/graduation-schema.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { fillSeedFixture } from './helpers/shadow-seed-fixture.ts';
 import { openFollowRig, type FollowRig } from './helpers/follow-rig.ts';
@@ -194,4 +196,28 @@ async function expectRefused(p: Promise<unknown>, reason: string): Promise<void>
     expect(readSwapRecord(w.deps.recordPath)!.state).toBe('verified');
     expect(configEngine(w)).toBe('pglite');
   }, 120_000);
+  test('swap, write on the Rust engine, failback: the writes reach the old primary and both engines read the same', async () => {
+    const w = await open();
+    const done = await inHome(w, async () => runSwapStates(startRecord(w.deps, 'planhash', 'policyhash'), w.deps));
+    expect(done.state).toBe('succeeded');
+    // Writes served by the real Rust engine after the swap: an edit, a new page with a tag and a timeline entry, a key.
+    const rust = w.rig.rust;
+    await rust.putPage('notes/late-example', { type: 'note', title: 'Late', compiled_truth: 'Edited on the Rust engine.', timeline: '' });
+    await rust.putPage('notes/rust-only-example', { type: 'note', title: 'Rust only', compiled_truth: 'Made on the Rust engine.', timeline: '' });
+    await rust.setConfig('example.failback', 'from-rust');
+    const failback = {
+      primary: w.primary, rust, recordPath: w.deps.recordPath, brainKey: 'pglite-test', runDir: join(w.home, '.gbrain', 'engine-swap', 'pglite-test'),
+      writers: async () => null,
+      prober: async () => ({ effective_engine: 'pglite', database_path: w.dbPath, ok: true }),
+    };
+    const plan = await inHome(w, () => planFailback(failback));
+    expect(plan.pages.changed + plan.pages.added).toBeGreaterThanOrEqual(1);
+    const back = await inHome(w, () => runFailback(failback, plan.plan_hash));
+    expect(back.failback!.state).toBe('succeeded');
+    expect((await verifyFailback(rust, w.primary)).mismatches).toEqual([]);
+    expect((await w.primary.getPage('notes/late-example'))!.compiled_truth).toBe('Edited on the Rust engine.');
+    expect(await w.primary.getConfig('example.failback')).toBe('from-rust');
+    expect(configEngine(w)).toBe('pglite');
+    expect((await readGraduationRow(w.primary))!.state).toBe('rolled_back');
+  }, 180_000);
 });
