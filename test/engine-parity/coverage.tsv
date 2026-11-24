@@ -253,7 +253,7 @@ countLineageClosingRules	pages	yes	1	no	yes	yes	serves
 readOpCheckpointCompletedKeys	pages	yes	1	no	yes	yes	serves
 readForecastPredictions	pages	yes	2	no	yes	yes	serves
 readPredictionLedgerEvents	pages	yes	2	no	yes	yes	serves
-readTakeHorizonRows	pages	yes	2	no	yes	yes	serves
+readTakeHorizonRows	pages	yes	1	no	yes	yes	serves
 readLatestTakeGrades	pages	yes	2	no	yes	yes	serves
 readBeliefCoverageEvents	pages	yes	2	no	yes	yes	serves
 searchKeyword	search	yes	50	yes	yes	yes	serves
@@ -510,7 +510,7 @@ readLiveTakePage	takes	yes	1	no	yes	yes	serves
 readTakeClaim	takes	yes	2	no	yes	yes	serves
 upsertTakeHorizon	takes	yes	2	no	yes	yes	serves
 deleteTakeHorizon	takes	yes	2	no	yes	yes	serves
-listTakeHorizons	takes	yes	2	no	yes	yes	serves
+listTakeHorizons	takes	yes	3	no	yes	yes	serves
 listHorizonScanRows	takes	yes	2	no	yes	yes	serves
 listWaveAppliedTakeIds	takes	yes	1	no	yes	yes	serves
 revertWaveTakeResolutions	takes	yes	1	no	yes	yes	serves
@@ -658,7 +658,7 @@ deleteUnstagedSegmentChunks	segmented_body	yes	3	no	yes	yes	serves
 deleteRewrittenSegmentDerivations	segmented_body	yes	1	no	yes	yes	serves
 readPageViewDigest	segmented_body	yes	1	no	yes	yes	serves
 writePageViewDigest	segmented_body	yes	1	no	yes	yes	serves
-listVectorlessChunkIndexes	segmented_body	yes	4	no	yes	yes	serves
+listVectorlessChunkIndexes	segmented_body	yes	3	no	yes	yes	serves
 listInlineVersionTexts	versions	yes	2	no	yes	yes	serves
 createVersion	versions	yes	83	no	yes	yes	serves
 getVersions	versions	yes	32	no	yes	yes	serves
@@ -2159,7 +2159,7 @@ listEmbedPendingProjections	embed_stale_work	yes	1	no	yes	yes	serves
 listEmbedProjectionRepairPages	embed_stale_work	yes	1	no	yes	yes	serves
 readPageIsSegmented	embed_stale_work	yes	1	no	yes	yes	serves
 hasEmbeddingSignatureDrift	embed_stale_work	yes	2	no	yes	yes	serves
-listUnembeddedChunkIndexes	embed_stale_work	yes	1	no	yes	yes	serves
+listUnembeddedChunkIndexes	embed_stale_work	yes	2	no	yes	yes	serves
 sumEmbedBackfillChars	embed_stale_work	yes	1	no	yes	yes	serves
 lockContentDriftState	embed_stale_work	yes	2	no	yes	yes	serves
 invalidateContentDriftChunks	embed_stale_work	yes	2	no	yes	yes	serves
