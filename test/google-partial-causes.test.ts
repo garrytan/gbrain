@@ -17,13 +17,17 @@ describe('markPartial', () => {
     expect(s.partialCauses![0]!.length).toBeLessThanOrEqual(200);
   });
 
-  test('once the list is full, the newest cause still lands, so a run-level cause added last is kept', () => {
+  test('item failures past five are dropped, and every run-level cause is kept whenever it is added', () => {
     const s = summary();
-    for (let i = 0; i < 8; i++) markPartial(s, 'gmail thread failed: thread ' + i);
+    for (let i = 0; i < 4; i++) markPartial(s, 'gmail thread failed: thread ' + i, true);
+    markPartial(s, 'calendar sweep failed: upstream error');
+    for (let i = 4; i < 9; i++) markPartial(s, 'gmail thread failed: thread ' + i, true);
+    markPartial(s, 'run aborted');
     markPartial(s, 'usage limit reached');
-    expect(s.partialCauses).toHaveLength(5);
-    expect(s.partialCauses!.slice(0, 4)).toEqual(['gmail thread failed: thread 0', 'gmail thread failed: thread 1', 'gmail thread failed: thread 2', 'gmail thread failed: thread 3']);
-    expect(s.partialCauses![4]).toBe('usage limit reached');
+    expect(s.partialCauses).toEqual([
+      'gmail thread failed: thread 0', 'gmail thread failed: thread 1', 'gmail thread failed: thread 2', 'gmail thread failed: thread 3',
+      'calendar sweep failed: upstream error', 'gmail thread failed: thread 4', 'run aborted', 'usage limit reached',
+    ]);
   });
 
   test('a repeated cause is kept once', () => {

@@ -64,8 +64,9 @@ export interface GoogleSyncSummary {
   limitStopped?: boolean;
   /** GST-3452: items that failed on that limit (each also counted in failedFiles). */
   limitedItems?: number;
-  /** Why the run ended partial, one line each, at most PARTIAL_CAUSE_LIMIT, so the stored job result names the cause. */
+  /** Why the run ended partial, one line each (every run-level cause, up to ITEM_CAUSE_LIMIT item failures), so the stored job result names the cause. */
   partialCauses?: string[];
+  partialItemCauses?: number;
   /** Threads per ingest tier, when the source sorts threads into tiers (ingest-tiers.ts). */
   ingestTiers?: Record<string, number>;
 }
@@ -73,20 +74,22 @@ export interface GoogleSyncSummary {
 /** GST-3452: a provider usage or rate limit (gbrain.io's allowance, Google's quota); the next sync resumes. */
 export const isUsageLimit = (e: unknown): boolean => e instanceof CredentialError && (e.code === 'gbrainio_limit_reached' || e.code === 'rate_limited');
 
-const PARTIAL_CAUSE_LIMIT = 5;
+const ITEM_CAUSE_LIMIT = 5;
 
 /**
- * Ends the run partial and records why. A repeated cause is kept once; once the list is full the newest cause
- * takes the last slot, so a run-level cause added last (an abort, a usage limit) is never crowded out by item
- * failures. Each cause is safe to store in the JSONB job result.
+ * Ends the run partial and records why. A repeated cause is kept once. A failed thread or item (`item`) is
+ * kept only while fewer than five are; a run-level cause (a failed service sweep, a guard refusal, a missing
+ * scope, an abort, a usage limit) is always kept, so item failures never crowd it out. Each cause is safe to
+ * store in the JSONB job result.
  */
-export function markPartial(summary: GoogleSyncSummary, cause: string): void {
+export function markPartial(summary: GoogleSyncSummary, cause: string, item = false): void {
   summary.status = 'partial';
   const line = jsonbSafeJson(truncateUtf8(cause.split('\n')[0]!, 200));
   const causes = summary.partialCauses ??= [];
-  if (causes.includes(line)) return;
-  if (causes.length < PARTIAL_CAUSE_LIMIT) causes.push(line);
-  else causes[PARTIAL_CAUSE_LIMIT - 1] = line;
+  const items = summary.partialItemCauses ?? 0;
+  if (causes.includes(line) || (item && items >= ITEM_CAUSE_LIMIT)) return;
+  causes.push(line);
+  if (item) summary.partialItemCauses = items + 1;
 }
 
 export interface GoogleSyncDeps {

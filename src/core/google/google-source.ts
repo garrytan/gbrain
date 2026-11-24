@@ -381,7 +381,7 @@ async function attemptThread(g: GmailSweep, tid: string, version: string | null,
     if (usageLimit) {
       g.summary.limitStopped = true;
       g.summary.limitedItems = (g.summary.limitedItems ?? 0) + 1;
-    } else markPartial(g.summary, `gmail thread failed: ${e instanceof Error ? e.message : String(e)}`);
+    } else markPartial(g.summary, `gmail thread failed: ${e instanceof Error ? e.message : String(e)}`, true);
     return { kind: usageLimit ? 'rate_limited' : 'failed' };
   }
 }

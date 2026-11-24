@@ -263,7 +263,7 @@ async function throughHolds(deps: GoogleSyncDeps, summary: GoogleSyncSummary, ho
     deps.log(`[google] ${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}; `
       + (classified.class === 'content' ? `counted toward a hold (see: gbrain sources status ${deps.sourceId})` : 'retried on the next sync'));
     if (wasHeld) return true;
-    markPartial(summary, `${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}`);
+    markPartial(summary, `${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}`, true);
     return false;
   }
 }
