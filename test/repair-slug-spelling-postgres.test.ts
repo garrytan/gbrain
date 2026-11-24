@@ -258,6 +258,35 @@ run('postgres: the repair holds the stored spelling\'s page lock', () => {
       }
     }), 120_000);
 
+    for (const table of ['pages', 'files']) {
+      test(`row security on ${table} (a policy that shows the role nothing) refuses the preview and names the table`, () => withEnv(env, async () => {
+        const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+        await purgedPage(sourceId, `Notes/Rls-${table}`);
+        await openAllBut(table);
+        await engine.executeRaw(`CREATE POLICY ${ROLE}_open ON ${table} FOR ALL TO ${ROLE} USING (false) WITH CHECK (true)`);
+        try {
+          const error = await repairJson(['slug-spelling', '--source', sourceId], scoped).then(() => undefined, e => e as OperationError);
+          expect({ code: error?.code, names: `${error?.message}`.includes(table) && `${error?.suggestion}`.includes('BYPASSRLS'), slugs: await slugsIn(sourceId) })
+            .toEqual({ code: 'writer_coordinator_required', names: true, slugs: [`Notes/Rls-${table}`] });
+        } finally {
+          await openAllBut(null);
+        }
+      }), 120_000);
+    }
+
+    test('a source row security hides from the role is refused before the repair runs (the source must exist), and nothing moves', () => withEnv(env, async () => {
+      const sourceId = `s${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+      await purgedPage(sourceId, 'Notes/Rls-Source');
+      await openAllBut('sources');
+      await engine.executeRaw(`CREATE POLICY ${ROLE}_open ON sources FOR ALL TO ${ROLE} USING (false) WITH CHECK (true)`);
+      try {
+        const error = await repairJson(['slug-spelling', '--source', sourceId], scoped).then(() => undefined, e => e as OperationError);
+        expect({ code: error?.code, slugs: await slugsIn(sourceId) }).toEqual({ code: 'invalid_params', slugs: ['Notes/Rls-Source'] });
+      } finally {
+        await openAllBut(null);
+      }
+    }), 120_000);
+
     for (const hidden of ['take_purges', 'fact_purges']) {
       test(`${hidden} hidden from the role: the move is refused before anything moves, also once the role has policies, and the owner moves it`, () => withEnv(env, async () => {
         _resetCliExitVerdictForTests();
