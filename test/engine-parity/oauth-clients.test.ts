@@ -25,20 +25,20 @@
  *  - Seam: none. Real engines, typed methods only; the sources a row names are made by the harness fixture. The row's
  *    own clock (`created_at`) is compared as a Date when given and as present when defaulted.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OauthClientInsert } from '../../src/core/engine-sql/oauth-clients.ts';
-import { rotateClientSecret } from '../../src/commands/agent-register.ts';
+import { rotateClientSecret, runAgentRegister } from '../../src/commands/agent-register.ts';
 import { parseRegisterClientArgs, preflightOauthClientColumns, registerScopedClient } from '../../src/commands/auth.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
 import { listClientRows } from '../../src/commands/auth-client-rows.ts';
 import { rescopeOAuthClient } from '../../src/core/grants/rescope.ts';
 import { readClientCatalogProvenance, recordFirstConsentInTransaction, rescopeClientGrant, rescopeClientGrantInTransaction } from '../../src/core/grants/service.ts';
 import { hashToken } from '../../src/core/utils.ts';
-import { archiveSource, createSource, parityArms, type ParityBackend } from './harness.ts';
+import { archiveSource, createSource, parityArms, resetArm, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 
 /** What a caller sees of a refused write: the SQLSTATE, the constraint and the message; `null` when it was accepted. */
 async function refusal(run: () => Promise<unknown>): Promise<{ code: unknown; constraint: unknown; message: unknown } | null> {
@@ -444,4 +444,44 @@ describe('engine parity: oauth_clients rows and constraints', () => {
         keptTtl: (await engine.readOauthClient('kept'))?.token_ttl, row: await engine.readOauthClient('gone'),
       };
     });
+});
+
+// Row 32m-2: `gbrain agent register --preset coding-agent` for a name whose `<name>-workspace` source already exists. A parity case counts a
+// typed refusal as a pass, so this reads each arm itself: PGLite and Postgres reuse the empty source and register; Rust refuses and stores nothing.
+describe('agent register into an existing derived workspace source (row 32m-2)', () => {
+  const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
+
+  test('PGLite and Postgres reuse the empty source and register; Rust stops on raw SQL and writes nothing', async () => {
+    const outcomes: unknown[] = [];
+    for (const arm of arms()) {
+      await resetArm(arm);
+      const { engine, backend } = arm;
+      await createSource(engine, backend, 'pin-agent-workspace');
+      await createSource(engine, backend, 'src-b');
+      const before = { clients: (await engine.listOauthClients()).length, source: await engine.getSource('pin-agent-workspace') };
+      const out: string[] = [];
+      const realExit = process.exit, realLog = console.log, realError = console.error;
+      process.exit = ((code?: number) => { throw Object.assign(new Error(`exit ${code}`), { code: 'test_exit' }); }) as typeof process.exit;
+      console.log = (...a: unknown[]) => { out.push(a.join(' ')); };
+      console.error = () => undefined;
+      try {
+        await runAgentRegister(engine, ['pin-agent', '--preset', 'coding-agent', '--federated-read', 'src-b', '--harness', 'claude-code', '--url', 'http://127.0.0.1:9/mcp', '--allow-old-serve', '--json']);
+      } catch { /* the command's own exit; its JSON line is read below */ } finally { process.exit = realExit; console.log = realLog; console.error = realError; }
+      const result = JSON.parse(out.at(-1) ?? '{}') as { ok?: boolean; reason?: string; message?: string; client_id?: string };
+      const clients = await engine.listOauthClients();
+      outcomes.push({
+        backend: arm.backend, ok: result.ok === true, reason: result.reason ?? null, message: result.message ?? null,
+        newClients: clients.length - before.clients,
+        // On a refusal no client row exists, so no register audit row can either; on success the one client has its audit rows (the register row and the surface row).
+        auditRows: (await Promise.all(clients.map(async c => (await engine.listOauthGrantAudit(c.client_id)).length))).reduce((a, b) => a + b, 0),
+        sourceUnchanged: JSON.stringify(await engine.getSource('pin-agent-workspace')) === JSON.stringify(before.source),
+      });
+    }
+    expect(outcomes).toEqual(arms().map(arm => arm.backend === 'rust'
+      // On this base the first raw statement is the source check validateSourceIds runs for --federated-read (agent-register.ts, `SELECT id,
+      // archived FROM sources WHERE id = ANY(...)`), before the per-name advisory lock and before ensureWorkspaceSource's counts, which
+      // are raw SQL too (a new workspace name stops at the same first statement on this base). The command reports any thrown error as mint_failed carrying the engine's engine_capability_missing message.
+      ? { backend: 'rust', ok: false, reason: 'mint_failed', message: RAW_SQL, newClients: 0, auditRows: 0, sourceUnchanged: true }
+      : { backend: arm.backend, ok: true, reason: null, message: null, newClients: 1, auditRows: 2, sourceUnchanged: true }));
+  }, 60_000);
 });
