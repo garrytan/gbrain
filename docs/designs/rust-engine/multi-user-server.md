@@ -224,7 +224,7 @@ The store format changes below are designed now and built later. Each takes a fo
 registry when it is built. None changes any output while off.
 
 1. **Write origin on every journal row.** gbrain already has a machine identity: a random UUID in
-   `host.json` under the persistence home (`src/core/persistence/identity.ts:111`, `hostIdFor`), and the
+   `host.json` under the persistence home (`src/core/persistence/identity.ts:111`, `localHostId`; `hostIdFor` at `:148` answers it per engine), and the
    SQL engines' `persistence_requests` table already has `admitter_host_id` and `consumer_host_id`
    columns (schema migration v178). Swap readiness counts writer hosts from them
    (`src/core/engine-swap/readiness.ts:280`, `multiple_writer_hosts`). The Rust native journal leaves
@@ -284,7 +284,7 @@ true, and what is cheap to do before more code depends on it.
 | A10 | `keyword/vector_cache.rs:141-144` (`static CACHE: OnceLock<...>`, 64 MiB) | One cache per process, shared by every store in it. The plan forbids process-wide caches. | S. Keyed by exact input text, so results are correct across stores; only the memory bound is shared. | Move it onto `Store`, like the per-store `VectorCache` (`lib.rs:209-212`) (G12). |
 | A11 | `keyword/index_build.rs:271`, `lib.rs:403-408`, `:428-434` | At most one builder runs per store, and only when the builder is enabled and the index needs a build (read-only opens never run one, `lib.rs:323`). Two writable openers that both needed a build would both run one (duplicate work, still correct under optimistic commits). | M. A lease would elect the builder. | None now. |
 | A12 | `owner_only.rs:1-8`, `:44-52` (the TypeScript member picks `OwnerOnlyForm` and sends it) | The caller decides which owner-only form applies. The plan says the engine decides access. | M. | Derive the form in the store from the access record, with a parity run on both forms (part of G8). |
-| A13 | `format.rs:46-55` (`FormatRecord`: no writer model, no log position) | A format says what the records are, not how they are written or where a log starts. | M for a new keyspace or field after more brains exist; each bump refuses older builds. | Reserve the next format number and one key tag for multi-writer metadata and the commit log in the format registry before another branch takes them (G5). |
+| A13 | `format.rs:50-58` (`FormatRecord`: no writer model, no log position) | A format says what the records are, not how they are written or where a log starts. | M for a new keyspace or field after more brains exist; each bump refuses older builds. | Reserve the next format number and one key tag for multi-writer metadata and the commit log in the format registry before another branch takes them (G5). |
 | A14 | Comments that state the single-writer model as a fact: `journal.rs:5`, `pages.rs:1626`, `timeline/held.rs:9`, `takes/held.rs:9`, `trust/proposals.rs:22`, `mention_state.rs:13`, `facts/purge_writes.rs:17` | They describe today's mode as the only mode, so a reader of a future optimistic transaction trusts them. | S. | Reword to "while explicit transactions hold the writer (`serialized_transactions`)" (G12). |
 
 ### Binding and owner process (`gbrain-napi`, `src/core/rust-engine*`)
