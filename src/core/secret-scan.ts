@@ -375,11 +375,16 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   // per scheme occurrence is a constant; the precheck skips the regex on
   // lines with no `@` at all. A password over 256 chars is the accepted miss
   // (a JWT that long is still claimed by `jwt` above).
+  // A raw `@` inside the password: drivers split the userinfo at the LAST `@` of
+  // the authority, so the password may carry up to 8 more `@`-separated pieces
+  // that hold no `/`, `?` or `#` (still the authority). Stopping at the first
+  // `@` left the rest of such a password after the marker; an `@` in the path or
+  // query still ends nothing, because a piece cannot cross `/`, `?` or `#`.
   {
     name: 'db_url_credentials',
     source:
       '(?:postgres(?:ql)?|mysql|mongodb(?:\\+srv)?|redis|rediss|amqp|mssql):\\/\\/' +
-      '[^\\s:/@"\']{0,128}:[^\\s@"\']{1,256}@',
+      '[^\\s:/@"\']{0,128}:[^\\s@"\']{1,256}(?:@[^\\s@"\'/?#]{0,256}){0,8}@',
     precheck: (line) => line.includes('@'),
   },
   // http(s) userinfo carrying a password: a sibling of db_url_credentials,
@@ -392,10 +397,11 @@ const CORE_PATTERNS: ReadonlyArray<CorePattern> = [
   // starts with `@` (after a `host:port` authority) as a credential. A
   // password carrying a literal `/`, `?` or `#` is the accepted miss. A user
   // with no password never fires. Placeholder passwords are rejected by
-  // `validate` (URL_PASSWORD_PLACEHOLDER_RE).
+  // `validate` (URL_PASSWORD_PLACEHOLDER_RE). A raw `@` inside the password runs
+  // to the last `@` before the path, where URL parsers split the userinfo.
   {
     name: 'url_credentials',
-    source: 'https?:\\/\\/[^\\s:/@"\']{0,128}:[^\\s@"\'/?#]{1,256}@',
+    source: 'https?:\\/\\/[^\\s:/@"\']{0,128}:[^\\s@"\'/?#]{1,256}(?:@[^\\s@"\'/?#]{0,256}){0,8}@',
     flags: 'gi',
     precheck: (line) => line.includes('@'),
     validate: urlPasswordIsReal,
