@@ -317,10 +317,11 @@ interface RustFn { name: string; file: string; line: number; body: string; bodyA
  * The files of the modules a `#[cfg(test)] mod name;` line declares (`dir/name.rs` and everything under `dir/name/`,
  * where `dir` is the declaring file's module directory): test-only code, skipped like an inline `#[cfg(test)] mod`.
  */
-function testModuleFiles(files: readonly string[]): Set<string> {
+function testModuleFiles(files: readonly string[], read: (file: string) => string = file => readFileSync(file, 'utf8')): Set<string> {
   const out = new Set<string>();
   for (const file of files) {
-    const text = readFileSync(file, 'utf8');
+    // Comments and strings blanked first, so a commented-out declaration hides nothing.
+    const text = stripRust(read(file));
     const base = file.replace(/\.rs$/, '');
     const dir = /\/(?:lib|main|mod)\.rs$/.test(file) ? file.replace(/\/[^/]+$/, '') : base;
     for (const m of text.matchAll(/#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;/g)) {
@@ -476,6 +477,19 @@ function brainMethodsOf(decls: Map<string, Decl[]>, member: string): { methods: 
 const snake = (s: string) => s.replace(/(?<!^)([A-Z])/g, (_, c: string) => '_' + c.toLowerCase()).toLowerCase();
 
 // ------------------------------------------------------------------------------------------------ the tests
+
+describe('the Rust scan skips only test-only modules', () => {
+  // Value: protects=a commented-out `#[cfg(test)] mod x;` does not hide production module x from the write scan;
+  // fails_when=the declaration scan reads raw text; why_new=the file-level test-module skip is new; seam=in-memory files
+  test('a #[cfg(test)] mod declaration inside a comment hides nothing', () => {
+    const files = ['/r/src/lib.rs', '/r/src/hidden.rs', '/r/src/tests.rs', '/r/src/tests/helpers.rs'];
+    const text: Record<string, string> = {
+      '/r/src/lib.rs': '// #[cfg(test)] mod hidden;\n/* #[cfg(test)]\nmod hidden; */\n#[cfg(test)]\nmod tests;\n',
+      '/r/src/hidden.rs': 'pub fn hidden() {}\n', '/r/src/tests.rs': 'mod helpers;\n', '/r/src/tests/helpers.rs': 'fn h() {}\n',
+    };
+    expect([...testModuleFiles(files, file => text[file]!)].sort()).toEqual(['/r/src/tests.rs', '/r/src/tests/helpers.rs']);
+  });
+});
 
 describe('every member listed as an owner-socket read runs no write', () => {
   const sql = buildSqlIndex();
