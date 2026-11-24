@@ -4,7 +4,8 @@
 //! listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions,
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
 //! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
-//! the `pageCollapseFacts` search read (`facts/collapse.rs`). Other families read the rows
+//! the `pageCollapseFacts` search read (`facts/collapse.rs`) and the `moveKeptFactRows` fence
+//! row move (`facts/kept_rows.rs`). Other families read the rows
 //! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
@@ -23,12 +24,17 @@
 //!   NULLs distinct).
 //! - `F 0x08` and `F 0x09`: the `open_loops` table (`facts/loops.rs` lists them).
 //! - `F 0x0A` and `F 0x0B`: the `fact_relink_attempts` table (`facts/relink.rs` lists them).
-//! - `F 0x0C`: the `page_purges` ledger (`facts/page_purges.rs`), read only.
+//! - `F 0x0C source content_hash`: the `page_purges` ledger (`facts/page_purges.rs` lists it).
 //! - `F 0x0D page_id`: the `page_facts_reconcile` watermark (`facts/reconcile.rs`), read only.
-//! - `F 0x0E generation_id`: the `derived_generations` ledger with its items
-//!   (`facts/generations.rs`), read only.
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
+//! - `F 0x10 source subject claim_hash`: the `take_purges` ledger (`facts/take_purges.rs`).
+//! - `F 0x11 source kind value`: the `loop_suppressions` table, the loop mutes
+//!   (`facts/loops/mutes.rs`). Store formats 6 and older kept them at `F 0x10` beside the take
+//!   purges; `facts/key_split.rs` moves them when such a brain opens. `0x0E` is retired (the
+//!   v0.60.766.0 addon's inline generation ledger, `seed/format_5.rs`); never reuse it.
+//!
+//! No two record kinds may share an `F` sub-tag: `tests/key_registry.rs` fails when they do.
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -41,50 +47,75 @@
 //! Text: `ILIKE` and `gbrain_fact_normalize` lower-case with `pg_lower` (Postgres `lower()` on a
 //! UTF-8 database); `ILIKE` and `LIKE` read `\` as the escape character.
 
+pub mod captured;
 mod collapse;
 pub mod contest;
 pub mod cycle;
 pub mod doctor;
 mod embedding;
+/// Postgres `md5(text)`, for the timeline retraction check's version digests.
 pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
+pub mod forget;
 pub mod generations;
 mod held_cells;
+pub mod held_moves;
 pub mod holding_purges;
+mod kept_rows;
+pub(crate) mod key_split;
+pub mod label_repair;
 pub mod loops;
-mod page_purges;
+pub mod ontology_repair;
+pub mod page_purges;
 pub(crate) use page_purges::{remove_purge, seed_purge};
-mod privacy;
+pub(crate) mod privacy;
+pub mod provenance;
 pub mod purge;
 pub mod purge_ledger;
+pub mod purge_plan;
+pub(crate) mod purge_probe;
+pub mod purge_writes;
 pub mod quote;
+pub mod quoted;
+pub mod recall;
 pub mod reconcile;
 pub mod relink;
 pub mod relink_writes;
+pub mod remember_reads;
 pub mod repair;
+pub mod repair_home;
+pub mod repair_previews;
+pub mod rest_sites;
 pub mod saved_match;
+pub mod session_takes;
+pub mod take_purges;
+pub mod text_repair;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
 mod widen;
 pub mod withdrawal_discovery;
 pub mod withdrawal_fence;
+mod withdrawal_guard;
 pub mod withdrawal_pages;
+pub mod write_path;
 
 pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub(crate) use fence::jsonb_time;
-pub use fence::{FenceContext, FenceTarget};
+pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
 pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
+pub use page_purges::PagePurgeUpsert;
+pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
     OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, successor_withholds_reason,
-    version_hidden,
+    hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows, stamped_rules,
+    successor_withholds_reason, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
@@ -217,7 +248,8 @@ impl FactRecord {
     /// value, event_type, dimension and context.
     /// The content tuple the attribution trigger compares
     /// (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`). The withdrawal-stamp exemption
-    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store keeps no withdrawal ledger.
+    /// (`gbrain.fact_withdrawal_stamp`) never applies: the store has no such setting (its withdrawal
+    /// ledger, trust/withdrawals.rs, writes no fact row).
     fn attribution_content_changed(&self, new: &FactRecord) -> bool {
         use crate::write_receipt::float_distinct;
         let a = self;
@@ -594,6 +626,8 @@ pub(crate) fn stamp_fact(
     old: Option<&FactRecord>,
     new: &FactRecord,
 ) -> Result<FactRecord> {
+    // `gbrain_stamp_write_attribution` casts the request on every row written to `facts`.
+    trust.attribution.refuse_request_not_uuid()?;
     let row = match old {
         None => StampRow::Insert {
             supplied: new.tier(),
@@ -751,6 +785,20 @@ fn rows_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<FactRecord>> {
     Ok(out)
 }
 
+/// Facts in every source with no `expired_at` (`expired_at IS NULL`).
+pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
+    let mut count = 0u64;
+    let mut failure = None;
+    scan_prefix(read, &[keys::FACT, ROW], false, &mut |_, v| {
+        match serde_json::from_slice::<FactRecord>(v) {
+            Ok(row) => count += u64::from(row.expired_at_us.is_none()),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(count), Err)
+}
+
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
 }
@@ -763,7 +811,7 @@ pub(crate) fn entity_rows(
     rows_under(read, &text_key(BY_ENTITY, &[source_id, entity]))
 }
 
-fn page_rows(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<FactRecord>> {
+pub(crate) fn page_rows(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_PAGE, &[source_id, slug]))
 }
 
@@ -801,7 +849,9 @@ pub(crate) fn fact_exists(read: &dyn KvRead, id: u64, source_ids: &[String]) -> 
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
 /// every fact row of the source, as `facts_source_id_fkey ... ON DELETE CASCADE` does, and its fact
-/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]). A row of
+/// purge tombstones (`fact_purges_source_id_fkey`, [`purge_ledger::remove_source_rows`]), page
+/// purge tombstones (`page_purges_source_id_fkey`, [`page_purges::remove_source_page_purges`]) and take
+/// purge tombstones (`take_purges_source_id_fkey`, [`take_purges::remove_source_rows`]). A row of
 /// another source that named one of them as its successor keeps its row with `superseded_by`
 /// cleared (`ON DELETE SET NULL`).
 ///
@@ -812,7 +862,9 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     for row in source_rows(tx, source_id)? {
         delete_fact(tx, trust, &row)?;
     }
-    purge_ledger::remove_source_rows(tx, source_id)
+    page_purges::remove_source_page_purges(tx, source_id)?;
+    purge_ledger::remove_source_rows(tx, source_id)?;
+    take_purges::remove_source_rows(tx, source_id)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1070,6 +1122,14 @@ pub struct ExpireFactArgs {
     pub successor_from: Option<String>,
 }
 
+/// `expireFactUntil(id, until)`: `until` is ISO text, or null for the row's own end.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExpireFactUntilArgs {
+    pub id: f64,
+    pub until: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageDeleteArgs {
@@ -1208,6 +1268,18 @@ pub struct TrajectoryQuery {
 
 fn time_arg(op: &str, what: &str, text: &str) -> Result<i64> {
     parse_iso(text).ok_or_else(|| invalid(format!("{op}: {what} is not an ISO time: \"{text}\"")))
+}
+
+/// An ISO time, or a bare `YYYY-MM-DD` day at UTC midnight (`'2026-06-01'::timestamptz` with TimeZone UTC).
+fn day_or_time(op: &str, what: &str, text: &str) -> Result<i64> {
+    let day = text.len() == 10 && text.as_bytes()[4] == b'-' && text.as_bytes()[7] == b'-';
+    match day
+        .then(|| parse_iso(&format!("{text}T00:00:00Z")))
+        .flatten()
+    {
+        Some(us) => Ok(us),
+        None => time_arg(op, what, text),
+    }
 }
 
 fn opt_time(op: &str, what: &str, text: &Option<String>) -> Result<Option<i64>> {
@@ -1673,6 +1745,39 @@ impl Store {
         })
     }
 
+    /// `expireFactUntil(id, until)`: expire an unexpired row now and end it at `until`, or, without
+    /// one, at its own earlier end or now, never before it began (`COALESCE($2, GREATEST(valid_from,
+    /// LEAST(COALESCE(valid_until, now()), now())))`). True when a row changed.
+    ///
+    /// A `'YYYY-MM-DD'` text (forget's file-mirror stamp) is `$2::timestamptz` in the store's zone, UTC: that
+    /// day's midnight. PG and PGLite cast it in the session TimeZone (PGLite's default is UTC).
+    pub fn expire_fact_until(&self, args: &ExpireFactUntilArgs) -> Result<bool> {
+        const OP: &str = "expireFactUntil";
+        let now = self.env.now_micros();
+        let until = args
+            .until
+            .as_deref()
+            .map(|t| day_or_time(OP, "until", t))
+            .transpose()?;
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let Some(old) = fact_by_number(tx, OP, "id", args.id)? else {
+                return Ok(false);
+            };
+            if old.expired_at_us.is_some() {
+                return Ok(false);
+            }
+            let mut new = old.clone();
+            new.expired_at_us = Some(now);
+            new.valid_until_us = Some(until.unwrap_or_else(|| {
+                old.valid_from_us
+                    .max(old.valid_until_us.unwrap_or(now).min(now))
+            }));
+            write_fact(tx, trust, Some(&old), &new)?;
+            Ok(true)
+        })
+    }
+
     /// `insertFacts(rows, { source_id }, { deleteForPageFirst })`: one write that runs the page
     /// delete, inserts the rows in order (a row whose fence key is taken, by an older row or an
     /// earlier one of the batch, is skipped), then links each `superseded by #N` reference.
@@ -2120,7 +2225,8 @@ impl Store {
     /// `migrateFactsToCanonical(phantom, canonical, sourceId)`: the phantom page's unexpired rows
     /// move onto the canonical slug (entity and page), their `row_num` offset past the canonical
     /// page's largest. First the ontology observations the move would duplicate are dropped
-    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`).
+    /// (src/core/facts/ontology-rekey.ts `dropRekeyDuplicates`). The withdrawal guard runs on each moved row
+    /// (`entity_slug` is in the `SET` list): a withdrawal of the claim on the canonical entity expires it.
     pub fn migrate_facts_to_canonical(
         &self,
         phantom: &str,
@@ -2168,6 +2274,7 @@ impl Store {
                         })?),
                         None => None,
                     };
+                withdrawal_guard::preserve_withdrawal(&*tx, &mut new)?;
                 write_fact(tx, trust, Some(old), &new)?;
             }
             Ok(moving.len() as u64)
@@ -2469,6 +2576,20 @@ mod tests {
     use super::*;
     use crate::kv::KvRead;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn a_day_text_is_utc_midnight_and_an_iso_time_is_kept() {
+        let day = day_or_time("expireFactUntil", "until", "2026-06-01").unwrap();
+        assert_eq!(Some(day), parse_iso("2026-06-01T00:00:00Z"));
+        let at = day_or_time("expireFactUntil", "until", "2026-03-04T05:06:07.000Z").unwrap();
+        assert_eq!(Some(at), parse_iso("2026-03-04T05:06:07.000Z"));
+        for bad in ["2026-13-01", "2026-6-01", "June 1", "2026-06-01T00:00:00"] {
+            assert!(
+                day_or_time("expireFactUntil", "until", bad).is_err(),
+                "accepted {bad}"
+            );
+        }
+    }
 
     struct MapRead(BTreeMap<Vec<u8>, Vec<u8>>);
 

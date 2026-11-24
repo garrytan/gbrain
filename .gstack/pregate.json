@@ -104,6 +104,7 @@
     "scripts/skill-drift-baseline.txt": ["test/skill-drift.test.ts"],
     "scripts/skill-drift-undeclared-subcommands.txt": ["test/skill-drift.test.ts"],
     "scripts/skills-commit-gate.sh": ["test/skill-health.test.ts", "test/skill-drift.test.ts"],
+    "scripts/check-pglite-embedded.sh": ["test/pglite-embedded-assets.test.ts", "test/shadow-fingerprint-probe.test.ts"],
     "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
     "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"],
     "scripts/check-migration-projection.ts": ["test/scripts/check-migration-projection.test.ts"],

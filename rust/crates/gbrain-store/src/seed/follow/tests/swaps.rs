@@ -446,3 +446,74 @@ fn every_unique_natural_key_is_among_the_columns_the_entry_keeps() {
     }
     assert!(with_sets >= 10, "only {with_sets} unique sets");
 }
+
+fn timeline_row(id: &str, summary: &str) -> SeedRow {
+    row(&[
+        ("id", id),
+        ("page_id", "7"),
+        ("date", "2026-05-06"),
+        ("source", "meeting"),
+        ("summary", summary),
+        ("detail", ""),
+        ("created_at", "2026-05-06 10:00:00+00"),
+        ("trust_tier", "unknown"),
+    ])
+}
+
+/// The summaries of the timeline of the page `slug`, sorted.
+fn summaries_of(s: &Store, slug: &str) -> Vec<String> {
+    let mut all: Vec<String> = s
+        .get_timeline(slug, &Default::default())
+        .unwrap()
+        .iter()
+        .map(|e| e["summary"].as_str().unwrap().to_owned())
+        .collect();
+    all.sort();
+    all
+}
+
+#[test]
+fn a_timeline_key_swap_split_over_two_calls_displaces_then_converges() {
+    let s = linked_pages();
+    s.import_relation_with_digests(
+        SEED,
+        "timeline_entries",
+        vec![
+            timeline_row("12", "Raised a seed round"),
+            timeline_row("13", "Hired a CTO"),
+        ],
+        &[digv(5, 51), digv(6, 52)],
+    )
+    .unwrap();
+    // Entry 12 takes the summary entry 13 holds (the unique key is page, date, summary and source):
+    // the stored row is displaced, not refused as a constraint violation.
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "timeline_entries",
+            1,
+            &[key(5, &[("id", "12")])],
+            &[timeline_row("12", "Hired a CTO")],
+            &[digv(5, 53)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.displaced), (1, 1));
+    assert_eq!(summaries_of(&s, ALICE), ["Hired a CTO"]);
+    assert_eq!(entries(&s, "timeline_entries"), 1);
+    let r = s
+        .replace_relation_rows(
+            SEED,
+            "timeline_entries",
+            2,
+            &[key(6, &[("id", "13")])],
+            &[timeline_row("13", "Raised a seed round")],
+            &[digv(6, 54)],
+        )
+        .unwrap();
+    assert_eq!((r.upserted, r.displaced), (1, 0));
+    assert_eq!(
+        summaries_of(&s, ALICE),
+        ["Hired a CTO", "Raised a seed round"]
+    );
+    assert_eq!(entries(&s, "timeline_entries"), 2);
+}

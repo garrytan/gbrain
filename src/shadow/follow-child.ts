@@ -77,7 +77,7 @@ export class FollowChild {
   constructor(private readonly o: FollowChildOptions) {
     this.now = o.now ?? Date.now;
     const seed = readSeedRecord(o.dir);
-    if (!seed) { this.file = null; return; }
+    if (seed?.digests !== true) { this.file = null; return; } // no seed, or one written before follow: nothing to follow
     const old = readFollowerFile(o.dir);
     const keep = old && old.seed_id === seed.seed_id ? old : null;
     this.file = keep ?? {
@@ -150,10 +150,12 @@ export class FollowChild {
     w.valid = false; w.through = null; w.invalidated_reason = reason;
   }
 
-  /** The store removed rows to make room for a write: the relation differs from the primary until a pass for it repairs it. */
+  /** The store removed rows to make room for a write: the relation differs from the primary until a pass for it repairs it (a displaced page takes its tags with it, so `tags` too). */
   private relationDisplaced(relation: string): void {
-    this.invalidate('relation_dirty', relation);
-    try { this.o.writeControl(`${JSON.stringify({ t: 'dirty', relation })}\n`); } catch { /* parent gone */ }
+    for (const dirty of relation === 'pages' ? [relation, 'tags'] : [relation]) {
+      this.invalidate('relation_dirty', dirty);
+      try { this.o.writeControl(`${JSON.stringify({ t: 'dirty', relation: dirty })}\n`); } catch { /* parent gone */ }
+    }
   }
 
   /** Not the owner: leaves a line for the owner (at most one a second; the last one waits for its turn). */

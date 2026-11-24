@@ -6,14 +6,14 @@
  *                          is one seed). Written by the child, atomically.
  *   reconcile/passes.jsonl one line per reconcile pass, written by the process that ran it.
  *
- * State words. follower: not_seeded (no seed.json), stopped (shadow mode off, or no live child wrote follower.json
+ * State words. follower: not_seeded (no seed.json), needs_reseed (a seed written before follow), stopped (shadow mode off, or no live child wrote follower.json
  * in the last minute), invalid (the coverage watermark is invalid), behind (rows are queued or waiting), following.
  * reconcile: never_run, ok (the last pass found nothing to repair), repaired, error.
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readEpoch } from './evidence-epoch.ts';
-import { readSeedRecord } from './seed.ts';
+import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import type { ShadowState } from './state.ts';
 
 export interface ProbeRecord {
@@ -117,7 +117,7 @@ export interface FollowStatus {
   epoch_id: string | null;
   epoch_started_at: string | null;
   follower: {
-    state: 'not_seeded' | 'stopped' | 'invalid' | 'behind' | 'following'; lag_ms: number | null; lag_ms_p99_24h: number | null;
+    state: 'not_seeded' | 'needs_reseed' | 'stopped' | 'invalid' | 'behind' | 'following'; action: string | null; lag_ms: number | null; lag_ms_p99_24h: number | null;
     lag_ms_p99_epoch: number | null; queue_depth: number; applied_rows: number; coverage_watermark: Watermark;
   };
   reconcile: {
@@ -158,6 +158,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   const queue = live?.queue_depth ?? 0;
   let followerState: FollowStatus['follower']['state'] = 'following';
   if (!seed) followerState = 'not_seeded';
+  else if (seed.digests !== true) followerState = 'needs_reseed';
   else if (!state?.enabled || !fresh) followerState = 'stopped';
   else if (!watermark.valid) followerState = 'invalid';
   else if (queue > 0 || (live?.lag_ms ?? 0) > 0) followerState = 'behind';
@@ -168,7 +169,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
     epoch_id: epoch?.epoch_id ?? null,
     epoch_started_at: epoch?.started_at ?? null,
     follower: {
-      state: followerState, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(counted?.lag.epoch ?? []),
+      state: followerState, action: followerState === 'needs_reseed' ? RESEED_STEPS : null, lag_ms: live ? live.lag_ms : null, lag_ms_p99_24h: lagP99(last24), lag_ms_p99_epoch: lagP99(counted?.lag.epoch ?? []),
       queue_depth: queue, applied_rows: live?.applied_rows ?? 0, coverage_watermark: watermark,
     },
     reconcile: {
@@ -189,7 +190,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
 export function renderFollowStatus(s: FollowStatus): string[] {
   const f = s.follower;
   const w = f.coverage_watermark;
-  const lines = [`  follower: ${f.state}; applied rows ${f.applied_rows}; queue ${f.queue_depth}; lag ${f.lag_ms ?? 'unknown'} ms (p99 24h ${f.lag_ms_p99_24h ?? '-'}, epoch ${f.lag_ms_p99_epoch ?? '-'})`];
+  const lines = [f.action ? `  follower: this brain needs a reseed (its seed was written before follow existed, so nothing is followed): ${f.action}` : `  follower: ${f.state}; applied rows ${f.applied_rows}; queue ${f.queue_depth}; lag ${f.lag_ms ?? 'unknown'} ms (p99 24h ${f.lag_ms_p99_24h ?? '-'}, epoch ${f.lag_ms_p99_epoch ?? '-'})`];
   lines.push(`  coverage watermark: ${w.valid ? `valid through ${w.through ?? '-'}` : `invalid (${w.invalidated_reason ?? 'unknown'})`}`);
   const r = s.reconcile;
   lines.push(`  reconcile: ${r.state}; clean full passes in a row ${r.consecutive_clean_full_passes}; next full pass ${r.next_full_pass_due ?? 'when one runs'}`);

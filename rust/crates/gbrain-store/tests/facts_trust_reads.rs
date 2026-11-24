@@ -17,9 +17,7 @@ fn args<T: serde::de::DeserializeOwned>(v: Value) -> T {
 
 /// One fence fact of `source`, written under a declared tier and origin.
 fn fact(b: &Brain, source: &str, name: &str, row: u32, tier: &str, origin: Value) -> u64 {
-    // The transaction family is not in this landing: the store's write context stands in for one,
-    // and `clear_write_trust` ends it as a commit does.
-    let tx: &gbrain_store::Store = b;
+    let tx = b.begin_transaction(false).unwrap();
     let names = [
         "gbrain.write_trust_tier",
         "gbrain.write_trust_promotion",
@@ -36,7 +34,7 @@ fn fact(b: &Brain, source: &str, name: &str, row: u32, tier: &str, origin: Value
             "sourceId": source,
         })))
         .unwrap();
-    tx.clear_write_trust();
+    tx.commit_transaction().unwrap();
     out["ids"][0].as_u64().unwrap()
 }
 
@@ -103,6 +101,7 @@ fn single_fact_metadata_answers_each_listed_fact_of_the_source_once_in_id_order(
         b.list_single_fact_metadata(&SingleFactMetadataQuery {
             source_id: source.into(),
             ids,
+            remote_floor: None,
         })
         .unwrap()
     };

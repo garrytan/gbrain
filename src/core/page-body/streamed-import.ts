@@ -469,8 +469,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
     if (existing) await tx.createVersion(slug, preimage ? { sourceId, ...opts.history, preimage } : { sourceId, ...opts.history });
     const result = await applySegmentedBody(tx, { slug, sourceId, pageId: live?.id ?? null, prepared, meta, promotion: live?.storage === 'inline', retireMaxRows: input.policy.flipRetireMaxRows });
     await tx.updatePageContextualRetrievalState(slug, sourceId, mode, corpusGeneration);
-    await tx.executeRaw(`DELETE FROM tags t USING pages p WHERE p.id = t.page_id AND p.source_id = $1 AND p.slug = $2
-      AND t.tag_source = 'frontmatter' AND NOT (t.tag = ANY($3::text[]))`, [sourceId, slug, parsed.tags]);
+    await tx.pruneFrontmatterTags(slug, parsed.tags, { sourceId });
     await addPageTags(tx, result.pageId, parsed.tags, 'frontmatter');
     await writePageAliases(tx, slug, sourceId, { ...parsed, compiled_truth: '', timeline: '' }, opts.activePack, mentionPolicy);
     if (result.complete) await sealSegmentedPage(tx, result.pageId);

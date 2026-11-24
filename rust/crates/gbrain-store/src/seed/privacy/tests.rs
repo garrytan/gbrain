@@ -58,6 +58,27 @@ fn owner_only_marks_keep_page_marks_and_drop_the_other_tables() {
 }
 
 #[test]
+fn a_mark_whose_page_is_gone_reserves_its_page_id() {
+    // A mark outlives a hard-deleted page, so it can name an id above every surviving page; the next page written must not take it
+    // (it would inherit the deleted page's owner-only mark and be hidden from non-owner reads).
+    let s = crate::test_support::store();
+    import(
+        &s,
+        "owner_only_marks",
+        vec![
+            row(&[("row_table", "pages"), ("row_id", "7")]),
+            row(&[("row_table", "facts"), ("row_id", "40")]),
+        ],
+    );
+    let next = s
+        .write(|tx| crate::pages::next_id(tx, crate::pages::NEXT_PAGE_ID))
+        .unwrap();
+    assert_eq!(next, 8);
+    let read = s.read().unwrap();
+    assert!(!crate::owner_only_marks::is_marked(&*read, next).unwrap());
+}
+
+#[test]
 fn an_owner_only_mark_needs_a_page_id() {
     let s = crate::test_support::store();
     let err = s
@@ -265,8 +286,12 @@ fn page_purges_keep_the_tombstone_the_purge_count_reads() {
         .unwrap();
     assert_eq!(count, vec![true, false]);
     let read = s.read().unwrap();
-    let mut key = crate::keys::text(crate::keys::FACT, &["default", "h1"]);
-    key.insert(1, 0x0C);
+    // The trunk's fact-family rows end each text part with a NUL (`facts::text_key`).
+    let mut key = vec![crate::keys::FACT, 0x0C];
+    for part in ["default", "h1"] {
+        key.extend_from_slice(part.as_bytes());
+        key.push(0);
+    }
     let stored: Value = crate::get_json(&*read, &key).unwrap().unwrap();
     assert_eq!(
         stored,

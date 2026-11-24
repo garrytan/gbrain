@@ -66,6 +66,7 @@ import { appendPurgeIntent } from '../belief/purge-mirror.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql } from '../write-gate-binding.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
@@ -378,7 +379,9 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
       OR (target_table='facts' AND target_id=ANY($3::bigint[])) OR (related_table='facts' AND related_id=ANY($3::bigint[]))
       OR (target_table='takes' AND target_id=ANY($4::bigint[])) OR (related_table='takes' AND related_id=ANY($4::bigint[]))) RETURNING 1`, [sourceId, pageId, factIds, takeIds]);
   }
-  const holds = has('write_gate_holds') ? (await tx.executeRaw<{ id: string }>('DELETE FROM write_gate_holds WHERE source_id=$1 AND slug=$2 RETURNING id::text AS id', [sourceId, slug])).map(h => h.id) : [];
+  const holds = has('write_gate_holds') ? (await tx.executeRaw<{ id: string }>(
+    `DELETE FROM write_gate_holds h WHERE h.source_id=$1 AND ${holdOwnedByDeletedPageSql('h', '$3', '$2')} RETURNING h.id::text AS id`, [sourceId, slug, pageId])).map(h => h.id) : [];
+  if (has('write_gate_holds')) holds.push(...await dropPurgedCandidates(tx, sourceId, [{ id: pageId }]));
   if (has('write_gate_holds')) removed.write_gate_holds = holds.length;
   if (has('write_gate_receipts')) {
     removed.write_gate_receipts = await count(`DELETE FROM write_gate_receipts WHERE (target_table='pages' AND target_id=$1) OR (target_table='facts' AND target_id=ANY($2::text[]))

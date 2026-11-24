@@ -12,8 +12,8 @@
  *   reports/            the provisional report (report.ts)
  *
  * `<brain>` is the engine kind plus the first 12 hex characters of a SHA-256 over the brain's identity: the resolved
- * `database_path` for PGLite, or the host, port and database name of `database_url` for Postgres (never the user or
- * password). The engine factory reads `state.json` on every engine it builds, so `shadowStateFor` is an existsSync
+ * `database_path` for PGLite, or the user name, host, port and database name of `database_url` for Postgres (a pooler
+ * routes by user name, so it is part of the hash; it is never stored or shown, and the password is never used). The engine factory reads `state.json` on every engine it builds, so `shadowStateFor` is an existsSync
  * and, only when the file exists, one small JSON read.
  */
 import { createHash } from 'node:crypto';
@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { join, resolve } from 'node:path';
 import { configDir } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
+import type { ManagedStorageRecord } from './managed-gate.ts';
 
 export const SHADOW_STATE_VERSION = 1;
 /** Default share of eligible reads mirrored (`shadow.read_sample` in the plan). */
@@ -43,6 +44,23 @@ export interface ShadowState {
   brain: string;
   /** The primary engine kind at start. */
   primary_engine: string;
+  /** Whether the brain used managed storage when `start` read it. Absent in a state written before this field existed. */
+  storage?: ManagedStorageRecord;
+  /**
+   * The start of the writer-evidence epoch: the first `start --yes` of the current seed. A later `start` keeps it (and the
+   * seed it names), so a restart cannot move the eligibility window past evidence already gathered; a new seed begins a new one.
+   */
+  writer_evidence_since?: string;
+  /** The seed id the epoch belongs to (null: no seed yet at that start). */
+  writer_evidence_seed?: string | null;
+  /**
+   * Set by `start` when it continues an existing epoch (an enabled restart, a start after stop, or an older state file). Hooks
+   * were replaced or were off at some point, and no record proves otherwise, so eligibility counts it as an unknown writer path
+   * while it is inside the window (a file, no database needed).
+   */
+  writer_coverage_restarted_at?: string;
+  /** Set by `stop` before it removes the hooks. Counted like the restart time, and the state itself counts while shadow mode is off. */
+  writer_coverage_stopped_at?: string;
 }
 
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
@@ -63,6 +81,9 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
     case 'pglite':
       if (!config.database_path) return null;
       return { engine, identity: `pglite:${resolve(config.database_path)}` };
+    case 'rust':
+      // A brain already on the Rust engine has no other engine to shadow: no shadow identity, so shadow mode does not start.
+      return null;
     default: {
       const unreachable: never = engine;
       return unreachable;

@@ -103,12 +103,12 @@ const readiness = (bench: any): ShadowStatus['bench'] => { const { filtered_vect
 describe('criterion 8 with no receipt', () => {
   test('both sources read not measured, the D14 margin is unset, and criterion 8 stays reported and not gating', async () => {
     await withShadow(async (c) => {
-      const { bench } = c.status();
+      const { bench } = await c.status();
       expect(bench.sources.owner_brain.state).toBe('not_measured');
       expect(bench.sources.bench_corpus.state).toBe('not_measured');
       expect(bench.filtered_vector_margin).toBe('D14 margin not set');
       for (const k of ['pairs', 'rust_no_worse', 'losses', 'filtered_vector_margin_met']) expect(k in bench).toBe(false);
-      const row8 = evaluateReadiness({ ...c.status() } as never, NOW).criteria.find((x) => x.n === 8)!;
+      const row8 = evaluateReadiness({ ...(await c.status()) } as never, NOW).criteria.find((x) => x.n === 8)!;
       expect(row8.state).toBe('reported');
       expect(row8.detail).toContain('not measured yet');
       expect(row8.gating).toBe(false);
@@ -366,7 +366,7 @@ describe('labels and rendering come from one block', () => {
           expect(text).toContain(`${primary} (this brain's primary):`);
           expect(text.match(/this brain's primary/g)).toHaveLength(1);
         }
-        const doc = c.status();
+        const doc = await c.status();
         expect(doc.bench.sources.bench_corpus.receipt.counted).toBe(false);
         for (const l of doc.bench.losses) expect(l.startsWith(LOSS) && !l.includes(', ') && !l.includes(';')).toBe(true);
       }, { config });
@@ -395,7 +395,7 @@ describe('storage', () => {
       expect(statSync(benchSummaryPath(c.dir)).mode & 0o777).toBe(0o600);
       const again = await importOk(c, receipt((x) => lat(x, 'pglite', 'get_page', 'p99', { ratio: 2, ci95: [1.5, 2.5] })));
       expect(again.losses).toHaveLength(1);
-      expect(c.status().bench.losses).toHaveLength(1);
+      expect((await c.status()).bench.losses).toHaveLength(1);
     });
   });
   test('a corrupt or semantically corrupt stored file reads unreadable with no readiness fields and no zeros', async () => {
@@ -414,13 +414,13 @@ describe('storage', () => {
       for (const edit of corrupt) {
         const s = structuredClone(good); edit(s);
         writeFileSync(path, JSON.stringify(s));
-        const b = c.status().bench;
+        const b = (await c.status()).bench;
         expect(b.sources.bench_corpus.state).toBe('unreadable');
         expect(b.sources.bench_corpus.reason).toContain('gbrain engine shadow bench --import');
         for (const k of ['pairs', 'rust_no_worse', 'losses']) expect(k in b).toBe(false);
       }
       writeFileSync(path, '{not json');
-      expect(c.status().bench.sources.bench_corpus.state).toBe('unreadable');
+      expect((await c.status()).bench.sources.bench_corpus.state).toBe('unreadable');
     });
   });
   test('a failed rename leaves the earlier summary active and no temp file; a retry after the cause is gone works', async () => {
@@ -469,7 +469,7 @@ describe('actual sample counts survive import, reload and report', () => {
         `${LOSS}write throughput at 4 clients vs PGLite 0.500x (95% CI 0.400 to 0.600 over 7 reps)`,
         `${LOSS}cold start vs PGLite 2.000x (95% CI 1.800 to 2.200 over 5 Rust and 9 PGLite starts)`,
       ]);
-      expect(c.status().bench.losses).toEqual(bench.losses);
+      expect((await c.status()).bench.losses).toEqual(bench.losses);
       expect((await c.run(['report'])).out).toContain('over 7 reps');
     });
   });
@@ -561,7 +561,7 @@ describe('round 1 review fixes: attribution, stored size, zero samples, and not 
       expect(x.err).toContain('previous bench evidence unchanged');
       expect(readFileSync(benchSummaryPath(c.dir), 'utf8')).toBe(before);
       expect(readdirSync(join(c.dir, 'evidence', 'bench')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
-      expect(c.status().bench.sources.bench_corpus.state).toBe('measured');
+      expect((await c.status()).bench.sources.bench_corpus.state).toBe('measured');
     });
   });
 
@@ -579,14 +579,14 @@ describe('round 1 review fixes: attribution, stored size, zero samples, and not 
   test('readiness says not measured, not slower, when the only open rows are unmeasured; a measured loss still says slower (status to plan path)', async () => {
     await withShadow(async (c) => {
       await importOk(c, receipt((r) => { nPairs(r, 'pglite', 'get_page', 50); }));
-      const row8 = (): { detail: string; gating: boolean } => evaluateReadiness({ ...readyDoc(), bench: readiness(c.status().bench) }, new Date('2026-12-01T00:00:00Z')).criteria.find((x) => x.n === 8)! as never;
-      const unmeasured = row8();
+      const row8 = async (): Promise<{ detail: string; gating: boolean }> => evaluateReadiness({ ...readyDoc(), bench: readiness((await c.status()).bench) }, new Date('2026-12-01T00:00:00Z')).criteria.find((x) => x.n === 8)! as never;
+      const unmeasured = await row8();
       expect(unmeasured.detail).toContain('Rust not shown to be no worse (rows not measured)');
       expect(unmeasured.detail).not.toContain('Rust slower');
       expect(unmeasured.detail).toContain(`${LOSS}get_page p50 vs PGLite not measured: 50 pairs (needs 100)`);
       expect(unmeasured.gating).toBe(false);
       await importOk(c, receipt((r) => { nPairs(r, 'pglite', 'get_page', 50); lat(r, 'postgres', 'get_timeline', 'p99', { ratio: 1.3, ci95: [1.2, 1.4] }); }));
-      expect(row8().detail).toContain('Rust slower on at least one class');
+      expect((await row8()).detail).toContain('Rust slower on at least one class');
     });
   });
 });

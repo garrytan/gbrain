@@ -4,10 +4,10 @@ The state substrate for [bulk-ingestion](SKILL.md). Read this before Phase 2
 (ACCESS) of any pipeline build, and at the start of ANY session that touches
 a large in-flight ingest.
 
-Battle-tested corpus shapes this pattern has carried (anonymized): an audio
-lecture library (~650 files, transcribe → curate pipeline), an email takeout
-(~400K messages, high-parallelism worker fan-out), a personal file archive
-(~2,700 documents), and a messaging-history export (~6,500 threads).
+It fits any large, enumerable corpus: an audio library run through a
+transcribe → curate pipeline, an email export fanned out to many workers, a
+document archive, a chat-history export. Sizes range from hundreds to
+hundreds of thousands of items.
 
 ## When to use
 
@@ -91,9 +91,9 @@ Field rules:
 ## Build the manifest from GROUND TRUTH (never from memory)
 
 The #1 failure mode: declaring an archive "done" by looking at the OUTPUT
-folder instead of re-scanning the SOURCE. (One production run called a
-corpus "exhausted" at 8% complete because only the transcript folder was
-checked, not the 650-file source.)
+folder instead of re-scanning the SOURCE. (A run that checks only the
+transcript folder can call a corpus finished when most of the source was
+never read.)
 
 Build/refresh procedure:
 

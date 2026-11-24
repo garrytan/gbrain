@@ -17,7 +17,10 @@ export interface UsageLine { ts: string; epoch_id: string | null; ops: Record<st
 
 export const usageDir = (shadowDir: string): string => join(shadowDir, 'usage');
 
+/** Appends one usage line. Never creates the shadow directory itself: after `stop --delete`, a resident process's late
+ * flush must not bring the evidence back (the ledger writers follow the same rule). */
 export function appendUsage(shadowDir: string, line: UsageLine): void {
+  if (!existsSync(shadowDir)) return;
   mkdirSync(usageDir(shadowDir), { recursive: true, mode: 0o700 });
   appendFileSync(join(usageDir(shadowDir), `${line.ts.slice(0, 10)}.jsonl`), JSON.stringify(line) + '\n', { mode: 0o600 });
 }

@@ -99,14 +99,14 @@ mod float8 {
 
 /// One page's membership: the table's columns less `id` and `page_id` (the key).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct IdentityRecord {
-    entity_id: String,
-    source_id: String,
+pub(crate) struct IdentityRecord {
+    pub(crate) entity_id: String,
+    pub(crate) source_id: String,
     #[serde(with = "float8")]
-    confidence: f64,
-    established_by: String,
-    established_at_us: i64,
-    canonical: bool,
+    pub(crate) confidence: f64,
+    pub(crate) established_by: String,
+    pub(crate) established_at_us: i64,
+    pub(crate) canonical: bool,
 }
 
 /// `linkEntityIdentityRow(input)`. `canonical`: true makes the page the group's canonical member,
@@ -138,7 +138,7 @@ pub struct IdentityFilter {
     pub exclude_private: Option<PrivacyPolicy>,
 }
 
-fn row_key(page_id: u64) -> Vec<u8> {
+pub(crate) fn row_key(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::ENTITY_IDENTITY, ROW];
     key.extend_from_slice(&page_id.to_be_bytes());
     key
@@ -152,18 +152,18 @@ fn group_prefix(entity_id: &str) -> Vec<u8> {
     key
 }
 
-fn group_key(entity_id: &str, page_id: u64) -> Vec<u8> {
+pub(crate) fn group_key(entity_id: &str, page_id: u64) -> Vec<u8> {
     let mut key = group_prefix(entity_id);
     key.extend_from_slice(&page_id.to_be_bytes());
     key
 }
 
-fn record(read: &dyn KvRead, page_id: u64) -> Result<Option<IdentityRecord>> {
+pub(crate) fn record(read: &dyn KvRead, page_id: u64) -> Result<Option<IdentityRecord>> {
     get_json(read, &row_key(page_id))
 }
 
 /// The page ids of one group, in page id order.
-fn group_pages(read: &dyn KvRead, entity_id: &str) -> Result<Vec<u64>> {
+pub(crate) fn group_pages(read: &dyn KvRead, entity_id: &str) -> Result<Vec<u64>> {
     let prefix = group_prefix(entity_id);
     let mut out = Vec::new();
     scan_prefix(read, &prefix, false, &mut |k, _| {
@@ -176,7 +176,7 @@ fn group_pages(read: &dyn KvRead, entity_id: &str) -> Result<Vec<u64>> {
 }
 
 /// Every membership, in page id order.
-fn all_records(read: &dyn KvRead) -> Result<Vec<(u64, IdentityRecord)>> {
+pub(crate) fn all_records(read: &dyn KvRead) -> Result<Vec<(u64, IdentityRecord)>> {
     let prefix = [keys::ENTITY_IDENTITY, ROW];
     let mut raw = Vec::new();
     scan_prefix(read, &prefix, false, &mut |k, v| {

@@ -419,7 +419,7 @@ describe('epoch, earliest READY date and printed rules', () => {
 });
 
 describe('through the status command, the report and the readiness evaluator', () => {
-  const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
+  const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
 
   test('status --json carries the manifest epoch and the evidence fields, never the a2 fields; the text status prints the dates', async () => {
     const home = tmp();
@@ -590,9 +590,10 @@ describe('adapter identity', () => {
     const root = join(import.meta.dir, '..', 'src', 'core', 'rust-engine');
     const files = [...readdirSync(join(root, 'store-members')).filter((n) => n.endsWith('.ts')).map((n) => `store-members/${n}`), 'store-codec.ts', 'members.ts'].sort();
     const digest = createHash('sha256');
+    // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([1, '2da36b0aec9fd66f7873674ff553852d076d3038eb0807174ac1864efc92fafd']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([3, '390e5d9063f42aa8d36f970534a5caaf1b616e85cecec7e42d12a298b20adf69']);
   });
 });
 
@@ -622,7 +623,7 @@ describe('unreadable fault history', () => {
 const STARTED_ISO = new Date(STARTED).toISOString();
 
 describe('follower readiness inputs are reported only for the current epoch', () => {
-  const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {} } as unknown as SeedRecord;
+  const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as unknown as SeedRecord;
   const STATE = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
   const AT = new Date(NOW.getTime());
   function follower(dir: string, tag: string | null | undefined): void {

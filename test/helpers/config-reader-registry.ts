@@ -24,6 +24,8 @@ export interface InternalConfigState {
 }
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
+  { key: 'dedupe.exa_spent_usd', reason: 'the running total gbrain dedupe --exa has paid Exa (entities/evidence/exa.ts); the total cap dedupe.exa_total_cap_usd is checked against it' },
+  { key: 'dedupe.exa_cache.', prefix: true, reason: 'one cached Exa answer per query hash (entities/evidence/exa.ts), so a query is never paid for twice' },
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },
@@ -32,7 +34,10 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'transcripts.archive.backfill_state', reason: 'whether the maintenance pass has finished backfilling older conversation days (transcripts/archive-maintenance.ts); a hand edit would stop or restart the backfill' },
   { key: 'transcripts.archive.last_read.', prefix: true, reason: 'what the last conversation archive run read from each reader per source (transcripts/archive.ts): status and doctor report it as of that run instead of reading every session again' },
   { key: 'transcripts.archive.index_pending.', prefix: true, reason: 'days whose conversation archive day index still has to be written (transcripts/archive.ts); the next run retries them' },
+  { key: 'learning.keyless_thin_contacts', reason: 'on a keyless brain, the number of thin pages the owner has recent contact with and what filling them would cost, as the last learning_derive pass counted them (learning/derive.ts); learned reads it, so a hand edit would misreport the note' },
+  { key: 'learning.derive.watermark', reason: 'the newest row time the nightly learning_derive pass has already recorded into the learning ledger (learning/derive.ts); a hand edit would skip items or record them twice' },
   { key: 'maintenance.last_run', reason: 'the free-upkeep run record (steps, cursor, parked items, next due time) that maintenance/run.ts writes after each gbrain maintain --unattended run; maintain --status and doctor read it, so a hand edit would misreport upkeep' },
+  { key: 'enrich_thin.daily_spend', reason: 'the enrich_thin phase\'s running total for the owner\'s day ({day, spent_usd, pages}, cycle/enrich-thin.ts); the daily caps read it, so a hand edit would let the phase spend past cycle.enrich_thin.max_daily_cost_usd or max_daily_pages' },
   { key: 'maintenance.embed_spend', reason: 'the per-day dollar total the capped upkeep embed step has spent (maintenance/run.ts); the daily cap reads it, so a hand edit would let upkeep spend past maintenance.embed_daily_usd' },
   { key: 'heal.audit', reason: 'the bounded self-heal audit log (last 200 rows, 30 days) that heal-audit.ts writes for each heal; doctor reads it to count a heal\'s consecutive failures, so a hand edit would hide an escalation' },
   { key: 'access.serves_derived', reason: 'whether two or more members are enabled, kept by the v309 trigger on access_members (search/private-visibility.ts servesPolicyFrom); a hand edit would lie about whom the brain serves' },
