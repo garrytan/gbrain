@@ -158,6 +158,7 @@ test/engine-parity/access-flag.test.ts
 test/engine-parity/access-grants.test.ts
 test/engine-parity/access-member-reads.test.ts
 test/engine-parity/access-members.test.ts
+test/engine-parity/access-migrate.test.ts
 test/engine-parity/access-policy.test.ts
 test/engine-parity/access-setup.test.ts
 test/engine-parity/access-sort-order.test.ts
