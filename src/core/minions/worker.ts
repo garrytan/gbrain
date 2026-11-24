@@ -41,7 +41,6 @@ import {
   type TickResult,
 } from './lock-renewal-tick.ts';
 import { clampLockDurationMs } from './handler-timeouts.ts';
-import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import {
   runDbProbe,
   assertWorkerDbReadiness,
