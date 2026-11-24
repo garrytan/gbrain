@@ -218,6 +218,25 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
         .collect())
 }
 
+/// The pages of `pages` that `pageReadFilter(alias, scope, params, live)` admits, in their order
+/// (the reads of `list_reads.rs` that take a caller's read policy).
+pub(crate) fn pages_in_read_scope(
+    read: &dyn KvRead,
+    pages: Vec<PageRecord>,
+    scope: &PageReadScope,
+) -> Result<Vec<PageRecord>> {
+    let sources = sources_by_id(read)?;
+    let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+    let mut owner_only = OwnerOnlyCache::default();
+    let mut kept = Vec::with_capacity(pages.len());
+    for page in pages {
+        if passes_read_scope(read, &page, scope, &trust, &sources, &mut owner_only)? {
+            kept.push(page);
+        }
+    }
+    Ok(kept)
+}
+
 /// `pageReadFilter(alias, scope, params, live)`: the source clause, the page policy, the trust
 /// policy and, with `live`, the live filter.
 fn passes_read_scope(
@@ -449,9 +468,15 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 /// (src/core/engine-sql/pages.ts:235-237). Retrieval logs, ratings, the volunteer log, the
 /// gazetteer, take proposals, open loops, core-edit notices and write-gate holds do not exist here
 /// yet.
-fn scrub_purged_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -> Result<()> {
+fn scrub_purged_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &[String],
+    secret_occurrences: &BTreeSet<u64>,
+) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
+    crate::secret_store::purge_for_deleted_pages(tx, source_id, slugs, secret_occurrences)?;
     Ok(())
 }
 
@@ -964,11 +989,13 @@ impl Store {
         }
         self.write(|tx| {
             let mut deleted = Vec::new();
+            let mut secrets = BTreeSet::new();
             for page in pages_by_slugs(&*tx, &source, slugs)? {
+                secrets.extend(crate::secret_store::page_occurrence_ids(&*tx, page.id)?);
                 remove_page(tx, &page)?;
                 deleted.push(page.slug);
             }
-            scrub_purged_slugs(tx, &source, &deleted)?;
+            scrub_purged_slugs(tx, &source, &deleted, &secrets)?;
             Ok(deleted)
         })
     }
@@ -1030,8 +1057,13 @@ impl Store {
             let pages = select(&*tx, self.env.now_micros())?;
             let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
             let mut texts = BTreeSet::new();
+            let mut secrets: BTreeMap<String, BTreeSet<u64>> = BTreeMap::new();
             for page in &pages {
                 texts.extend(crate::page_body::page_text_refs(&*tx, page.id)?);
+                secrets
+                    .entry(page.source_id.clone())
+                    .or_default()
+                    .extend(crate::secret_store::page_occurrence_ids(&*tx, page.id)?);
                 remove_page(tx, page)?;
                 by_source
                     .entry(page.source_id.clone())
@@ -1044,7 +1076,12 @@ impl Store {
             crate::page_body::delete_purged_texts(tx, &texts)?;
             let now = self.env.now_micros();
             for (source, slugs) in &by_source {
-                scrub_purged_slugs(tx, source, slugs)?;
+                scrub_purged_slugs(
+                    tx,
+                    source,
+                    slugs,
+                    &secrets.remove(source).unwrap_or_default(),
+                )?;
                 crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
             }
             Ok(answer(&pages))

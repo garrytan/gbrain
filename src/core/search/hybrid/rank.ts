@@ -23,6 +23,7 @@ import { applyRankPriors } from '../rank-priors.ts';
 import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker } from '../rerank.ts';
 import type { RerankMeta } from '../../ai/gateway.ts';
 import { applyEvidenceGate, recordRerankReceipts, startRerankShadow } from '../decide-stage.ts';
+import { rethrowCapabilityRefusal } from '../../engine-capability-refusal.ts';
 import { rerankEgressDenied } from '../decide-retrieval.ts';
 import type { SearchResult } from '../../types.ts';
 import { applyAliasHopLookup } from '../alias-hop.ts';
@@ -244,9 +245,11 @@ export async function expandStructuralNeighbors(req: HybridRequest, fused: Searc
         ...(dedupOpts ?? {}),
         maxPerPage: resolveWalkDedupCap(dedupOpts?.maxPerPage, capFromWalk),
       };
-    } catch {
+    } catch (e) {
       // Expansion is best-effort — missing edge tables or a transient
-      // DB error must not break base hybrid retrieval.
+      // DB error must not break base hybrid retrieval. An engine that cannot
+      // walk the code graph refuses: the caller asked for the walk.
+      rethrowCapabilityRefusal(e);
     }
   }
   return dedupOpts;

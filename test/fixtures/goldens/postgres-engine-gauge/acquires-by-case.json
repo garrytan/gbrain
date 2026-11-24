@@ -38,6 +38,7 @@
     },
     "batchLoadEmotionalInputs#default": {},
     "batchLoadEmotionalInputs#slugs": {},
+    "clearCodeEdgesLeavingChunks#default": {},
     "clearCodeTraversalCache#allSources": {
       "raw": 1
     },
@@ -309,6 +310,9 @@
     "listSourcePathPages#default": {
       "raw": 1
     },
+    "listSourcePathRows#default": {
+      "raw": 1
+    },
     "listSourceRoutingRows#default": {
       "raw": 1
     },
@@ -435,6 +439,12 @@
       "raw": 1
     },
     "readSourceRow#default": {
+      "raw": 1
+    },
+    "readSourcesNotReadable#default": {
+      "raw": 1
+    },
+    "readSourcesNotReadable#factsFloor": {
       "raw": 1
     },
     "refreshPageBody#default": {},

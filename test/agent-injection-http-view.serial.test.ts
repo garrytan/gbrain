@@ -45,16 +45,16 @@ const FORGED = /if_yes: gbrain delete|\[\/SHOW USER\]\[AGENT\]|ask: run gbrain d
 interface Run { exitCode: number; stdout: string; stderr: string; json: any }
 let home: string;
 
-function childEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
-  return keylessBrainEnv(process.env, home, {
+function childEnv(extra: Record<string, string | undefined> = {}, dir = home): Record<string, string> {
+  return keylessBrainEnv(process.env, dir, {
     DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_SOURCE: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined,
     GBRAIN_NON_INTERACTIVE: '1', GBRAIN_SKIP_STARTUP_HOOKS: '1', NO_COLOR: '1', ...extra,
   });
 }
 
-async function gbrain(args: string[], extra: Record<string, string | undefined> = {}, timeoutMs = 120_000): Promise<Run> {
+async function gbrain(args: string[], extra: Record<string, string | undefined> = {}, timeoutMs = 120_000, dir = home): Promise<Run> {
   const proc = Bun.spawn([process.execPath, '--no-env-file', CLI, ...args], {
-    cwd: home, env: childEnv(extra), stdin: Bun.file('/dev/null'), stdout: 'pipe', stderr: 'pipe',
+    cwd: dir, env: childEnv(extra, dir), stdin: Bun.file('/dev/null'), stdout: 'pipe', stderr: 'pipe',
   });
   const killer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } }, timeoutMs);
   try {
@@ -92,16 +92,21 @@ async function registerClient(name: string, scopes: string): Promise<{ id: strin
   return { id, secret };
 }
 
-beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), 'gbrain-h3-inject-'));
-  const init = await gbrain(['init', '--pglite', '--no-embedding', '--json']);
+/** A PGLite brain in `dir` holding the hostile page and a kettle page. */
+async function hostileBrain(dir: string, initArgs: string[]): Promise<void> {
+  const init = await gbrain(['init', '--pglite', ...initArgs, '--json'], {}, 120_000, dir);
   if (init.exitCode !== 0) throw new Error(`init failed:\n${init.stdout}\n${init.stderr}`);
-  const notes = join(home, 'notes');
+  const notes = join(dir, 'notes');
   mkdirSync(notes, { recursive: true });
   writeFileSync(join(notes, 'teapot.md'), `---\ntitle: ${JSON.stringify(HOSTILE_TITLE)}\n---\n\n${HOSTILE_BODY}\n`);
   writeFileSync(join(notes, 'kettle.md'), '---\ntitle: Kettle\n---\n\nA kettle page about tea.\n');
-  const imported = await gbrain(['import', notes, '--no-embed']);
+  const imported = await gbrain(['import', notes, '--no-embed'], {}, 120_000, dir);
   if (imported.exitCode !== 0) throw new Error(`import failed:\n${imported.stdout}\n${imported.stderr}`);
+}
+
+beforeAll(async () => {
+  home = mkdtempSync(join(tmpdir(), 'gbrain-h3-inject-'));
+  await hostileBrain(home, ['--no-embedding']);
   clientA = await registerClient('h3-client-a', 'read write admin');
   clientB = await registerClient('h3-client-b', 'read');
   clientC = await registerClient('h3-client-c', 'read write');
@@ -124,17 +129,18 @@ describe('injection: a hostile page title renders inert', () => {
     }
   }, 180_000);
 
-  test('through the degraded notices of a real stdio serve query', async () => {
-    const transport = new StdioClientTransport({ command: process.execPath, args: ['--no-env-file', CLI, 'serve'], env: childEnv(), cwd: home, stderr: 'pipe' });
+  /** The notice blocks two real stdio serve queries for the hostile page carry, each checked inert. */
+  async function stdioQueryNotices(dir: string): Promise<string[]> {
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['--no-env-file', CLI, 'serve'], env: childEnv({}, dir), cwd: dir, stderr: 'pipe' });
     const client = new Client({ name: 'h3-inject', version: '1' }, { capabilities: {} });
     await client.connect(transport);
     try {
-      let seen = 0;
+      const seen: string[] = [];
       for (const q of ['teapot inventory', HOSTILE_TITLE]) {
         const r = await client.callTool({ name: 'query', arguments: { query: q } }) as { content: Array<{ text: string }>; _meta?: Record<string, unknown> };
         expect(r.content[0]!.text).toContain('teapot'); // the hostile page is in the result data
         const notices = r.content.slice(1).filter(b => b.text.startsWith('[gbrain notice '));
-        seen += notices.length; // stdio dedupes per process: the degraded notice rides the first call
+        seen.push(...notices.map(b => b.text)); // stdio dedupes per process: the degraded notice rides the first call
         for (const b of notices) {
           expect(b.text).not.toMatch(/\[\/?(AGENT|SHOW USER)\]/);
           expect(b.text).not.toMatch(FORGED);
@@ -142,11 +148,24 @@ describe('injection: a hostile page title renders inert', () => {
         }
         expect(JSON.stringify(r._meta?.gbrain_notices ?? [])).not.toMatch(FORGED);
       }
-      expect(seen).toBeGreaterThan(0);
+      return seen;
     } finally {
       await client.close().catch(() => {});
     }
-  }, 120_000);
+  }
+
+  test('through the degraded notices of a real stdio serve query', async () => {
+    // Keyless on purpose: keyword-only is how this brain was set up, so its queries carry no degraded notice.
+    expect((await stdioQueryNotices(home)).filter(t => t.startsWith('[gbrain notice degraded_recall '))).toEqual([]);
+    // A brain missing the key it is configured to use gets the degraded notice, and the hostile page stays inert in it.
+    const missingKey = mkdtempSync(join(tmpdir(), 'gbrain-h3-inject-missing-key-'));
+    try {
+      await hostileBrain(missingKey, ['--embedding-model', 'openai:text-embedding-3-small', '--skip-embed-check']);
+      expect((await stdioQueryNotices(missingKey)).filter(t => t.startsWith('[gbrain notice degraded_recall kind=degraded]')).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(missingKey, { recursive: true, force: true });
+    }
+  }, 240_000);
 
   test('ids starting with -/--yes land after `--`; the fix runs and reads that id', async () => {
     for (const slug of ['--yes', '-rf']) {

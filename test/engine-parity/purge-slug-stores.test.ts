@@ -57,6 +57,7 @@ describe('engine parity: purge slug stores', () => {
         await engine.setPageAliases(slug, src, [`alias ${src} ${slug}`]);
       }
       const gone = await engine.getPage('notes/gone', { sourceId: SRC });
+      const kept = await engine.getPage('notes/kept', { sourceId: SRC });
       const holds = {
         gone: await hold(engine, SRC, 'notes/gone', 'fp-1'),
         kept: await hold(engine, SRC, 'notes/kept', 'fp-2'),
@@ -70,11 +71,11 @@ describe('engine parity: purge slug stores', () => {
         removed: await engine.deletePurgedSlugStoreRows(SRC, ['notes/gone']),
         again: await engine.deletePurgedSlugStoreRows(SRC, ['notes/gone'], { ifPresent: true }),
         noHolds: await engine.deletePurgedSlugHolds(SRC, []),
-        olderThanHold: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/gone', deletedAt: '2000-01-01T00:00:00.000000Z' }]),
-        holds: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/gone' }]),
-        holdsAgain: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/gone', deletedAt: null }]),
+        olderThanHold: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/gone', id: Number(gone!.id), deletedAt: '2000-01-01T00:00:00.000000Z' }]),
+        holds: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/gone', id: Number(gone!.id) }]),
+        holdsAgain: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/gone', id: Number(gone!.id), deletedAt: null }]),
         keptStores: await engine.deletePurgedSlugStoreRows(OTHER, ['notes/gone']),
-        keptHolds: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/kept' }]),
+        keptHolds: await engine.deletePurgedSlugHolds(SRC, [{ slug: 'notes/kept', id: Number(kept!.id) }]),
       };
       const stores = { take_proposals: 1, open_loops: 1, core_edit_notices: 0, page_aliases: 1, slug_aliases: 0, slug_rename_history: 0 };
       const none = { take_proposals: 0, open_loops: 0, core_edit_notices: 0, page_aliases: 0, slug_aliases: 0, slug_rename_history: 0 };

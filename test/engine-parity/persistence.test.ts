@@ -259,20 +259,15 @@ describe('engine parity: write journal', () => {
     return seen;
   });
 
-  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
-  // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
+  // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The epoch moves
+  // through the purge's typed bump (three purges) and the tombstones through the typed write a purge makes.
   parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
-    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
+    methods: ['bumpSourcePurgeEpoch', 'insertReasonPurgeTombstones', 'readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
   }, async (engine, backend) => {
     await createSource(engine, backend, 'purged');
-    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
-      throw write;
-    }
-    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
-      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
+    for (let i = 0; i < 3; i++) await engine.bumpSourcePurgeEpoch('purged');
+    await engine.insertReasonPurgeTombstones('purged', ['c1', 'c2'], ['notes/a.md', 'notes/b.md']);
+    await engine.insertReasonPurgeTombstones('default', ['c3'], ['notes/c.md']);
     const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
     const seen = {
       epoch: String(await engine.readSourcePurgeEpoch('purged')),
@@ -873,6 +868,23 @@ describe('engine parity: write journal', () => {
     return answers;
   });
 
+  parityTest('readTopologyChangeDigest reads the digest a request id recorded for a source, whichever writer recorded it', {
+    methods: ['readLedgerSource', 'insertTopologyChange', 'readTopologyChangeDigest'],
+  }, async (engine) => {
+    const before = await engine.readTopologyChangeDigest(REQUEST, 'default');
+    const source = await engine.readLedgerSource('default');
+    await engine.insertTopologyChange(lifecycleRow(source!.incarnation));
+    const answers = {
+      before,
+      stored: await engine.readTopologyChangeDigest(REQUEST, 'default'),
+      upperCase: await engine.readTopologyChangeDigest(REQUEST.toUpperCase(), 'default'),
+      otherSource: await engine.readTopologyChangeDigest(REQUEST, 'parity-no-such-source'),
+      otherRequest: await engine.readTopologyChangeDigest(OTHER_TOKEN, 'default'),
+    };
+    expect(answers).toEqual({ before: null, stored: 'e'.repeat(64), upperCase: 'e'.repeat(64), otherSource: null, otherRequest: null });
+    return answers;
+  });
+
   parityTest('findTopologyChanges finds the request id a lifecycle receipt of the same writer used', {
     methods: ['readLedgerSource', 'insertTopologyChange', 'findTopologyChanges'],
   }, async (engine) => {
@@ -1125,6 +1137,76 @@ describe('engine parity: write journal', () => {
     const row = (request_id: string, chars: number) => ({ source_id: 'default', slug: 'notes/parity-example', request_id, state: 'queued' as const, attempts: 0, chars });
     expect(answers).toEqual({ queued: [],
       committed: [row('b0000000-0000-4000-8000-0000000000b6', 15), row('b0000000-0000-4000-8000-0000000000b7', 30)], otherSource: [] });
+    return answers;
+  });
+
+  // Doctor's stale_embedding_effects reads: the Rust engine answered them as always empty, though its store keeps the
+  // effect rows. A failed (through a real claim) and a re-queued embedding effect of a committed write count; one of an
+  // uncommitted write does not.
+  parityTest('readStaleEmbeddingCounts and listStaleEmbeddingEffects count and list the failed and re-queued embedding effects of committed writes', {
+    methods: ['readStaleEmbeddingCounts', 'listStaleEmbeddingEffects', 'insertPublicationEffects', 'transactionDirect', 'declarePersistence', 'selectClaimableEffect', 'stampEffectClaim', 'failEffectRow',
+      'readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'putPage', 'getPage'],
+  }, async (engine) => {
+    const incarnation = (await engine.readSourceMembership('default'))!.incarnation;
+    await engine.putPage('notes/parity', { type: 'note', title: 'Parity', compiled_truth: 'twelve chars', timeline: 'abc' });
+    const pageId = (await engine.getPage('notes/parity'))!.id;
+    const queue = async (requestId: string) => {
+      const id = await admitDirect(engine, requestId);
+      await engine.transactionDirect(async tx => {
+        await tx.declarePersistence();
+        return tx.insertPublicationEffects({ requestId: id, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+          effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: pageId, repair_requeued_at: 'parity' } }, { kind: 'git', data: { relative_path: 'notes/parity.md' } }] });
+      });
+      return id;
+    };
+    const commit = async (id: string) => {
+      await engine.stampWriteClaim(id, TOKEN, 60_000, JSON.stringify({ phase: 'parity' }));
+      await engine.completeWriteRow({
+        id, state: 'committed', outcome: {}, errorCode: null, errorMessage: null, consumerVersion: 'parity', consumerHostId: null, errorDetail: null,
+        resultBytes: 0, counterKeys: KEYS, intentBytes: 100, retainedBytes: 0, terminalReservation: 4096, probePurges: false,
+      });
+    };
+    const view = (rows: Awaited<ReturnType<BrainEngine['listStaleEmbeddingEffects']>>) => rows.map(r => ({
+      source_id: r.source_id, slug: r.slug, request_id: r.request_id, state: r.state,
+      effect_id: /^\d+$/.test(r.effect_id) ? 'id' : r.effect_id, updated_at: /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?\+00$/.test(r.updated_at) ? 'stamp' : r.updated_at,
+    }));
+    const empty = { counts: await engine.readStaleEmbeddingCounts(null), rows: await engine.listStaleEmbeddingEffects(null) };
+    // A failed embedding effect, failed through a real effect-worker claim (the only effect, so the claim takes it).
+    const failedRequest = await admitDirect(engine, 'b0000000-0000-4000-8000-0000000000e5');
+    await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      return tx.insertPublicationEffects({ requestId: failedRequest, revision: null, sourceId: 'default', sourceIncarnation: incarnation, worktreeId: null,
+        effects: [{ kind: 'embedding', data: { slug: 'notes/parity', page_id: pageId } }] });
+    });
+    type Claimed = { id: string | number; kind: string; execution_token: string | null };
+    const claimed = await engine.transactionDirect(async tx => {
+      await tx.declarePersistence();
+      const candidate = await tx.selectClaimableEffect<Claimed>(HOST, []);
+      if (!candidate) return null;
+      return tx.stampEffectClaim<Claimed>({ id: candidate.id, token: OTHER_TOKEN, ownerJson: JSON.stringify({ token: OTHER_TOKEN, owner: { pid: 1, nonce: 'n', start: 's' } }) });
+    });
+    await engine.failEffectRow({ id: claimed!.id, token: claimed!.execution_token, reason: 'parity_failed' });
+    await commit(failedRequest);
+    const first = await queue('b0000000-0000-4000-8000-0000000000e6');
+    await queue('b0000000-0000-4000-8000-0000000000e7');
+    const uncommitted = await engine.readStaleEmbeddingCounts(null);
+    await commit(first);
+    const rows = await engine.listStaleEmbeddingEffects(null);
+    const answers = {
+      empty, uncommitted,
+      counts: await engine.readStaleEmbeddingCounts(null),
+      scoped: await engine.readStaleEmbeddingCounts(['default']),
+      other: await engine.readStaleEmbeddingCounts(['other']),
+      rows: view(rows),
+      otherRows: await engine.listStaleEmbeddingEffects(['other']),
+    };
+    const counts = (count: number, failed: number, requeued: number) => ({ count, failed, requeued });
+    const row = (request_id: string, state: string) => ({ source_id: 'default', slug: 'notes/parity-example', request_id, state, effect_id: 'id', updated_at: 'stamp' });
+    expect({ ...answers, claimedKind: claimed?.kind }).toEqual({
+      empty: { counts: counts(0, 0, 0), rows: [] }, uncommitted: counts(1, 1, 0), counts: counts(2, 1, 1), scoped: counts(2, 1, 1), other: counts(0, 0, 0),
+      rows: [row('b0000000-0000-4000-8000-0000000000e5', 'failed'), row('b0000000-0000-4000-8000-0000000000e6', 'queued')],
+      otherRows: [], claimedKind: 'embedding',
+    });
     return answers;
   });
 

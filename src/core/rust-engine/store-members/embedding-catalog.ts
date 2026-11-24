@@ -35,6 +35,9 @@ export const listEmbeddingStores: Member<'listEmbeddingStores'> = async () => [.
 export const hasStoredVectors: Member<'hasStoredVectors'> = (brain, store) =>
   storeCall({ member: 'hasStoredVectors' }, () => brain.hasStoredVectors({ name: store }));
 
+/** No chunk holds an image vector: the store refuses one (the chunk writes take only the text `embedding`). */
+export const hasChunkImageVectors: Member<'hasChunkImageVectors'> = async () => false;
+
 export const countStaleFactEmbeddings: Member<'countStaleFactEmbeddings'> = (brain, opts) => {
   if (!Number.isInteger(opts.dims) || Math.abs(opts.dims) > 2 ** 31 - 1) refuseMember('countStaleFactEmbeddings', 'a width that is not a 32-bit integer');
   return storeCall({ member: 'countStaleFactEmbeddings' }, () =>

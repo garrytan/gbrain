@@ -136,6 +136,94 @@ impl Brain {
         })
     }
 
+    /// `reclaimBudgetReservations({ scope, resolver }, nowIso)`: `{ released, uncertain }`.
+    #[napi]
+    pub fn reclaim_budget_reservations<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        now_iso: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.reclaim_budget_reservations(&scope, &resolver, &now_iso)
+        })
+    }
+
+    /// `reserveBudgetReservation({ scope, resolver }, spec)`: true when held.
+    #[napi]
+    pub fn reserve_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            let spec: gbrain_store::budget_ledger::BudgetReservationSpec =
+                required(spec, "reserveBudgetReservation spec")?;
+            s.reserve_budget_reservation(&scope, &resolver, &spec)
+        })
+    }
+
+    /// `dispatchBudgetReservation({ scope, resolver }, id, nowIso)`: true when dispatched.
+    #[napi]
+    pub fn dispatch_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        id: String,
+        now_iso: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.dispatch_budget_reservation(&scope, &resolver, &id, &now_iso)
+        })
+    }
+
+    /// `settleBudgetReservation({ scope, resolver }, id, actual)`: `{ prior, estimate, day, current }`.
+    #[napi]
+    pub fn settle_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        id: String,
+        actual: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.settle_budget_reservation(&scope, &resolver, &id, &actual)
+        })
+    }
+
+    /// `releaseBudgetReservation({ scope, resolver }, id)`: true when the day row moved.
+    #[napi]
+    pub fn release_budget_reservation<'env>(
+        &self,
+        env: &'env Env,
+        key: Value,
+        id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let (scope, resolver) = ledger_key(&key)?;
+            s.release_budget_reservation(&scope, &resolver, &id)
+        })
+    }
+
+    /// `readBudgetLedgerDay(scope, resolver, day)`: `{ reserved, committed, cap }` as numeric text, or null.
+    #[napi]
+    pub fn read_budget_ledger_day<'env>(
+        &self,
+        env: &'env Env,
+        scope: String,
+        resolver: String,
+        day: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_budget_ledger_day(&scope, &resolver, &day)
+        })
+    }
+
     /// `logChatUsage(row)`: appends one chat usage ledger row (`created_at` ISO text or null for
     /// now); resolves null.
     #[napi]
@@ -170,4 +258,20 @@ impl Brain {
             s.read_mcp_request_log_page(&input)
         })
     }
+}
+
+/// A ledger key `{ scope, resolver }` from the caller.
+fn ledger_key(key: &Value) -> gbrain_store::error::Result<(String, String)> {
+    let field = |name: &str| {
+        key.get(name)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                gbrain_store::error::StoreError::new(
+                    gbrain_store::error::INVALID_ARGUMENT,
+                    format!("a budget ledger key needs a text {name}"),
+                )
+            })
+    };
+    Ok((field("scope")?, field("resolver")?))
 }

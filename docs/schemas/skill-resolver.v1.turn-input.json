@@ -62,6 +62,7 @@
     "min_match_strength": {
       "enum": [
         "named",
+        "picked",
         "name",
         "triggers",
         "routing",

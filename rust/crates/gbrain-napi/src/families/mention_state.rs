@@ -223,9 +223,10 @@ impl Brain {
         env: &'env Env,
         source_ids: Option<Vec<String>>,
         page_ids: Option<Vec<i64>>,
+        after_page_id: Option<i64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.reset_mention_revisions(source_ids.as_deref(), page_ids.as_deref())
+            s.reset_mention_revisions(source_ids.as_deref(), page_ids.as_deref(), after_page_id)
         })
     }
 

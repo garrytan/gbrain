@@ -7,6 +7,8 @@
  */
 export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'apple.helper.port', // imessage/imessage-source.ts: the GBrain Helper's loopback port an imessage source reads (set by setup; no default)
+  'dedupe.exa', 'dedupe.exa_run_cap', 'dedupe.exa_total_cap_usd', // entities/evidence/exa.ts (GST-3609): web search for gbrain dedupe classes/sample --exa, off unless on and EXA_API_KEY is set; queries per run, default 2000; total spend cap in USD, default 25
+  'google_contacts.identity_links', // google/contact-identity.ts (GST-3609): on = each Google sync links the contacts it changed by exact email or phone; set by gbrain dedupe link-contacts --apply / --unlink, default off
   'identity.phone_country_code', // phone-key.ts, read by ops/whois.ts and apple-contacts/apple-contacts-source.ts: country code for phone numbers written without one, default 1
   'apple_contacts.write', 'apple_contacts.destructive_writes', 'apple_contacts.owner_key_file', // commands/apple-contacts.ts (GST-3278): write switch off|dry_run|on and destructive switch, both default off; absolute path of the 0600 owner key file
   'apple_contacts.enrich', 'apple_contacts.write_token_file', 'apple_contacts.enrich.create_cards', // apple-contacts/enrich.ts (GST-3278 PR 2): enrichment after each pull off|dry_run|on, default off; absolute path of the 0600 write:contacts:enrich token file; new cards from Google Contacts, default false

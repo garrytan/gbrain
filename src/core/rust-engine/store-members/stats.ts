@@ -290,7 +290,7 @@ export const findAnomalies: StoreMember<[opts: AnomaliesOpts], AnomalyResult[]> 
 };
 
 /** The liveness round trip (engine-sql/health.ts pingStore): the store opens a read snapshot. An aborted `signal` rejects first. */
-export const pingStore: StoreMember<[opts?: { signal?: AbortSignal }], void> = async (brain, opts) => {
+export const pingStore: StoreMember<[opts?: { signal?: AbortSignal; direct?: boolean }], void> = async (brain, opts) => {
   throwIfQueryAborted(opts);
   await storeCall({ member: 'pingStore' }, () => brain.pingStore());
 };

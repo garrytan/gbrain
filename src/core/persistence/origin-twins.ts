@@ -16,7 +16,6 @@ import { join } from 'node:path';
 import { resolveSlugForPath } from '../sync.ts';
 import { explicitIdVeto } from '../sync-rename-identity.ts';
 import type { BrainEngine } from '../engine.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 /** The kill switch for the sync-time auto-resolve (default on), modelled on `sync.slug_conflicts.auto_remove`. */
 export const ORIGIN_TWINS_AUTO_RESOLVE_KEY = 'sync.origin_twins.auto_resolve';
@@ -45,16 +44,8 @@ export interface OriginClaimant { id: number; slug: string; revision: string; bo
  * The verdict inputs of live pages, by id: the inline body digest (`compiled_truth` and `timeline`; NULL for a segmented
  * body, so unknown never matches), the explicit frontmatter id, privacy and slug-keyed withdrawals or purges.
  */
-export async function readOriginClaimants(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, ids: readonly number[]): Promise<OriginClaimant[]> {
-  const rows = await engine.executeRaw<{ id: number; slug: string; revision: string; body_hash: string | null; fm_id: string | null; private: boolean; restricted: boolean; trust_tier: string | null }>(
-    `SELECT p.id, p.slug, p.knowledge_revision::text AS revision,
-       CASE WHEN p.compiled_truth IS NULL THEN NULL ELSE md5(p.compiled_truth) || md5(COALESCE(p.timeline, '')) END AS body_hash,
-       p.frontmatter->>'id' AS fm_id, p.trust_tier::text AS trust_tier, (${privatePagesFilterFragment('p')}) AS private,
-       (EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=p.source_id AND w.subject=p.slug)
-         OR EXISTS (SELECT 1 FROM fact_purges f WHERE f.source_id=p.source_id AND f.subject=p.slug)) AS restricted
-     FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::bigint[]) AND p.deleted_at IS NULL ORDER BY p.id`, [sourceId, [...ids]]);
-  return rows.map(row => ({ id: Number(row.id), slug: row.slug, revision: String(row.revision), body_hash: row.body_hash, fm_id: row.fm_id,
-    private: row.private === true, restricted: row.restricted === true, trust_tier: row.trust_tier ?? null }));
+export async function readOriginClaimants(engine: Pick<BrainEngine, 'listOriginClaimants'>, sourceId: string, ids: readonly number[]): Promise<OriginClaimant[]> {
+  return await engine.listOriginClaimants(sourceId, ids);
 }
 
 export type OriginConflictReason = 'no_canonical_claimant' | 'content_differs' | 'file_unreadable' | 'explicit_id_conflict' | 'visibility_differs'

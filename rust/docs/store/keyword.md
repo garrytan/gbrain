@@ -181,7 +181,7 @@ that must not change the store they check. It opens the record file through redb
 (`redb_kv.rs` `RedbReadOnlyKv`), which takes no write lock, runs no recovery and commits nothing on close: a plain
 open commits redb's allocator state when it closes, so it changes bytes of `records.redb` even when nothing was
 written. The builder does not run. Every write is refused with `read_only_transaction`, and so is an open that
-would have to write: no records yet, a format before 4 (the upgrade) or an index state to reset. `store_io` names
+would have to write: no records yet, a format before 5 (the upgrade) or an index state to reset. `store_io` names
 a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
 writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
 across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.
@@ -357,6 +357,12 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
   (PostgreSQL 18.6) hold none of these characters.
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
+
+The search and query ops check the `where` filter once more on their finished rows (`keepFrontmatterMatches`), since
+some arms add pages outside the filtered statements. `filterPageIdsByFrontmatter(ids, where)` (`keyword/frontmatter_ids.rs`)
+answers that check: the ids, ascending, whose page frontmatter holds every key, by the same `frontmatter_holds` rule as
+the keyword and vector filters. Like the SQL (`SELECT p.id FROM pages p WHERE p.id = ANY($1)` plus the containment
+clauses), it reads every page row, a soft-deleted one included.
 
 The core BM25 member (`store-members/search.ts`) is gone; its napi method and `Store::search_keyword` stay, unused.
 

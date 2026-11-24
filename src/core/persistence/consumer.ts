@@ -6,6 +6,7 @@ import type { GBrainConfig } from '../config.ts';
 import { foregroundPriorityOverride, claimGroupFollowers, claimNextLaneHead, claimNextWrite, publicationGroupKey, syncGroup, floorPreparationAttempts, hasClaimableWrite, getWriteRequestById, releaseUnpublishedClaim, renewWriteClaim, vacuumPersistenceQueues, independentGroup, sweepSegmentStorage, yieldToEventLoop } from './journal.ts';
 import { expireDeferredWrites } from './refresh-barrier.ts';
 import { connectionCapFailure, finishPreparationStalled, finishUnpublishedFailure, preparationAbortReason, recoverPublication, transientDatabaseFailure, type PreparedMutation } from './coordinator.ts';
+import { inStoredSlugScope } from './legacy-slug-put.ts';
 import { hostIdFor } from './identity.ts';
 import { executeClaimedGroup, PAGE_BATCH_GROUP_MAX, publishSingleWrite, singleWrite } from './group-publish.ts';
 import { preparationConfigView } from './config-snapshot.ts';
@@ -13,6 +14,7 @@ import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, holdClaimForPubli
 import { claimOwnerProvablyDead, claimPhaseStamp, claimStateOf, claimTripleText, enterClaimPhase, startClaimPhase, type ClaimPhaseClock, type WaitingOn } from './claim-phase.ts';
 import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, preparationKind, startPreparation, type PreparationPolicy } from './preparation-budget.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
+import { acquireWorktree, getWorktreeBinding } from './ownership.ts';
 import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
@@ -675,10 +677,19 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
         const delay = Math.max(1000, (this.opts.pollMs ?? 250) * 2);
         this.rootRetryAfter.set(root, Date.now() + delay);
         try {
-          const recovered = await this.phase('recovery', () => recoverPublication(this.engine, row.id, this.hostId));
-          if (isTerminal(recovered)) this.settled(recovered);
-          if (!recovered.recovery) this.rootRetryAfter.delete(root);
-          else if (recovered.blocked_reason === 'unexpected_file_bytes') this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+          // #10083: the full row (intent, before-image) is read only once this process holds the root's lock.
+          const recovered = await this.phase('recovery', async () => {
+            const binding = await getWorktreeBinding(this.engine, row.source_id, this.hostId);
+            if (binding?.owner_host_id !== this.hostId) return recoverPublication(this.engine, row.id, this.hostId);
+            const lock = await acquireWorktree(binding, 0, undefined, this.engine, { yieldLanes: true });
+            if (!lock) return isTerminal(row) ? getWriteRequestById(this.engine, row.id) : null;
+            try { return await recoverPublication(this.engine, row.id, this.hostId, true); } finally { await lock.release(); }
+          });
+          if (recovered && isTerminal(recovered)) this.settled(recovered);
+          if (recovered && !recovered.recovery) this.rootRetryAfter.delete(root);
+          else if (['unexpected_file_bytes', 'unexpected_staging_bytes'].includes(String((recovered ?? row).blocked_reason))) {
+            this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
+          }
         } catch (error) {
           this.rootRetryAfter.set(root, Date.now() + Math.max(delay, 30_000));
           this.report(error);
@@ -1071,7 +1082,10 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       await floorPreparationAttempts(this.statements, row.id, this.policy.maxAttempts).catch(error => this.report(error));
     });
   }
-  private async execute(row: WriteRequest, root: RootHold): Promise<boolean> {
+  private execute(row: WriteRequest, root: RootHold): Promise<boolean> {
+    return inStoredSlugScope(row, () => this.executeRow(row, root));
+  }
+  private async executeRow(row: WriteRequest, root: RootHold): Promise<boolean> {
     let preparationActive = true;
     const observation = { request_id: row.request_id, started_at: new Date().toISOString(), deadline_exceeded: false, attempt: ++this.preparationAttempts };
     this.preparing.set(row.id, observation);

@@ -28,14 +28,16 @@ describe('migrations full-record golden', () => {
     expectGolden('migrations/records', golden, normalizer);
   }, 60_000);
 
-  test('versions are unique and the runner applies them ascending; gaps 17-19, 100 and 332 stay gaps', () => {
+  test('versions are unique and the runner applies them ascending; gaps 17-19 and 100 stay gaps', () => {
     const versions = MIGRATIONS.map((m) => m.version);
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    // 331 is master's access_read_log (sync 11) and 333 is the cli-members line's byte-order slug indexes; 334 is the
-    // trunk's projection-jobs index and 335 the pages projection-waiting words index. Only 332 is still free.
-    expect(golden.gaps).toEqual([17, 18, 19, 100, 332]);
+    // 331 is master's access_read_log (sync 11); 332 is master's engine_writer_observations and 333 its hold-page-id;
+    // 336 is the cli-members line's byte-order slug indexes, 337 the trunk's projection-jobs index and 338 the pages projection-waiting
+    // words index: renumbered above master's v334 (learning_items, #10193) and PR 10168's reserved v335, neither of which is on
+    // main yet, so 334 and 335 are gaps here until the next master sync brings them in (and then this list loses them).
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 334, 335]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);

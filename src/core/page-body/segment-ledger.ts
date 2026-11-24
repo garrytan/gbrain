@@ -9,7 +9,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { partialFenceRuns } from '../facts/withdrawal-overlay.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import type { GlobalPurgeMarker, PageWithdrawal } from '../page-state/types.ts';
 import { readEntryState } from './entry-state.ts';
 import { projectionStaleError } from './segment-projection.ts';
@@ -33,12 +33,11 @@ export function ledgerApplies(ledger: BodyLedger): boolean {
  * a trusted body read refuses with `page_projection_stale` (read-range.ts
  * `trustedSegments` joins such a block's segments before overlaying them).
  */
-export async function overlaySegmentText(engine: Pick<BrainEngine, 'executeRaw'>, ledger: BodyLedger,
+export async function overlaySegmentText(engine: Pick<BrainEngine, 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals'>, ledger: BodyLedger,
   segment: { sourceId: string; byteStart: number; entryState: unknown }, raw: string, view: 'read' | 'trusted'): Promise<string> {
   if (!ledgerApplies(ledger)) return raw;
-  const query = <T>(sql: string, params?: unknown[]) => engine.executeRaw<T>(sql, params);
   const text = raw.includes('gbrain:facts:begin')
-    ? (await overlayCanonicalBodies(query, raw, '', ledger.withdrawals, { sourceId: segment.sourceId, marker: ledger.globalPurges })).compiled_truth
+    ? (await overlayCanonicalBodiesTyped(engine, raw, '', ledger.withdrawals, { sourceId: segment.sourceId, marker: ledger.globalPurges })).compiled_truth
     : raw;
   const entryOpen = readEntryState(segment.entryState)?.withdrawal.open === true;
   if (!entryOpen && !text.includes('gbrain:facts:')) return text;

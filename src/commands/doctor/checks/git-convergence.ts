@@ -105,8 +105,8 @@ function publishableRemote(top: string, branch: string | null): boolean {
  * access policy files.
  */
 async function markReadOnlyMirrors(engine: BrainEngine, reports: RootReport[], now: number): Promise<void> {
-  const sources = new Map((await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>('SELECT id, local_path, config FROM sources')
-    .catch(() => [])).map(row => [row.id, row]));
+  // The typed source rows, so a Rust brain answers them; a failed read fails the check (no quiet empty roster).
+  const sources = new Map((await engine.listSourceRecords()).map(row => [row.id, row]));
   for (const report of reports) {
     const rows = report.source_ids.map(id => sources.get(id));
     if (!rows.length || rows.some(row => !row)) continue;

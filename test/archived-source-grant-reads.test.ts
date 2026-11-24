@@ -213,7 +213,8 @@ for (const kind of testBackends()) {
     test('a token whose sources cannot be read fails closed instead of keeping its stored list', async () => {
       const [row] = await engine.executeRaw<Record<string, unknown>>("SELECT * FROM access_tokens WHERE name = 'tok-owner'");
       const grant = await resolveTokenGrant(sqlQueryForEngine(engine), row!);
-      const failing = (async () => { throw new Error('sources unreadable'); }) as never;
+      const fail = async (): Promise<never> => { throw new Error('sources unreadable'); };
+      const failing = { readSharedSourceRows: fail, listSourceIds: fail, filterUnarchivedSourceIds: fail };
       await expect(tokenReadSources(failing, grant, async () => OWNER)).rejects.toThrow('sources unreadable');
     });
 
