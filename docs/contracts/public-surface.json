@@ -2526,6 +2526,7 @@
     "apple_helper_unauthorized": 1,
     "apple_schema_mismatch": 1,
     "approval_required": 1,
+    "archive_audience_changed": 1,
     "archive_audience_unproven": 1,
     "archive_gateway_auth": 1,
     "archive_gateway_failed": 1,

@@ -532,6 +532,16 @@ More: [docs/guides/apple-setup.md#apple_schema_mismatch](../../docs/guides/apple
 |---|---|---|---|---|---|---|
 | The change needs the owner's explicit approval before it can proceed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### archive_audience_changed
+
+<a id="archive_audience_changed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain's audience changed while the conversation archive was starting, so it now archives into another source; this run read and wrote nothing. | A run writes every page under the audience it reads while it holds its source lock; a brain that turned shared moves a checkout source's archive into its owner-only <source>-owner twin, so writing with the earlier read could publish pages other members read. | Rerun gbrain transcripts archive run. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
+
 ### archive_audience_unproven
 
 <a id="archive_audience_unproven"></a>
