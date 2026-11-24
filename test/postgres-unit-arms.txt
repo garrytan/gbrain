@@ -183,6 +183,8 @@ test/engine-parity/calibration-profiles.test.ts
 test/engine-parity/caller-typed-reads.test.ts
 test/engine-parity/checkpoint-validation.test.ts
 test/engine-parity/chronicle-coverage-gap.test.ts
+test/engine-parity/chronicle-backfill-done.test.ts
+test/engine-parity/chronicle-backfill.test.ts
 test/engine-parity/chronicle-decision.test.ts
 test/engine-parity/chronicle-executor.test.ts
 test/engine-parity/chronicle-publish-parity.test.ts

@@ -16,6 +16,7 @@ pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
 mod cascade;
+pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod config;
