@@ -49,9 +49,11 @@ member-access part alone (the page's readers, and the origin of a derived page):
 
 ## Differences from PGLite
 
-- **A page with only a soft-deleted row.** A remote write's visibility check judges such a page with a raw
-  statement over the soft-deleted row, so on a Rust brain that write is still refused (`engine_capability_missing`).
-  A page with a live row is judged through the typed reads.
+- **A page with no live row.** A remote write's visibility check judges a page that has only a soft-deleted row (or
+  no row) with a raw statement, but only when the opening probe and policy checks have not already decided it: a page
+  that passes the empty-identity policy ends the check, and a private page that names no readers is refused as not
+  visible, as on PGLite. When the check does reach that statement, a Rust brain refuses it with
+  `engine_capability_missing`. A page with a live row is judged through the typed reads.
 - **Owner-only sources.** A page policy for a caller that is not the owner ends with the owner-only test
   (`ownerOnlyAllowedSql`). The member reads which form the policy text carries and sends it as `ownerOnly`
   (`ownerOnlyFormIn`): `fn` when the text holds `ownerOnlyPageSql(alias, 'fn')`, `closed` when it holds
