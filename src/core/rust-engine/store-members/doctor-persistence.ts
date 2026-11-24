@@ -2,13 +2,14 @@
  * Doctor persistence reads (src/core/engine-sql/doctor-persistence.ts).
  *
  * Served from the store (rust/crates/gbrain-store/src/cli_reads/doctor_persistence.rs): the reads over the request
- * journal and the counters, which the store keeps. Answered in TypeScript with no store call: the reads over a
- * relation the store has no writer for (worktrees, host bindings, consumers, effects, derivation
- * sweeps), which hold no row on this engine, so each answers the empty state the same read gives on a PGLite brain with
+ * journal and the counters, which the store keeps, and the worktree binding reads (persistence/binding_reads.rs).
+ * Answered in TypeScript with no store call: the reads over a relation the store has no writer for (consumers,
+ * effects, derivation sweeps), which hold no row on this engine, so each answers the empty state the same read gives on a PGLite brain with
  * none. rust/docs/store/cli-reads-doctor-per.md names each member and the reason.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { OrphanBindingRow, OwnerBindingRow } from '../../engine-sql/doctor-persistence.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -81,6 +82,25 @@ export const listManagedRoots: Member<'listManagedRoots'> = async brain => {
   return rows.filter(row => row.local_path != null).map(row => ({ root: row.local_path as string, source_id: row.id }));
 };
 
+// ---- worktree bindings: the rows the writer claim keeps (persistence/worktrees.rs; persistence/binding_reads.rs) ----
+
+/** Source bindings whose source is gone or was re-created, by source id, at most `limit` when given. */
+export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async (brain, limit) => {
+  if (limit) {
+    const rows = Math.floor(limit);
+    if (!Number.isFinite(rows)) throw new Error('listOrphanBindingRows: limit must be a finite number');
+    limit = rows;
+  }
+  const rows = await storeCall({ member: 'listOrphanBindingRows' }, () => brain.listOrphanBindingRows(limit || undefined)) as Array<OrphanBindingRow & { pending_requests: number | string }>;
+  return rows.map(row => ({ ...row, pending_requests: Number(row.pending_requests) }));
+};
+/** Every stored worktree id. */
+export const listWorktreeIds: Member<'listWorktreeIds'> = async (brain) =>
+  storeCall({ member: 'listWorktreeIds' }, () => brain.listWorktreeIds()) as Promise<string[]>;
+/** Worktrees a host other than `hostId` owns (not recovering), with the owner's path and source ids, oldest first. */
+export const listOwnerBindings: Member<'listOwnerBindings'> = async (brain, hostId) =>
+  storeCall({ member: 'listOwnerBindings' }, () => brain.listOwnerBindings(hostId)) as Promise<OwnerBindingRow[]>;
+
 // ---- empty: the store has no writer for the relation ---------------------------------------------------------------
 
 /** No consumer heartbeat is recorded (persistence_consumers has no writer). */
@@ -93,11 +113,7 @@ export const listStalledCatchupRows: Member<'listStalledCatchupRows'> = async ()
 export const listParkedGroupRows: Member<'listParkedGroupRows'> = async () => [];
 export const readStaleEmbeddingCounts: Member<'readStaleEmbeddingCounts'> = async () => ({ count: 0, failed: 0, requeued: 0 });
 export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = async () => [];
-/** No worktree or source binding row exists, so none is orphaned. */
-export const listOrphanBindingRows: Member<'listOrphanBindingRows'> = async () => [];
-export const listWorktreeIds: Member<'listWorktreeIds'> = async () => [];
 export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async () => [];
-export const listOwnerBindings: Member<'listOwnerBindings'> = async () => [];
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
 export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];
 /**

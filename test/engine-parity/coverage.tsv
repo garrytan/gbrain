@@ -761,7 +761,7 @@ shareLockWriteCredential	persistence_journal	yes	1	no	yes	yes	serves
 readCounterRows	persistence_journal	yes	12	no	yes	yes	serves
 readAdmissionRate	persistence_journal	yes	3	no	yes	yes	serves
 lockPersistenceCounters	persistence_journal	yes	71	no	yes	yes	serves
-insertWriteRequest	persistence_journal	yes	85	no	yes	yes	serves
+insertWriteRequest	persistence_journal	yes	86	no	yes	yes	serves
 insertWriteRequestGroup	persistence_journal	yes	2	no	yes	yes	serves
 readOwnerHostBinding	persistence_journal	yes	1	no	yes	yes	serves
 stampWriteClaim	persistence_journal	yes	33	no	yes	yes	serves
@@ -2000,9 +2000,9 @@ listStalledCatchupRows	doctor_persistence	yes	1	no	yes	yes	serves
 listParkedGroupRows	doctor_persistence	yes	1	no	yes	yes	serves
 readStaleEmbeddingCounts	doctor_persistence	yes	1	no	yes	yes	serves
 listStaleEmbeddingEffects	doctor_persistence	yes	1	no	yes	yes	serves
-listOrphanBindingRows	doctor_persistence	yes	1	no	yes	yes	serves
+listOrphanBindingRows	doctor_persistence	yes	2	no	yes	yes	serves
 readPersistenceBrainIdText	doctor_persistence	yes	1	no	yes	yes	serves
-listWorktreeIds	doctor_persistence	yes	1	no	yes	yes	serves
+listWorktreeIds	doctor_persistence	yes	2	no	yes	yes	serves
 listManagedRoots	doctor_persistence	yes	1	no	yes	yes	serves
 listUnboundSourcePages	doctor_persistence	yes	1	no	yes	yes	serves
 listRecentWriterVersions	doctor_persistence	yes	2	no	yes	yes	serves
@@ -2010,7 +2010,7 @@ listRecentPurgeRequests	doctor_persistence	yes	4	no	yes	yes	serves
 listStuckWorktreeRefreshes	doctor_persistence	yes	1	no	yes	yes	serves
 listSourceBindingsForMovement	doctor_persistence	yes	1	no	yes	yes	serves
 listRunningClaimOwners	doctor_persistence	yes	2	no	yes	yes	serves
-listOwnerBindings	doctor_persistence	yes	1	no	yes	yes	serves
+listOwnerBindings	doctor_persistence	yes	2	no	yes	yes	serves
 listConsumerOwners	doctor_persistence	yes	1	no	yes	yes	serves
 listCallerRefusalRows	doctor_persistence	yes	2	no	yes	yes	serves
 countCompactedCallerRefusals	doctor_persistence	yes	2	no	yes	yes	serves

@@ -64,7 +64,7 @@ the store gains the writer.
 | `countParkedEffects()`, `listParkedEffects()` | 0, `[]` | no effect is recorded |
 | `listGitPushHoldRows()`, `listStalledCatchupRows()`, `listParkedGroupRows()` | `[]` | no effect or worktree is recorded |
 | `readStaleEmbeddingCounts()`, `listStaleEmbeddingEffects()` | zeros, `[]` | no embedding effect is recorded |
-| `listOrphanBindingRows()`, `listWorktreeIds()`, `listSourceBindingsForMovement()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
+| `listSourceBindingsForMovement()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no movement, consumer or refresh row |
 | `listDerivationPurgeSweeps()` | `[]` | no derivation-result sweep of a fact purge is recorded |
 | `listUnboundSourcePages()` | `[]` | a page has no `database_only_reason` |
 | `listOverwriteCandidates()` | `[]` | page versions carry no link to the request that wrote them |
@@ -76,3 +76,14 @@ Reads in `src/core/repair/failed-writes.ts` after the first two (by slug, by dig
 refusal read in `src/core/persistence/refusal-breaker.ts` (the admission path), and the per-binding reads in
 `src/core/persistence/sync-movement.ts` still go through `executeRaw`; on a Rust brain they refuse with the typed
 capability error. They are listed in `TODOS.md`.
+
+## Binding reads (`crates/gbrain-store/src/persistence/binding_reads.rs`)
+
+These read the worktree, host binding and source binding rows the writer claim keeps (`persistence/worktrees.rs`).
+
+| JS | Resolves |
+| --- | --- |
+| `listOrphanBindingRows(limit \| null)` | source bindings whose source is gone (`source_removed`) or carries another incarnation (`incarnation_replaced`), by source id bytewise, at most `limit` when given; `pending_requests` counts that source and incarnation's queued, deferred, running and recovering requests |
+| `listWorktreeIds()` | every worktree id (no order in the SQL; the store answers in key order) |
+| `listOwnerBindings(hostId)` | worktrees a host other than `hostId` owns, not `recovering`, that have a host binding for their owner: the owner's `local_path`, `created_at` as Postgres timestamptz text, and the source ids bytewise (null when none), oldest first |
+
