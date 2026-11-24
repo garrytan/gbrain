@@ -598,6 +598,22 @@ export async function readPrivateQueueState(tx: Raw, queue: string): Promise<Pri
 
 // ---------------------------------------------------------------- reads
 
+/** An unfinished job's identity (`listUnfinishedJobsByName`). */
+export interface UnfinishedJobRow { id: number; name: string; status: string }
+
+/**
+ * Every job of the given names that has not finished (any status but completed, failed, dead or cancelled), by id, in one
+ * read: no page limit, one snapshot (remediation's report of the manual-only jobs an earlier run queued).
+ */
+export async function listUnfinishedJobsByName(tx: Raw, names: readonly string[]): Promise<UnfinishedJobRow[]> {
+  const rows = await tx.executeRaw<{ id: number | string; name: string; status: string }>(
+    `SELECT id, name, status FROM minion_jobs
+          WHERE name = ANY($1::text[]) AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+          ORDER BY id`,
+    [[...names]]);
+  return rows.map(r => ({ id: Number(r.id), name: r.name, status: r.status }));
+}
+
 /** Ids of jobs of `name` waiting since before `hours` ago, oldest update first, at most `limit`. */
 export async function listStaleWaitingJobIds(tx: Raw, name: string, hours: number, limit: number): Promise<number[]> {
   const rows = await tx.executeRaw<{ id: number }>(

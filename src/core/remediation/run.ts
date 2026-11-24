@@ -23,6 +23,7 @@ import { planRepairStepsReport, previewFailureField, runRepairSteps, type Repair
 import { OperationError } from '../ops/contract.ts';
 import { isManualOnlyStep, manualOnlyFix } from './manual-only.ts';
 import type { RemediationCheckpoint } from '../remediation-checkpoint.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type {
   ManualOnlySkippedStep,
   RemediationHooks,
@@ -73,12 +74,14 @@ function manualOnlySkips(engine: BrainEngine) {
     const manual = steps.filter((s) => isManualOnlyStep(s) && s.status === 'remediable' && !skipped.some((m) => m.id === s.id));
     if (manual.length) {
       const { cliRenderContext, renderAction } = await import('../agent-output.ts');
-      const queued = await engine.executeRaw<{ id: number | string; name: string; status: string }>(
-        `SELECT id, name, status FROM minion_jobs
-          WHERE name = ANY($1::text[]) AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
-          ORDER BY id`,
-        [[...new Set(manual.map((s) => s.job))]],
-      ).catch(() => []);
+      // Every unfinished job of those names, by id, in one typed read (no page limit, one snapshot).
+      let queued: Array<{ id: number | string; name: string; status: string }> = [];
+      try {
+        queued = await engine.listUnfinishedJobsByName([...new Set(manual.map((s) => s.job))]);
+      } catch (e) {
+        rethrowCapabilityRefusal(e); // an engine that cannot list jobs refuses; it does not report "none queued"
+        // any other read error: the skip is still reported, without the queued-job note
+      }
       for (const step of manual) {
         const jobs = queued.filter((q) => q.name === step.job).map((q) => ({ id: Number(q.id), status: q.status }));
         skipped.push({

@@ -4,6 +4,7 @@
  * (rust/docs/store/jobs.md); timestamps cross the binding as ISO strings and come back as `Date`s, as PGLite returns them.
  */
 import type { JobRow } from '../../engine-sql/jobs.ts';
+import type { UnfinishedJobRow } from '../../engine-sql/jobs-queue.ts';
 import {
   DREAM_INLINE_PRIVATE_QUEUE_PREFIX,
   type CancelJobsSpec, type DelayActiveJobSpec, type JobAttachmentInsert, type JobPageSpec, type JobStatsRead,
@@ -150,6 +151,9 @@ export const readPrivateQueueState: StoreMember<[queue: string], PrivateQueueSta
 
 export const listStaleWaitingJobIds: StoreMember<[name: string, hours: number, limit: number], number[]> = (brain, name, hours, limit) =>
   call('listStaleWaitingJobIds', () => brain.listStaleWaitingJobIds(name, hours, limit));
+
+export const listUnfinishedJobsByName: StoreMember<[names: readonly string[]], UnfinishedJobRow[]> = (brain, names) =>
+  call('listUnfinishedJobsByName', () => brain.listUnfinishedJobsByName([...names]));
 
 export const countTtlExpiredWaiting: StoreMember<[name: string, hours: number], number> = (brain, name, hours) =>
   call('countTtlExpiredWaiting', () => brain.countTtlExpiredWaiting(name, hours));

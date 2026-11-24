@@ -737,6 +737,21 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
     Ok(ids)
 }
 
+/// Calls `f` on each row with `status` as it loads, in id order. The row is dropped when `f` returns, so a caller that
+/// filters keeps only what it projects: one row's payload is held at a time, not the whole status.
+fn for_each_row_with_status(
+    read: &dyn KvRead,
+    status: &str,
+    f: &mut dyn FnMut(&JobRecord),
+) -> Result<()> {
+    for id in ids_under(read, &status_prefix(status))? {
+        if let Some(row) = load(read, id)? {
+            f(&row);
+        }
+    }
+    Ok(())
+}
+
 fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
     let mut rows = Vec::new();
     for id in ids_under(read, &status_prefix(status))? {

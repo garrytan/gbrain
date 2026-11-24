@@ -4171,3 +4171,60 @@ describe('the OAuth code flow and the token grant send the same statements throu
     expect(used).toEqual(['tx.readOauthClientForUpdate', 'tx.issueOauthTokens']);
   });
 });
+
+describe('the typed job reads of the refusal-swallow fixes send the statement their callers sent, with the same parameters', () => {
+  // Copied verbatim from the callers at b7b18e5ab3 (src/core/remediation/run.ts manualOnlySkips, src/commands/autopilot-fanout.ts
+  // readRecentSourceFailures: the base text, then ` AND data->>'source_id' = $2` for one source, then ` GROUP BY ...`).
+  const UNFINISHED = `SELECT id, name, status FROM minion_jobs
+          WHERE name = ANY($1::text[]) AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+          ORDER BY id`;
+  const FAILURES = `SELECT data->>'source_id' AS source_id,
+              count(*)::int AS fail_count,
+              max(finished_at) AS last_failed_at
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
+          AND data->>'source_id' IS NOT NULL
+          AND finished_at IS NOT NULL
+          AND finished_at > $1 GROUP BY data->>'source_id'`;
+  const FAILURES_ONE_SOURCE = `SELECT data->>'source_id' AS source_id,
+              count(*)::int AS fail_count,
+              max(finished_at) AS last_failed_at
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
+          AND data->>'source_id' IS NOT NULL
+          AND finished_at IS NOT NULL
+          AND finished_at > $1 AND data->>'source_id' = $2 GROUP BY data->>'source_id'`;
+  const sent = async (run: (e: any) => Promise<unknown>) => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'pin', variant: 'default', run }));
+    expect(capture.error).toBeUndefined();
+    return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params }));
+  };
+
+  test('listUnfinishedJobsByName: the old text (one read, ordered by id) and the names as one array parameter', async () => {
+    expect(await sent(e => e.listUnfinishedJobsByName(['unify-types', 'extract-takes-from-pages'])))
+      .toEqual([{ text: UNFINISHED, params: [['unify-types', 'extract-takes-from-pages']] }]);
+  });
+
+  test('listRecentSourceCycleFailures: the old 471-byte statement and the cutoff, unscoped', async () => {
+    const cutoff = '2026-11-23T00:00:00.000Z';
+    expect(Buffer.byteLength(FAILURES)).toBe(471);
+    expect(await sent(e => e.listRecentSourceCycleFailures({ cutoff }))).toEqual([{ text: FAILURES, params: [cutoff] }]);
+  });
+
+  test('listRecentSourceCycleFailures: the old 499-byte statement, the cutoff then the source id, for one source', async () => {
+    const cutoff = '2026-11-23T00:00:00.000Z';
+    expect(Buffer.byteLength(FAILURES_ONE_SOURCE)).toBe(499);
+    expect(await sent(e => e.listRecentSourceCycleFailures({ cutoff, sourceId: 'src-1' }))).toEqual([{ text: FAILURES_ONE_SOURCE, params: [cutoff, 'src-1'] }]);
+  });
+
+  test('listRecentSourceCycleFailures: an empty or null source id is no filter (the unscoped statement)', async () => {
+    const cutoff = '2026-11-23T00:00:00.000Z';
+    for (const sourceId of ['', null, undefined]) {
+      expect(await sent(e => e.listRecentSourceCycleFailures({ cutoff, sourceId }))).toEqual([{ text: FAILURES, params: [cutoff] }]);
+    }
+  });
+});

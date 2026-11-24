@@ -49,6 +49,19 @@ impl Brain {
         self.run(env, move |s| s.read_last_finished_job_at(&name))
     }
 
+    /// `listRecentSourceCycleFailures(cutoff, sourceId)`: `{ source_id, fail_count, last_failed_at }` rows by source id.
+    #[napi]
+    pub fn list_recent_source_cycle_failures<'env>(
+        &self,
+        env: &'env Env,
+        cutoff: String,
+        source_id: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_recent_source_cycle_failures(&cutoff, source_id.as_deref())
+        })
+    }
+
     /// `readLastCompletedJobAt()`: an ISO string or null.
     #[napi]
     pub fn read_last_completed_job_at<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

@@ -195,6 +195,53 @@ impl Store {
             .collect())
     }
 
+    /// `listRecentSourceCycleFailures`: dead or failed `autopilot-cycle` rows that finished after `cutoff` (ISO),
+    /// grouped by `data->>'source_id'` (jsonb text, spaced as Postgres spaces it, for a value that is not a string; null or
+    /// absent is skipped; one row at a time is read and folded into its source, nothing else is kept): the count
+    /// and the last `finished_at` as ISO text, by source id (bytewise). A row whose `result->>'job_outcome'` is
+    /// `phase_failed` does not count; `source_id` narrows to one source.
+    pub fn list_recent_source_cycle_failures(
+        &self,
+        cutoff: &str,
+        source_id: Option<&str>,
+    ) -> Result<Vec<Value>> {
+        let cutoff = crate::env::parse_iso(cutoff).ok_or_else(|| {
+            StoreError::invalid(format!(
+                "listRecentSourceCycleFailures: cutoff is not an ISO timestamp: {cutoff}"
+            ))
+        })?;
+        let read = self.read()?;
+        let mut sources: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+        for status in ["dead", "failed"] {
+            // Each row is read, folded into its source's aggregate and dropped: only the per-source counts stay.
+            for_each_row_with_status(&*read, status, &mut |row| {
+                if row.name != "autopilot-cycle" {
+                    return;
+                }
+                let outcome = row.result.as_ref().and_then(|r| r.get("job_outcome"));
+                if outcome.and_then(Value::as_str) == Some("phase_failed") {
+                    return;
+                }
+                let Some(id) = row.data.get("source_id").and_then(jsonb_field_text) else {
+                    return;
+                };
+                if source_id.is_some_and(|want| want != id) {
+                    return;
+                }
+                let Some(finished) = row.finished_at.filter(|f| *f > cutoff) else {
+                    return;
+                };
+                let entry = sources.entry(id).or_insert((0, finished));
+                entry.0 += 1;
+                entry.1 = entry.1.max(finished);
+            })?;
+        }
+        Ok(sources
+            .into_iter()
+            .map(|(id, (count, last))| json!({ "source_id": id, "fail_count": count, "last_failed_at": iso(last) }))
+            .collect())
+    }
+
     /// `readLastCompletedJobAt`: the largest `updated_at` among `completed` rows, as ISO text, or null.
     pub fn read_last_completed_job_at(&self) -> Result<Value> {
         let read = self.read()?;
