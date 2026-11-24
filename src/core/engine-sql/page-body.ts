@@ -273,8 +273,8 @@ function metaParams(meta: SegmentedPageMeta) {
 
 export async function createSegmentedPageShell(exec: SqlExecutor, slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }> {
   const m = metaParams(meta);
-  // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
   // The new page takes over the quarantine holds waiting for its slug in the same statement (engine-sql/hold-binding.ts).
+  // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
   const { rows } = await exec.run<{ id: number }>(sqlFragment`
     WITH ins AS (
     INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, updated_at, effective_date,

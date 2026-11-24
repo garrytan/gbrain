@@ -171,8 +171,8 @@ export async function putPage(
     const crSet = cr ? sqlFragment`
         contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
         corpus_generation     = EXCLUDED.corpus_generation,` : sqlFragment``;
-    // origin-guard-ok: both engines' putPage run assertOriginUnclaimed in this transaction first
     // A page created here takes over the quarantine holds that were waiting for its slug in the same statement (engine-sql/hold-binding.ts).
+    // origin-guard-ok: both engines' putPage run assertOriginUnclaimed in this transaction first
     const { rows } = await exec.run(sqlFragment`
       WITH ins AS (
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at${crColumns})
