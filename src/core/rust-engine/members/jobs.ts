@@ -138,8 +138,6 @@ export const JOBS_MEMBERS = {
   listPinnedQuestions: 'minion_queue',
   insertVolunteerEvents: 'telemetry',
   readVolunteerUsage: 'telemetry',
-  upsertChronicleRow: 'telemetry',
-  reserveChronicleJudgeSlot: 'telemetry',
   insertRetrievalEvents: 'telemetry',
   readRetrievalEvent: 'telemetry',
   applyRetrievalRatings: 'telemetry',
