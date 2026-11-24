@@ -3487,8 +3487,8 @@
         "idempotent": true,
         "name": "write_gate",
         "sql": {
-          "length": 3219,
-          "sha256": "684da647e5b6a855dcb21dde674d9f57baf52441031a45cd0c1f3ce44de0b02a"
+          "length": 2797,
+          "sha256": "2a3434eded166927c0c55b55cb7465cb10494a55404fd6ad9b2b92c72b7f5d17"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5412,10 +5412,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "hold_page_id",
+        "name": "engine_writer_observations",
         "sql": {
-          "length": 4358,
-          "sha256": "60e825768d1388056a1310a19a3d3cf639a8bebda3334f78b4f319d98434f924"
+          "length": 4019,
+          "sha256": "26fa8ac4134ddb50f21c31fe1406aeef7461f346c0f07d0f30a7c13f41aa466d"
         },
         "sqlFor": "absent",
         "transaction": "absent",
