@@ -110,6 +110,21 @@ function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Pro
   return transactionMemo(engine, lock ? [`${key}:share`] : [key, `${key}:share`],
     () => engine.readLocalWriterRow(id, { lock }).then(row => row ? [row] : []));
 }
+/**
+ * The authorization's plain local writer read (`readLocalWriterRow` without a lock), answered once per shared view like
+ * the statement text it replaced. Only a row is kept: a missing writer is read again, so a registration that inserts the
+ * row and reads it back sees it. A locking read is never answered here.
+ */
+export function sharedWriterRow(target: BrainEngine, reads: Map<string, Promise<unknown>>, once: <T>(id: string, read: () => Promise<T>) => Promise<T>): BrainEngine['readLocalWriterRow'] {
+  return (id, opts) => {
+    if (opts?.lock) return target.readLocalWriterRow(id, opts);
+    const memo = JSON.stringify(['readLocalWriterRow', id]);
+    return once(memo, () => target.readLocalWriterRow(id)).then(row => {
+      if (!row) reads.delete(memo);
+      return row;
+    });
+  };
+}
 /** #5984: one membership read per source per transaction; a FOR SHARE read also answers a plain one. */
 function sourceMembership(engine: AuthorityEngine, sourceId: string, lock: boolean) {
   return transactionMemo(engine, lock ? [`source-membership:${sourceId}:share`] : [`source-membership:${sourceId}`, `source-membership:${sourceId}:share`],

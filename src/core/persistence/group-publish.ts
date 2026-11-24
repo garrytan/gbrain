@@ -37,7 +37,7 @@ import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { withoutReadDeadline } from '../read-deadline.ts';
-import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
+import { authorizeStoredRequest, sharedWriterRow, storedAuthorizationReads } from './authority.ts';
 import { hostIdFor } from './identity.ts';
 import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL } from './ownership.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
@@ -213,6 +213,8 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
+    // The authorization's plain writer read (once LOCAL_WRITER_SQL above, now the typed member), once for the group.
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     // The source row (contextual retrieval policy) is one read per source for the group, taking no member's deadline or signal.
     if (key === 'getSource') return (sourceId: string) => once(`source:${sourceId}`, () => withoutReadDeadline(() => target.getSource(sourceId)));
