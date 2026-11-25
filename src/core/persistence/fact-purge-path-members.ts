@@ -94,8 +94,8 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   ...served(factPurgeTx, 'deletePurgeTakeProposals'),
   // rewritePageBodies: the pages that held the claim lose its fence rows. A segmented page publishes a new generation
   // (rewriteLiveSegmentedFences, then a version of the old revision); an inline page is versioned first, then rewritten.
-  { site: 'rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'rewriting a segmented page\'s live fences reads the page and restores its deleted_at through raw SQL (segment-rewrite.ts:174, :194); typed and served on Rust by segmented-staging-2' },
+  // The segmented page's live fences are rewritten through typed members since segment-pending-stamp (segmented-writes.ts).
+  ...served(segmentedRewrite, 'readSegmentedRewritePage', 'restorePageDeletedAt', 'restorePageUpdatedAt', 'setSegmentedVersionHash'),
   // The segmented body's chunk reads the rewrite makes are typed members the Rust store serves (repair-rust b6b, segmented-writes.ts).
   ...served(segmentedRewrite, 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks'),
   ...served(ours, 'normalizeFenceLines'),
@@ -103,8 +103,7 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   ...served(factPurgeTx, 'redactVersionChangeReasons'),
   ...served(factPurgeTx, 'setPurgeVersionBody'),
   ...served(factPurgeTx, 'listSegmentedVersionsForPurge'),
-  { site: 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
-    stop: 'rebuilding a retained generation of a segmented page locks the page and rewrites its manifest through raw SQL (segment-rewrite.ts:216-244); typed and served on Rust by segmented-staging-2' },
+  ...served(segmentedRewrite, 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setMaterializingRevision', 'installSegmentedVectors'),
   // purgeSegmentStorage: the writes that would publish a staged body are cancelled, the stagings aborted, the texts deleted.
   ...served(factPurgeTx, 'abortPurgedStagings'),
   ...served(factPurgeTx, 'deletePurgedStagingParts'),
