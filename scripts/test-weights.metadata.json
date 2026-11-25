@@ -1,43 +1,10 @@
 {
   "lane": "unit",
   "unit": "milliseconds",
-  "run": "45193261725",
-  "commit": "131b1c6ae8fe436c0732c25fe6a0a37f4d65f14b",
+  "run": "45568356657",
+  "commit": "7c7de751d86800a9547ab35209bfecbccaa9c1b7",
   "source": "github",
-  "runs": [
-    "45193261725",
-    "45186224586",
-    "45154380155",
-    "45140909019",
-    "45140863344"
-  ],
-  "commits": [
-    "131b1c6ae8fe436c0732c25fe6a0a37f4d65f14b",
-    "ae4bef02cea6f7f2bb5c3a8565a9927de08162dc",
-    "b309af27a33d8da4a8c848f546dc01eff7a39f05",
-    "275870ad218eac0d0ed23a16903da060caaaa862",
-    "a9c0908f74bc0290ca7cd7f01944bce6f4dd512a"
-  ],
-  "measuredFiles": 5467,
-  "totalFiles": 5510,
-  "mergeExisting": true,
-  "coverageOnly": {
-    "addedFiles": 43,
-    "run": "45431264437",
-    "commit": "30e980e7707278d3704cc87b406f53cdfc5fe2a9",
-    "runs": [
-      "45431264437",
-      "45426238477",
-      "45412413625",
-      "45405933522",
-      "45398986192"
-    ],
-    "commits": [
-      "30e980e7707278d3704cc87b406f53cdfc5fe2a9",
-      "99a0369406562551f7c7078e6aa3f63c096a3ab5",
-      "233bd0401bd7aae94a2e64883c1030bb96b2ca4c",
-      "d7b17d4dac73daaaddf0bd5544a16aaef5e1f852",
-      "4b16903ecbe945af1e01df4dcdedd9243c9e916b"
-    ]
-  }
+  "measuredFiles": 5550,
+  "totalFiles": 5550,
+  "mergeExisting": false
 }
