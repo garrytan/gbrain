@@ -485,6 +485,10 @@ describe.skipIf(!NODE)('every skill source OpenClaw loads', () => {
     expect(out[0].appendContext).toContain('To use one, load it with skills_read({name})');
     expect(out[1].appendContext).toContain('email-triage');
     expect(out[1].appendContext).toContain('To use one, read the SKILL.md at its path with read before acting');
+    expect((await runCli(['skills', 'pin', 'add', 'invoice-maker', '--catalog', 'openclaw-main'], { env: b.env })).exitCode).toBe(0);
+    const pinned = readState(b).agents.main.pinned_block;
+    expect(pinned).toContain('To use one, load it with skills_read({name})');
+    expect(pinned).not.toContain('read the SKILL.md at its path');
   });
 
   test('listing off (maxSkillsPromptChars 0) with the resolver live: doctor reads "listing off, resolver live", splits counts by session class and source, names the gbrain home, and a load cut a path read still reaches does not warn', async () => {

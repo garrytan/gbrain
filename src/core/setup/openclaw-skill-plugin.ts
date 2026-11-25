@@ -183,6 +183,10 @@ export interface HostSkills { via: 'gateway' | 'cli'; workspaceDir?: string; man
  * a file by path (tools.fs.workspaceOnly keeps reads inside its workspace; a sandbox materializes skills under
  * other paths, so a host path is not readable).
  */
+/** The root the agent's read tool may open: '' for none, undefined for any (the plugin's readRootOf mirrors this). */
+const readRootFor = (reads: OpenclawPathReads | undefined, workspace: string | null | undefined): string | undefined =>
+  reads === 'none' ? '' : reads === 'workspace' && workspace ? workspace : undefined;
+
 export interface OpenclawAgentPolicy { listing: 'on' | 'off'; path_reads: OpenclawPathReads; path_reads_why: string | null; workspace: string | null }
 
 export function openclawAgentPolicy(agentId: string, roster: RosterEntry[] = openclawRoster()): OpenclawAgentPolicy {
@@ -464,8 +468,8 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     if (shut.length) out.notes.push(`agent ${id}: ${shut.length} skill(s) OpenClaw hides from this agent's model (ineligible on this host, outside its skill filter, or model invocation off) are never suggested: ${someNames(shut)}`);
     if (cut.length) out.notes.push(`agent ${id}: OpenClaw does not list ${cut.length} of ${catalog}'s skills (dropped at load by skills.limits.maxCandidatesPerRoot or skills.limits.maxSkillsLoadedPerSource, or not in its skill roots), so they are never suggested: ${someNames(cut)} (skill_resolver_host_load_cut)`);
     hidden.push(...shadowed);
-    const pins = dryRun ? { block: '', ids: [], unknown: [] as string[] } : pinnedBlockFor(home, catalog, 'openclaw');
     const policy = openclawAgentPolicy(id, roster);
+    const pins = dryRun ? { block: '', ids: [], unknown: [] as string[] } : pinnedBlockFor(home, catalog, 'openclaw', readRootFor(policy.path_reads, policy.workspace));
     const sources: Record<string, number> = {};
     for (const [sid, p] of files) if (!hidden.includes(sid)) { const s = sourceOfPath(p, roots) ?? 'unknown'; sources[s] = (sources[s] ?? 0) + 1; }
     agents[id] = {
@@ -553,7 +557,7 @@ export function refreshOpenclawPins(home: string): string[] {
   const changed: string[] = [];
   const agents = { ...prior.agents };
   for (const [id, a] of Object.entries(agents)) {
-    const pins = pinnedBlockFor(home, a.catalog, 'openclaw');
+    const pins = pinnedBlockFor(home, a.catalog, 'openclaw', readRootFor(a.path_reads, a.workspace_dir));
     if (pins.block === a.pinned_block && JSON.stringify(pins.ids) === JSON.stringify(a.pinned_ids)) continue;
     agents[id] = { ...a, pinned_block: pins.block, pinned_ids: pins.ids };
     changed.push(id);

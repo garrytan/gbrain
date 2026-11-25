@@ -52,7 +52,7 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
 }
 
 /** One catalog's pins rendered against its current index (what setup writes into a harness's surface); OpenClaw's lines name each SKILL.md, as its load line reads the path first. */
-export function pinnedBlockFor(home: string, catalog: string, harness?: string): PinnedBlock {
+export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string): PinnedBlock {
   const paths = catalogSkillPaths(home, catalog);
-  return renderPinnedBlock(readPins(readResolverConfig(home), catalog), { harness, known: paths ? new Set(paths.keys()) : null, ...(harness === 'openclaw' && paths ? { paths } : {}) });
+  return renderPinnedBlock(readPins(readResolverConfig(home), catalog), { harness, known: paths ? new Set(paths.keys()) : null, ...(harness === 'openclaw' && paths ? { paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });
 }
