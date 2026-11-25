@@ -15,7 +15,7 @@ import { rebaseRestorePath, type RestoredSource } from './quarantine.ts';
 
 /** Every reason a Rust restore refuses to publish: the `reason` of `restore_step_unsupported`. */
 export const RESTORE_REFUSAL_REASONS = [
-  'purge_replay', 'purge_mirror_unreadable', 'pending_requests', 'recovery_required', 'unclassified_state', 'recovery_mode', 'restore_addon_too_old',
+  'purge_replay', 'purge_mirror_unreadable', 'pending_requests', 'recovery_required', 'archived_authority', 'unclassified_state', 'recovery_mode', 'restore_addon_too_old',
 ] as const;
 export type RestoreRefusalReason = (typeof RESTORE_REFUSAL_REASONS)[number];
 
@@ -52,6 +52,12 @@ const TEXT: Record<RestoreRefusalReason, RefusalText> = {
     why: 'Treating an unreadable mirror as empty would hide purges that must not come back.',
     remedy: 'Restore a good copy of the mirror and name it with --purge-mirror <absolute path>, into a new absent --into.',
     argv: RESTORE_WITH_MIRROR,
+  },
+  archived_authority: {
+    what: (n, detail) => `The archive holds ${n} OAuth client(s) or local writer registration(s) that are still live${detail ? ` (${detail})` : ''}. This restore does not revoke them yet.`,
+    why: 'A restored brain must not keep access that the archive handed out: a live OAuth client or local writer in the archive would work again on the restored brain.',
+    remedy: 'Re-issue tokens on the live brain, then restore from an archive taken without them: remove its OAuth clients and local writer registrations, take a new backup, restore that into a new absent --into, and register the clients and create tokens again afterwards. Or wait for the follow-up release that adds revocation to the Rust restore.',
+    argv: NEW_BACKUP,
   },
   unclassified_state: {
     what: (n, detail) => `The archive holds ${n} kind(s) of record this build's restore does not know how to make safe${detail ? `: ${detail}` : ''} (access tokens and OAuth tokens are not revoked by this restore; shared-skill members and policies are not kept).`,

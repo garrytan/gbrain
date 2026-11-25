@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
-import { openRustStore } from '../src/core/rust-engine/store.ts';
+import { openRustStore, type RustStore } from '../src/core/rust-engine/store.ts';
 import { quarantineRestoredExecution, type RestoredSource } from '../src/core/backup/quarantine.ts';
 import { quarantineSharedSkillRestore } from '../src/core/shared-skills/restore.ts';
 import { registerLocalWriterValue } from '../src/core/persistence/identity.ts';
@@ -81,9 +81,9 @@ const EXPECTED = {
     const live = !['completed', 'failed'].includes(status);
     return { status: live ? 'cancelled' : status, previous: live ? status : null, restore: live ? RESTORE_ID : null, keep: 1 };
   }),
-  writerRevoked: true,
-  clientDeleted: true,
 };
+/** What only the PGLite restore does: it revokes the archived local writer and OAuth client; the Rust restore refuses an archive that holds either (below). */
+const PGLITE_REVOKES = { writerRevoked: true, clientDeleted: true };
 
 type Outcome = typeof EXPECTED;
 
@@ -95,7 +95,7 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await engine.disconnect(); });
 
-async function pgliteArm(): Promise<Outcome> {
+async function pgliteArm(): Promise<Outcome & typeof PGLITE_REVOKES> {
   for (const [id, path, config] of [['conn', '/old/conn', CONNECTOR], ['managed', `${OLD}/files/m`, { federated: false }],
     ['checkout', '/home/me/repo', { canonical: 'git' }], ['plain', null, {}]] as const) {
     await engine.executeRaw('INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, $3::text::jsonb)', [id, path, JSON.stringify(config)]);
@@ -125,7 +125,7 @@ async function pgliteArm(): Promise<Outcome> {
     .map(r => ({ status: r.status, previous: (r.data.__restore_previous_status as string) ?? null, restore: (r.data.__restore_id as string) ?? null, keep: r.data.keep as number }));
   const [writer] = await engine.executeRaw<{ revoked: boolean }>('SELECT revoked_at IS NOT NULL AS revoked FROM persistence_local_writers WHERE id = $1::uuid', [WRITER]);
   const [client] = await engine.executeRaw<{ deleted: boolean }>("SELECT deleted_at IS NOT NULL AS deleted FROM oauth_clients WHERE client_id = 'c1'");
-  return { sources, settings, origins, jobs, writerRevoked: writer!.revoked, clientDeleted: client!.deleted } as Outcome;
+  return { sources, settings, origins, jobs, writerRevoked: writer!.revoked, clientDeleted: client!.deleted } as Outcome & typeof PGLITE_REVOKES;
 }
 
 let addon: RustAddon | undefined;
@@ -150,13 +150,11 @@ async function rustArm(): Promise<Outcome> {
         backoff_type: 'fixed', backoff_delay: 1000, backoff_jitter: 0, on_child_fail: 'fail_parent', remove_on_complete: false,
         remove_on_fail: false, submission_authority: { version: 1, kind: 'application' } } });
     }
-    await b.registerLocalWriter({ id: WRITER, lane: 'cli', credentialHash: CREDENTIAL, grantCeiling: null });
-    await b.insertOauthClient({ client_id: 'c1', client_name: 'one', scope: 'read' });
 
     const census = await store.restoreCensus([]);
     expect(census.blockers).toEqual([]);
     const report = await store.restoreQuarantine(buildQuarantinePlan({ restoreId: RESTORE_ID, census, sources: SOURCES, originalRoot: OLD, root: NEW, managedPaths: ['files'] }));
-    expect(report.revoked).toEqual({ local_writers: [WRITER], oauth_clients: ['c1'] });
+    expect(report).not.toHaveProperty('revoked');
     const sources = Object.fromEntries((await b.listAllSources({ includeArchived: true }) as Array<{ id: string; local_path: string | null; config: Record<string, unknown> }>)
       .map(r => [r.id, { local_path: r.local_path, config: r.config }]));
     const settings = Object.fromEntries(await Promise.all(SETTINGS.map(async ([key]) => [key, await b.getConfig(key)] as const)));
@@ -166,15 +164,13 @@ async function rustArm(): Promise<Outcome> {
     }
     const jobs = (await Promise.all([1, 2, 3, 4, 5, 6, 7].map(id => b.getJob(id)))).map((r: { status: string; data: Record<string, unknown> }) => (
       { status: r.status, previous: (r.data.__restore_previous_status as string) ?? null, restore: (r.data.__restore_id as string) ?? null, keep: r.data.keep as number }));
-    const writer = (await b.readLocalWriter(WRITER)) as { revoked_at: unknown };
-    const after = await store.restoreCensus([]);
-    return { sources, settings, origins, jobs, writerRevoked: writer.revoked_at != null, clientDeleted: after.authority.oauth_clients.length === 0 } as Outcome;
+    return { sources, settings, origins, jobs } as Outcome;
   } finally { await store.close(); }
 }
 
 describe('one restore scenario, both engines', () => {
   test('PGLite: the SQL restore ends in the expected state', async () => {
-    expect(await pgliteArm()).toEqual(EXPECTED);
+    expect(await pgliteArm()).toEqual({ ...EXPECTED, ...PGLITE_REVOKES });
   });
   withAddon('Rust: the typed restore ends in the same state', async () => {
     expect(await rustArm()).toEqual(EXPECTED);
@@ -202,6 +198,25 @@ describe('one restore scenario, both engines', () => {
     try {
       expect((await again.restoreCensus([])).store.brain_id).toBe(fresh);
     } finally { await again.close(); }
+  });
+  withAddon('Rust: an archive that holds a live OAuth client or local writer is refused by name before anything changes', async () => {
+    addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const plan = { restore_id: 'r-auth', sources: [{ id: 'default', local_path: null, rebased_path: null }], settings: [] };
+    for (const [name, seed] of [
+      ['oauth', (b: RustStore['brain']) => b.insertOauthClient({ client_id: 'c1', client_name: 'one', scope: 'read' })],
+      ['writer', (b: RustStore['brain']) => b.registerLocalWriter({ id: WRITER, lane: 'cli', credentialHash: CREDENTIAL, grantCeiling: null })],
+    ] as const) {
+      const store = await openRustStore(addon, join(temporary, `authority-${name}`));
+      try {
+        await seed(store.brain);
+        const census = await store.restoreCensus([]);
+        expect(census.blockers).toEqual([{ reason: 'archived_authority', count: 1, detail: expect.stringContaining(name === 'oauth' ? 'c1' : WRITER) }]);
+        await expect(store.restoreQuarantine(plan)).rejects.toMatchObject({ code: 'restore_refused', message: expect.stringContaining('archived_authority: 1') });
+        // Nothing was revoked and the brain id is the one it had.
+        expect(await store.restoreCensus([])).toEqual(census);
+        expect(restoreRefusalFor({ census, mode: 'new_brain', mirror: 'ok' })?.reason).toBe('archived_authority');
+      } finally { await store.close(); }
+    }
   });
   withAddon('Rust: unfinished work refuses by name, and the refusal changes nothing', async () => {
     addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
@@ -271,6 +286,19 @@ describe('refusals', () => {
     expect(tokens?.message).toContain('access tokens (jobs 0x2b)');
     expect(tokens?.message).toContain('not revoked by this restore');
     expect(restoreRefusalFor({ census: census(), mode: 'new_brain', mirror: 'unavailable' })).toBeNull();
+  });
+
+  test('live OAuth client or local writer authority is refused by name, with the fix, and nothing was published', () => {
+    const held = census({ authority: { local_writers: [], oauth_clients: ['c1'] }, blockers: [{ reason: 'archived_authority', count: 1, detail: 'OAuth clients c1' }] });
+    const error = restoreRefusalFor({ census: held, mode: 'new_brain', mirror: 'ok' })!.toJSON() as Record<string, unknown>;
+    expect(error.error).toBe('restore_step_unsupported');
+    expect(error.reason).toBe('archived_authority');
+    expect(String(error.message)).toContain('OAuth clients c1');
+    expect(String(error.message)).toContain('does not revoke them yet');
+    expect(String(error.message)).toContain('Nothing was published');
+    expect(String(error.suggestion)).toContain('Re-issue tokens on the live brain');
+    expect(String(error.suggestion)).toContain('archive taken without them');
+    expect(String(error.suggestion)).toContain('follow-up release that adds revocation');
   });
 
   test('an addon without the restore members is detected', () => {

@@ -5,7 +5,7 @@
  */
 
 /** A reason a restore cannot publish; `restore_step_unsupported` carries it as `reason`. */
-export type RestoreBlockerReason = 'pending_requests' | 'recovery_required' | 'purge_replay' | 'unclassified_state';
+export type RestoreBlockerReason = 'pending_requests' | 'recovery_required' | 'purge_replay' | 'archived_authority' | 'unclassified_state';
 
 export interface RestoreStoreIdentity {
   engine_format_version: number;
@@ -28,7 +28,7 @@ export interface RestoreCensus {
   effects_live: number;
   recovery_records: number;
   jobs_live: number;
-  /** Authority the archive holds that a restore revokes. */
+  /** Live authority the archive holds: a restore revokes nothing yet, so any of it is the blocker `archived_authority`. */
   authority: RestoreAuthority;
   /** Every source, archived ones included. */
   sources: Array<{ id: string; archived: boolean; local_path: string | null; kind: string | null; remote_url: string | null }>;
@@ -38,7 +38,7 @@ export interface RestoreCensus {
   purges_missing: string[];
   /** Records of a kind this build's restore has not classified (for example `jobs 0x2b`). */
   unclassified: string[];
-  blockers: Array<{ reason: RestoreBlockerReason; count: number; /** What `unclassified_state` found, by name when known (for example `access tokens (jobs 0x2b)`). */ detail?: string }>;
+  blockers: Array<{ reason: RestoreBlockerReason; count: number; /** What `unclassified_state` found, by name when known (for example `access tokens (jobs 0x2b)`), or the ids `archived_authority` found. */ detail?: string }>;
 }
 
 export interface RestoreQuarantinePlan {
@@ -55,8 +55,6 @@ export interface RestoreQuarantineReport {
   rebased_origins: number;
   changed_settings: string[];
   jobs_cancelled: number;
-  /** Exactly what was revoked. */
-  revoked: RestoreAuthority;
   /** The restored store's brain id before the restore, and the fresh one it has now (a restore never keeps the old id). */
   previous_brain_id: string;
   brain_id: string;

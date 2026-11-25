@@ -270,7 +270,7 @@ fn the_known_lists_match_the_key_files() {
     assert_eq!(
         found,
         KNOWN_TAGS.iter().copied().collect(),
-        "classify a new key tag in restore.rs (authority needs a revoke step)"
+        "classify a new key tag in restore.rs (a tag that holds authority must refuse, since nothing revokes it)"
     );
     let mut jobs = BTreeSet::new();
     for text in [
@@ -308,7 +308,7 @@ fn regex_lite(head: &str) -> impl Fn(&str) -> Option<u8> + '_ {
 }
 
 #[test]
-fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_moves() {
+fn quarantine_detaches_rebases_disables_cancels_and_nothing_else_moves() {
     let store = store();
     // An archived source with a connector, a managed source with pages, a bare checkout, and a plain one.
     source(
@@ -357,44 +357,10 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
     .iter()
     .map(|s| job(&store, s))
     .collect();
-    for n in ["a", "b"] {
-        store
-            .register_local_writer(&WriterRegistration {
-                id: format!(
-                    "eeeeeeee-0000-4000-8000-00000000000{}",
-                    if n == "a" { 1 } else { 2 }
-                ),
-                lane: "cli".into(),
-                credential_hash: n.repeat(4),
-                grant_ceiling: None,
-            })
-            .unwrap();
-    }
-    store
-        .revoke_local_writer("eeeeeeee-0000-4000-8000-000000000002")
-        .unwrap();
-    // The revocation time the archive already held, read before the restore touches anything.
-    let revoked_before = store
-        .read_local_writer("eeeeeeee-0000-4000-8000-000000000002")
-        .unwrap()
-        .unwrap()["revoked_at"]
-        .clone();
-    assert!(!revoked_before.is_null());
-    store
-        .insert_oauth_client(
-            &serde_json::from_value(
-                json!({ "client_id": "c1", "client_name": "one", "scope": "read" }),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    store.insert_oauth_client(&serde_json::from_value(json!({ "client_id": "c2", "client_name": "two", "deleted_at": "2026-01-01T00:00:00.000000Z" })).unwrap()).unwrap();
-
     let census = store.restore_census(&[]).unwrap();
     assert!(census.blockers.is_empty(), "{:?}", census.blockers);
     assert_eq!(census.jobs_live, 5);
-    assert_eq!(census.authority.local_writers.len(), 1);
-    assert_eq!(census.authority.oauth_clients, ["c1"]);
+    assert!(census.authority.local_writers.is_empty() && census.authority.oauth_clients.is_empty());
     let conn = census.sources.iter().find(|s| s.id == "conn").unwrap();
     assert_eq!(
         (
@@ -444,13 +410,6 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
     assert_eq!(report.rebased_origins, 1);
     assert_eq!(report.changed_settings.len(), 4);
     assert_eq!(report.jobs_cancelled, 5);
-    assert_eq!(
-        (
-            report.revoked.local_writers.len(),
-            report.revoked.oauth_clients.clone()
-        ),
-        (1, vec!["c1".to_string()])
-    );
     assert!(
         report
             .reconnect
@@ -458,10 +417,8 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
             .any(|l| l.contains("2 legacy absolute page origins"))
     );
     assert!(
-        report
-            .reconnect
-            .iter()
-            .any(|l| l.contains("gbrain auth register-client"))
+        report.reconnect.iter().all(|l| !l.contains("Revoked")),
+        "this restore revokes nothing"
     );
 
     let conn = store.get_source_by_id("conn").unwrap().unwrap();
@@ -577,14 +534,6 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
         );
         assert_eq!(row["data"]["keep"], 1);
     }
-    let writers = |id: &str| store.read_local_writer(id).unwrap().unwrap();
-    let first = writers("eeeeeeee-0000-4000-8000-000000000001");
-    assert!(!first["revoked_at"].is_null());
-    assert_eq!(
-        writers("eeeeeeee-0000-4000-8000-000000000002")["revoked_at"],
-        revoked_before,
-        "an earlier revocation keeps its first time"
-    );
     assert_eq!(
         changed_tags(&before, &after),
         BTreeSet::from([
@@ -593,7 +542,6 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
             keys::PAGE,
             keys::PAGE_ORIGIN,
             keys::JOBS,
-            keys::WRITER,
             keys::META
         ])
     );
@@ -606,20 +554,87 @@ fn quarantine_detaches_rebases_disables_cancels_and_revokes_and_nothing_else_mov
         [&keys::meta("format")],
         "only the format record changes under meta (the brain id)"
     );
-    let (c1, c2) = (
-        store.restore_census(&[]).unwrap(),
-        serde_json::to_value(store.restore_census(&[]).unwrap().authority).unwrap(),
-    );
-    assert!(
-        c1.authority.local_writers.is_empty() && c2["oauth_clients"] == json!([]),
-        "nothing active is left"
-    );
     assert_eq!(
         store.restore_quarantine(&p).unwrap_err().code,
         "invalid_state",
         "one restore id applies once"
     );
     assert_eq!(dump(&store), after);
+}
+
+/// This restore revokes nothing: an archive that holds a live OAuth client or a live local writer is
+/// refused by name, before any record changes, and one whose authority is already revoked is not.
+#[test]
+fn archived_oauth_clients_and_local_writers_refuse_by_name_and_the_refusal_changes_nothing() {
+    let writer = |store: &Store, id: &str| {
+        store
+            .register_local_writer(&WriterRegistration {
+                id: id.into(),
+                lane: "cli".into(),
+                credential_hash: "ab".repeat(4),
+                grant_ceiling: None,
+            })
+            .unwrap();
+    };
+    let client = |store: &Store, id: &str, extra: Value| {
+        let mut row = json!({ "client_id": id, "client_name": id, "scope": "read" });
+        row.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        store
+            .insert_oauth_client(&serde_json::from_value(row).unwrap())
+            .unwrap();
+    };
+    let refused = |store: &Store, count: u64, named: &str| {
+        let census = store.restore_census(&[]).unwrap();
+        let blocker = census
+            .blockers
+            .iter()
+            .find(|b| b.reason == "archived_authority")
+            .expect("archived_authority is named");
+        assert_eq!(blocker.count, count);
+        assert!(blocker.detail.as_deref().unwrap().contains(named));
+        let (before, generation) = (dump(store), store.commit_version().unwrap());
+        let err = store.restore_quarantine(&default_only()).unwrap_err();
+        assert_eq!(err.code, "restore_refused");
+        assert!(
+            err.message.starts_with("archived_authority: "),
+            "{}",
+            err.message
+        );
+        assert_eq!(
+            (dump(store), store.commit_version().unwrap()),
+            (before, generation),
+            "a refusal commits nothing, so nothing is revoked and the brain id is kept"
+        );
+    };
+
+    let with_client = store();
+    client(&with_client, "c1", json!({}));
+    refused(&with_client, 1, "c1");
+
+    let with_writer = store();
+    writer(&with_writer, "eeeeeeee-0000-4000-8000-000000000001");
+    refused(&with_writer, 1, "eeeeeeee-0000-4000-8000-000000000001");
+
+    let with_both = store();
+    client(&with_both, "c1", json!({}));
+    writer(&with_both, "eeeeeeee-0000-4000-8000-000000000001");
+    refused(&with_both, 2, "c1");
+
+    // Authority the archive already revoked is not authority: a deleted client and a revoked writer do not refuse.
+    let spent = store();
+    client(
+        &spent,
+        "c2",
+        json!({ "deleted_at": "2026-01-01T00:00:00.000000Z" }),
+    );
+    writer(&spent, "eeeeeeee-0000-4000-8000-000000000002");
+    spent
+        .revoke_local_writer("eeeeeeee-0000-4000-8000-000000000002")
+        .unwrap();
+    assert!(!blocked(&spent, "archived_authority"));
+    spent.restore_quarantine(&default_only()).unwrap();
 }
 
 /// Rewrites fields of a stored write request (a request in a state only a crash or a long run leaves).
@@ -824,6 +839,27 @@ fn archived_access_tokens_are_refused_by_name_and_never_counted_as_nothing() {
         before,
         "the token row is left exactly as archived"
     );
+}
+
+/// OAuth tokens and codes (`jobs 0x2C`, `0x2D`) are authority this restore does not revoke: each refuses by name.
+#[test]
+fn archived_oauth_tokens_and_codes_are_refused_by_name() {
+    let store = store();
+    for (sub, id) in [
+        (0x2C, "11111111-0000-4000-8000-0000000000c1"),
+        (0x2D, "11111111-0000-4000-8000-0000000000d1"),
+    ] {
+        let key = [&[keys::JOBS, sub][..], id.as_bytes()].concat();
+        store.write(|tx| tx.put(&key, br#"{"x":1}"#)).unwrap();
+    }
+    let before = dump(&store);
+    let err = store.restore_quarantine(&default_only()).unwrap_err();
+    assert_eq!(err.code, "restore_refused");
+    assert_eq!(
+        err.message,
+        "unclassified_state: 2 (OAuth tokens (jobs 0x2c), OAuth codes (jobs 0x2d))"
+    );
+    assert_eq!(dump(&store), before);
 }
 
 /// A brain on a real directory (`FORMAT` and `records.redb`), reopened by path.

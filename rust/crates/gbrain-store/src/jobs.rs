@@ -110,7 +110,7 @@ pub use mutations::{DelayOpts, TokenDelta};
 pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
 pub(crate) use oauth_clients::{
-    carry_over_format_5_clients, live_client_ids, remove_client, revoke_clients, seed_client,
+    carry_over_format_5_clients, live_client_ids, remove_client, seed_client,
 };
 pub use oauth_codes::OauthCodeInsert;
 pub use oauth_tokens::OauthTokenInsert;

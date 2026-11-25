@@ -91,9 +91,9 @@ export interface RustStore {
   restoreCensus(purgeRequestIds: string[]): Promise<RestoreCensus>;
   /**
    * `gbrain backup restore` only: detaches sources, rebases managed paths and origins, turns off automation settings,
-   * cancels unfinished jobs and revokes archived local writers and OAuth clients, in one write transaction. Rejects
-   * `restore_refused` while a blocker stands, `invalid_argument` when the plan does not match the store and
-   * `invalid_state` for a restore id already applied; each leaves the store as it was.
+   * cancels unfinished jobs, in one write transaction. It revokes nothing: a live OAuth client or local writer is the
+   * blocker `archived_authority`. Rejects `restore_refused` while a blocker stands, `invalid_argument` when the plan
+   * does not match the store and `invalid_state` for a restore id already applied; each leaves the store as it was.
    */
   restoreQuarantine(plan: RestoreQuarantinePlan): Promise<RestoreQuarantineReport>;
   close(): Promise<void>;

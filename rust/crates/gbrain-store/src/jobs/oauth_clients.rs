@@ -373,7 +373,7 @@ pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
     bad.map_or(Ok(rows), Err)
 }
 
-/// The ids of the clients that are not deleted: archived authority a restore revokes.
+/// The ids of the clients that are not deleted: archived authority a restore refuses.
 pub(crate) fn live_client_ids(read: &dyn KvRead) -> Result<Vec<String>> {
     let rows = all_clients(read)?;
     Ok(rows
@@ -381,20 +381,6 @@ pub(crate) fn live_client_ids(read: &dyn KvRead) -> Result<Vec<String>> {
         .filter(|c| c.deleted_at.is_none())
         .map(|c| c.client_id)
         .collect())
-}
-
-/// `restore_quarantine`: marks every live client deleted at `now` (PGLite's `deleted_at =
-/// COALESCE(deleted_at, now())`); returns their ids. A deleted client keeps its first time.
-pub(crate) fn revoke_clients(tx: &mut dyn KvWrite, now: i64) -> Result<Vec<String>> {
-    let mut revoked = Vec::new();
-    for mut client in all_clients(&*tx)? {
-        if client.deleted_at.is_none() {
-            client.deleted_at = Some(now);
-            put_json(tx, &client_key(&client.client_id), &client)?;
-            revoked.push(client.client_id);
-        }
-    }
-    Ok(revoked)
 }
 
 /// The shadow seed (`seed.rs`): stores a client's spend columns copied from another engine (`budget_usd_per_day` in

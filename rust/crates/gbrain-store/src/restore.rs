@@ -6,15 +6,17 @@
 //! requests, claims, effects, recovery records, jobs), what authority the archive holds, every
 //! source and the config rows a restore changes, which purges the caller expects are in the
 //! ledgers, and any record of a kind this build has not classified. `blockers` names each reason
-//! to refuse: `pending_requests`, `recovery_required`, `purge_replay` and `unclassified_state`.
-//! Nothing on this engine cancels a request with a receipt, so those are refusals, never repairs.
+//! to refuse: `pending_requests`, `recovery_required`, `purge_replay`, `archived_authority` and
+//! `unclassified_state`. Nothing on this engine cancels a request with a receipt, and nothing
+//! revokes archived authority yet, so those are refusals, never repairs.
 //!
 //! `restore_quarantine` is one write transaction that repeats the safety census and refuses
 //! (`restore_refused`) while a blocker stands, then detaches sources, rebases managed paths and
-//! page origins, turns off automation settings, cancels unfinished jobs and revokes the archived
-//! authority this store holds (local writers and OAuth clients). The store keeps no access-token
-//! or OAuth token or code table, and no shared-skill table; a record of a later kind lands in
-//! `unclassified`, which refuses. Page text, facts, links and source incarnations are not touched.
+//! page origins, turns off automation settings and cancels unfinished jobs. It revokes nothing: a
+//! store that holds a live OAuth client or a live local writer registration is refused as
+//! `archived_authority` before any record changes, and an access-token, OAuth token or OAuth code
+//! record lands in `unclassified`, which refuses by name. The store keeps no shared-skill table.
+//! Page text, facts, links and source incarnations are not touched.
 
 use crate::config::ConfigValueRow;
 use crate::error::{
@@ -62,6 +64,20 @@ pub struct StoreIdentity {
 pub struct Authority {
     pub local_writers: Vec<String>,
     pub oauth_clients: Vec<String>,
+}
+
+impl Authority {
+    /// The names a refusal shows: the ids, never a credential.
+    fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.local_writers.is_empty() {
+            parts.push(format!("local writers {}", self.local_writers.join(", ")));
+        }
+        if !self.oauth_clients.is_empty() {
+            parts.push(format!("OAuth clients {}", self.oauth_clients.join(", ")));
+        }
+        parts.join("; ")
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -135,7 +151,6 @@ pub struct QuarantineReport {
     pub rebased_origins: u64,
     pub changed_settings: Vec<String>,
     pub jobs_cancelled: u64,
-    pub revoked: Authority,
     /// The brain id before the restore and the fresh one the restored store now has.
     pub previous_brain_id: String,
     pub brain_id: String,
@@ -264,6 +279,8 @@ fn next_bytes(read: &dyn KvRead, prefix: &[u8], first: u8) -> Result<Vec<u8>> {
 fn describe_unclassified(label: &str, byte: u8) -> String {
     match (label, byte) {
         ("jobs", 0x2B) => "access tokens (jobs 0x2b)".into(),
+        ("jobs", 0x2C) => "OAuth tokens (jobs 0x2c)".into(),
+        ("jobs", 0x2D) => "OAuth codes (jobs 0x2d)".into(),
         _ => format!("{label} 0x{byte:02x}"),
     }
 }
@@ -397,10 +414,18 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
         requests.get("recovering").copied().unwrap_or(0),
     );
     let unclassified = unclassified_state(read)?;
+    let authority = Authority {
+        local_writers: crate::journal::active_writer_ids(read)?,
+        oauth_clients: crate::jobs::live_client_ids(read)?,
+    };
     let blockers = [
         ("pending_requests", unfinished + effects_live),
         ("recovery_required", recovering + recovery_records),
         ("purge_replay", missing.len() as u64),
+        (
+            "archived_authority",
+            (authority.local_writers.len() + authority.oauth_clients.len()) as u64,
+        ),
         ("unclassified_state", unclassified.len() as u64),
     ]
     .into_iter()
@@ -408,7 +433,11 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
     .map(|(reason, count)| Blocker {
         reason,
         count,
-        detail: (reason == "unclassified_state").then(|| unclassified.join(", ")),
+        detail: match reason {
+            "unclassified_state" => Some(unclassified.join(", ")),
+            "archived_authority" => Some(authority.describe()),
+            _ => None,
+        },
     })
     .collect();
     Ok(Census {
@@ -418,10 +447,7 @@ fn census_in(read: &dyn KvRead, purge_ids: &[String], store: StoreIdentity) -> R
         effects_live,
         recovery_records,
         jobs_live: crate::jobs::live_job_count(read)?,
-        authority: Authority {
-            local_writers: crate::journal::active_writer_ids(read)?,
-            oauth_clients: crate::jobs::live_client_ids(read)?,
-        },
+        authority,
         sources,
         settings,
         purges_present: present.into_iter().collect(),
@@ -580,7 +606,6 @@ impl Store {
                 rebased_origins: 0,
                 changed_settings: vec![],
                 jobs_cancelled: 0,
-                revoked: Authority::default(),
                 previous_brain_id: identity.brain_id.clone(),
                 brain_id: String::new(),
                 reconnect: vec![],
@@ -639,16 +664,6 @@ impl Store {
                 settings.push(json!({ "key": change.key, "value": before }));
             }
             report.jobs_cancelled = crate::jobs::quarantine_jobs(tx, &plan.restore_id, now)?;
-            report.revoked = Authority {
-                local_writers: crate::journal::revoke_all_writers(tx, now)?,
-                oauth_clients: crate::jobs::revoke_clients(tx, now)?,
-            };
-            if !report.revoked.local_writers.is_empty() {
-                report.reconnect.push(format!("Revoked {} local writer registration(s) the archive held ({}); each local writer registers a new one before it writes again.", report.revoked.local_writers.len(), report.revoked.local_writers.join(", ")));
-            }
-            if !report.revoked.oauth_clients.is_empty() {
-                report.reconnect.push(format!("Revoked {} OAuth client(s) the archive held ({}); register each again with gbrain auth register-client <name>, create new access tokens with gbrain auth create <name>, and have MCP users sign in again.", report.revoked.oauth_clients.len(), report.revoked.oauth_clients.join(", ")));
-            }
             // A fresh brain id, in the format record (committed with everything above). `FORMAT` follows
             // after the commit; a crash between leaves a record that names the id it rotated from, and
             // the next open rebuilds `FORMAT` from it.
@@ -661,7 +676,7 @@ impl Store {
             format.rotated_from = Some(std::mem::replace(&mut format.brain_id, report.brain_id.clone()));
             put_json(tx, &keys::meta("format"), &format)?;
             report.reconnect.push(format!("The restored brain has a new identity ({}; it was {}): anything that names the old brain id, such as local writer credential files and owner sockets, does not apply to it.", report.brain_id, report.previous_brain_id));
-            let inventory = json!({ "sources": sources, "settings": settings, "reconnect": report.reconnect, "revoked": report.revoked });
+            let inventory = json!({ "sources": sources, "settings": settings, "reconnect": report.reconnect });
             tx.put(&config_key, inventory.to_string().as_bytes())?;
             Ok(report)
         })?;
