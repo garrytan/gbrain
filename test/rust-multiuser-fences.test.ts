@@ -22,7 +22,7 @@ import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loa
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
 import { rustLeases, type LeaseToken, type WriteOrigin } from '../src/core/rust-engine/store-members/leases.ts';
-import { clearHostRegistration, fenceOpts, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
+import { clearHostRegistration, effectInstallClaim, fenceOpts, hostRegistrationOf, setHostRegistration } from '../src/core/persistence/host-fence.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { startWorkerFence } from '../src/core/minions/worker-fence.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
@@ -317,6 +317,39 @@ describe('request and effect claims under a host fence (G2, G6, G8, G18)', () =>
       const done = await engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure, undefined, true));
       expect(done.state).toBe('failed');
       expect(await engine.renewWriteClaim({ id: row.id, token: TOKEN, leaseMs: 30_000, phaseJson: null, fence: b })).toBe(false);
+    });
+  });
+  withAddon('G2b: the effect installs read their claim under the host fence and the claim epoch in their own transaction', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { leases, a, row } = await claimed(engine);
+      const membership = await engine.readSourceMembership('default');
+      await engine.insertPublicationEffects({ requestId: row.id, revision: null, sourceId: 'default', sourceIncarnation: membership!.incarnation,
+        worktreeId: null, effects: [{ kind: 'embedding', data: { slug: 'notes/a', page_id: 1 } }] } as never);
+      const effect = (await claimPersistenceEffect(engine, HOST_ID))!;
+      const claim = effectInstallClaim(engine, effect)!;
+      expect(claim.fence).toEqual(a);
+      expect(await engine.transaction(tx => tx.lockEffectClaimRow(effect.id, effectInstallClaim(tx, effect)))).toMatchObject({ state: 'running', execution_token: effect.execution_token });
+      await leases.release(a);
+      const b = (await leases.acquire('consumer:h', holder('b'), 60_000))!;
+      expect(await refusal(() => engine.transaction(tx => tx.lockEffectClaimRow(effect.id, claim)))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await refusal(() => engine.transaction(tx => tx.lockEffectClaimRow(effect.id, { ...claim, fence: b })))).toEqual({ code: 'lease_lost', reason: 'claim_epoch_mismatch' });
+      // No claim at all (a plain read) is the answer it always was.
+      expect(await engine.lockEffectClaimRow(effect.id)).toMatchObject({ state: 'running' });
+    });
+  });
+
+  withAddon('G18b: a claimant\'s publication step after its claim finished gets its normal answer, not an epoch refusal', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      const { a, row } = await claimed(engine);
+      const current = (await getWriteRequestById(engine, row.id))!;
+      await engine.transaction(tx => completeWrite(tx, current, 'failed', {}, failure));
+      const journal = await engine.publicationJournalStore();
+      expect(await journal.recordRecovery({ id: row.id, executionToken: TOKEN, recovery: { files: [] } as never, bytes: 0, keys: [], fence: a }, true)).toBe(false);
+      await journal.markRecovering(row.id, TOKEN, 'late', failure, { fence: a });
+      await journal.markPublicationStarted(row.id, { fence: a });
+      expect((await getWriteRequestById(engine, row.id))!.state).toBe('failed');
     });
   });
 });

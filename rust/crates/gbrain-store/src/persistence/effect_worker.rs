@@ -550,7 +550,38 @@ impl Store {
     /// `lockEffectClaimRow(effectId)`: the effect's `{ state, execution_token }`, or null when no
     /// effect has the id. The store write is exclusive, so the row lock PGLite takes is the read.
     pub fn lock_effect_claim_row(&self, effect_id: i64) -> Result<Value> {
-        Ok(effect_by_id(&*self.read()?, effect_id)?.map_or(
+        self.lock_effect_claim_row_claimed(effect_id, None)
+    }
+
+    /// `lock_effect_claim_row` for an effect's install (embedding, links, facts), read inside the install's own
+    /// transaction. On a multi-user store, with a `claim`, the host fence must be held now and a claim that is
+    /// running under `claim.token` must have been taken under this fence's lease name and epoch (`lease_lost`
+    /// otherwise, before the row is answered). A claim that no longer runs under the token is answered as it always
+    /// was, and the caller stops on the state and token it reads. A plain store ignores the claim.
+    pub fn lock_effect_claim_row_claimed(
+        &self,
+        effect_id: i64,
+        claim: Option<&InstallClaim>,
+    ) -> Result<Value> {
+        let read = self.read()?;
+        let effect = effect_by_id(&*read, effect_id)?;
+        if let Some(claim) = claim.filter(|_| self.multiuser()) {
+            let fence = claim.fence.as_ref();
+            crate::leases::check_fence(self, &*read, fence, "lock_effect_claim_row")?;
+            let token = pg_uuid(&claim.token)?;
+            if let (Some(fence), Some(e)) = (fence, &effect)
+                && e.state == "running"
+                && e.execution_token.as_deref() == Some(token.as_str())
+            {
+                crate::leases::check_claim_epoch(
+                    &*read,
+                    CLAIM_EFFECT,
+                    &effect_id.to_string(),
+                    fence,
+                )?;
+            }
+        }
+        Ok(effect.map_or(
             Value::Null,
             |e| json!({ "state": e.state, "execution_token": e.execution_token }),
         ))

@@ -1047,26 +1047,39 @@ fn held_claim_of(read: &dyn KvRead, id: &str, fence: Option<&LeaseToken>) -> Res
     Ok(())
 }
 
-/// Like [`held_claim_of`], for upkeep (a renewal or a release) that names the token it holds: the epoch is required
-/// only while the row is running under that token. A row that finished (completion keeps its token), was released or
-/// went to another claim has nothing of this caller's to check, so the call gets the inactive-row answer a plain
-/// store gives instead of a claim-epoch refusal.
+/// Like [`held_claim_of`], for a caller that holds a claim only while `active` says the row is running one it holds:
+/// the epoch is required only then. A row that finished (completion keeps its token), was released or went to another
+/// claim has nothing of this caller's to check, so the call gets the inactive-row answer a plain store gives instead
+/// of a claim-epoch refusal.
+pub(crate) fn held_claim_when(
+    read: &dyn KvRead,
+    id: &str,
+    fence: Option<&LeaseToken>,
+    active: impl Fn(&RequestRecord) -> bool,
+) -> Result<()> {
+    let (Some(fence), Some(record)) = (fence, request_by_id(read, id)?) else {
+        return Ok(());
+    };
+    if active(&record) {
+        crate::leases::check_claim_epoch(read, CLAIM_WRITE, &record.id.to_lowercase(), fence)?;
+    }
+    Ok(())
+}
+
+/// Upkeep (a renewal or a release) names the token it holds: active is a `running` row under that token.
 fn held_active_claim_of(
     read: &dyn KvRead,
     id: &str,
     token: Option<&str>,
     fence: Option<&LeaseToken>,
 ) -> Result<()> {
-    let (Some(fence), Some(token), Some(record)) = (fence, token, request_by_id(read, id)?) else {
-        return Ok(());
-    };
-    let holds = record.state == "running"
-        && json_text(record.extra.get("execution_token"))
-            .is_some_and(|held| held.eq_ignore_ascii_case(token));
-    if holds {
-        crate::leases::check_claim_epoch(read, CLAIM_WRITE, &record.id.to_lowercase(), fence)?;
-    }
-    Ok(())
+    held_claim_when(read, id, fence, |record| {
+        token.is_some_and(|token| {
+            record.state == "running"
+                && json_text(record.extra.get("execution_token"))
+                    .is_some_and(|held| held.eq_ignore_ascii_case(token))
+        })
+    })
 }
 
 /// What recovery found on a request it settles (`WriteCompletion::recovered`): the state and execution token the
