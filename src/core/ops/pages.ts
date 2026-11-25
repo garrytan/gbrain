@@ -187,8 +187,8 @@ const get_page: Operation = {
       // should say WHERE the slug actually lives. Trusted local callers only
       // (`ctx.remote === false`) — for a remote caller the probe would be a
       // cross-source existence oracle outside its grant. Only when the lookup
-      // was actually scoped (an unscoped read already spanned every source).
-      if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
+      // was actually scoped (an unscoped read already spanned every source). GST-3747: never under --as, which answers as the member.
+      if (ctx.remote === false && !ctx.applyRemoteReadPolicy && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
         try {
           // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
           // deliberately spans all sources to name where the slug lives.

@@ -9,6 +9,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { load as loadYaml } from 'js-yaml';
 import { resolveFromVersions, stableWindow, type Release, type StableRecordTag } from '../../scripts/upgrade-matrix/versions.ts';
 import { failingFrom, parseRedFrom, renderRedFrom } from '../../scripts/upgrade-matrix/marker.ts';
 import { createCertificates, parseFixturePath, startGithubFixture } from '../../scripts/upgrade-matrix/github-fixture.ts';
@@ -333,5 +335,43 @@ describe('verdicts', () => {
     const door = (verdict: string) => ({ schema: 'gbrain-upgrade-matrix-door/1', door: 'hermes', harness_sha: 'h', candidate: { sha: 'c' }, verdict });
     expect(buildSummary(plan, [receipt(), door('hold')])).toMatchObject({ status: 'hold', holds: ['door:hermes'] });
     expect(buildSummary(plan, [receipt(), door('fail')]).status).toBe('red');
+  });
+});
+
+describe('upgrade-matrix.yml cell cache (GST-3494)', () => {
+  type Step = { id?: string; name?: string; uses?: string; run?: string; if?: string; 'timeout-minutes'?: number; 'continue-on-error'?: boolean; with?: Record<string, string> };
+  const workflow = loadYaml(readFileSync(join(import.meta.dir, '../../.github/workflows/upgrade-matrix.yml'), 'utf8')) as { jobs: { cell: { 'timeout-minutes': number; steps: Step[] } } };
+  const cell = workflow.jobs.cell;
+  const at = (pattern: RegExp) => cell.steps.findIndex(s => pattern.test(s.uses ?? ''));
+
+  test('no combined cache action: its post-step save ran into the job timeout and cancelled passing cells', () => {
+    expect(cell.steps.filter(s => /^actions\/cache@/.test(s.uses ?? ''))).toEqual([]);
+  });
+
+  test('restore and save are bounded and cannot fail the cell, and save runs after the receipts upload', () => {
+    const restore = cell.steps[at(/^actions\/cache\/restore@/)]!;
+    const save = cell.steps[at(/^actions\/cache\/save@/)]!;
+    for (const step of [restore, save]) {
+      expect(step['continue-on-error']).toBe(true);
+      expect(step['timeout-minutes']).toBeGreaterThan(0);
+    }
+    expect(restore['timeout-minutes']! + save['timeout-minutes']!).toBeLessThan(cell['timeout-minutes'] / 2);
+    expect(save.with!.key).toBe(restore.with!.key);
+    expect(save.with!.path).toBe(restore.with!.path);
+    expect(save.if).toBe(`steps.${restore.id}.outputs.cache-hit != 'true'`);
+    const run = cell.steps.findIndex(s => s.name === 'Run the cells');
+    const upload = at(/^actions\/upload-artifact@/);
+    expect(at(/^actions\/cache\/restore@/)).toBeLessThan(run);
+    expect(upload).toBeGreaterThan(run);
+    expect(at(/^actions\/cache\/save@/)).toBeGreaterThan(upload);
+  });
+
+  test('a restore that did not finish is deleted before the cells run, so a partial cache is never used or saved', () => {
+    const restoreAt = at(/^actions\/cache\/restore@/);
+    const restore = cell.steps[restoreAt]!;
+    const drop = cell.steps.findIndex(s => s.if === `steps.${restore.id}.outcome != 'success'`);
+    expect(drop).toBeGreaterThan(restoreAt);
+    expect(drop).toBeLessThan(cell.steps.findIndex(s => s.name === 'Run the cells'));
+    expect(cell.steps[drop]!.run).toBe(`rm -rf "${restore.with!.path!.replace('~', '$HOME')}"`);
   });
 });

@@ -102,6 +102,8 @@ size is the segmented body's byte count, or the byte length of `compiled_truth` 
 that hold `content`, and keeps one whose `activationId` is absent or names an activated activation. Rows come in slug
 byte order; the SQL has no `ORDER BY`, and the callers fold the rows into a set.
 
+The chronicle-backfill page batch is in [chronicle-reads.md](chronicle-reads.md).
+
 The Life Chronicle reads (`generations/chronicle_events.rs`, the members of `engine-sql/chronicle-events.ts`) add no
 keys. `readChronicleDepthRow` reads the page record of one slug (`{ id, live }`, or null when no record has the slug);
 `pageSlugExists` is true for a deleted page too. `listRetiredGenerationItemKeys` reads the ledger rows of the source and

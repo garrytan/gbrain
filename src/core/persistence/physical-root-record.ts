@@ -9,7 +9,7 @@ import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
-import { ownerMarkerMissingError } from './owner-marker.ts';
+import { ownerMarkerMissingError, ownershipReservationMissingError } from './owner-marker.ts';
 
 export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
@@ -349,7 +349,10 @@ export function physicalRootMovedRefusal(moved: MovedPhysicalRoot, exit: { sourc
 const DIRECTORY_CHANGED_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
   + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.';
 /** A stored refusal message (a write receipt keeps code and message only) that is the #5914 directory-changed refusal. */
-export const isPhysicalRootDirectoryChangedMessage = (message: string | null | undefined): boolean => message === DIRECTORY_CHANGED_MESSAGE;
+const NEW_DEVICE_DIRECTORY_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (it is a new directory on another filesystem device, as a brain copied into a container is) while the owner token, brain, worktree and root still match. '
+  + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.';
+export const isNewDeviceDirectoryMessage = (message: string | null | undefined): boolean => message === NEW_DEVICE_DIRECTORY_MESSAGE;
+export const isPhysicalRootDirectoryChangedMessage = (message: string | null | undefined): boolean => message === DIRECTORY_CHANGED_MESSAGE || message === NEW_DEVICE_DIRECTORY_MESSAGE;
 /**
  * #7671: the relocated-root self-transfer as the refusal's fix, a host-admin step: prepare, then accept. `root` and
  * `epoch` are filled when the caller holds the binding; otherwise they are inputs read from writer status.
@@ -367,8 +370,8 @@ export function relocatedRootTransferFix(sourceId: string, binding?: { root: str
     consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Accepts the self-transfer: ownership stays on this host and writes to the source resume; retry the refused write with the same request_id.' } };
 }
 /** The #5914 exit for a directory recreated at its recorded path; filled with the source and root by lockWorktree (ownership.ts). */
-export function physicalRootDirectoryChangedError(): OperationError {
-  const error = physicalRootError(DIRECTORY_CHANGED_MESSAGE);
+export function physicalRootDirectoryChangedError(message = DIRECTORY_CHANGED_MESSAGE): OperationError {
+  const error = physicalRootError(message);
   error.detail = 'physical_root_directory_changed';
   error.suggestion = 'On the brain host, run gbrain sources writer status <source> and note admin_state, then gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root '
     + '--admin-intent writer_transfer_prepare --expected-state <admin_state>, then gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <manifest digest printed by prepare> '
@@ -389,7 +392,12 @@ export function assertPhysicalRootStamp(directory: string, reservation: Physical
   if (value.inode !== info.ino.toString() || !samePhysicalBirth(value.birth, info.birthtimeNs)) {
     // #6501 door parity with the device change below: a well-formed stamp whose directory identity alone moved names the #5914 exit;
     // a malformed birth stamp is a damaged record, not a recreated directory, and keeps the generic refusal.
-    if (value.device === info.dev.toString() && typeof value.birth === 'string' && /^\d+$/.test(value.birth)) throw physicalRootDirectoryChangedError();
+    // GBRA-789: a new inode on another device whose stamp and reservation both name the old device is a brain copied to a new
+    // filesystem (a container) and takes the same exit; a stamp that disagrees with its reservation or a malformed device stays generic.
+    const wellFormedBirth = typeof value.birth === 'string' && /^\d+$/.test(value.birth);
+    if (wellFormedBirth && value.device === info.dev.toString()) throw physicalRootDirectoryChangedError();
+    if (wellFormedBirth && value.inode !== info.ino.toString() && typeof value.device === 'string' && /^\d+$/.test(value.device)
+      && reservation.initialDevice === value.device) throw physicalRootDirectoryChangedError(NEW_DEVICE_DIRECTORY_MESSAGE);
     throw physicalRootError();
   }
   if (value.device !== info.dev.toString()) {
@@ -522,11 +530,30 @@ export function relocatePhysicalRoot(recorded: string, target: string, records: 
   excludeOwnershipMarkers([target, dirname(target)]);
   return reservation;
 }
+/**
+ * #10260: the stamp in `root` when the reservation beside `root` is gone and the stamp still names `root` and this exact
+ * directory (device, inode and birth time all equal), else null: the state the plain self-transfer repairs. `brainId`
+ * and `worktreeId`, when given, must match too. Refusal evidence only; the self-transfer verifies ownership itself.
+ */
+export function lostReservationStamp(root: string, identity: { brainId?: string; worktreeId?: string } = {}): PhysicalRootStamp | null {
+  try {
+    if (readReservationRecord(root) !== null) return null;
+    const stamp = readPhysicalRootStamp(root);
+    if (!stamp || stamp.root !== root || identity.brainId !== undefined && stamp.brainId !== identity.brainId
+      || identity.worktreeId !== undefined && stamp.worktreeId !== identity.worktreeId) return null;
+    const info = statSync(root, { bigint: true });
+    return info.isDirectory() && stamp.device === info.dev.toString() && stamp.inode === info.ino.toString() && stamp.birth === info.birthtimeNs.toString() ? stamp : null;
+  } catch (error) {
+    if (error instanceof OperationError && error.detail === 'ownership_record_not_private') throw error;
+    return null;
+  }
+}
 export function assertPhysicalRoot(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
   try {
     const root = realpathSync(path);
     if (root !== path || lstatSync(path).isSymbolicLink()) throw physicalRootError();
     const reservation = readPhysicalRootReservation(root);
+    if (!reservation && lostReservationStamp(root, { worktreeId: identity.worktreeId })) throw ownershipReservationMissingError();
     if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
     assertPhysicalRootStamp(root, reservation);
     excludeMarkersInLaterCheckout(root);

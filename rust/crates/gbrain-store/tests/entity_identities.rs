@@ -490,3 +490,42 @@ fn identity_decisions_take_back_the_decided_at_text_the_list_returns() {
         "{err}"
     );
 }
+
+#[test]
+fn identity_decisions_refuse_a_non_ascii_decided_at_and_keep_non_ascii_text() {
+    use gbrain_store::identity_reviews::ApplyDecisions;
+    // A decided_at with a non-ASCII character where the zone is looked for (byte 19) is refused as
+    // the SQL cast refuses it, never a panic; non-ASCII names, slugs and deciders round-trip.
+    let b = Brain::new("identity-decided-at-non-ascii");
+    b.page("default", "people/zo\u{eb}-example");
+    b.page("other", "people/zo\u{eb}-example");
+    let decision = |decided_at: &str| {
+        json!({
+            "decision_id": "00000000000000cd", "verdict": "different",
+            "members": [{"source_id": "default", "slug": "people/zo\u{eb}-example"}, {"source_id": "other", "slug": "people/zo\u{eb}-example"}],
+            "group_id": null, "entity_id": null, "canonical": null,
+            "decided_by": "Zo\u{eb} \u{6771}\u{4eac}", "decided_at": decided_at, "origin": "database", "home_source_id": null, "git_blob": null,
+        })
+    };
+    let apply = |d: Value| {
+        b.store
+            .apply_identity_decisions(&de::<ApplyDecisions>(json!({ "upsert": [d] })))
+    };
+    let bad = "2026-11-18 00:00:0\u{e9}+00";
+    let err = apply(decision(bad)).unwrap_err().to_string();
+    assert!(err.contains("decided_at is not a timestamp"), "{err}");
+    assert_eq!(
+        b.store.list_identity_decisions().unwrap()["decisions"],
+        json!([])
+    );
+    apply(decision("2026-11-18T00:00:00Z")).unwrap();
+    let read = b.store.list_identity_decisions().unwrap();
+    assert_eq!(
+        read["decisions"][0]["decided_by"],
+        json!("Zo\u{eb} \u{6771}\u{4eac}")
+    );
+    assert_eq!(
+        read["decisions"][0]["members"][0]["slug"],
+        json!("people/zo\u{eb}-example")
+    );
+}
