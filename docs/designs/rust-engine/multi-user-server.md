@@ -404,8 +404,10 @@ impl Store {
   two hosts, so managed mode on Rust is single-host until that swap.
 
 - **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
-  and token), so a host that lost its lease cannot run a cycle: its cycle writes are refused at commit like any other
-  stale holder's. With the multi-user switch off, the cycle lock is unchanged.
+  and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is
+  refused at commit; under the single writer the takeover waits for the open transaction, then the old token is
+  refused with `epoch_moved`. Multi-user mode uses optimistic transactions, so the commit-time refusal must hold
+  there. With the multi-user switch off, the cycle lock is unchanged.
 
 ### I-6. Scope (per-user access)
 
