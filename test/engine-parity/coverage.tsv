@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 327/374
+# covered: 329/376
 # lifecycle: 9/9
 # pages: 32/37
 # search: 7/7
@@ -48,7 +48,7 @@
 # open_loops: 5/7
 # write_misc: 0/22
 # cli_reads_import: 0/4
-# entity_reads: 0/2
+# entity_reads: 2/4
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
@@ -62,11 +62,11 @@ transaction	lifecycle	yes	19	no	yes	yes	serves
 transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
-getPage	pages	yes	52	yes	yes	yes	serves
+getPage	pages	yes	54	yes	yes	yes	serves
 readPageSnapshot	pages	yes	21	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	serves
-putPage	pages	yes	199	yes	yes	yes	serves
+putPage	pages	yes	201	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -419,6 +419,8 @@ hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
 readGuestSourceRow	cli_reads_import	no	0	no	-	-	-
 readIgnoredPrivacyLabelPages	entity_reads	no	0	no	-	-	-
 readLivePageFrontmatter	entity_reads	no	0	no	-	-	-
+readImageSealProbe	entity_reads	yes	1	no	yes	yes	serves
+readPageChunkerVersion	entity_reads	yes	2	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
 lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
 replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links
