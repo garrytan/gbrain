@@ -87,7 +87,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'ensureFactsKeywordIndex'],
   retrieval_coverage: ['countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
     'readProjectionReadinessGeneration', 'readProjectionReadiness'],
-  chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
+  chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'readWindowChunk', 'countPageChunks', 'countStaleChunks', 'sumStaleChunkChars',
     'setPageEmbeddingSignature', 'readPageProvenanceComplete', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',
     'readEmbeddingCompletion', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings',

@@ -60,7 +60,6 @@ import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
 import { fenceTranscriptText, neutralizeToolCalls } from '../search/transcript-quote.ts';
 import { pageTrustForRead, quotedPageMeta, type QuarantinedView } from './get-page-projection.ts';
-import { chunkGenerationProbe, chunkManifestReads } from '../search/safe-chunks.ts';
 import { GET_PAGE_SLICE_PARAMS, parseSliceRequest, readGrep, readSection, sliceCharBudget, type SliceRequest } from './get-page-slice.ts';
 
 export const BODY_MODES = ['auto', 'full', 'none', 'outline', 'window'] as const;
@@ -335,10 +334,7 @@ function envelopeText(text: string, quarantined: QuarantinedView | null, trust: 
  */
 async function aroundChunk(ctx: OperationContext, page: Page, doc: WindowDocument, chunkId: number, contextLines: number, maxBytes: number, revision: string):
   Promise<{ window: WindowSlice | null; chunkText: string; anchor: 'stored_span' | 'located' | 'chunk_only'; span?: { byte_start: number; byte_end: number } }> {
-  const rows = await ctx.engine.executeRaw<{ chunk_text: string; chunk_source: string; occurrence_id: unknown; projected_byte_start: unknown; projected_byte_end: unknown }>(
-    `SELECT chunk_text, chunk_source, occurrence_id, projected_byte_start, projected_byte_end FROM content_chunks
-      WHERE id = $1 AND page_id = $2 AND COALESCE(modality, 'text') = 'text' AND ${chunkGenerationProbe('content_chunks', await chunkManifestReads(ctx.engine))}`, [chunkId, page.id]);
-  const row = rows[0];
+  const row = await ctx.engine.readWindowChunk(chunkId, Number(page.id));
   if (!row || (doc.segments && !doc.segments.body.rows.some(r => r.occurrenceId === Number(row.occurrence_id)))) {
     throw opError('revision_changed', `Chunk ${chunkId} is not part of page ${page.slug} at its current revision.`,
       "The page was re-chunked or edited since that search. Search again for a current chunk_id, or read the page's outline.",
@@ -511,10 +507,8 @@ function setNext(out: Record<string, unknown>, page: Page, cursor: string, markd
 async function noneResult(ctx: OperationContext, page: Page, out: Record<string, unknown>, truncated: boolean): Promise<Record<string, unknown>> {
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
   if (isSegmentedPage(page)) return { ...out, ...(fm.embed_skip ? { embed_skip: true } : {}), truncated };
-  const [counts] = await ctx.engine.executeRaw<{ total: unknown; embedded: unknown }>(
-    `SELECT count(*) AS total, count(*) FILTER (WHERE embedded_at IS NOT NULL) AS embedded FROM content_chunks
-      WHERE page_id = $1 AND ${chunkGenerationProbe('content_chunks', await chunkManifestReads(ctx.engine))}`, [page.id]);
-  return { ...out, chunks: { total: Number(counts?.total ?? 0), embedded: Number(counts?.embedded ?? 0) },
+  const counts = await ctx.engine.countPageChunks(Number(page.id));
+  return { ...out, chunks: { total: counts.total, embedded: counts.embedded },
     ...(fm.embed_skip ? { embed_skip: true } : {}), truncated };
 }
 

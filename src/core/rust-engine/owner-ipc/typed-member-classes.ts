@@ -416,6 +416,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'relationExists', 'sweepJournalChunk', 'takeProposalCached',
   // the write-time chronicle decision's reads (engine-sql/chronicle-ledger.ts): SELECTs only
   'countRecentChronicleReservations', 'hasPendingAutoChronicleRow', 'readChronicleRow', 'readPageTruthLead',
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts): SELECTs only
+  'countPageChunks', 'readWindowChunk',
   // embed --stale (engine-sql/embed-stale-work.ts, embedding-provenance.ts): counts, listings and probes over pages and chunks.
   'countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'hasEmbeddingSignatureDrift', 'readPageIsSegmented',
   'listEmbedPendingProjections', 'listEmbedProjectionRepairPages', 'listUnembeddedChunkIndexes', 'sumEmbedBackfillChars',

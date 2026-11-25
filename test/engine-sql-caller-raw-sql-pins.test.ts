@@ -16,7 +16,7 @@ import { makeEngineWithFake, runCase, withPinnedSqlEnvironment, type SqlCase } f
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { edgeTrimSql } from '../src/core/edge-whitespace.ts';
 import { budgetRowAppliesFilter } from '../src/core/page-size-policy.ts';
-import { chunkGenerationFilter, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
+import { chunkGenerationFilter, chunkGenerationProbe, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
 import { TIMELINE_SEPARATOR } from '../src/core/page-window/document.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
 import { retiredPageSql } from '../src/core/entities/resolve.ts';
@@ -31,6 +31,15 @@ import { PENDING_WRITE_HEALTH_SQL } from '../src/core/engine-sql/telemetry.ts';
 import { ABANDONED_TAKES_SQL, TOP_RESOLVED_TAKES_SQL, TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
 import { createHash } from 'node:crypto';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+
+/** get_page's chunk generation probe as its caller built it (get-page-body.ts, a role that reads page_body_manifest). */
+const GET_PAGE_GENERATION_PROBE = chunkGenerationProbe('content_chunks', true);
+/** chunkManifestReads' privilege probe, which a Postgres engine runs before get_page's chunk reads (safe-chunks.ts). */
+const CHUNK_MANIFEST_ACCESS = `-- chunk-visibility-ok: whether any chunk row of a segmented body exists, no row is returned
+SELECT has_table_privilege('page_body_manifest', 'SELECT') AS readable,
+  NOT has_table_privilege('page_body_manifest', 'SELECT')
+    AND (EXISTS (SELECT 1 FROM content_chunks WHERE body_generation IS NOT NULL)
+      OR EXISTS (SELECT 1 FROM content_chunks WHERE occurrence_id IS NOT NULL)) AS segmented`;
 import { markedScopeSources } from '../src/core/access/attest-sources.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from '../src/core/grants/legacy-token.ts';
 import { OAuthGrants } from '../src/core/oauth-grants.ts';
@@ -3606,6 +3615,20 @@ const PINS: Pin[] = [
     from: 'src/core/persistence/page-mutations.ts:585 preparePageAdmission (a revert\'s version file), at e4420913f5',
     case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
     texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
+  },
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts), copied from get-page-body.ts at f9592f7a7e with the
+  // generation probe in its manifest form (chunkGenerationProbe('content_chunks', true)).
+  {
+    from: 'src/core/ops/get-page-body.ts:338 aroundChunk, at f9592f7a7e',
+    case: { method: 'readWindowChunk', variant: 'default', run: e => e.readWindowChunk(1, 1) },
+    texts: [CHUNK_MANIFEST_ACCESS, `SELECT chunk_text, chunk_source, occurrence_id, projected_byte_start, projected_byte_end FROM content_chunks
+      WHERE id = $1 AND page_id = $2 AND COALESCE(modality, 'text') = 'text' AND ${GET_PAGE_GENERATION_PROBE}`],
+  },
+  {
+    from: 'src/core/ops/get-page-body.ts:514 noneResult, at f9592f7a7e',
+    case: { method: 'countPageChunks', variant: 'default', run: e => e.countPageChunks(1) },
+    texts: [CHUNK_MANIFEST_ACCESS, `SELECT count(*) AS total, count(*) FILTER (WHERE embedded_at IS NOT NULL) AS embedded FROM content_chunks
+      WHERE page_id = $1 AND ${GET_PAGE_GENERATION_PROBE}`],
   },
   {
     from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',

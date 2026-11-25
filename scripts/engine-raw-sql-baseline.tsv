@@ -306,7 +306,6 @@ src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/impact-capture.ts	execute_raw	1
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
-src/core/ops/get-page-body.ts	execute_raw	2
 src/core/ops/jobs.ts	execute_raw	3
 src/core/ops/known-as-of.ts	execute_raw	3
 src/core/ops/page-upload.ts	execute_raw	2

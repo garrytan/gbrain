@@ -156,6 +156,7 @@ import * as listReadsImpl from './engine-sql/list-reads.ts';
 import * as writeMiscImpl from './engine-sql/write-misc.ts';
 import * as chronicleLedger from './engine-sql/chronicle-ledger.ts';
 import * as pageMutationReads from './engine-sql/page-mutation-reads.ts';
+import * as pageWindowChunks from './engine-sql/page-window-chunks.ts';
 import * as repairBookkeepingImpl from './engine-sql/repair-bookkeeping.ts';
 import * as managedSyncOrphansImpl from './engine-sql/managed-sync-orphans.ts';
 import * as ownedContentImpl from './engine-sql/owned-content.ts';
@@ -2880,6 +2881,8 @@ export class PostgresEngine implements BrainEngine {
   async pruneChronicleReservations() { return chronicleLedger.pruneChronicleReservations(this); }
   async insertConfigIfAbsent(key: string, value: string) { return chronicleLedger.insertConfigIfAbsent(this, key, value); }
   async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
+  async readWindowChunk(chunkId: number, pageId: number) { return pageWindowChunks.readWindowChunk(this, chunkId, pageId, await chunkManifestReads(this)); }
+  async countPageChunks(pageId: number) { return pageWindowChunks.countPageChunks(this, pageId, await chunkManifestReads(this)); }
   listActiveAccessMembers() { return whenNotAborted(() => writeMiscImpl.listActiveAccessMembers(this.writeMiscReads)); }
   hasLabelledOnlyMember() { return whenNotAborted(() => this.engineSqlRead(exec => writeMiscImpl.hasLabelledOnlyMember(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw')))); }
   hasLabelledOnlyMemberAmong(memberIds: readonly string[]) { return whenNotAborted(() => this.engineSqlRead(exec => writeMiscImpl.hasLabelledOnlyMemberAmong(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw'), memberIds))); }

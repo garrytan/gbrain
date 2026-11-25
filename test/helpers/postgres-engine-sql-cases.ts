@@ -1857,6 +1857,9 @@ export const DOMAIN_OF: Record<string, string> = {
   // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
   'readStoredPageHead': OOS.callerRawSql,
   'readVersionSourcePath': OOS.callerRawSql,
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts)
+  'readWindowChunk': OOS.callerRawSql,
+  'countPageChunks': OOS.callerRawSql,
   'listActiveAccessMembers': OOS.writeMisc,
   'hasLabelledOnlyMember': OOS.writeMisc,
   'hasLabelledOnlyMemberAmong': OOS.surfacedReads,
@@ -3271,4 +3274,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
   ...variants('readStoredPageHead', [['default', (e) => e.readStoredPageHead('default', 'notes/a')]]),
   ...variants('readVersionSourcePath', [['default', (e) => e.readVersionSourcePath(1, 1)]]),
+  // get_page's chunk reads (engine-sql/page-window-chunks.ts)
+  ...variants('readWindowChunk', [['default', (e) => e.readWindowChunk(1, 1)]]),
+  ...variants('countPageChunks', [['default', (e) => e.countPageChunks(1)]]),
 ];
