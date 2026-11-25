@@ -322,7 +322,7 @@ test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-s
 test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
 test/scripts/check-bytecode-parity.test.ts	bytecode release build	5	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
-test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
+test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	3	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
 test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/check-public-surface.test.ts	dropped manifest entries	7	bun-file
@@ -356,19 +356,19 @@ test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/engine-raw-sql-ratchet.test.ts	check-engine-raw-sql-ratchet.ts: shrink-only baseline	11	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
-test/scripts/full-ci-workflow.test.ts	full CI on pull requests	7	readFileSync
+test/scripts/full-ci-workflow.test.ts	full CI on pull requests	8	readFileSync
 test/scripts/full-ci-workflow.test.ts	full-ci label lifetime	4	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/gh-issue-agent-filed.test.ts	agent-filed label	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
-test/scripts/macos-runner-events.test.ts	(file-level)	3	readFileSync
+test/scripts/macos-runner-events.test.ts	(file-level)	5	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
 test/scripts/native-setup-toolchain.test.ts	scripts/native/setup-toolchain.ts download budget	4	readFileSync
 test/scripts/nightly-e2e.test.ts	full E2E shard classification (#6040)	2	readFileSync
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/nightly-issue.test.ts	.github/nightly-known-red.tsv	2	readFileSync
 test/scripts/nightly-issue.test.ts	master-red: push-to-master runs	29	readFileSync
-test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	1	readFileSync
+test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	2	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync
 test/scripts/nightly-issue.test.ts	operator messages carry docs anchors that resolve	1	readFileSync
@@ -401,6 +401,7 @@ test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	read
 test/scripts/tier2-openclaw-mcp.test.ts	Tier 2 OpenClaw MCP wiring (#8002)	9	readFileSync
 test/scripts/ubi-runner-run.test.ts	run leftover line	2	readFileSync
 test/scripts/ubicloud-typecheck-state.test.ts	(file-level)	3	readFileSync
+test/scripts/unit-suite-gate.test.ts	test.yml unit-suite-gate job	3	readFileSync
 test/search/graph-signals-wire-integration.test.ts	v0.40.4 — source-grep regression guard	1	source-surface-helper
 test/serve-behavior-notice-6543.test.ts	(file-level)	3	readFileSync
 test/serve-http-admin-route-guard.test.ts	(file-level)	6	readFileSync
@@ -502,6 +503,7 @@ test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recip
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync,source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	8	source-surface-helper
 test/valid-time-gbra217.test.ts	valid-time normaliser and verdict (pure)	24	readFileSync
+test/vorflux-notify-workflow.test.ts	vorflux-notify.yml triggers and safety	2	readFileSync
 test/w13-small-hardening.test.ts	P1.14 paid-consent lint wording	1	exec-scan
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
 test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync

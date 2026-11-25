@@ -90,6 +90,14 @@ export const listOpenLoops: Member<'listOpenLoops'> = async (brain, opts = {}) =
   return rows.map(toRow);
 };
 
+/** `countOpenLoopsByCounterpartyEmail`: the store's per-email count of the source's open loops of that type, with no limit. */
+export const countOpenLoopsByCounterpartyEmail: Member<'countOpenLoopsByCounterpartyEmail'> = async (brain, sourceId, emails, loopType) => {
+  if (emails.length === 0) return [];
+  const rows: Array<{ email: string; n: number }> = await storeCall({ member: 'countOpenLoopsByCounterpartyEmail' },
+    () => brain.countOpenLoopsByCounterpartyEmail(sourceId, [...emails], loopType));
+  return rows.map(r => ({ email: r.email, n: Number(r.n) }));
+};
+
 /**
  * `readEntityOpenLoops` over the store's list read: the open loops whose counterparty page is the slug in the source.
  * The list read also matches a counterparty email equal to the slug, in any source, so the shim keeps only rows whose

@@ -137,7 +137,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   search_vector: ['countSearchVectorRows'],
   // open_loops: the loop upsert, list and close statements (engine-sql/open-loops.ts)
   open_loops: [
-    'closeOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'upsertOpenLoop'],
+    'closeOpenLoop', 'listOpenLoops', 'purgeStaleAppliedCaptures', 'listPendingCoreEditNotices', 'countOpenLoopsByCounterpartyEmail', 'readEntityOpenLoops', 'upsertOpenLoop'],
   // write_misc: the small write-side reads (engine-sql/write-misc.ts)
   write_misc: [
     'attachSourcePath', 'expireMemoryProposals', 'getWorktreeBinding', 'hasExtractedEvents', 'hasLabelledOnlyMember',

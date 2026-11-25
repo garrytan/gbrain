@@ -7,8 +7,10 @@
  * The read rule (`attestedReadScope`, applied once in MCP dispatch for every attested call) only hides inside the
  * credential's grant: it drops every personal source not bound to the attested member, and under a scope read
  * (`SCOPE_READ_ACCESS`) every personal source, the speaker's own included. It never adds a source, so a narrowed read
- * refuses a hidden source exactly like an out-of-grant one (resolveRequestedScope's permission_denied). Unattested
- * callers and member-bound credentials are unchanged (a member-bound credential could take the same rule later).
+ * refuses a hidden source exactly like an out-of-grant one (resolveRequestedScope's permission_denied). GST-3747: a
+ * connection bound to a member other than the owner that reads the federated floor (a token with no source list, a
+ * stdio server bound to a member) takes the same rule on that floor (`memberFloorScope`); a source list it was granted
+ * is kept exactly as named.
  * Everything lives in the database, so a repo-less brain gets it unchanged.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -93,6 +95,53 @@ export async function hiddenPersonalSources(engine: Pick<BrainEngine, 'executeRa
   }
   const own = new Set(scopeRead ? [] : rows.filter(r => r.member_id === member).map(r => r.source_id));
   return new Set(rows.map(r => r.source_id).filter(s => !own.has(s)));
+}
+
+/**
+ * GST-3747: the read scope of a connection bound to `member()` (null: bound to nobody) with no source list: its floor
+ * (`localFederatedSourceIds`, or its scalar source when nothing federates) and a pinned stdio server's named-read set
+ * (`explicitReadBinding`), minus every personal source bound to someone else, the rule attestedReadScope applies inside a grant. The owner (config access.owner_member) and an
+ * unbound connection keep the floor, and a source list (`auth.allowedSources`) is kept exactly as named. A hidden scalar
+ * source moves to the first kept source, or to NO_SOURCES, which refuses. Unchanged (the same object) when nothing is
+ * hidden; the member is looked up only when the floor holds a personal source.
+ */
+export async function memberFloorScope<T extends ReadScopeOpts>(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, opts: T, member: () => Promise<string | null>): Promise<T> {
+  const ids = floorIds(opts);
+  if (!ids.length || !(await hiddenPersonalSources(engine, ids, '', true)).size) return opts;
+  const id = await member();
+  if (!id || id === await (await import('./owner.ts')).ownerMemberId(engine)) return opts;
+  return floorWithout(opts, await hiddenPersonalSources(engine, ids, id, false));
+}
+
+/** The sources a caller with no source list reads: its scalar when it reads the floor, the floor, and a pinned stdio server's named-read set. */
+function floorIds(opts: ReadScopeOpts): string[] {
+  if (opts.auth?.allowedSources?.length) return [];
+  const federated = opts.localFederatedSourceIds ?? [];
+  const scalar = federated.length || opts.auth?.hasSourceGrant === false ? [opts.sourceId ?? 'default'] : [];
+  return [...scalar, ...federated, ...(opts.explicitReadBinding?.sourceIds ?? [])];
+}
+
+/** memberFloorScope's narrowing once the hidden personal sources are known; the same object when none applies. */
+export function floorWithout<T extends ReadScopeOpts>(opts: T, hidden: ReadonlySet<string>): T {
+  if (!hidden.size || !floorIds(opts).some(s => hidden.has(s))) return opts;
+  const federated = opts.localFederatedSourceIds;
+  const binding = opts.explicitReadBinding;
+  const floor = !!federated?.length || opts.auth?.hasSourceGrant === false;
+  const kept = (federated ?? []).filter(s => !hidden.has(s));
+  const moved = kept[0] ?? NO_SOURCES;
+  return {
+    ...opts,
+    ...(federated ? { localFederatedSourceIds: kept } : {}),
+    ...(floor && hidden.has(opts.sourceId ?? 'default') ? { sourceId: moved } : {}),
+    ...(floor && opts.auth?.sourceId && hidden.has(opts.auth.sourceId) ? { auth: { ...opts.auth, sourceId: moved } } : {}),
+    ...(binding ? { explicitReadBinding: { ...binding, sourceIds: binding.sourceIds.filter(s => !hidden.has(s)) } } : {}),
+  };
+}
+
+/** The member a caller identity names (its `member:<id>` principal), or null when it names none. */
+export function boundMemberId(identity: readonly string[]): string | null {
+  const principal = identity.find(p => p.startsWith('member:'));
+  return principal ? principal.slice('member:'.length) : null;
 }
 
 export interface ReadScopeOpts { auth?: AuthInfo; sourceId?: string; localFederatedSourceIds?: string[]; explicitReadBinding?: ExplicitReadBinding }

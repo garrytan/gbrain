@@ -306,6 +306,23 @@ jobs:
           RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}
         run: git push origin "+${RELEASE_SHA}:refs/tags/latest-stable"
 
+  # The production soak on the new tag's exact tree. Its search speed gate decides
+  # whether this release may reach stable (docs/RELEASING.md#search-speed-gate).
+  # A workflow_dispatch from GITHUB_TOKEN starts a run, unlike its tag push.
+  soak:
+    needs: [version, ci-gate, release]
+    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write  # dispatch production-soak.yml (scoped to this job only)
+    steps:
+      - name: Dispatch the production soak on v${{ needs.version.outputs.version }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: gh workflow run production-soak.yml -R "$GITHUB_REPOSITORY" --ref "v$RELEASE_VERSION"
+
   # [G7/S3#4] Publishes the rendered agent-workspace template repo (the
   # GitHub "Use this template" door) from CI ONLY — no human pushes it by
   # hand, so what adopters clone is exactly what this repo reviewed. Guarded

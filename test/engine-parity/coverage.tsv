@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 326/358
+# covered: 327/361
 # lifecycle: 9/9
 # pages: 32/32
 # search: 7/7
@@ -45,7 +45,7 @@
 # withdrawal_discovery: 1/1
 # belief_reads: 0/1
 # search_vector: 0/1
-# open_loops: 4/4
+# open_loops: 5/7
 # write_misc: 0/21
 # owner_only: 1/1
 # wanted_links: 2/2
@@ -376,9 +376,12 @@ listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql
 readWithdrawalDiscovery	withdrawal_discovery	yes	4	no	yes	yes	refuses:raw_sql
 listCoveredSources	belief_reads	no	0	no	-	-	-
 countSearchVectorRows	search_vector	no	0	no	-	-	-
-upsertOpenLoop	open_loops	yes	9	no	yes	yes	serves
-closeOpenLoop	open_loops	yes	6	no	yes	yes	serves
+upsertOpenLoop	open_loops	yes	10	no	yes	yes	serves
+closeOpenLoop	open_loops	yes	7	no	yes	yes	serves
 listOpenLoops	open_loops	yes	4	no	yes	yes	serves
+countOpenLoopsByCounterpartyEmail	open_loops	yes	1	no	yes	yes	serves
+purgeStaleAppliedCaptures	open_loops	no	0	no	-	-	-
+listPendingCoreEditNotices	open_loops	no	0	no	-	-	-
 readEntityOpenLoops	open_loops	yes	4	no	yes	yes	serves
 readSourceState	write_misc	no	0	no	-	-	-
 readAdmissionSource	write_misc	no	0	no	-	-	-
