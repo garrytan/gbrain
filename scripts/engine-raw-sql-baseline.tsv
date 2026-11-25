@@ -172,7 +172,7 @@ src/commands/edges-backfill.ts	execute_raw	1
 src/commands/embed.ts	execute_raw	1
 src/commands/embeddings.ts	execute_raw	1
 src/commands/engine-status.ts	execute_raw	1
-src/commands/enrich.ts	execute_raw	1
+src/commands/enrich.ts	execute_raw	2	GST-3815: the reader-scope check on backlink and search evidence (pageReadsToReadersOfSql) sits beside the raw facts read it shares a predicate with; no typed engine method exists for either, and both convert together
 src/commands/eval-suspected-contradictions.ts	execute_raw	1
 src/commands/eval-whoknows.ts	execute_raw	1
 src/commands/export.ts	execute_raw	2

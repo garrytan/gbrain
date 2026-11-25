@@ -237,6 +237,23 @@ describe('#6828: auto-update while master is ahead of latest-stable', () => {
   }, 90_000);
 });
 
+describe('Rust engine addon after an automatic upgrade', () => {
+  test('a real swap on a Rust brain runs the new binary\'s addon install before the relaunch; a PGLite brain does not', async () => {
+    const rust = harness('rust-addon', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
+    const cfgPath = join(rust.home, '.gbrain', 'config.json');
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, 'utf8')), engine: 'rust', database_path: join(rust.home, '.gbrain', 'brain.rust') }));
+    const tick = await run(rust, rust.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD, FAKE_INSTALLED_VERSION: MASTER_AHEAD });
+    expect(tick.out).toContain('EXIT_CALLED 0');
+    expect(tick.calls).toContain('gbrain engine install rust --json');
+    expect(tick.audit.at(-1)).toMatchObject({ action: 'apply', outcome: 'applied' });
+
+    const pglite = harness('pglite-addon', { cache: `UPGRADE_AVAILABLE ${VERSION} ${MASTER_AHEAD}` });
+    const plain = await run(pglite, pglite.driver, { FAKE_TARGET_VERSION: MASTER_AHEAD, FAKE_INSTALLED_VERSION: MASTER_AHEAD });
+    expect(plain.out).toContain('EXIT_CALLED 0');
+    expect(plain.calls.filter((c) => c.startsWith('gbrain engine'))).toEqual([]);
+  }, 90_000);
+});
+
 describe('#6828 review replays', () => {
   const setConfig = (h: Harness, patch: Record<string, unknown>) => {
     const p = join(h.home, '.gbrain', 'config.json');
