@@ -19,10 +19,10 @@ pub fn commit_times_rise(records: &[CommitRecord]) -> Result<(), String> {
                 a.position, b.position
             ));
         }
-        if b.commit_time_us <= a.commit_time_us {
+        if b.commit_time <= a.commit_time {
             return Err(format!(
                 "commit_time {} at {:?} does not rise above {} at {:?}",
-                b.commit_time_us, b.position, a.commit_time_us, a.position
+                b.commit_time, b.position, a.commit_time, a.position
             ));
         }
     }
@@ -34,7 +34,7 @@ pub fn last_commit_time_matches(
     records: &[CommitRecord],
     last_commit_time: Option<i64>,
 ) -> Result<(), String> {
-    let newest = records.last().map(|r| r.commit_time_us);
+    let newest = records.last().map(|r| r.commit_time);
     if newest == last_commit_time {
         Ok(())
     } else {
@@ -75,16 +75,15 @@ pub fn floor_of(local_ctime: Option<i64>, last_applied: Option<&CommitRecord>) -
 }
 
 /// A synthetic record for the controls.
-pub fn record(sequence: u64, index: u32, commit_time_us: i64) -> CommitRecord {
+pub fn record(sequence: u64, index: u32, commit_time: i64) -> CommitRecord {
     CommitRecord {
-        version: 2,
         position: CommitPosition { sequence, index },
         origin: super::mu::WriteOrigin {
             host_id: "host".into(),
             incarnation: "incarnation".into(),
             writer_id: "local_cli:test".into(),
         },
-        commit_time_us,
+        commit_time,
         write_ids: Vec::new(),
         ops: Vec::new(),
     }
