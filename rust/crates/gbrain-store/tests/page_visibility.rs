@@ -325,3 +325,37 @@ fn the_open_form_hides_every_page_that_names_readers_and_reads_the_store_flag_fo
     assert!(!hidden("atoms/from-alice", &open(&[])));
     assert!(hidden("atoms/from-alice", &access_policy(&[])));
 }
+
+#[test]
+fn privacy_hidden_judges_the_live_page_by_the_privacy_part_alone() {
+    let dir = TempDir::new("visibility-privacy-hidden");
+    let store = seeded(&dir);
+    put(&store, "notes/aliased", json!({"access": "private"}));
+    put(
+        &store,
+        "notes/shown",
+        json!({"access": "private", "visibility": "world"}),
+    );
+    let hidden = |slug: &str, honor_aliases: bool| {
+        store
+            .read_page_privacy_hidden("default", slug, honor_aliases)
+            .unwrap()
+    };
+    assert_eq!(hidden("notes/private", false), Some(true));
+    assert_eq!(hidden("notes/open", true), Some(false));
+    // The readers list is the member-access part, not the privacy part.
+    assert_eq!(hidden("notes/alice", true), Some(false));
+    // A soft-deleted page and a missing one have no live row.
+    assert_eq!(hidden("notes/gone", true), None);
+    assert_eq!(hidden("notes/missing", true), None);
+    assert_eq!(
+        store
+            .read_page_privacy_hidden("other", "notes/open", true)
+            .unwrap(),
+        None
+    );
+    // `access: private` hides only while the aliases are honoured, and never against a stated visibility.
+    assert_eq!(hidden("notes/aliased", true), Some(true));
+    assert_eq!(hidden("notes/aliased", false), Some(false));
+    assert_eq!(hidden("notes/shown", true), Some(false));
+}

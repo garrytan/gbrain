@@ -503,6 +503,44 @@ pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Resu
     Ok(None)
 }
 
+/// The label guard's prior tiers of a page (trust/page-write.ts `labelGuardTier`): `before_state->>'prior_tier'` of
+/// every `lower_page` proposal targeting the page that is not `accepted` and has a higher id than the page's last
+/// accepted `lower_page` proposal whose `after_state->>'resolution'` is not `labels_applied` (0 when none), ascending by
+/// id. A missing or non-text `prior_tier` reads as `->>` does (none, or the value's JSON text).
+pub(crate) fn lower_page_prior_tiers(
+    read: &dyn KvRead,
+    page_id: i64,
+) -> Result<Vec<Option<String>>> {
+    let mut lowers = Vec::new();
+    for id in ids_naming(read, "pages", page_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.action == "lower_page" && p.target_table == "pages" && p.target_id == page_id {
+            lowers.push(p);
+        }
+    }
+    let text = |state: &Value, key: &str| {
+        state
+            .get(key)
+            .and_then(crate::cli_reads::entities::arrow_text)
+    };
+    let cutoff = lowers
+        .iter()
+        .filter(|p| {
+            p.status == "accepted"
+                && text(&p.after_state, "resolution").as_deref() != Some("labels_applied")
+        })
+        .map(|p| p.id)
+        .max()
+        .unwrap_or(0);
+    Ok(lowers
+        .iter()
+        .filter(|p| p.status != "accepted" && p.id > cutoff)
+        .map(|p| text(&p.before_state, "prior_tier"))
+        .collect())
+}
+
 /// The targets (`target_table`, `target_id`) of the visibility proposals that name fact `fact_id` as their related row,
 /// whatever their status: the `supersede_fact` and `confirm` proposals whose `before_state` has a `visibility` key
 /// (`heldRowSql`'s grant clause, `eligibility/fence-overlay.ts`). Ascending by proposal id.

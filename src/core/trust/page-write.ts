@@ -188,12 +188,7 @@ export async function labelGuardTier(engine: BrainEngine, trust: WriteTrust, pag
   const labels = page.frontmatter ?? {};
   let tier: TrustTier | null = null;
   if (labelledPrivate(labels) || normalizeReaders(labels) !== null) {
-    const [guard] = await engine.executeRaw<{ owner_set: string | null; priors: (string | null)[] | null }>(`SELECT
-      (SELECT tier FROM page_label_guards WHERE page_id = $1) AS owner_set,
-      ARRAY(SELECT before_state->>'prior_tier' FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted'
-        AND id > COALESCE((SELECT max(id) FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'
-          AND after_state->>'resolution' IS DISTINCT FROM 'labels_applied'), 0)) AS priors`,
-    [Number(page.id)]);
+    const guard = await engine.readLabelGuardTiers(Number(page.id));
     tier = maxTrust(stored === 'unknown' ? minTrust(OWNER_TIER_FLOOR, ...frontmatterTrustCaps(labels)) : stored,
       ...[guard?.owner_set ?? null, ...(guard?.priors ?? [])].filter(isTrustTier));
     if (compareTrust(trust.tier, tier) >= 0) tier = null;
