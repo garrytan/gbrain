@@ -32,6 +32,7 @@ const load_links = () => import('./ops/links.ts') as Promise<Record<string, unkn
 const load_loops = () => import('./ops/loops.ts') as Promise<Record<string, unknown>>;
 const load_memory_settings = () => import('./ops/memory-settings.ts') as Promise<Record<string, unknown>>;
 const load_notices = () => import('./ops/notices.ts') as Promise<Record<string, unknown>>;
+const load_onboarding = () => import('./ops/onboarding.ts') as Promise<Record<string, unknown>>;
 const load_orphans = () => import('./ops/orphans.ts') as Promise<Record<string, unknown>>;
 const load_page_append = () => import('./ops/page-append.ts') as Promise<Record<string, unknown>>;
 const load_page_batch = () => import('./ops/page-batch.ts') as Promise<Record<string, unknown>>;
@@ -277,4 +278,6 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "learned": [load_learned, "learnedOperations"],
   "learned_keep": [load_learned, "learnedOperations"],
   "learned_undo": [load_learned, "learnedOperations"],
+  "onboarding_status": [load_onboarding, "onboardingOperations"],
+  "onboarding_off": [load_onboarding, "onboardingOperations"],
 };

@@ -3499,6 +3499,21 @@
           },
           {
             "category": "brain",
+            "details": {
+              "delivered_sessions": 0,
+              "last_session": null,
+              "max_sessions": 3,
+              "reason": "not_new_install",
+              "state": "off",
+              "window_ends_at": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+            "name": "first_session_suggestion",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
@@ -5053,7 +5068,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No retrieval-affecting files changed in working tree.",
+            "message": "1 retrieval-affecting file(s) changed since HEAD: src/core/operations.ts. Re-run `gbrain eval run-all` after committing these changes.",
             "name": "eval_drift",
             "status": "ok"
           },
@@ -9173,6 +9188,21 @@
           },
           {
             "category": "brain",
+            "details": {
+              "delivered_sessions": 0,
+              "last_session": null,
+              "max_sessions": 3,
+              "reason": "not_new_install",
+              "state": "off",
+              "window_ends_at": null
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+            "name": "first_session_suggestion",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No memory proposals await the owner.",
             "name": "memory_proposals_pending",
@@ -10727,7 +10757,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No retrieval-affecting files changed in working tree.",
+            "message": "1 retrieval-affecting file(s) changed since HEAD: src/core/operations.ts. Re-run `gbrain eval run-all` after committing these changes.",
             "name": "eval_drift",
             "status": "ok"
           },
