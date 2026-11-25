@@ -126,6 +126,26 @@ describe('the locked write tally', () => {
     expect(recordLost(dir, 'an-epoch', 'send_shed')).toBe(true);
   });
 
+  test('an unfinished journal line is unresolved while its writer lives, and exactly one lost_unreadable once the writer is dead; the fold then moves past it', () => {
+    const dir = tmp();
+    const { tally, epoch, counts } = tallyOn(dir); saved(dir, epoch);
+    appendFileSync(lostPath(dir, process.pid), '{"epoch_id":'); // cut short, and its writer (this process) is alive
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1 });
+    expect(row5({ write_comparisons: status(dir) as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 0 }); // nothing is invented while the writer may still finish the line
+    rmSync(lostPath(dir, process.pid));
+    const dead = 99_999_999; // no such process
+    writeFileSync(lostPath(dir, dead), `{"epoch_id":"${epoch}","reason":"send_shed"}\n{"epoch_id":`);
+    expect(status(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 2 }); // the complete line and the cut-short one
+    tally.save();
+    expect(counts()).toMatchObject({ comparable: 1000, uncomparable: 2, uncomparable_by_reason: { send_shed: 1, lost_unreadable: 1 } });
+    expect(status(dir)).toMatchObject({ state: 'measured' });
+    expect(status(dir).unresolved_replays).toBeUndefined();
+    tally.save();
+    expect(counts().uncomparable).toBe(2); // the fold moved past the cut-short line: it is counted once
+  });
+
   test('a lost sample of one epoch is never added to the next epoch (the owner child takes lines for its own fixed epoch only)', () => {
     const dir = tmp();
     const first = tallyOn(dir);

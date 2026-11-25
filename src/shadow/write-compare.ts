@@ -155,16 +155,18 @@ export function recordLost(dir: string, epoch: string, reason: string): boolean 
   const path = lostPath(dir, process.pid);
   try { appendFileSync(path, JSON.stringify({ epoch_id: epoch, reason }) + '\n', { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false is the answer, never a pass: the sampler then carries the count on its next line
 }
-/** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable counts as `lost_unreadable`). */
+/** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
 function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[]; unreadable?: true }> {
   let names: string[] = [];
   try { names = readdirSync(dir).filter((n) => /^write-lost\.\d+\.jsonl$/.test(n)); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? [] : [{ name: '', end: 0, reasons: [], unreadable: true }]; } // a directory that is gone has nothing to fold; one that cannot be listed is unresolved, never empty
   return names.flatMap((name) => {
     try {
-      const buf = readFileSync(join(dir, name)); const from = applied[name] ?? 0; const end = buf.lastIndexOf(10) + 1; // a line still being appended waits for its newline
-      if (end <= from) return [];
+      const buf = readFileSync(join(dir, name)); const from = applied[name] ?? 0; const cut = buf.lastIndexOf(10) + 1;
+      const open = buf.length > Math.max(cut, from); // bytes after the last newline: a line still being appended, or one a crash cut short
+      const end = open && !running(Number(/\d+/.exec(name)![0])) ? buf.length : cut; // its writer is gone: it ends as one lost_unreadable (its offset moves past it); while the writer lives it is unresolved
+      if (end <= from && !open) return [];
       const reasons = buf.subarray(from, end).toString('utf8').split('\n').filter(Boolean).flatMap((l) => { try { const e = JSON.parse(l); return e?.epoch_id === epoch ? [String(e.reason)] : []; } catch { return ['lost_unreadable']; } });
-      return [{ name, end, reasons }];
+      return [{ name, end: Math.max(end, from), reasons, ...(open && end < buf.length ? { unreadable: true as const } : {}) }];
     } catch { return [{ name, end: 0, reasons: [], unreadable: true }]; } // a file that cannot be read stays unfolded and unresolved: status reads it as no evidence
   });
 }
@@ -212,7 +214,7 @@ export class WriteTally {
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
         for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
         const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
-        const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => !l.unreadable); // the serving processes' lost samples, taken once under the same lock
+        const lost = readLost(this.dir, epoch, file.lost_applied).filter((l) => l.end > (file.lost_applied?.[l.name] ?? 0)); // the serving processes' lost samples, taken once under the same lock
         if (!change && !dead.length && !todo.length && !lost.length) return;
         file.lost_applied ??= {};
         for (const l of lost) { for (const r of l.reasons) applyVerdict(file, 'uncomparable', r, 1); file.lost_applied[l.name] = l.end; }
