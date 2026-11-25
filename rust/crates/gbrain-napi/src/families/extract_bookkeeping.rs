@@ -51,7 +51,7 @@ impl Brain {
         })
     }
 
-    /// The stored rollup rows of days on or after `since`, in key order (no member reads them yet).
+    /// The stored rollup rows of days on or after `since`, in key order (the 7-day extract rollup readers aggregate them).
     #[napi]
     pub fn list_extract_rollup_days<'env>(
         &self,
