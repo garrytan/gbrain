@@ -363,13 +363,19 @@ export class GoogleTokenProvider {
   async forceRefresh(): Promise<string> {
     const e = await this.entry();
     let token: TokenResponse;
+    let issuingClientId = e.meta.client_id;
     if (e.client_ref === 'hosted-relay') {
       const base = relayUrl();
       if (!base) throw new CredentialError('relay_disabled');
       token = await refreshViaRelay(base, e, this.fetchImpl);
     } else {
-      const client = await this.vault.getClient(GOOGLE_PROVIDER);
-      if (!client) throw new CredentialError('not_connected', ` (no OAuth client on file)`);
+      const client = await this.vault.getClient(GOOGLE_PROVIDER, e.meta.client_id ?? null);
+      // Older/custom backends may ignore the optional selector: never send a
+      // bound refresh token to a different client even on those backends.
+      if (!client || (e.meta.client_id && client.client_id !== e.meta.client_id)) {
+        throw new CredentialError('not_connected', ` (issuing OAuth client is not on file; reconnect this account)`);
+      }
+      issuingClientId = client.client_id;
       token = await refreshAccessToken(e, client, this.fetchImpl);
     }
     const nowIso = new Date().toISOString();
@@ -380,6 +386,10 @@ export class GoogleTokenProvider {
     // (b) resurrecting a credential the user just disconnected.
     const fresh = await this.vault.get(this.credentialIdValue);
     if (!fresh) throw new CredentialError('not_connected', ` for ${this.credentialIdValue} (removed mid-refresh)`);
+    if (fresh.client_ref !== e.client_ref || fresh.secret.refresh_token !== e.secret.refresh_token
+      || (fresh.client_ref === 'byo' && fresh.meta.client_id && fresh.meta.client_id !== issuingClientId)) {
+      throw new CredentialError('not_connected', ` for ${this.credentialIdValue} (connection changed mid-refresh; retry with the current connection)`);
+    }
     const updated: CredentialEntry = {
       ...fresh,
       secret: {
@@ -389,7 +399,7 @@ export class GoogleTokenProvider {
         // Google may rotate the refresh token; persist the new one.
         ...(token.refresh_token ? { refresh_token: token.refresh_token } : {}),
       },
-      meta: { ...fresh.meta, last_refresh_ok_at: nowIso },
+      meta: { ...fresh.meta, ...(fresh.client_ref === 'byo' ? { client_id: issuingClientId } : {}), last_refresh_ok_at: nowIso },
     };
     await this.vault.put(updated);
     return token.access_token;

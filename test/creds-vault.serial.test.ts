@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { GoogleTokenProvider, type FetchImpl } from '../src/core/creds/providers/google.ts';
 
 import {
   FileVaultBackend,
@@ -168,6 +169,97 @@ describe('FileVaultBackend credentials CRUD', () => {
 });
 
 describe('FileVaultBackend provider client records', () => {
+  it('refreshes both accounts through their issuing clients after a second client is stored', async () => {
+    const vault = new FileVaultBackend();
+    const first = makeClient();
+    const second = makeClient({ client_id: '22222-second.apps.googleusercontent.com', client_secret: 'synthetic-second-secret' });
+    const a = makeEntry();
+    const b = makeEntry({ id: 'google:b@example.com', meta: { ...a.meta, account: 'b@example.com', client_id: second.client_id } });
+    await vault.putClient(first);
+    await vault.put(a);
+    // Starting another consent flow alone must not break a's refresh.
+    await vault.putClient(second);
+    await vault.put(b);
+    const calls: URLSearchParams[] = [];
+    const fetchImpl: FetchImpl = async (_url, init) => {
+      const body = new URLSearchParams(String(init?.body));
+      calls.push(body);
+      return Response.json({ access_token: `synthetic-access-${calls.length}`, refresh_token: `synthetic-rotation-${calls.length}`, expires_in: 3600 });
+    };
+    const reopened = new FileVaultBackend();
+    await new GoogleTokenProvider(reopened, a.id, fetchImpl).forceRefresh();
+    await new GoogleTokenProvider(reopened, b.id, fetchImpl).forceRefresh();
+    expect(calls.map(c => c.get('client_id'))).toEqual([first.client_id, second.client_id]);
+    expect(calls.map(c => c.get('client_secret'))).toEqual([first.client_secret, second.client_secret]);
+    expect((await reopened.get(a.id))?.secret.refresh_token).toBe('synthetic-rotation-1');
+    expect((await reopened.get(b.id))?.secret.refresh_token).toBe('synthetic-rotation-2');
+    expect((await reopened.get(a.id))?.meta.client_id).toBe(first.client_id);
+    expect(statSync(credentialsPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it('pins legacy unbound BYO entries before another client is added, but not relay entries', async () => {
+    const vault = new FileVaultBackend();
+    const first = makeClient();
+    await vault.putClient(first);
+    const legacy = makeEntry();
+    delete legacy.meta.client_id;
+    await vault.put(legacy);
+    const relay = makeEntry({ id: 'google:relay@example.com', client_ref: 'hosted-relay', meta: { ...legacy.meta } });
+    await vault.put(relay);
+    await vault.putClient(makeClient({ client_id: '22222-second.apps.googleusercontent.com' }));
+    expect((await vault.get(legacy.id))?.meta.client_id).toBe(first.client_id);
+    expect((await vault.get(relay.id))?.meta.client_id).toBeUndefined();
+  });
+
+  it('refuses a missing issuing client before any token request', async () => {
+    const vault = new FileVaultBackend();
+    await vault.putClient(makeClient({ client_id: '22222-other.apps.googleusercontent.com' }));
+    const entry = makeEntry();
+    await vault.put(entry);
+    let calls = 0;
+    const fetchImpl: FetchImpl = async () => { calls++; return Response.json({ access_token: 'synthetic-wrong', expires_in: 3600 }); };
+    await expect(new GoogleTokenProvider(vault, entry.id, fetchImpl).forceRefresh()).rejects.toMatchObject({ code: 'not_connected' });
+    expect(calls).toBe(0);
+    expect(await vault.get(entry.id)).toEqual(entry);
+  });
+
+  it('isolates client keys by provider, rotates one secret, and purges the whole provider only on explicit deleteClient', async () => {
+    const vault = new FileVaultBackend();
+    const first = makeClient();
+    const second = makeClient({ client_id: '22222-second.apps.googleusercontent.com' });
+    const other = makeClient({ provider: 'other' });
+    await vault.putClient(first);
+    await vault.putClient(second);
+    await vault.putClient(other);
+    const rotated = { ...first, client_secret: 'synthetic-rotated-secret' };
+    await vault.putClient(rotated);
+    expect(await vault.getClient('google', first.client_id)).toEqual(rotated);
+    expect(await vault.getClient('google', second.client_id)).toEqual(second);
+    expect(await vault.getClient('other', first.client_id)).toEqual(other);
+    expect(await vault.getClient('google')).toEqual(rotated);
+    expect(await vault.getClient('google', 'missing-client')).toBeNull();
+    expect(await vault.deleteClient('google')).toBe(true);
+    expect(await vault.getClient('google', first.client_id)).toBeNull();
+    expect(await vault.getClient('google', second.client_id)).toBeNull();
+    expect(await vault.getClient('other', first.client_id)).toEqual(other);
+  });
+
+  it('does not attach an old refresh response to an account reconnected with another client', async () => {
+    const vault = new FileVaultBackend();
+    await vault.putClient(makeClient());
+    const entry = makeEntry();
+    await vault.put(entry);
+    const reconnected = makeEntry({ secret: { access_token: 'synthetic-new-access', refresh_token: 'synthetic-new-refresh' },
+      meta: { ...entry.meta, client_id: '22222-second.apps.googleusercontent.com' } });
+    const fetchImpl: FetchImpl = async () => {
+      await vault.putClient(makeClient({ client_id: reconnected.meta.client_id! }));
+      await vault.put(reconnected);
+      return Response.json({ access_token: 'synthetic-obsolete-access', refresh_token: 'synthetic-obsolete-refresh', expires_in: 3600 });
+    };
+    await expect(new GoogleTokenProvider(vault, entry.id, fetchImpl).forceRefresh()).rejects.toMatchObject({ code: 'not_connected' });
+    expect(await vault.get(entry.id)).toEqual(reconnected);
+  });
+
   it('putClient/getClient/deleteClient round-trip', async () => {
     const vault = new FileVaultBackend();
     expect(await vault.getClient('google')).toBeNull();
@@ -183,11 +275,12 @@ describe('FileVaultBackend provider client records', () => {
 
   it('putClient replaces the existing record for the same provider', async () => {
     const vault = new FileVaultBackend();
-    await vault.putClient(makeClient({ client_id: '11111-old.apps.googleusercontent.com' }));
-    await vault.putClient(makeClient({ client_id: '22222-new.apps.googleusercontent.com' }));
+    await vault.putClient(makeClient({ client_secret: 'synthetic-old-secret' }));
+    await vault.putClient(makeClient({ client_secret: 'synthetic-new-secret' }));
 
     const got = await vault.getClient('google');
-    expect(got?.client_id).toBe('22222-new.apps.googleusercontent.com');
+    expect(got?.client_id).toBe(makeClient().client_id);
+    expect(got?.client_secret).toBe('synthetic-new-secret');
 
     // Exactly one google record persists on disk — no accumulation.
     const raw = JSON.parse(readFileSync(credentialsPath(), 'utf-8')) as {

@@ -85,7 +85,7 @@ export interface CredentialMeta {
   consent_publish_state?: string;
 }
 
-/** A provider's OAuth client credentials (byo). One per provider in v1. */
+/** A provider's OAuth client credentials (byo), keyed by provider + client_id. */
 export interface ProviderClientRecord {
   provider: string;
   client_id: string;
@@ -98,7 +98,8 @@ export interface CredentialVault {
   put(entry: CredentialEntry): Promise<void>;
   list(filter?: { provider?: string }): Promise<CredentialMeta[]>;
   delete(id: string): Promise<boolean>;
-  getClient(provider: string): Promise<ProviderClientRecord | null>;
+  /** Exact issuer by id; null requires a unique legacy client; undefined selects the latest connect default. */
+  getClient(provider: string, clientId?: string | null): Promise<ProviderClientRecord | null>;
   putClient(rec: ProviderClientRecord): Promise<void>;
   deleteClient(provider: string): Promise<boolean>;
 }
@@ -273,14 +274,26 @@ export class FileVaultBackend implements CredentialVault {
     });
   }
 
-  async getClient(provider: string): Promise<ProviderClientRecord | null> {
-    return this.read().clients.find((c) => c.provider === provider) ?? null;
+  async getClient(provider: string, clientId?: string | null): Promise<ProviderClientRecord | null> {
+    const clients = this.read().clients.filter((c) => c.provider === provider);
+    if (clientId === null) return clients.length === 1 ? clients[0]! : null;
+    return clients.findLast((c) => clientId === undefined || c.client_id === clientId) ?? null;
   }
 
   async putClient(rec: ProviderClientRecord): Promise<void> {
     withVaultLock(this.path, () => {
       const shape = this.read();
-      shape.clients = shape.clients.filter((c) => c.provider !== rec.provider);
+      // Pin pre-client_id credentials while the old one-client vault is still
+      // unambiguous, under the same mutation lock as the client insertion.
+      const prior = shape.clients.filter((c) => c.provider === rec.provider);
+      if (prior.length === 1) {
+        for (const entry of Object.values(shape.credentials)) {
+          if (entry.provider === rec.provider && entry.client_ref === 'byo' && !entry.meta.client_id) {
+            entry.meta.client_id = prior[0]!.client_id;
+          }
+        }
+      }
+      shape.clients = shape.clients.filter((c) => c.provider !== rec.provider || c.client_id !== rec.client_id);
       shape.clients.push(rec);
       this.write(shape);
     });
