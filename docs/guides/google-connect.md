@@ -98,7 +98,9 @@ first with `gbrain google setup --personal --account you@example.com`, then
 run `gbrain sources set-access <source-id> vault`. The source keeps its id,
 its private-senders list and its ingest tiers, and it keeps syncing Gmail
 only. The command refuses, and changes nothing, until your own connection with
-a refresh token is in place. On a managed brain it asks first; add `--yes`
+a refresh token is in place (`not_connected`, `no_refresh_token`) and its
+grant can read every service the source syncs (`scope_missing`); each refusal
+names the setup command to run. On a managed brain it asks first; add `--yes`
 once you agree. Pages already imported stay where they are. The next
 `gbrain sync --source <source-id>` picks up mail from about a day before the
 newest imported message and then follows new mail through Gmail's change
@@ -448,7 +450,11 @@ daily gets no pre-warning before Google kills Testing-mode tokens at day 7;
 publishing to Production is the real fix). Once you publish the app to
 Production, record it by re-running consent —
 `gbrain google connect --reauth <email> --consent-state production` — so the
-weekly-expiry warning stops firing. Less-common flags
+weekly-expiry warning stops firing. `gbrain google status --account <email>`
+shows only that account and the sources that read it. Each account reports its
+`client_mode` (`personal`, `byo` or `relay`) and `grant_generation`; a failed
+refresh probe makes `ok` false and exits 1, and under `--no-probe` each
+account reports `refresh_probe: unprobed`. Less-common flags
 (`--via`, `--no-browser`, `--no-probe`, `--purge-client`, and setup's
 `--history-days` / `--sync-budget-ms`): `gbrain google --help`. The `--via`
 hosted fast path (a verified OAuth client brokering consent, tokens still
