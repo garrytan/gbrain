@@ -57,7 +57,7 @@ test/engine-parity/collate-facts-home.test.ts	1	0
 test/engine-parity/collate-ontology-config.test.ts	4	1
 test/engine-parity/collate-outputs.test.ts	5	2
 test/engine-parity/collate-persistence-a.test.ts	16	7
-test/engine-parity/collate-persistence-b.test.ts	14	10
+test/engine-parity/collate-persistence-b.test.ts	15	9
 test/engine-parity/collate-referrer-ties.test.ts	3	0
 test/engine-parity/collate-repair-scans.test.ts	4	0
 test/engine-parity/collate-schema-pack-samples.test.ts	4	0
@@ -204,6 +204,7 @@ test/engine-parity/link-temporal.test.ts	22	0
 test/engine-parity/links.test.ts	38	0
 test/engine-parity/list-reads.test.ts	2	0
 test/engine-parity/loop-mutes.test.ts	5	0
+test/engine-parity/managed-on-rust.test.ts	9	0
 test/engine-parity/mcp-get-tags.test.ts	1	0
 test/engine-parity/meeting-pages.test.ts	1	0
 test/engine-parity/meetings-sync.test.ts	1	0
