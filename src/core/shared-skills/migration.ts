@@ -13,7 +13,7 @@ import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
 import { INVENTORY_LIMIT_CEILINGS, readInventoryLimits, type InventoryLimits } from './inventory-limits.ts';
 import { SHARED_SKILL_LIMITS } from './model.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
-import { isRustBrain, rustHeads, rustPack } from './rust-publication.ts';
+import { isRustBrain, isRustClient, rustHeads, rustPack } from './rust-publication.ts';
 
 export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required';
 export interface SharedMigrationStage {
@@ -174,6 +174,15 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       row.stages.push({ stage, status: row.status, reason, ...(conflictCode ? { code: conflictCode } : {}) });
       await persist();
     };
+    // A client of a Rust brain's owner cannot read the owner-only skill store. That is host action named by its code,
+    // never a conflict: a conflict ends the run partial, and partial runs count toward the wedge.
+    const ownerOnly = async (stage: SharedMigrationStage['stage']) => {
+      row.status = 'action_required';
+      row.stages.push({ stage, status: 'action_required', code: 'owner_unavailable', reason: `owner_unavailable: this run is a client of the process that owns this Rust brain (gbrain serve), `
+        + `and only the owner reads its shared-skill store, so source ${source.id}'s skill files were not checked and nothing changed. `
+        + 'Run gbrain apply-migrations with the serve stopped to check them.' });
+      await persist();
+    };
     if (sourcePolicy.mode === 'preserve_files') {
       if (sourcePolicy.unverified) row.policy_unverified = true;
       row.member_installations = await inspectSharedMemberMigration(ctx.engine, source.id, source.incarnation);
@@ -215,6 +224,11 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       if (prior?.inventory && (!row.inventory || !sameInventory(prior.inventory.hashes, row.inventory.hashes))) {
         const original = { ...prior.inventory.hashes }, current = { ...row.inventory?.hashes };
         delete original['skillpack.json']; delete current['skillpack.json'];
+        if (isRustClient(ctx.engine)) {
+          row.inventory = prior.inventory;
+          await ownerOnly('inventory');
+          continue;
+        }
         const reviewed = prior.inventory;
         // A sealed read that fails keeps the inventory taken before the edit, so a retry still compares against it.
         const sealed = { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation)

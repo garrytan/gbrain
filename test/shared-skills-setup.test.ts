@@ -185,6 +185,25 @@ describe('staged skill migration', () => {
     expect(reopened.sources[0].stages.at(-1)?.reason).toContain('skills/memory-care/SKILL.md');
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
   });
+  test('a client of a Rust brain\'s owner names the owner-only check as host action, never a conflict', async () => {
+    // A serve owns the brain, so this process is its client: the skill store is the owner's alone.
+    const root = temp(), f = fixture(root); writePack(root);
+    const packReads: unknown[] = [];
+    asRustBrain(f, async key => { packReads.push(key); return null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), 'private: true\nLocal instructions');
+    Object.assign(f.ctx.engine, { ownerRole: 'client' });
+    for (let run = 0; run < 2; run++) {
+      const client = await runSharedSkillsMigration(f.ctx);
+      expect(client.status).toBe('action_required');
+      expect(client.sources[0].stages.at(-1)).toMatchObject({ stage: 'inventory', status: 'action_required', code: 'owner_unavailable' });
+    }
+    expect(packReads).toEqual([]);
+    // Back on the owner, the edit is still compared against the inventory taken before it.
+    Object.assign(f.ctx.engine, { ownerRole: 'owner' });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
   test('the source list never parses a source config, so a malformed one stays a per-source matter', async () => {
     const root = temp(), f = fixture(root); writePack(root);
     // Listings that return config refuse, as a malformed legacy config makes them throw.
