@@ -64,3 +64,9 @@ export function fenceOpts(engine: object): { fence?: LeaseToken } {
   const fence = fenceFor(engine);
   return fence ? { fence } : {};
 }
+
+/** `opts` with the registered fence added, or `opts` itself when there is none (so an unfenced call's options are unchanged). */
+export function withFence<T extends object | undefined>(engine: object, opts: T): T | (NonNullable<T> & { fence: LeaseToken }) {
+  const fence = fenceFor(engine);
+  return fence ? { ...opts, fence } as NonNullable<T> & { fence: LeaseToken } : opts;
+}

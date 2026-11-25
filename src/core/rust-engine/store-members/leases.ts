@@ -10,14 +10,15 @@
  *
  * Expiry is judged on the clock of the process that runs the store; a caller's clock is never sent.
  */
+import type { LeaseToken } from '../../engine-sql/lease-token.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
 
 /** Who holds a lease (interface I-3). `host_id` is the machine id from host.json, never a hostname. */
 export interface WriteOrigin { host_id: string; incarnation: string; writer_id: string }
 
-/** What a holder keeps and shows on every protected write. */
-export interface LeaseToken { name: string; epoch: number; token: string }
+/** What a holder keeps and shows on every protected write (defined with the engine types, which name it in their options). */
+export type { LeaseToken };
 
 /** A stored lease, without its token. */
 export interface LeaseState {

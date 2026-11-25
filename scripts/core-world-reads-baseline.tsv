@@ -623,6 +623,7 @@ src/core/ops/files.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ops/schema-packs.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/ops/skillopt.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ops/slug-params.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (carries the spellings a read was offered to the handler, per call)
+src/core/persistence/host-fence.ts	module_collection	1	L5: per-engine state (a WeakMap keyed by the engine object: the host registration of that engine, never shared between engines)
 src/core/repair/slug-spelling.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/utils.ts	als_store	1	the one stored spelling a write on an existing page may keep (withStoredSlug): a scope per call, not a global; goes when persistence requests carry the key explicitly
 src/core/output/post-write.ts	fs_import	1	W7: filesystem boundary moves to the local app
