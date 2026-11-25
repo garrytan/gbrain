@@ -134,7 +134,9 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
       evidence: await readCompanyBrainEvidence(engine, input.sourceId) };
     await checkCompanyBrainDestination(engine, { ...input, path: source.local_path, plan: fresh }, false);
     if (opts.dryRun) return { ok: true, code: 'dry_run', receipt };
-    await engine.transaction(async tx => {
+    // The callback can run again from a fresh snapshot after a lost optimistic commit: it reads only the pre-transaction `receipt` and
+    // `profile` and returns the new ones, which are assigned once the transaction has resolved.
+    const approved = await engine.transaction(async tx => {
       await tx.executeRaw('SELECT singleton FROM persistence_brain WHERE singleton=1 FOR UPDATE');
       const [current] = await tx.executeRaw<{ config: unknown; local_path: string }>('SELECT config,local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid AND NOT archived FOR UPDATE', [input.sourceId, source.incarnation]);
       if (!current || companyBrainProfile(current.config)?.receiptId !== receipt!.id) {
@@ -147,13 +149,16 @@ async function execute(engine: BrainEngine, input: CompanyBrainDestination, opts
       const nextId = randomUUID();
       const next = await beginSourceIngestionReceipt(tx, { id: nextId, sourceId: input.sourceId, sourceIncarnation: source.incarnation,
         approvedRevision: fresh.revision!.commit, profile: 'company-brain', schemaFingerprint: fresh.schema!.resolved_digest, extractorVersion: fresh.extractor_version, policyFingerprint, fence });
-      receipt = await linkSourceIngestionCheckpoints(tx, { ...mutation(), receiptId: nextId, expectedRevision: next.revision, expectedPhase: next.phase,
+      const linked = await linkSourceIngestionCheckpoints(tx, { ...mutation(), receiptId: nextId, expectedRevision: next.revision, expectedPhase: next.phase,
         checkpoints: [{ op: 'company-brain-plan', fingerprint: nextId, kind: 'manifest' }] });
-      profile = { ...profile!, receiptId: nextId, planDigest: fresh.plan_digest, approvedRevision: fresh.revision!.commit };
+      const nextProfile = { ...profile!, receiptId: nextId, planDigest: fresh.plan_digest, approvedRevision: fresh.revision!.commit };
       await tx.executeRaw("UPDATE sources SET config=jsonb_set(config,'{company_brain}',$3::text::jsonb) WHERE id=$1 AND incarnation=$2::uuid",
-        [input.sourceId, source.incarnation, JSON.stringify(profile)]);
+        [input.sourceId, source.incarnation, JSON.stringify(nextProfile)]);
       await tx.executeRaw("INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('company-brain-plan',$1,$2::text::jsonb)", [nextId, JSON.stringify([fresh])]);
+      return { receipt: linked, profile: nextProfile };
     });
+    receipt = approved.receipt;
+    profile = approved.profile;
     plan = fresh;
   }
   if (opts.dryRun) return { ok: true, code: 'dry_run', receipt };

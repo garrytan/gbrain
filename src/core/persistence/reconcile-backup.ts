@@ -157,7 +157,9 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
   if (!lock) throw opError('writer_lock_unavailable', 'Reconciliation backup capacity is busy.',
     'Another reconciliation holds the backup lock and nothing was removed. Wait a few seconds, then run the same removal again.');
   try {
-    return await engine.transaction(async tx => {
+    // The callback only validates and reports what it found: a rerun after a lost optimistic commit (multi-user Rust) must find
+    // the backup file where the first run did, so the file is removed once the transaction has committed, still under the lock.
+    const found = await engine.transaction(async tx => {
       const [row] = await tx.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2
         AND source_id=$3 AND slug=$4 AND request_id=$5::uuid AND operation='put_page' FOR UPDATE`,
         [principal.kind, principal.id, authority.sourceId, slug, requestId]);
@@ -168,7 +170,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
         `Request ${requestId} is still pending or recovering and its backup protects the originals, so nothing was removed. Read the receipt with gbrain write-request -- ${requestId}; remove the backup only once it is terminal.`,
         { fix: receiptFix(requestId) });
       const path = join(directory, reference);
-      if (!existsSync(path)) return { removed: false, backup_reference: reference, request_id: row.request_id };
+      if (!existsSync(path)) return { removed: false as const, backup_reference: reference, request_id: row.request_id };
       privateDirectory(directory);
       const stat = lstatSync(path);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !privatePermissions(stat)) {
@@ -182,8 +184,10 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
           `Nothing was removed. The backup file for request ${requestId} does not match the request it protects; keep it, tell the user, and read the receipt with gbrain write-request -- ${requestId}.`,
           { fix: receiptFix(requestId) });
       }
-      unlinkSync(path); flushDirectory(directory);
-      return { removed: true, backup_reference: reference, request_id: row.request_id, bytes: stat.size };
+      return { removed: true as const, path, backup_reference: reference, request_id: row.request_id, bytes: stat.size };
     });
+    if (!found.removed) return found;
+    unlinkSync(found.path); flushDirectory(directory);
+    return { removed: true, backup_reference: found.backup_reference, request_id: found.request_id, bytes: found.bytes };
   } finally { await lock.release(); }
 }

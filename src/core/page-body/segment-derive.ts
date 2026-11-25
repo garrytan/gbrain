@@ -594,6 +594,9 @@ export async function runDerivationSweep(engine: BrainEngine, sourceId: string, 
     let rows: Row[] | 'paid' | null;
     try {
       rows = await engine.transaction(async tx => {
+        // Each run starts clean: a run that lost its commit (multi-user Rust) must leave no picked or parked record behind.
+        picked = null;
+        parked = null;
         await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${statementMs}ms`]);
         const [purge] = await tx.executeRaw<SweepRecord>(`SELECT request_id::text AS request_id, needles, patterns, page_ids, phase, recheck, found, cursor_page,
             cursor_pipeline, cursor_occurrence::text AS cursor_occurrence, LEAST(COALESCE(batch_rows, $4), $4) AS batch_rows
@@ -645,6 +648,7 @@ export async function runDerivationSweep(engine: BrainEngine, sourceId: string, 
       }
       try {
         rows = await engine.transaction(async tx => {
+          parked = null; // as above: a rerun starts with nothing parked
           await tx.executeRaw("SELECT set_config('statement_timeout',$1,true)", [`${statementMs}ms`]);
           await faultPoint('purge:derivation_unread', { sourceId, requestId: purge.request_id });
           // Keyset probe, not output: the ORDER BY and derivationAfterSql share one collation (see derivationAfterSql).

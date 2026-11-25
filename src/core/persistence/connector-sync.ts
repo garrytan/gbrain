@@ -1196,6 +1196,8 @@ export class ManagedConnectorSync {
             { fix: ownerStatusFix(this.sourceId, 'Shows what the canonical owner is running and what is queued behind it.') });
         }
         row = await this.engine.transaction(async tx => {
+          // The callback can run again after a lost optimistic commit: only the run that commits may leave the flag set.
+          admitted = false;
           await declarePersistenceProtocol(tx);
           if (this.binding) await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [this.binding.worktree_id]);
           await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [this.sourceId]);

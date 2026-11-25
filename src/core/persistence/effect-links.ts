@@ -108,8 +108,10 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
   if (!snapshot || snapshot.page.id !== effect.data.page_id || snapshot.revision !== effect.revision) return skip(engine, 'superseded');
   if (!await isAutoLinkEnabled(engine) || !await isRemoteAutoLinksEnabled(engine)) return skip(engine, 'disabled');
   const { targets, skipped } = await mentionTargets(engine, snapshot, sourceId);
-  const beliefs = unmanagedBeliefPoint(sourceId, [snapshot.page.slug], 'remote_auto_links');
+  // A point per run of the callback: a run that loses an optimistic commit (multi-user Rust) leaves nothing to mark, even when its rerun returns before the point runs.
+  let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
   await engine.transaction(async tx => {
+    const point = beliefs = unmanagedBeliefPoint(sourceId, [snapshot.page.slug], 'remote_auto_links');
     const live = await lockedPage(tx, effect, row, snapshot, targets, hostId);
     if (!live) return;
     if (live.revision !== snapshot.revision) { await skip(tx, 'superseded'); return; }
@@ -117,7 +119,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     const obsolete = owned.filter(link => !wanted.has(link.slug)).map(link => link.id);
     const kept = new Set(owned.map(link => link.slug));
     const additions = mentionEdges(live.page.slug, sourceId, wanted, kept);
-    const added = await beliefs.run(tx, async () => {
+    const added = await point.run(tx, async () => {
       if (obsolete.length) await tx.deleteOwnedLinks(live.page.id, REMOTE_MENTION_LINK_SOURCE, obsolete);
       return additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0;
     });
@@ -130,7 +132,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     }
     await completeEffect(tx, effect, linksOutcome(added, obsolete.length, skipped));
   });
-  await beliefs.commit(engine);
+  await beliefs?.commit(engine);
 }
 
 /**
@@ -154,8 +156,10 @@ async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffe
   const { page } = snapshot;
   const { candidates } = await extractPageLinks(page.slug, text, {}, page.type, makeResolver(engine, { mode: 'live', sourceId }), await mentionOptions(engine));
   const { targets, skipped } = mentionCandidates(candidates, page.slug, sourceId);
-  const beliefs = unmanagedBeliefPoint(sourceId, [page.slug], 'remote_auto_links');
+  // A point per run of the callback: a run that loses an optimistic commit (multi-user Rust) leaves nothing to mark, even when its rerun returns before the point runs.
+  let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
   await engine.transaction(async tx => {
+    const point = beliefs = unmanagedBeliefPoint(sourceId, [page.slug], 'remote_auto_links');
     const live = await lockedPage(tx, effect, row, snapshot, targets, hostId);
     if (!live) return;
     // Another write (on a busy log, another append) landed between the read and the page lock, which now holds writers off:
@@ -163,10 +167,10 @@ async function runAppendLinksEffect(engine: BrainEngine, effect: PersistenceEffe
     if (live.revision !== snapshot.revision && await appendedText(tx, live, range, true, audience) !== text) { await skip(tx, 'superseded'); return; }
     const { wanted, owned } = await writableTargets(tx, row, live, targets, skipped);
     const additions = mentionEdges(live.page.slug, sourceId, wanted, new Set(owned.map(link => link.slug)));
-    const added = await beliefs.run(tx, async () => additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0);
+    const added = await point.run(tx, async () => additions.length ? await tx.addLinksBatch(additions, { auditSite: 'addLinksBatch' }) : 0);
     await completeEffect(tx, effect, linksOutcome(added, 0, skipped));
   });
-  await beliefs.commit(engine);
+  await beliefs?.commit(engine);
 }
 
 /**

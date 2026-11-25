@@ -285,7 +285,6 @@ export async function insertFacts(
     // ONCE per process so the cast matches the actual column type
     // (halfvec vs vector). The probe is cached after first call.
     const castSuffix = await embeddingCast(exec, resolveCast);
-    const warnings: string[] = [];
     // v0.46 (#3014): captured inside the transaction below when
     // deleteForPageFirst runs; stays 0 for the standalone insert path.
     let deleted = 0;
@@ -294,7 +293,9 @@ export async function insertFacts(
     // v0.46 (#3014): the fence path carries struck rows — `expired_at` is
     // stamped inline here, and `superseded by #N` references are resolved
     // to `facts.superseded_by` in a second pass below (same transaction).
-    const ids = await exec.transaction(async (tx) => {
+    const { ids, warnings } = await exec.transaction(async (tx) => {
+      // Per run: a callback that runs again after a lost commit (multi-user Rust) must not repeat the warnings of the run before.
+      const warnings: string[] = [];
       // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
       // as the FIRST statement of this transaction so a failing insert
       // below rolls the delete back too. Inlined (not a deleteFactsForPage
@@ -379,7 +380,7 @@ export async function insertFacts(
         await tx.run(sqlFragment`UPDATE facts f SET superseded_by = l.superseded_by
           FROM jsonb_to_recordset(${JSON.stringify(links)}::text::jsonb) AS l(id bigint, superseded_by bigint) WHERE f.id = l.id`);
       }
-      return out;
+      return { ids: out, warnings };
     });
     return { inserted: ids.length, ids, warnings, deleted };
   }

@@ -202,7 +202,12 @@ export async function backfillEffectiveDate(
       // postgres.js refuses bare BEGIN/COMMIT on pooled connections
       // (UNSAFE_TRANSACTION); engine.transaction() routes through sql.begin()
       // which uses a reserved backend.
-      await engine.transaction(async (tx) => {
+      // The callback may run again after a lost commit (multi-user Rust): it counts and collects per run, and the
+      // counts and onChange calls of the run that committed are taken once the transaction has resolved.
+      const batch = await engine.transaction(async (tx) => {
+        const changed: PageRow[] = [];
+        let batchTouched = 0;
+        let batchFallback = 0;
         if (isPostgres) {
           await tx.executeRaw(`SET LOCAL statement_timeout = '600s'`);
         }
@@ -234,11 +239,15 @@ export async function backfillEffectiveDate(
             `UPDATE pages SET effective_date = $1::timestamptz, effective_date_source = $2 WHERE id = $3`,
             [computed.date ? computed.date.toISOString() : null, computed.source, r.id],
           );
-          touched++;
-          opts.onChange?.(r);
-          if (computed.source === 'fallback') fallback++;
+          batchTouched++;
+          changed.push(r);
+          if (computed.source === 'fallback') batchFallback++;
         }
+        return { changed, batchTouched, batchFallback };
       });
+      touched = batch.batchTouched;
+      fallback += batch.batchFallback;
+      for (const r of batch.changed) opts.onChange?.(r);
     } else {
       // Dry run: still count what WOULD change.
       for (const r of rows) {

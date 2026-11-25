@@ -1,3 +1,4 @@
+import { rmSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
@@ -8,7 +9,7 @@ import { harnessAdapter } from '../core/harness/registry.ts';
 import { assertSecureEndpoint, type HarnessCredentials } from '../core/harness/credentials.ts';
 import { isValidName, normalizeMcpUrl } from '../core/mcp-registration.ts';
 import { registerClientNameLockKey } from './agent-register.ts';
-import { recoverCredentialDelivery, retainCredentialDelivery } from '../core/harness/delivery.ts';
+import { deliveryPath, recoverCredentialDelivery, retainCredentialDelivery } from '../core/harness/delivery.ts';
 import { clientMetadata, selectClientFlow } from '../core/harness/oauth-setup.ts';
 import { registerScopedClient } from './auth.ts';
 import { InvalidClientError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -31,7 +32,12 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
   try { assertSecureEndpoint(normalized.url); } catch { throw new GrantError('invalid_grant', 'Use HTTPS or loopback HTTP without credentials or fragments'); }
   if (input.profile !== undefined && !GRANT_PROFILES.includes(input.profile)) throw new GrantError('invalid_grant', 'Unknown grant profile');
   if (input.sharedSkills !== undefined && !['follow', 'memory-only'].includes(input.sharedSkills)) throw new GrantError('invalid_grant', 'Shared skills must be follow or memory-only');
+  // The private handoff stays written BEFORE the commit (a crash after the commit must not lose the only copy of the secret), so a
+  // callback that runs again after a lost optimistic commit (multi-user Rust) first removes the handoff of the run that was
+  // rolled back: its client does not exist, and the rerun registers another one.
+  let retained: string | undefined;
   return engine.transaction(async tx => {
+    if (retained !== undefined) { rmSync(deliveryPath(retained), { force: true }); retained = undefined; }
     const sql = sqlQueryForEngine(tx);
     await tx.lockOauthClientName(registerClientNameLockKey(input.name));
     if (input.clientId) await tx.readOauthClientForUpdate(input.clientId);
@@ -125,6 +131,7 @@ export async function provisionHarnessGrant(engine: BrainEngine, input: Provisio
     // Failure here rolls back client + token + audit. A commit failure can leave
     // an orphaned private journal, but resume first requires the live client.
     retainCredentialDelivery(credentials);
+    retained = credentials.client_id;
     return { grant: await readClientGrant(tx, registered.clientId), before: null, dry_run: false, credentials, credential_action: 'save_private_handoff' };
   });
 }
