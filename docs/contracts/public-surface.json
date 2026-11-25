@@ -2377,6 +2377,7 @@
     "search.track_retrieval",
     "search.unified_multimodal",
     "search.unified_multimodal_only",
+    "search.vector_exact_max_chunks",
     "search.vector_legacy_guard",
     "search_embedding_column",
     "secrets.on_push",

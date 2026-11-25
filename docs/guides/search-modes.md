@@ -206,6 +206,27 @@ Several of the knobs deserve a sentence:
   are re-sorted either way. `gbrain config set search.hnsw_iterative_scan
   strict_order` restores the older mode (restart serve and autopilot: it is
   read once per engine, so once per process on a one-brain server); another value is refused with exit 2.
+- **`vector_exact_max_chunks`** (Postgres only; config key
+  `search.vector_exact_max_chunks`, whole number of chunks, default `0` =
+  off; for example `gbrain config set search.vector_exact_max_chunks 150000`)
+  trades vector-search speed for exact results. On a large brain the HNSW
+  index misses some of the truly nearest chunks: at 50,000 pages, gbrain's
+  default index search kept about 68% of an exact scan's nDCG@5 (35.0 against
+  51.3 over 548 probes, mean of 3 index builds), and raising `ef_search` to
+  its 1000 ceiling won back under 2 points. With this setting above 0, a
+  hybrid search (`query`, `search` and the operations built on them) on a
+  brain with at most that many `content_chunks` rows (planner statistics)
+  scans every eligible chunk first, then ranks them exactly as the index path
+  does. The cost is latency: the exact scan alone measured about 570 ms p50
+  at 150,000 chunks and 1.1 s at 300,000 (8 vCPU, 1536-dim vectors), against
+  under 10 ms for the index, and the bench's whole `query` call went from
+  about 102 ms to 257 ms p50 at 50,000 pages. The scan has a 2 s budget; when
+  it runs out, or the chunk count is unknown (the table was never analyzed)
+  or larger than the setting, search takes the index path as before. Direct
+  vector callers (image search, by-image) always use the index. It is read on
+  every search, so no restart is needed; another value is refused with exit 2.
+  **Say to your agent:** *"Make vector search on my Postgres brain exact, even
+  if it is slower"* or *"Turn off exact vector search."*
 
 ### Setting and resolving the mode
 

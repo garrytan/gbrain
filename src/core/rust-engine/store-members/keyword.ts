@@ -50,7 +50,7 @@ export const findByTitleFuzzy: StoreMember<[name: string, dirPrefix?: string, mi
 
 /** Options no keyword statement reads: hybrid-search, vector and reporting knobs. */
 const NOT_READ = new Set([
-  'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
+  'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'vectorExactMaxChunks', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
   'autocut', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'embeddingColumn',
   'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget', 'takesHoldersAllowList', 'useCache',
   'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals', 'relationalRetrieval',

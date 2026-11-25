@@ -123,6 +123,14 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   The content-freshness check runs after the HNSW candidate scan on indexed
   columns (the planner cannot estimate it and would drop the index); doctor
   `vector_plan` warns when the emitted statement still misses the index.
+- **Exact-first vector scan (opt-in, Postgres)** — with
+  `search.vector_exact_max_chunks` above 0 and the brain's `content_chunks`
+  count (`pg_class.reltuples`) at or below it, hybrid search's vector arm
+  first runs the statement's `exactSql` (every filter inside the candidate
+  CTE, ordered by `distance + 0`) bound at the normal candidate window, then
+  the same source boost and per-page max-pool. A window whose pages fall
+  short widens x4 up to twice; a timeout (2 s budget) or an unknown count
+  falls back to the HNSW path above (`search/vector-exact.ts`).
 - **Title-phrase boost** — when the normalized query is a contiguous token-run
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
@@ -229,7 +237,8 @@ expansion (query: the mode's default, off in all three; --expand forces,
        │
        ▼
 hybrid recall + fusion:
-   ├── vector  (HNSW on chunk embeddings, per-page max-pool)
+   ├── vector  (HNSW on chunk embeddings, or an exact scan first under
+   │      search.vector_exact_max_chunks on Postgres; per-page max-pool)
    ├── keyword (BM25 via tsvector; text indexed through gbrain_fts_input)
    ├── title-phrase arm
    ├── relational (typed-edge recall arm — relational queries only; 2-3

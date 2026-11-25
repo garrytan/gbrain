@@ -271,6 +271,8 @@ export interface GBrainConfig {
     vector_legacy_guard?: boolean;
     /** #6132 pgvector iterative scan mode (search/hnsw-iterative-scan.ts); file > DB, env wins over both. */
     hnsw_iterative_scan?: string;
+    /** Postgres exact vector scan ceiling in chunks, 0 = off (search/vector-exact.ts); file > DB. */
+    vector_exact_max_chunks?: number;
     /** #5989 CJK keyword arm deadline in ms (search/cjk-keyword-deadline.ts); file > DB. */
     cjk_keyword_deadline_ms?: number;
     /** #6495 Postgres keyword/title statement_timeout in ms (postgres-engine/keyword-statement-timeout.ts); file > DB, resolved per connection. */
@@ -858,6 +860,8 @@ async function mergeSearchScanKnobs(
   if (mergedSearch.vector_legacy_guard === undefined && dbVectorLegacyGuard !== undefined) mergedSearch.vector_legacy_guard = dbVectorLegacyGuard;
   const dbHnswIterativeScan = await dbStr('search.hnsw_iterative_scan');
   if (mergedSearch.hnsw_iterative_scan === undefined && dbHnswIterativeScan !== undefined) mergedSearch.hnsw_iterative_scan = dbHnswIterativeScan;
+  const dbVectorExact = Number(await dbStr('search.vector_exact_max_chunks'));
+  if (mergedSearch.vector_exact_max_chunks === undefined && Number.isSafeInteger(dbVectorExact) && dbVectorExact >= 0) mergedSearch.vector_exact_max_chunks = dbVectorExact;
   const dbCjkDeadline = Number(await dbStr('search.cjk_keyword_deadline_ms'));
   if (mergedSearch.cjk_keyword_deadline_ms === undefined && Number.isFinite(dbCjkDeadline) && dbCjkDeadline > 0) mergedSearch.cjk_keyword_deadline_ms = dbCjkDeadline;
   const dbKeywordTimeout = Number(await dbStr('search.keyword_statement_timeout_ms'));
@@ -1405,6 +1409,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #5824 one-release rollback, latched per engine (search/vector-legacy-guard.ts).
   'search.vector_legacy_guard',
   'search.hnsw_iterative_scan',
+  'search.vector_exact_max_chunks', // Postgres exact vector scan ceiling in chunks, 0 = off (search/vector-exact.ts)
   'search.cjk_keyword_deadline_ms',
   'search.keyword_statement_timeout_ms',
   'search.keyword_timeout_negative_cache_seconds', // #6495: the longest skip in seconds, default 600, 0 = off; #7082: a serve's background re-run ends it sooner (postgres-engine/keyword-timeout-cache.ts)

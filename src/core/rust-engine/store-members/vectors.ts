@@ -28,12 +28,12 @@ const VECTOR_FILTERS = [
 
 /**
  * Keys the vector statement never reads, or reads only to steer its HNSW candidate pool (`vectorLegacyGuard`,
- * `hnswIterativeScan`, `onVectorPoolMeta`), which an exact scan does not have. A date bound's `*Inclusive` flag does
+ * `hnswIterativeScan`, `vectorExactMaxChunks`, `onVectorPoolMeta`), which an exact scan does not have. A date bound's `*Inclusive` flag does
  * nothing without the bound. `where`, `afterDate`, `beforeDate`, `minTrust` and `suppressFlagged` are absent: the store
  * applies none of them, so a set one refuses. `excludePrivate` is served as the page policy (private-provenance.ts).
  */
 const VECTOR_IGNORED = [
-  'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
+  'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'vectorExactMaxChunks', 'cjkKeyword', 'onKeywordIncomplete', 'adaptiveReturn',
   'autocut', 'nearSymbol', 'walkDepth', 'orFallback', 'orFill', 'keywordTimeoutCache', 'rankQuery', 'keywordPhrase',
   'afterDateInclusive', 'beforeDateInclusive', 'recencyBoost', 'salience', 'recency', 'since', 'until', 'tokenBudget',
   'useCache', 'intentWeighting', 'reranker', 'floorRatio', 'crossModal', 'graph_signals', 'relationalRetrieval',

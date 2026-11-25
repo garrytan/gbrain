@@ -37,6 +37,7 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.adaptive_return_min_keep',
   'search.vector_legacy_guard',              // search/vector-legacy-guard.ts via loadConfigWithEngine
   'search.hnsw_iterative_scan',              // search/hnsw-iterative-scan.ts via loadConfigWithEngine
+  'search.vector_exact_max_chunks',          // search/vector-exact.ts via loadConfigWithEngine
   'search.cjk_keyword_deadline_ms',          // search/cjk-keyword-deadline.ts via loadConfigWithEngine
   'search.keyword_statement_timeout_ms',     // postgres-engine/keyword-statement-timeout.ts (engine.getConfig once per connection) + loadConfigWithEngine
   'search.keyword_timeout_negative_cache_seconds', // postgres-engine/keyword-timeout-cache.ts (read on the first keyword timeout)

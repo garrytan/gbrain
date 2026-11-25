@@ -26,6 +26,7 @@ import { resolveBoostMap, resolveHardExcludes } from '../source-boost.ts';
 import { resolveEmbeddingColumn } from '../embedding-column.ts';
 import { resolveVectorLegacyGuard } from '../vector-legacy-guard.ts';
 import { resolveHnswIterativeScan } from '../hnsw-iterative-scan.ts';
+import { readVectorExactMaxChunks } from '../vector-exact.ts';
 import { resolveCjkKeywordDeadlineMs } from '../cjk-keyword-deadline.ts';
 import { resolveSearchDateBounds } from '../date-bounds.ts';
 import { type DecideSearchContext, decideMetaFor, resolveAndLaunchDecide } from '../decide-stage.ts';
@@ -296,6 +297,8 @@ export async function resolveHybridRequest(
     // #5824 rollback switch, latched once per process from env/config.
     vectorLegacyGuard: resolveVectorLegacyGuard(engine, cfgForColumn),
     hnswIterativeScan: resolveHnswIterativeScan(engine, cfgForColumn),
+    // Exact vector scan ceiling (Postgres only; 0 = off), read from env/config per search.
+    vectorExactMaxChunks: readVectorExactMaxChunks(cfgForColumn).maxChunks,
     // #5989: bound the CJK keyword arm by one deadline; its outcome and wall time ride the meta.
     cjkKeyword: {
       deadlineMs: resolveCjkKeywordDeadlineMs(cfgForColumn),
