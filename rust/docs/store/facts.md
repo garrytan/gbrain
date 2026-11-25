@@ -212,7 +212,7 @@ the stored `model` and `run_id` (a first write stores the given ones). The row h
 key, as in Postgres: deleting a fact or its page leaves the attempt in place, and the source
 check is the caller's. `listFactRelinkOutcomes` answers in fact-id order. The doctor's unlinked
 reads use the attempts as memos: a row is tried when its attempt is `conversation_unresolved`,
-unless a page created in the source after the attempt re-arms a NULL or re-armed reason
+unless a page created in the source at or after the attempt (in its clock tick too) re-arms a NULL or re-armed reason
 (`REARMED_REASONS` in `facts/conversation-memo.ts`, passed in by the TypeScript member); it is
 paid when a `paid_reextract` attempt for its page has the page's current `content_hash` as its
 reason. `countFactRelinkOutcomes` counts `no_subject` rows and the `linked` rows of the last 7
@@ -237,7 +237,7 @@ leave active that a withdrawal of its claim reaches on the new entity is saved e
 the source's rows in one snapshot and counts, per `source_markdown_slug`, the live rows written by
 a conversation extractor (not an audit row), user or unattributed, with no entity (or, with
 `unbacked`, on an unbacked name key). With `skipTried` it leaves out a row whose attempt is a
-`conversation_unresolved` miss, unless a newer live page re-armed the reason (`rearmedReasons`,
+`conversation_unresolved` miss, unless a live page created at or after the attempt re-armed the reason (`rearmedReasons`,
 passed from `REARMED_REASONS` of facts/conversation-memo.ts). Pages sort by count, most first,
 then by slug in byte order (COLLATE "C"), and the list stops at `limit`.
 

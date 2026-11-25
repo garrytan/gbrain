@@ -24,15 +24,20 @@ import { CONVERSATION_UNRESOLVED, RELINK_REASONS } from './relink-reasons.ts';
 
 export const PAID_REEXTRACT = 'paid_reextract';
 
-/** The miss reasons a page created after the attempt re-arms: every `RELINK_REASONS` entry that is not memoized. */
+/** The miss reasons a page created at or after the attempt re-arms: every `RELINK_REASONS` entry that is not memoized. */
 export const REARMED_REASONS: string[] = Object.entries(RELINK_REASONS).filter(([, r]) => !r.memoized).map(([code]) => code);
 
 const REARMED = REARMED_REASONS.map(code => `'${code}'`).join(', ');
 
-/** SQL (fact alias `f`): the free relink already tried this row, and no page created since has re-armed an unmemoized miss. */
+/**
+ * SQL (fact alias `f`): the free relink already tried this row, and no page created since has re-armed an unmemoized miss.
+ * A page stamped in the attempt's own clock tick counts as created since (`>=`): PGLite's clock moves in whole
+ * milliseconds, so a strict `>` left a miss memoized for good when the page landed in that millisecond. At worst the
+ * relink tries the row once more.
+ */
 export const conversationTriedSql = `EXISTS (SELECT 1 FROM fact_relink_attempts a WHERE a.source_id = f.source_id AND a.fact_id = f.id
   AND a.outcome = '${CONVERSATION_UNRESOLVED}'
-  AND NOT (a.reason IN (${REARMED}) AND EXISTS (SELECT 1 FROM pages np WHERE np.source_id = f.source_id AND np.deleted_at IS NULL AND np.created_at > a.attempted_at)))`;
+  AND NOT (a.reason IN (${REARMED}) AND EXISTS (SELECT 1 FROM pages np WHERE np.source_id = f.source_id AND np.deleted_at IS NULL AND np.created_at >= a.attempted_at)))`;
 
 /** SQL (fact alias `f`): an extraction of this row's page completed on the page's current content. */
 export const conversationPaidSql = `EXISTS (SELECT 1 FROM fact_relink_attempts pa JOIN pages pp ON pp.source_id = pa.source_id AND pp.slug = pa.target_slug AND pp.deleted_at IS NULL
