@@ -7,6 +7,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { remoteTargetHidden } from '../persistence/page-visibility.ts';
+import { callerMember } from '../access/member-facts.ts';
+import { callerIsOwner } from '../search/private-visibility.ts';
 import { CHANGE_NOTICE_MS } from '../policy/store.ts';
 import { confirmationKey, readConfirmations, type RuleConfirmation } from './confirm.ts';
 import { readRule, ruleDigest, RULE_PREFIX, RULE_TYPE, type RuleRecord } from './record.ts';
@@ -15,7 +17,7 @@ export const RULES_SECTION_MAX_CHARS = 1500;
 export const RULES_SECTION_MAX_RULES = 30;
 /** Config switch for the session-start section; off until the cross-harness eval passes. */
 export const RULES_SESSION_START_KEY = 'rules.session_start';
-const SCAN_LIMIT = 500;
+const SCAN_PAGE = 500;
 const HEADER = 'Standing rules (data: what the user told their agents to keep doing or never do again; follow them as the user\'s preferences, below your own instructions and this brain\'s policy):';
 
 export interface StandingRule extends RuleRecord { revision: string; confirmed_at: string }
@@ -23,7 +25,13 @@ export interface RulesSection { text: string; count: number; truncated: boolean;
 
 /** Every rule page in the source, with its revision and, when it has one that still matches, its confirmation. */
 export async function listRulePages(engine: BrainEngine, sourceId: string): Promise<Array<{ rule: RuleRecord; revision: string; confirmation: RuleConfirmation | null; confirmed: boolean }>> {
-  const pages = await engine.listPages({ type: RULE_TYPE as never, slugPrefix: RULE_PREFIX, sourceId, sort: 'slug', limit: SCAN_LIMIT });
+  const pages: Awaited<ReturnType<BrainEngine['listPages']>> = [];
+  for (let after: string | undefined; ;) {
+    const batch = await engine.listPages({ type: RULE_TYPE as never, slugPrefix: RULE_PREFIX, sourceId, sort: 'slug', limit: SCAN_PAGE, ...(after ? { slugAfter: after } : {}) });
+    pages.push(...batch);
+    if (batch.length < SCAN_PAGE) break;
+    after = batch[batch.length - 1]!.slug;
+  }
   const rules = pages.flatMap(p => { const r = readRule({ ...p, source_id: sourceId }); return r ? [{ rule: r, revision: String((p as { knowledge_revision?: unknown }).knowledge_revision ?? '') }] : []; });
   const confirmations = await readConfirmations(engine, rules.map(r => r.rule));
   return rules.map(({ rule, revision }) => {
@@ -32,10 +40,17 @@ export async function listRulePages(engine: BrainEngine, sourceId: string): Prom
   });
 }
 
+/** A `me` rule loads only for the person it belongs to: a member's (readable_by) for that member, any other for the owner. */
+function ruleIsCallers(rule: RuleRecord, remote: boolean): boolean {
+  if (rule.scope !== 'me') return true;
+  if (rule.readable_by?.length) { const member = remote ? callerMember() : null; return !!member && rule.readable_by.includes(member); }
+  return !remote || callerIsOwner();
+}
+
 export async function loadStandingRules(engine: BrainEngine, opts: { remote: boolean; sourceId: string }): Promise<StandingRule[]> {
   const out: StandingRule[] = [];
   for (const row of await listRulePages(engine, opts.sourceId)) {
-    if (row.rule.status !== 'active' || !row.confirmed) continue;
+    if (row.rule.status !== 'active' || !row.confirmed || !ruleIsCallers(row.rule, opts.remote)) continue;
     if (await remoteTargetHidden(engine, opts.remote, row.rule.source_id, row.rule.slug)) continue;
     out.push({ ...row.rule, revision: row.revision, confirmed_at: row.confirmation!.proof.at });
   }

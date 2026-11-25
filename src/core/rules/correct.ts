@@ -26,7 +26,7 @@ import { callerMember } from '../access/member-facts.ts';
 import { detectInstructionLike } from '../write-gate.ts';
 import { confirmOnTerminal, confirmRequiredError, terminalAuthorityProblem, type OwnerProof, type TerminalProbe } from '../policy/authority.ts';
 import { withRuleWriter } from './admission.ts';
-import { readConfirmations, saveConfirmation } from './confirm.ts';
+import { approvalDigest, readConfirmations, saveConfirmation, type ApprovedFact } from './confirm.ts';
 import { parseChecks, readRule, renderRulePage, ruleDigest, ruleIdOf, ruleName, ruleSlugOf, RULE_PREFIX, RULE_SCOPES, RULE_TEXT_MAX, type RuleCheck, type RuleScope, type RuleStatus } from './record.ts';
 
 export const RECEIPT_PREFIX = 'correct.receipt.';
@@ -81,6 +81,9 @@ function receiptNotFound(id: string): OperationError {
 }
 
 const principalKey = (p: { kind: string; id: string }) => `${p.kind}:${p.id}`;
+
+const approvedFact = (f: CorrectReceipt['fact']): ApprovedFact | null => f.action === 'none' || !f.id ? null : { action: f.action, id: f.id, text: f.text };
+const factLine = (f: ApprovedFact) => `Fact ${f.id}: ${f.action === 'replace' ? `replaced by "${f.text}"` : 'withdrawn'}`;
 
 /** Owner, member or other; the client label names who saved it ("saved by <client> on <date>"). */
 function authorOf(ctx: OperationContext): CorrectReceipt['author'] {
@@ -217,8 +220,9 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
   r.state = 'committed'; r.step = null; delete r.error;
   if (proof && !r.confirmed) {
     const stored = readRule({ ...(await engine.getPage(r.rule.slug, { sourceId: r.source_id }))!, source_id: r.source_id });
-    if (stored && stored.status === 'active' && ruleDigest(stored) === proof.digest) {
-      await saveConfirmation(engine, { source_id: r.source_id, slug: r.rule.slug, revision: r.steps.activate!.revision!, digest: proof.digest, proof });
+    const fact = approvedFact(r.fact);
+    if (stored && stored.status === 'active' && approvalDigest(ruleDigest(stored), fact) === proof.digest) {
+      await saveConfirmation(engine, { source_id: r.source_id, slug: r.rule.slug, revision: r.steps.activate!.revision!, digest: ruleDigest(stored), ...(fact ? { fact } : {}), proof });
       r.confirmed = true;
     }
   }
@@ -226,8 +230,8 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
   return r;
 }
 
-async function chooseSlug(engine: BrainEngine, sourceId: string, scope: RuleScope, text: string, receiptId: string): Promise<string> {
-  const slug = `${RULE_PREFIX}${scope}/${ruleName(text)}`;
+async function chooseSlug(engine: BrainEngine, sourceId: string, scope: RuleScope, text: string, receiptId: string, salt: string): Promise<string> {
+  const slug = `${RULE_PREFIX}${scope}/${ruleName(text, salt)}`;
   const snap = await engine.readPageSnapshot(slug, { sourceId });
   if (!snap || snap.page.deleted_at) return slug;
   const existing = readRule({ ...snap.page, source_id: sourceId });
@@ -240,6 +244,8 @@ async function chooseSlug(engine: BrainEngine, sourceId: string, scope: RuleScop
 }
 
 export interface CorrectOptions { probe?: TerminalProbe }
+
+const intentOf = (i: CorrectInput) => digestOf([i.rule, i.scope, i.fact_id, i.corrected_fact, i.entity, i.checks, i.source_id]);
 
 export async function runCorrect(ctx: OperationContext, p: Record<string, unknown>, opts: CorrectOptions = {}): Promise<Record<string, unknown>> {
   const remote = ctx.remote !== false;
@@ -254,18 +260,20 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
       'Tell the user what should be corrected; the brain\'s owner saves the rule.', { detail: codeOf(e) });
   }
   const key = principalKey(principal);
-  const receiptId = `cr-${input.request_id ? digestOf([key, input.request_id]).slice(0, 16) : randomBytes(8).toString('hex')}`;
+  let receiptId = `cr-${digestOf([key, input.request_id ?? intentOf(input)]).slice(0, 16)}`;
   const author = authorOf(ctx);
-  const intent = digestOf([input.rule, input.scope, input.fact_id, input.corrected_fact, input.entity, input.checks, input.source_id]);
-  const prior = await readReceipt(ctx.engine, receiptId);
+  const intent = intentOf(input);
+  let prior = await readReceipt(ctx.engine, receiptId);
+  if (prior && !input.request_id && prior.state === 'committed') { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }
   if (prior) {
     if (prior.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
     return receiptView(await advance(ctx, prior, author.owner, null), remote);
   }
-  const slug = await chooseSlug(ctx.engine, input.source_id, input.scope, input.rule, receiptId);
+  const slug = await chooseSlug(ctx.engine, input.source_id, input.scope, input.rule, receiptId, input.scope === 'me' && !author.owner ? (author.member ?? key) : '');
+  const fact: ApprovedFact | null = input.fact_id ? { action: input.corrected_fact ? 'replace' : 'withdraw', id: input.fact_id, text: input.corrected_fact } : null;
   const proof = !remote && !terminalAuthorityProblem(opts.probe)
-    ? await confirmOnTerminal({ argv: ['gbrain', 'correct'], subject: 'standing rule', digest: ruleDigest({ slug, scope: input.scope, text: input.rule, corrects: input.corrects, checks: input.checks }), probe: opts.probe,
-      summary: [`Standing rule (${input.scope}): ${input.rule}`, ...(input.fact_id ? [`Fact ${input.fact_id}: ${input.corrected_fact ? `replaced by "${input.corrected_fact}"` : 'withdrawn'}`] : [])] })
+    ? await confirmOnTerminal({ argv: ['gbrain', 'correct'], subject: 'standing rule', digest: approvalDigest(ruleDigest({ slug, scope: input.scope, text: input.rule, corrects: input.corrects, checks: input.checks }), fact), probe: opts.probe,
+      summary: [`Standing rule (${input.scope}): ${input.rule}`, ...(fact ? [factLine(fact)] : [])] })
     : null;
   const day = new Date().toISOString().slice(0, 10);
   const member = author.member;
@@ -331,15 +339,20 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
   if (!rule) throw opError('rule_transition', `${slug} is not a well-formed standing rule (type rule with scope, status and rule), so nothing was approved.`, `Run gbrain rules show ${ruleIdOf(slug)}.`);
   if (rule.status === 'retired') throw opError('rule_transition', `Rule ${rule.id} is retired; a retired rule is never revived, so nothing was approved.`, 'Save a new rule with gbrain correct.');
   const digest = ruleDigest(rule);
+  const stored = rule.status === 'proposed' && rule.receipt ? await readReceipt(engine, rule.receipt) : null;
+  const receipt = stored && stored.rule.slug === slug ? stored : null;
+  const fact = receipt ? approvedFact(receipt.fact) : null;
   const argv = ['gbrain', 'rules', 'approve', `${rule.id}@${revision}`];
-  const proof = opts.proof ? opts.proof(digest) : await confirmOnTerminal({ argv, digest, probe: opts.probe, subject: 'standing rule',
-    summary: [`Rule ${rule.id} (${rule.scope}, ${rule.status}): ${rule.text}`, `Saved: ${rule.attribution || 'outside gbrain correct'}`] });
-  if (proof.digest !== digest) throw confirmRequiredError(argv, { reason: 'declined' });
+  const bound = approvalDigest(digest, fact);
+  const proof = opts.proof ? opts.proof(bound) : await confirmOnTerminal({ argv, digest: bound, probe: opts.probe, subject: 'standing rule',
+    summary: [`Rule ${rule.id} (${rule.scope}, ${rule.status}): ${rule.text}`, `Saved: ${rule.attribution || 'outside gbrain correct'}`,
+      `Applies to: ${rule.scope === 'team' ? 'every agent in this brain' : rule.readable_by?.length ? `the agents of member ${rule.readable_by.join(', ')}` : 'your own agents'}`,
+      ...(fact ? [`Approving also changes a fact. ${factLine(fact)}`] : [])] });
+  if (proof.digest !== bound) throw confirmRequiredError(argv, { reason: 'declined' });
   const ctx = localRulesCtx(engine, sourceId);
   let finalRevision = revision;
   if (rule.status === 'proposed') {
-    const receipt = rule.receipt ? await readReceipt(engine, rule.receipt) : null;
-    if (receipt && receipt.rule.slug === slug) {
+    if (receipt) {
       const done = await advance(ctx, receipt, true, proof);
       if (done.state !== 'committed') return { approved: false, rule_id: rule.id, receipt: receiptView(done, false) };
       return { approved: true, rule_id: rule.id, revision: done.steps.activate?.revision ?? null, confirmed: done.confirmed, receipt: receiptView(done, false) };
@@ -366,5 +379,11 @@ export async function retireRule(engine: BrainEngine, id: string, opts: { source
   const page = renderRulePage({ scope: rule.scope, status: 'retired', text: rule.text, corrects: rule.corrects, attribution: rule.attribution, receipt: rule.receipt ?? '', checks: rule.checks,
     ...(fm.visibility === 'private' ? { visibility: 'private' as const } : {}), ...(rule.readable_by ? { readable_by: rule.readable_by } : {}) });
   await withRuleWriter(() => submitPageMutation(localRulesCtx(engine, sourceId), { operation: 'put_page', params: { slug, source_id: sourceId, content: page, expected_revision: String(snap!.revision) } }));
+  const receipt = rule.receipt ? await readReceipt(engine, rule.receipt) : null;
+  if (receipt && receipt.rule.slug === slug && receipt.state !== 'committed') {
+    receipt.state = 'conflicted';
+    receipt.error = { code: 'rule_transition', message: 'The owner retired this rule before it was finished, so its fact was left unchanged and nothing more is written.' };
+    await saveReceipt(engine, receipt);
+  }
   return { retired: true, rule_id: rule.id };
 }

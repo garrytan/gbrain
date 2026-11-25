@@ -61,7 +61,9 @@ a remote connection cannot clear the problem itself).
   and reads as "you told your agent this". It joins the standing-rules section only after you approve that exact
   revision: `gbrain rules approve <id>@<revision>`. The receipt's `next` names the command.
 - **Another member's agent**: the rule stays proposed and the fact unchanged until you approve it. Approving finishes
-  the correction: the fact is fixed, then the rule is made active.
+  the correction: the fact is fixed, then the rule is made active. The approve prompt shows the fact change and whose
+  agents the rule applies to, and the code you type covers both. A member's `me` rule loads only for that member's
+  agents, never for yours.
 - **Guests** cannot correct anything (`correct_guest_refused`).
 - Text a tool returned, or something an agent inferred, is refused (`correct_origin_refused`). So is a rule that reads
   like an instruction to override an agent, send data out or handle credentials (`correct_instruction_refused`).

@@ -237,3 +237,78 @@ describe('rules section and check', () => {
     expect(fail.results[0]!.problems.join(' ')).toContain('April');
   });
 });
+
+describe('review fixes: approval binds the fact, me rules stay their owner\'s, retries replay', () => {
+  test('approving a member\'s proposal shows and binds its fact change', async () => {
+    const wrong = await seedFact('Alice Example sits on floor two.');
+    const r = await remote(MEMBER, 'correct', { rule: 'Alice Example sits on floor five.', fact_id: wrong, corrected_fact: 'Alice Example sits on floor five.', scope: 'team', entity: 'people/alice-example' });
+    expect(r.json.state).toBe('proposed');
+    const written: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (s: string) => { written.push(String(s)); return true; };
+    let ok: any;
+    try { ok = await approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() }); } finally { (process.stderr as any).write = orig; }
+    expect(ok).toMatchObject({ approved: true, confirmed: true });
+    const shown = written.join('');
+    expect(shown).toContain(`Approving also changes a fact. Fact ${wrong}: replaced by "Alice Example sits on floor five."`);
+    expect(shown).toContain('Applies to: every agent in this brain');
+    const [row] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [`rules.confirmed.default:rules/${r.json.rule_id}`]);
+    const c = JSON.parse(row!.value);
+    expect(c.fact).toEqual({ action: 'replace', id: wrong, text: 'Alice Example sits on floor five.' });
+    expect(c.proof.digest).not.toBe(c.digest);
+    expect((await rulesSectionFor(engine, { remote: false, sourceId: 'default' }))!.text).toContain('floor five');
+  });
+
+  test('a member\'s approved me rule loads for that member only, and the same words get the owner a separate page', async () => {
+    const text = 'Reply to alice-example in short bullet lists.';
+    const m = await remote(MEMBER, 'correct', { rule: text });
+    expect(m.json.state).toBe('proposed');
+    const again = await remote(MEMBER, 'correct', { rule: text });
+    expect(again.json.receipt_id).toBe(m.json.receipt_id);
+    expect(again.json.rule_id).toBe(m.json.rule_id);
+    expect(await approveRule(engine, `${m.json.rule_id}@${m.json.revision}`, { probe: ownerTty() })).toMatchObject({ approved: true });
+    expect((await remote(MEMBER, 'context_pack', { include_rules: true })).json.rules.text).toContain(text);
+    expect((await rulesSectionFor(engine, { remote: false, sourceId: 'default' }))!.text).not.toContain(text);
+    expect((await remote(OWNER, 'context_pack', { include_rules: true })).json.rules?.text ?? '').not.toContain(text);
+    const o = await runCorrect(localRulesCtx(engine), { rule: text }, { probe: ownerTty() }) as any;
+    expect(o.state).toBe('committed');
+    expect(o.rule_id).not.toBe(m.json.rule_id);
+    expect((await rulesSectionFor(engine, { remote: false, sourceId: 'default' }))!.text).toContain(text);
+  });
+});
+
+
+describe('proposed rule receipts: approve and retire for each fact kind', () => {
+  test('withdraw x approve expires the fact (never purged); none x approve touches no fact', async () => {
+    const wrong = await seedFact('Alice Example owns a sailboat.');
+    const w = await remote(MEMBER, 'correct', { rule: 'Alice Example owns no boats.', fact_id: wrong, scope: 'team' });
+    expect(w.json).toMatchObject({ state: 'proposed', effect: { fact: 'unchanged' } });
+    expect(await approveRule(engine, `${w.json.rule_id}@${w.json.revision}`, { probe: ownerTty() })).toMatchObject({ approved: true, confirmed: true });
+    const row = await factRow(wrong);
+    expect(row).toBeDefined();
+    expect(row!.expired_at).not.toBeNull();
+    const before = await liveFacts();
+    const n = await remote(MEMBER, 'correct', { rule: 'Hold design reviews on Tuesdays.', scope: 'team' });
+    expect(n.json.state).toBe('proposed');
+    expect(await approveRule(engine, `${n.json.rule_id}@${n.json.revision}`, { probe: ownerTty() })).toMatchObject({ approved: true, confirmed: true });
+    expect(await liveFacts()).toEqual(before);
+    expect((await remote(MEMBER, 'correct', { receipt_id: n.json.receipt_id })).json).toMatchObject({ state: 'committed', effect: { fact: 'unchanged', standing: true } });
+  });
+
+  for (const kind of ['replace', 'withdraw', 'none'] as const) {
+    test(`${kind} x retire leaves the fact unchanged and the receipt stops pointing at approve`, async () => {
+      const wrong = kind === 'none' ? null : await seedFact(`Alice Example likes the color ${kind}.`);
+      const r = await remote(MEMBER, 'correct', { rule: `Alice Example's favorite color is not ${kind}.`, scope: 'team',
+        ...(wrong ? { fact_id: wrong } : {}), ...(kind === 'replace' ? { corrected_fact: `Alice Example likes teal over ${kind}.` } : {}) });
+      expect(r.json.state).toBe('proposed');
+      expect(await retireRule(engine, r.json.rule_id)).toMatchObject({ retired: true });
+      if (wrong) expect((await factRow(wrong))!.expired_at).toBeNull();
+      const after = (await remote(MEMBER, 'correct', { receipt_id: r.json.receipt_id })).json;
+      expect(after).toMatchObject({ state: 'conflicted', error: { code: 'rule_transition' }, effect: { rule: 'proposed', fact: 'unchanged' } });
+      expect(after.next?.argv?.[1]).not.toBe('rules approve');
+      expect(JSON.stringify(after.next)).not.toContain('approve');
+      await expect(approveRule(engine, `${r.json.rule_id}@${r.json.revision}`, { probe: ownerTty() })).rejects.toMatchObject({ code: 'rule_revision_stale' });
+    });
+  }
+});
+

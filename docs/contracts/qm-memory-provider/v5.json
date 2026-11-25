@@ -342,10 +342,6 @@
             "prefer_source_id": {
               "type": "string",
               "description": "Source to try first (thin clients send .gbrain-source here); never narrows."
-            },
-            "include_rules": {
-              "type": "boolean",
-              "description": "true: add your confirmed standing rules (rules field)."
             }
           },
           "required": []

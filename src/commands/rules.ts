@@ -12,6 +12,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 import { listRulePages } from '../core/rules/section.ts';
 import { approveRule, retireRule } from '../core/rules/correct.ts';
@@ -74,7 +75,7 @@ export async function runRules(engine: BrainEngine, args: string[]): Promise<voi
     if (sub === 'check') {
       const r = await runRulesCheck(engine, { sourceId, ...(words[0] ? { id: words[0] } : {}) });
       print(r, r.checked ? [`Checked ${r.checked}, failed ${r.failed}.`, ...r.results.filter(x => !x.pass).map(x => `  ${x.rule_id}: ${x.problems.join('; ')}`)].join('\n') : 'No confirmed active rules to check.');
-      if (r.failed) process.exitCode = 1;
+      if (r.failed) setCliExitVerdict(1);
       return;
     }
     throw usageError(`Unknown rules subcommand: ${sub}.`, 'Use one of: gbrain rules list, show, approve, retire or check.', { code: 'unknown_command' });

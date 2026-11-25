@@ -5,16 +5,27 @@
  * <id>@<revision>). The record lives in config under the reserved prefix rules.confirmed., which every config
  * writer refuses outside withOwnerProof, so neither an agent nor a remote caller can confirm a rule.
  */
+import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { withOwnerProof, type OwnerProof } from '../policy/authority.ts';
 
 export const RULE_CONFIRM_PREFIX = 'rules.confirmed.';
 
+/** The fact change an approval also authorizes: a proposed rule's receipt supersedes or withdraws this fact. */
+export interface ApprovedFact { action: 'replace' | 'withdraw'; id: string; text: string | null }
+
+/** What the owner confirms: the rule's digest, bound to the fact change it carries when there is one. */
+export function approvalDigest(ruleDigest: string, fact: ApprovedFact | null): string {
+  return fact ? createHash('sha256').update(JSON.stringify([ruleDigest, fact.action, fact.id, fact.text])).digest('hex') : ruleDigest;
+}
+
 export interface RuleConfirmation {
   source_id: string;
   slug: string;
   revision: string;
+  /** The rule's digest (ruleDigest); the proof covers approvalDigest(digest, fact). */
   digest: string;
+  fact?: ApprovedFact;
   proof: OwnerProof;
 }
 
@@ -24,7 +35,7 @@ function parse(raw: string | null | undefined): RuleConfirmation | null {
   if (!raw) return null;
   try {
     const c = JSON.parse(raw) as RuleConfirmation;
-    if (typeof c.revision !== 'string' || typeof c.digest !== 'string' || !c.proof || c.proof.digest !== c.digest) return null;
+    if (typeof c.revision !== 'string' || typeof c.digest !== 'string' || !c.proof || c.proof.digest !== approvalDigest(c.digest, c.fact ?? null)) return null;
     if (c.proof.method !== 'terminal' && c.proof.method !== 'owner_session') return null;
     return c;
   } catch {

@@ -51,9 +51,10 @@ export function ruleSlugOf(id: string): string | null {
   return m ? `${RULE_PREFIX}${m[1]}/${m[2]}` : null;
 }
 
-export function ruleName(text: string): string {
+/** `salt` keys a member's own rule to that member, so two people saving the same words never share a page. */
+export function ruleName(text: string, salt = ''): string {
   const base = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '') || 'rule';
-  return `${base}-${createHash('sha256').update(text).digest('hex').slice(0, 6)}`;
+  return `${base}-${createHash('sha256').update(salt ? `${salt}\n${text}` : text).digest('hex').slice(0, 6)}`;
 }
 
 const strings = (v: unknown, max: number): string[] => (Array.isArray(v) ? v : []).filter((s): s is string => typeof s === 'string' && s.trim().length > 0).map(s => s.trim().slice(0, 200)).slice(0, max);
