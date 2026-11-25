@@ -4,7 +4,7 @@
  *
  * 1. Protects: on a Rust brain, v0.11.0's Phase B (`gbrain jobs smoke`, a child process) passes and prints what it
  *    prints on PGLite, and v0.12.2 (the JSONB repair, which has nothing to repair outside Postgres) completes with
- *    PGLite's exact output. `gbrain upgrade` reaches the same runner (upgrade.ts starts `gbrain post-upgrade`, which
+ *    PGLite's exact output, and `gbrain repair-jsonb` names the Rust engine in its no-op line. `gbrain upgrade` reaches the same runner (upgrade.ts starts `gbrain post-upgrade`, which
  *    calls applyMigrations in process).
  * 2. Fails on: the migration lock opening a Rust brain for the run (the parent then owns it, and the smoke child
  *    waits on an owner that is blocked in the synchronous spawn: `owner_unavailable`); repair-jsonb treating a Rust
@@ -145,6 +145,16 @@ describeRust('apply-migrations on a Rust brain', () => {
     const rust = await migrate(brains.rust, '0.12.2');
     expect(pglite.exitCode).toBe(0);
     expect({ exitCode: rust.exitCode, out: rust.out }).toEqual({ exitCode: 0, out: pglite.out });
+  }, 300_000);
+
+  // Value: protects=`gbrain repair-jsonb` in text mode names the Rust engine and the no-op on a Rust brain, as it names PGLite's; fails_when=the renderer handles PGLite only and prints Engine: postgres for Rust; why_new=the Rust no-op is new; seam=none; no_claim=Postgres repairs
+  test('repair-jsonb in text mode names the Rust engine and the no-op, with and without --dry-run', async () => {
+    for (const flags of [[], ['--dry-run']]) {
+      const pglite = await cli(brains.pglite, ['repair-jsonb', ...flags]);
+      const rust = await cli(brains.rust, ['repair-jsonb', ...flags]);
+      expect({ flags, exitCode: rust.exitCode, out: rust.out }).toEqual({ flags, exitCode: 0, out: pglite.out.replace('Engine: pglite', 'Engine: rust') });
+      expect(rust.out).not.toContain('Engine: postgres');
+    }
   }, 300_000);
 
   // Value: protects=each upgrade migration that still refuses on a Rust brain refuses with the typed raw_sql refusal of the phase named here, and a new pass or a different refusal is seen at once; fails_when=a stop starts passing (drop its row) or refuses for another reason; why_new=the stops are new; seam=none; no_claim=what the owners of these stops build

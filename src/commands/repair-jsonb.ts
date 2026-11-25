@@ -213,8 +213,8 @@ export async function runRepairJsonbCli(args: string[]): Promise<void> {
     return;
   }
 
-  if (result.engine === 'pglite') {
-    console.log('Engine: pglite — JSONB double-encode bug never affected this path. No-op.');
+  if (result.engine === 'pglite' || result.engine === 'rust') {
+    console.log(`Engine: ${result.engine} — JSONB double-encode bug never affected this path. No-op.`);
     return;
   }
 
