@@ -207,7 +207,9 @@ key `rust_server.owner_token_ids`) that verifies through the HTTP server's beare
 operation list, source grant, slug fence, takes-holder list, member or act-for binding, attest right or trust floor.
 OAuth clients and every narrower token refuse `permission_denied` (`token_not_owner`) before any call runs. The
 token is re-verified every 2 s while a connection lives, and its expiry at every admission: a revoked or expired
-token stops new work within about 2 s; work already started is not undone. Such a connection runs with the owner's
+token stops new work within about 2 s, and so does a recheck that has not answered within 30 s; transaction
+begin and commit and callback answers pass the same check (a commit after revocation rolls back). Work already
+started is not undone. Such a connection runs with the owner's
 trusted local view (`Scope::trusted_local`, I-6). A frame's caller access record and `remote: true` only narrow it:
 a remote caller reads through the remote read allow-list and sends no writes or whole operations, on both sides.
 `remote: false` refuses for a principal whose floor is remote (none exists before M2).

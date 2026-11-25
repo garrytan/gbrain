@@ -44,6 +44,7 @@ let revoked = false;
 let gate: Promise<void> | null = null;
 let beginGate: Promise<void> | null = null;
 let positionsFail = 0;
+let hang = false;
 
 const fake = {
   kind: 'rust', capabilities: new Set<string>(['persistence_journal']),
@@ -67,6 +68,7 @@ const fake = {
 const servedOpts: ServedServerOptions = {
   verify: {
     verify: async (_engine, token) => {
+      if (hang) return new Promise(() => {});
       if (token === SLOW_TOKEN) { await Bun.sleep(300); return { ...ownerInfo }; }
       if (token === OWNER_TOKEN && !revoked) return { ...ownerInfo };
       throw new Error('Invalid token');
@@ -75,6 +77,7 @@ const servedOpts: ServedServerOptions = {
   positions: async () => { if (positionsFail > 0) { positionsFail--; throw new Error('position read failed'); } return { sequence: 5, index: 0, exact: true }; },
   transactions: () => true,
   helloTimeoutMs: 2_000,
+  recheckHungMs: 1_000,
   log: () => {},
 };
 
@@ -90,7 +93,7 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-afterEach(() => { ran.length = 0; revoked = false; gate = null; beginGate = null; positionsFail = 0; });
+afterEach(() => { hang = false; ran.length = 0; revoked = false; gate = null; beginGate = null; positionsFail = 0; });
 
 type Peer = { socket: Socket; send(frame: object): void; next(): Promise<Record<string, unknown>>; closed: Promise<void> };
 function rawPeer(): Promise<Peer> {
@@ -141,6 +144,21 @@ describe('G2: transaction frames and callbacks pass the credential gate', () => 
     expect(errorOf(out).code).toBe('permission_denied');
     await Bun.sleep(50);
     expect(ran).toEqual(['transaction:begin', 'transaction:rollback']);
+    p.socket.destroy();
+  }, 10_000);
+});
+
+describe('G2: a recheck that never answers', () => {
+  test('once a token recheck has hung past its bound, new calls refuse; until then they run', async () => {
+    const p = await helloed();
+    hang = true;
+    p.send({ t: 'call', id: 1, member: 'getPage', args: encodeValue(['before']) });
+    expect((await p.next()).ok).toBe(true);
+    await Bun.sleep(2_000 + 1_300);
+    p.send({ t: 'call', id: 2, member: 'getPage', args: encodeValue(['after']) });
+    const out = await p.next();
+    expect(errorOf(out)).toMatchObject({ code: 'permission_denied', reason: 'token_expired' });
+    expect(ran).toEqual(['getPage:before']);
     p.socket.destroy();
   }, 10_000);
 });

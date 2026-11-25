@@ -49,6 +49,9 @@ import { MAX_REQUEST_WAITERS, REQUEST_ID, RequestTable, type StoredOutcome } fro
 import { ownerBusy, ownerResponseTooLarge } from '../owner-ipc/routes.ts';
 
 /** Whole operations a network client may not send: they name paths on the server host (decision 9). */
+/** How long a token recheck may run before the connection stops taking new work. */
+const RECHECK_HUNG_MS = 30_000;
+
 const SERVER_PATH_OPERATIONS: ReadonlySet<string> = new Set(['importFromFile', 'importImageFile', 'importManagedFiles', 'snapshotStore']);
 /** Registry operations the write journal admits with a request id, so a retry after a restart runs them again safely. */
 const JOURNALED_OPERATIONS: ReadonlySet<string> = new Set(['put_page']);
@@ -67,6 +70,8 @@ export interface ServedServerOptions {
   callbackTimeoutMs?: number;
   /** The longest a transaction over the wire may stay open. */
   transactionMaxMs?: number;
+  /** How long a token recheck may run before the connection stops taking new work (default 30 s). */
+  recheckHungMs?: number;
   /** How long a `min_position` read waits when the caller gave no deadline. */
   positionWaitMs?: number;
   /** Server log line (an unexpected error with its correlation id). */
@@ -247,10 +252,12 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       const answer = { ...ctx.hello, t: 'hello', v: OWNER_IPC_VERSION_V3, version: OWNER_IPC_VERSION_V3, caps: [...caps], server_id: state.serverId };
       writeFrame(answer);
       if (who.kind === 'owner_token' && token !== null) {
-        lastCheckedAt = Date.now();
         recheckTimer = setInterval(() => {
-          if (closed || invalid) return;
-          void recheckToken(side.engine, token!, principal!, opts.verify).then(p => { principal = p; lastCheckedAt = Date.now(); }, (error: unknown) => { invalid = error as Error; });
+          if (closed || invalid || checkingSince !== null) return;
+          checkingSince = Date.now();
+          void recheckToken(side.engine, token!, principal!, opts.verify)
+            .then(p => { principal = p; }, (error: unknown) => { invalid = error as Error; })
+            .finally(() => { checkingSince = null; });
         }, RECHECK_MS);
         recheckTimer.unref?.();
       }
@@ -263,11 +270,12 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       (error: unknown) => { authenticating = false; refuseConnection(error); });
   };
 
-  // When the owner token was last verified; a recheck that stops answering stops new work too (review G2).
-  let lastCheckedAt: number | null = null;
+  // When the running recheck started: one that has not answered within RECHECK_HUNG_MS stops new work too (review G2).
+  // A recheck that is merely late (a busy event loop) does not: it is the verifier that must answer, not the timer.
+  let checkingSince: number | null = null;
   const staleCredential = (): Error | null => {
     if (invalid) return invalid;
-    if (lastCheckedAt !== null && Date.now() - lastCheckedAt > 3 * RECHECK_MS) return servedAuthRefused('token_expired', null);
+    if (checkingSince !== null && Date.now() - checkingSince > (opts.recheckHungMs ?? RECHECK_HUNG_MS)) return servedAuthRefused('token_expired', null);
     if (principal?.expiresAt !== undefined && principal.expiresAt <= Date.now()) return (invalid = servedAuthRefused('token_expired', null));
     return null;
   };
