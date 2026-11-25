@@ -226,23 +226,28 @@ const PINS: Pin[] = [
            ON CONFLICT (page_id) DO UPDATE SET alias_revision = EXCLUDED.alias_revision, alias_version = EXCLUDED.alias_version,
              aliases_refreshed_at = EXCLUDED.aliases_refreshed_at`]; },
   },
+  // The two listMentionCandidatePages texts below are master's (pagesMatchingNames in src/core/mentions/pass.ts at 913e459414, the
+  // mention speedup #10255): the page window is picked by id in a subselect, then joined back to pages as p, and the LIKE
+  // prefilter moved into the body CASE, so every page in the window comes back and an unmatched one has a null body.
   {
     from: 'src/core/mentions/pass.ts:423 (at 0af1a6ecf0)',
     case: { method: 'listMentionCandidatePages', variant: 'ascii', run: e => e.listMentionCandidatePages(['default'], 0, 500, ['%alice%']) },
-    texts: () => { const ascii = true; return [`SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
-              frontmatter->'mention_ignore' AS mention_ignore
-         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
-          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
-        ORDER BY id LIMIT $3`]; },
+    texts: () => { const ascii = true; return [`SELECT p.id, p.slug, p.source_id, p.body_storage,
+              CASE WHEN ${ascii ? `p.body_storage = 'segmented' OR lower(COALESCE(p.title, '') || ' ' || COALESCE(p.compiled_truth, '') || ' ' || COALESCE(p.timeline, '')) LIKE ANY($4::text[])` : 'true'}
+                   THEN COALESCE(p.title, '') || E'\\n\\n' || COALESCE(p.compiled_truth, '') || E'\\n\\n' || COALESCE(p.timeline, '') END AS body,
+              p.frontmatter->'mention_ignore' AS mention_ignore
+         FROM (SELECT id FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2 ORDER BY id LIMIT $3) w
+         JOIN pages p ON p.id = w.id ORDER BY p.id`]; },
   },
   {
     from: 'src/core/mentions/pass.ts:423 (at 0af1a6ecf0)',
     case: { method: 'listMentionCandidatePages', variant: 'all', run: e => e.listMentionCandidatePages(['default'], 0, 500, null) },
-    texts: () => { const ascii = false; return [`SELECT id, slug, source_id, body_storage, COALESCE(title, '') || E'\\n\\n' || COALESCE(compiled_truth, '') || E'\\n\\n' || COALESCE(timeline, '') AS body,
-              frontmatter->'mention_ignore' AS mention_ignore
-         FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2
-          ${ascii ? `AND (body_storage = 'segmented' OR lower(COALESCE(title, '') || ' ' || COALESCE(compiled_truth, '') || ' ' || COALESCE(timeline, '')) LIKE ANY($4::text[]))` : ''}
-        ORDER BY id LIMIT $3`]; },
+    texts: () => { const ascii = false; return [`SELECT p.id, p.slug, p.source_id, p.body_storage,
+              CASE WHEN ${ascii ? `p.body_storage = 'segmented' OR lower(COALESCE(p.title, '') || ' ' || COALESCE(p.compiled_truth, '') || ' ' || COALESCE(p.timeline, '')) LIKE ANY($4::text[])` : 'true'}
+                   THEN COALESCE(p.title, '') || E'\\n\\n' || COALESCE(p.compiled_truth, '') || E'\\n\\n' || COALESCE(p.timeline, '') END AS body,
+              p.frontmatter->'mention_ignore' AS mention_ignore
+         FROM (SELECT id FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND id > $2 ORDER BY id LIMIT $3) w
+         JOIN pages p ON p.id = w.id ORDER BY p.id`]; },
   },
   {
     from: 'src/core/mentions/pass.ts:462 (at 0af1a6ecf0)',
