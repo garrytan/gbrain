@@ -3142,6 +3142,7 @@
           "azure_openai_use_entra?: string | undefined",
           "backup?: { check_enabled?: boolean | string; check_interval_days?: number | string; } | undefined",
           "brain?: { audience?: string; } | undefined",
+          "brain_first?: { policy_line?: string; } | undefined",
           "chat_fallback_chain?: string[] | undefined",
           "chat_fallback_on_refusal?: boolean | undefined",
           "chat_model?: string | undefined",
@@ -3169,7 +3170,7 @@
           "hooks?: { stop_push_debounce_min?: number | string; } | undefined",
           "integrations?: { memorable?: { enabled?: boolean; }; } | undefined",
           "litellm_api_key?: string | undefined",
-          "mcp?: { instructions?: string; publish_skills?: boolean; publish_advisor?: boolean; skills_dir?: string; strict_params?: \"warn\" | \"reject\"; default_surface_dcr?: \"verbs\" | \"starter\" | \"full\"; advertised_surface?: \"verbs\" | \"starter\" | \"full\"; result_rows?: \"lean\" | \"full\"; allow_session_widen?: boolean | string; } | undefined",
+          "mcp?: { instructions?: string; default_surface_claude_code?: \"full\" | \"starter\"; default_surface_codex?: \"full\" | \"starter\"; default_surface_hermes?: \"full\" | \"starter\"; publish_skills?: boolean; publish_advisor?: boolean; skills_dir?: string; strict_params?: \"warn\" | \"reject\"; default_surface_dcr?: \"verbs\" | \"starter\" | \"full\"; advertised_surface?: \"verbs\" | \"starter\" | \"full\"; result_rows?: \"lean\" | \"full\"; allow_session_widen?: boolean | string; } | undefined",
           "mcp_surface?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "memory?: { auto_writeback?: string; auto_writeback_transient_ttl?: string; visibility_posture?: string; } | undefined",
           "migrate?: { graduation?: boolean; } | undefined",
@@ -7487,6 +7488,7 @@
           "surfaceCeiling?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "takesHoldersAllowList?: string[] | undefined",
           "thinClient?: boolean | undefined",
+          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; } | undefined",
           "transport?: \"stdio\" | \"http\" | undefined",
           "viaSubagent?: boolean | undefined",
           "writeWaitMs?: number | undefined"
@@ -7840,7 +7842,7 @@
           "hasSupersedeEdges: () => Promise<boolean>",
           "hasWithdrawnFenceClaim: (sourceId: string, claims: readonly withdrawalFence.FenceClaimRow[], subject: string | null) => Promise<boolean>",
           "holdsDatastoreLock: () => boolean",
-          "initSchema: () => Promise<void>",
+          "initSchema: (opts?: { embedding?: { dimensions: number; model: string; }; }) => Promise<void>",
           "insertDecideCalibration: (row: decideStoreImpl.DecideCalibrationInsert) => Promise<number>",
           "insertDecideProposal: (p: decideProposals.NewProposal) => Promise<number | null>",
           "insertDecideReceipts: (rows: readonly decideStoreImpl.DecideReceiptInsert[]) => Promise<void>",
@@ -9576,7 +9578,8 @@
           "gbrain_version: string",
           "index: { file: \"index.bin\"; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number; }",
           "ranker: { id: string; version: number; variant: Variant; params: (typeof VARIANT_PARAMS)[Variant]; calibration_split_sha256: string; tokenizer: string; k: number; hint_chars: number; trigger_share: number; }",
-          "schema_version: 1"
+          "schema_version: 1",
+          "vectors: VectorsReceipt | VectorsSkip"
         ],
         "name": "BuildReceipt"
       },
@@ -9635,7 +9638,8 @@
           "score: number | null",
           "session: { turn: number; spent: number; budget: number; remaining: number; } | null",
           "skip_reason: string | null",
-          "target: string"
+          "target: string",
+          "vector?: { cosine: number; floor: number; } | undefined"
         ],
         "name": "Explain"
       },
@@ -9664,7 +9668,7 @@
         "kind": "type",
         "name": "MatchStrength",
         "signature": [
-          "\"body\" | \"name\" | \"description\" | \"named\" | \"picked\" | \"triggers\" | \"routing\""
+          "\"vector\" | \"body\" | \"name\" | \"description\" | \"named\" | \"picked\" | \"triggers\" | \"routing\""
         ]
       },
       {
@@ -9804,7 +9808,8 @@
           "schema_version: 1",
           "shadow: boolean",
           "suggestions: Suggestion[]",
-          "tokenizer: string"
+          "tokenizer: string",
+          "vectors?: VectorsReport | undefined"
         ],
         "name": "TurnOutput"
       },
@@ -9812,7 +9817,7 @@
         "kind": "function",
         "name": "buildSkillIndex",
         "signature": [
-          "(input: BuildInput, opts?: { home?: string; now?: () => number; }) => Promise<BuildReceipt>"
+          "(input: BuildInput, opts?: { home?: string; now?: () => number; env?: NodeJS.ProcessEnv; }) => Promise<BuildReceipt>"
         ]
       },
       {

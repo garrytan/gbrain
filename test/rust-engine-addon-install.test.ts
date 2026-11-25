@@ -311,6 +311,12 @@ describe('the addon install after a swap-only upgrade', () => {
     expect(installAddonWithInstalledBinary({}, () => { throw new Error('exit 1'); }, () => true)).toBe(false);
     expect(installAddonWithInstalledBinary({}, run, () => { throw new Error('bad config'); })).toBe(false);
   });
+
+  test('runs under its own bound, well inside the 300 s autopilot gives the whole swap', () => {
+    let timeout = 0;
+    installAddonWithInstalledBinary({}, (_c, _a, opts) => { timeout = opts.timeout; return ''; }, () => true);
+    expect(timeout).toBe(120_000);
+  });
 });
 
 describe('gbrain engine install', () => {

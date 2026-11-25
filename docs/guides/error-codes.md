@@ -23,6 +23,9 @@ Under contract v1 an `error` value never changes. Where a surface sends a legacy
 | `invalid_params` | `not_found` | The requested resource does not exist or is not visible to this caller. |
 | `page_identity_changed` | `page_not_found` | No page with that slug exists in the selected source. |
 | `invalid_params` | `page_too_large_for_inline` | The whole page does not fit one result on this connection, so get_page did not return its body. |
+| `invalid_params` | `profile_entity_not_self` | remember with facet named an entity other than the caller's own profile, or came from a credential that has no profile; nothing was saved. |
+| `invalid_params` | `profile_facet_unknown` | remember's facet is not one of the profile facets (size.<item>, brand, diet, allergy, style, constraint, schedule, household, other); nothing was saved. |
+| `invalid_params` | `profile_metric_reserved` | remember's claim_metric used the reserved profile. prefix, or was passed together with facet; nothing was saved. |
 | `invalid_params` | `result_too_large` | The tool's result is larger than this connection can carry in one response, so it was replaced by this error; nothing was cut. |
 | `invalid_params` | `revision_changed` | The page changed since the cursor or chunk id was issued, so that position no longer names the same text. |
 | `permission_denied` | `trusted_local_only` | The operation runs only from the trusted local CLI on the brain host; no MCP connection can call it. |
@@ -4528,6 +4531,58 @@ More: [docs/ENGINES.md#pglite-vector-index-ceiling](../../docs/ENGINES.md#pglite
 |---|---|---|---|---|---|---|
 | The saved plan has no valid repository identity. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### policy_approval_reserved
+
+<a id="policy_approval_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a reserved agent-policy setting (policy.approved.<scope>, or brain_first.policy_line from an agent session) was refused, so nothing was changed. | The approved agent policy is what policy_check serves, so only an owner-confirmed gbrain policy command may write it; a plain config set, an agent session or a remote caller cannot approve a policy for itself. | Change the policy with gbrain policy allow\|ask\|deny\|edit, or approve a pending revision with gbrain policy accept <revision>, in your own terminal. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_approval_reserved](../../docs/guides/agent-policy.md#policy_approval_reserved)
+
+### policy_confirm_required
+
+<a id="policy_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An agent policy change was not applied because the owner did not confirm it here: this process looks like an agent session, has no terminal to ask on, or the confirmation code was not typed. | An agent must not approve its own policy. The change waits as a pending revision that changes nothing policy_check serves, until the owner confirms that exact revision in their own terminal or in the owner session. | Ask the owner to run the command in fix in their own terminal, outside the agent session; do not retry it from the agent. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `agent_marker`, `no_terminal`, `declined`.
+
+More: [docs/guides/agent-policy.md#policy_confirm_required](../../docs/guides/agent-policy.md#policy_confirm_required)
+
+### policy_malformed
+
+<a id="policy_malformed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The agent policy fence could not be parsed (the error names the line and column), so nothing was changed or approved. | policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while it is malformed agents get the last approved revision, or ask for every verb when nothing was ever approved. | Run gbrain policy show --check to see the problem, then fix it with gbrain policy edit. Run: gbrain policy show --check | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_malformed](../../docs/guides/agent-policy.md#policy_malformed)
+
+### policy_owner_only
+
+<a id="policy_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype the agent policy page, so nothing was written. | The agent policy is owner-only: remote callers (MCP and HTTP) read it through policy_check and agent_policy but never write it, so an agent cannot widen its own permissions. | Ask the owner to change it with gbrain policy on the brain host. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_owner_only](../../docs/guides/agent-policy.md#policy_owner_only)
+
+### policy_revision_stale
+
+<a id="policy_revision_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The revision named for approval is not the policy page's current revision, so nothing was approved. | Approval binds one exact revision; approving an older one would serve rules the owner did not see. | Run gbrain policy status to see the pending revision, then approve that one. Run: gbrain policy status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_revision_stale](../../docs/guides/agent-policy.md#policy_revision_stale)
+
 ### pool_inflight_over_budget
 
 <a id="pool_inflight_over_budget"></a>
@@ -4586,6 +4641,26 @@ More: [docs/guides/repair.md#preview-changed](../../docs/guides/repair.md#previe
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### profile_entity_not_self
+
+<a id="profile_entity_not_self"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember with facet named an entity other than the caller's own profile, or came from a credential that has no profile; nothing was saved. | A profile fact is about the person the credential speaks for. A member's profile is its own member page, so a member credential never writes a profile fact onto another page (the owner's included); a credential that is neither the owner nor a member, such as one asserting an audience, has no profile at all. | Omit entity to save the fact on your own profile, or drop facet to save an ordinary fact about that entity. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#who-a-profile-belongs-to](../../docs/guides/profile.md#who-a-profile-belongs-to)
+
+### profile_facet_unknown
+
+<a id="profile_facet_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember's facet is not one of the profile facets (size.<item>, brand, diet, allergy, style, constraint, schedule, household, other); nothing was saved. | Profile facts are typed by a fixed facet list so every connected agent reads the same profile shape; an unlisted facet would be a facet no reader knows. | Pass one of the listed facets (size takes an item, e.g. size.shoe), or "other", or omit facet to save an ordinary fact. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#facets](../../docs/guides/profile.md#facets)
+
 ### profile_incompatible
 
 <a id="profile_incompatible"></a>
@@ -4593,6 +4668,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The stored profile is incompatible with this operation. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### profile_metric_reserved
+
+<a id="profile_metric_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| remember's claim_metric used the reserved profile. prefix, or was passed together with facet; nothing was saved. | The profile.<facet> metric is validated in one place and set only by facet, so no hand-written metric, import or extractor can create a profile fact outside the facet list. | Pass facet (e.g. facet: "diet") instead of a profile. claim_metric; claim_value, claim_unit and claim_period may still ride with it. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/profile.md#facets](../../docs/guides/profile.md#facets)
 
 ### projection_owner_resident
 
@@ -5417,6 +5502,16 @@ Reasons: `digest`, `engine_abi`, `engine_build`, `target`, `load_failed`, `verif
 | The Rust engine is selected (engine: rust), but no addon for this gbrain release is installed on this machine, or no addon is published for this platform, so gbrain opened nothing and wrote nothing. | The Rust engine ships as a separate addon file kept in the gbrain home, checked against the checksum in this release's manifest before it loads. Without a checked addon the engine cannot open, and gbrain refuses before touching the brain. | Run gbrain engine install rust to download and check the addon this release names (not_published means this release has none: use a release that does, or keep pglite or postgres; unsupported_target means no release has one for this platform). For a build you made, point GBRAIN_RUST_ENGINE_ADDON at it (bun run rust:build). Or switch engine in the gbrain config back to pglite or postgres. | user | `gbrain doctor --json` | 1 | yes |
 
 Reasons: `unsupported_target`, `not_installed`, `override_not_found`, `not_published`, `fetch_failed`.
+
+### rust_snapshot_stopped
+
+<a id="rust_snapshot_stopped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Rust brain's snapshot did not run or did not finish, and nothing of it remains; `reason` says why. | A snapshot copies the whole brain at one committed generation while writers keep going. The owner runs one at a time (`busy`), stops it when its caller has gone or cancelled it (`cancelled`), when the disk of the target or of the brain falls below max(2 GiB, 5 % of the filesystem) (`disk_pressure`: the copy holds old pages of the brain until it ends, so it can grow the brain's file on a busy brain), or when it has run past its age budget (`age_budget`, 2 hours). The call ends only after the owner has released its read of the brain and removed what the copy wrote, so a caller may delete its scratch space once it sees this error. | Wait for a running snapshot to end, free disk space, or start the snapshot again when the brain is quieter. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `busy`, `cancelled`, `disk_pressure`, `age_budget`.
 
 ### rust_store_locked
 

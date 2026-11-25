@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 305648,
-    "stdoutSha256": "54fa11331ea9a25a4ae004439873bd38bdfe7f62f9e8c32c05c40bd10ad2638f",
+    "stdoutBytes": 308922,
+    "stdoutSha256": "b49c46593bc152949433766190a364fe9cb634274c8a333e0d946eee6da3cfb5",
     "toolNames": [
       "remember",
       "entity",
@@ -100,6 +100,9 @@
       "storage_register",
       "storage_update",
       "reveal_secret",
+      "policy_check",
+      "agent_policy",
+      "capabilities",
       "submit_job",
       "get_job",
       "wait_job",
@@ -229,6 +232,7 @@
           "content_origin": "string?",
           "entity": "string?",
           "expected_revision": "string?",
+          "facet": "string?",
           "fact": "string?",
           "force": "boolean?",
           "infer_entity": "boolean?",
@@ -277,6 +281,10 @@
             },
             "expected_revision": {
               "description": "Revision read; omit to create.",
+              "type": "string"
+            },
+            "facet": {
+              "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.",
               "type": "string"
             },
             "fact": {
@@ -4788,6 +4796,113 @@
         "scope": "read"
       },
       {
+        "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "policy_check",
+        "parameters": {
+          "amount": "number?",
+          "currency": "string?",
+          "merchant": "string?",
+          "to": "string?",
+          "verb": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "amount": {
+              "description": "Money involved, with currency.",
+              "type": "number"
+            },
+            "currency": {
+              "description": "Three-letter currency code for amount, like USD.",
+              "type": "string"
+            },
+            "merchant": {
+              "description": "Merchant or service, when a rule may name it.",
+              "type": "string"
+            },
+            "to": {
+              "description": "Who it reaches: self, household, known or new.",
+              "enum": [
+                "self",
+                "household",
+                "known",
+                "new"
+              ],
+              "type": "string"
+            },
+            "verb": {
+              "description": "The outside action.",
+              "enum": [
+                "send",
+                "publish",
+                "spend",
+                "delete",
+                "sign_up",
+                "call",
+                "book",
+                "cancel",
+                "dispute",
+                "submit",
+                "return",
+                "use",
+                "renew",
+                "remind",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "verb"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "The user's agent policy rules that apply to you, as rows, with its state and revision. Advisory; call policy_check for one action.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "agent_policy",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Which gbrain ops this installation serves and this connection can call now, listed or not, with the fix for each one that is not callable.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "capabilities",
+        "parameters": {
+          "ops": "array?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "ops": {
+              "description": "Op names to check (default: policy_check, agent_policy, capabilities).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
         "description": "Submit a background job. Remote callers may submit sync, import, lint or lint-fix for their authenticated filesystem source. Other kinds require local CLI or a dedicated operation.",
         "idempotent": false,
         "local_only": false,
@@ -7513,6 +7628,7 @@
           "intent": "string?",
           "min_trust": "string?",
           "prefer_source_id": "string?",
+          "profile": "boolean?",
           "session_id": "string?",
           "since": "string?",
           "source_id": "string?"
@@ -7580,6 +7696,10 @@
             "prefer_source_id": {
               "description": "Source to try first (thin clients send .gbrain-source here); never narrows.",
               "type": "string"
+            },
+            "profile": {
+              "description": "true: add your own profile (facets, constraints, relationships, preferences).",
+              "type": "boolean"
             },
             "session_id": {
               "description": "Opaque session id.",

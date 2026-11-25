@@ -156,8 +156,14 @@
       "pages": [
         "./commands/pages.ts"
       ],
+      "policy": [
+        "./commands/policy.ts"
+      ],
       "pricing": [
         "./commands/pricing.ts"
+      ],
+      "profile": [
+        "./commands/profile.ts"
       ],
       "quarantine": [
         "./commands/trust.ts",

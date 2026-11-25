@@ -6,7 +6,8 @@
  * different kinds (email E1 or E4, messaging M3, company plus shared history C4) with the names agreeing. Supporting
  * signals (E3, M2) never make the second signal; they only order the waiting list. Signals of one kind count once.
  * Any contradiction (C6, Mx, X2 beside other evidence) waits; X2 alone marks the pair probably different. A page
- * labelled family or about a minor never links automatically. C1's twin with disagreeing names (C2) links only on X1, or
+ * labelled family or about a minor, or whose title reads as a room, a team, a mailbox or a business, never links
+ * automatically. C1's twin with disagreeing names (C2) links only on X1, or
  * on email plus messaging. Two pages in one source that share an id and a name (C7) collapse.
  */
 import type { BaseClass } from './people.ts';
@@ -26,6 +27,8 @@ export interface PairEvidence {
   signals: ReadonlySet<Signal>;
   /** Either page is labelled family or is about a minor. */
   sensitive: boolean;
+  /** Either page's title reads as a room, a team, a mailbox or a business. */
+  nonPerson?: boolean;
 }
 
 const kinds = (s: ReadonlySet<Signal>) => ({ email: s.has('E1') || s.has('E4'), messaging: s.has('M3'), history: s.has('C4') });
@@ -41,6 +44,7 @@ export function combine(e: PairEvidence): { verdict: Verdict; reason: string; sc
   const same = e.base === 'C1' || e.base === 'C3' || e.base === 'C7' || s.has('M1') || s.has('X1') || strong > 0;
   if (s.has('X2')) return same ? wait('the web names two different people') : { verdict: 'different', reason: 'the web names two different people', score };
   if (e.sensitive) return wait('family or minor page');
+  if (e.nonPerson) return wait('not a person page');
   if (e.base === 'C7') return e.names === true ? { verdict: 'collapse', reason: 'same source, same name, shared id', score } : wait('names disagree');
   if (e.base === 'C2') {
     if (s.has('X1')) return { verdict: 'link', reason: 'shared email or phone, same web profile', score };

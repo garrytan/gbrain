@@ -30,9 +30,9 @@ import { frontmatterWhereSql } from './frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from './source-boost.ts';
 import { buildHardExcludeClause, buildSourceFactorCase, buildVisibilityClause, keywordPhraseFactorSql } from './sql-ranking.ts';
 import { handleMatchSql, slugHandles } from './keyword-handles.ts';
+import { KEYWORD_COUNT_CAP } from './keyword-count-text.ts';
 
-/** Counts stop here; a capped count is reported as "10000+". */
-export const KEYWORD_COUNT_CAP = 10_000;
+export { KEYWORD_COUNT_CAP };
 
 /** Where the keyword-mode page query resumes: after this (score, page_id). */
 export interface KeywordPageAfter { score: number; page_id: number }

@@ -49,13 +49,13 @@ on:
     branches: [master]
     paths: [VERSION]
   # A dispatch with no input is the backfill of the current VERSION while master HEAD is its release commit.
-  # addon_dry_run=true builds, packages and checks the Rust engine addon from the dispatched branch and publishes
-  # nothing: ci-gate is skipped, so every publishing job (each needs ci-gate's publish == 'true', and each also
+  # addon_dry_run=true builds, packages and checks the Rust engine addon, and builds, smoke-tests and runs the gbrain
+  # binaries as a fresh install, from the dispatched branch, and publishes nothing: ci-gate is skipped, so every publishing job (each needs ci-gate's publish == 'true', and each also
   # checks !inputs.addon_dry_run) is skipped, no attestation is made, and the run has its own concurrency group.
   workflow_dispatch:
     inputs:
       addon_dry_run:
-        description: Build, package and check the Rust engine addon only; publish nothing (no release, tag, asset or attestation).
+        description: Build and check the Rust engine addon and the gbrain binaries only; publish nothing (no release, tag, asset or attestation).
         type: boolean
         default: false
 
@@ -136,7 +136,9 @@ jobs:
 
   build:
     needs: [version, ci-gate]
-    if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
+    # always(): on a dry run ci-gate is skipped, and the binaries are still built and smoke-tested from the
+    # dispatched branch (no attestation; the release job that publishes them stays skipped).
+    if: always() && needs.version.result == 'success' && (inputs.addon_dry_run || (needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true'))
     strategy:
       matrix:
         include:
@@ -155,7 +157,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
-          ref: ${{ needs.ci-gate.outputs.sha }}
+          ref: ${{ inputs.addon_dry_run && github.sha || needs.ci-gate.outputs.sha }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.4
@@ -183,7 +185,7 @@ jobs:
       # release runner is a flakier duplicate gate — it blocked the first
       # release on ambient-env tests (run 30698650484). The build job's gate
       # is the artifact itself: compile, then smoke-test the binary.
-      - run: bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT='"${{ github.sha }}"' --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
+      - run: bun build --compile --bytecode --format=esm --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT='"${{ github.sha }}"' --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
       - name: Verify Darwin executable signature before execution
         if: runner.os == 'macOS'
         run: codesign --verify --strict --verbose=2 "bin/${{ matrix.artifact }}"
@@ -204,9 +206,22 @@ jobs:
           v="$(tr -d '[:space:]' < VERSION)"
           case "$out" in *"$v"*) echo "version matches VERSION file" ;; *) echo "binary version '$out' does not contain '$v'" >&2; exit 1 ;; esac
       - name: Attest build provenance
+        if: ${{ !inputs.addon_dry_run }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
           subject-path: bin/${{ matrix.artifact }}
+      # Dry run only: the binary runs from an empty directory with a fresh home, as a downloaded install does.
+      - name: Run the binary as an install from an empty directory (dry run)
+        if: ${{ inputs.addon_dry_run }}
+        run: |
+          # Real path: on macOS mktemp gives /var/folders/..., and /var is a symlink gbrain refuses.
+          d="$(cd "$(mktemp -d)" && pwd -P)"
+          cp "bin/${{ matrix.artifact }}" "$d/gbrain"
+          cd "$d"
+          env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain --version
+          env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain init --pglite --no-embedding --non-interactive --json > init.json
+          env -i PATH=/usr/bin:/bin HOME="$d" GBRAIN_HOME="$d" ./gbrain doctor --json > doctor.json
+          grep -q '"checks"' doctor.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ${{ matrix.artifact }}
