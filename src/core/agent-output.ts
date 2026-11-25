@@ -772,6 +772,15 @@ function argvFromPricing(command: string): string[] | undefined {
 
 function dbParts(e: unknown, ctx: AgentErrorContext): EnvelopeParts | undefined {
   const d = classifyPgAccessError(e, { url: ctx.db?.url ?? null, brainId: ctx.db?.brainId });
+  if (ctx.transport === 'cli' && d.sqlstate === 'XX000' &&
+      /^could not (?:open file|read (?:block \d+|blocks \d+\.\.\d+) in file) "(?:base|global|pg_tblspc)\/[^"\r\n]+"(?: \(target block \d+\))?: Interrupted system call$/i.test(d.message)) {
+    const recovery = 'Check storage and the PostgreSQL log on the database host. Once it can read again, inspect the original job or write receipt before resubmitting.';
+    return {
+      error: 'database_error', code: 'database_error', reason: 'storage_read_interrupted', retryable: false,
+      message: 'PostgreSQL reported an interrupted data-file read.', suggestion: recovery,
+      fix: { consent: [], actor: 'host_admin', why: recovery, requires_exclusive: false },
+    };
+  }
   if (d.reason === 'unknown') return undefined;
   const verb = isVerbOp(ctx);
   if (d.reason === 'schema_missing') {
