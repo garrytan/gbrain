@@ -624,6 +624,10 @@ home (see [where the coordination lock lives](#coordination-lock)): set
 `GBRAIN_COORDINATION_HOME` to a mounted directory outside the checkout so the lock
 survives recreation, because the default `~/.gbrain/persistence` usually sits on the
 container's ephemeral filesystem.
+A prebuilt brain copied into each container (its checkout and the reservation beside
+it) is a new directory at its recorded path, usually on a new filesystem device: its
+first write refuses with `physical_root_directory_changed`, and the relocated-root
+self-transfer that refusal names re-stamps it once per container.
 
 <a id="coordination-lock"></a>**Where the coordination lock lives.** Every
 canonical checkout has one native lock file that all of its writers share, and

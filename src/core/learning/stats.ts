@@ -14,7 +14,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { isValidTimeZone } from '../cycle/cycle-date.ts';
 import { CHANGE_KINDS, QUESTION_KINDS, type LearningKind } from './kinds.ts';
-import { callerFilters, liveItems } from './read.ts';
+import { callerFilters, defaultWindowStart, liveItems } from './read.ts';
 
 export const STATS_DEFAULT_DAYS = 30;
 export const NIGHT_ENDS_HOUR = 6;
@@ -61,7 +61,7 @@ export function countsTowardBar(row: Pick<LedgerRow, 'kind' | 'state' | 'shown_a
 export async function learnedStats(engine: BrainEngine, ctx: OperationContext, opts: { sourceIds: string[] | null; since?: Date; now?: Date; rowCap?: number }): Promise<LearnedStats> {
   const rowCap = opts.rowCap ?? STATS_ROW_CAP;
   const now = opts.now ?? new Date();
-  const since = opts.since ?? new Date(now.getTime() - STATS_DEFAULT_DAYS * 86_400_000);
+  const since = opts.since ?? await defaultWindowStart(engine, now, STATS_DEFAULT_DAYS);
   const timeZone = await brainTimeZone(engine);
   const iso = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
   const filters = await callerFilters(engine, ctx);
