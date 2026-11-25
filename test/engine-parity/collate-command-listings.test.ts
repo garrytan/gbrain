@@ -17,13 +17,13 @@
  *    Postgres to see it fail.
  *  - Seam: source and member rows come from the createSource fixture and insertAccessMember; pages with their
  *    frontmatter from putPage, OAuth clients (with a stamped created_at) from insertOauthClient and file rows from
- *    upsertCliFileRow; link rows from addLink and hold rows from writeGitHoldRow; effect rows from harness-only SQL. `files verify` runs with an empty GBRAIN_HOME
+ *    upsertCliFileRow; link rows from addLink and hold rows from writeGitHoldRow; parked effects from the typed journal
+ *    seed (test/helpers/persistence-typed-seed.ts). `files verify` runs with an empty GBRAIN_HOME
  *    and stubbed process.exit and console.error. The admin clients list is read over HTTP from an express app on an
  *    ephemeral port. A command that still reads raw SQL stops on the Rust arm's raw_sql refusal.
  */
 import { describe, expect, spyOn } from 'bun:test';
 import express from 'express';
-import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +37,7 @@ import { censusGitGap } from '../../src/commands/sources-git-gap.ts';
 import { runFiles } from '../../src/commands/files.ts';
 import { createMember, createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { seedTypedEffects, seedTypedRequest, settleTypedEffects } from '../helpers/persistence-typed-seed.ts';
 import { emptyHome, withEnv } from '../helpers/with-env.ts';
 import { byteOrder, BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS } from '../helpers/byte-order.ts';
 
@@ -152,26 +153,25 @@ describe('command listings sort text keys by byte', () => {
     return { links: census.rows_without_git_home.links, holds: census.holds };
   });
 
-  // The parked-effect seed has no typed writer, so this half seeds by SQL and stops on the Rust arm.
-  parityTest('the git-gap census counts parked effects in byte key order', { methods: ['executeRaw', 'putPage', 'transaction'], requires: 'raw_sql' }, async (engine, backend) => {
+  // The parked targets are seeded the way the effect worker parks them (test/helpers/persistence-typed-seed.ts): one request
+  // with an effect of each kind, each claimed and parked with every code.
+  parityTest('the git-gap census counts parked effects in byte key order', {
+    methods: ['putPage', 'readSourceMembership', 'insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'selectClaimableEffect',
+      'stampEffectClaim', 'parkEffectRow', 'transaction'],
+  }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     await page(engine, 'work', 'notes/a');
-    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id = 'work'");
-    await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
-      const [request] = await tx.executeRaw<{ id: string }>(`INSERT INTO persistence_requests(principal_kind,principal_id,request_id,operation,source_id,source_incarnation,slug,digest,authority,
-          intent_bytes,terminal_reservation) VALUES ('local_cli','test',$1::uuid,'put_page','work',$2::uuid,'notes/a','x','{}'::jsonb,0,0) RETURNING id::text`, [randomUUID(), incarnation]);
-      for (const kind of MIXED_SOURCES) {
-        await tx.executeRaw("INSERT INTO persistence_effects(request_id,kind,data,state,source_id,source_incarnation) VALUES ($1::uuid,$2,$3::text::jsonb,'failed','work',$4::uuid)",
-          [request!.id, kind, JSON.stringify({ parked: MIXED_SOURCES.map(code => ({ slug: 'notes/a', error_code: code })) }), incarnation]);
-      }
-    });
+    const request = await seedTypedRequest(engine, { source: 'work', slug: 'notes/a', state: 'committed' });
+    await seedTypedEffects(engine, { id: request.id, source: 'work', incarnation: request.incarnation }, MIXED_SOURCES.map(kind => ({ kind })));
+    await settleTypedEffects(engine, () => ({ to: 'parked', data: { parked: MIXED_SOURCES.map(code => ({ slug: 'notes/a', error_code: code })) } }));
     const census = await censusGitGap(engine, 'work', { sample: 0 });
     expect({
       parked: census.parked_effects.map(p => [p.kind, p.code]),
     }).toEqual({
       parked: BYTE_SOURCES.flatMap(kind => BYTE_SOURCES.map(code => [kind, code])),
     });
+    // The counts themselves are compared across engines.
+    return census.parked_effects;
   });
 
   parityTest('files verify reports its rows by byte storage path', { methods: ['upsertCliFileRow', 'listFileRowsForVerify'] }, async (engine) => {
