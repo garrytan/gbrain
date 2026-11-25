@@ -40,7 +40,7 @@ Lookups and pages brought up are labelled "best effort, may undercount": telemet
 a hard kill drops what was not flushed. "Later retrieved" means a search or read surfaced the page afterwards; it does
 not mean a person opened it, and a page surfaced again within 5 minutes of its last retrieval is not recorded again.
 
-Reading the card writes nothing: it does not mark nightly items as seen, and it never runs when an agent session
+Reading the card writes nothing. It does not mark nightly items as seen, and it never runs when an agent session
 starts.
 
 ## When a counter is off
@@ -50,7 +50,7 @@ An off row names the command that turns it on, for example:
 - Conversations archived: `gbrain transcripts archive on`
 - Of those, later retrieved: `gbrain config set search.track_retrieval true`
 
-An off row is not a failure: a card whose only gaps are off rows is complete.
+An off row is not a failure, so a card whose only gaps are off rows is complete.
 
 ## When a count is unavailable
 
