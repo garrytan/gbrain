@@ -78,7 +78,9 @@ plain-text suggestions may still name one.
 **Session widening.** On the owner's stdio pipe, `request_tools {surface}`
 widens this session's tool set (never past `--access read-only` or
 `GBRAIN_MCP_FORCE_SURFACE`), sends `tools/list_changed`, and returns the new
-tools' schemas so a client that ignores `list_changed` can call them by name.
+tools' schemas. Codex and OpenClaw never take a new tool in the turn that asked
+for it ([client behaviour](../protocol/AGENT_OPERATOR_v1.md#tool-catalog-changes-toolslist_changed)),
+so for those clients the note says so and names the lasting route instead.
 Nothing is written; a new session starts at the registered surface. Each widen
 writes a `surface_widened from=<x> to=<y> op=request_tools` line on stderr.
 `gbrain config set mcp.allow_session_widen false` turns widening off; the

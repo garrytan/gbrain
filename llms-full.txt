@@ -3316,14 +3316,22 @@ Nested legacy errors keep their nesting and gain sibling `code` and `fix`.
 
 gbrain sends `notifications/tools/list_changed` when its tool catalog changes
 mid-session: a serve that started degraded or in status-only mode recovers and
-swaps in the full catalog. Harness support varies by version:
+swaps in the full catalog, and `request_tools` adds tools (stdio: a `{surface}`
+widen or a `{tools}` reveal; OAuth HTTP: a persisted `{surface}` change, sent on
+that call's own response stream). Harness support varies by version:
 
 | Harness | Behaviour |
 |---|---|
 | Claude Code | recent versions refresh the tool list on the notification; some versions and modes have been reported to keep the old list |
-| Codex | versions that include openai/codex#12449 refresh the tool list; its deferred tool search can stay stale |
+| Codex | 0.170 logs the notification and keeps its tool list for the session; the refresh is behind the experimental, off-by-default `mcp_tool_list_changed` feature and applies from the next turn |
+| OpenClaw | 2026.11 drops its cached catalog on the notification, but a run's tools are built when the run starts, so a new tool is callable from the next user message, never in the run that asked |
 | other MCP clients | not measured |
 
+On a local `gbrain serve` stdio pipe (not the thin-client bridge), `request_tools`
+tells Codex and OpenClaw (by their initialize client name) that tools it newly
+lists cannot be called in this turn and names the lasting route (`--surface full`
+on the registration). On OAuth HTTP a widened surface is persisted for the
+client, so the next `tools/list` and every later session list it.
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
 
