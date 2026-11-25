@@ -108,6 +108,7 @@ test/db-wins-unimported-gst2579.test.ts
 test/decide-sql-move-parity.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
+test/dedupe-collapse.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/delta-beliefs-link-context-2957.test.ts
 test/derived-link-reconciliation.test.ts
