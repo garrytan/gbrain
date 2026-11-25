@@ -42,6 +42,9 @@ function batchState(items: ImportItemReceipt[]): ImportBatchReceipt['state'] {
   return items.some(i => i.status === 'failed') ? 'partial' : 'committed';
 }
 
+/** The receipt states a write ends in without committing (ops/persistence.ts). */
+const ENDED = new Set(['failed', 'conflict', 'cancelled']);
+
 /** Polls an item still publishing; its receipt says where it ended. */
 async function poll(call: ImportCall, item: ImportItemReceipt): Promise<ImportItemReceipt> {
   try {
@@ -49,7 +52,7 @@ async function poll(call: ImportCall, item: ImportItemReceipt): Promise<ImportIt
     const state = String(r.state ?? '');
     const outcome = (r.outcome ?? {}) as Record<string, unknown>;
     if (state === 'committed') return { ...item, status: String(outcome.status ?? 'committed'), ...(outcome.id !== undefined ? { fact_id: String(outcome.id) } : {}) };
-    if (/fail|reject|cancel|withdrawn/.test(state)) return { ...item, status: 'failed', error: { code: String(r.error_code ?? state), message: String(r.error_message ?? state) } };
+    if (ENDED.has(state)) return { ...item, status: 'failed', error: { code: String(r.error_code ?? state), message: String(r.error_message ?? state) } };
     return item;
   } catch (e) {
     return { ...item, error: errorOf(e) };
@@ -59,7 +62,8 @@ async function poll(call: ImportCall, item: ImportItemReceipt): Promise<ImportIt
 /**
  * Brings the receipt forward: polls pending items, then sends each batch never sent, saving the receipt after every
  * step. Stops at the first batch the brain refuses as a whole (its error is on the batch; later batches stay
- * not_started for a resume). Returns the receipt.
+ * not_started for a resume); a batch refused for its items (invalid_params) records each item as failed, and the
+ * import moves on. Returns the receipt.
  */
 export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: ImportCall, save: (r: ImportReceipt) => void): Promise<ImportReceipt> {
   const groups = batches(plan);
@@ -86,8 +90,15 @@ export async function runImport(plan: ImportPlan, receipt: ImportReceipt, call: 
       batch.state = batchState(batch.items);
       save(receipt);
     } catch (e) {
+      const error = errorOf(e);
+      if (error.code === 'invalid_params') {
+        batch.items = items.map(it => ({ line: it.line, request_id: '', status: 'failed', error }));
+        batch.state = 'partial';
+        save(receipt);
+        continue;
+      }
       batch.state = 'failed';
-      batch.error = errorOf(e);
+      batch.error = error;
       save(receipt);
       break;
     }

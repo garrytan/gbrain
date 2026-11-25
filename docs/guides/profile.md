@@ -109,8 +109,10 @@ gbrain profile import --status <receipt>                 # what an apply saved, 
 gbrain profile import --resume <receipt>                 # finish an apply that stopped
 ```
 
-The preview saves nothing. It lists the facts by facet and names each dropped line by number: a line that looks like a
-password, key or token is never saved or printed, and a line over 2,000 characters is skipped. The hash covers the file,
+The preview saves nothing. It lists each fact with its line and facet, and names each dropped line by number: a line
+that looks like a password, key or token is never saved or printed, a line over 2,000 characters is skipped, and so is
+a line that is not a list item (in `memory-text`, not a dated memory or a list item). A date that is not a real
+calendar date is left off its fact. In `claude-memories`, a plain sentence under a heading is a fact too. The hash covers the file,
 how it was parsed, your profile and the credential doing the import, so the apply refuses with `preview_changed` if any
 of them changed since the preview; preview again and apply the new hash. Scripts and agents pass `--yes --preview
 <hash>`; nothing prompts.
@@ -122,5 +124,6 @@ replaces a fact you stated yourself (`user_said`); a line that repeats a saved f
 
 The apply keeps a receipt (`profile-imports/<hash>.json` in your gbrain config folder, readable only by you) with each
 line's result. Running the same apply again, or `--resume` after it stopped, sends only what was never saved, and first
-checks any write still finishing. A line that failed is listed and not retried: fix it in the file, then preview and
+checks any write still finishing. A batch the brain refuses for its lines is recorded as failed lines and the import
+moves on to the next batch. A line that failed is listed and not retried: fix it in the file, then preview and
 apply again. The import exits 10 while writes are still finishing and 1 if anything failed or was left unsent.

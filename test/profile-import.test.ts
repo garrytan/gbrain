@@ -30,6 +30,7 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { facetHint, planImport, previewHash, sniffFormat, IMPORT_BATCH } from '../src/core/profile/import.ts';
 import { newReceipt, runImport, summarize, type ImportCall } from '../src/core/profile/import-run.ts';
 import { loadReceipt, parseImportArgs, runProfileImport } from '../src/commands/profile-import.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -50,12 +51,11 @@ const FAKE_TOKEN = 'ghp_' + 'Zq7Rk2Lm9Xw4'.repeat(3);
 async function cli(args: string[], call: ImportCall, profile: string, home: string, principal = 'local:test'): Promise<{ out: string; code: number }> {
   const lines: string[] = [];
   const log = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.join(' ')); });
-  const saved = process.exitCode;
-  process.exitCode = 0;
+  _resetCliExitVerdictForTests();
   try {
     await runProfileImport(args, call, async () => ({ principal, profile }), home);
-    return { out: lines.join('\n'), code: Number(process.exitCode ?? 0) };
-  } finally { log.mockRestore(); process.exitCode = saved; }
+    return { out: lines.join('\n'), code: currentExitCode() };
+  } finally { log.mockRestore(); _resetCliExitVerdictForTests(); process.exitCode = 0; }
 }
 
 beforeAll(() => { __setEmbedTransportForTests((async () => { throw new Error('profile import makes no model call'); }) as never); });
@@ -84,6 +84,17 @@ describe('parsers', () => {
       { line: 2, fact: 'Allergic to shellfish', facet: 'allergy', valid_from: '2026-01-05' },
       { line: 3, fact: 'Works at acme-example', facet: 'other', valid_from: '2026-02-01' },
     ]);
+    expect(plan.dropped).toEqual([{ line: 1, reason: 'not a dated memory or list item' }, { line: 5, reason: 'not a dated memory or list item' }]);
+  });
+  test('an impossible date is not sent as valid_from; the fact is kept', () => {
+    expect(planImport('[2024-02-30] - Moved house\n[2024-13-01] - Got a dog', 'memory-text').items).toEqual([
+      { line: 1, fact: 'Moved house', facet: 'other' }, { line: 2, fact: 'Got a dog', facet: 'other' }]);
+    expect(planImport(JSON.stringify([{ content: 'Bought a bike', created_at: '2024-02-30T10:00:00Z' }]), 'auto').items).toEqual([{ line: 1, fact: 'Bought a bike', facet: 'other' }]);
+  });
+  test('muse-memory: a prose line is named as dropped, never skipped silently', () => {
+    const plan = planImport('## Theater\nLoves musicals, especially revivals.\n- Season tickets at the playhouse', 'muse-memory');
+    expect(plan.items).toEqual([{ line: 3, fact: 'Season tickets at the playhouse', facet: 'other' }]);
+    expect(plan.dropped).toEqual([{ line: 2, reason: 'not a list item' }]);
   });
   test('claude-memories: an array of memories, a {memories} document and a conversations_memory summary', () => {
     const arr = JSON.stringify([{ content: 'Prefers dark roast coffee', created_at: '2026-03-01T10:00:00Z' }, { memory: 'Household of three', category: 'Family' }]);
@@ -96,11 +107,16 @@ describe('parsers', () => {
     expect(planImport(doc, 'claude-memories').items.map(i => i.fact)).toEqual(['Runs on weekday mornings']);
     const summary = JSON.stringify([{ conversations_memory: '**Work**\n- Leads a small team\n- Allergic to latex' }]);
     expect(planImport(summary, 'auto').items.map(i => [i.fact, i.facet])).toEqual([['Leads a small team', 'other'], ['Allergic to latex', 'allergy']]);
+    const prose = JSON.stringify([{ conversations_memory: '**Work context**\nRuns a small design studio.\n\n**Food**\nCooks vegetarian most nights.' }]);
+    expect(planImport(prose, 'auto').items.map(i => [i.fact, i.facet])).toEqual([['Runs a small design studio.', 'other'], ['Cooks vegetarian most nights.', 'diet']]);
   });
   test('facet hints and sniffing', () => {
     expect(facetHint('Dietary notes', 'No pork')).toBe('diet');
     expect(facetHint(null, 'Ring size 7')).toBe('size.ring');
     expect(facetHint(null, 'Likes jazz')).toBe('other');
+    for (const heading of ['Theater', 'Creative projects', 'Weather', 'Seating', 'Homework']) expect(facetHint(heading, 'Something')).toBe('other');
+    expect(facetHint('Eating out', 'Likes ramen')).toBe('diet');
+    expect(facetHint('Home', 'Two cats')).toBe('household');
     expect(sniffFormat('- a bullet')).toBe('muse-memory');
     expect(sniffFormat('[not json')).toBe('muse-memory');
   });
@@ -149,6 +165,7 @@ describe('local import on a single-user keyless brain', () => {
     const p = JSON.parse(preview.out);
     expect(p).toMatchObject({ format: 'muse-memory', profile: 'memory/owner', items: 5, by_facet: { allergy: 1, diet: 1, other: 1, 'size.shoe': 1, 'size.jacket': 1 } });
     expect(p.dropped).toEqual([{ line: 13, reason: expect.stringMatching(/^credential-shaped/) }]);
+    expect(p.facts.map((f: R) => [f.line, f.facet])).toEqual([[4, 'allergy'], [7, 'diet'], [9, 'size.shoe'], [10, 'other'], [14, 'size.jacket']]);
     expect(preview.out).not.toContain(FAKE_TOKEN);
     expect(p.apply_argv.slice(-3)).toEqual(['--yes', '--preview', p.preview]);
     expect(await count(engine)).toBe(before);
@@ -253,6 +270,35 @@ describe('progress receipt', () => {
     expect(calls).toEqual(['remember', 'get_write_request', 'get_write_request']);
     expect(saves.length).toBeGreaterThan(0);
     expect(summarize(receipt)).toMatchObject({ complete: true, failed: [{ line: 2 }] });
+  });
+  test('a write that ended in conflict is reported failed, not left pending', async () => {
+    const plan = planImport('- Fact one', 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    const fake: ImportCall = async (tool) => tool === 'remember'
+      ? { items: [{ index: 0, request_id: 'c0', status: 'pending' }] }
+      : { state: 'conflict', error_code: 'write_conflict', error_message: 'the page moved' };
+    await runImport(plan, receipt, fake, () => {});
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches[0]!.state).toBe('partial');
+    expect(receipt.batches[0]!.items[0]).toMatchObject({ status: 'failed', error: { code: 'write_conflict' } });
+  });
+  test('a batch refused for its items is recorded as failed lines and the next batch is still sent', async () => {
+    const plan = planImport(Array.from({ length: IMPORT_BATCH + 1 }, (_, i) => `- Fact ${i}`).join('\n'), 'muse-memory');
+    const target = { principal: 'local:test', profile: 'memory/owner' };
+    const receipt = newReceipt(plan, previewHash(plan, target), '/tmp/x.md', target, 'imported');
+    const sent: string[] = [];
+    const fake: ImportCall = async (_tool, p) => {
+      sent.push(String(p.request_id));
+      if (sent.length === 1) throw Object.assign(new Error('items[3].valid_from must be an ISO date'), { code: 'invalid_params' });
+      return { items: [{ index: 0, request_id: 'c20', status: 'inserted', id: '9' }] };
+    };
+    await runImport(plan, receipt, fake, () => {});
+    expect(receipt.batches.map(b => b.state)).toEqual(['partial', 'committed']);
+    expect(receipt.batches[0]!.items).toHaveLength(IMPORT_BATCH);
+    expect(receipt.batches[0]!.items[0]).toMatchObject({ status: 'failed', error: { code: 'invalid_params' } });
+    await runImport(plan, receipt, fake, () => {});
+    expect(sent).toHaveLength(2);
   });
   test('a file that is not a receipt is refused', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-receipt-'));

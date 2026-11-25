@@ -8,6 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { scanText, TRANSCRIPT_LANE_SCAN_OPTS } from '../secret-scan.ts';
+import { isStrictIsoDateTime } from '../utils.ts';
 import { canonicalFacet } from './facets.ts';
 
 export const IMPORT_FORMATS = ['muse-memory', 'claude-memories', 'memory-text'] as const;
@@ -23,8 +24,8 @@ export interface ImportPlan { format: ImportFormat; content_sha256: string; item
 export interface ImportTarget { principal: string; profile: string }
 
 const HEADING_FACETS: Array<[RegExp, string]> = [
-  [/allerg/, 'allergy'], [/diet|food|eat/, 'diet'], [/brand/, 'brand'], [/style|fashion|cloth/, 'style'],
-  [/schedule|routine|calendar/, 'schedule'], [/household|family|home/, 'household'], [/constraint|restriction|avoid/, 'constraint'],
+  [/\ballerg/, 'allergy'], [/\b(diet|dietary|food|foods|eat|eats|eating)\b/, 'diet'], [/\bbrands?\b/, 'brand'], [/\b(style|fashion|clothes|clothing)\b/, 'style'],
+  [/\b(schedule|routines?|calendar)\b/, 'schedule'], [/\b(household|family|home)\b/, 'household'], [/\b(constraints?|restrictions?|avoid)\b/, 'constraint'],
 ];
 
 /** The facet a heading or a fact names, `other` when none: `Allergies` → allergy, `Shoe size: 10` → size.shoe. */
@@ -39,26 +40,35 @@ export function facetHint(heading: string | null, fact: string): string {
   return 'other';
 }
 
-type Raw = { line: number; fact: string; heading: string | null; valid_from?: string };
+type Raw = { line: number; fact: string; heading: string | null; valid_from?: string } | { line: number; skip: string };
 
-function bullets(text: string): Raw[] {
+const HEADING = /^\s*(?:#{1,6}\s+(.+?)\s*#*|\*\*(.+?)\*\*:?|__(.+?)__:?)\s*$/;
+const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/;
+
+/** Lines of a Markdown memory list; with `prose`, a plain line under a heading is a fact too, else it is named as skipped. */
+function bullets(text: string, prose = false): Raw[] {
   const out: Raw[] = [];
   let heading: string | null = null;
   text.split(/\r?\n/).forEach((l, i) => {
-    const h = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(l);
-    if (h) { heading = h[1]!; return; }
-    const b = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/.exec(l);
+    const h = HEADING.exec(l);
+    if (h) { heading = (h[1] ?? h[2] ?? h[3])!; return; }
+    const b = BULLET.exec(l);
     if (b) out.push({ line: i + 1, fact: b[1]!, heading });
+    else if (l.trim()) out.push(prose ? { line: i + 1, fact: l.trim(), heading } : { line: i + 1, skip: 'not a list item' });
   });
   return out;
 }
+
+/** A dated line's date, kept only when it is a real calendar date (remember refuses any other). */
+const realDate = (d: string | undefined): string | undefined => d !== undefined && isStrictIsoDateTime(d) ? d : undefined;
 
 function memoryText(text: string): Raw[] {
   const out: Raw[] = [];
   text.split(/\r?\n/).forEach((l, i) => {
     const m = /^\s*\[(\d{4}-\d{2}-\d{2})\]\s*[-\u2013\u2014:]\s*(.+?)\s*$/.exec(l);
-    if (m) out.push({ line: i + 1, fact: m[2]!, heading: null, valid_from: m[1]! });
-    else if (l.trim()) { const b = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/.exec(l); if (b) out.push({ line: i + 1, fact: b[1]!, heading: null }); }
+    const date = realDate(m?.[1]);
+    if (m) out.push({ line: i + 1, fact: m[2]!, heading: null, ...(date ? { valid_from: date } : {}) });
+    else if (l.trim()) { const b = BULLET.exec(l); out.push(b ? { line: i + 1, fact: b[1]!, heading: null } : { line: i + 1, skip: 'not a dated memory or list item' }); }
   });
   return out;
 }
@@ -68,12 +78,12 @@ function claudeMemories(text: string): Raw[] {
   const list = Array.isArray(doc) ? doc : (doc as { memories?: unknown }).memories;
   const out: Raw[] = [];
   const take = (v: unknown, n: number) => {
-    if (typeof v === 'string') { out.push(...bullets(v).map(b => ({ ...b, line: n }))); if (!/^\s*[-*+]/m.test(v) && v.trim()) out.push({ line: n, fact: v.trim(), heading: null }); return; }
+    if (typeof v === 'string') { out.push(...bullets(v, true).map(b => ({ ...b, line: n }))); return; }
     if (!v || typeof v !== 'object') return;
     const o = v as Record<string, unknown>;
     const fact = [o.content, o.memory, o.text].find(x => typeof x === 'string') as string | undefined;
-    const date = [o.created_at, o.updated_at].find(x => typeof x === 'string') as string | undefined;
-    if (fact) out.push({ line: n, fact, heading: typeof o.category === 'string' ? o.category : null, ...(date && /^\d{4}-\d{2}-\d{2}/.test(date) ? { valid_from: date.slice(0, 10) } : {}) });
+    const date = realDate(([o.created_at, o.updated_at].find(x => typeof x === 'string') as string | undefined)?.slice(0, 10));
+    if (fact) out.push({ line: n, fact, heading: typeof o.category === 'string' ? o.category : null, ...(date ? { valid_from: date } : {}) });
     else if (typeof o.conversations_memory === 'string') take(o.conversations_memory, n);
   };
   if (Array.isArray(list)) list.forEach((v, i) => take(v, i + 1));
@@ -96,6 +106,7 @@ export function planImport(text: string, format: ImportFormat | 'auto'): ImportP
   const dropped: ImportDrop[] = [];
   const seen = new Set<string>();
   for (const r of raw) {
+    if ('skip' in r) { dropped.push({ line: r.line, reason: r.skip }); continue; }
     const fact = r.fact.replace(/\s+/g, ' ').trim();
     if (!fact) continue;
     const secret = scanText(fact, TRANSCRIPT_LANE_SCAN_OPTS)[0];

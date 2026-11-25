@@ -7,7 +7,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { IMPORT_FORMATS, planImport, previewHash, type ImportFormat, type ImportTarget } from '../core/profile/import.ts';
 import { newReceipt, runImport, summarize, type ImportCall, type ImportReceipt } from '../core/profile/import-run.ts';
-import { writeJsonDocument } from '../core/cli-force-exit.ts';
+import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 
 export const IMPORT_HELP = `Usage:
   gbrain profile import <file> [--format auto|${IMPORT_FORMATS.join('|')}] [--json]   preview
@@ -100,9 +100,9 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
     const byFacet: Record<string, number> = {};
     for (const i of plan.items) byFacet[i.facet] = (byFacet[i.facet] ?? 0) + 1;
     const apply = ['gbrain', 'profile', 'import', file, '--format', plan.format, '--yes', '--preview', hash];
-    if (f.json) { await writeJsonDocument(JSON.stringify({ preview: hash, format: plan.format, profile: who.profile, items: plan.items.length, by_facet: byFacet, dropped: plan.dropped, apply_argv: apply }, null, 2)); return; }
+    if (f.json) { await writeJsonDocument(JSON.stringify({ preview: hash, format: plan.format, profile: who.profile, items: plan.items.length, by_facet: byFacet, facts: plan.items, dropped: plan.dropped, apply_argv: apply }, null, 2)); return; }
     console.log(`Preview ${hash}: ${plan.items.length} fact(s) from ${basename(file)} (${plan.format}) onto ${who.profile}, saved private and inferred.`);
-    for (const [facet, n] of Object.entries(byFacet).sort()) console.log(`  ${facet}: ${n}`);
+    for (const i of plan.items) console.log(`  line ${i.line} [${i.facet}] ${i.fact.length > 100 ? i.fact.slice(0, 99) + '…' : i.fact}`);
     for (const d of plan.dropped) console.log(`  dropped line ${d.line}: ${d.reason}`);
     console.log(`Apply: ${apply.join(' ')}`);
     return;
@@ -118,6 +118,6 @@ export async function runProfileImport(args: string[], call: ImportCall, target:
   await runImport(plan, receipt, call, r => saveReceipt(path, r));
   await report(receipt, path, f.json);
   const s = summarize(receipt);
-  if (receipt.batches.some(b => b.state === 'pending')) process.exitCode = 10;
-  else if (!s.complete || s.failed.length) process.exitCode = 1;
+  if (receipt.batches.some(b => b.state === 'pending')) setCliExitVerdict(10);
+  else if (!s.complete || s.failed.length) setCliExitVerdict(1);
 }
