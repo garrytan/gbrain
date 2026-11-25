@@ -45,11 +45,11 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     live();
     const query = digestQuery(tx);
     await query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ'); // the first statement fixes the snapshot, as in the seed
-    await query(DIGEST_SESSION_SETTINGS);
-    if (hasCapability(engine, 'postgres_admin')) await query(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // the wait below only abandons a read: this stops it
+    live(); await query(DIGEST_SESSION_SETTINGS);
+    live(); if (hasCapability(engine, 'postgres_admin')) await query(`SET LOCAL statement_timeout = ${PREIMAGE_TIMEOUT_MS}`); // the wait below only abandons a read: this stops it
     const rowsOf = async (relation: string, where: string, params: unknown[], limit: number): Promise<Row[]> => {
       live();
-      const read = await relationRead(tx, relation, ['id']);
+      const read = await relationRead(tx, relation, ['id']); live(); // the catalog read above is a statement too
       const rows = await tx.executeRaw<Record<string, string | null>>(`/* shadow write preimage */ ${read.select} WHERE ${where} LIMIT ${limit + 1}`, params);
       if (rows.length > limit) throw new Error('preimage_too_large');
       return rows.map((r) => ({ ...Object.fromEntries(read.columns.map((c, i) => [c.name, r[`c${i}`] ?? null])), k0: r.k0 ?? null }));
@@ -60,6 +60,13 @@ export async function readPreimage(engine: BrainEngine, op: string, targets: Pag
     const more = strings(links, 'from_page_id').concat(strings(links, 'to_page_id'), strings(links, 'origin_page_id')).filter((id) => !ids.includes(id));
     if (more.length) pages.push(...await rowsOf('pages', 't.id::text = ANY($1::text[])', [[...new Set(more)]], MAX_PRE_PAGES));
     if (pages.length > MAX_PRE_PAGES) throw new Error('preimage_too_large');
+    // Not comparable, and said before anything is copied further: a soft-deleted page hides its links from the typed read on both engines, and a withdrawn
+    // or purged fact changes the body the primary serves (page-state/snapshot.ts) by an overlay the scratch store does not have.
+    if (pages.some((p) => p.deleted_at)) throw new Error('soft_deleted_page');
+    live();
+    const [overlay] = await tx.executeRaw<{ n: string }>(`/* shadow write preimage */ SELECT (SELECT count(*) FROM fact_withdrawals WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[])))
+      + (SELECT count(*) FROM fact_purges WHERE source_id = ANY($1::text[]) AND (subject = '*' OR subject = ANY($2::text[]))) AS n`, [strings(pages, 'source_id'), strings(pages, 'slug')]);
+    if (Number(overlay?.n ?? 0) > 0) throw new Error('fact_overlay');
     const named = [...new Set([...strings(pages, 'source_id'), ...targets.map((t) => t.source)])].filter((id) => id !== 'default'); // a page not there yet still needs its source in the scratch store
     const sources = named.length ? await rowsOf('sources', 't.id::text = ANY($1::text[])', [named], MAX_PRE_PAGES) : [];
     const bare = (rows: Row[]): Row[] => rows.map(({ k0: _key, ...rest }) => rest);
@@ -78,6 +85,8 @@ async function fenced(engine: BrainEngine, op: string, args: unknown[], targets:
     return movedOutsideFootprint(op, args, pre, again);
   } catch { return true; }
 }
+
+const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
 
 const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { onTimeout(); reject(new Error('preimage_timeout')); }, ms);
@@ -119,7 +128,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
             pre = await timeout(readPreimage(ctx.engine, name, targets, signal), o.preimageTimeoutMs ?? PREIMAGE_TIMEOUT_MS, () => { signal.aborted = true; });
           } catch (error) {
             const why = (error as Error)?.message;
-            uncomparable(name, why === 'preimage_too_large' || why === 'preimage_timeout' ? why : 'preimage_unreadable');
+            uncomparable(name, why && PREIMAGE_REASONS.has(why) ? why : 'preimage_unreadable');
             return run();
           }
           let result: unknown;

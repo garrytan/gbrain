@@ -10,7 +10,7 @@
  * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
@@ -105,19 +105,6 @@ describe('write comparison rules (review findings)', () => {
     expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 1, uncomparable_by_reason: { moved: 1 } });
   });
 
-  test('a verdict that could not be written never leaves a passing count behind, and is counted when the next one is written', () => {
-    const dir = tmp();
-    const tally = new WriteTally(dir, () => 'e1');
-    tally.note('comparable'); tally.note('comparable');
-    mkdirSync(`${writeTallyPath(dir)}.${process.pid}.tmp`); // the write fails (a directory is in its way)
-    tally.note('unexplained_difference');
-    expect(readWriteTally(dir, 'e1')).toBeNull(); // the two comparable writes no longer stand as evidence without the mismatch
-    rmSync(`${writeTallyPath(dir)}.${process.pid}.tmp`, { recursive: true });
-    tally.note('comparable');
-    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, unexplained_difference: 1 });
-    expect(row5({ write_comparisons: { state: 'measured', comparable: 5000, unexplained_difference: readWriteTally(dir, 'e1')!.unexplained_difference } }).state).toBe('fail');
-  });
-
   test('a second child never deletes the store a first one is using, and a dead process\'s leftover store is removed', async () => {
     const dir = tmp(); const scratch = tmp();
     let opened = ''; let release = (): void => {}; let entered = (): void => {};
@@ -154,7 +141,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
   const A = R({ id: '1', source_id: 'default', slug: 'a/x', title: 'X' }); const B = R({ id: '2', source_id: 'default', slug: 'a/y', title: 'Y' });
   const L = R({ id: '10', from_page_id: '1', to_page_id: '2', link_type: 'knows' });
   const pre = { sources: [], pages: [A, B], links: [L] };
-  const sample = (): WriteEvent => ({ t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } });
+  const sample = (over: Partial<WriteEvent> = {}): WriteEvent => ({ t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] }, ...over });
 
   test('rows outside the write\'s footprint must be unchanged, and no link may appear that the write did not add', () => {
     const link = ['a/x', 'a/y', 'c', 'knows'];
@@ -165,7 +152,7 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A, B], links: [L, added] })).toBe(true); // a link nobody here wrote
     expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A, { ...B, title: 'Edited elsewhere' }], links: [L] })).toBe(true); // a copied page changed
     expect(movedOutsideFootprint('addLink', link, pre, { sources: [], pages: [A], links: [L] })).toBe(true); // a copied page is gone
-    expect(movedOutsideFootprint('removeLink', link, pre, { sources: [], pages: [A, B], links: [] })).toBe(false); // the write's own link, removed
+    expect(movedOutsideFootprint('removeLink', ['a/x', 'a/y', 'knows'], pre, { sources: [], pages: [A, B], links: [] })).toBe(false); // the write's own link, removed
     expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [{ ...A, title: 'New' }, B], links: [L] })).toBe(false); // the page it writes
     expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [A, { ...B, title: 'Edited elsewhere' }], links: [L] })).toBe(true);
     expect(movedOutsideFootprint('putPage', ['a/x', {}], pre, { sources: [], pages: [A, B], links: [] })).toBe(true); // a link it does not write is gone
@@ -175,6 +162,57 @@ describe('the data fence and the scratch location (lane owner ruling)', () => {
     expect(movedOutsideFootprint('deletePage', ['a/x'], pre, { sources: [], pages: [B], links: [farther] })).toBe(false); // a link to a page that was never copied is not a change to the copy
     const jobs = { ...B, projection_job_revision: 'r1' };
     expect(movedOutsideFootprint('addLink', link, { ...pre, pages: [A, jobs] }, { sources: [], pages: [A, { ...jobs, projection_job_revision: 'r2' }], links: [L] })).toBe(false); // job-queue state is not an edit
+  });
+
+  test('a link another process adds between the same two pages, with another type or source, is not the write\'s own (a type or source it leaves out matches any)', () => {
+    const typed = ['a/x', 'a/y', 'c', 'knows', 'markdown'];
+    const other = R({ id: '13', from_page_id: '1', to_page_id: '2', link_type: 'works_at', link_source: 'markdown' });
+    const same = R({ id: '14', from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'markdown' });
+    const fromElsewhere = R({ id: '15', from_page_id: '1', to_page_id: '2', link_type: 'knows', link_source: 'frontmatter' });
+    const after = (links: Array<Record<string, string>>) => ({ sources: [], pages: [A, B], links: [L, ...links] });
+    expect(movedOutsideFootprint('addLink', typed, pre, after([same]))).toBe(false);
+    expect(movedOutsideFootprint('addLink', typed, pre, after([other]))).toBe(true);
+    expect(movedOutsideFootprint('addLink', typed, pre, after([fromElsewhere]))).toBe(true);
+    expect(movedOutsideFootprint('addLink', ['a/x', 'a/y', 'c'], pre, after([other]))).toBe(false); // no type named: the documented gap
+  });
+
+  test('a failed write never drops what was saved, and a replay whose verdict was not written is unresolved evidence that status reads as none', () => {
+    const dir = tmp();
+    const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' } as never, NOW.getTime());
+    const tally = new WriteTally(dir, () => epoch.epoch_id);
+    const state = { sample_rate: 0.1 } as never;
+    tally.note('comparable', undefined, 1000); tally.note('unexplained_difference');
+    tally.begin();
+    expect(readWriteTally(dir, epoch.epoch_id)).toMatchObject({ in_flight: process.pid, comparable: 1000, unexplained_difference: 1 });
+    const blocked = `${writeTallyPath(dir)}.${process.pid}.tmp`;
+    mkdirSync(blocked); // the write cannot be published (and the old file is not touched)
+    tally.note('comparable', undefined, 1, true);
+    expect(readWriteTally(dir, epoch.epoch_id)).toMatchObject({ in_flight: process.pid }); // still marked: nothing passes on it
+    expect(buildFollowStatus(dir, state, NOW).write_comparisons.state).toBe('capability_missing');
+    expect(row5({ write_comparisons: buildFollowStatus(dir, state, NOW).write_comparisons as ShadowStatus['write_comparisons'] }).state).toBe('missing');
+    rmSync(blocked, { recursive: true });
+    tally.note('comparable', undefined, 1, true);
+    expect(readWriteTally(dir, epoch.epoch_id)).toMatchObject({ in_flight: null, comparable: 1002, unexplained_difference: 1 }); // the whole epoch, mismatch included
+    expect(row5({ write_comparisons: buildFollowStatus(dir, state, NOW).write_comparisons as ShadowStatus['write_comparisons'] }).state).toBe('fail');
+  });
+
+  test('a replay a killed process left in flight is counted uncomparable when the next child starts, and nothing else is lost', () => {
+    const dir = tmp();
+    writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: 'e1', updated_at: '', comparable: 7, unexplained_difference: 1, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: 2147483646 }));
+    fakeComparer(dir);
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ in_flight: null, comparable: 7, unexplained_difference: 1, uncomparable: 1, uncomparable_by_reason: { crashed_mid_replay: 1 } });
+    writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: 'e1', updated_at: '', comparable: 7, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: process.pid }));
+    fakeComparer(dir); // a live process's mark is left alone
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ in_flight: process.pid, uncomparable: 0 });
+  });
+
+  test('a copy that leaves out a column the Rust store does not keep is not that copy (uncomparable), except the one column the seed always reports', async () => {
+    const dir = tmp();
+    const withPage = sample({ pre: { sources: [], pages: [{ id: '1', source_id: 'default', slug: 'people/pat-example' }], links: [] } });
+    await settle(fakeComparer(dir, { imported: (rows) => ({ imported: rows, unmapped_columns: ['trust_level'] }) }), [withPage]);
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { preimage_not_loaded: 1 } });
+    await settle(fakeComparer(dir, { imported: (rows) => ({ imported: rows, unmapped_columns: ['generation'] }) }), [withPage]);
+    expect(readWriteTally(dir, 'e1')).toMatchObject({ comparable: 1, uncomparable: 1 });
   });
 
   test('scratch stores are in the gbrain data home beside shadow/, not in a shared temp directory, and not under the shadow directory', async () => {

@@ -9,7 +9,7 @@
  *
  * Counts live in `write-comparisons.json`, written by the child under the current evidence epoch; `status` reads them.
  */
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { memberKind, WRITE_MAP } from './write-map.ts';
 
@@ -42,13 +42,14 @@ export function pageRefs(op: string, args: any[]): PageRef[] {
   return [...new Map(all.filter((r): r is PageRef => r !== null).map((r) => [`${r.source}\0${r.slug}`, r])).values()];
 }
 
-/** What a pilot write itself changes: the pages it writes or deletes, and the (from, to) page pairs of the links it adds or removes. */
-export function footprint(op: string, args: any[]): { pages: PageRef[]; pairs: Array<[PageRef, PageRef]> } {
+/** What a pilot write itself changes: the pages it writes or deletes, and the links it adds or removes (from, to, and the type and source it names; one it leaves out matches any). */
+export function footprint(op: string, args: any[]): { pages: PageRef[]; links: Array<{ from: PageRef; to: PageRef; type?: string; source?: string }> } {
   const o = (args[OPTS_AT[op] ?? 1] ?? {}) as Record<string, unknown>;
-  const pair = (a: PageRef | null, b: PageRef | null): Array<[PageRef, PageRef]> => (a && b ? [[a, b]] : []);
-  if (op === 'addLinksBatch') return { pages: [], pairs: (args[0] as any[]).flatMap((l) => pair(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id))) };
-  if (op === 'addLink' || op === 'removeLink') return { pages: [], pairs: pair(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId)) };
-  return { pages: pageRefs(op, args), pairs: [] };
+  const link = (from: PageRef | null, to: PageRef | null, type?: unknown, source?: unknown) => (from && to ? [{ from, to, type: typeof type === 'string' ? type : undefined, source: typeof source === 'string' ? source : undefined }] : []);
+  if (op === 'addLinksBatch') return { pages: [], links: (args[0] as any[]).flatMap((l) => link(ref(l.from_slug, l.from_source_id), ref(l.to_slug, l.to_source_id), l.link_type, l.link_source)) };
+  if (op === 'addLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[3], args[4]) };
+  if (op === 'removeLink') return { pages: [], links: link(ref(args[0], o.fromSourceId), ref(args[1], o.toSourceId), args[2], args[3]) };
+  return { pages: pageRefs(op, args), links: [] };
 }
 
 type Row = Record<string, string | null>;
@@ -67,8 +68,9 @@ export function movedOutsideFootprint(op: string, args: any[], pre: PreImage, no
   const key = (r: PageRef): string => `${r.source}\0${r.slug}`;
   const ids = new Map<string, string | null>([...pre.pages, ...now.pages].map((p) => [`${p.source_id}\0${p.slug}`, p.id ?? null]));
   const ownPages = new Set(fp.pages.map((r) => ids.get(key(r))));
-  const ownPairs = new Set(fp.pairs.map(([a, b]) => `${ids.get(key(a))}\0${ids.get(key(b))}`));
-  const ownLink = (l: Row): boolean => ownPairs.has(`${l.from_page_id}\0${l.to_page_id}`) || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
+  const own = fp.links.map((l) => ({ from: ids.get(key(l.from)), to: ids.get(key(l.to)), type: l.type, source: l.source }));
+  const ownLink = (l: Row): boolean => own.some((w) => w.from === l.from_page_id && w.to === l.to_page_id && (w.type === undefined || w.type === l.link_type) && (w.source === undefined || w.source === l.link_source))
+    || (op === 'deletePage' && (ownPages.has(l.from_page_id) || ownPages.has(l.to_page_id)));
   const after = (rows: Row[]): Map<string | null, Row> => new Map(rows.map((r) => [r.id ?? null, r]));
   const pagesNow = after(now.pages); const linksNow = after(now.links);
   const preLinks = new Set(pre.links.map((l) => l.id));
@@ -117,6 +119,8 @@ export interface WriteTallyFile {
   version: 1; epoch_id: string; updated_at: string;
   comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
   capability_missing_by_family: Record<string, number>; uncomparable_by_reason: Record<string, number>;
+  /** The pid of a child that has a replay in flight whose verdict is not written yet: status reads the evidence as unresolved while it stands. */
+  in_flight?: number | null;
 }
 export const writeTallyPath = (dir: string): string => join(dir, 'write-comparisons.json');
 
@@ -140,27 +144,52 @@ function applyVerdict(file: WriteTallyFile, [outcome, key, count]: Verdict): voi
 }
 
 /**
- * Counts outcomes under the current epoch and writes the file after each one (sampled writes are rare). With no epoch, or no directory, nothing is counted.
- * A verdict that could not be written is kept and written with the next one, and the file it could not update is removed, so a count that no longer
- * includes a verdict never stands as evidence (it reads as no count, never as a pass).
+ * Counts outcomes under the current epoch and writes the whole epoch's totals after each one (sampled writes are rare). With no epoch, or no directory,
+ * nothing is counted. A replay marks itself in flight on disk before it starts and its verdict ends the mark, so a verdict that never reached the disk
+ * (the write failed, the child was killed) leaves the evidence unresolved, and status reads unresolved evidence as no evidence. When a write fails the
+ * complete totals are held in memory and written whole with the next one: a saved mismatch is never dropped, and the epoch never restarts from zero.
  */
 export class WriteTally {
-  private unsaved: Verdict[] = [];
+  private held: WriteTallyFile | null = null;
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir)) {}
-  note(outcome: WriteOutcome, key?: string, count = 1): void {
-    const epoch = this.epoch();
-    if (epoch === null || !this.alive()) return;
-    this.unsaved.push([outcome, key, count]);
-    const file = readWriteTally(this.dir, epoch) ?? { version: 1 as const, epoch_id: epoch, updated_at: '', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {} };
-    for (const verdict of this.unsaved) applyVerdict(file, verdict);
+  private load(epoch: string): WriteTallyFile {
+    return this.held?.epoch_id === epoch ? this.held : readWriteTally(this.dir, epoch)
+      ?? { version: 1, epoch_id: epoch, updated_at: '', comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {} };
+  }
+  private save(file: WriteTallyFile): void {
     file.updated_at = new Date().toISOString();
     try {
       const tmp = `${writeTallyPath(this.dir)}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify(file) + '\n', { mode: 0o600 });
       renameSync(tmp, writeTallyPath(this.dir));
-      this.unsaved = [];
-    } catch {
-      try { unlinkSync(writeTallyPath(this.dir)); } catch { /* nothing to remove, or it cannot be: the follower's own status stops updating in the same directory */ }
-    }
+      this.held = null;
+    } catch { this.held = file; }
+  }
+  /** Marks a replay in flight, on disk, before it starts. */
+  begin(): void {
+    const epoch = this.epoch();
+    if (epoch === null || !this.alive()) return;
+    const file = this.load(epoch);
+    file.in_flight = process.pid;
+    this.save(file);
+  }
+  /** A mark left by a process that no longer exists is one replay with no verdict: counted uncomparable, and the mark is cleared. */
+  recover(): void {
+    const epoch = this.epoch();
+    const file = epoch === null || !this.alive() ? null : readWriteTally(this.dir, epoch);
+    if (!file?.in_flight || file.in_flight === process.pid) return;
+    try { process.kill(file.in_flight, 0); return; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') return; }
+    file.in_flight = null;
+    applyVerdict(file, ['uncomparable', 'crashed_mid_replay', 1]);
+    this.save(file);
+  }
+  /** Counts one outcome; `ends` is a replay's own verdict, which ends its in-flight mark. */
+  note(outcome: WriteOutcome, key?: string, count = 1, ends = false): void {
+    const epoch = this.epoch();
+    if (epoch === null || !this.alive()) return;
+    const file = this.load(epoch);
+    applyVerdict(file, [outcome, key, count]);
+    if (ends && file.in_flight === process.pid) file.in_flight = null;
+    this.save(file);
   }
 }

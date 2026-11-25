@@ -14,6 +14,8 @@ import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
 
+/** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
+const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
 export const WRITE_QUEUE_BOUND = 16;
 export const WRITE_COMPARE_TIMEOUT_MS = 30_000;
 
@@ -52,6 +54,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       try { process.kill(Number(pid), 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(scratchRoot, name), { recursive: true, force: true }); }
     }
   } catch { /* silent-read-ok: an unreadable scratch directory only leaves old scratch stores behind; nothing is counted from it, and a replay then fails as uncomparable */ }
+  d.tally.recover(); // a replay a killed process left unresolved
   let chain: Promise<void> = Promise.resolve();
   let queued = 0;
   let runs = 0;
@@ -78,8 +81,8 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       for (const [relation, rows] of [['sources', pre.sources], ['pages', pre.pages], ['links', pre.links]] as const) {
         if (!rows.length) continue;
         const done = await store.importRelation(`write-compare-${runs}`, relation, rows);
-        // The scratch store must hold exactly the rows the primary held: a skipped, dropped or lossy import is not that copy.
-        if (done.imported !== rows.length || done.skipped || done.dropped || Object.keys(done.losses).length) return ['uncomparable', 'preimage_not_loaded'];
+        // The scratch store must hold exactly the rows the primary held: a skipped, dropped or lossy import, or a column it does not keep, is not that copy.
+        if (done.imported !== rows.length || done.skipped || done.dropped || Object.keys(done.losses).length || done.unmapped_columns?.some((c: string) => !EXPECTED_UNMAPPED.has(c))) return ['uncomparable', 'preimage_not_loaded'];
       }
       try { await engine[event.op](...args); } catch (error) { d.onError?.('write', error); return ['uncomparable', `rust_write_failed`]; }
       const theirs = readBackText(encodeValue(await readBack(engine, targets, pageSet(targets, pre))));
@@ -96,6 +99,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     try {
       if (wedged) verdict = ['uncomparable', 'scratch_wedged'];
       else {
+        d.tally.begin(); // unresolved on disk until the verdict is written
         const work = replay(event);
         verdict = await new Promise<Verdict>((resolve, reject) => {
           const timer = setTimeout(() => { wedged = true; resolve(['uncomparable', 'timeout']); }, d.timeoutMs ?? WRITE_COMPARE_TIMEOUT_MS);
@@ -106,7 +110,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       d.onError?.('write', error);
       verdict = ['uncomparable', safeCode((error as { code?: unknown })?.code)];
     }
-    d.tally.note(verdict[0], verdict[1]);
+    d.tally.note(verdict[0], verdict[1], 1, true); // the replay is over: its verdict ends the unresolved mark
   }
 
   return {

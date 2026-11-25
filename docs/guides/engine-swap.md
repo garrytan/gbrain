@@ -71,12 +71,13 @@ never a pass. With no shadow running, every criterion is `missing`.
    shared temp directory), for one comparison only: it is deleted when the comparison ends, however it ends, and a killed
    shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence files hold no page content. The row counts as `comparable` when they match and `unexplained_difference` when they do not.
    A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
-   transaction, another write landed in between, or it touched too many rows) is `uncomparable` and never counts. On a
+   transaction, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds a withdrawn or purged fact (the primary then serves a redacted body the copy does not have), or the Rust store cannot keep a copied column) is `uncomparable` and never counts. A comparison whose verdict could not be written leaves the evidence unresolved, and status reads unresolved evidence as no evidence until it is written. On a
    Postgres brain, which other processes can write, a data fence catches another writer: every copied row outside the
    write's own footprint must be unchanged afterwards, no link may have appeared that the write did not add, and a `putPage`
    must read back the revision it returned; otherwise the sample is `uncomparable` (`moved`). PGLite skips the fence, because
-   its single-writer file lock means no other process can write. Open gap: another process editing the very rows the write
-   changes is not seen, and shows as an unexplained difference (it can fail criterion 5, never pass it). Every
+   its single-writer file lock means no other process can write. Open gaps: another process editing the very rows the write
+   changes is not seen, and shows as an unexplained difference (it can fail criterion 5, never pass it); and a link write that
+   names no type, or no source, treats a link another process adds between the same two pages with any type or source as its own. Every
    sampled write of any other kind (tags, chunks, timeline, facts, raw SQL and so on) is counted `capability_missing` under
    its family, so `gbrain engine shadow status` and the swap plan name every family still unchecked. With no verdict yet the
    row stays `missing`; below 1,000 comparable writes it fails and says how many it has. The sample share is the write sample

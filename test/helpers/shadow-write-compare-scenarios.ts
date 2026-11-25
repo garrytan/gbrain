@@ -345,6 +345,49 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       } finally { put.mockRestore(); }
     }, 60_000);
 
+    test('a read whose deadline passes during its catalog statement stops before the page statement (cancellation is checked between every statement)', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      const signal = { aborted: false };
+      let pageStatements = 0;
+      const real = primary().transaction.bind(primary()) as (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => Promise<unknown>;
+      const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => real((tx) => fn(new Proxy(tx, {
+        get: (target, prop) => {
+          const value = Reflect.get(target, prop, target);
+          if (prop !== 'executeRaw' || typeof value !== 'function') return typeof value === 'function' ? value.bind(target) : value;
+          return async (sql: unknown, ...rest: unknown[]) => {
+            if (typeof sql === 'string' && sql.includes('shadow write preimage')) pageStatements++;
+            const out = await value.call(target, sql, ...rest);
+            if (typeof sql === 'string' && sql.includes('pg_attribute')) signal.aborted = true; // the deadline passes while the catalog read runs
+            return out;
+          };
+        },
+      })), opts)) as never);
+      try {
+        await expect(readPreimage(primary(), 'putPage', [{ source: 'default', slug: 'people/alice-example' }], signal)).rejects.toThrow('preimage_aborted');
+        expect(pageStatements).toBe(0);
+      } finally { spy.mockRestore(); }
+    }, 60_000);
+
+    test('a page that is soft-deleted, or a source with a withdrawn or purged fact, is not copied: the sample is uncomparable and the write still goes through', async () => {
+      await ctx.reset();
+      await fillSeedFixture(primary());
+      await primary().softDeletePage('companies/acme-example');
+      const gone = rig();
+      await gone.wrapped.removeLink('people/alice-example', 'companies/acme-example', 'works_at');
+      await until(() => gone.inbox.length >= 1);
+      expect(gone.inbox.map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'soft_deleted_page']]);
+      await primary().restorePage('companies/acme-example');
+      await primary().executeRaw("INSERT INTO fact_withdrawals (source_id, visibility, subject, fact_hash) VALUES ('default', 'world', '*', 'h1')");
+      try {
+        const overlay = rig();
+        await overlay.wrapped.addLink('people/alice-example', 'companies/acme-example', 'again', 'invests_in');
+        await until(() => overlay.inbox.length >= 1);
+        expect(overlay.inbox.map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'fact_overlay']]);
+        expect(await primary().getLinks('people/alice-example')).toHaveLength(1); // the earlier removal and this addition both went through
+      } finally { await primary().executeRaw("DELETE FROM fact_withdrawals WHERE fact_hash = 'h1'"); }
+    }, 60_000);
+
     (ctx.kind === 'pglite' ? test : test.skip)('on a single-connection engine a read that ran out of time ends at its next statement, so the write behind it is not held for the read', async () => {
       await ctx.reset();
       let release = (): void => {};
