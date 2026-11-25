@@ -171,7 +171,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
       const slugs = scanning ? [...new Set([...retrying, ...parked.flatMap(entry => entry.slug ? [entry.slug] : [])])] : [];
       // The requeue is a Git durability store write (engine-sql/git-durability.ts), so a Rust brain applies it to its effect record.
-      const updated = await (await tx.gitDurabilityStore()).requeueParkedEffect(effect.id, { ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
+      const updated = await (await tx.gitDurabilityStore()).requeueParkedEffect(String(effect.id), { ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
         ...(!scanning && (effect.data.slug ?? effect.data.relative_path) ? { failing_target: effect.data.slug ?? effect.data.relative_path } : {}),
         ...(underOwner ? { retried_under: 'owner_host', retried_by_host: hostId } : {}),
         ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}),
