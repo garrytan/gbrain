@@ -384,7 +384,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "grep": {
         "type": "string",
-        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.",
+        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner \"a|b\" also matches either side), with line numbers and total_matches.",
         "fullSurfaceOnly": true
       },
       "context": {
@@ -4127,6 +4127,29 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "name": "reveal-secret",
       "hidden": true
     }
+  },
+  {
+    "name": "check_claims",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+    "params": {
+      "text": {
+        "type": "string",
+        "required": true,
+        "description": "The draft to check (max 20000 characters)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "search"
   },
   {
     "name": "policy_check",

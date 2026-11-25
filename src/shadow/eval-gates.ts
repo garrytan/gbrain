@@ -20,7 +20,7 @@
  * Anything missing, unreadable or different is a `false` whose reason names the cause.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync, type Stats } from 'node:fs';
 import { join } from 'node:path';
 import type { EpochManifest } from './evidence-epoch.ts';
 
@@ -251,9 +251,48 @@ function writeAtomic(path: string, body: string): void {
 
 export interface FetchResult { cached: boolean; reason: string | null; passed: boolean }
 
-/** `dev:ino:birth` of a directory, or null when it is gone: tells a shadow that was deleted (and maybe recreated) from the one a command started in. */
-export function dirIdentity(path: string): string | null {
-  try { const st = statSync(path); return `${st.dev}:${st.ino}:${st.birthtimeMs}`; } catch { return null; } // silent-read-ok: a missing directory is the answer
+/** A directory this command started in, held open so that the same path can be told from a directory that took its place. */
+export interface DirPin {
+  /** True while the path still names the directory that was pinned: false once it was deleted, moved away or replaced. */
+  live(): boolean;
+  /** Releases the hold. Call it on every exit; a closed pin is never live. */
+  close(): void;
+}
+
+/**
+ * Pins a directory, or returns null when it is not there. A path stays the same directory only while it names the inode the
+ * pin holds, and the pin is an open descriptor: the system cannot give a directory's inode number to a new directory while
+ * any descriptor is open on it, so a directory deleted and recreated at the same path always reads as a different one.
+ * (Comparing `dev:ino[:birth]` alone does not: ext4 hands the freed inode straight back after rmdir and mkdir, and a
+ * filesystem without a stored creation time reports the same birth time for both.) No file is written into the directory, so
+ * nothing of the pin shows in the directory or in anything published from it. Where a directory cannot be opened (Windows),
+ * the pin falls back to `dev:ino:birth` at the time it was taken.
+ */
+export function pinDir(path: string): DirPin | null {
+  let fd: number | null = null;
+  try { fd = openSync(path, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0)); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; } // silent-read-ok: a directory that cannot be opened falls back to the stat identity below
+  // With a descriptor held the inode is the identity; without one the birth time joins it.
+  const key = (st: Stats): string => (fd !== null ? `${st.dev}:${st.ino}` : `${st.dev}:${st.ino}:${st.birthtimeMs}`);
+  let held: string;
+  try {
+    const st = fd !== null ? fstatSync(fd) : statSync(path);
+    if (!st.isDirectory()) throw new Error('not a directory');
+    held = key(st);
+  } catch {
+    if (fd !== null) { try { closeSync(fd); } catch { /* the descriptor is already unusable */ } }
+    return null; // silent-read-ok: a directory that cannot be read has no identity to hold
+  }
+  let open = true;
+  return {
+    live: () => {
+      if (!open) return false;
+      try { return key(statSync(path)) === held; } catch { return false; } // silent-read-ok: a missing directory is the answer
+    },
+    close: () => {
+      if (open && fd !== null) { try { closeSync(fd); } catch { /* released either way */ } }
+      open = false;
+    },
+  };
 }
 
 /**
@@ -262,23 +301,29 @@ export function dirIdentity(path: string): string | null {
  * verdict reads as `eval_gates_digest_mismatch`). A failure keeps the old cache and records the attempt.
  *
  * It needs the shadow directory and its epoch to exist already and never creates the shadow root: `drills/` is made
- * without recursion, and every write checks that the shadow directory and `drills/` are still the ones it started in.
+ * without recursion, and every write checks that the shadow directory and `drills/` are still the ones it started in (held open, see `pinDir`).
  * A shadow deleted or replaced during the fetch (`stop --delete`) gets nothing written and the reason `shadow_gone`.
  */
 export async function fetchEvalGates(dir: string, epoch: EpochManifest | null, deps: FetchDeps): Promise<FetchResult> {
+  const held: DirPin[] = [];
+  const pin = (path: string): DirPin | null => { const pinned = pinDir(path); if (pinned) held.push(pinned); return pinned; };
+  try { return await fetchPinned(dir, epoch, deps, pin); } finally { for (const pinned of held) pinned.close(); }
+}
+
+async function fetchPinned(dir: string, epoch: EpochManifest | null, deps: FetchDeps, pin: (path: string) => DirPin | null): Promise<FetchResult> {
   const paths = cachePaths(dir);
   const now = deps.now ?? Date.now;
   const gone: FetchResult = { cached: false, reason: 'shadow_gone', passed: false };
-  const rootId = dirIdentity(dir);
-  if (rootId === null) return gone;
+  const rootPin = pin(dir);
+  if (rootPin === null) return gone;
   if (!epoch) return { cached: false, reason: 'eval_gates_build_unknown', passed: false };
   const drills = join(dir, 'drills');
   try { mkdirSync(drills, { mode: 0o700 }); } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return gone;
     if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
   }
-  const drillsId = dirIdentity(drills);
-  const live = (): boolean => drillsId !== null && dirIdentity(dir) === rootId && dirIdentity(drills) === drillsId;
+  const drillsPin = pin(drills);
+  const live = (): boolean => drillsPin !== null && rootPin.live() && drillsPin.live();
   const write = (path: string, body: string): void => { if (!live()) throw new FetchRefused('shadow_gone'); writeAtomic(path, body); };
   const record = (reason: string | null): void => write(paths.fetch, JSON.stringify({ at: new Date(now()).toISOString(), reason }) + '\n');
   try {

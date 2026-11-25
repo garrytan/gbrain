@@ -669,7 +669,21 @@ function historyReceipt(launcher: string, harness: SetupHarnessId, flags: SetupF
 
 const historyStep = (harness: SetupHarnessId, flags: SetupFlags, launcher: string, brainCreate: boolean, liveServe: boolean, extra: string[]): Promise<HistoryOutcome | null> =>
   historyFor({ harness, launcher, flags: { ...flags.historyImport, notes: flags.notes, dryRun: flags.dryRun }, brainCreate, json: flags.json, liveServe,
-    setupArgv: ['gbrain', 'setup', harness, ...extra, ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])] });
+    setupArgv: ['gbrain', 'setup', harness, ...extra, ...(flags.name === 'gbrain' ? [] : ['--name', flags.name])], choices: setupChoices(flags) });
+
+/** The wiring choices this run was given, carried into the commands it prints, so accepting the offer keeps them. */
+const setupChoices = (f: SetupFlags): string[] => [
+  ...(f.noHooks ? ['--no-hooks'] : []),
+  ...(f.capture === undefined ? [] : [f.capture ? '--capture' : '--no-capture']),
+  ...(f.providers === undefined ? [] : [f.providers ? '--providers' : '--no-providers']),
+  ...(f.instructions === undefined ? [] : [f.instructions ? '--instructions' : '--no-instructions']),
+  ...(f.surface ? ['--surface', f.surface, ...(f.advertise ? ['--advertise', f.advertise] : [])] : []),
+  ...(f.skillResolver === 'on' ? ['--skill-loading', 'resolve'] : f.skillLoading ? ['--skill-loading', f.skillLoading] : []),
+  ...(f.workspace ? ['--workspace', f.workspace] : []),
+  ...(f.gbrainBin ? ['--gbrain-bin', f.gbrainBin] : []),
+  ...(f.source ? ['--source', f.source] : []),
+  ...(f.noStdioMember ? ['--no-stdio-member'] : []),
+];
 
 async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
   const paths = codexSetupPaths(flags.name);
@@ -1353,3 +1367,5 @@ async function finish(out: Out, doc: {
 
 /** An index the user asked for by flag that could not be written fails the run (the rest of the install still finished). */
 const skillsFailed = (o: SkillsBlockOutcome | null): boolean => skillsOutcomeFailed(o);
+
+export const __testing = { parseFlags, setupChoices };

@@ -134,8 +134,11 @@ pass, `run-serial-tests.sh` pooled runs and rescues, `run-slow-tests.sh`,
 run attempt, exit code), `<id>.files` (the assigned files) and Bun's native
 JUnit report. `GBRAIN_TEST_RECEIPT_LANE` overrides the runner's lane name.
 `scripts/lib/test-env.sh` (`receipts_init`) reads both variables and unsets
-them, so tests and nested runners never inherit them. `bun run test` writes
-receipts to `.context/test-receipts/` by default, cleared per run.
+them, so tests and nested runners never inherit them. `run-with-receipt.sh`
+also reads and unsets `GBRAIN_TEST_RECEIPT_ARM`, the receipt's arm, so matrix
+cells that run one lane and file (the OpenClaw versions) stay separate
+identities. `bun run test` writes receipts to `.context/test-receipts/` by
+default, cleared per run.
 
 `bun run verify` records each check as pass, fail, timeout or skip in
 `<log dir>/outcomes.tsv` and in a JUnit receipt. A check that skips itself
