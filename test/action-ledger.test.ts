@@ -123,6 +123,8 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
 
   test('a member reads only its own actions; a guest reads none', async () => {
     const remote = ctxFor(engine, true);
+    const owned = await logAction(ctxFor(engine, false), { verb: 'spend', summary: 'Paid the rent', counterparty: 'bank-example', spent: 900, currency: 'USD', estimated: true });
+    expect((await engine.getPage(owned.action_id, { sourceId: 'default' }))!.frontmatter.readable_by).toBeUndefined();
     const mine = await withCallerAccess(ALICE, () => logAction(remote, { verb: 'book', summary: 'Booked a table', counterparty: 'bistro-example', spent: 30, currency: 'USD', estimated: true }));
     const page = await engine.getPage(mine.action_id, { sourceId: 'default' });
     expect(page!.frontmatter.readable_by).toContain('alice-example');
