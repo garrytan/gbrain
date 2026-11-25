@@ -103,18 +103,22 @@ function tryCreateLock(path: string): boolean {
   }
 }
 
-/** Runs `fn` while holding `<dir>/evidence/epoch.lock` (created O_EXCL), so children in other processes take turns. */
-function withEpochLock<T>(dir: string, fn: () => T): T {
-  mkdirSync(join(dir, 'evidence'), { recursive: true, mode: 0o700 });
-  const path = lockPath(dir);
+/** Runs `fn` while holding the lock file at `path` (created O_EXCL), so processes take turns. Throws (`epoch_lock_timeout`) when it stays held. The directory must exist. */
+export function withLock<T>(path: string, fn: () => T): T {
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     if (tryCreateLock(path)) break;
     if (staleLock(path)) { try { unlinkSync(path); } catch { /* another process took it first */ } continue; }
-    if (Date.now() > deadline) throw Object.assign(new Error('the evidence epoch lock is held'), { code: 'epoch_lock_timeout' });
+    if (Date.now() > deadline) throw Object.assign(new Error('the lock is held'), { code: 'epoch_lock_timeout' });
     sleepSync(20);
   }
   try { return fn(); } finally { try { unlinkSync(path); } catch { /* already gone */ } }
+}
+
+/** The epoch manifest's lock, `<dir>/evidence/epoch.lock`. */
+function withEpochLock<T>(dir: string, fn: () => T): T {
+  mkdirSync(join(dir, 'evidence'), { recursive: true, mode: 0o700 });
+  return withLock(lockPath(dir), fn);
 }
 
 /**

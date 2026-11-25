@@ -12,7 +12,7 @@ import { openRustEngine, type RustEngineAddonHandle } from '../core/rust-engine.
 import { configDir } from '../core/config.ts';
 import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteOutcome, type WriteVerdictSink } from './write-compare.ts';
+import { pageRefs, pageSet, readBack, readBackText, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
 
 /** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
 const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
@@ -22,8 +22,7 @@ export const WRITE_COMPARE_TIMEOUT_MS = 30_000;
 export interface WriteComparerDeps {
   dir: string;
   load: RustEngineAddonLoad;
-  /** Receives each outcome; absent, outcomes are dropped (nothing records them yet). */
-  record?: WriteVerdictSink;
+  tally: WriteTally;
   /** False once the shadow directory is gone (`stop --delete`): nothing is created or counted then. */
   alive: () => boolean;
   openEngine?: (addon: RustEngineAddonHandle, path: string) => Record<string, any>;
@@ -55,6 +54,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       try { process.kill(Number(pid), 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') rmSync(join(scratchRoot, name), { recursive: true, force: true }); }
     }
   } catch { /* silent-read-ok: an unreadable scratch directory only leaves old scratch stores behind; nothing is counted from it, and a replay then fails as uncomparable */ }
+  d.tally.recover(); // a replay a killed process left unresolved
   let chain: Promise<void> = Promise.resolve();
   let queued = 0;
   let runs = 0;
@@ -98,6 +98,7 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
     let verdict: Verdict;
     try {
       if (wedged) verdict = ['uncomparable', 'scratch_wedged'];
+      else if (!d.tally.begin()) verdict = ['uncomparable', 'mark_unwritten']; // the in-flight mark is not on disk, so no replay runs: its verdict could be lost
       else {
         const work = replay(event);
         verdict = await new Promise<Verdict>((resolve, reject) => {
@@ -109,17 +110,16 @@ export function createWriteComparer(d: WriteComparerDeps): { handle(event: Write
       d.onError?.('write', error);
       verdict = ['uncomparable', safeCode((error as { code?: unknown })?.code)];
     }
-    d.record?.(verdict[0], verdict[1]);
+    d.tally.note(verdict[0], verdict[1], 1, true); // the replay is over: its verdict ends its in-flight mark
   }
 
   return {
     handle(event) {
-      if (!d.record) return; // nothing records outcomes yet (the locked tally is a separate PR): no scratch store is worth opening for a result that is dropped
-      if (Number.isInteger(event.dropped) && event.dropped! > 0) d.record?.('uncomparable', 'send_shed', Math.min(event.dropped!, 10_000));
+      if (Number.isInteger(event.dropped) && event.dropped! > 0) d.tally.note('uncomparable', 'send_shed', Math.min(event.dropped!, 10_000));
       // The serving process can only report what it saw itself; a verdict (`comparable`, `unexplained_difference`) is made here, from a replay.
-      if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.record?.(event.outcome, event.family ?? event.reason); return; }
-      if (!event.pre || !event.args) { d.record?.('uncomparable', 'no_sample'); return; }
-      if (queued >= WRITE_QUEUE_BOUND) { d.record?.('uncomparable', 'queue_full'); return; }
+      if (event.outcome === 'capability_missing' || event.outcome === 'uncomparable') { d.tally.note(event.outcome, event.family ?? event.reason); return; }
+      if (!event.pre || !event.args) { d.tally.note('uncomparable', 'no_sample'); return; }
+      if (queued >= WRITE_QUEUE_BOUND) { d.tally.note('uncomparable', 'queue_full'); return; }
       queued++;
       chain = chain.then(() => run(event)).finally(() => { queued--; });
     },
