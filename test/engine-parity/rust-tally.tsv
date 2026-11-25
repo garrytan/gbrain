@@ -170,6 +170,7 @@ test/engine-parity/git-holds.test.ts	7	0
 test/engine-parity/graduation-catalog.test.ts	1	2
 test/engine-parity/handover-reads.test.ts	2	1
 test/engine-parity/harness-consumer-stop.test.ts	2	0
+test/engine-parity/held-fact-folder-rule.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hidden-refusals-2.test.ts	12	0
 test/engine-parity/hidden-refusals.test.ts	4	1
@@ -196,6 +197,7 @@ test/engine-parity/journal-purge-terminal.test.ts	2	0
 test/engine-parity/journal-typed-sites.test.ts	6	1
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
+test/engine-parity/labelled-only-for.test.ts	1	0
 test/engine-parity/large-page.test.ts	3	0
 test/engine-parity/lifecycle.test.ts	10	1
 test/engine-parity/link-read-options.test.ts	17	0
@@ -296,6 +298,7 @@ test/engine-parity/remember-members.test.ts	9	0
 test/engine-parity/remember-meta.test.ts	3	0
 test/engine-parity/remember-supersede.test.ts	3	0
 test/engine-parity/remember-whole.test.ts	1	0
+test/engine-parity/remote-access-matrix.test.ts	3	2
 test/engine-parity/remote-links.test.ts	9	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0

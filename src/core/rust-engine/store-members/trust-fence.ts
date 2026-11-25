@@ -21,7 +21,7 @@
  */
 import type { FenceFactRow, GuardedTakeRow, GuardedTakeRowsQuery, HeldRowsQuery, PageTrustRestore } from '../../engine-sql/trust-fence.ts';
 import type { FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow } from '../../engine-sql/cli-reads-ops.ts';
-import { callerMember, grantedPrivateFactSql, memberFactAdmitSql, memberPageSlug } from '../../access/member-facts.ts';
+import { callerMember, memberPageSlug } from '../../access/member-facts.ts';
 import { privateFactSources, privatePagesFilterForCaller } from '../../search/private-visibility.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePageTextPolicy } from './private-provenance.ts';
@@ -52,34 +52,38 @@ export const restorePageTrust: StoreMember<[spec: PageTrustRestore], void> = asy
  * here; heldFenceLines then holds every fence row line (fail closed), as it does for any failed lookup.
  * rust/docs/store/facts.md, "Held fence cells".
  */
-export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]], HeldFenceCellRow[]> = async (brain, keys) => {
-  if (!keys.length) return [];
+/** The caller's admissions heldRowSql reads (its own member page and its private-facts grant), as the store takes them. */
+function heldCaller(member: string): { member?: { slug: string; principal: string; policy: ReturnType<typeof storePageTextPolicy> }; grantSources?: string[] } {
   const own = callerMember();
-  const member = own === null ? undefined : {
+  const page = own === null ? undefined : {
     slug: memberPageSlug(own),
     principal: `member:${own}`,
-    policy: storePageTextPolicy('listHeldFenceCells', () => privatePagesFilterForCaller('p'), { callerReaders: true }),
+    policy: storePageTextPolicy(member, () => privatePagesFilterForCaller('p'), { callerReaders: true }),
   };
   const grantSources = [...privateFactSources()];
-  const input = { keys, ...(member ? { member } : {}), ...(grantSources.length ? { grantSources } : {}) };
+  return { ...(page ? { member: page } : {}), ...(grantSources.length ? { grantSources } : {}) };
+}
+
+export const listHeldFenceCells: StoreMember<[keys: readonly HeldFenceCellKey[]], HeldFenceCellRow[]> = async (brain, keys) => {
+  if (!keys.length) return [];
+  const input = { keys, ...heldCaller('listHeldFenceCells') };
   const rows = await storeCall({ member: 'listHeldFenceCells' }, () => brain.listHeldFenceCells(input)) as HeldFenceCellRow[];
   return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
 };
 
 /**
  * #5575 ENG-1: the fence overlay's read of one page (BrainEngine readFenceOverlayRows), one row per incoming row in
- * incoming order. `purged` reads the store's fact purge ledger (`facts/purge_ledger.rs` `purged_claim`). With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim for the caller with no
- * member page and no private-facts grant; a member caller or a private-facts grant refuses here (listHeldFenceCells serves both). rust/docs/store/facts.md, "The fence overlay".
+ * incoming order. `purged` reads the store's fact purge ledger (`facts/purge_ledger.rs` `purged_claim`). With `hideHeld`, `narrower` is listHeldFenceCells' rule for an uncut claim,
+ * with the caller's member page and private-facts grant as listHeldFenceCells takes them. rust/docs/store/facts.md, "The fence overlay".
  */
 export const readFenceOverlayRows: StoreMember<[page: { sourceId: string; slug: string }, incoming: readonly FenceOverlayIncomingRow[], opts: { hideHeld: boolean }], FenceOverlayRow[]> =
   async (brain, page, incoming, opts) => {
     if (!incoming.length) return [];
-    if (opts.hideHeld) {
-      if (memberFactAdmitSql('hr') !== 'FALSE') refuseMember('readFenceOverlayRows', "a member caller's own page facts");
-      if (grantedPrivateFactSql('hr') !== 'FALSE') refuseMember('readFenceOverlayRows', 'a private-facts grant');
-    }
+    // With hideHeld, `narrower` is listHeldFenceCells' rule: the caller's own member page and private-facts grant admit
+    // their facts (memberFactAdmitSql, grantedPrivateFactSql), so the store takes the same caller input.
+    const caller = opts.hideHeld ? heldCaller('readFenceOverlayRows') : {};
     const rows = await storeCall({ member: 'readFenceOverlayRows', slug: page.slug, sourceId: page.sourceId },
-      () => brain.readFenceOverlayRows({ sourceId: page.sourceId, slug: page.slug, incoming, hideHeld: opts.hideHeld === true })) as FenceOverlayRow[];
+      () => brain.readFenceOverlayRows({ sourceId: page.sourceId, slug: page.slug, incoming, hideHeld: opts.hideHeld === true, ...caller })) as FenceOverlayRow[];
     return rows.map((row) => ({ ...row, row_num: Number(row.row_num) }));
   };
 

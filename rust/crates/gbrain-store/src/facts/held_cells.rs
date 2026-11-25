@@ -195,6 +195,27 @@ fn granted(read: &dyn KvRead, input: &HeldFenceCellsInput, row: &FactRecord) -> 
     Ok(!hold_refused(read, row, &member, &opens)?)
 }
 
+/// The live facts of page (`source`, `slug`) as `heldRowSql` reads them for the caller `input` names (its member and
+/// its private-facts grant; `input.keys` is not read): each row and whether the caller's reads admit it.
+pub(super) fn live_rows(
+    read: &dyn KvRead,
+    input: &HeldFenceCellsInput,
+    source: &str,
+    slug: &str,
+) -> Result<Vec<LiveRow>> {
+    let admit = member_admits(read, input.member.as_ref(), source, slug)?;
+    let mut live = Vec::new();
+    for row in page_rows(read, source, slug)? {
+        if row.expired_at_us.is_some() {
+            continue;
+        }
+        let admitted = row.visibility != "world"
+            && ((admit && row.visibility == "private") || granted(read, input, &row)?);
+        live.push(LiveRow { row, admitted });
+    }
+    Ok(live)
+}
+
 /// A live fact of the page as `heldRowSql` reads it: the row and whether the caller's reads admit it.
 pub(super) struct LiveRow {
     pub(super) row: FactRecord,
@@ -250,20 +271,7 @@ impl Store {
             let page = (key.source_id.as_str(), key.slug.as_str());
             let live = match pages.entry(page) {
                 Entry::Occupied(e) => e.into_mut(),
-                Entry::Vacant(e) => {
-                    let admit = member_admits(&*read, input.member.as_ref(), page.0, page.1)?;
-                    let mut live = Vec::new();
-                    for row in page_rows(&*read, page.0, page.1)? {
-                        if row.expired_at_us.is_some() {
-                            continue;
-                        }
-                        let admitted = row.visibility != "world"
-                            && ((admit && row.visibility == "private")
-                                || granted(&*read, input, &row)?);
-                        live.push(LiveRow { row, admitted });
-                    }
-                    e.insert(live)
-                }
+                Entry::Vacant(e) => e.insert(live_rows(&*read, input, page.0, page.1)?),
             };
             if !held(live, key, row_num) {
                 continue;

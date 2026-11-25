@@ -62,6 +62,7 @@ import { ownerOnlyFactSql, ownerOnlyPageSql, ownerOnlyTakeSql, ownerOnlyTimeline
 import type { HybridSearchOpts, PostFusionOpts } from '../../search/hybrid.ts';
 import type { PageReadScope } from '../../types.ts';
 import { refuseMember } from './common.ts';
+import { validQualifiedRuleId } from '../../access/folder-rules.ts';
 
 /** The policy flags the store reads (`PrivacyPolicy` in rust/crates/gbrain-store/src/facts/privacy.rs). */
 export interface StorePrivacyPolicy {
@@ -180,7 +181,20 @@ export function storePrivacyPolicy(
     const own = readers.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
     // The reader record, then (for an owner) the same record with the owner fields; each compared by its exact text.
     const access = currentCallerAccess();
+    // The caller's own folder rules and pending prefixes ride in its record, as storePageTextPolicy's do; the store
+    // judges a held fact under a satisfied rule by them.
+    const folders = {
+      satisfiedRuleIds: [...access.satisfiedRuleIds],
+      folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+    };
+    // sharedHeldRuledSql renders no satisfied rule unless every id is a valid qualified id; the store is sent none then.
+    const validRules = folders.satisfiedRuleIds.every(validQualifiedRuleId);
+    const stored = {
+      ...(folders.satisfiedRuleIds.length && validRules ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
+      ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+    };
     const records: Array<Partial<CallerAccess>> = [{ ...readers, hidePrivate: true, restricted: !open }];
+    if (folders.satisfiedRuleIds.length || folders.folderCoverage.length) records.push({ ...readers, ...folders, hidePrivate: true, restricted: !open });
     if (access.owner) {
       records.push({ ...readers, hidePrivate: access.hidePrivate, restricted: !open, owner: true, ...(access.ownerReads ? { ownerReads: access.ownerReads } : {}) });
     }
@@ -192,7 +206,8 @@ export function storePrivacyPolicy(
         const judged = form.memberCase && memberPage !== undefined && canonical.includes(`pp.slug = '${memberPage}'`);
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
-        return { ...factPolicyFlags(canonical), ...readers, ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}) };
+        const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}) };
       }
     }
     return undefined;
@@ -427,6 +442,28 @@ export function judgeWidenedCaller<T>(judge: (readers: StoreCallerReaders) => T 
 export function callerReadersPagePolicy(readers: StoreCallerReaders): StorePrivacyPolicy {
   const canonical = renderForStoreCaller({ ...readers, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
   return { ...pagePolicyFlags(canonical), ...readers };
+}
+
+/** The caller's own folder rules and pending prefixes, as a caller record holds them and the store reads them. */
+export function callerFolders(): { satisfiedRuleIds: string[]; folderCoverage: Array<{ source_id: string; prefix: string }> } {
+  const access = currentCallerAccess();
+  return {
+    satisfiedRuleIds: [...access.satisfiedRuleIds],
+    folderCoverage: access.folderCoverage.map(c => ({ source_id: c.source_id, prefix: c.prefix })),
+  };
+}
+
+/**
+ * callerReadersPagePolicy for a record that also holds the caller's folder rules and pending prefixes (callerFolders):
+ * the reference storePageTextPolicy serves such a caller under, with the folders it sends the store.
+ */
+export function callerFoldersPagePolicy(readers: StoreCallerReaders, folders: ReturnType<typeof callerFolders>): StorePrivacyPolicy {
+  const canonical = renderForStoreCaller({ ...readers, ...folders, hidePrivate: true }, () => privatePagesFilterForCaller('p'));
+  return {
+    ...pagePolicyFlags(canonical), ...readers, callerRecord: true,
+    ...(folders.satisfiedRuleIds.length ? { satisfiedRuleIds: folders.satisfiedRuleIds } : {}),
+    ...(folders.folderCoverage.length ? { folderCoverage: folders.folderCoverage } : {}),
+  };
 }
 
 /**
