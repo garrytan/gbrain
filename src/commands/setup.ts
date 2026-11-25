@@ -866,7 +866,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       }
     }
     // An entry setup did not write but adopts (identical to its own) was chosen by whoever wrote it: it stays as it is.
-    if (found.mcp.state === 'current' && !prior) plan = { ...plan, surfaceOrigin: 'explicit' };
+    if (found.mcp.state === 'current' && !prior?.entry_hash && !prior?.pending_entry_hash) plan = { ...plan, surfaceOrigin: 'explicit' };
     let binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags, 'codex'), out);
@@ -875,8 +875,8 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'codex', flags.stdioMember), out);
     if (prior && priorProfile && !pluginOwner && chosenSurface === undefined && (found.mcp.state === 'owned' || found.mcp.state === 'current') && !sameProfile(priorProfile, defaults)) {
       const rerun = setupRerunArgv('codex', prior);
-      if (priorOrigin === 'default') notes.push(`the Codex registration moves from serve ${profileFlags(priorProfile).join(' ')} to serve ${profileFlags(defaults).join(' ')}, the Codex default (${CODEX_DEFAULT_WHY}). To keep the old registration: ${[...rerun, ...profileFlags(priorProfile)].join(' ')}`);
-      else if (priorOrigin === undefined) notes.push(`this Codex registration was written before setup recorded whether its surface was chosen, so it keeps serve ${profileFlags(priorProfile).join(' ')}. To move it to the Codex default (${CODEX_DEFAULT_WHY}): ${[...rerun, ...profileFlags(defaults)].join(' ')}`);
+      if (priorOrigin === 'default') notes.push(`the Codex registration moves from serve ${profileFlags(priorProfile).join(' ')} to serve ${profileFlags(defaults).join(' ')}, the Codex default (${CODEX_DEFAULT_WHY}). To keep the old registration: ${shellQuoteArgv([...rerun, ...profileFlags(priorProfile)])}`);
+      else if (priorOrigin === undefined) notes.push(`this Codex registration was written before setup recorded whether its surface was chosen, so it keeps serve ${profileFlags(priorProfile).join(' ')}. To move it to the Codex default (${CODEX_DEFAULT_WHY}): ${shellQuoteArgv([...rerun, ...profileFlags(defaults)])}`);
     }
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && (found.mcp.state === 'current' || found.mcp.state === 'owned'));
     const target: Target = {
@@ -1167,10 +1167,11 @@ function servesBound(flags: SetupFlags): boolean {
  * with the exact `openclaw mcp set` line that replaces it with `serve --surface full` listed whole (OpenClaw, like
  * Codex, never calls a tool request_tools unlocks). Reads the file only and never runs OpenClaw's CLI; null when the
  * file is absent or unreadable, or the entry is not a starter serve. `openclaw mcp set` replaces the whole entry, so the
- * line is printed only when every env key is one setup may echo (GBRAIN_HOME, GBRAIN_SOURCE); otherwise `command` is
- * null and the detail names the args to put in the file, so no env value is printed or overwritten.
+ * line is printed only for an entry setup may echo whole: a command, `serve` with only surface flags after it, and env
+ * limited to GBRAIN_HOME and GBRAIN_SOURCE. Otherwise `command` is null and the detail names only the flags to change,
+ * so no other value from the entry is printed or overwritten.
  */
-function openclawStarterEntry(name: string): { path: string; detail: string; args: string[]; command: string | null } | null {
+function openclawStarterEntry(name: string): { path: string; detail: string; from: string[]; to: string[]; command: string | null } | null {
   const path = openclawConfigPath();
   let entry: { command?: unknown; args?: unknown; env?: unknown } | undefined;
   try {
@@ -1187,11 +1188,14 @@ function openclawStarterEntry(name: string): { path: string; detail: string; arg
     if (/^--(surface|advertise)=/.test(args[i]!)) continue;
     kept.push(args[i]!);
   }
-  const fullArgs = [...args.slice(0, serve + 1), '--surface', 'full', ...kept];
-  const echoable = entry.env === undefined || (!!entry.env && typeof entry.env === 'object' && Object.entries(entry.env as Record<string, unknown>).every(([k, v]) => (k === 'GBRAIN_HOME' || k === 'GBRAIN_SOURCE') && typeof v === 'string'));
-  const registered = `${path} registers '${name}' on serve ${profileFlags({ surface: 'starter', advertise: registeredAdvertise(args.join(' ')) }).join(' ')}; OpenClaw never calls a tool request_tools unlocks, so move it to the full surface (setup does not run OpenClaw's CLI)`;
-  if (!echoable) return { path, args: fullArgs, command: null, detail: `${registered}. Its env holds values setup does not print, and openclaw mcp set replaces the whole entry, so set its args in that file to ${JSON.stringify(fullArgs)} and keep its env as it is` };
-  return { path, args: fullArgs, detail: registered, command: `openclaw mcp set ${name} ${shellQuote(JSON.stringify({ ...entry, args: fullArgs }))}` };
+  const from = profileFlags({ surface: 'starter', advertise: registeredAdvertise(args.join(' ')) });
+  const to = profileFlags({ surface: 'full', advertise: null });
+  const echoable = kept.length === 0 && args.slice(0, serve).every((a) => !a.startsWith('-') && !a.includes('='))
+    && Object.keys(entry).every((k) => k === 'command' || k === 'args' || k === 'env')
+    && (entry.env === undefined || (!!entry.env && typeof entry.env === 'object' && Object.entries(entry.env as Record<string, unknown>).every(([k, v]) => (k === 'GBRAIN_HOME' || k === 'GBRAIN_SOURCE') && typeof v === 'string')));
+  const registered = `${path} registers '${name}' on serve ${from.join(' ')}; OpenClaw never calls a tool request_tools unlocks, so move it to the full surface (setup does not run OpenClaw's CLI)`;
+  if (!echoable) return { path, from, to, command: null, detail: `${registered}. The entry holds values setup does not print, and openclaw mcp set replaces the whole entry, so in that file change ${from.join(' ')} in its args to ${to.join(' ')} and leave the rest as it is` };
+  return { path, from, to, detail: registered, command: `openclaw mcp set ${name} ${shellQuote(JSON.stringify({ ...entry, args: [...args.slice(0, serve + 1), ...to] }))}` };
 }
 
 /**

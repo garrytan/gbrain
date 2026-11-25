@@ -266,20 +266,20 @@ describe('gbrain setup openclaw: names the line that moves a starter entry to fu
     expect(readFileSync(join(dir, 'openclaw.json'), 'utf8')).toBe(text);
   }, 120_000);
 
-  test('an entry whose env holds other values gets the args to set and no runnable line, and no env value is printed', async () => {
-    for (const env2 of [{ DATABASE_URL: 'postgresql://db.example.test/brain-secret-example' }, { GBRAIN_DATABASE_URL: 'postgresql://u:secret-example@db.example.test/b' }]) {
+  test('an entry holding other values gets only the flags to change and no runnable line, and none of its values is printed', async () => {
+    for (const [extraArgs, env2] of [[[], { DATABASE_URL: 'postgresql://db.example.test/brain-secret-example' }], [[], { GBRAIN_DATABASE_URL: 'postgresql://u:secret-example@db.example.test/b' }], [['--token', 'secret-example'], {}]] as const) {
       const b = box();
       const dir = join(b.home, '.openclaw');
       mkdirSync(dir, { recursive: true });
-      const text = JSON.stringify({ mcp: { servers: { gbrain: { command: b.bin, args: ['serve', '--surface', 'starter'], env: { GBRAIN_HOME: b.home, ...env2 } } } } }, null, 2);
+      const text = JSON.stringify({ mcp: { servers: { gbrain: { command: b.bin, args: ['serve', '--surface', 'starter', ...extraArgs], env: { GBRAIN_HOME: b.home, ...env2 } } } } }, null, 2);
       writeFileSync(join(dir, 'openclaw.json'), text);
       const r = await setupOpenclaw(b);
       expect(r.exitCode, r.stderr).toBe(0);
       expect(r.doc.mcp.replace.command).toBeNull();
-      expect(r.doc.mcp.replace.args).toEqual(['serve', '--surface', 'full']);
+      expect(r.doc.mcp.replace).toMatchObject({ from: ['--surface', 'starter'], to: ['--surface', 'full'] });
       expect(r.stdout + r.stderr).not.toContain('secret-example');
       const t = await runCli(['setup', 'openclaw', '--gbrain-bin', b.bin], { env: { ...env(b), ...OC_ENV } });
-      expect(t.stdout).toContain('["serve","--surface","full"]');
+      expect(t.stdout).toContain('change --surface starter in its args to --surface full');
       expect(t.stdout + t.stderr).not.toContain('secret-example');
       expect(t.stdout).not.toContain('openclaw mcp set gbrain');
       expect(readFileSync(join(dir, 'openclaw.json'), 'utf8')).toBe(text);
