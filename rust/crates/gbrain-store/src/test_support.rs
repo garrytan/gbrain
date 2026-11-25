@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 /// A byte file held in memory. Nothing survives the store.
 #[derive(Debug, Default)]
-struct MemFile(Mutex<Vec<u8>>);
+pub(crate) struct MemFile(Mutex<Vec<u8>>);
 
 impl FileBackend for MemFile {
     fn size(&self) -> std::io::Result<u64> {

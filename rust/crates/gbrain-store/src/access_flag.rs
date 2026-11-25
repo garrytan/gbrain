@@ -385,8 +385,11 @@ mod tests {
         //   `redb_kv.rs` (the table create on first open, the writable backend's `begin_write`, and
         //   `RedbSink`'s three redb transactions on the new record file a store snapshot fills: no
         //   brain store has that file open, so no store write handle exists to flag),
-        //   `fjall_kv.rs`, and
-        //   `occ_kv.rs` (its trait methods and the commit onto the base store);
+        //   `fjall_kv.rs`,
+        //   `occ_kv.rs` (its trait methods and the commit onto the base store),
+        //   `group_kv.rs` (its trait methods and the one shared write on the record file a group
+        //   commits; every statement it hands out is still opened through `Store::write`), and
+        //   its test module `group_kv/tests.rs`, a whole file under `#[cfg(test)]`;
         // - `lib.rs`: the brain-create write, the two arms of `Store::write`'s unbound loop, and
         //   the format upgrade (no page records; the format-5 carry-over in `seed/format_5.rs` writes
         //   purge tombstones, generations and oauth clients on it);
@@ -405,6 +408,8 @@ mod tests {
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
+            ("group_kv.rs", 4),
+            ("group_kv/tests.rs", 12),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),

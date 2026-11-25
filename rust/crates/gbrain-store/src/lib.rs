@@ -28,6 +28,7 @@ mod fingerprint_fixture;
 pub mod fjall_kv;
 pub mod format;
 pub mod git_gap_census;
+pub mod group_kv;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
@@ -263,7 +264,8 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
-        Arc::new(kv)
+        // One writer at a time, with the writers that queue up sharing one durable commit.
+        Arc::new(group_kv::GroupKv::new(Arc::new(kv)))
     })
 }
 

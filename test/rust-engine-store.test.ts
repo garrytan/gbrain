@@ -932,3 +932,56 @@ describe('raw SQL by design on a Rust brain', () => {
     expect(seen).toEqual(['readSegmentRegions']);
   });
 });
+
+/**
+ * Group commit on the single-writer store (rust/crates/gbrain-store/src/group_kv.rs): writers that queue up share one
+ * durable commit, and each call resolves only after its group's commit. A child writes pages from eight writers at once
+ * and prints ACK <slug> after each call resolves; it is killed with SIGKILL mid-run. On reopen every acknowledged page
+ * is there and whole, and every page that is there is whole (an unacknowledged one may be there or not, never half).
+ */
+describe('group commit on a Rust brain', () => {
+  withAddon('pages written by eight writers at once that were acknowledged survive a SIGKILL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-store-'));
+    dirs.push(dir);
+    const root = join(import.meta.dir, '..');
+    const child = `
+      const { loadRustAddon } = await import(${JSON.stringify(join(root, 'src/core/rust-engine/addon-loader.ts'))});
+      const { openRustEngine } = await import(${JSON.stringify(join(root, 'src/core/rust-engine.ts'))});
+      const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ${JSON.stringify(BUILT)} } });
+      const engine = openRustEngine({ addon, databasePath: ${JSON.stringify(dir)} });
+      await engine.connect({ engine: 'pglite', database_path: ${JSON.stringify(dir)} });
+      const body = (w, n) => ('writer ' + w + ' page ' + n + ' ').repeat(40);
+      await Promise.all(Array.from({ length: 8 }, async (_, w) => {
+        for (let n = 0; ; n++) {
+          const slug = 'notes/w' + w + '-' + n;
+          await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: body(w, n), timeline: '' });
+          process.stdout.write('ACK ' + slug + '\\n');
+        }
+      }));`;
+    const proc = Bun.spawn([process.execPath, '-e', child], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GBRAIN_SWEEP: '0', GBRAIN_RUST_CONCURRENT_WRITES: '0' } });
+    const reader = proc.stdout.getReader();
+    let text = '';
+    while ((text.match(/ACK /g) ?? []).length < 120) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`child ended early: ${await new Response(proc.stderr).text()}`);
+      text += new TextDecoder().decode(value);
+    }
+    proc.kill('SIGKILL');
+    await proc.exited;
+    const acked = [...text.matchAll(/ACK (\S+)\n/g)].map(m => m[1]!);
+    expect(acked.length).toBeGreaterThanOrEqual(120);
+    const { engine } = await open(dir);
+    const expected = (slug: string) => {
+      const [, w, n] = /^notes\/w(\d+)-(\d+)$/.exec(slug)!;
+      return (`writer ${w} page ${n} `).repeat(40);
+    };
+    for (const slug of acked) {
+      const page = await engine.getPage(slug);
+      expect(page?.title, `acknowledged ${slug} is missing`).toBe(slug);
+      expect(page?.compiled_truth).toBe(expected(slug));
+    }
+    const all = await engine.listPages({ limit: 100000 });
+    for (const page of all) expect(page.compiled_truth).toBe(expected(page.slug));
+    expect(all.length).toBeGreaterThanOrEqual(acked.length);
+  });
+});
