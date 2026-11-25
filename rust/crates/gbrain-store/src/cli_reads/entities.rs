@@ -898,6 +898,19 @@ pub(crate) fn is_retired(p: &PageRecord) -> bool {
         || has_retired_status_word(&text("status").to_lowercase())
 }
 
+/// The collapsed-page test of `listEntityKeyRows({ collapsed: true })`: `frontmatter -> 'dedupe_collapse'`
+/// is not NULL (a JSON null value counts) and `btrim(frontmatter ->> 'merged_into')` is not empty.
+pub(crate) fn is_collapsed(p: &PageRecord) -> bool {
+    p.frontmatter.contains_key("dedupe_collapse")
+        && !p
+            .frontmatter
+            .get("merged_into")
+            .and_then(arrow_text)
+            .unwrap_or_default()
+            .trim_matches(' ')
+            .is_empty()
+}
+
 /// The regex `(^|[^a-z])(alias|redirect|redirected)([^a-z]|$)` on lowercased text.
 fn has_retired_status_word(status: &str) -> bool {
     let bytes = status.as_bytes();

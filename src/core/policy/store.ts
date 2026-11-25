@@ -55,8 +55,8 @@ interface PolicyPage { body: string; revision: string; author: string }
 async function readPolicyPage(engine: BrainEngine, scope: PolicyScope): Promise<PolicyPage | null> {
   const page = await engine.getPage(POLICY_SLUGS[scope], { sourceId: POLICY_SOURCE });
   if (!page) return null;
-  const [row] = await engine.executeRaw<{ kind: string | null; pid: string | null }>(
-    'SELECT revision_principal_kind AS kind, revision_principal_id AS pid FROM pages WHERE id = $1', [page.id]);
+  // The typed member (a Rust brain serves it), not raw SQL: the policy answer must not stop on raw_sql there.
+  const row = await engine.readPageRevisionAttribution(page.id);
   return { body: isSegmentedPage(page) ? '' : page.compiled_truth ?? '', revision: String(page.knowledge_revision ?? ''), author: row?.kind ? `${row.kind}:${row.pid ?? ''}` : 'unrecorded' };
 }
 

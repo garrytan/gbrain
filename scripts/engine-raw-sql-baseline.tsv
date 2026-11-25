@@ -512,7 +512,6 @@ src/core/persistence/worktree-refresh.ts	execute_raw	28
 src/core/persistence/write-applied.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
-src/core/policy/store.ts	execute_raw	1	GST-3824 L1: the policy page revision author (pages.revision_principal_kind/id), which no engine read returns
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1

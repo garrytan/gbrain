@@ -84,7 +84,10 @@ pub(crate) fn precedence_of(
     {
         return "approved";
     }
-    if let Some(class) = set.as_deref().and_then(|s| CLASSES.iter().find(|c| **c == s)) {
+    if let Some(class) = set
+        .as_deref()
+        .and_then(|s| CLASSES.iter().find(|c| **c == s))
+    {
         return class;
     }
     let kind = source.and_then(|s| config_text(&s.config, "kind"));
