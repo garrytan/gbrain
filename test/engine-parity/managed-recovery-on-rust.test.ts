@@ -45,6 +45,7 @@ import { topologyPrincipal } from '../../src/core/persistence/topology-locks.ts'
 import { claimNextWrite } from '../../src/core/persistence/journal.ts';
 import { readTopologyRecoveryStops } from '../../src/core/persistence/topology-stop.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
+import { claimPersistenceEffect, parkEffect } from '../../src/core/persistence/effect-journal.ts';
 import type { SourceLifecycleInput } from '../../src/core/persistence/source-lifecycle.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -281,39 +282,47 @@ describe('managed clone and recovery on a Rust brain, hold kept for users', () =
     timeout: 180_000,
   }, async (engine, backend) => withManagedBrain(engine, backend, { durable: true }, async (home, root) => {
     const remote = join(home, 'remote.git');
-    const away = join(home, 'remote-away.git');
+    const host = hostIdFor(engine);
     const request_id = randomUUID();
-    renameSync(remote, away);
+    // The owner pass that published the write waits at its next claim, so the test claims the Git effect first and parks it on
+    // its push, as the effect runner does once the push has failed five times (a real failing push waits 30 s between attempts).
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let committed = false;
+    installFaultHook(async point => {
+      if (point === 'publication:after_commit') committed = true;
+      else if (point === 'consumer:claiming' && committed) await held;
+    });
     await submitPageMutation(ctxFor(engine) as never, { operation: 'put_page',
       params: { slug: 'notes/kate-example', content: '---\ntype: note\ntitle: Kate Example\n---\nWorks at widget-co.\n', request_id } });
+    let claimed: Awaited<ReturnType<typeof claimPersistenceEffect>> = null;
+    for (let i = 0; i < 100 && !claimed; i++) { claimed = await claimPersistenceEffect(engine, host); if (!claimed) await Bun.sleep(50); }
+    release();
+    installFaultHook(undefined);
+    const effect = claimed!;
+    await parkEffect(engine, effect, { ...effect.data, parked: [{ slug: 'notes/kate-example', error_code: 'git_push_unavailable' }] });
     const writer = (await readLocalWriter(engine, 'cli')).id;
     const gitEffect = async () => {
       const row = await engine.readWriteRequest('local_cli', writer, request_id);
-      const effect = row ? (await engine.readRequestEffects(row.id, 'git'))[0] : undefined;
-      return effect ? { state: effect.state, code: effect.error_code } : null;
+      const stored = row ? (await engine.readRequestEffects(row.id, 'git'))[0] : undefined;
+      return stored ? { state: stored.state, code: stored.error_code } : null;
     };
-    const settle = async (done: (e: { state: string; code: unknown } | null) => boolean) => {
-      let effect = await gitEffect();
-      for (let i = 0; i < 150 && !done(effect); i++) {
-        await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
-        await Bun.sleep(100);
-        effect = await gitEffect();
-      }
-      return effect;
-    };
-    const parked = await settle(e => e?.state === 'failed');
-    // The remote is reachable again; the operator re-wires the credential and the parked push gets one more attempt.
-    renameSync(away, remote);
+    const parked = await gitEffect();
     const token = join(home, 'token');
     writeFileSync(token, 'ghp_exampleexampleexample\n', { mode: 0o600 });
     const reviewed = { admin_intent: 'writer_git_durability', expected_state: await writerAdminState(engine) };
     const report = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: 'work', pat_file: token, ...reviewed }) as Record<string, any>;
-    const retried = await settle(e => e?.state === 'committed');
+    let retried = await gitEffect();
+    for (let i = 0; i < 150 && retried?.state !== 'committed'; i++) {
+      await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: host, limit: 20 });
+      await Bun.sleep(100);
+      retried = await gitEffect();
+    }
     const pushed = execFileSync('git', ['-C', remote, 'ls-tree', '-r', '--name-only', 'main', 'notes'], { encoding: 'utf8' }).trim().split('\n').sort();
     const answer = { parked, retry: { status: report.parked_pushes?.status, requests: report.parked_pushes?.requests, queued: report.parked_pushes?.queued,
       unchanged: report.parked_pushes?.unchanged, refused: report.parked_pushes?.refused?.length }, retried: retried && { state: retried.state }, pushed,
-      checkout: existsSync(join(root, 'notes', 'kate-example.md')) };
-    expect(answer).toEqual({ parked: { state: 'failed', code: expect.any(String) }, retry: { status: 'ok', requests: 1, queued: 1, unchanged: 0, refused: 0 },
+    checkout: existsSync(join(root, 'notes', 'kate-example.md')) };
+    expect(answer).toEqual({ parked: { state: 'failed', code: 'targets_parked' }, retry: { status: 'ok', requests: 1, queued: 1, unchanged: 0, refused: 0 },
       retried: { state: 'committed' }, pushed: ['notes/alice-example.md', 'notes/kate-example.md'], checkout: true });
     return answer;
   }));

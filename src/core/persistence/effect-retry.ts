@@ -170,14 +170,12 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       const { parked: _parked, retry_slugs: retrying = [], failing_target: _target, ...data } = effect.data;
       const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
       const slugs = scanning ? [...new Set([...retrying, ...parked.flatMap(entry => entry.slug ? [entry.slug] : [])])] : [];
-      const [updated] = await tx.executeRaw<{ state: string }>(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
-        next_attempt_at=now(),claim_expires_at=NULL,claim_owner=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
-        AND execution_token IS NULL AND recovery IS NULL RETURNING state`,
-      [effect.id, JSON.stringify({ ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
+      // The requeue is a Git durability store write (engine-sql/git-durability.ts), so a Rust brain applies it to its effect record.
+      const updated = await (await tx.gitDurabilityStore()).requeueParkedEffect(effect.id, { ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
         ...(!scanning && (effect.data.slug ?? effect.data.relative_path) ? { failing_target: effect.data.slug ?? effect.data.relative_path } : {}),
         ...(underOwner ? { retried_under: 'owner_host', retried_by_host: hostId } : {}),
         ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}),
-        retried: (effect.data.retried ?? 0) + 1 }), effect.error_code]);
+        retried: (effect.data.retried ?? 0) + 1 }, effect.error_code);
       if (!updated) throw opError('write_claim_lost', 'The parked effect changed during retry approval.',
         `The ${effect.kind} effect of request ${requestId} changed (claimed, retried or settled by the worker) while this approval ran, so the transaction rolled back and nothing was queued. Preview its current state before deciding again.`,
         { fix: previewFix(sourceId, requestId) });

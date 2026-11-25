@@ -204,6 +204,7 @@ test/engine-parity/link-temporal.test.ts	22	0
 test/engine-parity/links.test.ts	38	0
 test/engine-parity/list-reads.test.ts	2	0
 test/engine-parity/loop-mutes.test.ts	5	0
+test/engine-parity/managed-recovery-on-rust.test.ts	7	0
 test/engine-parity/mcp-get-tags.test.ts	1	0
 test/engine-parity/meeting-pages.test.ts	1	0
 test/engine-parity/meetings-sync.test.ts	1	0
@@ -404,7 +405,7 @@ test/engine-parity/timeline-reads.test.ts	4	0
 test/engine-parity/timeline.test.ts	36	0
 test/engine-parity/title-fuzzy-like-bound.test.ts	1	0
 test/engine-parity/title-fuzzy-unicode.test.ts	1	0
-test/engine-parity/topology-named-stop.test.ts	0	2
+test/engine-parity/topology-named-stop.test.ts	2	0
 test/engine-parity/transaction-settings.test.ts	12	0
 test/engine-parity/traversal-cache.test.ts	7	0
 test/engine-parity/trust-backfill.test.ts	0	1

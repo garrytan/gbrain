@@ -13,6 +13,7 @@ const REQ_2: &str = "b0000000-0000-4000-8000-0000000000b2";
 const REQ_3: &str = "b0000000-0000-4000-8000-0000000000b3";
 const WRITER: &str = "e0000000-0000-4000-8000-0000000000e1";
 const KEY: &str = "principal:local_cli:parity-writer";
+const HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
 
 fn keys() -> Vec<String> {
     vec![KEY.into(), "brain".into()]
@@ -134,7 +135,7 @@ fn an_empty_journal_answers_the_empty_state_of_every_read() {
         store.read_publication_refusals().unwrap(),
         json!({ "guard": 0, "trigger": 0, "opaque": 0 })
     );
-    assert!(store.list_running_claim_owners().unwrap().is_empty());
+    assert!(store.list_running_claim_owners(HOST).unwrap().is_empty());
     assert!(store.list_local_edit_adoptions().unwrap().is_empty());
     let ids = vec!["default".to_string()];
     let ops = vec!["put_page".to_string()];
@@ -217,7 +218,7 @@ fn requests_counters_and_the_admission_sample_are_read_as_postgres_reads_them() 
     assert_eq!(stalls[0]["no_root_progress"], true);
     assert_eq!(stalls[0]["waiting"], 0);
     assert_eq!(stalls[0]["worktree_id"], Value::Null);
-    let owners = store.list_running_claim_owners().unwrap();
+    let owners = store.list_running_claim_owners(HOST).unwrap();
     assert_eq!(owners.len(), 1);
     assert_eq!(owners[0]["owner"], json!({ "pid": 7 }));
     assert_eq!(owners[0]["lapsed"], false);

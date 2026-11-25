@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2403/2430
+# covered: 2404/2430
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -76,7 +76,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 122/137
+# write_misc: 123/137
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -131,7 +131,7 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	283	yes	yes	yes	serves
+getPage	pages	yes	284	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -991,10 +991,10 @@ moveTwinPageChildren	persistence_journal	yes	4	no	yes	yes	serves
 moveTwinFacts	persistence_journal	yes	3	no	yes	yes	serves
 recordRenameAlias	persistence_journal	yes	3	no	yes	yes	serves
 movePageVersions	persistence_journal	yes	1	no	yes	yes	serves
-readSourceMembership	persistence_journal	yes	138	no	yes	yes	serves
+readSourceMembership	persistence_journal	yes	139	no	yes	yes	serves
 findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
-listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
+listTopologyRecoveries	persistence_journal	yes	7	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
 insertTopologyChange	persistence_journal	yes	10	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
@@ -1033,7 +1033,7 @@ markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	8	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	12	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	13	no	yes	yes	serves
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
 listRetryTrackedEffects	persistence_journal	yes	2	no	yes	yes	serves
@@ -1963,10 +1963,10 @@ readSourceState	write_misc	yes	17	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	26	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	31	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	40	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	47	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -2021,9 +2021,9 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
-gitDurabilityStore	write_misc	no	0	no	-	-	-
+gitDurabilityStore	write_misc	yes	1	no	yes	yes	serves
 gitEffectStore	write_misc	no	0	no	-	-	-
-topologyStore	write_misc	yes	1	no	yes	yes	serves
+topologyStore	write_misc	yes	6	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-
 listAppliedPolicyRevisions	write_misc	yes	6	no	yes	yes	serves
 readLiveMember	write_misc	yes	13	no	yes	yes	serves
@@ -2418,7 +2418,7 @@ listRecentWriterVersions	doctor_persistence	yes	2	no	yes	yes	serves
 listRecentPurgeRequests	doctor_persistence	yes	4	no	yes	yes	serves
 listStuckWorktreeRefreshes	doctor_persistence	yes	1	no	yes	yes	serves
 listSourceBindingsForMovement	doctor_persistence	yes	4	no	yes	yes	serves
-listRunningClaimOwners	doctor_persistence	yes	2	no	yes	yes	serves
+listRunningClaimOwners	doctor_persistence	yes	3	no	yes	yes	serves
 listOwnerBindings	doctor_persistence	yes	2	no	yes	yes	serves
 listConsumerOwners	doctor_persistence	yes	1	no	yes	yes	serves
 listCallerRefusalRows	doctor_persistence	yes	2	no	yes	yes	serves
