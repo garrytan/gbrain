@@ -327,6 +327,17 @@ function refusedStale(call: PendingCall): boolean {
   return true;
 }
 
+/** What a protocol v3 session reaches of an owner: its engine and the one dispatcher both transports share. */
+function servedSideOf(engine: BrainEngine,
+  admit: (frame: Record<string, unknown>, bytes: number, calls: Map<number, PendingCall>, send: (frame: object, member?: string) => void, helloed: boolean, served?: ServedHooks) => void,
+  cancel: (calls: Map<number, PendingCall>, id: number) => void): ServedServerSide {
+  return {
+    engine,
+    admit: (frame, bytes, calls, send, hooks) => admit(frame, bytes, calls as unknown as Map<number, PendingCall>, send, true, hooks),
+    cancel: (calls, id) => cancel(calls as unknown as Map<number, PendingCall>, id),
+  };
+}
+
 /** A connection that closes aborts every call it started; calls of other connections keep running. */
 function endConnectionCalls(calls: Map<number, PendingCall>, leaveQueue: (call: PendingCall) => void): void {
   for (const call of calls.values()) {
@@ -628,12 +639,7 @@ export async function serveOwnerEngine(
     pump();
   };
 
-  // What a protocol v3 session reaches of this owner: the one dispatcher both transports share.
-  const servedSide: ServedServerSide = {
-    engine,
-    admit: (frame, bytes, calls, send, hooks) => admit(frame, bytes, calls as unknown as Map<number, PendingCall>, send, true, hooks),
-    cancel: (calls, id) => cancelCall(calls as unknown as Map<number, PendingCall>, id),
-  };
+  const servedSide = servedSideOf(engine, admit, cancelCall);
 
   const attachServed = opts.served ? (socket: Socket) => attachServedSocket(socket, {
     closing: () => closing, sockets, maxConnections, side: servedSide, options: opts.served!, hello, endCalls: closeConnectionCalls,
