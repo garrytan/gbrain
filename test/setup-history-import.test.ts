@@ -30,6 +30,7 @@ import {
   HISTORY_BOUNDS, INSTALL_RECEIPT_KEY, declineHistory, decisionTopic, historyCard, offerHistoryDecision, previewHistory, readInstallReceipt,
   recordInstallReceipt, renderHistoryCard, runSetupHistory,
 } from '../src/core/onboard/setup-history.ts';
+import { firstSessionSectionFor } from '../src/core/onboard/first-session.ts';
 import { runAccess } from '../src/commands/access.ts';
 import * as importFile from '../src/core/import-file.ts';
 import { appliedRules } from '../src/core/access/policy.ts';
@@ -180,6 +181,22 @@ for (const kind of testBackends()) {
         expect(again).toMatchObject({ days_written: 0, links: { status: 'skipped', reason: 'nothing_published' } });
         const [{ m }] = await engine.executeRaw<{ m: number }>("SELECT count(*)::int AS m FROM links l JOIN pages p ON p.id = l.from_page_id WHERE p.source_id = 'conversations'");
         expect(Number(m)).toBe(Number(n));
+      } finally { await close(); }
+    }, 180_000);
+
+    test('the first-session section points at the imported conversations from the source the hook binds', async () => {
+      const { engine, close, dir } = await freshInstall(kind);
+      try {
+        await inHome(() => runSetupHistory(engine, { harness: 'claude-code', stage: 'range', days: 30, dir, deadlineAtMs: soon(), now: NOW }));
+        const out = await firstSessionSectionFor(engine, { sourceId: 'default', sessionId: 'fresh-1', harness: 'claude-code', lane: 'owner', now: NOW });
+        if (!('text' in out)) throw new Error(out.reason);
+        const pointers = out.text.split('\n').filter(l => / -> conversations\//.test(l));
+        expect(pointers).toHaveLength(3);
+        expect(pointers.some(l => l.includes('-> conversations/days/'))).toBe(false);
+        await engine.executeRaw("UPDATE sources SET config = jsonb_set(config, '{federated}', 'false') WHERE id = 'conversations'");
+        const isolated = await firstSessionSectionFor(engine, { sourceId: 'default', sessionId: 'fresh-2', harness: 'claude-code', lane: 'owner', now: NOW });
+        if (!('text' in isolated)) throw new Error(isolated.reason);
+        expect(isolated.text).not.toContain('-> conversations/');
       } finally { await close(); }
     }, 180_000);
 
