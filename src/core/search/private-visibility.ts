@@ -921,6 +921,29 @@ export function folderRestrictedSql(alias: string): string {
 }
 
 /**
+ * GST-3815: page row `p` reads to everyone who reads page row `t`, as SQL, for a derivation that copies text from `p`
+ * onto `t` (enrich filling a page from other pages' facts, links and chunks). `p` is `t` itself, or: no privacy rule
+ * hides it (privacyPartSql: visibility, aliases, pinned questions, lineage), no origin of it names readers, every reader
+ * `t` names is one of its readers (it names none, or `t` names some and all of them are its), every folder rule over it
+ * also covers `t`, no pending folder prefix covers it, and it is owner-only only when `t` is. Anything it cannot tell
+ * (readers not yet derived, unreadable access tables) fails closed.
+ */
+export function pageReadsToReadersOfSql(p: string, t: string): string {
+  const form = ownerOnlyForm(readSchemaVersion());
+  return `(${p}.id = ${t}.id OR (${privacyPartSql(p)} AND ${originAllowedSql(p)}
+    AND ((${p}.page_readers IS NULL AND NOT ${namesReadersSql(p)}) OR (${p}.page_readers IS NOT NULL AND ${t}.page_readers IS NOT NULL AND ${t}.page_readers <@ ${p}.page_readers))
+    AND (${p}.folder_rule_ids IS NULL OR (${t}.folder_rule_ids IS NOT NULL AND ${p}.folder_rule_ids <@ ${t}.folder_rule_ids))
+    AND NOT gbrain_access_pending_covers(${p}.source_id, ${p}.slug) AND NOT (SELECT gbrain_access_state_unreadable())
+    AND (NOT ${ownerOnlyPageSql(p, form)} OR ${ownerOnlyPageSql(t, form)})))`;
+}
+
+/** GST-3815: fact row `f` is owner-only only when page row `t` is, as SQL (pageReadsToReadersOfSql's owner-only part for a fact). */
+export function factOwnerOnlyWithinPageSql(f: string, t: string): string {
+  const form = ownerOnlyForm(readSchemaVersion());
+  return `(NOT ${ownerOnlyFactSql(f, form)} OR ${ownerOnlyPageSql(t, form)})`;
+}
+
+/**
  * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
  * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
  */

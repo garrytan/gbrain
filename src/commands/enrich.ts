@@ -44,6 +44,8 @@ import { CapFlagError, mergeCapFlag, parseCapFlag, type CapFlag } from '../core/
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
+import { pageReadsToReadersOfSql } from '../core/search/private-visibility.ts';
+import { factReadsToReadersOfSql } from '../core/access/member-facts.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
 import { resolveOwnerContactAnchor, type OwnerContactAnchor } from '../core/enrich/owner-contact.ts';
@@ -275,6 +277,19 @@ export function assembleEvidence(parts: {
   ];
 }
 
+/** GST-3815: the slugs among `slugs` whose every page row in `sourceId` reads to everyone who reads page `slug`. */
+async function pagesReadingToReadersOf(engine: BrainEngine, sourceId: string, slug: string, slugs: string[]): Promise<Set<string>> {
+  const wanted = [...new Set(slugs.filter(Boolean))];
+  if (!wanted.length) return new Set();
+  const rows = await engine.executeRaw<{ slug: string }>(
+    `SELECT p.slug FROM pages p JOIN pages t ON t.source_id = p.source_id AND t.slug = $2 AND t.deleted_at IS NULL
+      WHERE p.source_id = $1 AND p.slug = ANY($3::text[])
+      GROUP BY p.slug HAVING bool_or(p.deleted_at IS NULL) AND bool_and(${pageReadsToReadersOfSql('p', 't')})`,
+    [sourceId, slug, wanted],
+  );
+  return new Set(rows.map((r) => r.slug));
+}
+
 async function retrieveEvidence(
   engine: BrainEngine,
   sourceId: string,
@@ -286,13 +301,16 @@ async function retrieveEvidence(
   const hybrid: EnrichEvidence[] = [];
   const seen = new Set<string>();
 
-  // 1. Facts the brain has extracted about this entity (highest signal/char).
+  // 1. Facts the brain has extracted about this entity (highest signal/char), only those every reader of the page
+  // already reads (GST-3815): the fill is written under the page's own readers.
   try {
     const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
-      `SELECT fact, context FROM facts
-        WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
-          AND (valid_until IS NULL OR valid_until > now())
-        ORDER BY confidence DESC, id DESC
+      `SELECT f.fact, f.context FROM facts f
+        JOIN pages t ON t.source_id = f.source_id AND t.slug = f.entity_slug AND t.deleted_at IS NULL
+        WHERE f.source_id = $1 AND f.entity_slug = $2 AND f.expired_at IS NULL
+          AND (f.valid_until IS NULL OR f.valid_until > now())
+          AND ${factReadsToReadersOfSql('f', 't')}
+        ORDER BY f.confidence DESC, f.id DESC
         LIMIT $3`,
       [sourceId, slug, FACT_LIMIT],
     );
@@ -304,12 +322,14 @@ async function retrieveEvidence(
     // Pre-facts brains / column drift → no facts evidence.
   }
 
-  // 2. Inbound-link context — how OTHER pages describe this entity.
+  // 2. Inbound-link context — how OTHER pages describe this entity, from pages every reader of this one reads.
   try {
     const rows = await engine.getBacklinks(slug, { sourceId });
+    const readable = await pagesReadingToReadersOf(engine, sourceId, slug, rows.flatMap((l) => [l.from_slug, l.origin_slug ?? '']));
     let n = 0;
     for (const l of rows) {
       if (n >= BACKLINK_LIMIT) break;
+      if (l.from_source_id !== sourceId || !readable.has(l.from_slug) || (l.origin_slug && !readable.has(l.origin_slug))) continue;
       const ctx = (l.context ?? '').trim();
       if (!ctx) continue;
       const dedup = `${l.from_slug}:${ctx.slice(0, 40)}`;
@@ -322,15 +342,17 @@ async function retrieveEvidence(
     // ignore
   }
 
-  // 3. Hybrid search on the entity name — pages that mention it.
+  // 3. Hybrid search on the entity name — pages that mention it, among those every reader of this one reads.
   try {
     const hits = await hybridSearch(engine, title || slug, {
       ...INTERNAL_BREADTH_SEARCH_OPTS,
       limit: HYBRID_SEARCH_LIMIT,
       sourceId,
     });
+    const readable = await pagesReadingToReadersOf(engine, sourceId, slug, hits.map((h) => h.slug));
     for (const h of hits) {
       if (h.slug === slug) continue; // don't feed the stub its own body twice
+      if ((h.source_id ?? sourceId) !== sourceId || !readable.has(h.slug)) continue;
       const dedup = `${h.slug}:${h.chunk_text.slice(0, 40)}`;
       if (seen.has(dedup)) continue;
       seen.add(dedup);
