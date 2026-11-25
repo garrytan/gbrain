@@ -3314,14 +3314,22 @@ Nested legacy errors keep their nesting and gain sibling `code` and `fix`.
 
 gbrain sends `notifications/tools/list_changed` when its tool catalog changes
 mid-session: a serve that started degraded or in status-only mode recovers and
-swaps in the full catalog. Harness support varies by version:
+swaps in the full catalog, and `request_tools` adds tools (stdio: a `{surface}`
+widen or a `{tools}` reveal; OAuth HTTP: a persisted `{surface}` change, sent on
+that call's own response stream). Harness support varies by version:
 
 | Harness | Behaviour |
 |---|---|
 | Claude Code | recent versions refresh the tool list on the notification; some versions and modes have been reported to keep the old list |
-| Codex | versions that include openai/codex#12449 refresh the tool list; its deferred tool search can stay stale |
+| Codex | 0.170 logs the notification and keeps its tool list for the session; the refresh is behind the experimental, off-by-default `mcp_tool_list_changed` feature and applies from the next turn |
+| OpenClaw | 2026.11 drops its cached catalog on the notification, but a run's tools are built when the run starts, so a new tool is callable from the next user message, never in the run that asked |
 | other MCP clients | not measured |
 
+On a local `gbrain serve` stdio pipe (not the thin-client bridge), `request_tools`
+tells Codex and OpenClaw (by their initialize client name) that tools it newly
+lists cannot be called in this turn and names the lasting route (`--surface full`
+on the registration). On OAuth HTTP a widened surface is persisted for the
+client, so the next `tools/list` and every later session list it.
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
 
@@ -6268,7 +6276,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons`, which is `capability_missing` until write comparisons are built. The
+  this is a reading, not the swap's own check); and `write_comparisons` (page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
@@ -6301,8 +6309,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
   holds one.
-- **Provisional report.** The verdict is always `NOT READY`: this phase compares reads only, write comparisons
-  are not built yet, and the readiness decision come in later phases of the plan
+- **Provisional report.** The verdict is always `NOT READY`: write comparisons cover page and link writes only,
+  and the readiness decision comes later in the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.
 

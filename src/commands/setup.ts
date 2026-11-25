@@ -88,6 +88,7 @@ import {
 } from '../core/setup/claude-code.ts';
 import {
   applyCodexSetup,
+  CODEX_STARTUP_GRACE_KEY,
   codexSetupPaths,
   desiredCodexMcpEntry,
   inspectCodexSetup,
@@ -778,11 +779,11 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
     if (flags.dryRun) {
-      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
+      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
       const steps: CodexSetupStep[] = [
         { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
         ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
-        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
+        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' && found.grace.state !== 'absent' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}${found.grace.state === 'absent' ? `, and ${CODEX_STARTUP_GRACE_KEY} = 0 (Codex waits for gbrain to start)` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.hooksPath}` : `no hooks (${found.hooksPath})` },
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),

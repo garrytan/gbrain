@@ -220,6 +220,7 @@ test/git-remote-durable.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_AL
 test/git-remote-pull-file-transport.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/google-connect-cmd.serial.test.ts	global-state	global-state: spyOn console.error; patches process stdout/stderr/console
 test/google-api-access-cmd-7073.serial.test.ts	global-state	global-state: replaces globalThis.fetch and patches process stdout/stderr for google status and setup
+test/google-personal-connect.serial.test.ts	global-state	global-state: patches process.stdout/stderr.write, process.exit, process.stdin.isTTY and globalThis.fetch, and runs CLI commands that set the process exit verdict
 test/google-loops-recovery.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
 test/graduation-serve-guard.serial.test.ts	global-state	global-state: spawns real gbrain serve children and holds GBRAIN_HOME (withEnv) across awaited CLI runs
 test/graph-query-thin-client-source-flag.serial.test.ts	R2	R2: mock.module(../src/core/config.ts, ../src/core/mcp-client.ts) replaces modules for every file in the process
