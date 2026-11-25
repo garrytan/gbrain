@@ -411,7 +411,8 @@ describe('the write sample rate (shadow.write_sample, D13)', () => {
       const flags = ['--sample-rate', '0.5', '--write-sample-rate', '0.2'];
       expect(await runEngineShadow(['start', '--plan', ...flags], { ...plan.deps, config: () => config, ...unmanagedBrain })).toBe(0);
       const text = plan.out.join('\n');
-      expect(text).toContain('write sample rate 0.2: the share of direct page and link writes that will be sampled for write comparison once the locked tally lands');
+      expect(text).toContain('write sample rate 0.2: that share of page and link writes is checked on a throwaway Rust store');
+      expect(text).toContain('a write inside a transaction is not checked, and a PGLite brain samples no writes');
       expect(text).toContain('--sample-rate 0.5 --write-sample-rate 0.2');
       const hash = plan.out.find((l) => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
       expect(await runEngineShadow(['start', '--yes', '--expect', hash, ...flags], { ...capture().deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(0);
