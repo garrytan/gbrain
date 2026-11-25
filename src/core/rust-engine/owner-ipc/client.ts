@@ -80,6 +80,11 @@ const rejoins = new WeakMap<OwnerConnection, () => Promise<void>>();
 /** countPagesBy grouper functions the client resolved to a fixed table; they cross the socket as that table. */
 const grouperTables = new WeakMap<object, { types: string[]; groups: string[] }>();
 
+/** The fixed table a countPagesBy grouper crosses as (protocol v3 client, served/client.ts), or undefined. */
+export function grouperTableOf(fn: object): { types: string[]; groups: string[] } | undefined {
+  return grouperTables.get(fn);
+}
+
 /** The owner connection an engine reaches its brain through, or undefined when the engine owns it (or is no client). */
 export function ownerConnectionFor(engine: object): OwnerConnection | undefined {
   return connections.get(engineKey(engine));
@@ -427,7 +432,7 @@ export function rustOwnerServesPersistence(capabilities: Iterable<string> | unde
  * is asked as before. A member the Rust store serves (store-members/) runs on the owner even when the rest of its
  * capability does not, exactly as it runs in the owner's own process.
  */
-function missingOnRustOwner(hello: { kind: string; capabilities: readonly string[] }, member: string): Capability | null {
+export function missingOnRustOwner(hello: { kind: string; capabilities: readonly string[] }, member: string): Capability | null {
   if (hello.kind !== 'rust' || member in STORE_MEMBERS) return null;
   const cls = (RUST_ENGINE_MEMBERS as Record<string, string>)[member];
   if (cls === undefined || cls === 'implemented') return null;

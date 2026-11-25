@@ -31,6 +31,11 @@ export interface EncodeOptions {
   onFunction?: (fn: (...args: unknown[]) => unknown, path: string) => Wire;
   /** Called for each AbortSignal; returns the wire form. Without it a signal encodes as undefined. */
   onSignal?: (signal: AbortSignal, path: string) => Wire;
+  /**
+   * Protocol v3 only (served/session.ts): called for each object before it is encoded; a wire form it returns is used
+   * as is (an open transaction handle crosses as a reference). Undefined encodes the object as usual.
+   */
+  onObject?: (value: object, path: string) => Wire | undefined;
 }
 
 export interface DecodeOptions {
@@ -38,6 +43,8 @@ export interface DecodeOptions {
   onFunction?: (wire: { [key: string]: Wire }) => unknown;
   /** Rebuilds an AbortSignal from its wire form. Without it a signal tag decodes as undefined. */
   onSignal?: (wire: { [key: string]: Wire }) => unknown;
+  /** Protocol v3 only: rebuilds a transaction reference (`{ $t: 'txref' }`). Without it the tag is unknown and refuses. */
+  onTxRef?: (wire: { [key: string]: Wire }) => unknown;
 }
 
 /** A value the codec cannot send (a function with no handler, a symbol, a cycle). */
@@ -144,6 +151,7 @@ export function encodeValue(value: unknown, opts: EncodeOptions = {}, path = 'va
   }
   if (value === null) return null;
   const object = value as object;
+  if (opts.onObject) { const custom = opts.onObject(object, path); if (custom !== undefined) return custom; }
   if (object instanceof Date) return { $t: 'date', v: Number.isNaN(object.getTime()) ? null : object.toISOString() };
   if (Buffer.isBuffer(object)) return encodeBytes('buf', object);
   if (object instanceof Uint8Array) return encodeBytes('u8', object);
@@ -233,6 +241,9 @@ function decodeTagged(wire: { [key: string]: Wire }, opts: DecodeOptions): unkno
     // object, so a body that must throw page_body_segmented would read as data. A tag this side does not know is never
     // read as data either: the peer speaks another protocol.
     case 'guard': throw new OwnerIpcEncodeError('A segmented-body guard crossed the owner socket outside a guarded body field.', 'value');
+    // A transaction reference (protocol v3 only); without the v3 hook it is an unknown tag like any other.
+    case 'txref': if (opts.onTxRef) return opts.onTxRef(wire);
+    // falls through
     default: throw new OwnerIpcEncodeError(`An unknown value tag crossed the owner socket (${String(wire.$t).slice(0, 32)}).`, 'value');
   }
 }

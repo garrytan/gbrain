@@ -32,6 +32,11 @@ export const ENGINE_CAPABILITIES = [
   'single_owner',
   /** Postgres server administration: pooler, roles, server settings and statistics. */
   'postgres_admin',
+  /**
+   * The engine is a client of a brain server over protocol v3 (multi-user Rust, interface I-8; rust-engine/served/).
+   * Only a served Rust engine reports it; never PGLite or Postgres.
+   */
+  'served',
 
   // Typed BrainEngine storage domains.
   'schema',
@@ -82,7 +87,10 @@ const ENGINE_ONLY: Readonly<Record<SqlEngineKind, readonly Capability[]>> = {
   postgres: ['postgres_admin'],
 };
 
-const ENGINE_SPECIFIC = new Set<Capability>(Object.values(ENGINE_ONLY).flat());
+/** Capabilities only a Rust engine in a given mode reports; no SQL engine has them. */
+const RUST_MODE_ONLY: readonly Capability[] = ['served'];
+
+const ENGINE_SPECIFIC = new Set<Capability>([...Object.values(ENGINE_ONLY).flat(), ...RUST_MODE_ONLY]);
 
 /**
  * The full capability set PGLite or Postgres reports: every shared capability

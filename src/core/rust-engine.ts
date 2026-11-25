@@ -33,7 +33,9 @@ import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
 import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
-import type { OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
+import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
+import { servedServerOptionsFor } from './rust-engine/served/serve-listen.ts';
+import { connectServedEngine, type ServedTarget } from './rust-engine/served/engine.ts';
 
 /**
  * The empty async context: no request, job, deadline, signal or caller mark. The engine runs its election, and the
@@ -86,6 +88,8 @@ export interface OpenRustEngineOptions {
   databasePath: string;
   /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
   ownerWaitMs?: number;
+  /** Multi-user Rust: the brain server this engine is a client of; it then never opens a store (rust-engine/served/). */
+  served?: ServedTarget;
 }
 
 /**
@@ -159,6 +163,7 @@ export class RustEngine implements BrainEngine {
   /** True from the first synchronous step of `disconnect()`, which also captures the stop hooks: no work that needs a hook may start after it. */
   get disconnecting(): boolean { return this._disconnecting > 0; }
   private readonly _ownerWaitMs: number | undefined;
+  private readonly _served: ServedTarget | undefined;
   private _owner: OwnerRole | null = null;
   private _leaveOwner: (() => void) | null = null;
   /** Set on a transaction-bound clone (store-members/transactions.ts); null on the engine itself. */
@@ -174,6 +179,7 @@ export class RustEngine implements BrainEngine {
     this.addon = opts.addon;
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
+    this._served = opts.served;
   }
 
   /** True between `connect()` and `disconnect()`. */
@@ -188,6 +194,9 @@ export class RustEngine implements BrainEngine {
   /** The owner's call pool, when this process owns the brain. */
   ownerStats(): OwnerServerStats | null { return this._owner?.role === 'owner' ? this._owner.server.stats() : null; }
 
+  /** The owner socket server, when this process owns the brain (the brain server listener attaches to it). */
+  ownerServer(): OwnerEngineServer | null { return this._owner?.role === 'owner' ? this._owner.server : null; }
+
   /**
    * Becomes the brain's owner (opens the store, serves the owner socket) or a client of the process that owns it. A
    * second `connect` while connected changes nothing, and connects that overlap share one election. A `disconnect`
@@ -197,7 +206,20 @@ export class RustEngine implements BrainEngine {
   async connect(config: EngineConfig): Promise<void> {
     this._savedConfig = config;
     if (this._connected) return;
+    if (this._served) { await this._connectServed(this._served); return; }
     await this._electOnce();
+  }
+
+  /**
+   * A client of a brain server (rust-engine/served/engine.ts): no election, no store, no fallback to one. A disconnect
+   * that wins against the connect closes what it made.
+   */
+  private async _connectServed(target: ServedTarget): Promise<void> {
+    const generation = this._generation;
+    const leave = await connectServedEngine(this, target);
+    if (generation !== this._generation || this._disconnecting) { leave(); throw mapStoreError({ code: 'store_closed' }, { member: 'connect' }); }
+    this._leaveOwner = leave;
+    this._connected = true;
   }
 
   /** The one open in progress, started if there is none: connects that overlap, and takeovers, share it. */
@@ -234,8 +256,11 @@ export class RustEngine implements BrainEngine {
     let storeFailure: { error: unknown } | null = null;
     let role: OwnerRole;
     try {
+      // Multi-user Rust on: the owner also speaks protocol v3 (rust-engine/served/); off, the key is absent.
+      const served = servedServerOptionsFor(this);
       role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
         wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
+        ...(served ? { served } : {}),
         ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
         // Holding the owner lock: open the store before the socket serves, so no client call reaches this engine
         // without it. A call this process makes meanwhile waits for the open (`storeFor`), and ends at once when its

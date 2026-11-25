@@ -15,6 +15,9 @@
  *    every member in `methods`; it counts as stopped. Returning, or ending on a capability refusal, fails (harness.ts).
  */
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
+import { mintOwnerServerToken } from '../../src/core/rust-engine/served/owner-token.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -69,12 +72,66 @@ export function newRustBrain(): RustBrainDir {
   return { engine, dir: engine.databasePath };
 }
 
-/** A Rust engine on a new brain directory, connected. */
+/** A Rust engine on a new brain directory, connected; with GBRAIN_TEST_RUST_SERVED=1, a served client of one. */
 export async function openRustBrain(): Promise<RustBrainDir> {
   await loadRustArmAddon();
+  // The operator-env preload drops GBRAIN_ switches; the served arm sets the ones it needs from its GBRAIN_TEST_ flags,
+  // before the owner opens (its election reads them).
+  if (rustServedRequested()) {
+    process.env.GBRAIN_RUST_MULTIUSER = '1';
+    if (process.env.GBRAIN_TEST_RUST_SERVED_SERIAL_TXN === '1') process.env.GBRAIN_RUST_SERVED_SERIAL_TXN = '1';
+  }
   const brain = newRustBrain();
   await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
+  if (rustServedRequested()) return serveRustBrain(brain);
   return brain;
+}
+
+/**
+ * The served variant of the Rust arm (`GBRAIN_TEST_RUST_SERVED=1`, which turns multi-user Rust on for the run; add
+ * `GBRAIN_TEST_RUST_SERVED_SERIAL_TXN=1` for transactions over the wire before lane L1): the brain's owner
+ * runs in this process with a loopback TLS listener (rust-engine/served/listener.ts) and an owner server token, and
+ * the engine each case receives is a served client of it (rust-engine/served/engine.ts) that reaches it over protocol
+ * v3. The same tally pins and divergence rows apply, so a case that answers differently served fails. Fixtures that
+ * write the store directly (`openStore`) use the owner; every case member call goes over the wire.
+ */
+export const RUST_SERVED_FLAG = 'GBRAIN_TEST_RUST_SERVED';
+
+export function rustServedRequested(env: Record<string, string | undefined> = process.env): boolean {
+  return env[RUST_SERVED_FLAG] === '1';
+}
+
+let servedTls: { cert: Buffer; key: Buffer } | undefined;
+
+/** A self-signed certificate for `localhost`, made once per process with openssl (test-only, never kept). */
+function servedArmTls(): { cert: Buffer; key: Buffer } {
+  if (servedTls) return servedTls;
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-served-tls-'));
+  try {
+    const run = Bun.spawnSync(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
+      '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost', '-keyout', join(dir, 'key.pem'), '-out', join(dir, 'cert.pem')], { stderr: 'pipe' });
+    if (run.exitCode !== 0) throw new Error(`openssl could not make the served arm's test certificate: ${run.stderr.toString()}`);
+    servedTls = { cert: readFileSync(join(dir, 'cert.pem')), key: readFileSync(join(dir, 'key.pem')) };
+    return servedTls;
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
+  const owner = owned.engine;
+  const server = owner.ownerServer();
+  if (!server?.attachServed) throw new Error('served arm: the Rust owner did not start with protocol v3');
+  const tls = servedArmTls();
+  const { token } = await mintOwnerServerToken(owner as unknown as BrainEngine, 'served-arm');
+  const listener = await listenServed(server, { host: '127.0.0.1', port: 0, tls });
+  const client = openRustEngine({ addon: addon!, databasePath: owned.dir, served: { url: `gbrain+tls://localhost:${listener.port}`, token, ca: tls.cert } });
+  await client.connect({ engine: 'rust', database_path: owned.dir } as never);
+  Object.defineProperty(client, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
+  Object.defineProperty(client, 'servedOwner', { value: owner, configurable: true });
+  const leave = client.disconnect.bind(client);
+  Object.defineProperty(client, 'disconnect', {
+    value: async () => { await leave(); await listener.close(); await owner.disconnect(); }, configurable: true, writable: true,
+  });
+  return { engine: client, dir: owned.dir };
 }
 
 export function removeBrainDir(dir: string): void {
