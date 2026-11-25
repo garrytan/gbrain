@@ -250,11 +250,17 @@ pub(crate) fn hidden_by_private_provenance(
             }
         }
     }
-    // `sharedHeldRuledSql`: a held fact reads as its entity's page would under a folder rule
-    // (live, whatever the access state) or a pending prefix, which no served caller satisfies.
+    // `sharedHeldRuledSql`: a held fact is hidden when its entity sits under a folder rule (live,
+    // whatever the access state) the caller does not satisfy, or under a pending prefix. The rules the
+    // caller satisfies are `satisfied_rule_ids`, as `source:rule` ids (`gbrain_access_folder_rules`).
     match (&row.entity_slug, held) {
-        (Some(entity), Some(_)) => Ok(!folder_rules(read, &row.source_id, entity)?.is_empty()
-            || pending_covers(read, &row.source_id, entity)?),
+        (Some(entity), Some(_)) => {
+            let unsatisfied = folder_rules(read, &row.source_id, entity)?.iter().any(|r| {
+                let id = format!("{}:{}", r.source_id, r.rule_id);
+                !policy.satisfied_rule_ids.contains(&id)
+            });
+            Ok(unsatisfied || pending_covers(read, &row.source_id, entity)?)
+        }
         _ => Ok(false),
     }
 }
