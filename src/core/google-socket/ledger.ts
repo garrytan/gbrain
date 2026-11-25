@@ -85,8 +85,8 @@ export class BrokerLedger {
   }
 
   /** Gives back a reserved call that had no effect. */
-  uncount(product: GoogleServer): void {
-    const bucket = this.state.quota[this.day()];
+  uncount(product: GoogleServer, day: string): void {
+    const bucket = this.state.quota[day];
     if (!bucket?.[product]) return;
     bucket[product] = bucket[product]! - 1;
     this.save();
