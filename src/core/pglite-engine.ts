@@ -1184,7 +1184,7 @@ export class PGLiteEngine implements BrainEngine {
     await this.connect(config);
   }
 
-  async initSchema(): Promise<void> {
+  async initSchema(opts: { embedding?: { dimensions: number; model: string } } = {}): Promise<void> {
     // Tier 3: snapshot was loaded into PGlite — schema + migrations already
     // applied. Only record the schema version, as a cold init does.
     if (this._snapshotLoaded) return noteSchemaVersion(this, parseInt(await this.getConfig('version') ?? '', 10));
@@ -1200,7 +1200,7 @@ export class PGLiteEngine implements BrainEngine {
       // return falsy), so the catch below is the only fallback path (#3461).
       dims = gw.getEmbeddingDimensions();
       model = gw.getEmbeddingModel();
-    } catch { /* gateway not configured — use defaults */ }
+    } catch { /* gateway not configured — use defaults */ } if (opts.embedding) ({ dimensions: dims, model } = opts.embedding); // a caller's explicit identity (shadow replay copies) wins
 
     const storedIdentity = await readStoredEmbeddingIdentity(this);
     if (storedIdentity) {
