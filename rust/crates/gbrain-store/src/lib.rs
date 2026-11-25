@@ -83,6 +83,7 @@ pub mod facts;
 pub mod federation_exposure;
 pub mod field_usage;
 pub mod generations;
+pub mod handover_reads;
 pub mod identity_auto;
 pub mod identity_reviews;
 pub mod import_members;

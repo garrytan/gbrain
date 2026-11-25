@@ -258,6 +258,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'purgeSubjectPageLive', 'rankEntities', 'recentWriterVersions', 'scanExactBatch', 'scanUnfencedFactRows',
   'selectClaimableEffect', 'selectClaimableWrite', 'selectProjectionWindowJobs', 'sourceIdExists',
   'staleLinkRelationshipKeys', 'wordLexemes',
+  // The member handover preview reads (engine-sql/handover-reads.ts) whose names carry no read prefix.
+  'countMemberPage', 'countMemberPageFacts', 'countMemberBoundCredentials',
   // Lane 15 reads whose names carry no read prefix: the schema-pack retype probe and the explain-target probe.
   'probeRetypeRows', 'probeTargetRows',
   // Batch 12: row-lock and existence reads (SELECTs only) of the persistence, repair and secret-store lanes.

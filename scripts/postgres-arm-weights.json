@@ -285,6 +285,7 @@
   "test/engine-parity/git-durability-credential.test.ts": 7100,
   "test/engine-parity/git-holds.test.ts": 11400,
   "test/engine-parity/graduation-catalog.test.ts": 8185,
+  "test/engine-parity/handover-reads.test.ts": 6000,
   "test/engine-parity/harness-consumer-stop.test.ts": 5000,
   "test/engine-parity/held-fence-cells.test.ts": 10059,
   "test/engine-parity/hidden-refusals-2.test.ts": 10200,
