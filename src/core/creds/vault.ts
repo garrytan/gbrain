@@ -167,8 +167,12 @@ export function redactEntry(e: CredentialEntry): CredentialMeta {
 export interface GrantVault extends CredentialVault {
   /** Every client record of a provider, provider-wide and per-account. */
   listClients(provider: string): Promise<ProviderClientRecord[]>;
-  /** The client record whose client_id matches, or null. */
-  getClientById(provider: string, clientId: string): Promise<ProviderClientRecord | null>;
+  /**
+   * The client record whose client_id matches, or null. With `account`, that
+   * account's own record wins, then the provider-wide record; another
+   * account's record is returned only when nothing else matches.
+   */
+  getClientById(provider: string, clientId: string, account?: string): Promise<ProviderClientRecord | null>;
   /**
    * Writes a consented (or imported) grant and, when given, its per-account
    * client record, in one locked write. `expectedGeneration` is the
@@ -465,9 +469,10 @@ export class FileVaultBackend implements GrantVault {
     return this.read().clients.filter((c) => c.provider === provider);
   }
 
-  async getClientById(provider: string, clientId: string): Promise<ProviderClientRecord | null> {
+  async getClientById(provider: string, clientId: string, account?: string): Promise<ProviderClientRecord | null> {
     const matches = this.read().clients.filter((c) => c.provider === provider && c.client_id === clientId);
-    return matches.find((c) => !!c.account) ?? matches[0] ?? null;
+    const own = account ? matches.find((c) => c.account === account.toLowerCase()) : undefined;
+    return own ?? matches.find((c) => !c.account) ?? matches[0] ?? null;
   }
 
   /** Replaces the record in the same slot (provider-wide, or the same account); other accounts' records stay. */

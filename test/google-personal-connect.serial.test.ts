@@ -10,7 +10,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runGoogleConnect, runGoogleConnectImport } from '../src/commands/google.ts';
+import { runCreds } from '../src/commands/creds.ts';
+import { runGoogleConnect, runGoogleConnectImport, runGoogleDisconnect } from '../src/commands/google.ts';
+import { importBundle } from '../src/core/creds/export.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { CredentialError } from '../src/core/creds/errors.ts';
 import { GoogleTokenProvider, personalModeSetupUrl } from '../src/core/creds/providers/google.ts';
@@ -22,6 +24,8 @@ const CLIENT_B = '100002-personalb.apps.googleusercontent.com';
 const SHARED = '100003-shared.apps.googleusercontent.com';
 const SECRET_A = 'GOCSPX-synthetic-secret-a';
 const SECRET_B = 'GOCSPX-synthetic-secret-b';
+const CLIENT_C = '100004-personalc.apps.googleusercontent.com';
+const SECRET_C = 'GOCSPX-synthetic-secret-c';
 const GMAIL_RO = 'https://www.googleapis.com/auth/gmail.readonly';
 const CAL_RO = 'https://www.googleapis.com/auth/calendar.readonly';
 const GMAIL_MODIFY = 'https://www.googleapis.com/auth/gmail.modify';
@@ -281,6 +285,56 @@ describe('refresh custody', () => {
     await new GoogleTokenProvider(v, 'google:bob@example.com').forceRefresh();
     const posted = calls.filter((c) => c.url.endsWith('/token')).map((c) => [c.body.get('client_id'), c.body.get('client_secret'), c.body.get('refresh_token')]);
     expect(posted).toEqual([[CLIENT_A, SECRET_A, '1//rt-alice@example.com'], [CLIENT_B, SECRET_B, '1//rt-bob@example.com']]);
+  });
+
+  test('another account\'s record for a shared client never shadows the provider-wide record', async () => {
+    const h = home();
+    const shared = { provider: 'google', client_id: CLIENT_A, client_secret: SECRET_A, created_at: '2026-01-01T00:00:00.000Z' };
+    const v = seed(h, [ent('carol@example.com', { client_id: CLIENT_A, client_mode: 'byo' })],
+      [shared, { ...rec('bob@example.com', CLIENT_A, SECRET_A), mode: 'byo' as const }]);
+    await new GoogleTokenProvider(v, 'google:carol@example.com').forceRefresh();
+    expect((await v.get('google:carol@example.com'))!.secret.access_token).toBe(ACCESS);
+  });
+
+  test('a BYO import on a client already on file reuses it, and the accounts already on it keep refreshing', async () => {
+    const h = home();
+    const shared = { provider: 'google', client_id: CLIENT_A, client_secret: SECRET_A, created_at: '2026-01-01T00:00:00.000Z' };
+    const v = seed(h, [ent('carol@example.com', { client_id: CLIENT_A, client_mode: 'byo' })], [shared]);
+    await withEnv(env(h), async () => {
+      tokenReply = () => tokenJson({ id_token: idToken('alice@example.com', CLIENT_A), refresh_token: undefined });
+      const raw = JSON.stringify({ account: 'alice@example.com', refresh_token: REFRESH, client: { installed: { client_id: CLIENT_A, client_secret: SECRET_A } } });
+      const r = await run(() => runGoogleConnectImport(raw, ['--import', '-', '--json']));
+      expect(JSON.parse(r.out)).toMatchObject({ status: 'connected' });
+    });
+    expect(readVault(h).clients).toEqual([shared]);
+    tokenReply = () => tokenJson({});
+    await new GoogleTokenProvider(v, 'google:carol@example.com').forceRefresh();
+    expect((await v.get('google:carol@example.com'))!.secret.access_token).toBe(ACCESS);
+  });
+
+  test('disconnect --purge-client removes this account\'s own client and the provider-wide one, and keeps other accounts\' clients', async () => {
+    const h = home();
+    const shared = { provider: 'google', client_id: CLIENT_A, client_secret: SECRET_A, created_at: '2026-01-01T00:00:00.000Z' };
+    seed(h, [ent('alice@example.com', { client_id: CLIENT_B, client_mode: 'personal' }), ent('bob@example.com', { client_id: CLIENT_C, client_mode: 'personal' })],
+      [shared, rec('alice@example.com', CLIENT_B, SECRET_B), rec('bob@example.com', CLIENT_C, SECRET_C)]);
+    await withEnv(env(h), async () => {
+      const r = await run(() => runGoogleDisconnect(['alice@example.com', '--purge-client', '--json']));
+      expect(JSON.parse(r.out)).toMatchObject({ status: 'disconnected' });
+    });
+    const v = readVault(h);
+    expect(v.credentials['google:alice@example.com']).toBeUndefined();
+    expect(v.clients).toEqual([rec('bob@example.com', CLIENT_C, SECRET_C)]);
+  });
+
+  test('creds export carries each Personal-mode account\'s own client', async () => {
+    const h = home();
+    seed(h, [ent('alice@example.com', { client_id: CLIENT_B, client_mode: 'personal', consent_publish_state: 'production' })], [rec('alice@example.com', CLIENT_B, SECRET_B)]);
+    const out = join(h, 'bundle.json');
+    await withEnv({ ...env(h), GBRAIN_TEST_PASSPHRASE: 'correct-horse-battery-test' }, async () => {
+      await run(() => runCreds(['export', '--out', out, '--passphrase-env', 'GBRAIN_TEST_PASSPHRASE', '--json']));
+    });
+    const payload = importBundle(JSON.parse(readFileSync(out, 'utf-8')), 'correct-horse-battery-test');
+    expect(payload.clients).toEqual([rec('alice@example.com', CLIENT_B, SECRET_B)]);
   });
 
   test('an entry whose client is no longer on file is refused before any network call', async () => {

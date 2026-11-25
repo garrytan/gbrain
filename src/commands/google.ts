@@ -499,6 +499,11 @@ async function runGoogleImport(vault: CredentialVault, f: ConnectFlags, fetchImp
     secret: { refresh_token: refreshToken }, meta: { account, client_id: pair.client_id, client_mode: mode, connected_at: nowIso },
   };
   const prior = await vault.get(probe.id);
+  // A BYO client already on file (shared, or this account's) is reused as is;
+  // otherwise the import adds an account-scoped record, so it never replaces
+  // or shadows the client other accounts refresh with.
+  const onFile = await vault.getClientById(GOOGLE_PROVIDER, pair.client_id, account);
+  const reuseClient = mode === 'byo' && !!onFile && onFile.client_secret === pair.client_secret && (!onFile.account || onFile.account === account);
   const token = await refreshAccessToken(probe, { provider: GOOGLE_PROVIDER, ...pair, created_at: nowIso }, fetchImpl, new Date(), undefined);
   const email = await proveGrantIdentity(token, pair.client_id, fetchImpl);
   if (email !== account) throw new CredentialError('identity_unproven', ` (the refresh token belongs to ${email}, not ${account})`);
@@ -522,7 +527,7 @@ async function runGoogleImport(vault: CredentialVault, f: ConnectFlags, fetchImp
         consent_publish_state: f.consentState ?? prior?.meta.consent_publish_state ?? 'unknown',
       },
     },
-    client: { provider: GOOGLE_PROVIDER, ...pair, created_at: nowIso, account, mode },
+    ...(reuseClient ? {} : { client: { provider: GOOGLE_PROVIDER, ...pair, created_at: nowIso, account, mode } }),
     expectedGeneration: grantGeneration(prior),
   });
   appendGoogleHeartbeat('import_ok', 'ok', { account_hash: hashish(account), client_mode: mode });

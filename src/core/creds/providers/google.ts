@@ -512,7 +512,7 @@ export class GoogleTokenProvider {
   /** The client that minted this entry's tokens; never a different one. */
   private async clientFor(e: CredentialEntry): Promise<ProviderClientRecord> {
     if (isGrantVault(this.vault) && e.meta.client_id) {
-      const byId = await this.vault.getClientById(GOOGLE_PROVIDER, e.meta.client_id);
+      const byId = await this.vault.getClientById(GOOGLE_PROVIDER, e.meta.client_id, e.meta.account);
       if (!byId) throw new CredentialError('client_record_mismatch', ` for ${e.id}`);
       if (byId.account && byId.account !== (e.meta.account ?? '').toLowerCase()) {
         throw new CredentialError('client_record_mismatch', ` for ${e.id} (the client on file belongs to another account)`);

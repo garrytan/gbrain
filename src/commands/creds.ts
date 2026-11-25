@@ -135,7 +135,7 @@ async function runExport(args: string[]): Promise<void> {
   if (isGrantVault(vault)) {
     for (const e of entries) {
       if (!e.meta.client_id) continue;
-      const own = await vault.getClientById(e.provider, e.meta.client_id);
+      const own = await vault.getClientById(e.provider, e.meta.client_id, e.meta.account);
       if (own?.account && !clients.some((c) => c.client_id === own.client_id && c.account === own.account)) clients.push(own);
     }
   }
