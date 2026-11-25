@@ -112,10 +112,24 @@ export async function moveSlugBindings(
     sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),
     sql(`UPDATE secret_store_occurrence SET slug = $3 WHERE source_id = $1 AND slug = $2 AND commit_sha IS NULL
        AND (page_id IS NULL OR page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3)))`),
-    // The page's attachments (bound by page_id); a row that names no page has no owner to follow and stays.
+    // The page's attachments bound by page_id (a row bound to another page never moves by slug).
     sql(`UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2
        AND page_id IN (SELECT id FROM pages WHERE source_id = $1 AND slug IN ($2, $3))`),
   ];
+  statements.push(async savepoint => {
+    // An attachment that names its page only by slug (no page_id) moves when the old slug named exactly this live
+    // page: the moved page is live at the new slug and no other page of the source, live or soft-deleted, holds the
+    // old slug now. Otherwise the slug is ambiguous, so the rows stay and the skip is logged.
+    const [r] = await savepoint.executeRaw<{ ok: boolean; skipped: number }>(`WITH ok AS (
+        SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL)
+           AND NOT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2) AS ok),
+      moved AS (UPDATE files SET page_slug = $3 WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL AND (SELECT ok FROM ok) RETURNING 1)
+      SELECT (SELECT ok FROM ok) AS ok, (SELECT count(*)::int FROM files WHERE source_id = $1 AND page_slug = $2 AND page_id IS NULL) AS skipped`,
+      [sourceId, oldSlug, newSlug]);
+    if (r && !r.ok && Number(r.skipped) > 0) {
+      console.error(`[rename] ${r.skipped} attachment(s) of source ${sourceId} name ${oldSlug} with no page id; left there because that slug does not name only the renamed page`);
+    }
+  });
   for (const statement of statements) {
     try {
       await tx.transaction(savepoint => statement(savepoint));
