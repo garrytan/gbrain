@@ -135,7 +135,7 @@ getPage	pages	yes	246	yes	yes	yes	serves
 readPageSnapshot	pages	yes	93	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	3	no	yes	yes	serves
 lockPageKeys	pages	yes	15	no	yes	yes	serves
-putPage	pages	yes	1254	yes	yes	yes	serves
+putPage	pages	yes	1257	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
@@ -1342,10 +1342,10 @@ countRedactedFacts	facts_doctor	yes	1	no	yes	yes	serves
 listOutsideContentFenceCounts	facts_doctor	yes	2	no	yes	yes	serves
 countAtomFacts	facts_doctor	yes	1	no	yes	yes	serves
 listUnpreviewedTrustFacts	facts_doctor	yes	2	no	yes	yes	serves
-countUnlinkedFactsByOrigin	facts_doctor	yes	2	no	yes	yes	serves
-countUnlinkedFactStats	facts_doctor	yes	2	no	yes	yes	serves
+countUnlinkedFactsByOrigin	facts_doctor	yes	3	no	yes	yes	serves
+countUnlinkedFactStats	facts_doctor	yes	3	no	yes	yes	serves
 countFactRelinkOutcomes	facts_doctor	yes	1	no	yes	yes	serves
-listUnlinkedConversationSlugs	facts_doctor	yes	3	no	yes	yes	serves
+listUnlinkedConversationSlugs	facts_doctor	yes	4	no	yes	yes	serves
 countFactEmbeddingCoverage	facts_doctor	yes	1	no	yes	yes	serves
 countStaleFactEmbeddings	facts_doctor	yes	1	no	yes	yes	serves
 countSegmentedCensusPages	facts_doctor	yes	1	no	yes	yes	refuses:facts
@@ -1359,7 +1359,7 @@ hasChunkImageVectors	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkVectorCoverage	embedding_catalog	yes	1	no	yes	yes	serves
 readChunkColumnTypes	embedding_catalog	yes	1	no	yes	yes	serves
 countChunkColumnCoverage	embedding_catalog	yes	1	no	yes	yes	serves
-upsertFactRelinkAttempt	fact_relink_attempts	yes	9	no	yes	yes	serves
+upsertFactRelinkAttempt	fact_relink_attempts	yes	12	no	yes	yes	serves
 listFactRelinkOutcomes	fact_relink_attempts	yes	3	no	yes	yes	serves
 deleteFactRelinkMemos	fact_relink_attempts	yes	1	no	yes	yes	serves
 placeRelinkedFact	fact_relink_writes	yes	4	no	yes	yes	serves

@@ -244,10 +244,9 @@ describe('engine parity: doctor-check facts statements', () => {
     return { unpaged, rearmed, stale, paid, without };
   }
 
-  const memoMethods = (read: string) => ({ methods: [read, 'upsertFactRelinkAttempt', 'putPage'] });
-  parityTest('countUnlinkedFactsByOrigin with hasAttempts counts the tried and paid conversation rows', memoMethods('countUnlinkedFactsByOrigin'), (engine, backend) =>
+  parityTest('countUnlinkedFactsByOrigin with hasAttempts counts the tried and paid conversation rows', { methods: ['countUnlinkedFactsByOrigin', 'upsertFactRelinkAttempt', 'putPage'] }, (engine, backend) =>
     originMemos(engine, backend, false));
-  parityTest('countUnlinkedFactsByOrigin with hasAttempts re-arms on a page created in the clock tick of the attempt', memoMethods('countUnlinkedFactsByOrigin'), (engine, backend) =>
+  parityTest('countUnlinkedFactsByOrigin with hasAttempts re-arms on a page created in the clock tick of the attempt', { methods: ['countUnlinkedFactsByOrigin', 'upsertFactRelinkAttempt', 'putPage'] }, (engine, backend) =>
     originMemos(engine, backend, true));
 
   parityTest('countUnlinkedFactStats counts the last 7 days of active facts and the inferred tiers', { methods: ['countUnlinkedFactStats'] }, async (engine) => {
@@ -280,9 +279,9 @@ describe('engine parity: doctor-check facts statements', () => {
     return { unpaged, rearmed, without };
   }
 
-  parityTest('countUnlinkedFactStats with hasAttempts counts the no-subject and unresolved rows', memoMethods('countUnlinkedFactStats'), (engine, backend) =>
+  parityTest('countUnlinkedFactStats with hasAttempts counts the no-subject and unresolved rows', { methods: ['countUnlinkedFactStats', 'upsertFactRelinkAttempt', 'putPage'] }, (engine, backend) =>
     statsMemos(engine, backend, false));
-  parityTest('countUnlinkedFactStats with hasAttempts re-arms on a page created in the clock tick of the attempt', memoMethods('countUnlinkedFactStats'), (engine, backend) =>
+  parityTest('countUnlinkedFactStats with hasAttempts re-arms on a page created in the clock tick of the attempt', { methods: ['countUnlinkedFactStats', 'upsertFactRelinkAttempt', 'putPage'] }, (engine, backend) =>
     statsMemos(engine, backend, true));
 
   parityTest('countFactRelinkOutcomes counts the no-subject and recently linked attempts by outcome and tier', { methods: ['countFactRelinkOutcomes', 'upsertFactRelinkAttempt'] }, async (engine, backend) => {
@@ -368,9 +367,9 @@ describe('engine parity: doctor-check facts statements', () => {
     return { unpaged, rearmed, paid };
   }
 
-  parityTest('listUnlinkedConversationSlugs with hasAttempts targets each fix from the relink-attempt memos', memoMethods('listUnlinkedConversationSlugs'), (engine, backend) =>
+  parityTest('listUnlinkedConversationSlugs with hasAttempts targets each fix from the relink-attempt memos', { methods: ['listUnlinkedConversationSlugs', 'upsertFactRelinkAttempt', 'putPage'] }, (engine, backend) =>
     slugMemos(engine, backend, false));
-  parityTest('listUnlinkedConversationSlugs with hasAttempts re-arms on a page created in the clock tick of the attempt', memoMethods('listUnlinkedConversationSlugs'), (engine, backend) =>
+  parityTest('listUnlinkedConversationSlugs with hasAttempts re-arms on a page created in the clock tick of the attempt', { methods: ['listUnlinkedConversationSlugs', 'upsertFactRelinkAttempt', 'putPage'] }, (engine, backend) =>
     slugMemos(engine, backend, true));
 
   parityTest('countFactEmbeddingCoverage counts missing, stale and partially embedded facts of each live source', { methods: ['countFactEmbeddingCoverage'] }, async (engine, backend) => {
