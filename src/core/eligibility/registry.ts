@@ -28,7 +28,7 @@ export const OP_READ_TRUST: Readonly<Record<string, ReadTrustHandling>> = {
   recall: 'filtered', context_pack: 'filtered', delta: 'filtered', memory_recall: 'labeled',
   search: 'filtered', search_exact: 'filtered', query: 'filtered', get_page: 'filtered', fetch: 'filtered',
   get_chunks: 'filtered', get_timeline: 'filtered', takes_list: 'filtered', takes_search: 'filtered',
-  assemble_evidence: 'filtered',
+  assemble_evidence: 'filtered', check_claims: 'labeled',
   entity: 'labeled', synthesize: 'labeled', think: 'labeled',
   search_by_image: 'labeled', list_pages: 'labeled', find_pages: 'labeled', volunteer_context: 'filtered',
   get_versions: 'labeled', get_raw_data: 'labeled', resolve_slugs: 'labeled', whois: 'labeled',

@@ -42,7 +42,7 @@ const OP_AREAS: Record<string, string> = {
   put_raw_data: 'pages', get_raw_data: 'pages',
   fetch: 'pages', // #4039 deep-research read adapter (search/fetch pair)
   // search
-  search: 'search', search_exact: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search',
+  search: 'search', search_exact: 'search', query: 'search', search_by_image: 'search', assemble_evidence: 'search', check_claims: 'search',
   // tags
   add_tag: 'tags', remove_tag: 'tags', get_tags: 'tags',
   // links + graph

@@ -4148,7 +4148,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "scope": "read",
     "cliHints": {
       "hidden": true
-    }
+    },
+    "area": "search"
   },
   {
     "name": "submit_job",
