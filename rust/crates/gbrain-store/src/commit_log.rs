@@ -13,8 +13,9 @@
 //!
 //! - `2` alone: the log's meta record, JSON `{ since, newest, trimmed_through }`, rewritten by every
 //!   logged commit. `since` is the activation commit; every commit after it has a record.
-//! - `2 sequence_be8 index_be4`: one commit record. Value: `[version u8 = 1]` `[3 length-prefixed
-//!   UTF-8 strings: host id, incarnation, writer id]` `[u32 count of write ids, each length-prefixed]`
+//! - `2 sequence_be8 index_be4`: one commit record (I-4.v2). Value: `[version u8 = 2]` `[3 length-prefixed
+//!   UTF-8 strings: host id, incarnation, writer id]` `[commit time: i64 big-endian, microseconds since
+//!   the Unix epoch, UTC]` `[u32 count of write ids, each length-prefixed]`
 //!   `[u32 count of ops, each: op u8, key length-prefixed, operand length-prefixed]`. Lengths and
 //!   counts are u32 big-endian. Ops: 1 put (operand: the full value), 2 delete (empty operand), 3
 //!   `add_i64` (operand: the delta, 8 bytes little-endian, as the counter is stored), 4
@@ -38,7 +39,7 @@ use std::collections::VecDeque;
 /// The commit log's one-byte key tag.
 pub const COMMIT_LOG: u8 = b'2';
 /// The version byte every commit record starts with.
-pub const RECORD_VERSION: u8 = 1;
+pub const RECORD_VERSION: u8 = 2;
 /// The default retention cap: 64 MiB of records.
 pub const DEFAULT_RETENTION_BYTES: u64 = 64 << 20;
 
@@ -153,6 +154,8 @@ pub enum LogOp {
 pub struct CommitRecord {
     pub position: CommitPosition,
     pub origin: WriteOrigin,
+    /// The commit's time (`CommitClock`): strictly increasing in position order across the log.
+    pub commit_time: i64,
     pub write_ids: Vec<String>,
     /// In key order; at most one op per key.
     pub ops: Vec<(Vec<u8>, LogOp)>,
@@ -224,6 +227,7 @@ fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
 /// Encodes a commit record value (the position is in its key).
 pub fn encode_record<'a>(
     origin: &WriteOrigin,
+    commit_time: i64,
     write_ids: &[String],
     ops: impl IntoIterator<Item = (&'a [u8], LogOpRef<'a>)>,
 ) -> Vec<u8> {
@@ -231,6 +235,7 @@ pub fn encode_record<'a>(
     put_bytes(&mut out, origin.host_id.as_bytes());
     put_bytes(&mut out, origin.incarnation.as_bytes());
     put_bytes(&mut out, origin.writer_id.as_bytes());
+    out.extend_from_slice(&commit_time.to_be_bytes());
     out.extend_from_slice(&(write_ids.len() as u32).to_be_bytes());
     for id in write_ids {
         put_bytes(&mut out, id.as_bytes());
@@ -295,7 +300,9 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// Decodes the commit record stored under `key`. Strict: an unknown version, a length or count
+/// Decodes the commit record stored under `key`. A version other than `RECORD_VERSION` (v1 was
+/// retired before any store outside tests held it) refuses with `format_unknown`: an unknown version
+/// is not corruption, and no offset is guessed. Otherwise strict: a length or count
 /// past the bytes left, a wrong operand length, an unknown op, a key written twice, invalid UTF-8
 /// or trailing bytes refuse with `store_corrupt`.
 pub fn decode_record(key: &[u8], value: &[u8]) -> Result<CommitRecord> {
@@ -303,13 +310,19 @@ pub fn decode_record(key: &[u8], value: &[u8]) -> Result<CommitRecord> {
     let mut c = Cursor { bytes: value, at: 0 };
     let version = c.take(1)?[0];
     if version != RECORD_VERSION {
-        return Err(corrupt(&format!("record version {version} is not known")));
+        return Err(StoreError::new(
+            crate::error::FORMAT_UNKNOWN,
+            format!(
+                "commit log: record version {version} is not one this build reads ({RECORD_VERSION}); nothing was changed"
+            ),
+        ));
     }
     let origin = WriteOrigin {
         host_id: c.text()?,
         incarnation: c.text()?,
         writer_id: c.text()?,
     };
+    let commit_time = i64::from_be_bytes(c.take(8)?.try_into().expect("8 bytes"));
     let ids = c.u32()? as usize;
     // Every id takes at least its 4-byte length: a count past that is a lie, refused before any
     // allocation it would size.
@@ -353,6 +366,7 @@ pub fn decode_record(key: &[u8], value: &[u8]) -> Result<CommitRecord> {
     Ok(CommitRecord {
         position,
         origin,
+        commit_time,
         write_ids,
         ops,
     })
@@ -468,34 +482,83 @@ pub fn write_activation(tx: &mut dyn KvWrite, since: CommitPosition) -> Result<(
     tx.put(&meta_key(), &serde_json::to_vec(&meta)?)
 }
 
-/// One transaction the record file's writer accepted: its position and the time the writer read
-/// from the hook's clock at the accept step.
+/// One transaction the record file's writer accepted: its position and its commit time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Accepted {
     pub position: CommitPosition,
     pub commit_time: i64,
 }
 
-/// The accept hook (`Kv::set_accept_hook`): called once per accepted transaction, in accept order
+/// The accept hook (`Kv::set_commit_clock`): called once per accepted transaction, in accept order
 /// (which is commit order), by the record file's one writer, at the accept step: before the commit
 /// is durable, so a commit that then fails was still seen, and while no later transaction can be
-/// accepted. It holds no policy of the store's; it must be quick and must not write to the store.
+/// accepted. For observation only: it holds no policy of the store's, must be quick and must not
+/// write to the store.
 pub type AcceptHook = std::sync::Arc<dyn Fn(Accepted) + Send + Sync>;
 
-/// A clock and the hook it feeds, as a store keeps them.
-#[derive(Clone)]
-pub(crate) struct AcceptHookSlot {
-    pub(crate) clock: std::sync::Arc<dyn Env>,
-    pub(crate) hook: AcceptHook,
+/// Commit times (multi-user mode, lane L5's clock rule): every accepted transaction gets
+/// `max(store clock, previous accepted commit time + 1 µs)`, so commit times strictly increase in
+/// commit order even when the clock goes back. The record file keeps the newest durable one
+/// (`redb_kv::COMMIT_TIME_KEY`) in the same write transaction as the data, so a failed commit
+/// leaves no time behind and a restart, or another process opening the same store, continues
+/// above it. Owned by the record file's one writer.
+pub(crate) struct CommitClock {
+    clock: std::sync::Arc<dyn Env>,
+    /// The newest durable commit time (0 before the first).
+    last: std::sync::Mutex<i64>,
+    hook: std::sync::Mutex<Option<AcceptHook>>,
 }
 
-impl AcceptHookSlot {
-    pub(crate) fn call(&self, position: CommitPosition) {
-        (self.hook)(Accepted {
-            position,
-            commit_time: self.clock.clock_micros(),
-        });
+impl CommitClock {
+    pub(crate) fn new(clock: std::sync::Arc<dyn Env>, last: i64) -> Self {
+        Self {
+            clock,
+            last: std::sync::Mutex::new(last),
+            hook: std::sync::Mutex::new(None),
+        }
     }
+
+    pub(crate) fn set_hook(&self, hook: Option<AcceptHook>) {
+        *self.hook.lock().unwrap_or_else(|p| p.into_inner()) = hook;
+    }
+
+    /// The commit time of the transaction accepted at `position`, after `prev` (the time given to
+    /// the transaction accepted just before it in the same record-file commit) or, for the first,
+    /// after the newest durable time; reported to the hook.
+    pub(crate) fn accept(&self, position: CommitPosition, prev: Option<i64>) -> i64 {
+        let floor = prev.unwrap_or_else(|| *self.last.lock().unwrap_or_else(|p| p.into_inner()));
+        let time = self.clock.clock_micros().max(floor.saturating_add(1));
+        let hook = self.hook.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(hook) = hook {
+            hook(Accepted {
+                position,
+                commit_time: time,
+            });
+        }
+        time
+    }
+
+    /// Takes in the newest time of a record-file commit that succeeded.
+    pub(crate) fn committed(&self, time: i64) {
+        let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
+        *last = (*last).max(time);
+    }
+}
+
+/// The floor every later commit time is above, from `read`: the larger of the durable commit time
+/// (`redb_kv::COMMIT_TIME_KEY`) and the newest commit record's time (a store rebuilt from the log,
+/// or a copy that did not carry the adapter key).
+pub fn floor_time(read: &dyn KvRead) -> Result<i64> {
+    let mut floor = crate::redb_kv::read_commit_time(read)?.unwrap_or(0);
+    let mut newest = None;
+    read.scan(&record_key(CommitPosition::default()), &records_end(), true, &mut |k, v| {
+        newest = Some((k.to_vec(), v.to_vec()));
+        false
+    })?;
+    if let Some((k, v)) = newest {
+        floor = floor.max(decode_record(&k, &v)?.commit_time);
+    }
+    Ok(floor)
 }
 
 /// How a store keeps its log (`Kv::enable_commit_log`).
@@ -799,7 +862,7 @@ mod tests {
         ];
         (
             record_key(CommitPosition::new(7, 2)),
-            encode_record(&origin(), &["r1".into(), "r2".into()], ops),
+            encode_record(&origin(), 1_700_000_000_000_042, &["r1".into(), "r2".into()], ops),
         )
     }
 
@@ -809,6 +872,7 @@ mod tests {
         let r = decode_record(&k, &v).unwrap();
         assert_eq!(r.position, CommitPosition::new(7, 2));
         assert_eq!(r.origin, origin());
+        assert_eq!(r.commit_time, 1_700_000_000_000_042);
         assert_eq!(r.write_ids, vec!["r1", "r2"]);
         assert_eq!(
             r.ops,
@@ -826,9 +890,13 @@ mod tests {
         let (k, v) = sample();
         let mut cases: Vec<(String, Vec<u8>)> = Vec::new();
         cases.push(("empty".into(), vec![]));
-        let mut bad_version = v.clone();
-        bad_version[0] = 2;
-        cases.push(("version".into(), bad_version));
+        // Any other version, the retired v1 included, is not one this build reads.
+        for version in [0u8, 1, 3, 255] {
+            let mut other = v.clone();
+            other[0] = version;
+            let err = decode_record(&k, &other).unwrap_err();
+            assert_eq!(err.code, crate::error::FORMAT_UNKNOWN, "version {version}");
+        }
         let mut trailing = v.clone();
         trailing.push(0);
         cases.push(("trailing".into(), trailing));
@@ -840,6 +908,7 @@ mod tests {
         for _ in 0..3 {
             put_bytes(&mut huge, b"");
         }
+        huge.extend_from_slice(&0i64.to_be_bytes());
         huge.extend_from_slice(&u32::MAX.to_be_bytes());
         cases.push(("id count".into(), huge.clone()));
         let mut huge_ops = huge[..huge.len() - 4].to_vec();
@@ -851,6 +920,7 @@ mod tests {
             for _ in 0..3 {
                 put_bytes(&mut out, b"");
             }
+            out.extend_from_slice(&0i64.to_be_bytes());
             out.extend_from_slice(&0u32.to_be_bytes());
             out.extend_from_slice(&1u32.to_be_bytes());
             out.push(tag);
@@ -872,7 +942,7 @@ mod tests {
         // Keys out of order or repeated.
         let twice: Vec<(&[u8], LogOpRef)> =
             vec![(b"a", LogOpRef::Delete), (b"a", LogOpRef::Delete)];
-        let v = encode_record(&origin(), &[], twice);
+        let v = encode_record(&origin(), 0, &[], twice);
         assert_eq!(decode_record(&k, &v).unwrap_err().code, STORE_CORRUPT);
         // A key under the tag that is no record key.
         assert_eq!(decode_record(&[COMMIT_LOG, 1], &sample().1).unwrap_err().code, STORE_CORRUPT);
@@ -897,6 +967,25 @@ mod tests {
         assert!(!CommitPosition::new(3, 0).follows(CommitPosition::end_of(3)));
         let json = serde_json::to_string(&a).unwrap();
         assert_eq!(json, r#"{"sequence":3,"index":1}"#);
+    }
+
+    #[test]
+    fn a_write_inside_another_brains_write_sees_none_of_its_origin_or_requests() {
+        let on = scope::RowOrigin {
+            host_id: "h".into(),
+            incarnation: "i".into(),
+        };
+        let outer = scope::open(Some(on.clone()));
+        scope::note("outer-req", "local_cli", "a");
+        {
+            // An off brain's write opens its own empty frame.
+            let inner = scope::open(None);
+            assert_eq!(scope::row_origin(), None);
+            scope::note("inner-req", "local_cli", "b");
+            assert_eq!(inner.take(), (vec!["inner-req".to_string()], Some("local_cli:b".into())));
+        }
+        assert_eq!(scope::row_origin(), Some(on));
+        assert_eq!(outer.take(), (vec!["outer-req".to_string()], Some("local_cli:a".into())));
     }
 
     #[test]

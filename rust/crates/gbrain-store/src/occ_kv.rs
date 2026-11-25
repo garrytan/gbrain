@@ -41,7 +41,7 @@
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
 
 use crate::commit_log::{
-    AcceptHook, AcceptHookSlot, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
+    AcceptHook, CommitClock, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
 };
 use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLICT};
 use crate::kv::{Kv, KvRead, KvWrite};
@@ -354,8 +354,8 @@ struct Shared {
     /// transaction, in the batch's own record-file commit).
     log: Mutex<Option<LogState>>,
     log_on: AtomicBool,
-    /// The accept hook, once installed: the pipeline calls it for each transaction it accepts.
-    hook: Mutex<Option<AcceptHookSlot>>,
+    /// The commit clock, once installed: the pipeline times each transaction it accepts.
+    clock: Mutex<Option<Arc<CommitClock>>>,
 }
 
 impl Shared {
@@ -451,18 +451,21 @@ impl Pipeline {
         let mut latest: Option<Box<dyn KvRead + Send>> = None;
         let mut accepted: Vec<Request> = Vec::new();
         let mut touched: Vec<Vec<u8>> = Vec::new();
-        let hook = self
+        let clock = self
             .shared
-            .hook
+            .clock
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone();
+        // Each accepted transaction's commit time, in accept order: each is above the one before.
+        let mut times: Vec<i64> = Vec::new();
         for req in batch {
             match self.accept(&req, next, &mut resolved, &mut latest) {
                 Ok(keys) => {
                     touched.extend(keys);
-                    if let Some(hook) = &hook {
-                        hook.call(CommitPosition::new(next, accepted.len() as u32));
+                    if let Some(clock) = &clock {
+                        let position = CommitPosition::new(next, accepted.len() as u32);
+                        times.push(clock.accept(position, times.last().copied()));
                     }
                     accepted.push(req);
                 }
@@ -478,6 +481,7 @@ impl Pipeline {
         if accepted.is_empty() {
             return;
         }
+        let batch_time = times.last().copied();
         let mut log = self.shared.log.lock().unwrap_or_else(|p| p.into_inner());
         let mut append = None;
         let outcome = (|| -> Result<u64> {
@@ -498,6 +502,7 @@ impl Pipeline {
                         let origin = state.origin_for(&req.meta);
                         let value = crate::commit_log::encode_record(
                             &origin,
+                            times.get(i).copied().unwrap_or(0),
                             &req.meta.write_ids,
                             req.writes.iter().map(|(k, op)| (k.as_slice(), log_op(op))),
                         );
@@ -506,10 +511,16 @@ impl Pipeline {
                     .collect();
                 append = Some(state.write(&mut *tx, &records)?);
             }
+            if let Some(time) = batch_time {
+                tx.set_commit_time(time);
+            }
             tx.commit()
         })();
         match outcome {
             Ok(seq) if seq == next => {
+                if let (Some(clock), Some(time)) = (&clock, batch_time) {
+                    clock.committed(time);
+                }
                 if let (Some(state), Some(append)) = (log.as_mut(), append) {
                     state.applied(append);
                 }
@@ -671,7 +682,7 @@ impl OccKv {
             stats: Arc::new(OccStats::default()),
             log: Mutex::new(None),
             log_on: AtomicBool::new(false),
-            hook: Mutex::new(None),
+            clock: Mutex::new(None),
         });
         let pipeline = Pipeline {
             shared: shared.clone(),
@@ -807,6 +818,12 @@ impl Kv for OccKv {
     }
 
     fn enable_commit_log(&self, settings: LogSettings) -> Result<()> {
+        if self.shared.clock.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
+            return Err(StoreError::new(
+                crate::error::INVALID_STATE,
+                "the commit log needs the commit clock (`Kv::set_commit_clock`) first",
+            ));
+        }
         let state = LogState::load(&*self.shared.base.snapshot()?, settings)?;
         *self.shared.log.lock().unwrap_or_else(|p| p.into_inner()) = Some(state);
         self.shared.log_on.store(true, Ordering::Release);
@@ -817,8 +834,19 @@ impl Kv for OccKv {
         self.shared.log_on.load(Ordering::Acquire)
     }
 
-    fn set_accept_hook(&self, clock: Arc<dyn crate::env::Env>, hook: AcceptHook) -> Result<()> {
-        *self.shared.hook.lock().unwrap_or_else(|p| p.into_inner()) = Some(AcceptHookSlot { clock, hook });
+    fn set_commit_clock(
+        &self,
+        clock: Arc<dyn crate::env::Env>,
+        hook: Option<AcceptHook>,
+    ) -> Result<()> {
+        let mut slot = self.shared.clock.lock().unwrap_or_else(|p| p.into_inner());
+        if slot.is_none() {
+            let last = crate::commit_log::floor_time(&*self.shared.base.snapshot()?)?;
+            *slot = Some(Arc::new(CommitClock::new(clock, last)));
+        }
+        if let Some(c) = slot.as_ref() {
+            c.set_hook(hook);
+        }
         Ok(())
     }
 }

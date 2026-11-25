@@ -9,7 +9,6 @@ import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/def
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch.ts';
-import { localHostId } from '../persistence/identity.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -300,19 +299,17 @@ export async function openRustStore(
   let multiuser = false;
   let commitLog = false;
   try {
-    // The commit log and write origin sub-switches, with the host id the write origin needs (the engine's own,
-    // else this machine's). Sent only when set: an open without them sends what it always sent and reads no host.json.
-    // The brain's mode is resolved by this very open (the switch or its config row), so they are sent as requests
-    // under a mode that may be on, and the store applies them only when it resolves the mode on (I-0.v2).
+    // The commit log and write origin sub-switches, sent only when set: an open without them sends what it always
+    // sent. The brain's mode is resolved by this very open (the switch or its config row), so they go as requests the
+    // store applies only when it resolves the mode on (I-0.v2). The host id comes from the caller (`origin`), which
+    // reads it only when the switch itself is on or a sub-switch is set.
     const commitLogOn = rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', MODE_MAY_BE_ON);
     const writeOriginOn = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', MODE_MAY_BE_ON);
-    const writes = commitLogOn || writeOriginOn
-      ? {
-        ...(commitLogOn ? { commitLog: true } : {}),
-        ...(writeOriginOn ? { writeOrigin: true } : {}),
-        hostId: origin?.hostId ?? localHostId(),
-      }
-      : {};
+    const writes = {
+      ...(commitLogOn ? { commitLog: true } : {}),
+      ...(writeOriginOn ? { writeOrigin: true } : {}),
+      ...((commitLogOn || writeOriginOn) && origin?.hostId ? { hostId: origin.hostId } : {}),
+    };
     const info = await brain.open(databasePath, {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,

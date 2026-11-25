@@ -397,9 +397,16 @@ impl Store {
             .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read_in(dir, known)?;
+        // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
+        // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
+        let config_on = multiuser_config_on(
+            redb_kv::peek(&dir.join(format::RECORDS_FILE), &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
+        );
+        // The commit log counts only in multi-user mode (I-0.v2).
+        let log_on = options.multiuser_writes.commit_log && (options.multiuser || config_on);
         // A commit log brain (or one whose switch to the log was under way) is never opened for
         // writing without the log: nothing may commit that the log would miss.
-        if existing.as_ref().is_some_and(|f| f.log.is_some()) && !options.multiuser_writes.commit_log {
+        if existing.as_ref().is_some_and(|f| f.log.is_some()) && !log_on {
             return Err(log_required());
         }
         if existing.is_none() {
@@ -410,14 +417,13 @@ impl Store {
                 peeked.and_then(|b| serde_json::from_slice::<StoredFormat>(&b).ok())
             {
                 format::check_version_in(stored.format_version, known)?;
+                if stored.log.is_some() && !log_on {
+                    return Err(log_required());
+                }
             }
         }
-        // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
-        // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
-        let config_on = multiuser_config_on(
-            redb_kv::peek(&dir.join(format::RECORDS_FILE), &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
-        );
-        let kv = open_records(dir, options.concurrent_writes || options.multiuser || config_on)?;
+        let concurrent = options.concurrent_writes || options.multiuser || config_on;
+        let kv = open_records(dir, concurrent)?;
         let mut store = Store::open_kv_in(
             kv,
             Arc::new(SystemEnv),
@@ -426,6 +432,19 @@ impl Store {
             OpenMode::Write { dir: Some(dir) },
         )?;
         store.dir = Some(dir.to_path_buf());
+        if store.multiuser && !concurrent {
+            // The config row turned multi-user mode on but could not be read before the open (redb
+            // recovered the file first): open again, now on the concurrent store the mode needs.
+            drop(store);
+            return Store::open_dir_in(
+                dir,
+                OpenOptions {
+                    concurrent_writes: true,
+                    ..options
+                },
+                known,
+            );
+        }
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
@@ -505,11 +524,6 @@ impl Store {
             );
         let off = MultiUserWrites::default();
         let multiuser = if multiuser_on { &options.multiuser_writes } else { &off };
-        if multiuser.write_origin && multiuser.host_id.as_deref().is_none_or(str::is_empty) {
-            return Err(StoreError::invalid(
-                "multi-user write origin needs this machine's host id",
-            ));
-        }
         // This open's origin: minted only in multi-user mode, so an open with the mode off draws
         // nothing from `env` it did not draw before.
         let origin = (!read_only && multiuser.any()).then(|| {
@@ -534,6 +548,11 @@ impl Store {
         let snapshot = kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*snapshot, &keys::meta("format"))?;
         drop(snapshot);
+        // Multi-user mode: every accepted transaction gets a strictly increasing commit time, kept
+        // durable with its data, from this open on (its own upkeep writes included).
+        if multiuser_on && !read_only {
+            kv.set_commit_clock(env.clone(), None)?;
+        }
         let mut log_enabled = false;
         let (stored, created) = match stored {
             Some(stored) if stored.format_version == LOG_FORMAT_VERSION => {
@@ -634,7 +653,11 @@ impl Store {
             runs_builder: options.keyword_index_builder,
             flag_assumed,
             dir: None,
-            stamp_rows: multiuser.write_origin && origin.is_some(),
+            // Without a host id there is no origin to stamp (the caller could not name this machine
+            // without minting its identity while it could not know the mode was on).
+            stamp_rows: multiuser.write_origin
+                && origin.is_some()
+                && multiuser.host_id.as_deref().is_some_and(|h| !h.is_empty()),
             origin,
             multiuser: multiuser_on,
         })
@@ -830,8 +853,8 @@ impl Store {
             let _trust = crate::write_trust::stamp_context::open(trust);
             return tx.statement(|w| {
                 let value = write_chain(w, &mut f)?;
-                if let Some(scope) = &meta {
-                    w.set_commit_meta(scope.meta());
+                if let Some(meta) = meta.meta() {
+                    w.set_commit_meta(meta);
                 }
                 Ok(value)
             });
@@ -851,8 +874,8 @@ impl Store {
                 let _trust = crate::write_trust::stamp_context::open(trust);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => {
-                        if let Some(scope) = &meta {
-                            tx.set_commit_meta(scope.meta());
+                        if let Some(meta) = meta.meta() {
+                            tx.set_commit_meta(meta);
                         }
                         tx.commit().map(|_| value)
                     }
@@ -892,26 +915,46 @@ impl Store {
     /// The commit-meta scope of one write run in multi-user mode (`None` while it is off, so the
     /// write runs exactly as before): journal rows the run admits are stamped with this open's
     /// origin, and the commit names the run's requests and principal.
-    fn meta_scope(&self, trust: &crate::trust::WriteTrust) -> Option<MetaScope> {
-        let origin = self.origin.clone()?;
+    fn meta_scope(&self, trust: &crate::trust::WriteTrust) -> MetaScope {
         let attribution = &trust.attribution;
-        Some(MetaScope {
-            guard: commit_log::scope::open(self.stamp_rows.then(|| (*origin).clone())),
-            origin,
+        MetaScope {
+            // A frame for every write run, the mode off included, so a write that runs inside another
+            // brain's write never sees that brain's origin or adds to its requests.
+            guard: commit_log::scope::open(
+                self.origin
+                    .as_ref()
+                    .filter(|_| self.stamp_rows)
+                    .map(|o| (**o).clone()),
+            ),
+            origin: self.origin.clone(),
             request_id: attribution.request_id.clone(),
             writer: attribution
                 .principal_kind
                 .as_ref()
                 .map(|kind| format!("{kind}:{}", attribution.principal_id.as_deref().unwrap_or(""))),
-        })
+        }
     }
 
-    /// Installs the accept hook of this brain's record file (`commit_log::AcceptHook`): called for
-    /// each accepted transaction, in commit order, with its position and the time the store's clock
-    /// reads at the accept step. For multi-user mode's commit-ordered times (lane L5); nothing installs
-    /// one while the mode is off. Install it before the brain takes writes.
+    /// Installs the accept hook of this brain's record file (`commit_log::AcceptHook`), for
+    /// observation only: called for each accepted transaction, in commit order, with its position and
+    /// its commit time. Starts the commit clock when the brain's open did not (multi-user mode starts
+    /// it at open). Install it before the brain takes writes.
     pub fn set_accept_hook(&self, hook: commit_log::AcceptHook) -> Result<()> {
-        self.kv.set_accept_hook(self.env.clone(), hook)
+        // The commit clock writes its durable time only while the multi-user switch is on.
+        if !self.multiuser {
+            return Err(StoreError::new(
+                error::INVALID_STATE,
+                "the accept hook needs multi-user mode (GBRAIN_RUST_MULTIUSER=1)",
+            ));
+        }
+        self.kv.set_commit_clock(self.env.clone(), Some(hook))
+    }
+
+    /// The newest durable commit time (multi-user mode, `commit_log::CommitClock`): the floor every
+    /// later commit time is above, across restarts and other processes opening this store. `None`
+    /// before the first timed commit.
+    pub fn last_commit_time(&self) -> Result<Option<i64>> {
+        self.kv.last_commit_time()
     }
 
     /// Where the commit log starts, when this brain keeps one (`None` otherwise).
@@ -931,19 +974,22 @@ impl Store {
 /// One write run's commit-meta scope (`Store::meta_scope`).
 struct MetaScope {
     guard: commit_log::scope::Guard,
-    origin: Arc<commit_log::scope::RowOrigin>,
+    /// `None` while multi-user mode is off: the write then sets no commit meta.
+    origin: Option<Arc<commit_log::scope::RowOrigin>>,
     request_id: Option<String>,
     writer: Option<String>,
 }
 
 impl MetaScope {
-    fn meta(&self) -> commit_log::CommitMeta {
-        commit_log::scope::meta_of(
-            Some(&self.origin),
+    /// The run's commit meta, or `None` while multi-user mode is off.
+    fn meta(&self) -> Option<commit_log::CommitMeta> {
+        let origin = self.origin.as_ref()?;
+        Some(commit_log::scope::meta_of(
+            Some(origin),
             self.guard.take(),
             self.request_id.clone(),
             self.writer.clone(),
-        )
+        ))
     }
 }
 
@@ -970,6 +1016,8 @@ fn log_required() -> StoreError {
 /// with `since` the position of this very commit. `FORMAT` is stamped first, so an older build
 /// refuses the brain before it opens the record file even if this commit never lands; the open
 /// writes `FORMAT` again from the records afterwards.
+/// Its one raw write holds only the format record and the log's meta record, no page record, so it
+/// needs no flagging writer (`access_flag.rs` counts it).
 fn activate_log(
     kv: &dyn Kv,
     stored: StoredFormat,

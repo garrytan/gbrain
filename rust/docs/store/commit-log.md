@@ -14,9 +14,10 @@ Multi-user mode only (interface I-0 to I-4 of the multi-user build, `docs/design
 | `GBRAIN_RUST_COMMIT_LOG=1` | The commit log (`MultiUserWrites::commit_log`) | only while the store resolves multi-user mode on |
 | `GBRAIN_RUST_WRITE_ORIGIN=1` | Write origin on journal rows (`MultiUserWrites::write_origin`) | only while the store resolves multi-user mode on |
 
-Off (the default for all three), nothing on this page happens: no key under tag `2` is written, `FORMAT` and the
-format record keep their bytes, journal rows keep their `extra`, the open result keeps its shape and no clock or id
-is drawn that was not drawn before. Commit positions are computed either way, and nothing an agent sees shows them.
+Off (the default for all three), nothing on this page happens: no key under tag `2` is written, `M\0ctime` is never
+written, `FORMAT` and the format record keep their bytes, journal rows keep their `extra`, the open result keeps its
+shape and no clock or id is drawn that was not drawn before. Commit positions are computed either way, and nothing an
+agent sees shows them. Sub-switches set while multi-user mode is off are ignored.
 
 ## Commit positions
 
@@ -38,13 +39,22 @@ seq 42  (42,0)             seq 42  (42,0)                   a refused transactio
 - `KvWrite::commit()` still returns the sequence (`commit_position().sequence`); `Store::commit_transaction_at`
   and napi `commitTransaction` return the position.
 
-## The accept hook
+## Commit times and the accept hook
 
-`Store::set_accept_hook(hook)`: the record file's one writer calls `hook(Accepted { position, commit_time })` once
-per accepted transaction, in commit order, at the accept step (the pipeline's accept loop, or the single-writer
-commit under redb's write lock), with `commit_time` read from the store's clock. It runs before the commit is
-durable, so it may see a commit that then fails. It holds no policy of the store's (lane L5 builds commit-ordered
-times on it). Nothing installs one while multi-user mode is off.
+While multi-user mode is on (with the log on or off), every accepted transaction gets a commit time:
+`max(store clock, previous accepted commit time + 1 µs)`, microseconds since the Unix epoch, UTC. Commit times
+strictly increase in commit-position order, inside a group commit too, even when the clock goes back. The same
+record-file commit writes the newest one to the adapter key `M\0ctime` (8 bytes big-endian, reserved like the
+commit sequence) and, with the log on, each transaction's own time into its commit record, so a time is durable
+exactly when its data is and a failed commit leaves none behind. `Store::last_commit_time()` reads `M\0ctime`: the
+floor at open, for a restart or another process opening the store. A store rebuilt from the log takes the floor
+from its newest record (`commit_log::floor_time`). Commit times set row times and the clock floor; every
+"what happened first" rule uses the commit position, never the time.
+
+`Store::set_accept_hook(hook)` (multi-user mode only; refused while off) is for observation: the record file's one
+writer calls `hook(Accepted { position, commit_time })` once per accepted transaction, in commit order, at the accept
+step (the pipeline's accept loop, or the single-writer commit under redb's write lock), with the same commit time the
+record carries. It runs before the commit is durable, so it may see a commit that then fails.
 
 ## The log
 
@@ -53,12 +63,15 @@ Keys under tag `2` (declared in `commit_log.rs`, claimed in the tag registry of
 
 - `2`: the meta record, JSON `{ since, newest, trimmed_through }`. `since` is the activation commit, `newest` the
   newest commit with a record (`since` before the first), `trimmed_through` the newest record retention removed.
-- `2 sequence_be8 index_be4`: one commit record. Value (all lengths and counts u32 big-endian):
-  `[version u8 = 1]` `[host id, incarnation, writer id: each length-prefixed UTF-8]`
+- `2 sequence_be8 index_be4`: one commit record, version 2 (I-4.v2). Value (all lengths and counts u32 big-endian):
+  `[version u8 = 2]` `[host id, incarnation, writer id: each length-prefixed UTF-8]`
+  `[commit time: i64 big-endian, microseconds since the Unix epoch, UTC]`
   `[count of write ids, each length-prefixed]` `[count of ops; each: op u8, key length-prefixed, operand length-prefixed]`.
   Ops: `1` put (operand: the full value, never a reference), `2` delete (empty operand), `3` `add_i64` (the delta, 8
   bytes little-endian, as counters are stored), `4` `raise_counter` (the value, 8 bytes big-endian, as id sequences
-  are stored). One op per key, keys in increasing order. The decoder refuses anything else with `store_corrupt`.
+  are stored). One op per key, keys in increasing order. A version other than 2 (version 1 was retired before any
+store outside tests held it) refuses with `format_unknown`; any other malformed record with `store_corrupt`. Where a
+record is decoded to JSON it carries `"commit_time_us"`.
 
 What a record holds:
 

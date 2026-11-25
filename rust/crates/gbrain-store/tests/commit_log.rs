@@ -11,7 +11,7 @@ use common::TempDir;
 use gbrain_store::commit_log::{
     self, CommitMeta, CommitPosition, LogOp, LogSettings, WriteOrigin, is_log_key,
 };
-use gbrain_store::error::{FORMAT_UNKNOWN, INVALID_ARGUMENT, WRITE_CONFLICT};
+use gbrain_store::error::{FORMAT_UNKNOWN, WRITE_CONFLICT};
 use gbrain_store::journal::{PageMutation, Principal, WriteAdmission};
 use gbrain_store::kv::{Kv, KvRead};
 use gbrain_store::occ_kv::OccKv;
@@ -423,28 +423,26 @@ fn journal_rows_carry_the_write_origin_only_with_the_switch_on() {
 }
 
 #[test]
-fn write_origin_needs_a_host_id() {
+fn write_origin_without_a_host_id_stamps_nothing() {
     let dir = TempDir::new("origin-host");
     let kv = records_kv(&dir.path().join("r.redb"), false);
-    let err = Store::open_kv(
-        kv,
+    let store = Store::open_kv(
+        kv.clone(),
         Arc::new(SystemEnv),
-        options(
-            false,
-            MultiUserWrites {
-                host_id: None,
-                ..mu()
-            },
-        ),
+        options(false, MultiUserWrites { host_id: None, ..mu() }),
     )
-    .err()
     .unwrap();
-    assert_eq!(err.code, INVALID_ARGUMENT);
+    store.admit_write(&admission(&uuid(1), "notes/a", None), None).unwrap();
+    let row = raw_request(&*kv, &uuid(1));
+    for field in ["admitter_host_id", "admitter_incarnation", "writer_id"] {
+        assert!(row.get(field).is_none(), "{field}: {row}");
+    }
 }
 
 /// A raw store with the log activated before its first write (the activation commit holds only
 /// the meta record, outside the data).
 fn raw_logged(kv: &dyn Kv, retention: u64) -> CommitPosition {
+    kv.set_commit_clock(Arc::new(SystemEnv), None).unwrap();
     let mut tx = kv.begin_write().unwrap();
     let since = CommitPosition::new(kv.version().unwrap() + 1, 0);
     commit_log::write_activation(&mut *tx, since).unwrap();
@@ -654,6 +652,7 @@ fn retention_trims_to_the_cap_and_keeps_where_the_log_stands() {
         };
         // Reopen: the state comes back from the records and the meta record alone.
         let kv = records_kv(&path, concurrent);
+        kv.set_commit_clock(Arc::new(SystemEnv), None).unwrap();
         kv.enable_commit_log(LogSettings {
             retention_bytes: cap,
             ..LogSettings::default()
@@ -776,10 +775,12 @@ fn a_log_brain_is_refused_for_writing_without_the_log_and_read_without_it() {
         assert_eq!(files(&brain), before, "the refused open changed a file");
         // Without FORMAT the format record refuses it, still before any record is written.
         std::fs::remove_file(brain.join("FORMAT")).unwrap();
+        let before = files(&brain);
         let err = Store::open_dir(&brain, options(concurrent, MultiUserWrites::default()))
             .err()
             .unwrap();
         assert_eq!(err.code, FORMAT_UNKNOWN);
+        assert_eq!(files(&brain), before, "the refused open changed a file without FORMAT");
         // A read-only open reads it.
         let store = Store::open_dir(&brain, options(concurrent, mu())).unwrap();
         drop(store);
@@ -977,7 +978,12 @@ fn the_accept_hook_sees_every_commit_once_in_commit_order_with_its_time() {
         let store = Store::open_kv(
             kv.clone(),
             Arc::new(Ticking(std::sync::atomic::AtomicI64::new(1_000))),
-            options(concurrent, MultiUserWrites::default()),
+            OpenOptions {
+                concurrent_writes: concurrent,
+                keyword_index_builder: false,
+                multiuser: true,
+                ..OpenOptions::default()
+            },
         )
         .unwrap();
         let seen: Arc<std::sync::Mutex<Vec<commit_log::Accepted>>> = Arc::default();
@@ -1012,4 +1018,257 @@ fn the_accept_hook_sees_every_commit_once_in_commit_order_with_its_time() {
             assert!(seen.iter().any(|a| a.position.index > 0), "no group commit formed");
         }
     }
+}
+
+
+/// A clock the test moves by hand (it may go backwards), with random ids.
+struct HandClock(std::sync::atomic::AtomicI64);
+
+impl gbrain_store::Env for HandClock {
+    fn now_micros(&self) -> i64 {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    fn new_uuid(&self) -> String {
+        gbrain_store::env::SystemEnv.new_uuid()
+    }
+}
+
+fn mu_only(concurrent: bool) -> OpenOptions {
+    OpenOptions {
+        concurrent_writes: concurrent,
+        keyword_index_builder: false,
+        multiuser: true,
+        multiuser_writes: mu(),
+        ..OpenOptions::default()
+    }
+}
+
+/// Every commit record's time, in position order.
+fn record_times(store: &Store) -> Vec<(CommitPosition, i64)> {
+    store
+        .read_commit_log(None, usize::MAX)
+        .unwrap()
+        .records
+        .iter()
+        .map(|r| (r.position, r.commit_time))
+        .collect()
+}
+
+#[test]
+fn commit_time_never_goes_back_when_the_store_clock_does() {
+    for concurrent in MODES {
+        let dir = TempDir::new("ctime-back");
+        let kv = records_kv(&dir.path().join("r.redb"), concurrent);
+        let clock = Arc::new(HandClock(std::sync::atomic::AtomicI64::new(5_000_000)));
+        let store = Store::open_kv(kv.clone(), clock.clone(), mu_only(concurrent)).unwrap();
+        store.set_config("test.a", "1").unwrap();
+        let before = store.last_commit_time().unwrap().unwrap();
+        // The clock jumps an hour back, then stands still.
+        clock.0.store(5_000_000 - 3_600_000_000, std::sync::atomic::Ordering::SeqCst);
+        for i in 0..5 {
+            store.set_config("test.a", &i.to_string()).unwrap();
+        }
+        let times = record_times(&store);
+        for pair in times.windows(2) {
+            assert!(pair[0].1 < pair[1].1, "concurrent {concurrent}: {pair:?}");
+        }
+        let last = store.last_commit_time().unwrap().unwrap();
+        assert_eq!(last, before + 5, "each commit takes the previous time plus 1 us");
+        assert_eq!(times.last().unwrap().1, last, "the newest record's time is the durable time");
+    }
+}
+
+#[test]
+fn commit_time_strictly_increases_inside_one_optimistic_batch() {
+    let dir = TempDir::new("ctime-batch");
+    let kv = Arc::new(OccKv::new(RedbKv::open_path(&dir.path().join("r.redb")).unwrap()).unwrap());
+    let clock = Arc::new(HandClock(std::sync::atomic::AtomicI64::new(9_000_000)));
+    kv.set_commit_clock(clock, None).unwrap();
+    raw_logged(&*kv, commit_log::DEFAULT_RETENTION_BYTES);
+    let exclusive = kv.begin_write_exclusive().unwrap();
+    let threads: Vec<_> = (0..4u8)
+        .map(|i| {
+            let mut tx = kv.begin_write().unwrap();
+            tx.put(&[b'k', i], b"v").unwrap();
+            let t = std::thread::spawn(move || tx.commit_position());
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            t
+        })
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(60));
+    drop(exclusive);
+    let mut positions: Vec<CommitPosition> = threads.into_iter().map(|t| t.join().unwrap().unwrap()).collect();
+    positions.sort();
+    assert!(positions.iter().all(|p| p.sequence == positions[0].sequence), "one batch: {positions:?}");
+    let page = commit_log::read_commit_log(&*kv.snapshot().unwrap(), None, 100).unwrap();
+    let batch: Vec<i64> = page
+        .records
+        .iter()
+        .filter(|r| r.position.sequence == positions[0].sequence)
+        .map(|r| r.commit_time)
+        .collect();
+    assert_eq!(batch.len(), 4);
+    // The clock stood still (the activation commit took 9_000_000): each transaction of the batch
+    // takes the previous time plus 1 us.
+    assert_eq!(batch, vec![9_000_001, 9_000_002, 9_000_003, 9_000_004]);
+    assert_eq!(kv.last_commit_time().unwrap(), Some(9_000_004));
+}
+
+#[test]
+fn commit_time_continues_above_the_durable_floor_after_a_restart_and_a_primary_move() {
+    for concurrent in MODES {
+        let dir = TempDir::new("ctime-move");
+        let brain = dir.path().join("brain");
+        let far = 4_000_000_000_000_000;
+        let last = {
+            std::fs::create_dir_all(&brain).unwrap();
+            let kv = records_kv(&brain.join("records.redb"), concurrent);
+            let clock = Arc::new(HandClock(std::sync::atomic::AtomicI64::new(far)));
+            let store = Store::open_kv(kv, clock, mu_only(concurrent)).unwrap();
+            store.set_config("test.a", "2").unwrap();
+            store.last_commit_time().unwrap().unwrap()
+        };
+        // Reopen (a restart, or a new primary on another machine with a slower clock): the floor is
+        // the newest durable time, and the next commit is above it.
+        let store = Store::open_dir(&brain, mu_only(concurrent)).unwrap();
+        assert_eq!(store.last_commit_time().unwrap(), Some(last), "the floor at open");
+        store.set_config("test.a", "3").unwrap();
+        let next = store.last_commit_time().unwrap().unwrap();
+        assert_eq!(next, last + 1, "concurrent {concurrent}: the next time is above the floor");
+        let times = record_times(&store);
+        for pair in times.windows(2) {
+            assert!(pair[0].1 < pair[1].1, "{pair:?}");
+        }
+        // A store rebuilt from the log alone (no adapter key) takes the same floor from its newest record.
+        drop(store);
+        let copy = TempDir::new("ctime-copy");
+        let source = records_kv(&brain.join("records.redb"), false);
+        let model = RedbKv::open_path(&copy.path().join("m.redb")).unwrap();
+        let mut tx = model.begin_write().unwrap();
+        source
+            .snapshot()
+            .unwrap()
+            .scan(&[1], &[0xFF; 64], false, &mut |k, v| {
+                tx.put(k, v).unwrap();
+                true
+            })
+            .unwrap();
+        tx.commit().unwrap();
+        assert_eq!(model.last_commit_time().unwrap(), None, "the copy has no adapter key");
+        // A promoted follower's clock starts at its newest applied record's time.
+        model.set_commit_clock(Arc::new(SystemEnv), None).unwrap();
+        let mut tx = model.begin_write().unwrap();
+        tx.put(b"after-promotion", b"1").unwrap();
+        tx.commit().unwrap();
+        assert_eq!(model.last_commit_time().unwrap(), Some(next + 1));
+    }
+}
+
+#[test]
+fn a_crash_after_commit_keeps_the_commit_time_and_the_next_one_is_above_it() {
+    use gbrain_sim::{CrashMode, FaultPlan, SimDisk, SimFile};
+    #[derive(Debug)]
+    struct Backend(SimFile);
+    impl gbrain_store::FileBackend for Backend {
+        fn size(&self) -> std::io::Result<u64> { self.0.len() }
+        fn read_at(&self, o: u64, b: &mut [u8]) -> std::io::Result<()> { self.0.read_at(o, b) }
+        fn write_at(&self, o: u64, d: &[u8]) -> std::io::Result<()> { self.0.write_at(o, d) }
+        fn set_len(&self, l: u64) -> std::io::Result<()> { self.0.set_len(l) }
+        fn sync(&self) -> std::io::Result<()> { self.0.sync() }
+    }
+    let disk = SimDisk::new(7, FaultPlan::none());
+    let open = |disk: &SimDisk| -> Arc<dyn Kv> {
+        Arc::new(RedbKv::open_backend(Box::new(Backend(disk.open("r.redb")))).unwrap())
+    };
+    let far = 4_000_000_000_000_000;
+    let last = {
+        let store = Store::open_kv(open(&disk), Arc::new(HandClock(std::sync::atomic::AtomicI64::new(far))), mu_only(false)).unwrap();
+        store.set_config("test.a", "1").unwrap();
+        let last = store.last_commit_time().unwrap().unwrap();
+        // The crash: everything synced stays, nothing after it.
+        disk.set_plan(FaultPlan { fsync_error_pm: 0, fsync_lie_pm: 0, crash_at_op: Some(disk.stats().io_ops + 1), crash_mode: CrashMode::DropUnsynced });
+        let _ = store.set_config("test.b", "lost");
+        disk.crash_now();
+        last
+    };
+    disk.reboot();
+    disk.set_plan(FaultPlan::none());
+    let store = Store::open_kv(open(&disk), Arc::new(SystemEnv), mu_only(false)).unwrap();
+    assert_eq!(store.last_commit_time().unwrap(), Some(last), "the acknowledged commit's time survived");
+    assert_eq!(store.get_config("test.b").unwrap(), None, "the crashed commit left no data");
+    store.set_config("test.c", "1").unwrap();
+    assert_eq!(store.last_commit_time().unwrap(), Some(last + 1), "and no time: the next is right above");
+    let times = record_times(&store);
+    assert_eq!(times.last().unwrap().1, last + 1);
+}
+
+#[test]
+fn a_brain_with_the_switch_off_never_holds_a_commit_time_or_log_key() {
+    for concurrent in MODES {
+        let dir = TempDir::new("ctime-off");
+        // Sub-switches asked for, the switch itself off: nothing of this lane is written.
+        let off = OpenOptions {
+            concurrent_writes: concurrent,
+            keyword_index_builder: false,
+            multiuser: false,
+            multiuser_writes: mu(),
+            ..OpenOptions::default()
+        };
+        let kv = records_kv(&dir.path().join("r.redb"), concurrent);
+        let store = Store::open_kv(kv.clone(), Arc::new(SystemEnv), off).unwrap();
+        assert!(!store.info().multiuser && !store.info().commit_log);
+        store.set_config("test.a", "1").unwrap();
+        store.submit_page_mutation(&mutation(&uuid(1), "notes/a", "a"), None).unwrap();
+        assert_eq!(store.last_commit_time().unwrap(), None);
+        assert!(store.set_accept_hook(Arc::new(|_| {})).is_err(), "the hook needs the mode");
+        assert!(data(&*kv).keys().all(|k| !is_log_key(k)));
+        drop(store);
+        drop(kv);
+        let kv = RedbKv::open_path(&dir.path().join("r.redb")).unwrap();
+        assert_eq!(gbrain_store::redb_kv::read_commit_time(&*kv.snapshot().unwrap()).unwrap(), None);
+        let row = raw_request(&kv, &uuid(1));
+        assert!(row.get("writer_id").is_none() && row.get("admitter_incarnation").is_none());
+    }
+}
+
+#[test]
+fn single_writer_commits_from_many_threads_hand_the_log_over_without_a_false_corruption() {
+    let dir = TempDir::new("handoff");
+    let kv = records_kv(&dir.path().join("r.redb"), false);
+    raw_logged(&*kv, 2_000);
+    let threads: Vec<_> = (0..8u8)
+        .map(|t| {
+            let kv = kv.clone();
+            std::thread::spawn(move || {
+                for i in 0..100u8 {
+                    let mut tx = kv.begin_write().unwrap();
+                    tx.put(&[b'k', t, i], &[i; 64]).unwrap();
+                    tx.commit_position().unwrap();
+                }
+            })
+        })
+        .collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    let read = kv.snapshot().unwrap();
+    let meta = commit_log::read_meta(&*read).unwrap().unwrap();
+    assert_eq!(meta.newest.sequence, kv.version().unwrap());
+}
+
+#[test]
+fn a_log_brain_snapshots_and_verifies_like_any_other() {
+    let dir = TempDir::new("log-snapshot");
+    let brain = dir.path().join("brain");
+    let store = Store::open_dir(&brain, mu_only(false)).unwrap();
+    store.set_config("test.a", "1").unwrap();
+    let target = dir.path().join("copy");
+    store
+        .snapshot_to(&target, &gbrain_store::snapshot::SnapshotOp::new())
+        .unwrap();
+    drop(store);
+    let report = gbrain_store::verify::verify_store_dir(&target, None).unwrap();
+    assert_eq!(report.engine_format_version, Some(LOG_FORMAT_VERSION));
+    let copy = Store::open_dir(&target, mu_only(false)).unwrap();
+    assert_eq!(copy.get_config("test.a").unwrap().as_deref(), Some("1"));
 }

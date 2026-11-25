@@ -49,6 +49,11 @@ pub trait KvWrite: KvRead + Send {
     fn set_commit_meta(&mut self, meta: crate::commit_log::CommitMeta) {
         let _ = meta;
     }
+    /// Sets the commit time this write records with its data (`commit_log::CommitClock`): the
+    /// optimistic pipeline sets its batch's newest. A write that keeps no commit time ignores it.
+    fn set_commit_time(&mut self, time: i64) {
+        let _ = time;
+    }
 
     /// Takes `count` ids from the sequence kept under `key` (8-byte big-endian, the next id to
     /// hand out, 1 when absent) and returns the first. Like Postgres `nextval`: two transactions
@@ -144,19 +149,24 @@ pub trait Kv: Send + Sync {
             "this record store cannot keep a commit log",
         ))
     }
-    /// Installs the accept hook (`commit_log::AcceptHook`), with the clock its commit times come
-    /// from. Called only while nothing else writes (a brain's open, or before the first write). A
-    /// store whose writer has no accept step refuses.
-    fn set_accept_hook(
+    /// Starts giving every accepted transaction a commit time from `clock` (`commit_log::CommitClock`),
+    /// kept durable with the data, and reports each to `hook` when one is given. A later call keeps the
+    /// times and replaces the hook. Called only while nothing else writes (a brain's open, or before
+    /// its first write). A store whose writer has no accept step refuses.
+    fn set_commit_clock(
         &self,
         clock: std::sync::Arc<dyn crate::env::Env>,
-        hook: crate::commit_log::AcceptHook,
+        hook: Option<crate::commit_log::AcceptHook>,
     ) -> Result<()> {
         let _ = (clock, hook);
         Err(crate::error::StoreError::new(
             crate::error::INVALID_STATE,
-            "this record store has no accept step to hook",
+            "this record store has no accept step to keep commit times at",
         ))
+    }
+    /// The newest durable commit time (`None` before the first, or when no commit clock ever ran).
+    fn last_commit_time(&self) -> Result<Option<i64>> {
+        crate::redb_kv::read_commit_time(&*self.snapshot()?)
     }
     /// True once [`Kv::enable_commit_log`] succeeded.
     fn commit_log_enabled(&self) -> bool {

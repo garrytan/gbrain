@@ -151,6 +151,16 @@ impl Kv for RecKv {
     fn commit_log_enabled(&self) -> bool {
         self.inner.commit_log_enabled()
     }
+    fn set_commit_clock(
+        &self,
+        clock: Arc<dyn Env>,
+        hook: Option<commit_log::AcceptHook>,
+    ) -> Result<(), StoreError> {
+        self.inner.set_commit_clock(clock, hook)
+    }
+    fn last_commit_time(&self) -> Result<Option<i64>, StoreError> {
+        self.inner.last_commit_time()
+    }
 }
 
 struct RecWrite {
@@ -192,6 +202,9 @@ impl KvWrite for RecWrite {
     }
     fn set_commit_meta(&mut self, meta: commit_log::CommitMeta) {
         self.inner.set_commit_meta(meta);
+    }
+    fn set_commit_time(&mut self, time: i64) {
+        self.inner.set_commit_time(time);
     }
     fn commit(self: Box<Self>) -> Result<u64, StoreError> {
         let RecWrite { inner, log, writes } = *self;
@@ -717,7 +730,12 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
     }
     let mut model = start.clone();
     let mut prev = *cursor;
+    let mut prev_time: Option<i64> = None;
     for record in &page.records {
+        if prev_time.is_some_and(|t| record.commit_time <= t) {
+            return Err(format!("commit time goes back at {}", record.position.token()));
+        }
+        prev_time = Some(record.commit_time);
         if !record.position.follows(prev) {
             return Err(format!("the log jumps from {} to {}", prev.token(), record.position.token()));
         }
@@ -732,6 +750,12 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
                 }
                 other => return Err(format!("the single-writer store logged {other:?}")),
             }
+        }
+    }
+    if let Some(t) = prev_time {
+        let durable = kv.last_commit_time().map_err(|e| e.to_string())?;
+        if durable != Some(t) {
+            return Err(format!("the newest record's time is {t}, the durable time {durable:?}"));
         }
     }
     let version = kv.version().map_err(|e| e.to_string())?;

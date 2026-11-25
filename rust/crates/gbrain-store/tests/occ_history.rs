@@ -80,6 +80,7 @@ fn open(disk: &SimDisk) -> Result<OccKv, StoreError> {
 fn open_as(disk: &SimDisk, logged: bool) -> Result<OccKv, StoreError> {
     let kv = open(disk)?;
     if logged {
+        kv.set_commit_clock(std::sync::Arc::new(gbrain_store::SystemEnv), None)?;
         if commit_log::read_meta(&*kv.snapshot()?)?.is_none() {
             let mut tx = kv.begin_write()?;
             let since = CommitPosition::new(kv.version()? + 1, 0);
@@ -102,7 +103,12 @@ fn check_log(kv: &dyn Kv) -> Result<(), String> {
     }
     let mut model: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
     let mut last = None;
+    let mut last_time = None;
     for record in &page.records {
+        if last_time.is_some_and(|t| record.commit_time <= t) {
+            return Err(format!("commit time goes back at {}", record.position.token()));
+        }
+        last_time = Some(record.commit_time);
         for (key, op) in &record.ops {
             match op {
                 LogOp::Put(v) => {
@@ -143,6 +149,12 @@ fn check_log(kv: &dyn Kv) -> Result<(), String> {
             model.len(),
             stored.len()
         ));
+    }
+    if let Some(t) = last_time {
+        let durable = kv.last_commit_time().map_err(|e| e.to_string())?;
+        if durable != Some(t) {
+            return Err(format!("the newest record's time is {t}, the durable time {durable:?}"));
+        }
     }
     if let Some(last) = last
         && last.sequence != version

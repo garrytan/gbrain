@@ -106,7 +106,7 @@ pub(crate) fn check_version_in(version: u32, known: &[u32]) -> Result<()> {
 
 /// Reads `FORMAT`; `None` when the file does not exist.
 pub fn read(dir: &Path) -> Result<Option<FormatRecord>> {
-    read_in(dir, FORMAT_VERSIONS)
+    read_in(dir, OPENED_FORMATS)
 }
 
 /// `read` for a build that opens only the formats in `known` (see `check_version_in`).
