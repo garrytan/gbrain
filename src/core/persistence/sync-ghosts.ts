@@ -21,6 +21,7 @@ import type { Action } from '../agent-output.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { scanGhostSource } from '../ghost-pages.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint } from './sync-holds.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** Full checks per sync: the count is exact up to this many candidates, `truncated` past it. */
 export const SYNC_GHOST_CHECK_LIMIT = 50;
@@ -50,15 +51,7 @@ const scans = new Map<BrainEngine, EngineScans>();
 /** The ghost report from the source's last scan; starts a background scan when the source's interval has passed. */
 export async function countSyncGhosts(engine: BrainEngine, sourceId: string): Promise<SyncGhostPages | null> {
   const inFlight = scans.get(engine)?.inFlight.has(sourceId) === true;
-  const [row] = await engine.executeRaw<{ report: SyncGhostPages[] | null; claimed: boolean }>(inFlight
-    ? 'SELECT completed_keys AS report, false AS claimed FROM op_checkpoints WHERE op=$1 AND fingerprint=$2'
-    : `WITH prior AS (SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2),
-       claim AS (INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-         SELECT $1, $2, '[]'::jsonb, now() WHERE EXISTS (SELECT 1 FROM sources WHERE id=$2 AND last_sync_at IS NOT NULL)
-         ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at = now()
-         WHERE op_checkpoints.updated_at <= now() - ($3::bigint * interval '1 millisecond')
-           AND EXISTS (SELECT 1 FROM sources WHERE id=$2 AND last_sync_at > op_checkpoints.updated_at) RETURNING 1)
-     SELECT (SELECT completed_keys FROM prior) AS report, EXISTS (SELECT 1 FROM claim) AS claimed`,
+  const [row] = await syncRows<{ report: SyncGhostPages[] | null; claimed: boolean }>(engine, inFlight ? 'ghost_report_read' : 'ghost_report_claim',
   inFlight ? [SYNC_GHOST_REPORT_OP, sourceId] : [SYNC_GHOST_REPORT_OP, sourceId, scanIntervalMs()]).catch(() => []);
   if (inFlight) decide(sourceId, 'scan_in_flight');
   else if (row?.claimed) startScan(engine, sourceId);
@@ -92,8 +85,7 @@ function startScan(engine: BrainEngine, sourceId: string): void {
     try {
       const report = await scanReport(engine, sourceId, owned.controller.signal);
       owned.controller.signal.throwIfAborted();
-      await engine.executeRaw('UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now() WHERE op=$1 AND fingerprint=$2',
-        [SYNC_GHOST_REPORT_OP, sourceId, JSON.stringify(report ? [report] : [])]);
+      await syncRows(engine, 'ghost_report_write', [SYNC_GHOST_REPORT_OP, sourceId, JSON.stringify(report ? [report] : [])]);
       decide(sourceId, 'scan_done');
     } catch (error) {
       if (owned.controller.signal.aborted) decide(sourceId, 'scan_aborted');
@@ -110,7 +102,7 @@ async function scanReport(engine: BrainEngine, sourceId: string, signal: AbortSi
   const scan = await scanGhostSource(engine, sourceId, { candidateLimit: SYNC_GHOST_CHECK_LIMIT, signal });
   if (scan.status !== 'known' || (!scan.ghosts.length && !scan.truncated)) return null;
   const incarnation = scan.owner?.source_incarnation ?? '';
-  const held = new Set(scan.ghosts.length ? (await engine.executeRaw<{ path: string }>(`SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])`,
+  const held = new Set(scan.ghosts.length ? (await syncRows<{ path: string }>(engine, 'ghost_held_paths',
     [GIT_HOLD_OP, scan.ghosts.map(ghost => gitHoldFingerprint(sourceId, incarnation, ghost.path))])).map(row => row.path) : []);
   const ghosts = scan.ghosts.filter(ghost => !held.has(ghost.path));
   if (!ghosts.length && !scan.truncated) return null;

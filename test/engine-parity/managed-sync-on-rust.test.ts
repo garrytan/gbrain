@@ -25,6 +25,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { performSync } from '../../src/commands/sync.ts';
+import { readGitSourceHolds } from '../../src/core/persistence/sync-holds.ts';
 import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
@@ -128,8 +129,26 @@ describe('a whole managed sync on a Rust brain, hold kept for users', () => {
     'notes/broken-example.md': '---\ntitle: [broken\n---\nCommitted, but its frontmatter does not parse.\n',
   }, async (_root, sync) => {
     const first = await sync();
-    const out = { first: imported(first.status), pages: await pagesOf(engine) };
-    expect(out.pages).toEqual({ 'notes/alice-example': 'Alice Example' });
+    const holds = ((await readGitSourceHolds(engine, { sourceIds: ['work'] }))[0]?.holds ?? []).map(hold => ({ path: hold.path, code: hold.code })).sort((a, b) => a.path.localeCompare(b.path));
+    const out = { first: first.status, pages: await pagesOf(engine), holds };
+    expect(out).toEqual({ first: 'first_sync', pages: { 'notes/alice-example': 'Alice Example' }, holds: [{ path: 'notes/broken-example.md', code: 'invalid_frontmatter' }] });
+    return out;
+  }));
+
+  parityTest('a named sync statement answers the source row and the pass checkpoint the sync left', {
+    methods: ['worktreeClaimStore', 'runSyncStatement'],
+    timeout: 180_000,
+  }, async (engine, backend) => withSyncedCheckout(engine, backend, { 'notes/alice-example.md': note('Alice Example', 'Works at acme-example.') }, async (root, sync) => {
+    const before = (await engine.runSyncStatement<{ archived: boolean; local_path: string | null; last_commit: string | null }>('source_row', ['work']))[0];
+    await sync();
+    const after = (await engine.runSyncStatement<{ last_commit: string | null }>('source_row', ['work']))[0];
+    const head = git(root, 'rev-parse', 'HEAD').trim();
+    const passRows = await engine.runSyncStatement<{ value: { telemetry?: { outcome?: string } } | null }>('checkpoint_first',
+      ['managed-sync-pass', `work:${(await engine.readSourceMembership('work'))!.incarnation}`]);
+    const missing = await engine.runSyncStatement('source_row', ['no-such-source']);
+    const out = { archived: before!.archived, rooted: before!.local_path === root, beforeCommit: before!.last_commit, imported: after!.last_commit === head,
+      pass: passRows.length, missing: missing.length };
+    expect(out).toEqual({ archived: false, rooted: true, beforeCommit: null, imported: true, pass: 1, missing: 0 });
     return out;
   }));
 });

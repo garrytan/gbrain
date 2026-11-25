@@ -34,6 +34,7 @@ import { assertDrainLease } from './sync-lease.ts';
 import { faultPoint } from './fault-points.ts';
 import { SYNC_SLICE_OP } from './sync-slices.ts';
 import { passFingerprint } from './sync-pass-row.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 type CompanySync = ReturnType<typeof currentCompanyBrainSync>;
 
@@ -75,10 +76,7 @@ export async function resolveManagedCursor(engine: BrainEngine, input: { sourceI
   readOnly?: boolean; foldIn?: boolean }): Promise<CursorResolution> {
   const { sourceId, incarnation, company, assertActive } = input;
   const canonical = managedCursorKey(incarnation, company);
-  const rows = (await engine.executeRaw<CursorRow>(`SELECT fingerprint AS key, COALESCE(completed_keys->0->>'done','false')='true' AS done,
-      completed_keys->0->>'companyReceiptId' AS company_receipt_id, completed_keys->0->>'runId' AS run_id
-    FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'=$2
-    ORDER BY updated_at DESC, fingerprint COLLATE "C"`, [sourceId, incarnation])).filter(row => (row.company_receipt_id ?? null) === (company?.receiptId ?? null));
+  const rows = (await syncRows<CursorRow>(engine, 'cursor_rows', [sourceId, incarnation])).filter(row => (row.company_receipt_id ?? null) === (company?.receiptId ?? null));
   assertActive();
   const unfinished = rows.filter(row => !row.done);
   const winner = unfinished.find(row => row.key === canonical) ?? unfinished[0] ?? (company ? rows.find(row => row.key === canonical) ?? rows[0] : undefined);

@@ -42,6 +42,7 @@ import { committedContentOrMissing, filterOwnedRefusal, missingAttributesRefusal
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 type Snapshot = Awaited<ReturnType<BrainEngine['readPageSnapshot']>>;
 export type HeldEntry = Pick<GitHoldRecord, 'path' | 'source_path' | 'slug' | 'page_id' | 'code' | 'message' | 'upstream_version' | 'meta'>;
@@ -328,7 +329,7 @@ function runWriteGateSource(engine: BrainEngine, run: SyncScreenRun, sourceId: s
   let read = writeGateSourceByRun.get(run);
   if (!read) {
     read = (async () => {
-      const [row] = await engine.executeRaw<{ config: Record<string, unknown> | string | null }>('SELECT config FROM sources WHERE id=$1', [sourceId]);
+      const [row] = await syncRows<{ config: Record<string, unknown> | string | null }>(engine, 'source_config', [sourceId]);
       const config = typeof row?.config === 'string' ? JSON.parse(row.config) as Record<string, unknown> : row?.config ?? null;
       const allowRules = await listTrustAllowRules(engine, { sourceIds: [sourceId] }).catch(() => []);
       return { sourceId, config, allowRules };

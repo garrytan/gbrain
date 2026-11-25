@@ -9,12 +9,13 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { registerEngineView } from './switches.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 const KEY_READ = 'SELECT value FROM config WHERE key=$1';
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
 export async function preparationConfigView(engine: BrainEngine): Promise<BrainEngine> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config');
+  const rows = await syncRows<{ key: string; value: string }>(engine, 'config_all');
   const values = new Map(rows.map(row => [row.key, row.value]));
   const value = (key: string) => values.has(key) ? values.get(key)! : null;
   return registerEngineView(new Proxy(engine, { get(target, key) {

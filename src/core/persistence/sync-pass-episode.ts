@@ -28,6 +28,7 @@ import { digest } from './digest.ts';
 import { faultPointNow } from './fault-points.ts';
 import { walkTreeLevel } from './sync-git-stream.ts';
 import { SYNC_PASS_COST_OP, type PassEpisode, type SyncSelection } from './sync-pass-row.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -153,16 +154,13 @@ export async function reservePassCost(tx: Exec, intents: ReadonlyArray<PricedInt
   const paid = intents.filter(intent => intent.passId === passId && intent.kind === 'managed_sync_import' && intent.processingOptions?.noEmbed !== true && typeof intent.content === 'string');
   if (!paid.length) return;
   const groupId = digest(['sync-pass-cost-v1', passId!, ...paid.map(intent => `${intent.path ?? ''}\0${intent.level ?? ''}`).sort()]).slice(0, 32);
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,jsonb_build_array($3::text::jsonb),now()) ON CONFLICT (op,fingerprint) DO NOTHING`,
-    [SYNC_PASS_COST_OP, `${costPrefix(scope.sourceId, scope.incarnation, scope.scope)}${groupId}`,
+  await syncRows(tx, 'pass_cost_insert', [SYNC_PASS_COST_OP, `${costPrefix(scope.sourceId, scope.incarnation, scope.scope)}${groupId}`,
       JSON.stringify({ source_id: scope.sourceId, incarnation: scope.incarnation, usd: paid.reduce((sum, intent) => sum + estimateCostFromChars(intent.content!.length, scope.pricePerMTok), 0) })]);
 }
 
 /** `reserved_usd`: the reservations of one episode (or pass) scope, or of the whole incarnation; a range read. */
 export async function readReservedUsd(exec: Exec, sourceId: string, incarnation: string, scope?: string): Promise<{ usd: number; rows: number }> {
-  const [row] = await exec.executeRaw<{ usd: number | string | null; rows: number | string }>(
-    `SELECT COALESCE(sum((completed_keys->0->>'usd')::numeric),0)::float8 AS usd, count(*) AS rows FROM op_checkpoints WHERE op=$1 AND starts_with(fingerprint, $2)`,
-    [SYNC_PASS_COST_OP, costPrefix(sourceId, incarnation, scope)]);
+  const [row] = await syncRows<{ usd: number | string | null; rows: number | string }>(exec, 'reserved_usd', [SYNC_PASS_COST_OP, costPrefix(sourceId, incarnation, scope)]);
   return { usd: Number(row?.usd ?? 0), rows: Number(row?.rows ?? 0) };
 }
 

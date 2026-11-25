@@ -21,6 +21,7 @@
  * publication (persistence/coordinator.ts, group-publish.ts); preparers that
  * know more (sync markers, derivation inputs) declare their own.
  */
+import { SYNC_STATEMENTS, syncRows } from '../engine-sql/managed-sync-store.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';
@@ -213,7 +214,7 @@ export function stampTrustMarker(frontmatter: Record<string, unknown>, tier: Tru
 }
 
 /** The source config `ownerImportTrust` reads. */
-export const SOURCE_TRUST_CONFIG_SQL = 'SELECT config FROM sources WHERE id = $1';
+export const SOURCE_TRUST_CONFIG_SQL = SYNC_STATEMENTS.source_trust_config.sql;
 
 /**
  * The tier of a journaled owner-source write of one page (managed sync,
@@ -222,7 +223,7 @@ export const SOURCE_TRUST_CONFIG_SQL = 'SELECT config FROM sources WHERE id = $1
  */
 export async function ownerImportTrust(engine: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'id' | 'source_id' | 'authority' | 'intent' | 'operation'>,
   frontmatter: Record<string, unknown> | null | undefined, sourceUri?: string | null): Promise<WriteTrust> {
-  const [source] = await engine.executeRaw<{ config: Record<string, unknown> | string | null }>(SOURCE_TRUST_CONFIG_SQL, [row.source_id]);
+  const [source] = await syncRows<{ config: Record<string, unknown> | string | null }>(engine, 'source_trust_config', [row.source_id]);
   const config = typeof source?.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source?.config ?? null;
   const trust = ownerPageTrust({ frontmatter, sourceConfig: config, channel: requestChannel(row), requestId: row.id, sourceUri });
   return row.authority?.remote === true ? { ...trust, tier: minTrust(trust.tier, 'agent_written') } : trust;

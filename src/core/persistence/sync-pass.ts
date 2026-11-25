@@ -50,6 +50,7 @@ import { domainCache, levelDomain, narrowedWalk, walkAttestations, type LevelDom
 import type { SyncImportPageRow } from '../engine-sql/sync-pass-pages.ts';
 import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
 import { removalPendingField, type RemovalPending } from './sync-removal-pending.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export { MANAGED_SYNC_PASS_OP, SYNC_ORIGIN_DELETED_OP };
 
@@ -382,7 +383,7 @@ type Exec = Pick<BrainEngine, 'executeRaw' | 'readSyncImportPageRows' | 'declare
 async function withRoundSnapshot<T>(engine: BrainEngine, fn: (exec: Exec) => Promise<T>): Promise<T> {
   if (engine.kind === 'pglite') return fn(engine);
   return engine.transaction(async tx => {
-    const isolation = tx.executeRaw('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const isolation = syncRows(tx, 'round_snapshot');
     const read = fn(tx);
     try { await isolation; } catch (error) { read.catch(() => undefined); throw error; }
     return read;
@@ -497,13 +498,7 @@ async function readAttestations(exec: Exec, kind: 'postgres' | 'pglite', sourceI
 /** `A` for one statement's pages, by the request that wrote each page's current revision (see `readAttestations`); a page with no committed request has no row. */
 export async function readRevisionAttestations(exec: Exec, sourceId: string, incarnation: string,
   rows: ReadonlyArray<{ pageId: number; requestId: string | null; revision: string; sourcePath: string | null }>): Promise<Array<{ page_id: number; arm1: boolean; attested_hash: string | null }>> {
-  return exec.executeRaw<{ page_id: number; arm1: boolean; attested_hash: string | null }>(`SELECT x.page_id,
-        (r.intent->>'kind' = ANY($3::text[]) AND r.source_incarnation::text=$2 AND (r.page_id IS NULL OR r.page_id=x.page_id)) AS arm1,
-        COALESCE((SELECT e.data->>'expected_hash' FROM persistence_effects e WHERE e.request_id=r.id AND e.kind='git' AND e.revision=x.revision
-          AND e.data->>'expected_hash' IS NOT NULL AND (e.data->>'relative_path'=x.source_path OR right(e.data->>'relative_path', length(x.source_path)+1)='/'||x.source_path) LIMIT 1),
-          CASE WHEN r.intent->>'kind'='managed_file_import' AND r.intent->>'sourcePath'=x.source_path AND r.intent->>'inputHash'=r.intent->>'targetHash' THEN r.intent->>'targetHash' END) AS attested_hash
-      FROM unnest($4::int[], $5::uuid[], $6::uuid[], $7::text[]) AS x(page_id, request_id, revision, source_path)
-      JOIN persistence_requests r ON r.id=x.request_id AND r.state='committed' AND r.source_id=$1`,
+  return syncRows<{ page_id: number; arm1: boolean; attested_hash: string | null }>(exec, 'revision_attestations',
       [sourceId, incarnation, SYNC_WRITE_KINDS, rows.map(row => row.pageId), rows.map(row => row.requestId), rows.map(row => row.revision), rows.map(row => row.sourcePath)]);
 }
 
@@ -511,12 +506,8 @@ export async function readRevisionAttestations(exec: Exec, sourceId: string, inc
 async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, worktreeId: string): Promise<{ pageIds: Set<number>; origins: Set<string>; statements: number }> {
   // A write admitted with sync.write_through=false carries no worktree (page-mutations.ts), so the incarnation's
   // worktree-less requests are open work too.
-  const [requests, effects] = await Promise.all([exec.executeRaw<{ page_id: number | null; source_path: string | null; path: string | null }>(`SELECT page_id, intent->>'sourcePath' AS source_path, intent->>'path' AS path
-    FROM persistence_requests WHERE state IN ('queued','running','recovering') AND source_id=$2 AND (worktree_id=$1 OR worktree_id IS NULL AND source_incarnation=$3::uuid)`,
-    [worktreeId, sourceId, incarnation]),
-  exec.executeRaw<{ page_id: number | null; path: string | null }>(`SELECT r.page_id, e.data->>'relative_path' AS path
-    FROM persistence_requests r JOIN persistence_effects e ON e.request_id=r.id
-    WHERE r.worktree_id=$1 AND r.source_id=$2 AND e.kind='git' AND e.state IN ('queued','running')`, [worktreeId, sourceId])]);
+  const [requests, effects] = await Promise.all([syncRows<{ page_id: number | null; source_path: string | null; path: string | null }>(exec, 'open_requests', [worktreeId, sourceId, incarnation]),
+  syncRows<{ page_id: number | null; path: string | null }>(exec, 'open_git_effects', [worktreeId, sourceId])]);
   const pageIds = new Set<number>(), origins = new Set<string>();
   for (const row of [...requests, ...effects]) if (row.page_id != null) pageIds.add(Number(row.page_id));
   for (const row of requests) for (const origin of [row.source_path, row.path]) if (origin && !isWindowsColonTarget(origin)) origins.add(syncOriginPath(origin));
@@ -528,9 +519,7 @@ async function readOpenWork(exec: Exec, sourceId: string, incarnation: string, w
 async function readMarkers(exec: Exec, sourceId: string, incarnation: string): Promise<Map<string, { kind: 'deleted' | 'legacy'; blobOids: string[]; deletion: string | null; slug: string | null; pageId: number | null }>> {
   const prefix = `${sourceId}:${incarnation}:`;
   // `starts_with`, not a range: under a linguistic collation (en_US) a `< prefix || U+FFFF` bound matches nothing.
-  const rows = await exec.executeRaw<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown; deletion?: unknown; slug?: unknown; page_id?: unknown } | null }>(
-    'SELECT fingerprint, completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND starts_with(fingerprint, $2)',
-    [SYNC_ORIGIN_DELETED_OP, prefix]);
+  const rows = await syncRows<{ fingerprint: string; value: { kind?: string; blob_oids?: unknown; deletion?: unknown; slug?: unknown; page_id?: unknown } | null }>(exec, 'checkpoint_prefix', [SYNC_ORIGIN_DELETED_OP, prefix]);
   return new Map(rows.filter(row => !isWindowsColonTarget(row.fingerprint.slice(prefix.length))).map(row => [syncOriginPath(row.fingerprint.slice(prefix.length)), {
     kind: row.value?.kind === 'legacy' ? 'legacy' as const : 'deleted' as const,
     blobOids: Array.isArray(row.value?.blob_oids) ? (row.value!.blob_oids as unknown[]).filter((oid): oid is string => typeof oid === 'string') : [],
@@ -568,16 +557,7 @@ export async function readFileRemovingDeletes(exec: Exec, sourceId: string, asks
   const found = new Set<string>();
   for (let i = 0; i < asks.length; i += 5_000) {
     const chunk = asks.slice(i, i + 5_000);
-    const rows = await exec.executeRaw<{ path: string }>(`SELECT x.path FROM unnest($2::text[], $3::text[], $4::int[]) AS x(path, slug, page_id)
-      CROSS JOIN LATERAL (SELECT r.sequence, r.outcome FROM persistence_requests r WHERE r.source_id=$1 AND r.slug=x.slug AND r.state='committed'
-          AND r.operation='delete_page' AND (r.page_id IS NULL OR r.page_id=x.page_id) AND r.outcome->>'noop' IS DISTINCT FROM 'true'
-          AND r.outcome->>'retention' IS DISTINCT FROM 'true' AND (r.intent IS NULL OR r.intent->>'retention' IS DISTINCT FROM 'true')
-        ORDER BY r.sequence DESC LIMIT 1) d
-      WHERE d.outcome->'write_through'->>'written'='true' AND d.outcome->>'status' IS DISTINCT FROM 'purged'
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests l WHERE l.source_id=$1 AND l.slug=x.slug AND l.sequence>d.sequence
-          AND l.state='committed' AND l.operation IN ('restore_page','put_page') AND (l.page_id IS NULL OR l.page_id=x.page_id)
-          AND l.outcome->>'noop' IS DISTINCT FROM 'true' AND l.outcome->>'status' IS DISTINCT FROM 'duplicate')`,
-      [sourceId, chunk.map(ask => ask.path), chunk.map(ask => ask.slug), chunk.map(ask => ask.pageId)]);
+    const rows = await syncRows<{ path: string }>(exec, 'file_removing_deletes', [sourceId, chunk.map(ask => ask.path), chunk.map(ask => ask.slug), chunk.map(ask => ask.pageId)]);
     for (const row of rows) found.add(row.path);
   }
   return found;
@@ -591,16 +571,13 @@ export async function readFileRemovingDeletes(exec: Exec, sourceId: string, asks
 async function readLegacyDeletions(exec: Exec, sourceId: string, incarnation: string, slugs: string[]): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
   // The slug order never reaches output: DISTINCT ON only keeps the newest committed delete per slug, and the rows fold into a Map looked up by slug.
-  const rows = await exec.executeRaw<{ slug: string; id: string }>(`SELECT DISTINCT ON (slug) slug, id::text AS id FROM persistence_requests
-    WHERE source_id=$1 AND source_incarnation=$2::uuid AND state='committed' AND slug=ANY($3::text[])
-      AND (operation='delete_page' OR intent->>'kind'='managed_sync_delete') ORDER BY slug, sequence DESC`, [sourceId, incarnation, slugs]);
+  const rows = await syncRows<{ slug: string; id: string }>(exec, 'legacy_deletions', [sourceId, incarnation, slugs]);
   return new Map(rows.map(row => [row.slug, row.id]));
 }
 
 /** The pass row of the incarnation (PR 4b writes it); null in PR 4a. */
 async function readPassRow(exec: Exec, sourceId: string, incarnation: string): Promise<Record<string, unknown> | null> {
-  const [row] = await exec.executeRaw<{ value: Record<string, unknown> | null }>('SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [MANAGED_SYNC_PASS_OP, `${sourceId}:${incarnation}`]);
+  const [row] = await syncRows<{ value: Record<string, unknown> | null }>(exec, 'checkpoint_first', [MANAGED_SYNC_PASS_OP, `${sourceId}:${incarnation}`]);
   return row?.value ?? null;
 }
 
@@ -1077,7 +1054,9 @@ async function readRoundSnapshot(engine: BrainEngine, input: { kind: 'postgres' 
     return { pages: read!.pages, open: work, markers, passRow, statements: read!.statements + work.statements + 2 + (marked ? 1 : proof ? (kind === 'postgres' ? 6 : 1) : 0), ...(confirm ? { confirm } : {}),
       ...(confirmed?.read ? { changed: confirmed.changed } : {}) };
   });
-  if (!reuse || reuse.working) return round(false);
+  // A Rust brain keeps no transaction ids to prove a reused `I⋈P` from (the proof reads `xmin`, `age` and the `txid_*` snapshot
+  // functions), so each of its rounds reads the table whole: the answer a failed proof falls back to.
+  if (!reuse || reuse.working || engine.kind === 'rust') return round(false);
   try { return await round(true); } catch (error) {
     if (!(error instanceof ConfirmFailure)) throw error;
     prior = undefined;
@@ -1172,8 +1151,7 @@ export async function passWritesMatched(exec: Exec, input: { kind: 'postgres' | 
   const parser = syncImportParser(input.pack);
   const read = await readPages(exec, input.kind, input.sourceId, input.incarnation, parser, { table: new PageTable(parser), ids: input.ids, slots: new Map() });
   if (!read || read.pages.length !== input.ids.length) return false;
-  const writers = new Map((await exec.executeRaw<{ id: string; level: string | null; path: string | null }>(`SELECT p.id::text AS id, r.intent->>'level' AS level, r.intent->>'path' AS path
-    FROM pages p JOIN persistence_requests r ON r.id=p.revision_write_request_id WHERE p.source_id=$1 AND p.id = ANY($2::bigint[])`, [input.sourceId, input.ids])).map(row => [row.id, row]));
+  const writers = new Map((await syncRows<{ id: string; level: string | null; path: string | null }>(exec, 'page_writers', [input.sourceId, input.ids])).map(row => [row.id, row]));
   const pages = read.pages, parserFor = syncImportParsers(input.pack);
   for (let i = 0; i < pages.length; i++) {
     const writer = writers.get(String(pages.id[i])), level = writer?.level ?? null, sourcePath = pages.sourcePath[i]!;
@@ -1337,20 +1315,7 @@ export async function idleTickProbe(engine: BrainEngine, input: { sourceId: stri
  */
 export async function passIdleProbe(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; worktreeId: string;
   requestHwm: string | number | null; openAtStamp: readonly string[] | null }): Promise<{ passRow: Record<string, unknown> | null; newer: boolean; pending: boolean; stillOpen: number; writebackOpen: boolean }> {
-  const [probe] = await engine.executeRaw<{ pass_row: Record<string, unknown> | null; newer: boolean; pending: boolean; still_open: number | string; writeback_open: boolean }>(`WITH pass AS (
-      SELECT completed_keys->0 AS value FROM op_checkpoints WHERE op=$1 AND fingerprint=$2),
-    stamp AS (SELECT unnest(COALESCE($5::text[], ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(value->'obligations'->'converged'->'open_at_stamp')='array'
-      THEN value->'obligations'->'converged'->'open_at_stamp' ELSE '[]'::jsonb END) FROM pass))) AS id)
-    SELECT (SELECT value FROM pass) AS pass_row,
-      EXISTS (SELECT 1 FROM persistence_requests WHERE sequence > COALESCE($3::bigint, ((SELECT value FROM pass)->'obligations'->'converged'->>'request_hwm')::bigint, 0)
-        AND (worktree_id = $4 OR worktree_id IS NULL AND source_id = $6 AND source_incarnation = $7::uuid)) AS newer,
-      EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') AND (worktree_id = $4 OR worktree_id IS NULL AND source_id = $6 AND source_incarnation = $7::uuid)) AS pending,
-      (SELECT count(*) FROM persistence_requests WHERE state IN ('queued','running','recovering') AND (worktree_id = $4 OR worktree_id IS NULL AND source_id = $6 AND source_incarnation = $7::uuid)
-        AND 'r:'||request_id::text IN (SELECT id FROM stamp))
-        + (SELECT count(*) FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
-            WHERE r.worktree_id = $4 AND e.kind = 'git' AND e.state IN ('queued','running') AND 'e:'||e.id::text IN (SELECT id FROM stamp)) AS still_open,
-      EXISTS (SELECT 1 FROM persistence_effects e WHERE e.kind = 'git' AND e.state <> 'committed' AND NOT (e.data ? 'settled') AND e.request_id IN (SELECT id::uuid FROM pass,
-        jsonb_array_elements_text(CASE WHEN jsonb_typeof(value->'obligations'->'converged'->'writeback')='array' THEN value->'obligations'->'converged'->'writeback' ELSE '[]'::jsonb END) AS w(id))) AS writeback_open`,
+  const [probe] = await syncRows<{ pass_row: Record<string, unknown> | null; newer: boolean; pending: boolean; still_open: number | string; writeback_open: boolean }>(engine, 'pass_idle_probe',
     [MANAGED_SYNC_PASS_OP, `${input.sourceId}:${input.incarnation}`, input.requestHwm, input.worktreeId, input.openAtStamp ? [...input.openAtStamp] : null, input.sourceId, input.incarnation]);
   return { passRow: probe?.pass_row ?? null, newer: probe?.newer === true, pending: probe?.pending === true, stillOpen: Number(probe?.still_open ?? 0), writebackOpen: probe?.writeback_open === true };
 }

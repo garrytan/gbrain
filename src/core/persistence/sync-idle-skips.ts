@@ -12,6 +12,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadSyncFailures } from '../sync-failure-ledger.ts';
 import { GIT_HOLD_SUMMARY_OP, summaryFingerprint } from './sync-holds.ts';
 import { currentDrainLease } from './sync-lease.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** Each settle an idle-clear tick skips, with why it has nothing to do then. */
 export const IDLE_SKIPS = {
@@ -29,10 +30,7 @@ export interface IdleFacts { tail: boolean; holds: number; holdSummary: number; 
 
 /** The facts the pin's other reads do not carry, read in the same round trip as them. */
 export async function readIdleFacts(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, incarnation: string): Promise<Pick<IdleFacts, 'holdSummary' | 'failures'>> {
-  const [row] = await engine.executeRaw<{ failures: boolean; hold_summary: number | string }>(
-    `SELECT EXISTS(SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$1) AS failures,
-      COALESCE((SELECT (completed_keys->0->>'count')::int FROM op_checkpoints WHERE op=$2 AND fingerprint=$3),0) AS hold_summary`,
-    [sourceId, GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation)]);
+  const [row] = await syncRows<{ failures: boolean; hold_summary: number | string }>(engine, 'idle_facts', [sourceId, GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation)]);
   return { failures: row?.failures === true, holdSummary: Number(row?.hold_summary ?? 0) };
 }
 
