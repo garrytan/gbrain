@@ -26,7 +26,7 @@ The card counts the whole brain, every source and every page, because only the b
 | Lookups served | Searches and recalls search telemetry recorded in the last 30 days, including searches gbrain runs for itself |
 | Pages brought up on their own | Pages gbrain put into an agent's context without being asked, in the last 30 days |
 | Of those, later retrieved | How many of those pages a search or read later surfaced |
-| Nightly items | Items the nightly cycle recorded in the last 30 days (`gbrain learned` shows them); hidden from the text card when there are none |
+| Nightly items | Items the nightly cycle recorded in the last 30 days (`gbrain learned` shows them), not counting Facts fence rows you typed; it reads "at least 100" past 100; hidden from the text card when there are none |
 | Brain score | The doctor's brain score; on a brain with no embedding key it reads "N of N reachable without a key" |
 
 Conversations count only archive pages that were published; a conversation held back by redaction is not counted.
@@ -55,6 +55,8 @@ An off row is not a failure, so a card whose only gaps are off rows is complete.
 ## When a count is unavailable
 
 A row whose query fails reads `unavailable (query_failed)` with the error, and the card says it is degraded; the
-other rows are still measured. When every count fails, `gbrain value` exits non-zero and prints the error
+other rows are still measured. A row that needs a newer schema names that code instead: on a brain without the
+learning ledger, Nightly items reads `unavailable (migrations_pending)` and says to run `gbrain apply-migrations --yes`.
+When every count fails, `gbrain value` exits non-zero and prints the error
 `value_unavailable` (as one JSON error with `--json`): run `gbrain doctor --json` to see why the brain cannot be
 read.
