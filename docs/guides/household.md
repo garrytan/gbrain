@@ -64,7 +64,8 @@ On a brain that serves one person, records carry no reader list and you read eve
 people, each record names the owner and the `household-adults`, `household-helpers` and `household-chats` groups
 its row allows. To reclassify a subject, run `gbrain household replace --about <slug> --role <role>` on the brain host
 (or `household add --child` with a new record): it narrows the records about the subject to adults first, then sets
-the role. An edit or sync that narrows a subject while records about it are still shared is refused
+the role. Over remote MCP only the owner's connection can make a subject a child with `household_add`; any other
+connection is refused with `household_reclassify`, whatever records exist. An edit or sync that narrows a subject while records about it are still shared is refused
 ([household_reclassify](#household_reclassify)), and so is making a child of a subject page that sync deleted and
 wrote again; only the owner can turn a child into another role.
 Every write path runs these checks against the stored page and the new one: `put_page`, `edit_page`, the household

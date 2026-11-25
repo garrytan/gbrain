@@ -203,8 +203,8 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   const classes = await classifySubjects(engine, sourceId, about);
   const decision = placeRecord({ kind: frontmatter.kind, school: tags.map(t => t.toLowerCase()).includes('school'), subjects: [...classes.values()], requested: frontmatter.audience });
   frontmatter.household_audience = decision.audience;
-  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
-  const table = serves.serves === 'several' ? tableReaders(decision.audience, owner) : null;
+  const owner = await ownerMemberId(engine);
+  const table = await placedReaders(engine, decision.audience);
   const written = readerList(frontmatter.readable_by);
   const authored = written && !(['adults', 'shared'] as const).some(a => sameList(written, tableReaders(a, owner))) ? written : null;
   if (!authored) {
@@ -217,6 +217,12 @@ export async function placeHouseholdFrontmatter(engine: Pick<BrainEngine, 'execu
   for (const entry of authored) if (await readerCovered(engine, entry, table)) kept.push(entry);
   frontmatter.readable_by = kept.length ? kept : owner ? [owner] : [`group:${HOUSEHOLD_GROUPS.adults}`];
   return decision;
+}
+
+/** The readers the placement table gives an audience on a brain that serves several people; null on a brain that serves one. */
+export async function placedReaders(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, audience: HouseholdAudience): Promise<string[] | null> {
+  const [serves, owner] = await Promise.all([brainServes(engine as BrainEngine), ownerMemberId(engine)]);
+  return serves.serves === 'several' ? tableReaders(audience, owner) : null;
 }
 
 /** True when some reader in `next` (null: everyone) is not covered by `before` (null: everyone). */

@@ -319,8 +319,15 @@ describe('household_due at scale', () => {
   test('a reused request_id is refused before household_add changes any subject (follow-up final review)', async () => {
     await call('household_add', { kind: 'supply', title: 'Napkins', cadence: '30d', request_id: 'shared-request-2' });
     const err = await call('household_add', { kind: 'supply', title: 'Terry glue', cadence: '30d', about: ['people/terry-example'], about_role: 'adult', request_id: 'shared-request-2' }).catch((e: any) => e);
-    expect(err.code).toBeDefined();
+    expect(err.code).toBe('idempotency_conflict');
     expect(await engine.getPage('people/terry-example')).toBeNull();
+  });
+
+  test('a request_id reused for the same record with different content changes no subject (final-head review #2)', async () => {
+    await call('household_add', { kind: 'supply', title: 'Wood glue', cadence: '30d', request_id: 'same-slug-request' });
+    const err = await call('household_add', { kind: 'supply', title: 'Wood glue', cadence: '30d', about: ['people/zed-example'], about_role: 'adult', request_id: 'same-slug-request' }).catch((e: any) => e);
+    expect(err.code).toBe('idempotency_conflict');
+    expect(await engine.getPage('people/zed-example')).toBeNull();
   });
 
   test('household_due reads frontmatter only, never page bodies (outside#8)', async () => {
