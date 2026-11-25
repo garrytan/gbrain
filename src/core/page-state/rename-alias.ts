@@ -130,7 +130,7 @@ export async function moveSlugBindings(
  * semantics (#5431) onto the row that materialized at the destination, before
  * the stale row is soft-deleted: edges where it is the source, target or
  * origin, its timeline entries, its version history and its secret store
- * occurrences (the purge cascade finds a page's originals by page id) and its quarantine holds
+ * occurrences (the purge cascade finds a page's originals by page id), its attachments (page id and slug) and its quarantine holds
  * (`carryHoldsToPage`: a hold that differs from one the surviving page already has is kept and marked, never dropped).
  * Rows the surviving page already holds under the same unique key (`links` composite key,
  * timeline dedup indexes) are dropped from the stale side, never duplicated.
@@ -159,6 +159,8 @@ export async function movePageIdReferences(
     [`UPDATE timeline_entries SET event_page_id = $2 WHERE event_page_id = $1`, [fromPageId, toPageId]],
     [`UPDATE page_versions SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
     [`UPDATE secret_store_occurrence SET page_id = $2 WHERE page_id = $1`, [fromPageId, toPageId]],
+    // Attachments: the surviving page owns them now (a purge of the retired row must not take them), under its slug.
+    [`UPDATE files SET page_id = $2, page_slug = (SELECT slug FROM pages WHERE id = $2) WHERE page_id = $1`, [fromPageId, toPageId]],
   ];
   for (const [sql, params] of statements) await tx.executeRaw(sql, params);
   await carryHoldsToPage(tx, fromPageId, toPageId);

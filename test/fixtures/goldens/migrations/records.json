@@ -5489,8 +5489,8 @@
         "idempotent": true,
         "name": "files_follow_page_slug",
         "sql": {
-          "length": 163,
-          "sha256": "74f917a1d1d1a6ae3621ac6ba235d58bffcd20d4e5b1676f7b7012a5e38933f3"
+          "length": 188,
+          "sha256": "b9e49542a84f5e85a80793885b1c09597f62752a7596552e66e6b23efa848565"
         },
         "sqlFor": "absent",
         "transaction": "absent",
