@@ -424,6 +424,19 @@ describe('the owner profile survives an owner identity change, and a null visibi
     expect((await factRow(engine, 'canarynullbatch'))?.visibility).toBe('private');
   }, 60_000);
 
+  test('a batched remember routes each faceted item to the profile with its own metric, allergy private by default', async () => {
+    await run(engine, 'remember', { items: [
+      { fact: 'Eats pescatarian canarybatchdiet', facet: 'diet' },
+      { fact: 'Allergic to shellfish canarybatchallergy', facet: 'allergy' },
+      { fact: 'Ring size 7 canarybatchring', facet: 'size.ring' },
+      { fact: 'The harbor ledger closes on Fridays canarybatchplain', infer_entity: false },
+    ], provenance: 'batch 2026-11-25' });
+    expect(await factRow(engine, 'canarybatchdiet')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.diet', visibility: 'world' });
+    expect(await factRow(engine, 'canarybatchallergy')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.allergy', visibility: 'private' });
+    expect(await factRow(engine, 'canarybatchring')).toMatchObject({ entity_slug: 'memory/owner', claim_metric: 'profile.size.ring' });
+    expect(await factRow(engine, 'canarybatchplain')).toMatchObject({ entity_slug: null, claim_metric: null });
+  }, 60_000);
+
   test('an allergy saved on memory/owner is still in the profile after the owner is named', async () => {
     await run(engine, 'remember', { fact: 'Allergic to wheat canarybeforeowner', facet: 'allergy', provenance: 'p' });
     expect((await run(engine, 'context_pack', { profile: true })).profile.entity.slug).toBe('memory/owner');
