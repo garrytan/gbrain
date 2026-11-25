@@ -1,5 +1,6 @@
 /**
- * `gbrain init` and `gbrain apply-migrations` on a Rust-engine brain run no SQL schema migration (v335 included).
+ * `gbrain init` and `gbrain apply-migrations` on a Rust-engine brain run no SQL schema migration (v335 included). Init refuses
+ * nothing; apply-migrations runs the upgrade chain (PR 10319) and stops at the first named raw SQL stop, v0.14.0.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  * 1. Protects: a Rust brain upgrades and re-inits without a raw-SQL refusal. Schema migrations (src/core/migrate.ts) run
@@ -65,16 +66,18 @@ describe.skipIf(!HAVE_ADDON)('schema migration commands on a Rust brain', () => 
   });
   afterAll(() => { if (home) rmSync(home, { recursive: true, force: true }); });
 
-  test('init on the existing Rust brain and apply-migrations run no SQL migration and refuse nothing', async () => {
+  test('init on the existing Rust brain refuses nothing, and apply-migrations runs no SQL schema migration and stops only at the named v0.14.0 raw SQL stop', async () => {
     const ok = { exitCode: 0, refused: false, v335: false, detail: '' };
     // The first command opens the store, which creates its tables.
     expect({ step: 'init', ...outcome(await cli(['init', '--non-interactive', '--json'])) }).toEqual({ step: 'init', ...ok });
-    // apply-migrations runs no SQL migration either. Its exit code is not asserted here: its phase B smoke check spawns
-    // `gbrain jobs smoke` while the command still holds the brain, and on a Rust brain that child answers owner_unavailable
-    // (one process owns a Rust brain), so the command exits 1 for a reason that is not a migration. That failure is
-    // reported separately; this test pins only that no raw-SQL refusal and no v335 step occur.
-    const applied = outcome(await cli(['apply-migrations', '--yes', '--no-autopilot-install']));
-    expect({ step: 'apply-migrations', refused: applied.refused, v335: applied.v335 }).toEqual({ step: 'apply-migrations', refused: false, v335: false });
+    // apply-migrations runs no SQL schema migration (no v335 step). Since PR 10319 it takes its lock from a file beside the
+    // brain and runs the upgrade chain on a Rust brain; the chain stops at the first migration whose phase still needs raw
+    // SQL, v0.14.0 (test/apply-migrations-rust-owner.serial.test.ts pins every such named stop). So it must refuse by that
+    // typed raw_sql refusal and by nothing earlier, and never reach v335. Its exit code is 1 for that stop.
+    const applied = await cli(['apply-migrations', '--yes', '--no-autopilot-install']);
+    const text = applied.stdout + applied.stderr;
+    expect({ step: 'apply-migrations', exitCode: applied.exitCode, v335: outcome(applied).v335, stoppedAtV0140: /Migration v0\.14\.0 failed \(schema: [^\n]*raw_sql capability/.test(text), earlierStop: /Migration v0\.(?:1[0-3]\.\d+|[0-9]\.\d+) failed/.test(text) })
+      .toEqual({ step: 'apply-migrations', exitCode: 1, v335: false, stoppedAtV0140: true, earlierStop: false });
     expect({ step: 'init again', ...outcome(await cli(['init', '--non-interactive', '--json'])) }).toEqual({ step: 'init again', ...ok });
   }, 300_000);
 });
