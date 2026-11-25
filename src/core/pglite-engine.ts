@@ -2901,7 +2901,7 @@ export class PGLiteEngine implements BrainEngine {
   readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(unscopedExecutor(this.engineSql, 'sources: source checks read it unscoped through executeRaw'), sourceId); }
   readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return linkSlugReadsImpl.readLiveSlugAliases(unscopedExecutor(this.engineSql, 'link preparation: the live alias targets read unscoped through executeRaw'), sourceId, targets); }
   readSourceSlugProbe(sourceId: string, afterId: number) { return linkSlugReadsImpl.readSourceSlugProbe(unscopedExecutor(this.engineSql, 'link preparation: the source slug fingerprint read unscoped through executeRaw'), sourceId, afterId); }
-  readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string) { return slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(this.engineSql, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after); }
+  readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string, keys?: readonly string[] | null) { return slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(this.engineSql, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after, keys); }
   lockSourceRow(sourceId: string) { return sourcesImpl.lockSourceRow(this.engineSql, sourceId); }
   lockSourceForUpdate(sourceId: string) { return sourcesImpl.lockSourceForUpdate(this.engineSql, sourceId); }
   isSourceClaimed(sourceId: string) { return sourcesImpl.isSourceClaimed(unscopedExecutor(this.engineSql, 'sources: sync-authority read the claim unscoped through executeRaw'), sourceId); }

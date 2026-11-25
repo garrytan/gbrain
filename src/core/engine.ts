@@ -2276,7 +2276,7 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   /** Link preparation's slug fingerprint of a source and the slugs above `afterId` (engine-sql/link-slug-reads.ts). */
   readSourceSlugProbe(sourceId: string, afterId: number): Promise<LinkSlugReadsSql.SourceSlugProbe>;
   /** A scalar slug read's stored-spelling scan: up to 200 stored slugs with spelling key `key`, after `after` by bytes (engine-sql/slug-spellings.ts). */
-  readStoredSlugSpellings(key: string, scope: SlugSpellingsSql.StoredSpellingScope, after: string): Promise<string[]>;
+  readStoredSlugSpellings(key: string, scope: SlugSpellingsSql.StoredSpellingScope, after: string, keys?: readonly string[] | null): Promise<string[]>;
 
   // Chunks
   /**

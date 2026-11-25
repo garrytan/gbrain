@@ -25,6 +25,7 @@ import { normalizeSlug, withStoredSlug } from '../utils.ts';
 import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { STORED_SPELLINGS_PAGE } from '../engine-sql/slug-spellings.ts';
 import { storedWriteSlug } from '../persistence/legacy-slug-put.ts';
+import { spellingKeys } from '../slug-spelling-key.ts';
 import type { Page } from '../types.ts';
 import { opError, type Operation } from './contract.ts';
 import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
@@ -184,13 +185,21 @@ function readScope(ctx: Ctx, op: string, params: Params): { sourceId?: string; s
   return op === 'get_page' || sourceIdParam !== undefined ? federatedSearchScope(ctx, sourceIdParam) : sourceScopeOpts(ctx);
 }
 
-/** Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies before any row is kept). */
+/**
+ * Every stored spelling in `scope` that normalizes to `normalized` and is not in `skip`, in code-unit order (the scope applies
+ * before any row is kept). The rows come from the spelling index, probed by the slug's own key and the keys of its capital
+ * forms; a slug with more capital forms than `MAX_SPELLING_VARIANTS` is read by scanning the ASCII key instead. Either way
+ * `normalizeSlug` has the last word on each row.
+ */
 async function storedSpellings(ctx: Ctx, normalized: string, scope: { sourceId?: string; sourceIds?: string[] }, skip: readonly string[]): Promise<string[]> {
   // The typed scan (engine-sql/slug-spellings.ts): rows that share the slug's key, a page at a time after the last slug.
+  // The SQL engines probe the spelling index by `keys` (the slug's own key and its capital forms) and scan the ASCII key
+  // when `keys` is null; the Rust store reads by the ASCII key. Either way `normalizeSlug` below has the last word.
+  const keys = spellingKeys(normalized);
   const key = normalized.replace(/[^a-z0-9]/g, '');
   const found = new Set<string>();
   for (let after = '';;) {
-    const rows = await ctx.engine.readStoredSlugSpellings(key, scope, after);
+    const rows = await ctx.engine.readStoredSlugSpellings(key, scope, after, keys);
     for (const s of rows) if (!skip.includes(s) && normalizeSlug(s) === normalized) found.add(s);
     if (rows.length < STORED_SPELLINGS_PAGE) return [...found].sort();
     after = rows[rows.length - 1]!;

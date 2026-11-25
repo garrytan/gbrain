@@ -11,6 +11,7 @@
 # file is a one-line edit: insert its path in sorted order. Shards balance
 # other Postgres lane runs. The unit, serial and slow lanes unset
 # themselves from scripts/postgres-arm-weights.json.
+test/access-archived-personal-source.test.ts
 test/access-as.test.ts
 test/access-audience-members.test.ts
 test/access-binding.test.ts
@@ -25,6 +26,7 @@ test/access-labelled-only-fail-closed.test.ts
 test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-handover.test.ts
+test/access-member-personal-sources.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
 test/access-members.test.ts
@@ -472,6 +474,7 @@ test/engine-parity/repair-page-scans.test.ts
 test/engine-parity/repair-plan-scans.test.ts
 test/engine-parity/repair-runner.test.ts
 test/engine-parity/repair-secret-spans.test.ts
+test/engine-parity/repair-slug-spelling.test.ts
 test/engine-parity/repair-source-reads.test.ts
 test/engine-parity/repair-takes-timeline.test.ts
 test/engine-parity/repair-twin-merge.test.ts
@@ -842,6 +845,7 @@ test/large-pages/upload-over-ceiling.test.ts
 test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
+test/learning-decide.test.ts
 test/learning-duplicates.test.ts
 test/learning-ledger.test.ts
 test/link-context-world-rows-2957.test.ts
@@ -1081,6 +1085,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/physical-root-container-copy.test.ts
 test/physical-root-copied-brain-fix-7671.test.ts
 test/physical-root-moved-8625.test.ts
 test/postgres-source-lock-contention.test.ts
@@ -1168,6 +1173,7 @@ test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
+test/repair-slug-spelling-postgres.test.ts
 test/repair-unwithdrawn-facts-8819.test.ts
 test/repair-visibility-propose-gst2670.test.ts
 test/request-tools-combined-gbra449.test.ts
@@ -1223,6 +1229,7 @@ test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/slug-move-keeps-trust-9735.test.ts
+test/slug-spelling-index.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-purge-stranded-pages-7072.test.ts
 test/source-resolver-null-path.test.ts

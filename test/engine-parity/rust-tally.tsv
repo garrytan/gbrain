@@ -222,7 +222,7 @@ test/engine-parity/oauth-revocation.test.ts	4	0
 test/engine-parity/ontology-propose.test.ts	5	0
 test/engine-parity/ontology-repair-sites.test.ts	4	0
 test/engine-parity/op-checkpoint.test.ts	2	0
-test/engine-parity/open-loops.test.ts	6	0
+test/engine-parity/open-loops.test.ts	7	0
 test/engine-parity/open-pages.test.ts	5	0
 test/engine-parity/owner-only-marks.test.ts	1	1
 test/engine-parity/owner-only-reads.test.ts	4	0
@@ -314,6 +314,7 @@ test/engine-parity/repair-page-scans.test.ts	5	0
 test/engine-parity/repair-plan-scans.test.ts	2	0
 test/engine-parity/repair-runner.test.ts	17	0
 test/engine-parity/repair-secret-spans.test.ts	18	0
+test/engine-parity/repair-slug-spelling.test.ts	0	1
 test/engine-parity/repair-source-reads.test.ts	2	0
 test/engine-parity/repair-takes-timeline.test.ts	6	5
 test/engine-parity/repair-twin-merge.test.ts	7	0

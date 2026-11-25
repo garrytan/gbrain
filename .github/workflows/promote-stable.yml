@@ -81,10 +81,16 @@ on:
         required: false
         type: string
         default: ''
+      canary_waiver:
+        description: Why to promote a release the install canary failed or has not tested yet (recorded in stable.json; empty refuses such a release)
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write  # create and push the stable-v<version> and stable tags and the stable-record branch
   actions: read    # read the soak run and the upgrade matrix run's receipt
+  statuses: read   # read the install canary's gbrain/install-canary status on the release commit
 
 concurrency:
   group: promote-stable
@@ -107,6 +113,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STABLE_SOAK_WORKFLOW: ${{ vars.STABLE_SOAK_WORKFLOW }}
+          STABLE_CANARY_POSTERS: ${{ vars.STABLE_CANARY_POSTERS }}
           PROMOTE_VERSION: ${{ inputs.version }}
           PROMOTE_SOAK_RUN_URL: ${{ inputs.soak_run_url }}
           PROMOTE_MATRIX_RUN_URL: ${{ inputs.matrix_run_url }}
@@ -118,6 +125,7 @@ jobs:
           PROMOTE_NOT_PROMOTABLE_REASON: ${{ inputs.not_promotable_reason }}
           PROMOTE_NOT_PROMOTABLE_FIXED_IN: ${{ inputs.not_promotable_fixed_in }}
           PROMOTE_NOT_PROMOTABLE_REMOVE: ${{ inputs.not_promotable_remove }}
+          PROMOTE_CANARY_WAIVER: ${{ inputs.canary_waiver }}
         run: |
           git config user.name "gbrain-release-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
