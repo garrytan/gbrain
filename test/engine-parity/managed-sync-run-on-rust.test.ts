@@ -39,13 +39,14 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
 import { waiveNoopRun, type WaiverCursor, type WaiverRunEntry } from '../../src/core/persistence/sync-waivers.ts';
-import { claimedHeadOrder, claimedPredecessor, type OrderedRow } from '../../src/core/persistence/sync-window.ts';
+import { claimedHeadOrder, claimedPredecessor } from '../../src/core/persistence/sync-window.ts';
 import { awaitLaneTurn, type LaneState } from '../../src/core/persistence/sync-lanes.ts';
 import { engineStallProbe } from '../../src/core/persistence/sync-drain.ts';
 import { resolveBulkSettings } from '../../src/core/persistence/sync-group.ts';
 import type { SyncStatementName } from '../../src/core/engine-sql/managed-sync-store.ts';
 import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 
+type OrderedRow = Parameters<typeof claimedPredecessor>[1];
 const { parityTest } = parityArms(testBackends());
 
 const GIT_ID = ['-c', 'user.name=Example', '-c', 'user.email=example@example.invalid'];
@@ -415,7 +416,7 @@ describe('the named statements of the run block answer the rows their text answe
     commit(root, 'delete bob');
     expect((await sync()).status).toBe('synced');
     const alice = (await engine.getPage('notes/alice-example', { sourceId: 'work' }))!;
-    const strip = (rows: Array<Record<string, unknown>>) => rows.map(row => ({ ...row, id: row.id === alice.id ? 'alice' : 'other', knowledge_revision: String(row.knowledge_revision) === String(alice.id) ? 'x' : typeof row.knowledge_revision }));
+    const strip = (rows: Array<Record<string, any>>): Array<Record<string, any>> => rows.map(row => ({ ...row, id: row.id === alice.id ? 'alice' : 'other', knowledge_revision: String(row.knowledge_revision) === String(alice.id) ? 'x' : typeof row.knowledge_revision }));
     const waiver = strip(await named(engine, 'waiver_pages', ['work', ['notes/alice-example', 'notes/bob-example', 'notes/none']]));
     const slugs = ['notes/alice-example', 'notes/bob-example'];
     const kernel = strip(await named(engine, 'kernel_pages_by_slug', ['work', slugs]));
