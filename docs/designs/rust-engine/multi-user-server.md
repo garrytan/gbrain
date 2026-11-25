@@ -896,3 +896,34 @@ optimistically without that proof: they are an open gap of the lane, not a guara
 | E18 | `src/core/rust-engine/store-members/persistence.ts:167` (`shareLockWriteCredential`, no-op) | credential share lock for revocation | read-set | Revocation waits for the credential read. |
 
 Counts: cas 3, needs-review 16, read-set 52, single_flight 4 (75 sites). Callbacks with an effect outside the store are a separate audit (a rerun repeats them); its fixes are listed in the lane L1 report.
+
+## Appendix: transaction callback audit under multi-user mode (lane L1)
+
+Rule (coordinator, Nov 25): multi-user mode is not called safe on a path until the transaction callbacks on it are
+audited. In multi-user mode a callback runs again after a lost commit, so a count, flag, cursor or file it keeps outside
+the transaction must start each run from the same state, or move after the commit.
+
+Audited: every `transaction` / `transactionDirect` call in `src/` (467 sites, 451 callbacks); 26 read by hand in the first
+pass, the 44 the scan flagged read by hand in the second. The rest were cleared by the scan only, which proves nothing
+about them.
+
+Fixed (on paths the Rust engine runs today): shared-skill publication staging, segmented rechunk counters, secret backup
+restore counters, oversize-chunk heal counters and stderr line, trust scan counter, keep-db admission flags, no-op
+embedding settle ids, segmented projection seal flag, connector checkpoint cleanup counts, held-concept rebuild flags,
+owner page repair file (the lost run's file is put back first), publish redaction audit line (written after the commit),
+access restamp count (counted after the commit), unmanaged belief point report (reset per run). Tests that fail without
+the fix: `test/optimistic-callback-rerun.test.ts` (restamp, backup restore, connector cleanup) and
+`test/provenance-drift-7891.test.ts` (owner page repair). The other fixes have no rerun test yet.
+
+Not safe until audited when their members are served on Rust (the callback keeps state across a run today):
+`src/commands/sources-git-gap.ts` (cursor, census), `src/core/persistence/rows-behind.ts` (cursor, ids), `src/core/mentions/pass.ts`
+(beliefs), `src/commands/export.ts` (staged export state), `src/core/facts/purge.ts` (plan and counts),
+`src/core/write-gate-recheck.ts` (receipt counts), `src/core/page-body/ingest.ts` (moved, lost flags),
+`src/core/belief/backfill.ts` (publication ids), `src/core/persistence/graduation-copy.ts` (positions, trigger names),
+`src/core/persistence/effect-recovery.ts` (file mode changes), `src/core/facts/writeback-settings.ts` (request log line),
+`src/core/persistence/coordinator.ts` (bundle staging), `src/shadow/seed.ts` (writes to the sink engine),
+`src/core/company-brain/runtime.ts` (receipt and profile), `src/core/persistence/reconcile-backup.ts` (unlink before
+commit), `src/commands/mcp-provision.ts` (credential file before commit), `src/core/backfill-effective-date.ts`
+(counters), `src/core/persistence/sync-lease.ts` callers in `sync-pass-apply.ts` (counters), `src/core/engine-sql/facts.ts`
+insertFacts (warnings), `src/core/page-body/segment-derive.ts` (picked, parked), `src/core/persistence/connector-sync.ts`
+(admitted flag). The lists with line numbers and the fix for each are in the lane L1 report.

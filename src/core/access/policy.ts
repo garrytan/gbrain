@@ -185,9 +185,10 @@ export async function restampSource(engine: BrainEngine, sourceId: string, opts:
     progress.pages_restamped += row.changed;
     opts.onProgress?.({ ...progress });
   }
-  await engine.transaction(async tx => {
+  // Counted after the commit: a run that loses an optimistic commit (multi-user Rust) counts nothing.
+  progress.pages_restamped += await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
-    progress.pages_restamped += await tx.finishAccessRestamp(sourceId);
+    return tx.finishAccessRestamp(sourceId);
   });
   return progress;
 }

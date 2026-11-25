@@ -363,6 +363,8 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
   try {
     await engine.transaction(tx => withWriteAttribution(tx, { ...attribution, trust }, () => withTrustPromotion(tx, tier, () =>
       withTrustKeep(tx, FENCE_TABLES, async () => {
+        // A run that lost an optimistic commit (multi-user Rust) wrote the file: put it back before this run reads it.
+        if (rendered?.path && file?.ok && file.target) { await restoreOwnerRepairFile(tx, input, file.target, rendered); rendered = null; }
         if ((await tx.readPageSnapshot(input.slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) {
           throw changedSincePreview(pageRef(input.sourceId, input.slug), ACTION_NAMES[intent.mode]);
         }
