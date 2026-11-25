@@ -144,7 +144,12 @@ impl RedbKv {
         f: impl FnOnce(&mut dyn KvWrite) -> Result<T>,
     ) -> Result<T> {
         if self.log.on.load(Ordering::Acquire)
-            || self.log.clock.lock().unwrap_or_else(|p| p.into_inner()).is_some()
+            || self
+                .log
+                .clock
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_some()
         {
             return Err(StoreError::new(
                 crate::error::INVALID_STATE,

@@ -63,6 +63,24 @@ fn snapshot_required(why: String) -> StoreError {
     StoreError::new(SNAPSHOT_REQUIRED, why)
 }
 
+/// A follower holds only a commit log brain of a format this build reads.
+fn admit_format(stored: &StoredFormat) -> Result<()> {
+    format::check_version_in(stored.format_version, format::OPENED_FORMATS)?;
+    let Some(log) = stored.log else {
+        return Err(StoreError::new(
+            INVALID_STATE,
+            "this brain keeps no commit log, so it cannot be a follower",
+        ));
+    };
+    if stored.format_version != format::LOG_FORMAT_VERSION {
+        return Err(StoreError::new(
+            STORE_CORRUPT,
+            "the format record names a commit log on a format without one",
+        ));
+    }
+    format::check_version(log.base_format)
+}
+
 fn every_key(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
     let mut keys = BTreeSet::new();
     read.scan(&[1], &[0xFF; 64], false, &mut |k, _| {
@@ -78,7 +96,16 @@ impl Follower {
     pub fn open(dir: &Path) -> Result<Follower> {
         std::fs::create_dir_all(dir)
             .map_err(|e| StoreError::io(format!("follower directory: {e}")))?;
-        let kv = RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+        // As a store's open: a brain of a format this build does not read is refused before its
+        // record file is opened for writing.
+        format::read_in(dir, format::OPENED_FORMATS)?;
+        let records = dir.join(format::RECORDS_FILE);
+        if let Some(bytes) = crate::redb_kv::peek(&records, &keys::meta("format")) {
+            let stored: StoredFormat = serde_json::from_slice(&bytes)
+                .map_err(|e| StoreError::new(STORE_CORRUPT, format!("the format record: {e}")))?;
+            admit_format(&stored)?;
+        }
+        let kv = RedbKv::open_path(&records)?;
         Follower::over(kv, Some(dir.to_path_buf()))
     }
 
@@ -103,8 +130,19 @@ impl Follower {
     }
 
     fn reload(&self) -> Result<()> {
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = self.load_state()?;
+        Ok(())
+    }
+
+    /// The follower's bookkeeping from what its record file holds now. Callers hold `state`'s
+    /// lock, so no other call writes between this read and their use of it.
+    fn load_state(&self) -> Result<Option<LogState>> {
         let read = self.kv.snapshot()?;
         let stored: Option<StoredFormat> = get_json(&*read, &keys::meta("format"))?;
+        if let Some(stored) = &stored {
+            admit_format(stored)?;
+        }
         let state = match (stored, read_meta(&*read)?) {
             (None, _) => None,
             (Some(_), None) => {
@@ -121,8 +159,15 @@ impl Follower {
                 },
             )?),
         };
-        *self.state.lock().unwrap_or_else(|p| p.into_inner()) = state;
-        Ok(())
+        Ok(state)
+    }
+
+    /// The brain the follower holds (`None` while it is empty).
+    pub fn brain_id(&self) -> Result<Option<String>> {
+        Ok(
+            get_json::<StoredFormat>(&*self.kv.snapshot()?, &keys::meta("format"))?
+                .map(|f| f.brain_id),
+        )
     }
 
     /// The newest commit the follower holds (`None` while it is empty).
@@ -171,13 +216,14 @@ impl Follower {
             .iter()
             .map(|r| (r.position, commit_log::encode_commit_record(r)))
             .collect();
-        self.apply_raw(&page.lineage, &raw)
+        self.apply_raw(&page.brain_id, &page.lineage, &raw)
     }
 
-    /// Applies records as the primary stored them (position and value), with the primary's
-    /// history. All of them commit in one redb transaction, or none does.
+    /// Applies records as the primary stored them (position and value), with the primary's brain
+    /// id and history. All of them commit in one redb transaction, or none does.
     pub fn apply_raw(
         &self,
+        brain_id: &str,
         lineage: &[Timeline],
         records: &[(CommitPosition, Vec<u8>)],
     ) -> Result<Applied> {
@@ -187,6 +233,15 @@ impl Follower {
                 "this follower holds no brain yet: install a snapshot first".into(),
             ));
         };
+        let mine = get_json::<StoredFormat>(&*self.kv.snapshot()?, &keys::meta("format"))?
+            .map(|f| f.brain_id)
+            .unwrap_or_default();
+        if brain_id != mine {
+            return Err(StoreError::new(
+                INVALID_STATE,
+                format!("these records belong to brain {brain_id:?}, not this follower's {mine:?}"),
+            ));
+        }
         let cursor = state.meta().newest;
         if !commit_log::lineage_continues(&state.meta().lineage, cursor, lineage) {
             return Err(snapshot_required(format!(
@@ -224,7 +279,7 @@ impl Follower {
         let time = fresh.iter().map(|(r, _)| r.commit_time).max();
         let mut next_state = LogState::clone(state);
         next_state.set_lineage(lineage.to_vec());
-        let outcome = self.kv.replica_reset(sequence, time, |tx| {
+        let outcome = self.kv.replica_write(sequence, time, |tx| {
             for (record, _) in &fresh {
                 if let Some((key, _)) = record.ops.iter().find(|(k, _)| is_log_key(k)) {
                     return Err(StoreError::new(
@@ -254,9 +309,10 @@ impl Follower {
                 })
             }
             Err(e) => {
-                drop(guard);
-                // The bookkeeping is reloaded from what the file holds now.
-                let _ = self.reload();
+                // The bookkeeping is reloaded from what the file holds now, under the same lock.
+                if let Ok(fresh) = self.load_state() {
+                    *guard = fresh;
+                }
                 Err(e)
             }
         }
@@ -293,11 +349,24 @@ impl Follower {
                 meta.newest.token()
             )));
         }
+        // The log's bounds agree with each other and with the format record.
+        if log.since != meta.since
+            || meta.since > meta.newest
+            || meta
+                .trimmed_through
+                .is_some_and(|t| t < meta.since || t > meta.newest)
+        {
+            return Err(bad("its log bounds disagree".into()));
+        }
         // Every retained record decodes, gap-free, up to `newest`.
-        let page = commit_log::read_commit_log(&*read, meta.trimmed_through.or(Some(meta.since)), usize::MAX);
+        let page = commit_log::read_commit_log(
+            &*read,
+            meta.trimmed_through.or(Some(meta.since)),
+            usize::MAX,
+        );
         let records = match page {
             Ok(page) if !page.snapshot_required => page.records,
-            Ok(_) => Vec::new(),
+            Ok(_) => return Err(bad("its log does not reach its own start".into())),
             Err(e) => return Err(bad(format!("its log does not read: {}", e.message))),
         };
         if let Some(last) = records.last()
@@ -309,7 +378,17 @@ impl Follower {
         if let (Some(last), Some(t)) = (records.last(), time)
             && t < last.commit_time
         {
-            return Err(bad("its durable commit time is below its newest record's".into()));
+            return Err(bad(
+                "its durable commit time is below its newest record's".into()
+            ));
+        }
+        // Its FORMAT, read and checked against the held records now, published after the copy.
+        let snapshot_format =
+            format::read(snapshot_dir)?.ok_or_else(|| bad("it has no FORMAT".into()))?;
+        if snapshot_format.brain_id != stored.brain_id
+            || snapshot_format.format_version != format::LOG_FORMAT_VERSION
+        {
+            return Err(bad("its FORMAT does not match its records".into()));
         }
         let snapshot_keys = every_key(&*read)?;
         if let Some(m) = manifest
@@ -320,8 +399,9 @@ impl Follower {
             return Err(bad("it does not match its manifest".into()));
         }
         // Against the follower as it is now.
-        let guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mine = self.kv.snapshot()?;
+        let mut other_history = false;
         if let Some(current) = get_json::<StoredFormat>(&*mine, &keys::meta("format"))? {
             if current.brain_id != stored.brain_id {
                 return Err(bad("it is another brain".into()));
@@ -333,6 +413,7 @@ impl Follower {
                 let cursor = state.meta().newest;
                 let same_history =
                     commit_log::lineage_continues(&state.meta().lineage, cursor, &meta.lineage);
+                other_history = !same_history;
                 if same_history && meta.newest < cursor {
                     return Err(bad(format!(
                         "it ends at {}, behind this follower at {}",
@@ -347,31 +428,41 @@ impl Follower {
             .filter(|k| !snapshot_keys.contains(k))
             .collect();
         drop(mine);
-        // `replica_write` keeps the larger of the follower's durable time and the snapshot's, and
-        // the snapshot is not behind the follower, so the floor never moves back.
-        let outcome = self.kv.replica_write(sequence, time, |tx| {
-                for k in &drop_keys {
-                    tx.delete(k)?;
+        // Both keep the larger of the follower's durable time and the snapshot's, so the floor
+        // never moves back. Only a snapshot of another history may move the sequence back.
+        let copy = |tx: &mut dyn crate::kv::KvWrite| -> Result<()> {
+            for k in &drop_keys {
+                tx.delete(k)?;
+            }
+            let mut failure = None;
+            read.scan(&[1], &[0xFF; 64], false, &mut |k, v| match tx.put(k, v) {
+                Ok(()) => true,
+                Err(e) => {
+                    failure = Some(e);
+                    false
                 }
-                let mut failure = None;
-                read.scan(&[1], &[0xFF; 64], false, &mut |k, v| match tx.put(k, v) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        failure = Some(e);
-                        false
-                    }
-                })?;
-                failure.map_or(Ok(()), Err)
-            });
-        drop(guard);
-        let reloaded = self.reload();
+            })?;
+            failure.map_or(Ok(()), Err)
+        };
+        let outcome = if other_history {
+            self.kv.replica_reset(sequence, time, copy)
+        } else {
+            self.kv.replica_write(sequence, time, copy)
+        };
+        // The bookkeeping follows what the file holds, still under the lock.
+        let reloaded = self.load_state();
         outcome?;
-        reloaded?;
-        // FORMAT follows the records (a promotion's open also repairs it).
-        if let Some(dir) = &self.dir
-            && let Some(record) = format::read(snapshot_dir)?
-        {
-            format::write(dir, &record)?;
+        *guard = reloaded?;
+        drop(guard);
+        // FORMAT follows the records (a promotion's open also repairs it). The records are
+        // installed even if this fails: say so.
+        if let Some(dir) = &self.dir {
+            format::write(dir, &snapshot_format).map_err(|e| {
+                StoreError::io(format!(
+                    "the snapshot was installed, but its FORMAT was not written ({}); a promotion's open rewrites it",
+                    e.message
+                ))
+            })?;
         }
         Ok(meta.newest)
     }
@@ -390,6 +481,23 @@ impl Follower {
         if !(options.multiuser && options.multiuser_writes.commit_log) {
             return Err(StoreError::invalid(
                 "promotion needs multi-user mode and the commit log (GBRAIN_RUST_MULTIUSER=1, GBRAIN_RUST_COMMIT_LOG=1)",
+            ));
+        }
+        // Every check the open will make that could refuse it, before the follower changes.
+        if options
+            .multiuser_writes
+            .host_id
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return Err(StoreError::invalid(crate::HOST_ID_REQUIRED));
+        }
+        if let (Some(on_disk), Some(mine)) = (format::read(&dir)?, self.brain_id()?)
+            && on_disk.brain_id != mine
+        {
+            return Err(StoreError::new(
+                STORE_CORRUPT,
+                "FORMAT names a different brain than the follower's records",
             ));
         }
         {

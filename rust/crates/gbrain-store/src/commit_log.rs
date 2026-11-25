@@ -214,6 +214,9 @@ pub struct LogPage {
     pub snapshot_required: bool,
     /// The log's history (`LogMeta::lineage`): a follower checks it with `lineage_continues`.
     pub lineage: Vec<Timeline>,
+    /// The brain the log belongs to (its format record's `brain_id`): a follower applies only its
+    /// own brain's records.
+    pub brain_id: String,
 }
 
 /// The key of the meta record.
@@ -492,6 +495,13 @@ pub fn read_commit_log(
         newest: Some(meta.newest),
         snapshot_required: stale,
         lineage: meta.lineage.clone(),
+        brain_id: crate::get_json::<serde_json::Value>(read, &crate::keys::meta("format"))?
+            .and_then(|f| {
+                f.get("brain_id")
+                    .and_then(|b| b.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default(),
     };
     if stale || max == 0 || after >= meta.newest {
         return Ok(page);
@@ -990,12 +1000,31 @@ mod tests {
         };
         let at = |s: u64| CommitPosition::new(s, 0);
         assert!(lineage_continues(&[], at(5), &[]));
-        assert!(lineage_continues(&[], at(5), &[t("a", 5)]), "forked at the cursor");
-        assert!(lineage_continues(&[], at(5), &[t("a", 7)]), "forked after the cursor");
-        assert!(!lineage_continues(&[], at(9), &[t("a", 7)]), "the follower holds old-timeline commits");
-        assert!(lineage_continues(&[t("a", 7)], at(9), &[t("a", 7), t("b", 9)]));
-        assert!(!lineage_continues(&[t("a", 7)], at(9), &[t("x", 7)]), "another history");
-        assert!(!lineage_continues(&[t("a", 7)], at(9), &[]), "the follower is on a newer timeline");
+        assert!(
+            lineage_continues(&[], at(5), &[t("a", 5)]),
+            "forked at the cursor"
+        );
+        assert!(
+            lineage_continues(&[], at(5), &[t("a", 7)]),
+            "forked after the cursor"
+        );
+        assert!(
+            !lineage_continues(&[], at(9), &[t("a", 7)]),
+            "the follower holds old-timeline commits"
+        );
+        assert!(lineage_continues(
+            &[t("a", 7)],
+            at(9),
+            &[t("a", 7), t("b", 9)]
+        ));
+        assert!(
+            !lineage_continues(&[t("a", 7)], at(9), &[t("x", 7)]),
+            "another history"
+        );
+        assert!(
+            !lineage_continues(&[t("a", 7)], at(9), &[]),
+            "the follower is on a newer timeline"
+        );
     }
 
     #[test]

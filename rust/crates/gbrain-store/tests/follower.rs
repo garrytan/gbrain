@@ -86,19 +86,26 @@ fn mutation(n: u64, slug: &str, body: &str) -> PageMutation {
 fn step(store: &Store, n: u64) {
     match n % 5 {
         0 => store
-            .set_config(&format!("test.k{}", n % 3), &"v".repeat(1 + (n as usize % 4) * 20_000))
+            .set_config(
+                &format!("test.k{}", n % 3),
+                &"v".repeat(1 + (n as usize % 4) * 20_000),
+            )
             .unwrap(),
         1 => {
             let _ = store.unset_config(&format!("test.k{}", (n + 1) % 3));
         }
         2 | 3 => {
             store
-                .submit_page_mutation(&mutation(n, &format!("notes/p{}", n % 4), &format!("b{n}")), None)
+                .submit_page_mutation(
+                    &mutation(n, &format!("notes/p{}", n % 4), &format!("b{n}")),
+                    None,
+                )
                 .unwrap();
         }
         _ => {
             let tx = store.begin_transaction(false).unwrap();
-            tx.submit_page_mutation(&mutation(n, "notes/rolled", "x"), None).unwrap();
+            tx.submit_page_mutation(&mutation(n, "notes/rolled", "x"), None)
+                .unwrap();
             tx.rollback_transaction().unwrap();
         }
     }
@@ -131,7 +138,9 @@ fn pair(name: &str, concurrent: bool) -> (Pair, Follower) {
     let follower = Follower::open(&root.join("follower")).unwrap();
     assert_eq!(follower.cursor(), None, "a new follower is empty");
     let (_, manifest) = primary_image(&primary, &root.join("snap"));
-    follower.install_snapshot(&root.join("snap"), Some(&manifest)).unwrap();
+    follower
+        .install_snapshot(&root.join("snap"), Some(&manifest))
+        .unwrap();
     (
         Pair {
             _dir: dir,
@@ -181,7 +190,11 @@ fn applying_a_record_twice_is_a_no_op_and_a_gap_changes_nothing() {
         let after = image_of(follower.records());
         let again = follower.apply_page(&page).unwrap();
         assert_eq!((again.applied, again.skipped), (0, page.records.len()));
-        assert_eq!(image_of(follower.records()), after, "a repeat changed the follower");
+        assert_eq!(
+            image_of(follower.records()),
+            after,
+            "a repeat changed the follower"
+        );
         // An overlapping page: the old part is skipped, the new part applied.
         step(&p.primary, 10);
         let overlap = p.primary.read_commit_log(start, usize::MAX).unwrap();
@@ -191,7 +204,10 @@ fn applying_a_record_twice_is_a_no_op_and_a_gap_changes_nothing() {
         // A gap: records that do not start right after the cursor are refused, nothing changes.
         step(&p.primary, 11);
         step(&p.primary, 12);
-        let mut gapped = p.primary.read_commit_log(follower.cursor(), usize::MAX).unwrap();
+        let mut gapped = p
+            .primary
+            .read_commit_log(follower.cursor(), usize::MAX)
+            .unwrap();
         assert!(gapped.records.len() >= 2);
         gapped.records.remove(0);
         let before = image_of(follower.records());
@@ -238,16 +254,26 @@ fn promotion_continues_the_positions_and_starts_the_clock_above_the_floor() {
         // copy of the same brain: install from a snapshot of that copy).
         drop(primary);
         let copy = Store::open_dir(&root.join("primary"), mu(concurrent)).unwrap();
-        let manifest = copy.snapshot_to(&root.join("snap"), &SnapshotOp::new()).unwrap();
+        let manifest = copy
+            .snapshot_to(&root.join("snap"), &SnapshotOp::new())
+            .unwrap();
         let follower = Follower::open(&root.join("follower")).unwrap();
-        follower.install_snapshot(&root.join("snap"), Some(&manifest)).unwrap();
+        follower
+            .install_snapshot(&root.join("snap"), Some(&manifest))
+            .unwrap();
         for n in 8..12 {
             step(&copy, n);
         }
         catch_up(&follower, &copy);
         let cursor = follower.cursor().unwrap();
         let floor = follower.last_commit_time().unwrap();
-        let last_record = copy.read_commit_log(None, usize::MAX).unwrap().records.last().unwrap().commit_time;
+        let last_record = copy
+            .read_commit_log(None, usize::MAX)
+            .unwrap()
+            .records
+            .last()
+            .unwrap()
+            .commit_time;
         assert!(floor >= last_record && floor >= far);
         drop(copy);
         // Promotion on a machine whose clock is far behind.
@@ -256,8 +282,15 @@ fn promotion_continues_the_positions_and_starts_the_clock_above_the_floor() {
         let page = promoted.read_commit_log(Some(cursor), 10).unwrap();
         assert_eq!(page.records.len(), 1);
         let next = &page.records[0];
-        assert_eq!(next.position, CommitPosition::new(cursor.sequence + 1, 0), "concurrent {concurrent}");
-        assert!(next.commit_time > floor, "the clock went back across the promotion");
+        assert_eq!(
+            next.position,
+            CommitPosition::new(cursor.sequence + 1, 0),
+            "concurrent {concurrent}"
+        );
+        assert!(
+            next.commit_time > floor,
+            "the clock went back across the promotion"
+        );
         assert_eq!(page.lineage.len(), 1);
         assert_eq!(page.lineage[0].from, cursor);
     }
@@ -274,7 +307,7 @@ fn a_follower_ahead_of_a_promoted_follower_is_told_to_install_a_snapshot_and_rec
             step(&p.primary, n);
         }
         catch_up(&a, &p.primary);
-        for n in 4..8 {
+        for n in 4..20 {
             step(&p.primary, n);
         }
         catch_up(&b, &p.primary);
@@ -282,10 +315,14 @@ fn a_follower_ahead_of_a_promoted_follower_is_told_to_install_a_snapshot_and_rec
         // A third follower C, behind A, which can continue on the new timeline.
         let c = Follower::open(&p.root.join("c")).unwrap();
         c.install_snapshot(&p.root.join("snap"), None).unwrap();
-        let Pair { root, primary, _dir } = p;
+        let Pair {
+            root,
+            primary,
+            _dir,
+        } = p;
         drop(primary);
         let promoted = a.promote(mu(concurrent)).unwrap();
-        for n in 20..24 {
+        for n in 40..42 {
             step(&promoted, n);
         }
         // B holds commits of the old primary the new one never had: refused, nothing changes.
@@ -302,7 +339,14 @@ fn a_follower_ahead_of_a_promoted_follower_is_told_to_install_a_snapshot_and_rec
         catch_up(&c, &promoted);
         // B recovers from a snapshot of the new primary, even though it moves its position back.
         let (image, manifest) = primary_image(&promoted, &root.join("snap-new"));
-        b.install_snapshot(&root.join("snap-new"), Some(&manifest)).unwrap();
+        assert!(
+            manifest.generation < b.sequence().unwrap(),
+            "the case needs a snapshot behind the diverged follower: {} vs {}",
+            manifest.generation,
+            b.sequence().unwrap()
+        );
+        b.install_snapshot(&root.join("snap-new"), Some(&manifest))
+            .unwrap();
         assert_eq!(image_of(b.records()), image);
         assert_eq!(image_of(c.records()), image);
         step(&promoted, 30);
@@ -334,14 +378,18 @@ fn a_refused_snapshot_leaves_the_follower_byte_identical() {
         refused(&p.root.join("snap-b"), Some(&old), "a manifest mismatch");
         // A brain without a log.
         let plain = Store::open_dir(&p.root.join("plain"), OpenOptions::default()).unwrap();
-        plain.snapshot_to(&p.root.join("snap-plain"), &SnapshotOp::new()).unwrap();
+        plain
+            .snapshot_to(&p.root.join("snap-plain"), &SnapshotOp::new())
+            .unwrap();
         refused(&p.root.join("snap-plain"), None, "a brain without a log");
         // Another brain with a log.
         let other = Store::open_dir(&p.root.join("other"), mu(concurrent)).unwrap();
         for n in 0..12 {
             step(&other, n);
         }
-        other.snapshot_to(&p.root.join("snap-other"), &SnapshotOp::new()).unwrap();
+        other
+            .snapshot_to(&p.root.join("snap-other"), &SnapshotOp::new())
+            .unwrap();
         refused(&p.root.join("snap-other"), None, "another brain");
         // A snapshot whose log meta disagrees with its record file.
         drop(other);
@@ -350,14 +398,175 @@ fn a_refused_snapshot_leaves_the_follower_byte_identical() {
         {
             let kv = RedbKv::open_path(&p.root.join("snap-c/records.redb")).unwrap();
             let read = kv.snapshot().unwrap();
-            let mut meta = gbrain_store::commit_log::read_meta(&*read).unwrap().unwrap();
+            let mut meta = gbrain_store::commit_log::read_meta(&*read)
+                .unwrap()
+                .unwrap();
             drop(read);
             meta.newest = CommitPosition::new(meta.newest.sequence + 5, 0);
             let mut tx = kv.begin_write().unwrap();
-            tx.put(&gbrain_store::commit_log::meta_key(), &serde_json::to_vec(&meta).unwrap()).unwrap();
+            tx.put(
+                &gbrain_store::commit_log::meta_key(),
+                &serde_json::to_vec(&meta).unwrap(),
+            )
+            .unwrap();
             tx.commit().unwrap();
         }
-        refused(&p.root.join("snap-c"), None, "a log meta past the record file");
+        refused(
+            &p.root.join("snap-c"),
+            None,
+            "a log meta past the record file",
+        );
+        // A trim point past the log's newest.
+        primary_image(&p.primary, &p.root.join("snap-d"));
+        {
+            let kv = RedbKv::open_path(&p.root.join("snap-d/records.redb")).unwrap();
+            let read = kv.snapshot().unwrap();
+            let mut meta = gbrain_store::commit_log::read_meta(&*read)
+                .unwrap()
+                .unwrap();
+            drop(read);
+            meta.trimmed_through = Some(CommitPosition::new(meta.newest.sequence + 3, 0));
+            let mut tx = kv.begin_write().unwrap();
+            tx.put(
+                &gbrain_store::commit_log::meta_key(),
+                &serde_json::to_vec(&meta).unwrap(),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        refused(
+            &p.root.join("snap-d"),
+            None,
+            "a trim point past the newest commit",
+        );
+        // A FORMAT that names another brain than the records.
+        primary_image(&p.primary, &p.root.join("snap-e"));
+        let mut format: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(p.root.join("snap-e/FORMAT")).unwrap()).unwrap();
+        format["brain_id"] = json!("00000000-0000-4000-8000-000000000000");
+        std::fs::write(
+            p.root.join("snap-e/FORMAT"),
+            serde_json::to_vec(&format).unwrap(),
+        )
+        .unwrap();
+        refused(&p.root.join("snap-e"), None, "a FORMAT of another brain");
+    }
+}
+
+#[test]
+fn records_of_another_brain_are_refused() {
+    for concurrent in MODES {
+        let (p, follower) = pair("other-brain", concurrent);
+        let other = Store::open_dir(&p.root.join("other"), mu(concurrent)).unwrap();
+        for n in 0..20 {
+            step(&other, n);
+            step(&p.primary, n);
+        }
+        catch_up(&follower, &p.primary);
+        let before = image_of(follower.records());
+        let page = other
+            .read_commit_log(follower.cursor(), usize::MAX)
+            .unwrap();
+        let foreign = if page.snapshot_required {
+            other.read_commit_log(None, usize::MAX).unwrap()
+        } else {
+            page
+        };
+        let err = follower.apply_page(&foreign).unwrap_err();
+        assert_eq!(err.code, gbrain_store::error::INVALID_STATE, "{err:?}");
+        assert_eq!(image_of(follower.records()), before);
+    }
+}
+
+#[test]
+fn a_follower_of_a_newer_format_is_refused_without_a_change() {
+    let (p, follower) = pair("newer-format", false);
+    drop(follower);
+    let records = p.root.join("follower/records.redb");
+    {
+        let kv = RedbKv::open_path(&records).unwrap();
+        let read = kv.snapshot().unwrap();
+        let mut format: serde_json::Value = serde_json::from_slice(
+            &read
+                .get(&gbrain_store::keys::meta("format"))
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        drop(read);
+        format["format_version"] = json!(99);
+        let mut tx = kv.begin_write().unwrap();
+        tx.put(
+            &gbrain_store::keys::meta("format"),
+            &serde_json::to_vec(&format).unwrap(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+    let bytes = std::fs::read(&records).unwrap();
+    assert_eq!(
+        Follower::open(&p.root.join("follower")).err().unwrap().code,
+        gbrain_store::error::FORMAT_UNKNOWN
+    );
+    assert_eq!(
+        std::fs::read(&records).unwrap(),
+        bytes,
+        "the refused open changed the record file"
+    );
+}
+
+#[test]
+fn a_refused_promotion_leaves_the_follower_unchanged() {
+    let (p, follower) = pair("promote-refused", false);
+    step(&p.primary, 1);
+    catch_up(&follower, &p.primary);
+    let before = image_of(follower.records());
+    let dir = p.root.join("follower");
+    let Pair { primary, .. } = &p;
+    let _ = primary;
+    let mut no_host = mu(false);
+    no_host.multiuser_writes.host_id = None;
+    assert!(follower.promote(no_host).is_err());
+    let follower = Follower::open(&dir).unwrap();
+    assert_eq!(
+        image_of(follower.records()),
+        before,
+        "the refused promotion changed the follower"
+    );
+    assert!(follower.lineage().is_empty());
+}
+
+/// Installs and applies racing on one follower: whatever order they run in, the follower ends at
+/// a state the primary had, with its cursor at its commit sequence.
+#[test]
+fn concurrent_install_and_apply_leave_a_state_the_primary_had() {
+    for concurrent in MODES {
+        let (p, follower) = pair("race", concurrent);
+        for n in 0..10 {
+            step(&p.primary, n);
+        }
+        let (later, manifest) = primary_image(&p.primary, &p.root.join("snap-later"));
+        let page = p
+            .primary
+            .read_commit_log(follower.cursor(), usize::MAX)
+            .unwrap();
+        let follower = Arc::new(follower);
+        for round in 0..20 {
+            let f = follower.clone();
+            let snap = p.root.join("snap-later");
+            let m = manifest.clone();
+            let installer = std::thread::spawn(move || {
+                let _ = f.install_snapshot(&snap, Some(&m));
+            });
+            let _ = follower.apply_page(&page);
+            installer.join().unwrap();
+            let image = image_of(follower.records());
+            assert_eq!(image, later, "concurrent {concurrent}, round {round}");
+            assert_eq!(
+                follower.cursor().unwrap().sequence,
+                follower.sequence().unwrap()
+            );
+        }
     }
 }
 
@@ -383,7 +592,11 @@ impl gbrain_store::FileBackend for Backend {
 }
 
 fn sim_follower(disk: &SimDisk) -> Follower {
-    Follower::over(RedbKv::open_backend(Box::new(Backend(disk.open("f.redb")))).unwrap(), None).unwrap()
+    Follower::over(
+        RedbKv::open_backend(Box::new(Backend(disk.open("f.redb")))).unwrap(),
+        None,
+    )
+    .unwrap()
 }
 
 /// A crash at every I/O call of one install and of one multi-record apply: after the reboot the
@@ -391,7 +604,11 @@ fn sim_follower(disk: &SimDisk) -> Follower {
 /// and it then catches up to the primary.
 #[test]
 fn a_crash_mid_install_or_mid_apply_recovers_to_a_consistent_position() {
-    let modes = [CrashMode::DropUnsynced, CrashMode::TearLast, CrashMode::Subset];
+    let modes = [
+        CrashMode::DropUnsynced,
+        CrashMode::TearLast,
+        CrashMode::Subset,
+    ];
     for concurrent in MODES {
         let (p, _) = pair("crash", concurrent);
         let (installed, manifest) = primary_image(&p.primary, &p.root.join("snap"));
@@ -413,7 +630,8 @@ fn a_crash_mid_install_or_mid_apply_recovers_to_a_consistent_position() {
         let honest = SimDisk::new(11, FaultPlan::none());
         let f = sim_follower(&honest);
         let start = honest.stats().io_ops;
-        f.install_snapshot(&p.root.join("snap"), Some(&manifest)).unwrap();
+        f.install_snapshot(&p.root.join("snap"), Some(&manifest))
+            .unwrap();
         let mid = honest.stats().io_ops;
         f.apply_page(&page).unwrap();
         let end = honest.stats().io_ops;
@@ -432,7 +650,9 @@ fn a_crash_mid_install_or_mid_apply_recovers_to_a_consistent_position() {
             });
             let in_install = k < mid;
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if f.install_snapshot(&p.root.join("snap"), Some(&manifest)).is_ok() {
+                if f.install_snapshot(&p.root.join("snap"), Some(&manifest))
+                    .is_ok()
+                {
                     let _ = f.apply_page(&page);
                 }
             }));
@@ -444,7 +664,10 @@ fn a_crash_mid_install_or_mid_apply_recovers_to_a_consistent_position() {
             let image = image_of(f.records());
             let at = match f.cursor() {
                 None => {
-                    assert!(image.keys.is_empty(), "crash at I/O {k}: an empty follower holds keys");
+                    assert!(
+                        image.keys.is_empty(),
+                        "crash at I/O {k}: an empty follower holds keys"
+                    );
                     "empty"
                 }
                 Some(_) if image == installed => "installed",
@@ -458,14 +681,22 @@ fn a_crash_mid_install_or_mid_apply_recovers_to_a_consistent_position() {
             points += 1;
             // And it goes on to the end from there.
             if f.cursor().is_none() {
-                f.install_snapshot(&p.root.join("snap"), Some(&manifest)).unwrap();
+                f.install_snapshot(&p.root.join("snap"), Some(&manifest))
+                    .unwrap();
             }
             f.apply_page(&page).unwrap();
-            assert_eq!(image_of(f.records()), applied_image, "crash at I/O {k}: catching up");
+            assert_eq!(
+                image_of(f.records()),
+                applied_image,
+                "crash at I/O {k}: catching up"
+            );
         }
         eprintln!("concurrent {concurrent}: {points} crash points: {outcomes:?}");
         assert!(outcomes.contains_key("empty") && outcomes.contains_key("applied"));
-        assert!(outcomes.contains_key("installed"), "no crash landed between the install and the apply");
+        assert!(
+            outcomes.contains_key("installed"),
+            "no crash landed between the install and the apply"
+        );
     }
 }
 
