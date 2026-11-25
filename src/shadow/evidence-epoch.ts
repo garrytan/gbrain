@@ -60,9 +60,6 @@ const sha = (text: string): string => createHash('sha256').update(text).digest('
 /** The inputs in one fixed key order, as text. */
 const canonical = (i: EpochInputs): string => JSON.stringify([i.seed_id, i.rust_addon_sha256, i.comparator_version, i.adapter_version, i.capability_set_hash, i.readiness_policy_hash]);
 
-/** Whether two input sets name the same candidate. */
-export const sameEpochInputs = (a: EpochInputs, b: EpochInputs): boolean => canonical(a) === canonical(b);
-
 /** A stable hash of the capability names the Rust engine reports. */
 export function capabilitySetHash(capabilities: Iterable<string>): string {
   return sha(JSON.stringify([...capabilities].sort())).slice(0, 16);

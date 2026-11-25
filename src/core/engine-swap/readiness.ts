@@ -108,6 +108,8 @@ export const MIN_BENCH_PAIRS = 100;
 export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
+/** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
+export const WRITE_CLIENT_LIMIT = 'client shadow children record no write comparisons';
 
 const DAY_MS = 86_400_000;
 
@@ -245,7 +247,7 @@ function writeComparisons(r: Reader): Check {
   });
   // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
   const named = Object.entries(r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {}).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
-  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
   return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit };
 }
 

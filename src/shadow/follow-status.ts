@@ -12,7 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT } from '../core/engine-swap/readiness.ts';
+import { WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT } from '../core/engine-swap/readiness.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import { writeSampleRate, type ShadowState } from './state.ts';
@@ -214,6 +214,6 @@ export function renderFollowStatus(s: FollowStatus): string[] {
   const wc = s.write_comparisons;
   const families = Object.entries(wc.capability_missing_by_family ?? {}).map(([name, n]) => `${name} ${n}`).join(', ');
   lines.push(`  allocators: ${s.allocators.verified ? `verified ${s.allocators.checked_at}` : 'not verified'}; write comparisons: ${wc.state}`);
-  lines.push(`    writes (epoch): comparable ${wc.comparable}, unexplained ${wc.unexplained_difference}, uncomparable ${wc.uncomparable}; capability_missing ${wc.capability_missing}${families ? ` (by family: ${families})` : ''}${wc.unresolved_replays ? `; ${wc.unresolved_replays} replay(s) with no verdict written yet, so no evidence` : ''}; ${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}`);
+  lines.push(`    writes (epoch): comparable ${wc.comparable}, unexplained ${wc.unexplained_difference}, uncomparable ${wc.uncomparable}; capability_missing ${wc.capability_missing}${families ? ` (by family: ${families})` : ''}${wc.unresolved_replays ? `; ${wc.unresolved_replays} replay(s) with no verdict written yet, so no evidence` : ''}; ${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}`);
   return lines;
 }

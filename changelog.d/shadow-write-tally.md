@@ -11,8 +11,8 @@
 - PGLite brains sample no writes and record no write comparisons, so criterion 5 stays `missing` on them. PGLite has one connection, and a read that runs past its 2 seconds cannot be stopped there. The status line and the swap report say so.
 - A save of the tally is flushed to disk (the file, then its directory) before a replay may start or a result counts as saved, and a save that may have landed is added once when it is retried.
 - A lock whose holder died is now taken over through a separate takeover file, so two shadow processes can never both hold the lock, and a process releases only the lock it took. A lock file left empty by a crash is never taken over automatically (remove it by hand), because it cannot be told apart from a lock that is still being created. The epoch manifest uses the same lock code.
-- A result that could not be saved is tied to the evidence epoch it was made in, so after the epoch changes it is never added to the new epoch's counts, and a failed save can no longer make the next outcome disappear.
-- A shadow child that is a client of another process's Rust store now records its write comparisons too, under the current epoch, as long as its own addon and inputs are the epoch's. It never opens or changes an epoch.
+- A failed save can no longer make the next outcome disappear: a save that may have landed is kept sealed until a durable save takes it, and each outcome after it is counted once.
+- Only the shadow child that owns the Rust store records write comparisons. A client child (one that talks to another process's store) records nothing, adds no evidence and can never make criterion 5 pass; the status line and the swap report say so. The cost is fewer comparable writes, so criterion 5 reaches 1,000 later. The owner's evidence epoch is fixed for its life, so an epoch change during a replay cannot count that replay's result in the new epoch.
 - The status line and the swap report no longer say that comparisons are not recorded. They still say that a criterion 5 pass covers page and link writes only, and the pass rule (zero unexplained differences on at least 1,000 comparable writes) is unchanged.
 
 ### Fixed

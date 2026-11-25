@@ -186,31 +186,6 @@ describe('the locked write tally', () => {
     expect(other.counts().comparable).toBe(1002);
   });
 
-  const INPUTS = { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' };
-  /** The manifest's epoch changes A, then B, then A again: three epochs, the third not the first. A client reads whichever is current. */
-  const rotate = (dir: string): string => { ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'b' } as never, NOW.getTime() + 1000); return ensureEpoch(dir, INPUTS as never, NOW.getTime() + 2000).epoch_id; };
-
-  test('a verdict kept from a retired epoch never counts in a later one, and a replay\'s verdict belongs to the epoch its mark is in', () => {
-    const dir = tmp();
-    const e1 = ensureEpoch(dir, INPUTS as never, NOW.getTime()).epoch_id;
-    const now = (): string | null => readEpoch(dir)?.epoch_id ?? null; // what a client\'s epoch getter sees
-    const mine = new WriteTally(dir, now, () => true, process.pid);
-    expect(mine.begin()).toBe(true);
-    const unblock = blockSave(dir, process.pid);
-    mine.note('comparable', undefined, 1, true); // E1's verdict cannot be saved: kept
-    const e3 = rotate(dir); expect(e3).not.toBe(e1);
-    unblock();
-    expect(mine.begin()).toBe(true); // E3
-    mine.note('comparable', undefined, 1, true);
-    expect(readWriteTally(dir, e3)).toMatchObject({ comparable: 1, in_flight: [] }); // not 2: E1's verdict was not added to E3
-    // A replay begun in E3 whose epoch rotates before its verdict: the verdict is E3's, so it is not counted in E4.
-    expect(mine.begin()).toBe(true);
-    ensureEpoch(dir, { ...INPUTS, rust_addon_sha256: 'c' } as never, NOW.getTime() + 3000);
-    const e4 = now()!;
-    mine.note('comparable', undefined, 1, true);
-    expect(readWriteTally(dir, e4)?.comparable ?? 0).toBe(0);
-  });
-
   test('a failed begin() before the rename cannot unseal a batch that may have landed: the next outcome is counted, not lost', async () => {
     const dir = tmp();
     const { epoch } = tallyOn(dir); saved(dir, epoch);
@@ -292,10 +267,11 @@ describe('the locked write tally', () => {
   });
 });
 
-describe('a client child records write comparisons when its inputs are the current epoch\'s', () => {
+describe('a client child records no write comparison (lane owner ruling)', () => {
   const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
   const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
   const sample = JSON.stringify({ t: 'write', op: 'addTag', outcome: 'capability_missing', family: 'tags' }) + '\n';
+  const replay = JSON.stringify({ t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } }) + '\n';
   async function run(dir: string, role: 'owner' | 'client', sha: string, lines: string[]): Promise<void> {
     const input = new PassThrough();
     const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, addonSha256: () => sha, openEngine: () => ({ ownerRole: role, async connect() {}, async disconnect() {} }) as never });
@@ -304,21 +280,24 @@ describe('a client child records write comparisons when its inputs are the curre
     await done;
   }
   const seeded = (): string => { const d = tmp(); writeSeedRecord(d, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never); return d; };
-  const tags = (dir: string): number | undefined => (JSON.parse(readFileSync(writeTallyPath(dir), 'utf8')) as { capability_missing_by_family: Record<string, number> }).capability_missing_by_family.tags;
 
-  test('a client whose addon and inputs are the epoch\'s counts into it, and one whose addon is not neither counts nor changes the epoch', async () => {
+  test('only the owner child records; a client child adds nothing, with the epoch\'s own addon and inputs, and across an A to B to A epoch rotation', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
-      const dir = seeded();
-      await run(dir, 'owner', 'a'.repeat(64), [sample]); // the owner opens the epoch and counts one
-      const epoch = JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8')).epoch_id as string;
-      expect(tags(dir)).toBe(1);
-      await run(dir, 'client', 'a'.repeat(64), [sample, sample]); // the same addon, as a client of another process's store: counted
-      expect(tags(dir)).toBe(3);
+      const dir = seeded(); const A = 'a'.repeat(64);
+      await run(dir, 'owner', A, [sample]); // the owner opens the epoch and counts one
+      const epoch = readEpoch(dir)!.epoch_id;
+      expect(readWriteTally(dir, epoch)).toMatchObject({ capability_missing: 1 });
       const before = readFileSync(writeTallyPath(dir), 'utf8');
-      await run(dir, 'client', 'b'.repeat(64), [sample]); // another addon: its comparisons belong to another epoch, so nothing is counted here
+      await run(dir, 'client', A, [sample, replay]); // the same addon and inputs, as a client of another process's store: nothing is counted, no replay runs
       expect(readFileSync(writeTallyPath(dir), 'utf8')).toBe(before);
-      expect(JSON.parse(readFileSync(join(dir, 'evidence', 'epoch.json'), 'utf8')).epoch_id).toBe(epoch); // and the epoch is not opened or changed
-      expect(existsSync(join(dir, 'evidence', 'epochs.jsonl'))).toBe(false);
+      await run(dir, 'owner', 'b'.repeat(64), []); // another addon takes the store: a second epoch
+      await run(dir, 'client', 'b'.repeat(64), [sample, replay]); // its client: still nothing
+      await run(dir, 'owner', A, []); // and A again, which is a third epoch, not the first
+      const third = readEpoch(dir)!.epoch_id;
+      expect(third).not.toBe(epoch);
+      await run(dir, 'client', A, [sample, replay]); // a client with the third epoch's own addon and inputs: nothing is counted in it
+      expect(readFileSync(writeTallyPath(dir), 'utf8')).toBe(before); // the file is byte for byte the first owner's
+      expect(readWriteTally(dir, third)).toBeNull();
     });
   }, 60_000);
 });

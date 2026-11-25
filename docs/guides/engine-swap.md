@@ -90,8 +90,15 @@ never a pass. With no shadow running, every criterion is `missing`.
    therefore samples no write: it takes no pre-read, `write_comparisons` stays `capability_missing` with zero counts, and criterion 5
    stays `missing`. Postgres keeps the sampler, and stops a slow read with a server-side statement timeout of the same length.
 
+   **Only the owner child records.** Shadow mode runs one child per gbrain process, and only the child that owns the Rust store has a
+   fixed evidence epoch; a client of another process's store has none. A client child records no write comparison at all: it adds no
+   evidence and can never make criterion 5 pass (it counts its sampled writes as unrecorded and replays nothing), and `gbrain engine
+   shadow status` and the swap report say "client shadow children record no write comparisons". The cost is fewer comparable writes,
+   so criterion 5 reaches 1,000 later. Because the owner's epoch never changes during its life, an epoch change while a replay is
+   running cannot count that replay's result in the new epoch.
+
    **How the counts are kept.** Counts live in `write-comparisons.json` in the shadow directory, per evidence epoch, and
-   change only under one cross-process lock (the same lock code as the epoch manifest, where a lock whose holder died is taken over through a separate takeover file, so two processes never both enter; a takeover file, or a lock file left empty by a crash between creating it and writing it, refuses the lock until it is removed by hand, because neither can be told apart from a live one, and the tally then records nothing, which is no evidence, never a pass). Each unsaved result is tied to the evidence epoch it was made in and is never added to another epoch's counts. Each update adds this child's
+   change only under one cross-process lock (the same lock code as the epoch manifest, where a lock whose holder died is taken over through a separate takeover file, so two processes never both enter; a takeover file, or a lock file left empty by a crash between creating it and writing it, refuses the lock until it is removed by hand, because neither can be told apart from a live one, and the tally then records nothing, which is no evidence, never a pass). Each update adds this child's
    unsaved results to what the file holds at that moment; it never writes back a copy it read earlier, so one child
    cannot erase a difference another saved, and a result whose save failed is kept and added at the next save. Before a
    replay starts, the child writes its process id into the file's in-flight list, and the replay runs only if that write

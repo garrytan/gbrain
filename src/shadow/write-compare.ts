@@ -159,7 +159,7 @@ const running = (pid: number): boolean => { try { process.kill(pid, 0); return t
 
 /**
  * The write tally (swap criterion 5). The file changes only inside one cross-process lock, as a read-modify-write of THIS child's unsaved verdicts
- * (`pending` batches) onto what the file holds now: a held snapshot is never written back, so nothing another child saved can be overwritten. A save
+ * (`pending` batches) onto what the file holds now: a held snapshot is never written back, so nothing another child saved can be overwritten. Only the child that owns the Rust store has an epoch (one fixed id for its life: `epoch()` is the owner's `curEpoch`, null for a client), so a client child records nothing and a retired epoch's results can never be added to another epoch's file (a save also refuses a file whose manifest epoch is not this child's). A save
  * is the temp file flushed, renamed over the file and the directory flushed; only then do its batches count as saved. A save that fails, at any point
  * (even after the rename, where it may have landed), keeps its batches, and `applied` (the last batch number of this child the file has taken) makes the
  * retry add each batch once. A replay publishes its pid in `in_flight` (`begin`, true only when that is durable on disk; the caller refuses the replay on
@@ -170,7 +170,6 @@ export class WriteTally {
   private pending: Array<{ seq: number; delta: WriteTallyFile; ending: boolean }> = [];
   private sealed = 0; // the first `sealed` pending batches were in a save that may have landed: never added to, until a durable save takes them
   private seq = 0;
-  private marked: string | null = null; // the epoch of the mark this child has published
   private readonly id: string;
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid) { this.id = `${pid}.${randomBytes(4).toString('hex')}`; }
   /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
@@ -188,7 +187,7 @@ export class WriteTally {
         for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
         file.in_flight = file.in_flight.filter((p) => !dead.includes(p));
         for (const id of Object.keys(file.applied)) if (id !== this.id && !running(Number.parseInt(id, 10))) delete file.applied[id];
-        const todo = batches.filter((b) => b.delta.epoch_id === epoch && b.seq > (file.applied![this.id] ?? 0)); // a batch of a retired epoch is never added to another's file
+        const todo = batches.filter((b) => b.seq > (file.applied![this.id] ?? 0));
         if (!change && !dead.length && !todo.length) return;
         for (const b of todo) {
           for (const o of OUTCOMES) file[o] += b.delta[o];
@@ -210,21 +209,15 @@ export class WriteTally {
     } catch { if (renamed) this.sealed = batches.length; return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved batches for the next save
   }
   /** Publishes this pid as having a replay in flight. True only when that is durable on disk: on false the replay must not run. */
-  begin(): boolean {
-    const epoch = this.epoch();
-    if (!this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); })) return false;
-    this.marked = epoch; // the replay's verdict belongs to the epoch its mark is in, whatever the epoch is by then
-    return true;
-  }
+  begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
   /** At child start: counts the marks of dead processes (and of an earlier process with this pid), and saves any verdict still unsaved. */
   recover(): void { this.update(undefined, true); }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. */
   note(outcome: WriteOutcome, key?: string, n = 1, ends = false): void {
-    const epoch = (ends && this.marked) || this.epoch();
+    const epoch = this.epoch();
     if (epoch === null || !this.alive()) return;
-    if (ends) this.marked = null;
     let batch = this.pending.at(-1);
-    if (!batch || this.pending.length === this.sealed || batch.delta.epoch_id !== epoch) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), ending: false });
+    if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), ending: false });
     applyVerdict(batch.delta, outcome, key, n);
     batch.ending ||= ends;
     this.update();
