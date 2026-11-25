@@ -280,7 +280,7 @@ describe('runGoogleConnect — needs_client_credentials (non-TTY, no creds anywh
 });
 
 describe('runGoogleConnect — two-step paste flow', () => {
-  test('step 1: --client-json + --paste (non-TTY) → awaiting_consent, 0600 pending file, client in the vault', async () => {
+  test('step 1: --client-json + --paste (non-TTY) → awaiting_consent, 0600 pending file, client waits there until consent', async () => {
     const home = freshHome();
     await withEnv(connectEnv(home), async () => {
       const clientJson = writeClientJsonFile(home);
@@ -307,11 +307,10 @@ describe('runGoogleConnect — two-step paste flow', () => {
       expect(pending.scopes).toEqual(['openid', 'email', GMAIL_SCOPE]); // gmail-only + base
       expect(pending.client_id).toBe(CLIENT_ID);
 
-      // The OAuth client landed in the vault.
-      const vault = readVault(home);
-      expect(vault.clients).toHaveLength(1);
-      expect(vault.clients[0].client_id).toBe(CLIENT_ID);
-      expect(Object.keys(vault.credentials)).toHaveLength(0); // no tokens yet
+      // GST-3849: the client is stored only together with a verified grant,
+      // so before consent it waits in the 0600 pending record, not the vault.
+      expect((pending as PendingShape & { client_secret?: string }).client_secret).toBeTruthy();
+      expect(existsSync(join(home, '.gbrain', 'credentials.json')) ? readVault(home).clients : []).toHaveLength(0);
 
       // Funnel heartbeats so far.
       const events = readHeartbeats(home).map((h) => h.event);
