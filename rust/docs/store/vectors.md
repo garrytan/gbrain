@@ -108,7 +108,8 @@ vectors by `updateTakeEmbeddings`; both raise the vector generation. The parity 
 ## `cosinesByChunkIds`
 
 The hybrid pipeline rescores the vector arm's candidates with `cosinesByChunkIds(ids, column, query)`, which the
-store serves as an exact scan (`Store::cosines_by_chunk_ids`): one `{ id, cosine }` row per chunk that is
+store serves as an exact cosine (`Store::cosines_by_chunk_ids`) over only the pages that hold those chunk ids, found by
+key ([keyed-index.md](keyed-index.md)): one `{ id, cosine }` row per chunk that is
 visible to `getEmbeddingsByChunkIds` and has a vector, and no row for an id that is missing, deleted or has no
 vector. The score is the text-space cosine, and it is `0` when the stored vector has another dimension count
 or either norm is zero. The TypeScript member returns a map of chunk id to cosine. A query pgvector cannot parse refuses `invalid_argument`. The TypeScript member refuses a

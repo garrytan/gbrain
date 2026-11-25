@@ -6,7 +6,8 @@ These methods work on the pages of [Pages](pages.md). The one key they add is th
 
 Every date is an ISO string with microseconds (`2026-08-10T12:00:00.000123Z`) or `null`; the
 TypeScript members turn them into `Date` where PGLite returns one. Text sorts in byte order.
-There are no secondary indexes yet: each method scans the pages of its scope.
+There are no secondary indexes yet, except the keyed lookups that `findDuplicatePage` and `findDuplicatePages` read
+([keyed-index.md](keyed-index.md)): every other method scans the pages of its scope.
 
 A read scope (`PageReadScope`) is `{ sourceId?, sourceIds?, live?, excludePrivate?, minTrust?, suppressFlagged? }`. A non-empty `sourceIds`
 wins over a non-empty `sourceId`; with neither, every source. `live: true` also hides deleted pages,
