@@ -4528,6 +4528,58 @@ More: [docs/ENGINES.md#pglite-vector-index-ceiling](../../docs/ENGINES.md#pglite
 |---|---|---|---|---|---|---|
 | The saved plan has no valid repository identity. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### policy_approval_reserved
+
+<a id="policy_approval_reserved"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a reserved agent-policy setting (policy.approved.<scope>, or brain_first.policy_line from an agent session) was refused, so nothing was changed. | The approved agent policy is what policy_check serves, so only an owner-confirmed gbrain policy command may write it; a plain config set, an agent session or a remote caller cannot approve a policy for itself. | Change the policy with gbrain policy allow\|ask\|deny\|edit, or approve a pending revision with gbrain policy accept <revision>, in your own terminal. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_approval_reserved](../../docs/guides/agent-policy.md#policy_approval_reserved)
+
+### policy_confirm_required
+
+<a id="policy_confirm_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An agent policy change was not applied because the owner did not confirm it here: this process looks like an agent session, has no terminal to ask on, or the confirmation code was not typed. | An agent must not approve its own policy. The change waits as a pending revision that changes nothing policy_check serves, until the owner confirms that exact revision in their own terminal or in the owner session. | Ask the owner to run the command in fix in their own terminal, outside the agent session; do not retry it from the agent. | user | `repeat the read that failed` | 1 | no |
+
+Reasons: `agent_marker`, `no_terminal`, `declined`.
+
+More: [docs/guides/agent-policy.md#policy_confirm_required](../../docs/guides/agent-policy.md#policy_confirm_required)
+
+### policy_malformed
+
+<a id="policy_malformed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The agent policy fence could not be parsed (the error names the line and column), so nothing was changed or approved. | policy_check serves only an owner-approved, well-formed policy; a malformed page is never approved, and while the page is malformed every verb answers ask. | Run gbrain policy show --check to see the problem, then fix it with gbrain policy edit. Run: gbrain policy show --check | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_malformed](../../docs/guides/agent-policy.md#policy_malformed)
+
+### policy_owner_only
+
+<a id="policy_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype the agent policy page, so nothing was written. | The agent policy is owner-only: remote callers (MCP and HTTP) read it through policy_check and agent_policy but never write it, so an agent cannot widen its own permissions. | Ask the owner to change it with gbrain policy on the brain host. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_owner_only](../../docs/guides/agent-policy.md#policy_owner_only)
+
+### policy_revision_stale
+
+<a id="policy_revision_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The revision named for approval is not the policy page's current revision, so nothing was approved. | Approval binds one exact revision; approving an older one would serve rules the owner did not see. | Run gbrain policy status to see the pending revision, then approve that one. Run: gbrain policy status | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/agent-policy.md#policy_revision_stale](../../docs/guides/agent-policy.md#policy_revision_stale)
+
 ### pool_inflight_over_budget
 
 <a id="pool_inflight_over_budget"></a>

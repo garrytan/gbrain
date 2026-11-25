@@ -74,6 +74,8 @@ export interface GBrainConfig {
    * memorableGateAllowed in core/context/hook-heartbeat.ts.
    */
   integrations?: { memorable?: { enabled?: boolean } };
+  /** L1: whether the brain-first block carries the agent-policy line (on|off); written only owner-confirmed (commands/config/reserved-keys.ts). */
+  brain_first?: { policy_line?: string };
   /** Monthly backup-coverage check. File-plane for engine-free hook children. */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
   /** #5232: CLI write wait in ms (file plane; persistence/write-wait.ts). */
