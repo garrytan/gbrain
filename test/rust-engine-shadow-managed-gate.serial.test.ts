@@ -116,6 +116,8 @@ describe('engine shadow start on a managed-storage brain', () => {
     const state = readShadowState(shadowDir())!;
     expect(state.enabled).toBe(true);
     expect(state.storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
+    // A managed brain cannot opt in to the swap: its shadow keeps the general write sample rate (no field: the default).
+    expect(state.write_sample_rate).toBeUndefined();
     expect(JSON.parse(readFileSync(join(shadowDir(), 'state.json'), 'utf8')).storage).toEqual({ managed: true, checked_at: NOW.toISOString() });
   });
 

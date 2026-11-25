@@ -105,6 +105,8 @@ describe('gbrain engine shadow', () => {
       expect(dir.startsWith(join(home, '.gbrain', 'shadow'))).toBe(true);
       const state = readShadowState(dir)!;
       expect(state).toMatchObject({ enabled: true, plan_hash: hash, sample_rate: 0.1, primary_engine: 'pglite' });
+      // An unmanaged brain's shadow is the opt-in swap's evidence: it compares every write (rate 1.0, D26 / ask D).
+      expect(state.write_sample_rate).toBe(1);
       expect(statSync(join(dir, 'state.json')).mode & 0o777).toBe(0o600);
       // The brain itself is untouched: no PGLite directory was created.
       expect(existsSync(config.database_path!)).toBe(false);
