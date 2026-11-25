@@ -7,6 +7,7 @@ import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lo
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseGlobalFlags } from './cli-options.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './persistence/native-lock.ts';
+import { runPgliteCreateGuard } from './pglite-create-guard.ts';
 import type { Action } from './agent-output.ts';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -343,6 +344,7 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
       try {
         let migrated = false;
         try { migrated = JSON.parse(readFileSync(markerPath, 'utf8')).protocol === protocol; } catch { /* first upgrade */ }
+        runPgliteCreateGuard(canonical);
         mkdirSync(canonical, { recursive: true });
         let reaped = false;
         try { mkdirSync(lockDir); }
