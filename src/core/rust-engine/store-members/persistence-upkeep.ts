@@ -29,5 +29,15 @@ export const persistenceUpkeepStore = async (brain: StoreBrain): Promise<Persist
     lockRearmableEffects: (requestIds, code) => call('lockRearmableEffects', [...requestIds], code),
     rearmEffect: async (id, dataJson) => { await call('rearmEffect', id, dataJson); },
     renewHeldEffectClaim: (id, token) => call<boolean>('renewHeldEffectClaim', id, token),
+    floorPreparationAttempts: async (id, limit) => { await call('floorPreparationAttempts', id, limit); },
+    chargePreparationAttempt: async (id, token) => {
+      const charged = await call<number | string | null>('chargePreparationAttempt', id, token);
+      return charged === null ? null : Number(charged);
+    },
+    readHealthFacts: (roots) => call('readHealthFacts', [...roots]),
+    nextScanSlug: (sourceId, afterSlug) => call<string | null>('nextScanSlug', sourceId, afterSlug),
+    effectRecovering: (id) => call<boolean | null>('effectRecovering', id),
+    recordSkippedTarget: async (id, token, targetJson, limit) => { await call('recordSkippedTarget', id, token, targetJson, limit); },
+    listOwnedBoundSources: (hostId) => call<string[]>('listOwnedBoundSources', hostId),
   };
 };

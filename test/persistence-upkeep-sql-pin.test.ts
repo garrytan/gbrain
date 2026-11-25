@@ -11,9 +11,40 @@ import { PERSISTENCE_UPKEEP_SQL } from '../src/core/engine-sql/persistence-upkee
 import { REARMABLE_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
+import { RELEASED_DEFERRED } from '../src/core/persistence/worktree-refresh-schema.ts';
 
 const OPEN_SYNC_PASS_SQL = (r: string) => `${r}.intent ? 'passId' AND EXISTS (SELECT 1 FROM op_checkpoints p
       WHERE p.op='${MANAGED_SYNC_PASS_OP}' AND p.completed_keys->0->'telemetry'->>'pass_id'=${r}.intent->>'passId' AND p.completed_keys->0->'telemetry'->>'outcome'='open')`;
+
+const STUCK_RECOVERY = (r: string) => `(${r}.state='recovering' OR (${r}.recovery IS NOT NULL AND (${r}.state<>'running' OR ${r}.claim_expires_at<now())))`;
+
+/** `writeHealthFacts`' statement as journal.ts composed it. */
+const HEALTH_FACTS = `
+    WITH roots AS (SELECT unnest($1::text[]) AS root)
+    SELECT roots.root,head.sequence::text,head.started_sequence::text,head.started_unlaned::text,COALESCE(head.inspect_owner,false) AS inspect_owner,
+      COALESCE(head.recovering,false) OR EXISTS (SELECT 1 FROM persistence_effects e
+        WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.worktree_id=w.id AND f.state='recovery_required') AS recovery_required,
+      w.id IS NOT NULL AND (w.state<>'active' OR w.owner_host_id IS NULL) AS owner_unavailable
+    FROM roots LEFT JOIN persistence_worktrees w ON w.id::text=roots.root
+    LEFT JOIN LATERAL (
+      (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id=w.id
+          AND (s.state IN ('running','recovering') OR s.recovery IS NOT NULL) ORDER BY s.sequence LIMIT 1) AS started_sequence,
+        (SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id=w.id
+          AND (s.state IN ('running','recovering') OR s.recovery IS NOT NULL)
+          AND NOT (s.state='running' AND s.recovery IS NULL AND s.operation='submit_job') ORDER BY s.sequence LIMIT 1) AS started_unlaned,
+        ${STUCK_RECOVERY('r')} AS recovering,
+        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
+        WHERE r.worktree_id=w.id AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL OR ${RELEASED_DEFERRED('r')})
+        ORDER BY r.sequence LIMIT 1)
+      UNION ALL
+      (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id IS NULL AND s.source_incarnation=r.source_incarnation
+          AND s.state IN ('running','recovering') ORDER BY s.sequence LIMIT 1) AS started_sequence,NULL::bigint AS started_unlaned,
+        ${STUCK_RECOVERY('r')} AS recovering,
+        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
+        WHERE r.worktree_id IS NULL AND r.source_incarnation=CASE WHEN roots.root LIKE 'db:%' THEN substring(roots.root FROM 4)::uuid END
+        AND r.state IN ('queued','running','recovering') ORDER BY r.sequence LIMIT 1)
+    ) head ON true`;
 
 test('the upkeep statements are their callers\' text with the shared fragments spliced in', () => {
   expect({ ...PERSISTENCE_UPKEEP_SQL } as Record<string, string>).toEqual({
@@ -38,5 +69,16 @@ test('the upkeep statements are their callers\' text with the shared fragments s
       next_attempt_at=now(),updated_at=now() WHERE id=$1 AND execution_token IS NULL AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
     renewHeldClaim: `UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
       WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`,
+    floorPreparationAttempts: `UPDATE persistence_requests SET preparation_attempts=GREATEST(preparation_attempts,$2::integer),updated_at=now()
+    WHERE id=$1::uuid AND state IN ('queued','running') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
+    chargePreparationAttempt: `UPDATE persistence_requests SET preparation_attempts=preparation_attempts+1,updated_at=now()
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING preparation_attempts`,
+    healthFacts: HEALTH_FACTS,
+    nextScanSlug: 'SELECT slug FROM pages WHERE source_id=$1 AND ($2::text IS NULL OR slug>$2) ORDER BY slug LIMIT 1',
+    effectRecovering: 'SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1',
+    recordSkippedTarget: `UPDATE persistence_effects SET data=jsonb_set(data,'{skipped}',COALESCE(data->'skipped','[]'::jsonb)||$3::text::jsonb)
+    WHERE id=$1 AND execution_token=$2::uuid AND jsonb_array_length(COALESCE(data->'skipped','[]'::jsonb))<$4`,
+    ownedBoundSources: `SELECT s.source_id FROM persistence_source_bindings s
+    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`,
   });
 });

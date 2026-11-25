@@ -7,6 +7,12 @@
 //! - effect claim upkeep (`rearmWithheldTargets`, `effectClaimKeeper`, persistence/effect-journal.ts):
 //!   the re-armable effects, the re-arm write and the held claim's renewal.
 //!
+//! - the preparation-attempt counters, a write receipt's health facts and the segment sweep's
+//!   owned sources (`floorPreparationAttempts`, `chargePreparationAttempt`, `writeHealthFacts`,
+//!   `sweepSegmentStorage`, persistence/journal.ts);
+//! - an effect attempt's next scan page, recovery probe and skipped target (`selectedEffectPage`,
+//!   `recordFailure`, `recordSkippedTarget`, persistence/effects.ts).
+//!
 //! The transaction-local lock and statement waits the compaction sets are Postgres settings with no
 //! store counterpart (decision C of `persistence.rs`: the store runs one write at a time), so the
 //! TypeScript member answers them without a store call. The row locks (`FOR UPDATE`, `SKIP
@@ -16,12 +22,20 @@
 use super::effect_worker::{CLAIM_LEASE_US, claimed, parked_with, pg_uuid};
 use super::effects::{EffectRecord, all_effects, request_effects, write_effect};
 use super::receipt_compaction::{first_records, in_open_pass, in_open_run};
-use super::{distinct_keys, read_counter, request_by_id, write_counter};
+use super::worktree_admission::{all_refreshes, released_deferred_in};
+use super::worktree_rows::{list_source_bindings, read_worktree_row};
+use super::write_claim_terms::worktree_of;
+use super::{
+    all_requests, distinct_keys, extra_i64, extra_is_null, extra_time, read_counter, request_by_id,
+    write_counter,
+};
 use crate::Store;
 use crate::env::parse_iso;
 use crate::error::{Result, StoreError};
+use crate::journal::RequestRecord;
 use crate::journal::write_request;
 use crate::kv::KvRead;
+use crate::pages::all_pages;
 use serde_json::{Value, json};
 
 /// `$n::timestamptz` of a compaction cutoff, refused in the cast's words.
@@ -125,6 +139,130 @@ fn id_arg(args: &[Value], at: usize, op: &str) -> Result<String> {
             "{op}: argument {at} is not an id"
         ))),
     }
+}
+
+/// `STUCK_RECOVERY(r)`: recovering, or holding a recovery record while not running under a live
+/// claim. A running claim with no expiry compares NULL, which `COALESCE(..., false)` reads as false.
+fn stuck_recovery(r: &RequestRecord, now: i64) -> bool {
+    r.state == "recovering"
+        || (!extra_is_null(r, "recovery")
+            && (r.state != "running" || extra_time(r, "claim_expires_at").is_some_and(|t| t < now)))
+}
+
+fn recovery_held(r: &RequestRecord) -> bool {
+    !extra_is_null(r, "recovery")
+}
+
+/// `r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes')`.
+fn inspect_owner(r: &RequestRecord) -> bool {
+    matches!(
+        r.blocked_reason.as_deref(),
+        Some("unexpected_file_bytes" | "unexpected_staging_bytes")
+    )
+}
+
+/// The lowest sequence of `rows`, as `sequence::text`.
+fn first_sequence<'a>(rows: impl Iterator<Item = &'a RequestRecord>) -> Value {
+    rows.map(|r| r.sequence)
+        .min()
+        .map_or(Value::Null, |s| json!(s.to_string()))
+}
+
+/// One root's health facts (the `writeHealthFacts` statement): its head request's sequence, the
+/// first started sequences, and the recovery, owner and inspection flags.
+fn health_fact(
+    read: &dyn KvRead,
+    root: &str,
+    requests: &[RequestRecord],
+    now: i64,
+) -> Result<Value> {
+    // `w.id::text = roots.root`: a worktree id is stored as lower-case text.
+    let worktree = if root == root.to_lowercase() {
+        read_worktree_row(read, root)?
+    } else {
+        None
+    };
+    let mut sequence = Value::Null;
+    let mut started_sequence = Value::Null;
+    let mut started_unlaned = Value::Null;
+    let mut recovering = false;
+    let mut inspect = false;
+    if worktree.is_some() {
+        let mine: Vec<&RequestRecord> = requests
+            .iter()
+            .filter(|r| worktree_of(r).as_deref() == Some(root))
+            .collect();
+        let mut head: Option<&RequestRecord> = None;
+        for r in &mine {
+            let pending = matches!(r.state.as_str(), "queued" | "running" | "recovering")
+                || recovery_held(r)
+                || released_deferred_in(read, r)?;
+            if pending && head.is_none_or(|h| r.sequence < h.sequence) {
+                head = Some(r);
+            }
+        }
+        if let Some(h) = head {
+            let started = |r: &&&RequestRecord| {
+                matches!(r.state.as_str(), "running" | "recovering") || recovery_held(r)
+            };
+            sequence = json!(h.sequence.to_string());
+            started_sequence = first_sequence(mine.iter().filter(started).copied());
+            started_unlaned = first_sequence(
+                mine.iter()
+                    .filter(started)
+                    .filter(|r| {
+                        !(r.state == "running" && !recovery_held(r) && r.operation == "submit_job")
+                    })
+                    .copied(),
+            );
+            recovering = stuck_recovery(h, now);
+            inspect = inspect_owner(h);
+        }
+    } else if let Some(incarnation) = root.strip_prefix("db:") {
+        let incarnation = pg_uuid(incarnation)?;
+        let mine: Vec<&RequestRecord> = requests
+            .iter()
+            .filter(|r| {
+                worktree_of(r).is_none() && r.source_incarnation.eq_ignore_ascii_case(&incarnation)
+            })
+            .collect();
+        let head = mine
+            .iter()
+            .filter(|r| matches!(r.state.as_str(), "queued" | "running" | "recovering"))
+            .min_by_key(|r| r.sequence);
+        if let Some(h) = head {
+            sequence = json!(h.sequence.to_string());
+            started_sequence = first_sequence(
+                mine.iter()
+                    .filter(|r| matches!(r.state.as_str(), "running" | "recovering"))
+                    .copied(),
+            );
+            recovering = stuck_recovery(h, now);
+            inspect = inspect_owner(h);
+        }
+    }
+    let (recovery_required, owner_unavailable) = match &worktree {
+        None => (recovering, false),
+        Some(w) => {
+            let effect_recovery = super::effects::all_effects(read)?.iter().any(|e| {
+                e.worktree_id
+                    .as_deref()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(root))
+                    && e.recovery.is_some()
+            });
+            let refresh_recovery = all_refreshes(read)?.iter().any(|f| {
+                f.worktree_id.eq_ignore_ascii_case(root) && f.state == "recovery_required"
+            });
+            (
+                recovering || effect_recovery || refresh_recovery,
+                w.state != "active" || w.owner_host_id.is_none(),
+            )
+        }
+    };
+    Ok(json!({
+        "root": root, "sequence": sequence, "started_sequence": started_sequence, "started_unlaned": started_unlaned,
+        "inspect_owner": inspect, "recovery_required": recovery_required, "owner_unavailable": owner_unavailable,
+    }))
 }
 
 impl Store {
@@ -285,6 +423,126 @@ impl Store {
                     write_effect(tx, &e)?;
                     Ok(json!(true))
                 })
+            }
+            "floorPreparationAttempts" => {
+                let id = text_arg(args, 0, op)?;
+                let limit = bigint_arg(args, 1, op)?;
+                let now = self.env.now_micros();
+                self.write(|tx| {
+                    let Some(mut r) = request_by_id(&*tx, &id)? else {
+                        return Ok(Value::Null);
+                    };
+                    if !matches!(r.state.as_str(), "queued" | "running") {
+                        return Ok(Value::Null);
+                    }
+                    let current = extra_i64(&r, "preparation_attempts");
+                    r.extra
+                        .insert("preparation_attempts".into(), json!(current.max(limit)));
+                    r.updated_at_us = now;
+                    write_request(tx, &r)?;
+                    Ok(Value::Null)
+                })
+            }
+            "chargePreparationAttempt" => {
+                let id = text_arg(args, 0, op)?;
+                let token = opt_text_arg(args, 1, op)?
+                    .map(|t| pg_uuid(&t))
+                    .transpose()?;
+                let now = self.env.now_micros();
+                self.write(|tx| {
+                    let Some(token) = &token else {
+                        return Ok(Value::Null);
+                    };
+                    let Some(mut r) = request_by_id(&*tx, &id)? else {
+                        return Ok(Value::Null);
+                    };
+                    let holds = r.state == "running"
+                        && r.extra
+                            .get("execution_token")
+                            .and_then(Value::as_str)
+                            .is_some_and(|t| t.eq_ignore_ascii_case(token));
+                    if !holds {
+                        return Ok(Value::Null);
+                    }
+                    let attempts = extra_i64(&r, "preparation_attempts") + 1;
+                    r.extra
+                        .insert("preparation_attempts".into(), json!(attempts));
+                    r.updated_at_us = now;
+                    write_request(tx, &r)?;
+                    Ok(json!(attempts))
+                })
+            }
+            "readHealthFacts" => {
+                let roots = texts_arg(args, 0, op)?;
+                let read = self.read()?;
+                let now = self.env.now_micros();
+                let requests = all_requests(&*read)?;
+                let rows = roots
+                    .iter()
+                    .map(|root| health_fact(&*read, root, &requests, now))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Value::Array(rows))
+            }
+            "nextScanSlug" => {
+                let source = text_arg(args, 0, op)?;
+                let after = opt_text_arg(args, 1, op)?;
+                let read = self.read()?;
+                let next = all_pages(&*read)?
+                    .into_iter()
+                    .filter(|p| {
+                        p.source_id == source
+                            && after.as_deref().is_none_or(|a| p.slug.as_str() > a)
+                    })
+                    .map(|p| p.slug)
+                    .min();
+                Ok(next.map_or(Value::Null, Value::String))
+            }
+            "effectRecovering" => {
+                let id = super::effect_worker::effect_id(&id_arg(args, 0, op)?)?;
+                let read = self.read()?;
+                Ok(super::effects::effect_by_id(&*read, id)?
+                    .map_or(Value::Null, |e| json!(e.recovery.is_some())))
+            }
+            "recordSkippedTarget" => {
+                let id = id_arg(args, 0, op)?;
+                let token = opt_text_arg(args, 1, op)?;
+                let targets: Value = serde_json::from_str(&text_arg(args, 2, op)?)
+                    .map_err(|_| StoreError::invalid("invalid input syntax for type json"))?;
+                let limit = bigint_arg(args, 3, op)?;
+                self.write(|tx| {
+                    let Some(mut e) = claimed(&*tx, &id, token.as_deref(), false)? else {
+                        return Ok(Value::Null);
+                    };
+                    let mut skipped = match e.data.get("skipped") {
+                        Some(Value::Array(items)) => items.clone(),
+                        _ => Vec::new(),
+                    };
+                    if skipped.len() as i64 >= limit {
+                        return Ok(Value::Null);
+                    }
+                    if let Value::Array(items) = &targets {
+                        skipped.extend(items.iter().cloned());
+                    }
+                    if let Value::Object(map) = &mut e.data {
+                        map.insert("skipped".into(), Value::Array(skipped));
+                    }
+                    write_effect(tx, &e)?;
+                    Ok(Value::Null)
+                })
+            }
+            "listOwnedBoundSources" => {
+                let host = pg_uuid(&text_arg(args, 0, op)?)?;
+                let read = self.read()?;
+                let mut owned = Vec::new();
+                for (source, binding) in list_source_bindings(&*read)? {
+                    if let Some(w) = read_worktree_row(&*read, &binding.worktree_id)?
+                        && w.owned_by(Some(&host))
+                        && w.state == "active"
+                    {
+                        owned.push(Value::String(source));
+                    }
+                }
+                Ok(Value::Array(owned))
             }
             _ => Err(StoreError::invalid(format!(
                 "persistenceUpkeepStore: unknown statement {op}"

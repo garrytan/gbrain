@@ -7,6 +7,8 @@ import { localHostId, withVerifiedLocalRegistration, type LocalGrant, type Local
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
+import { persistenceUpkeepStore } from '../src/core/engine-sql/persistence-upkeep.ts';
+
 
 const RECEIPTS = ['get_write_request', 'list_write_requests', 'cancel_write_request'];
 let engine: PGLiteEngine;
@@ -63,16 +65,19 @@ describe('own-principal write receipt operations', () => {
   test('one hundred authorized receipts use one projected diagnostic query', async () => {
     for (let i = 0; i < 100; i++) await accept(owner, `allowed/batch-${i}`);
     let queries = 0;
+    const counted = async (...args: Parameters<typeof engine.executeRaw>) => {
+      if (args[0].includes('WITH roots AS')) {
+        queries++;
+        expect(args[0]).not.toContain('r.*');
+        expect(args[0]).not.toContain('intent');
+        expect((args[1]![0] as string[])).toHaveLength(1);
+      }
+      return engine.executeRaw(...args);
+    };
     const proxy = new Proxy(engine, { get(target, key) {
-      if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
-        if (args[0].includes('WITH roots AS')) {
-          queries++;
-          expect(args[0]).not.toContain('r.*');
-          expect(args[0]).not.toContain('intent');
-          expect((args[1]![0] as string[])).toHaveLength(1);
-        }
-        return target.executeRaw(...args);
-      };
+      if (key === 'executeRaw') return counted;
+      // The health read goes through the typed upkeep store; count the statement it sends.
+      if (key === 'persistenceUpkeepStore') return () => persistenceUpkeepStore({ executeRaw: counted } as never);
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });

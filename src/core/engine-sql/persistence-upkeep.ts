@@ -8,6 +8,10 @@
  *   worktree, the effect bytes, and the two writes.
  * - Effect claim upkeep (persistence/effect-journal.ts `rearmWithheldTargets`, `effectClaimKeeper`): the re-arm's locked
  *   read and update, and the renewal of a claim between the pieces of a long file.
+ * - The preparation-attempt counters (persistence/journal.ts `floorPreparationAttempts`, `chargePreparationAttempt`),
+ *   a write receipt's health facts (`writeHealthFacts`) and the segment sweep's owned sources (`sweepSegmentStorage`).
+ * - An effect attempt's reads and writes (persistence/effects.ts): the next page of a source scan (`selectedEffectPage`),
+ *   whether an effect holds a recovery record (`recordFailure`) and a skipped target (`recordSkippedTarget`).
  *
  * Each statement is the text its caller sent, written out (the protocol predicate, `EFFECT_BYTES_SQL`, the open-pass
  * predicate and `REARMABLE_SQL` spliced in), pinned byte for byte by test/engine-sql-caller-raw-sql-pins.test.ts.
@@ -42,6 +46,46 @@ export const PERSISTENCE_UPKEEP_SQL = {
       next_attempt_at=now(),updated_at=now() WHERE id=$1 AND execution_token IS NULL AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'`,
   renewHeldClaim: `UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
       WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING id`,
+  floorPreparationAttempts: `UPDATE persistence_requests SET preparation_attempts=GREATEST(preparation_attempts,$2::integer),updated_at=now()
+    WHERE id=$1::uuid AND state IN ('queued','running') AND set_config('gbrain.persistence_protocol','2',true)='2'`,
+  chargePreparationAttempt: `UPDATE persistence_requests SET preparation_attempts=preparation_attempts+1,updated_at=now()
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING preparation_attempts`,
+  healthFacts: `
+    WITH roots AS (SELECT unnest($1::text[]) AS root)
+    SELECT roots.root,head.sequence::text,head.started_sequence::text,head.started_unlaned::text,COALESCE(head.inspect_owner,false) AS inspect_owner,
+      COALESCE(head.recovering,false) OR EXISTS (SELECT 1 FROM persistence_effects e
+        WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL)
+        OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.worktree_id=w.id AND f.state='recovery_required') AS recovery_required,
+      w.id IS NOT NULL AND (w.state<>'active' OR w.owner_host_id IS NULL) AS owner_unavailable
+    FROM roots LEFT JOIN persistence_worktrees w ON w.id::text=roots.root
+    LEFT JOIN LATERAL (
+      (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id=w.id
+          AND (s.state IN ('running','recovering') OR s.recovery IS NOT NULL) ORDER BY s.sequence LIMIT 1) AS started_sequence,
+        (SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id=w.id
+          AND (s.state IN ('running','recovering') OR s.recovery IS NOT NULL)
+          AND NOT (s.state='running' AND s.recovery IS NULL AND s.operation='submit_job') ORDER BY s.sequence LIMIT 1) AS started_unlaned,
+        (r.state='recovering' OR (r.recovery IS NOT NULL AND (r.state<>'running' OR r.claim_expires_at<now()))) AS recovering,
+        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
+        WHERE r.worktree_id=w.id AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL OR (r.state='deferred' AND (r.deferred_refresh_id IS NOT NULL OR r.deferred_import_from IS NOT NULL)
+        AND (r.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=r.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (r.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=r.source_id AND COALESCE(imported.last_commit,'')<>r.deferred_import_from))))
+        ORDER BY r.sequence LIMIT 1)
+      UNION ALL
+      (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id IS NULL AND s.source_incarnation=r.source_incarnation
+          AND s.state IN ('running','recovering') ORDER BY s.sequence LIMIT 1) AS started_sequence,NULL::bigint AS started_unlaned,
+        (r.state='recovering' OR (r.recovery IS NOT NULL AND (r.state<>'running' OR r.claim_expires_at<now()))) AS recovering,
+        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
+        WHERE r.worktree_id IS NULL AND r.source_incarnation=CASE WHEN roots.root LIKE 'db:%' THEN substring(roots.root FROM 4)::uuid END
+        AND r.state IN ('queued','running','recovering') ORDER BY r.sequence LIMIT 1)
+    ) head ON true`,
+  nextScanSlug: `SELECT slug FROM pages WHERE source_id=$1 AND ($2::text IS NULL OR slug>$2) ORDER BY slug LIMIT 1`,
+  effectRecovering: `SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1`,
+  recordSkippedTarget: `UPDATE persistence_effects SET data=jsonb_set(data,'{skipped}',COALESCE(data->'skipped','[]'::jsonb)||$3::text::jsonb)
+    WHERE id=$1 AND execution_token=$2::uuid AND jsonb_array_length(COALESCE(data->'skipped','[]'::jsonb))<$4`,
+  ownedBoundSources: `SELECT s.source_id FROM persistence_source_bindings s
+    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`,
 } as const;
 
 /** The locked receipt `compactReceipt` rechecks: the request row plus its age and open-run flags. */
@@ -68,6 +112,26 @@ export interface PersistenceUpkeepStore {
   rearmEffect(id: number | string, dataJson: string): Promise<void>;
   /** Renews the 2-minute claim on effect `id` while `token` holds it running (a recovery record does not stop it); whether it did. */
   renewHeldEffectClaim(id: number | string, token: string | null): Promise<boolean>;
+  /** Raises live request `id`'s preparation attempts to at least `limit`. */
+  floorPreparationAttempts(id: string, limit: number): Promise<void>;
+  /** Adds one preparation attempt to request `id` while `token` holds it running; the new count, or null when no claim matched. */
+  chargePreparationAttempt(id: string, token: string | null): Promise<number | null>;
+  /** The health facts of each root (a worktree id, or `db:<source incarnation>`); see `writeHealthFacts`. */
+  readHealthFacts(roots: readonly string[], opts?: { signal?: AbortSignal }): Promise<HealthFactRow[]>;
+  /** The first slug of source `sourceId` after `afterSlug` (or the first one), in slug order; null past the last. */
+  nextScanSlug(sourceId: string, afterSlug: string | null): Promise<string | null>;
+  /** Whether effect `id` holds a recovery record; null when no effect has the id. */
+  effectRecovering(id: number | string): Promise<boolean | null>;
+  /** Adds `targetJson` (a one-element array) to effect `id`'s skipped list while `token` holds it and the list has fewer than `limit`. */
+  recordSkippedTarget(id: number | string, token: string | null, targetJson: string, limit: number): Promise<void>;
+  /** The sources bound to an active worktree host `hostId` owns. */
+  listOwnedBoundSources(hostId: string): Promise<string[]>;
+}
+
+/** One root's health facts (`writeHealthFacts`): its head sequence and started sequences as text, and its flags. */
+export interface HealthFactRow {
+  root: string; sequence: string | null; started_sequence: string | null; started_unlaned: string | null;
+  recovery_required: boolean; owner_unavailable: boolean; inspect_owner: boolean;
 }
 
 /**
@@ -110,6 +174,30 @@ export async function persistenceUpkeepStore(exec: Raw, direct: Raw = exec): Pro
     },
     async renewHeldEffectClaim(id: number | string, token: string | null) {
       return (await direct.executeRaw(S.renewHeldClaim, [id, token])).length === 1;
+    },
+    async floorPreparationAttempts(id: string, limit: number) {
+      await exec.executeRaw(S.floorPreparationAttempts, [id, limit]);
+    },
+    async chargePreparationAttempt(id: string, token: string | null) {
+      const [charged] = await exec.executeRaw<{ preparation_attempts: number }>(S.chargePreparationAttempt, [id, token]);
+      return charged ? Number(charged.preparation_attempts) : null;
+    },
+    async readHealthFacts(roots: readonly string[], opts?: { signal?: AbortSignal }) {
+      return exec.executeRaw<HealthFactRow>(S.healthFacts, [[...roots]], opts?.signal ? { signal: opts.signal } : undefined);
+    },
+    async nextScanSlug(sourceId: string, afterSlug: string | null) {
+      const [row] = await exec.executeRaw<{ slug: string }>(S.nextScanSlug, [sourceId, afterSlug]);
+      return row?.slug ?? null;
+    },
+    async effectRecovering(id: number | string) {
+      const [row] = await exec.executeRaw<{ recovering: boolean }>(S.effectRecovering, [id]);
+      return row ? row.recovering : null;
+    },
+    async recordSkippedTarget(id: number | string, token: string | null, targetJson: string, limit: number) {
+      await exec.executeRaw(S.recordSkippedTarget, [id, token, targetJson, limit]);
+    },
+    async listOwnedBoundSources(hostId: string) {
+      return (await exec.executeRaw<{ source_id: string }>(S.ownedBoundSources, [hostId])).map(r => r.source_id);
     },
   };
 }

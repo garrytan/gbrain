@@ -898,7 +898,25 @@ admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw
   queues an unclaimed effect with no recovery again, due now, with the data given; `renewHeldEffectClaim` renews a
   running claim under its token for two minutes, also while the effect holds a recovery record.
 
-Pinned by `test/engine-parity/receipt-compaction-step.test.ts` and `test/engine-parity/effect-claim-upkeep.test.ts`.
+- The preparation-attempt counters (`floorPreparationAttempts`, `chargePreparationAttempt` in journal.ts): a floor
+  raises a queued or running request's count to the limit; a charge adds one to a request running under the token and
+  answers the new count (null when no claim matched).
+- A write receipt's health facts (`writeHealthFacts`): `readHealthFacts(roots)` answers each root, a worktree id or
+  `db:<source incarnation>`, with its head request (the first pending one by sequence: queued, running or recovering, a
+  held recovery record or, on a worktree, a released deferred write), the first started sequences, and the recovery,
+  owner and inspection flags, as the SQL's lateral join does. An uppercase worktree id matches no row, as `w.id::text`
+  does not.
+- The segment sweep's owned sources (`sweepSegmentStorage`): `listOwnedBoundSources(hostId)`, the sources bound to an
+  active worktree that host owns, in source id order.
+- An effect attempt (effects.ts): `nextScanSlug` is the next slug of the source in byte order (soft-deleted pages
+  included, as the SQL reads `pages` unfiltered), `effectRecovering` whether the effect holds a recovery record (null
+  for no effect), and `recordSkippedTarget` appends to the effect's `skipped` list under its claim token while the list
+  is shorter than the limit. `recordFailure`'s source read is the existing `readSourceMembership`.
+- The queue vacuum (`vacuumPersistenceQueues`) runs on PGLite only, so a Rust brain answers 0 with no store call, as
+  Postgres does (`test/persistence-upkeep-rust-noop.test.ts`).
+
+Pinned by `test/engine-parity/receipt-compaction-step.test.ts`, `test/engine-parity/effect-claim-upkeep.test.ts` and
+`test/engine-parity/journal-upkeep-steps.test.ts`.
 
 ## TypeScript members with no stored state
 

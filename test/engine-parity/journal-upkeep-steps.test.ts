@@ -19,8 +19,16 @@
  *    effects.ts `__effectFailureStepsForTests`), rather than a whole consumer or effect pass.
  */
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
+import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { PersistenceEffect } from '../../src/core/persistence/effect-model.ts';
@@ -166,7 +174,7 @@ describe('engine parity: the write journal upkeep steps', () => {
       opError('source_changed', 'The source changed.', 'parity')));
     const embedding = await claim(engine);
     const own = await outcome(() => __effectFailureStepsForTests.recordFailure(engine, { ...embedding, kind: 'git' as never },
-      opError('git_commit_failed', 'The commit failed.', 'parity')));
+      opError('git_commit_failed' as never, 'The commit failed.', 'parity')));
     const effects = (await engine.readRequestEffects(id)).map(e => ({ kind: e.kind, state: e.state, error_code: e.error_code }));
     const out = { skipped, replaced: replaced ?? 'ok', own: own ?? 'ok', effects };
     expect(out).toEqual({
@@ -178,5 +186,33 @@ describe('engine parity: the write journal upkeep steps', () => {
       ],
     });
     return out;
+  });
+
+  parityTest('the segment sweep lists the sources bound to an active worktree this host owns', {
+    methods: ['readWriterAdminState', 'worktreeClaimStore', 'persistenceUpkeepStore'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-upkeep-parity-')));
+    try {
+      return await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        const root = join(home, 'checkout');
+        mkdirSync(join(root, 'notes'), { recursive: true });
+        execFileSync('git', ['-C', root, 'init', '-q']);
+        writeFileSync(join(root, 'notes', 'alice-example.md'), '---\ntitle: Alice Example\n---\nWorks at acme-example.\n');
+        execFileSync('git', ['-C', root, 'add', '.']);
+        execFileSync('git', ['-C', root, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'notes']);
+        await createSource(engine, backend, 'work', {}, root);
+        try {
+          const upkeep = await engine.persistenceUpkeepStore();
+          const before = await upkeep.listOwnedBoundSources(localHostId());
+          await runPersistenceAdministration(engine, 'writer_claim', { source_id: 'work', path: root, admin_intent: 'writer_claim',
+            expected_state: await writerAdminState(engine) });
+          const out = { before, owned: await upkeep.listOwnedBoundSources(localHostId()),
+            otherHost: await upkeep.listOwnedBoundSources('e0000000-0000-4000-8000-0000000000e9') };
+          expect(out).toEqual({ before: [], owned: ['work'], otherHost: [] });
+          return out;
+        } finally { await disposePersistenceConsumer(engine); }
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
