@@ -564,6 +564,7 @@
     "runtime_build_skew",
     "rust_engine_addon_mismatch",
     "rust_engine_addon_missing",
+    "rust_snapshot_stopped",
     "rust_store_locked",
     "rust_store_unreadable",
     "schedule_install_failed",

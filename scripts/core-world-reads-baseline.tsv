@@ -942,6 +942,8 @@ src/core/rust-engine/owner-ipc/client.ts	module_collection	3	Rust owner IPC: Wea
 src/core/rust-engine/owner-ipc/election.ts	fs_import	1	Rust owner IPC: creates the parent directory of the owner lock (beside the store directory); filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/protocol.ts	fs_import	1	Rust owner IPC: resolves symlinks in the store path (realpath) so every alias of one brain names one owner lock and socket, as pglite-lock.ts does; filesystem boundary moves to the local app (W7)
 src/core/rust-engine/owner-ipc/server.ts	fs_import	1	Rust owner IPC: removes only a stale socket file and sets 0600 on the owner socket, like persistence/ipc.ts; filesystem boundary moves to the local app (W7)
+src/core/rust-engine/store-snapshot.ts	fs_import	1	Rust brain snapshot: reads the free space of the target's and the brain's filesystems (statfs) to stop a copy before it fills the disk; the disk is a local-app object (W7)
+src/core/rust-engine/store-snapshot.ts	module_collection	2	Rust brain snapshot: the owner's table of operation ids and what became of them (bounded to 32 finished entries) and a WeakMap of the store a snapshot is running on; entries die with the store; stays until engine state moves per engine (W6)
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)
 src/core/schema-migration-lock.ts	module_collection	1	stays: GBRA-467 per-engine in-process queue for engines without a cross-process schema lock (PGLite); coordination state, not a setting
