@@ -11,7 +11,8 @@
  * pages join every search arm already has (pageTrustFloorSql on `p`).
  */
 import { QUARANTINE_KEY } from '../quarantine.ts';
-import { TRUST_TIER_RANK, tiersAtOrAbove, trustRankSql, type TrustTier } from '../trust/tier.ts';
+import { TrustFloorError } from '../engine-errors.ts';
+import { TRUST_TIER_RANK, isTrustTier, tiersAtOrAbove, trustRankSql, type TrustTier } from '../trust/tier.ts';
 import type { ReadEligibility } from './policy.ts';
 
 /** Write-gate reason families that make an unconfirmed row ineligible for proactive injection (CEO-20). */
@@ -23,9 +24,10 @@ export type EligibilityTable = 'facts' | 'takes' | 'timeline_entries' | 'pages';
 
 const tierListSql = (tiers: readonly TrustTier[]) => tiers.map(t => `'${t}'`).join(',');
 
-/** `alias.trust_tier` admitted by a floor; 'TRUE' without one. */
+/** `alias.trust_tier` admitted by a floor; 'TRUE' without one. A floor that names no tier throws `TrustFloorError`. */
 export function trustFloorSql(alias: string, floor: TrustTier | undefined): string {
   if (!floor) return 'TRUE';
+  if (!isTrustTier(floor)) throw new TrustFloorError(floor);
   const tiers = tiersAtOrAbove(floor);
   return tiers.length === 6 ? 'TRUE' : `${alias}.trust_tier IN (${tierListSql(tiers)})`;
 }
