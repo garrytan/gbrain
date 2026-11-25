@@ -1260,11 +1260,11 @@ export class PostgresEngine implements BrainEngine {
   // preparer's read deadline they run as the other typed preparation reads do (preparationRead), ending at the deadline.
   readLiveMember(via: MemberBindingVia, key: string) { return this.ownRawRead(exec => accessControlImpl.readLiveMember(exec, via, key)); }
   readFolderAccess(readers: readonly string[]) { return this.ownRawRead(exec => accessControlImpl.readFolderAccess(exec, readers)); }
-  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null> { return accessControlImpl.readMayActFor(this, via, key); }
-  readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows> { return accessControlImpl.readAudiencePrincipals(this, memberIds, groupIds); }
-  readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock) { return accessCredentials.readScopeSourceConfigs(this, ids, lock); }
-  readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(refuseAborted(this.engineSql), 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this)); }
-  readOwnerOnlySourceConfig(sourceId: string) { return sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(refuseAborted(this.engineSql), 'sources: the owner-only check read it unscoped through executeRaw'), sourceId); }
+  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null> { return this.ownRawRead(raw => accessControlImpl.readMayActFor(raw, via, key)); }
+  readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows> { return this.ownRawRead(raw => accessControlImpl.readAudiencePrincipals(raw, memberIds, groupIds)); }
+  readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock) { return this.ownRawRead(raw => accessCredentials.readScopeSourceConfigs(raw, ids, lock)); }
+  readOwnerOnlySourcesPresent() { return this.preparationRead(exec => sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(refuseAborted(exec), 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this))); }
+  readOwnerOnlySourceConfig(sourceId: string) { return this.preparationRead(exec => sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(refuseAborted(exec), 'sources: the owner-only check read it unscoped through executeRaw'), sourceId)); }
   readSourceRow(sourceId: string) { return this.engineSqlRead(exec => sourcesImpl.readSourceRow(unscopedExecutor(exec, 'sources: source checks read it unscoped through executeRaw'), sourceId)); }
   lockSourceRow(sourceId: string) { return sourcesImpl.lockSourceRow(refuseAborted(this.autocommitSql), sourceId); }
   async listSourceLocalPaths(): Promise<string[]> {
