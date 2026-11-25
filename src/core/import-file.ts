@@ -72,6 +72,7 @@ import { abortSegmentedStaging, bodyStorageOf, demoteSegmentedPage, materialized
 import type { SegmentedStagingOwner } from './page-body/ingest.ts';
 import type { PageBodyPolicy } from './page-body/limits.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
+import { KEEP_INGEST_PROVENANCE } from './persistence/prepared-import.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
 import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
 
@@ -198,6 +199,16 @@ interface ImportFenceOptions {
   fenceScreen?: FenceScreen | null;
 }
 
+function ingestProvenanceStamps(opts: Pick<Partial<Page>, 'source_kind' | 'source_uri' | 'ingested_via'>, originUri: string | null) {
+  // The engines preserve stored stamps when these inputs are absent.
+  if (KEEP_INGEST_PROVENANCE in opts && opts[KEEP_INGEST_PROVENANCE] === true) return {};
+  return {
+    source_kind: opts.source_kind ?? null,
+    source_uri: opts.source_uri ?? originUri,
+    ingested_via: opts.ingested_via ?? null,
+  };
+}
+
 /**
  * Import content from a string. Core pipeline:
  * parse -> hash -> transaction(version + putPage + tags + chunks + beforeCommit).
@@ -282,8 +293,6 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
-    /** Keep the row's first-ingest columns while retaining the current writer metadata for guardrail observation. */
-    preserveIngestProvenance?: boolean;
     /** Wave B: who stages a segmented body (the journaled request's principal); unset: the local maintenance principal, kind `import`. */
     segmentedOwner?: SegmentedStagingOwner;
     /** Wave B: a segmented body an earlier preparation of this write staged (`PreparedContentImport.segmented`), reused when its inputs are unchanged. */
@@ -741,12 +750,7 @@ export async function importFromContent(
       // vector-index writes deletes the rows it does not keep, commits the page pending and finishes after commit (chunk-moves.ts).
       const chunkWrites = planImportChunkWrites(fresh, kept, !segmented && !!opts.prepare && opts.boundedChunkWrites === true);
       const deferChunks = chunkReplacementDeferred = chunkWrites.defer;
-      // The engines preserve stored stamps when these inputs are absent.
-      const ingestProvenance = opts.preserveIngestProvenance ? {} : {
-        source_kind: opts.source_kind ?? null,
-        source_uri: opts.source_uri ?? originUri,
-        ingested_via: opts.ingested_via ?? null,
-      };
+      const ingestProvenance = ingestProvenanceStamps(opts, originUri);
       let written: Page | undefined;
       await pipelined(tx, [
         () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),

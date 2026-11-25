@@ -47,7 +47,7 @@ import { replaceableFile } from '../facts/file-body-guard.ts';
 import { releaseHiddenMoment } from '../facts/derivation-inputs.ts';
 import { tombstoneWindow } from './concept-rebuild.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import type { PreparedContentImport } from './prepared-import.ts';
+import { KEEP_INGEST_PROVENANCE, type PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { requestPrincipal, type SqlEngine, type WriteRequest } from './model.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
@@ -1079,6 +1079,15 @@ async function assertRebuildMembersUnchanged(tx: BrainEngine, row: WriteRequest,
     `A member of concept ${row.slug} in source ${row.source_id} moved after synthesis read it.`, pageFix(row.source_id, row.slug));
 }
 
+function importMutationProvenance(row: WriteRequest, intent: Record<string, unknown>, snapshot: PageSnapshot | null) {
+  return {
+    source_kind: typeof intent.source_kind === 'string' ? intent.source_kind : null,
+    source_uri: typeof intent.source_uri === 'string' ? intent.source_uri : null,
+    ingested_via: typeof intent.ingested_via === 'string' ? intent.ingested_via : null,
+    [KEEP_INGEST_PROVENANCE]: row.authority.remote === true && row.operation === 'edit_page' && snapshot !== null,
+  };
+}
+
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
   preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
   options: NonNullable<Parameters<typeof preparePageMutation>[5]>, guest: GuestWrite): Promise<PreparedMutation> {
@@ -1216,10 +1225,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     preserveGateMarkers: !row.authority.remote && (p.kind === 'managed_maintenance_page' || p.kind === 'managed_quarantine_clear'),
     forceRechunk: row.operation === 'restore_page' || row.operation === 'revert_version',
     allowEmptyOverwrite: p.allow_empty === true || row.operation === 'restore_page' || row.operation === 'revert_version',
-    source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,
-    source_uri: typeof p.source_uri === 'string' ? p.source_uri : null,
-    ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
-    preserveIngestProvenance: row.authority.remote === true && row.operation === 'edit_page' && snapshot !== null,
+    ...importMutationProvenance(row, p, snapshot),
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {

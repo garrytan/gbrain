@@ -3,6 +3,9 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import type { ImportResult, ParsedPage } from '../import-file.ts';
 import type { SegmentedImport } from './segmented-apply.ts';
 
+/** A coordinated partial edit keeps stored first-ingest stamps while observing the current write. */
+export const KEEP_INGEST_PROVENANCE = Symbol('keep_ingest_provenance');
+
 /**
  * #6007: what an apply reports to its caller. `pageId` is the page it
  * wrote, when the write left it live; `sealed` means sealing its text
