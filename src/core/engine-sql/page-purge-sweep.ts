@@ -45,9 +45,11 @@ export async function deletePurgedPageHolds(engine: Raw, sourceId: string, slug:
   // The holds kept for another page are noted in the same statement (write-gate-binding.ts noteKeptHoldsCte), once the notes
   // table exists (a brain whose v337 migration has not run yet still purges).
   const [notes] = await engine.executeRaw<{ ok: boolean }>("SELECT pg_catalog.to_regclass('write_gate_hold_rechecks') IS NOT NULL AS ok");
-  const noted = notes?.ok ? `WITH ${noteKeptHoldsCte('$1', '$3', '$2', q => `${q}.id = $3::bigint`)} ` : '';
-  const rows = await engine.executeRaw<{ id: string }>(
-    `${noted}DELETE FROM write_gate_holds h WHERE h.source_id=$1 AND ${holdOwnedByDeletedPageSql('h', '$3', '$2')} RETURNING h.id::text AS id`, [sourceId, slug, pageId]);
+  // The purged page's source, id and slug ride in one CTE, so the statement holds no hand-numbered placeholder.
+  const noted = notes?.ok ? `, ${noteKeptHoldsCte('(SELECT src FROM d)', 'd.pid', 'd.slug', q => `${q}.id = (SELECT pid FROM d)`, 'FROM d')}` : '';
+  const { text, params } = renderFragment(sqlFragment`WITH d(src, pid, slug) AS (SELECT ${sourceId}::text, ${pageId}::bigint, ${slug}::text)${trustedSql(noted)}
+    DELETE FROM write_gate_holds h USING d WHERE h.source_id = d.src AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.pid', 'd.slug'))} RETURNING h.id::text AS id`);
+  const rows = await engine.executeRaw<{ id: string }>(text, params);
   // A hold marked with candidate pages stays while a candidate survives; the purged page leaves its list (write-gate-binding.ts).
   rows.push(...(await dropPurgedCandidates(engine, sourceId, pageId === null ? [] : [{ id: pageId }])).map(id => ({ id })));
   return rows.map(h => h.id).sort(byId);

@@ -5,6 +5,7 @@
  *
  * Every function takes the engine (or transaction) it runs on. Counts come back as numbers.
  */
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { dropPurgedCandidates, holdOwnedByDeletedPageSql, noteKeptHoldsCte } from '../write-gate-binding.ts';
 import type { BrainEngine } from '../engine.ts';
 
@@ -73,11 +74,11 @@ export async function deletePurgedSlugHolds(
   // once the notes table exists (a brain whose v337 migration has not run yet still purges).
   const upto = '(d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto)';
   const [notes] = await tx.executeRaw<{ ok: boolean }>("SELECT pg_catalog.to_regclass('write_gate_hold_rechecks') IS NOT NULL AS ok");
-  const noted = notes?.ok ? `, ${noteKeptHoldsCte('$1', 'd.id', 'd.slug', q => `EXISTS (SELECT 1 FROM d WHERE d.id = ${q}.id)`, 'FROM d', upto)}` : '';
-  const holds: string[] = (await tx.executeRaw<{ id: string }>(`WITH d AS (SELECT * FROM unnest($2::text[], $3::bigint[], $4::timestamptz[]) AS d(slug, id, upto))${noted}
+  const noted = notes?.ok ? `, ${noteKeptHoldsCte('(SELECT id FROM s)', 'd.id', 'd.slug', q => `EXISTS (SELECT 1 FROM d WHERE d.id = ${q}.id)`, 'FROM d', upto)}` : '';
+  const { text, params } = renderFragment(sqlFragment`WITH s(id) AS (SELECT ${sourceId}::text), d AS (SELECT * FROM unnest(${pages.map(p => p.slug)}::text[], ${pages.map(p => p.id ?? null)}::bigint[], ${pages.map(p => p.deletedAt ?? null)}::timestamptz[]) AS d(slug, id, upto))${trustedSql(noted)}
     DELETE FROM write_gate_holds h USING d
-    WHERE h.source_id = $1 AND ${holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug')} AND ${upto} RETURNING h.id::text AS id`,
-  [sourceId, pages.map(p => p.slug), pages.map(p => p.id ?? null), pages.map(p => p.deletedAt ?? null)])).map(h => h.id);
+    WHERE h.source_id = (SELECT id FROM s) AND ${trustedSql(holdOwnedByDeletedPageSql('h', 'd.id', 'd.slug'))} AND ${trustedSql(upto)} RETURNING h.id::text AS id`);
+  const holds: string[] = (await tx.executeRaw<{ id: string }>(text, params)).map(h => h.id);
   holds.push(...await dropPurgedCandidates(tx, sourceId, pages));
   const receipts = holds.length
     ? (await tx.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = ANY($1::text[]) RETURNING 1", [holds])).length
