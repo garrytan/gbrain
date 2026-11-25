@@ -45,7 +45,7 @@ import { claimAndRecoverEffect } from '../../src/core/persistence/effects.ts';
 import { readOwnerRecoveryHeads } from '../../src/core/persistence/consumer.ts';
 import { consumerIdentity } from '../../src/core/persistence/consumer-heartbeat.ts';
 import { ownerHostStaleCheck } from '../../src/commands/doctor/checks/owner-host-stale.ts';
-import type { WriteRequest } from '../../src/core/persistence/model.ts';
+import type { PagesRecoveryRecord, WriteRequest } from '../../src/core/persistence/model.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -110,7 +110,7 @@ const foreground = (engine: BrainEngine, worktreeId: string) => admit(engine, wo
 const sequenceOf = async (engine: BrainEngine, id: string) => String((await engine.readWriteRequestById(id))!.sequence);
 
 /** A claimed row as the arms compare it: the labels stand for the ids, the token is only checked for being set. */
-const shape = (row: (WriteRequest & { seen_sequence?: string }) | null, labels: Map<string, string>) => row && ({ request: labels.get(row.id), state: row.state,
+const shape = (row: (WriteRequest & { seen_sequence?: string | null }) | null, labels: Map<string, string>) => row && ({ request: labels.get(row.id), state: row.state,
   token: typeof row.execution_token === 'string' ? 'set' : row.execution_token, phase: (row.claim_phase as { phase?: string } | null)?.phase ?? null, blocked: row.blocked_reason ?? null });
 
 describe('managed claims on a Rust brain, hold kept for users', () => {
@@ -222,7 +222,7 @@ describe('managed claims on a Rust brain, hold kept for users', () => {
     const token = randomUUID();
     await engine.stampWriteClaim(id, token, 60_000, JSON.stringify({ phase: 'publishing' }));
     const before = (await readOwnerRecoveryHeads(engine, host, [])).length;
-    const record = { version: 3, target: 'pages', root, ownerEpoch: '1', attempt: token, files: [] };
+    const record: PagesRecoveryRecord = { version: 3, target: 'pages', root, ownerEpoch: '1', attempt: token, files: [] };
     await engine.transaction(async tx => {
       const journal = await tx.publicationJournalStore();
       await journal.recordRecovery({ id, executionToken: token, recovery: record, bytes: 40, keys: KEYS }, true);

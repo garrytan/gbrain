@@ -67,7 +67,7 @@ import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
-import { claimHeadStatement, claimHeadText, foregroundPriorityText, laneHeadStatement, laneHeadText, LANE_HEAD_STAMP_SQL, RECLAIM_RELEASED_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { claimHeadStatement, claimHeadText, laneHeadStatement, laneHeadText, LANE_HEAD_STAMP_SQL, RECLAIM_RELEASED_SQL } from '../src/core/engine-sql/persistence-claims.ts';
 import { CLAIM_ORDER, FOREGROUND_WAITING_ON, GROUP_KEY_SQL } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
