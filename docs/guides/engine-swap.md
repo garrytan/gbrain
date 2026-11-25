@@ -64,7 +64,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    primary's.
 5. Zero unexplained differences on at least 1,000 comparable write comparisons. A shadow that cannot compare writes
    (`capability_missing`) has no evidence.
-6. Zero `privacy_diverged` events.
+6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
    speed bar gate only turning Rust on by default, not this opt-in swap. The plan shows the numbers and any loss.

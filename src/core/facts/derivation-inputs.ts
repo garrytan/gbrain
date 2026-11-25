@@ -81,6 +81,15 @@ export async function derivedRowsFrom(engine: BrainEngine, inputs: readonly Deri
 export const KEEP_HIDDEN_AT = `CASE WHEN needs_rederive.derived_table='pages' AND EXISTS (SELECT 1 FROM pages hp
   WHERE hp.id::text=needs_rederive.derived_id AND hp.deleted_at=needs_rederive.marked_at) THEN needs_rederive.marked_at ELSE now() END`;
 
+/**
+ * The mark's whole statement (the engine-sql member markNeedsRederive sends it as it is): constant text plus KEEP_HIDDEN_AT, no
+ * value in the text. $1 table, $2 ids, $3 source, $4 request, $5 reason, $6 the pages this transaction just hid (used twice).
+ */
+export const MARK_NEEDS_REDERIVE_SQL = `INSERT INTO needs_rederive(derived_table,derived_id,source_id,request_id,reason,marked_at)
+      SELECT $1,d.id,$3,$4::uuid,$5,COALESCE((SELECT p.deleted_at FROM pages p WHERE d.id=ANY($6::text[]) AND p.id::text=d.id),now()) FROM unnest($2::text[]) AS d(id)
+      ON CONFLICT (derived_table,derived_id) DO UPDATE SET reason=EXCLUDED.reason,request_id=EXCLUDED.request_id,
+        marked_at=CASE WHEN EXCLUDED.derived_id=ANY($6::text[]) THEN EXCLUDED.marked_at ELSE ${KEEP_HIDDEN_AT} END`;
+
 /** #9653: a delete of a page already hidden this way (a person's or a sync's) ends the automatic purge's hold on it. */
 export async function releaseHiddenMoment(tx: BrainEngine, pageId: number): Promise<void> {
   await tx.executeRaw(`UPDATE needs_rederive n SET marked_at=clock_timestamp() FROM pages p

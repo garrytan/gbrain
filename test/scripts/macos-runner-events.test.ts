@@ -11,14 +11,16 @@ import { runInNewContext } from 'node:vm';
 import { load as loadYaml } from 'js-yaml';
 
 type Matrix = Record<string, unknown> & { exclude?: unknown };
-type Job = { if?: string; needs?: string[]; strategy?: { matrix: Matrix } };
+type Job = { if?: string; needs?: string[]; 'continue-on-error'?: boolean | string; strategy?: { matrix: Matrix } };
 const root = join(import.meta.dir, '../..');
 const load = (name: string) => loadYaml(readFileSync(join(root, '.github/workflows', name), 'utf8')) as { jobs: Record<string, Job> };
 const strip = (expression: string) => expression.trim().replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '').replace(/\.([A-Za-z_]\w*(?:-\w+)+)/g, "['$1']");
 
 interface Event { event_name: string; reuse?: string; scope?: string }
-const context = (e: Event) => ({
+const context = (e: Event, matrix: Record<string, string> = {}) => ({
   fromJSON: (text: string) => JSON.parse(text),
+  startsWith: (text: string, prefix: string) => String(text).toLowerCase().startsWith(String(prefix).toLowerCase()),
+  matrix,
   cancelled: () => false,
   always: () => true,
   github: { event_name: e.event_name },
@@ -28,7 +30,7 @@ const context = (e: Event) => ({
     'dynamic-ci': { result: e.event_name === 'pull_request' ? 'success' : 'skipped', outputs: { 'security-regressions': '', 'native-locks': '' } },
   },
 });
-const evaluate = (expression: string, e: Event) => runInNewContext(strip(expression), context(e), { timeout: 100 });
+const evaluate = (expression: string, e: Event, matrix: Record<string, string> = {}) => runInNewContext(strip(expression), context(e, matrix), { timeout: 100 });
 
 /** The matrix cells a job starts for event `e`, or [] when its if skips it. */
 function cells(job: Job, e: Event): Array<Record<string, string>> {
@@ -66,5 +68,25 @@ describe('macOS jobs by event (GST-2926)', () => {
       expect(darwin({ scope: 'full', ...e })).toEqual(['darwin-arm64', 'darwin-x64']);
     }
     expect(cells(native.jobs['heartbeat-finalize']!, { event_name: 'workflow_dispatch' })).toEqual([{}]);
+  });
+});
+
+describe('advisory native cells (GST-3494)', () => {
+  const advisory = (job: Job, matrix: Record<string, string>) => {
+    const value = job['continue-on-error'];
+    return typeof value === 'string' ? evaluate(value, { event_name: 'workflow_dispatch' }, matrix) === true : value === true;
+  };
+
+  test('a darwin cell runs on every full event but its failure never fails native-locks', () => {
+    const targets = cells(native.jobs.native!, { event_name: 'schedule' }).map(c => c.target!);
+    expect(targets.filter(t => t.startsWith('darwin'))).toEqual(['darwin-arm64', 'darwin-x64']);
+    for (const target of targets) expect(advisory(native.jobs.native!, { target, bun: '1.4.4' })).toBe(target.startsWith('darwin-'));
+  });
+
+  test('the OpenClaw startup cell still runs on a full scope and is advisory; Linux and Windows cells still gate', () => {
+    expect(cells(native.jobs.openclaw!, { event_name: 'schedule' })).toEqual([{}]);
+    expect(advisory(native.jobs.openclaw!, {})).toBe(true);
+    for (const target of ['linux-x64-glibc', 'linux-arm64-glibc', 'win32-x64', 'win32-arm64']) expect(advisory(native.jobs.native!, { target })).toBe(false);
+    for (const [name, job] of Object.entries(native.jobs)) if (name !== 'native' && name !== 'openclaw') expect(job['continue-on-error']).toBeUndefined();
   });
 });
