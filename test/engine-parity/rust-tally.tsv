@@ -141,7 +141,7 @@ test/engine-parity/facts-purge.test.ts	29	0
 test/engine-parity/facts-quoted.test.ts	5	0
 test/engine-parity/facts-repair-sites.test.ts	19	1
 test/engine-parity/facts-repair.test.ts	21	0
-test/engine-parity/facts-rest-sites.test.ts	24	4
+test/engine-parity/facts-rest-sites.test.ts	27	1
 test/engine-parity/facts-trust-owner.test.ts	6	0
 test/engine-parity/facts-trust.test.ts	13	0
 test/engine-parity/facts-unique-violation.test.ts	3	0
@@ -385,7 +385,7 @@ test/engine-parity/sync-stamp.test.ts	1	1
 test/engine-parity/sync-status-reads.test.ts	10	0
 test/engine-parity/sync-swap-reads.test.ts	6	0
 test/engine-parity/take-held-rows.test.ts	2	0
-test/engine-parity/take-proposals.test.ts	8	0
+test/engine-parity/take-proposals.test.ts	9	0
 test/engine-parity/take-purge-ledger.test.ts	4	0
 test/engine-parity/take-purge-loop-mute-keys.test.ts	2	0
 test/engine-parity/take-purge-overlay.test.ts	2	0
