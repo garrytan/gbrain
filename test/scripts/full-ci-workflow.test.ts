@@ -193,12 +193,12 @@ describe('full CI on pull requests', () => {
         ],
         failures: [], ...over,
       });
-      const record = (doc: unknown) => {
+      const record = (doc: unknown, receipts = 'success') => {
         const path = join(dir, 'ci-manifest.json');
         if (doc === undefined) rmSync(path, { force: true }); else writeFileSync(path, JSON.stringify(doc));
         const out = join(dir, 'out');
         const result = bash(`bash ${join(root, 'scripts/ci-full-suite-tree.sh')}`,
-          { ARTIFACT_DIR: out, RUN_ID: '42', RUN_ATTEMPT: '2', WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, GITHUB_STEP_SUMMARY: join(dir, 'summary.md') }, dir);
+          { ARTIFACT_DIR: out, RUN_ID: '42', RUN_ATTEMPT: '2', WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, EXECUTED_RECEIPTS: receipts, GITHUB_STEP_SUMMARY: join(dir, 'summary.md') }, dir);
         expect(result.status, result.stderr).toBe(0);
         return { tree: JSON.parse(readFileSync(join(out, 'tree.json'), 'utf8')), stdout: result.stdout };
       };
@@ -207,6 +207,12 @@ describe('full CI on pull requests', () => {
       const earlier = record(manifest({ run_attempt: 1 }));
       expect(earlier.stdout).not.toContain('::warning::');
       expect(earlier.tree).toEqual({ ...base, files: ['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts'], tests: 8 });
+      for (const receipts of ['failure', 'cancelled', '']) {
+        const stale = record(manifest({ run_attempt: 1 }), receipts);
+        expect(stale.tree).toEqual(base);
+        expect(stale.stdout).toContain(`ci-manifest.json is from attempt 1 and executed-receipts did not succeed (result ${receipts || 'unknown'}), so it may have run again by attempt 2 without replacing it`);
+      }
+      expect(record(manifest(), 'failure').tree.files).toEqual(['test/a.test.ts', 'test/b.test.ts', 'test/e2e/c.test.ts']);
       for (const [doc, why] of [
         [undefined, 'no ci-manifest.json from this run'],
         [manifest({ run_attempt: 3 }), 'belongs to run 42 attempt 3, newer than this attempt 2'],
@@ -237,6 +243,7 @@ describe('full CI on pull requests', () => {
       expect(steps[download]!['continue-on-error']).toBe(true);
       expect(download).toBeLessThan(steps.findIndex(s => s.name === 'Record the tested tree'));
       expect(step(w.jobs[job]!, 'Record the tested tree').env!.MANIFEST).toBe('${{ runner.temp }}/ci-manifest/ci-manifest.json');
+      expect(step(w.jobs[job]!, 'Record the tested tree').env!.EXECUTED_RECEIPTS).toBe('${{ needs.executed-receipts.result }}');
       const ledger = w.jobs['executed-receipts']!.steps!.find(s => s.run?.includes('scripts/ci-manifest.ts'))!;
       expect(ledger.run).toContain('--out "$RUNNER_TEMP/ci-manifest.json"');
     }

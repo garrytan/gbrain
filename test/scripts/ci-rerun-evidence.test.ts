@@ -38,7 +38,7 @@ function withRepo(fn: (dir: string, sha: string, record: (manifest: unknown, att
       const out = join(dir, 'out');
       const result = spawnSync('bash', [join(root, 'scripts/ci-full-suite-tree.sh')], {
         cwd: dir, encoding: 'utf8',
-        env: { ...process.env, ARTIFACT_DIR: out, RUN_ID: String(RUN), RUN_ATTEMPT: String(attempt), WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, GITHUB_STEP_SUMMARY: join(dir, 'summary.md') },
+        env: { ...process.env, ARTIFACT_DIR: out, RUN_ID: String(RUN), RUN_ATTEMPT: String(attempt), WORKFLOW: 'Test', EVENT: 'workflow_dispatch', MANIFEST: path, EXECUTED_RECEIPTS: 'success', GITHUB_STEP_SUMMARY: join(dir, 'summary.md') },
       });
       expect(result.status, result.stderr).toBe(0);
       return { tree: JSON.parse(readFileSync(join(out, 'tree.json'), 'utf8')), stdout: result.stdout };
