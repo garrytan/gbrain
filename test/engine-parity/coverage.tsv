@@ -139,12 +139,12 @@ putPage	pages	yes	1254	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	42	yes	yes	yes	serves
-deletePages	pages	yes	4	yes	yes	yes	serves
+deletePages	pages	yes	5	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	1	yes	yes	yes	serves
 softDeletePage	pages	yes	317	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	14	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	8	no	yes	yes	serves
+purgeDeletedPages	pages	yes	9	no	yes	yes	serves
 listPages	pages	yes	20	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
