@@ -411,13 +411,21 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   rec.addon_sha256 = (deps.addonSha256 ?? addonFileSha256)(load.addon);
   const epochAddon = epoch.inputs.rust_addon_sha256;
   if (rec.addon_sha256 === null || epochAddon === null || epochAddon === 'unreadable' || rec.addon_sha256 !== epochAddon) return finish('addon_mismatch', false);
-  rootPin = pinDir(dir);
-  try { mkdirSync(drillsDir(dir), { mode: 0o700 }); } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') { releasePins(); return finish('shadow_gone', false); }
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') { releasePins(); throw e; }
+  // The holds and the lock are taken together: a failure on the way (a full disk, a read-only drills directory) releases the
+  // holds already taken, and once the lock is taken the `finally` below releases both.
+  let release: (() => void) | null = null;
+  try {
+    rootPin = pinDir(dir);
+    try { mkdirSync(drillsDir(dir), { mode: 0o700 }); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') { releasePins(); return finish('shadow_gone', false); }
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+    drillsPin = pinDir(drillsDir(dir));
+    release = takeLock(dir, now());
+  } catch (e) {
+    releasePins();
+    throw e;
   }
-  drillsPin = pinDir(drillsDir(dir));
-  const release = takeLock(dir, now());
   if (!release) { releasePins(); return finish('drill_running', false); }
   // The lock is held through the whole drill, the write of its result and the removal of its pending marker, on every path:
   // an older drill that is slow to publish must not be overtaken by a newer one and then overwrite its result.
