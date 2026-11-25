@@ -408,7 +408,7 @@ pub(crate) fn stored_entries(read: &dyn KvRead) -> Result<BTreeSet<Vec<u8>>> {
 /// within format 9 without a new store format.
 const LOOKUPS_VERSION: &[u8] = b"2";
 
-fn stamp_key() -> Vec<u8> {
+pub(crate) fn stamp_key() -> Vec<u8> {
     keys::meta("keyed_lookups")
 }
 
