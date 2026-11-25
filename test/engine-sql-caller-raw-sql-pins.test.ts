@@ -42,6 +42,7 @@ import { quarantineFilterFragment } from '../src/core/quarantine.ts';
 import { MANAGED_MODE_SQL } from '../src/core/persistence/managed-mode.ts';
 import { FACT_PREIMAGE_SQL } from '../src/core/engine-sql/facts.ts';
 import { pageReadFilter } from '../src/core/search/read-policy-sql.ts';
+import { NEUTRAL_WEIGHT } from '../src/core/feedback/store.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS } from '../src/core/search/saved-fact-collapse.ts';
 import { PINNED_QUESTION_MARKER } from '../src/core/questions/identity.ts';
@@ -3940,6 +3941,25 @@ const PINS: Pin[] = [
         ORDER BY p.id LIMIT 500`],
   },
   // The observed-date read of the facts arm and recall's date header (search/evidence-date.ts factObservationDates).
+  {
+    from: 'src/core/search/evidence-date.ts:110 loadPageDateHeaders, at 4ca2fa285e',
+    case: { method: 'readPageDateFieldsByIds', variant: 'default', run: e => e.readPageDateFieldsByIds([1, 2]) },
+    texts: ['SELECT id, slug, frontmatter, import_filename FROM pages WHERE id = ANY($1::int[])'],
+  },
+  // The search feedback stage's weight read; NEUTRAL_WEIGHT (0.5) was interpolated into the text.
+  {
+    from: 'src/core/search/feedback-boost.ts:40 readPageFeedback, at 4ca2fa285e',
+    case: { method: 'readPageFeedbackWeights', variant: 'default', run: e => e.readPageFeedbackWeights([1, 2]) },
+    texts: [`SELECT p.id, p.content_hash,
+            CASE WHEN w.weight IS NULL THEN NULL
+                 WHEN p.content_hash IS DISTINCT FROM w.content_hash
+                   THEN ${NEUTRAL_WEIGHT} + (w.weight - ${NEUTRAL_WEIGHT}) / 2
+                 ELSE w.weight END AS weight
+       FROM pages p
+       LEFT JOIN retrieval_weights w
+         ON w.source_id = p.source_id AND w.element_kind = 'page' AND w.element_key = p.slug
+      WHERE p.id = ANY($1::int[])`],
+  },
   {
     from: 'src/core/search/evidence-date.ts:158 factObservationDates, at 4ca2fa285e',
     case: { method: 'listFactHoldingRefs', variant: 'default', run: e => e.listFactHoldingRefs([1, 2]) },

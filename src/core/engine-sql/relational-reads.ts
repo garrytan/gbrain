@@ -49,6 +49,21 @@ export async function readAdmittedPageDateFields(exec: LegacyUnscopedRead, refs:
   );
 }
 
+/** A page's observation-date inputs by id (`readPageDateFieldsByIds`). */
+export interface PageDateFieldsByIdRow { id: number; slug: string; frontmatter: unknown; import_filename: string | null }
+
+/**
+ * The observation-date inputs of each of `ids` that names a page row (a soft-deleted page included, as the SQL sets
+ * no filter), in no set order (search/evidence-date.ts `loadPageDateHeaders`, for page hits already read under the
+ * caller's policy). The text is the one evidence-date.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function readPageDateFieldsByIds(exec: LegacyUnscopedRead, ids: readonly number[]): Promise<PageDateFieldsByIdRow[]> {
+  if (!ids.length) return [];
+  const rows = await exec.executeRaw<{ id: number | string; slug: string; frontmatter: unknown; import_filename: string | null }>(
+    'SELECT id, slug, frontmatter, import_filename FROM pages WHERE id = ANY($1::int[])', [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
 /** A page the walk reached: its title, type and bounded body prefix (`boundedBodyPrefixSql`). */
 export interface RelationalPageRow { page_id: number; slug: string; source_id: string; title: string; type: string; synopsis: string | null }
 

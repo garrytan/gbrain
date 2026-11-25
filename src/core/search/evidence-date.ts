@@ -101,15 +101,14 @@ export function factDateHeader(
  * `brain.timezone`. Ids missing from the result render `unknown`.
  */
 export async function loadPageDateHeaders(
-  engine: { executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]>; getConfig(key: string): Promise<string | null> },
+  engine: Pick<BrainEngine, 'readPageDateFieldsByIds' | 'getConfig'>,
   pageIds: number[],
 ): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   const ids = [...new Set(pageIds.filter(id => Number.isInteger(id) && id > 0))];
   if (ids.length === 0) return out;
   const timeZone = (await engine.getConfig('brain.timezone').catch(() => null))?.trim() || null;
-  const rows = await engine.executeRaw<{ id: number; slug: string; frontmatter: unknown; import_filename: string | null }>(
-    'SELECT id, slug, frontmatter, import_filename FROM pages WHERE id = ANY($1::int[])', [ids]);
+  const rows = await engine.readPageDateFieldsByIds(ids);
   for (const r of rows) {
     const fm = typeof r.frontmatter === 'string' ? JSON.parse(r.frontmatter) : r.frontmatter;
     const observed = pageObservationDate({ slug: String(r.slug), frontmatter: fm && typeof fm === 'object' ? fm as Record<string, unknown> : null, filename: r.import_filename, timeZone });
@@ -210,7 +209,13 @@ type HeaderHit = { page_id: number; title?: string | null; chunk_text?: string |
 export async function blockDateHeaders(engine: Parameters<typeof loadPageDateHeaders>[0],
   hits: HeaderHit[], onUnavailable: () => void, opts: { titles?: boolean } = {}): Promise<(hit: HeaderHit) => string> {
   let headers: Map<number, string>;
-  try { headers = await loadPageDateHeaders(engine, hits.map(h => h.page_id)); } catch { headers = new Map(); onUnavailable(); }
+  try {
+    headers = await loadPageDateHeaders(engine, hits.map(h => h.page_id));
+  } catch (e) {
+    rethrowCapabilityMissing(e);
+    headers = new Map();
+    onUnavailable();
+  }
   return hit => {
     if (hit.fact_row) return hit.chunk_text?.startsWith('[observed ') ? '' : `${factDateHeader(hit.fact_row, undefined, hit.fact_row.observed)}\n`;
     const header = headers.get(hit.page_id) ?? pageDateHeader(null);

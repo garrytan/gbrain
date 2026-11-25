@@ -290,6 +290,16 @@ impl Brain {
         })
     }
 
+    /// `readPageDateFieldsByIds(ids)`: `[{ id, slug, frontmatter, import_filename }]`.
+    #[napi]
+    pub fn read_page_date_fields_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_date_fields_by_ids(&ids))
+    }
+
     /// `readPageSynopses(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
     /// `[{ page_id, slug, source_id, title, type, synopsis }]`.
     #[napi]

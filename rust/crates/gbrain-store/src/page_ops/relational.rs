@@ -97,6 +97,30 @@ impl Store {
         Ok(out)
     }
 
+    /// `readPageDateFieldsByIds(ids)`: `{ id, slug, frontmatter, import_filename }` for each id that names a page
+    /// row (a soft-deleted page included: the SQL has no filter), in id order (the SQL sets none).
+    pub fn read_page_date_fields_by_ids(&self, ids: &[f64]) -> Result<Vec<Value>> {
+        let mut wanted = std::collections::BTreeSet::new();
+        for id in ids {
+            if id.is_finite() && id.fract() == 0.0 && *id >= 1.0 && *id <= f64::from(i32::MAX) {
+                wanted.insert(*id as u64);
+            }
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            if let Some(page) = crate::pages::read_page_by_id(&*read, id)? {
+                out.push(json!({
+                    "id": page.id,
+                    "slug": page.slug,
+                    "frontmatter": Value::Object(page.frontmatter.clone()),
+                    "import_filename": page.import_filename,
+                }));
+            }
+        }
+        Ok(out)
+    }
+
     /// `readPageSynopses(refs, scope)`: `{ page_id, slug, source_id, title, type, synopsis }` for each
     /// ref that names a page the scope admits and the search visibility clause shows (live, a served
     /// text projection, an unarchived source, unquarantined, no `pinned_question` key, and the

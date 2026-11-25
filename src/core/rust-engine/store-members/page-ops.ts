@@ -6,7 +6,7 @@
  * the atoms-restore reads listRestorableAtoms and countKeptAtomRetirements (page_ops/atom_restore.rs), the moved-pages reads
  * listLivePagesBySourcePaths, listLivePagesByFileName, listLivePagesSharingFrontmatterId, hasSegmentedHistory and
  * readLivePagesByIds (moved_page_reads.rs), the stale-atoms read listStaleAtoms (page_ops/stale_atoms.rs),
- * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs, readAdmittedPageDateFields,
+ * getContentFlagsByPageIds, getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, readAdmittedPageRefs, readAdmittedPageDateFields, readPageDateFieldsByIds,
  * readPageSynopses, readSeedTitleSlugs, revertToVersion.
  * deletePages scrubs the eval candidates' retrieved slugs in the delete's transaction, as PGLite does.
  * purgeDeletedPages (also served) keeps the pages PGLite's atom and derived retirement holds keep, reading the `retired_by`
@@ -29,7 +29,7 @@ import type { CorpusSampleOpts, DomainBankRow, DomainBankSampleOpts, PageReadPol
 import type { RestorableAtomRow } from '../../engine-sql/atom-restore-reads.ts';
 import type { MovedPageRow } from '../../engine-sql/moved-page-reads.ts';
 import type { StaleAtomRow } from '../../engine-sql/stale-atom-reads.ts';
-import type { PageDateFieldsRow, PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
+import type { PageDateFieldsByIdRow, PageDateFieldsRow, PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
 import { overlayStoreSnapshots, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { storeErrorCode } from '../store-errors.ts';
@@ -336,6 +336,14 @@ export const readAdmittedPageDateFields: StoreMember<[refs: readonly PageRefRow[
   const rows: PageDateFieldsRow[] = await storeCall({ member: 'readAdmittedPageDateFields' }, () =>
     brain.readAdmittedPageDateFields(refs.map((r) => ({ source_id: r.source_id, slug: r.slug })), scope));
   return rows.map((r) => ({ source_id: r.source_id, slug: r.slug, frontmatter: r.frontmatter, import_filename: r.import_filename ?? null }));
+};
+
+/** The date header's page read by id (engine-sql/relational-reads.ts, search/evidence-date.ts loadPageDateHeaders). */
+export const readPageDateFieldsByIds: StoreMember<[ids: readonly number[]], PageDateFieldsByIdRow[]> = async (brain, ids) => {
+  if (!ids.length) return [];
+  if (!ids.every(Number.isSafeInteger)) refuseMember('readPageDateFieldsByIds', 'a page id that is not an integer');
+  const rows: PageDateFieldsByIdRow[] = await storeCall({ member: 'readPageDateFieldsByIds' }, () => brain.readPageDateFieldsByIds([...ids]));
+  return rows.map((r) => ({ id: r.id, slug: r.slug, frontmatter: r.frontmatter, import_filename: r.import_filename ?? null }));
 };
 
 /**

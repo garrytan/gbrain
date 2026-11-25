@@ -131,6 +131,32 @@ export async function insertRetrievalEvents(tx: Raw, events: RetrievalEventInser
   }
 }
 
+/** A page's learned feedback weight (`readPageFeedbackWeights`): null when no weight row exists. */
+export interface PageFeedbackWeightRow { id: number; content_hash: string | null; weight: number | null }
+
+/**
+ * The search feedback stage's weight read (search/feedback-boost.ts): for each of `pageIds` that names a page row (a
+ * soft-deleted page included), its content hash and its learned page weight, halved toward neutral (0.5) when the
+ * page changed since it was rated; null without a weight row. The rows come in no set order. The text is the one
+ * feedback-boost.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function readPageFeedbackWeights(tx: Raw, pageIds: readonly number[]): Promise<PageFeedbackWeightRow[]> {
+  if (!pageIds.length) return [];
+  const rows = await tx.executeRaw<{ id: number | string; content_hash: string | null; weight: number | string | null }>(
+    `SELECT p.id, p.content_hash,
+            CASE WHEN w.weight IS NULL THEN NULL
+                 WHEN p.content_hash IS DISTINCT FROM w.content_hash
+                   THEN 0.5 + (w.weight - 0.5) / 2
+                 ELSE w.weight END AS weight
+       FROM pages p
+       LEFT JOIN retrieval_weights w
+         ON w.source_id = p.source_id AND w.element_kind = 'page' AND w.element_key = p.slug
+      WHERE p.id = ANY($1::int[])`,
+    [[...pageIds]],
+  );
+  return rows.map(r => ({ id: Number(r.id), content_hash: r.content_hash, weight: r.weight == null ? null : Number(r.weight) }));
+}
+
 /** One retrieval event with its pages by rank and its links by byte, or null. */
 export async function readRetrievalEvent(tx: Raw, id: string): Promise<RetrievalEventRead | null> {
   const rows = await tx.executeRaw<{ id: string; client_id: string; op: string; created_at: Date | string }>(RETRIEVAL_FEEDBACK_SQL.readEvent, [id]);

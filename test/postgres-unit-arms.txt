@@ -488,6 +488,7 @@ test/engine-parity/retrieval-reflex.test.ts
 test/engine-parity/schema-detect.test.ts
 test/engine-parity/search-cjk.test.ts
 test/engine-parity/search-deep-query.test.ts
+test/engine-parity/search-feedback-and-date-headers.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-private-fence.test.ts

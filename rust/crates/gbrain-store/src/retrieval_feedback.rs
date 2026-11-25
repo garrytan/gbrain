@@ -260,6 +260,37 @@ impl Store {
 
     /// `readRetrievalEvent(id)`: the event with its pages by rank (ties by source and slug) and its links by source,
     /// edge key and target in byte order; None when the event is gone.
+    /// `readPageFeedbackWeights(pageIds)`: `{ id, content_hash, weight }` for each id that names a page row (a
+    /// soft-deleted page included), in id order (the SQL sets none). `weight` is the page's learned weight, halved
+    /// toward neutral when the page's hash differs from the rated one (`IS DISTINCT FROM`), or null without a weight
+    /// row; the `CASE` mixes `real` and `double precision`, so it reaches TypeScript as the widened `f64`.
+    pub fn read_page_feedback_weights(&self, page_ids: &[f64]) -> Result<Vec<Value>> {
+        let mut wanted = std::collections::BTreeSet::new();
+        for id in page_ids {
+            if id.is_finite() && id.fract() == 0.0 && *id >= 1.0 && *id <= f64::from(i32::MAX) {
+                wanted.insert(*id as u64);
+            }
+        }
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for id in wanted {
+            let Some(page) = pages::read_page_by_id(&*read, id)? else {
+                continue;
+            };
+            let weight_key = key(
+                keys::TELEMETRY_RETRIEVAL_WEIGHT,
+                &[&page.source_id, "page", &page.slug],
+            );
+            let weight = match get_json::<WeightRecord>(&*read, &weight_key)? {
+                None => Value::Null,
+                Some(w) if w.content_hash != page.content_hash => json!(decayed(w.weight)),
+                Some(w) => json!(f64::from(w.weight)),
+            };
+            out.push(json!({ "id": page.id, "content_hash": page.content_hash, "weight": weight }));
+        }
+        Ok(out)
+    }
+
     pub fn read_retrieval_event(&self, id: &str) -> Result<Option<Value>> {
         no_nul("readRetrievalEvent", &[("id", id)])?;
         let read = self.read()?;

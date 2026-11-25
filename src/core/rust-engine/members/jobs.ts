@@ -142,6 +142,7 @@ export const JOBS_MEMBERS = {
   readVolunteerUsage: 'telemetry',
   insertRetrievalEvents: 'telemetry',
   readRetrievalEvent: 'telemetry',
+  readPageFeedbackWeights: 'telemetry',
   applyRetrievalRatings: 'telemetry',
   patchOauthClient: 'minion_queue',
   insertAccessToken: 'minion_queue',

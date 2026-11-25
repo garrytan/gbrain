@@ -25,6 +25,16 @@ impl Brain {
         })
     }
 
+    /// `readPageFeedbackWeights(pageIds)`: `[{ id, content_hash, weight }]`, each page row's learned weight.
+    #[napi]
+    pub fn read_page_feedback_weights<'env>(
+        &self,
+        env: &'env Env,
+        page_ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_feedback_weights(&page_ids))
+    }
+
     /// `readRetrievalEvent(id)`: the event with its pages and links, or null.
     #[napi]
     pub fn read_retrieval_event<'env>(

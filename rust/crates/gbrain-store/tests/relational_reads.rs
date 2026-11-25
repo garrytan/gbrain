@@ -325,3 +325,41 @@ fn the_date_field_read_admits_what_the_ref_read_admits_and_carries_frontmatter()
             .is_empty()
     );
 }
+
+#[test]
+fn the_date_field_read_by_id_answers_every_page_row_soft_deleted_included() {
+    let dir = TempDir::new("relational-date-fields-by-id");
+    let store = seeded(&dir);
+    let rows = store
+        .read_admitted_page_date_fields(
+            &[r("default", "companies/private")],
+            &PageReadScope::default(),
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let ids: Vec<f64> = (1..=40).map(f64::from).collect();
+    let by_id = store.read_page_date_fields_by_ids(&ids).unwrap();
+    let slugs: Vec<&str> = by_id.iter().map(|r| r["slug"].as_str().unwrap()).collect();
+    assert!(slugs.contains(&"companies/gone"), "{slugs:?}");
+    assert!(slugs.contains(&"companies/private"), "{slugs:?}");
+    let private = by_id
+        .iter()
+        .find(|r| r["slug"] == "companies/private")
+        .unwrap();
+    assert_eq!(private["frontmatter"], json!({ "visibility": "private" }));
+    assert_eq!(private["import_filename"], Value::Null);
+    let mut sorted = by_id
+        .iter()
+        .map(|r| r["id"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    let before = sorted.clone();
+    sorted.sort_unstable();
+    assert_eq!(before, sorted);
+    assert!(store.read_page_date_fields_by_ids(&[]).unwrap().is_empty());
+    assert!(
+        store
+            .read_page_date_fields_by_ids(&[0.0, -3.0, 2.5])
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2403/2427
+# covered: 2405/2429
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -76,7 +76,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 121/133
+# write_misc: 122/134
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -87,7 +87,7 @@
 # remote_links: 5/5
 # facts_backstop: 2/2
 # large_page: 2/2
-# relational_reads: 4/4
+# relational_reads: 5/5
 # trust_fence: 4/4
 # trust_proposals: 8/8
 # connect_gate: 4/4
@@ -135,13 +135,13 @@ getPage	pages	yes	280	yes	yes	yes	serves
 readPageSnapshot	pages	yes	100	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1324	yes	yes	yes	serves
+putPage	pages	yes	1326	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	43	yes	yes	yes	serves
 deletePages	pages	yes	9	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	333	yes	yes	yes	serves
+softDeletePage	pages	yes	334	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	15	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	10	no	yes	yes	serves
@@ -2068,9 +2068,10 @@ readPinnedQuestion	write_misc	no	0	no	-	-	-
 listPinnedQuestions	write_misc	yes	1	no	yes	yes	serves
 insertVolunteerEvents	write_misc	yes	3	no	yes	yes	serves
 readVolunteerUsage	write_misc	yes	1	no	yes	yes	serves
-insertRetrievalEvents	write_misc	yes	5	no	yes	yes	serves
+insertRetrievalEvents	write_misc	yes	6	no	yes	yes	serves
 readRetrievalEvent	write_misc	yes	3	no	yes	yes	serves
-applyRetrievalRatings	write_misc	yes	4	no	yes	yes	serves
+readPageFeedbackWeights	write_misc	yes	1	no	yes	yes	serves
+applyRetrievalRatings	write_misc	yes	5	no	yes	yes	serves
 readGitGapSourceRow	write_misc	no	0	no	-	-	-
 countGitGapLivePages	write_misc	no	0	no	-	-	-
 markTransactionReadOnly	write_misc	no	0	no	-	-	-
@@ -2210,6 +2211,7 @@ readStoredBodyBytes	large_page	yes	1	no	yes	yes	serves
 readPageBodySizes	large_page	yes	1	no	yes	yes	serves
 readAdmittedPageRefs	relational_reads	yes	2	no	yes	yes	serves
 readAdmittedPageDateFields	relational_reads	yes	2	no	yes	yes	serves
+readPageDateFieldsByIds	relational_reads	yes	1	no	yes	yes	serves
 readPageSynopses	relational_reads	yes	2	no	yes	yes	serves
 readSeedTitleSlugs	relational_reads	yes	1	no	yes	yes	serves
 listFenceFactRows	trust_fence	yes	5	no	yes	yes	serves

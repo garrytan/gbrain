@@ -6796,6 +6796,28 @@
         ],
         "flagOnScopes": []
       },
+      "readPageDateFieldsByIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageFeedbackWeights#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readPageIdentity#default": {
         "flagOffLanes": [
           "pool"
@@ -10987,7 +11009,9 @@
         "readPageBodySizes": "none",
         "readPageCompiledTruths": "none",
         "readPageDatabaseOnlyReason": "none",
+        "readPageDateFieldsByIds": "none",
         "readPageEmbeddingBudget": "none",
+        "readPageFeedbackWeights": "none",
         "readPageFileOrigin": "none",
         "readPageFolderRulesAllowed": "none",
         "readPageHiddenFromCaller": "none",
