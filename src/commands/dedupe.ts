@@ -15,7 +15,8 @@
  * every company (core/entities/company-auto-link.ts); sync runs it over the companies it changed. decide records the
  * owner's choice for each Google Contacts contact that waits (dedupe-decide.ts) and undo removes
  * decisions by id. auto links the person pairs of the classes that passed their labelled sample
- * (core/entities/evidence/auto.ts), as decisions undo removes. Nothing here merges, renames or deletes a page.
+ * (core/entities/evidence/auto.ts), as decisions undo removes, and collapses same-source C7 pairs by pointer and alias
+ * (core/entities/evidence/collapse.ts), which undo and reject also take back. Nothing here renames or deletes a page.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -23,7 +24,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { DUPLICATE_KINDS, entityPagesOf, findTypedDuplicateGroups, type DuplicateEvidence, type DuplicateGroup, type DuplicateKind, type DuplicateResult, type EntityKind, type EntityPage } from '../core/entities/duplicates.ts';
 import { autoLinkCompanies } from '../core/entities/company-auto-link.ts';
-import { canonicalOf, decidedSets, decisionId, forgetDecisions, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
+import { canonicalOf, decidedSets, decisionId, fillDecisionEvidence, forgetDecisions, identityHome, reconcileDecisions, recordDecisions, unpublishableMembers, type DecisionInput, type RecordResult } from '../core/entities/identity-decisions.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../core/engine-sql/identity-decisions.ts';
 import { identityIdsForPages, isEntityId, listEntityIdentities, validateEntityId } from '../core/entity-identity.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -32,7 +33,9 @@ import { APPLE_CONTACTS_LINK_ORIGIN, unlinkContact } from '../core/apple-contact
 import { GOOGLE_CONTACTS_LINK_ORIGIN, IDENTITY_LINKS_CONFIG_KEY, identityLinksOn, linkGoogleContacts, unlinkGoogleContacts } from '../core/google/contact-identity.ts';
 import { decideContacts } from './dedupe-decide.ts';
 import { classifyPairs, samplePairs, seededPick, type ClassesReport, type ClassifyOptions } from '../core/entities/evidence/classes.ts';
-import { AUTO_CLASSES, applyAutoLinks, autoLinksSince, autoSwitchKey, parseAutoClass, planAutoLinks, switchAutoClassOff } from '../core/entities/evidence/auto.ts';
+import { AUTO_CLASSES, AUTO_DECIDED_BY, CORRECTS_PREFIX, applyAutoLinks, autoLinksSince, autoSwitchKey, collapsesSince, correctionsSince, parseAutoClass, planAutoLinks, switchAutoClassOff } from '../core/entities/evidence/auto.ts';
+import { loadConfig } from '../core/config.ts';
+import { listCollapses, undoCollapse, type CollapseOutcome } from '../core/entities/evidence/collapse.ts';
 import { PAIR_CLASSES, parsePairClass } from '../core/entities/evidence/combine.ts';
 import { EXA_SWITCH_KEY, exaSettings } from '../core/entities/evidence/exa.ts';
 
@@ -46,7 +49,7 @@ const HELP = `Usage: gbrain dedupe --preview [--json] [--kind cross-source|in-so
        gbrain dedupe reconcile [--json]
        gbrain dedupe link-contacts --source <id> [--apply | --unlink] [--json]
        gbrain dedupe decide --source <id> --file <choices.json> [--dry-run] [--json]
-       gbrain dedupe undo <decision-id>... [--json]
+       gbrain dedupe undo <decision-id | collapse-id>... [--json]
        gbrain dedupe classes [--source <id>] [--exa [--dry-run]] [--json]
        gbrain dedupe sample --class <class> [--n 100] [--seed <n>] [--source <id>] [--exa [--dry-run]] [--json]
        gbrain dedupe sample --class <class> --since <7d> [--n 20] [--seed <n>] [--json]
@@ -75,7 +78,8 @@ confirm --clean     list the clean company groups a bulk confirm covers and prin
   --expect <hash>   confirm exactly those groups; refuses (preview_changed) if the list changed since
 reject <id>...      record that the pages are different people or companies: the pair is never proposed again, even
                     after a page is renamed or moved to another source, and a confirmed or automatic group is
-                    unlinked (<id> may be its identity id); two pages in one source also get distinct_from
+                    unlinked (<id> may be its identity id, or a collapse id: the collapse is undone too); two pages
+                    in one source also get distinct_from
 reconcile           write decisions the database holds alone into git, re-read the committed decisions, link
                     pages that arrived since and link every company group that qualifies; run it after doctor
                     reports a drift
@@ -98,7 +102,8 @@ decide              record your choice for each waiting contact of a Google Cont
   --file <path>     the choices file (required)
   --dry-run         print what each line would do; changes nothing
 undo <id>...        remove the decisions with these ids (gbrain dedupe decide prints them): a link is unlinked, and a
-                    rejected or ignored contact waits for you again
+                    rejected or ignored contact waits for you again; a collapse id takes the collapse back (the page
+                    loses its merged_into and the kept page the aliases the collapse added)
 classes             count the pairs of person pages by class and by what would happen to them, from the evidence:
                     shared ids, emails and phones (C1 to C7), your email pages (E1, E3, E4) and chat pages (M1 to M3);
                     changes nothing
@@ -112,15 +117,18 @@ sample              a seeded random sample of one class's pairs with their evide
   --seed <n>        the sample's seed (default 1); the same seed and brain give the same sample
   --since <Nd|Nh>   sample the automatic links of one class recorded in that time instead (the weekly check:
                     --since 7d --n 20)
-auto                list the pairs of person pages that link automatically, in the classes that passed a labelled
-                    sample (${AUTO_CLASSES.join(', ')}: an email or phone only those two person pages hold, in two
-                    sources); a pair with a family, minor or non-person page, a contradiction, a page in two such
+auto                list the pairs of person pages joined automatically, in the classes that passed a labelled
+                    sample (${AUTO_CLASSES.join(', ')}): C2, an email or phone only those two person pages hold, in two
+                    sources, is linked; C7, two pages in one source with the same name and a shared id, is collapsed
+                    (the newer page gets merged_into the older one, which gains its name as an alias; only
+                    frontmatter changes, in one commit on a source with a repository); a pair with a family, minor or
+                    non-person page, names that disagree unless one is a handle, a contradiction, a page in two such
                     pairs (in any source), or a page already in an identity group is set aside; changes nothing
-  --apply           link them: one "same" decision per pair (decided_by dedupe:auto:<class>), each printed with the
-                    gbrain dedupe undo command that removes it (a later --apply can link it again);
-                    gbrain dedupe reject <identity id> keeps a wrong pair apart for good
-  --off <class>     stop linking the class and remove every link it made
-  --on <class>      link the class again from the next --apply
+  --apply           do it: one "same" decision per C2 pair (decided_by dedupe:auto:<class>) and one write per
+                    collapse, each printed with the gbrain dedupe undo command that takes it back (a later --apply
+                    can do it again) and the gbrain dedupe reject command that keeps a wrong pair apart for good
+  --off <class>     stop the class and take back everything it did
+  --on <class>      do the class again from the next --apply
 
 Companies link automatically: each sync links the cross-source company groups its changed pages belong to when
 they are clean, share a LinkedIn company page or their own site's domain, and name no different countries
@@ -129,7 +137,7 @@ People are linked automatically only by gbrain dedupe auto --apply, and contact 
 phone (Apple Contacts, and Google Contacts after link-contacts --apply).
 
 Decisions are kept in .gbrain/identity/ in the brain's repository (committed through gbrain git commit-push),
-or in the database on a brain with no repository. Nothing merges, renames or deletes a page.
+or in the database on a brain with no repository. Nothing renames or deletes a page; only auto collapses one.
 `;
 
 /** Frontmatter fields the confirm list compares between members, beyond identity keys (the Captain's ruling on the bench run). */
@@ -426,21 +434,29 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
   const { result, read } = await scan(engine);
   const same = read.decisions.filter(d => d.verdict === 'same');
   const decisions: DecisionInput[] = [];
-  for (const id of [...new Set(f.ids)]) {
+  const collapsed = new Map((await listCollapses(engine)).map(c => [c.collapse, c]));
+  const uncollapse = [...new Set(f.ids)].filter(id => collapsed.has(id)).map(id => collapsed.get(id)!);
+  for (const c of uncollapse) {
+    decisions.push({ verdict: 'different', members: [{ source_id: c.source_id, slug: c.retired }, { source_id: c.source_id, slug: c.canonical }], group_id: c.collapse,
+      entity_id: null, canonical: null, decided_by: `${CORRECTS_PREFIX}${AUTO_DECIDED_BY}${c.class}` });
+  }
+  for (const id of [...new Set(f.ids)].filter(x => !collapsed.has(x))) {
     const confirmed = same.filter(d => d.entity_id === id);
     const linked = confirmed.length || !isEntityId(id) ? [] : await listEntityIdentities(engine, { entityId: id });
     const contacts = linked.filter(m => !m.canonical && CONTACT_LINK_ORIGINS.includes(m.established_by));
     const person = linked.find(m => m.canonical) ?? linked.find(m => !contacts.includes(m));
     const auto = (linked.some(m => m.established_by === 'dedupe:auto') ? linked.filter(m => m.established_by === 'dedupe:auto')
       : contacts.length && person ? [person, ...contacts] : []).map(m => ({ source_id: m.source_id, slug: m.slug }));
-    const members = confirmed.length ? confirmed.map(d => ({ members: d.members, group_id: d.group_id ?? id }))
+    const members = confirmed.length ? confirmed.map(d => ({ members: d.members, group_id: d.group_id ?? id,
+      decided_by: d.decided_by.startsWith(AUTO_DECIDED_BY) ? `${CORRECTS_PREFIX}${d.decided_by}` : DECIDED_BY }))
       : [result.groups.find(g => g.id === id)?.members ?? read.decisions.find(d => d.group_id === id)?.members ?? (auto.length > 1 ? auto : undefined)]
-        .filter((m): m is IdentityMemberRef[] => !!m).map(m => ({ members: m, group_id: id }));
+        .filter((m): m is IdentityMemberRef[] => !!m).map(m => ({ members: m, group_id: id, decided_by: DECIDED_BY }));
     if (!members.length) throw unknownGroup(id);
-    for (const m of members) decisions.push({ verdict: 'different', members: m.members, group_id: m.group_id, entity_id: null, canonical: null, decided_by: DECIDED_BY });
+    for (const m of members) decisions.push({ verdict: 'different', members: m.members, group_id: m.group_id, entity_id: null, canonical: null, decided_by: m.decided_by });
   }
   const pages = await entityPagesOf(engine, decisions.flatMap(d => d.members));
   for (const d of decisions) d.evidence = d.members.map(m => pages.get(`${m.source_id}\t${m.slug}`)?.fingerprint).filter((x): x is string => !!x);
+  for (const d of decisions) if (uncollapse.some(c => c.collapse === d.group_id) && (d.evidence?.length ?? 0) < 2) d.evidence = [];
   const undone = new Set(decisions.map(d => decisionId(d.members)));
   for (const d of decisions) {
     const keys = new Set(d.members.map(memberText));
@@ -457,16 +473,22 @@ async function runReject(engine: BrainEngine, args: string[]): Promise<void> {
         verify: { argv: ['gbrain', 'doctor', '--only', 'entity_duplicates', '--json'] } } });
   }
   const r = await recordDecisions(engine, decisions, `dedupe: record ${decisions.length} group(s) as different people or companies`);
+  const uncollapsed: CollapseOutcome[] = [];
+  for (const c of uncollapse) uncollapsed.push(await undoCollapse(engine, c, loadConfig()));
+  if (uncollapse.length) await fillDecisionEvidence(engine);
   await unlinkRejectedContacts(engine, decisions);
   const sameSource = await markDistinct(engine, decisions);
   if (f.json) {
     console.log(JSON.stringify({ rejected: decisions.map(d => ({ group_id: d.group_id, members: d.members })), store: r.store,
-      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), distinct_from: sameSource }, null, 2));
+      ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome, ...(r.receipt.note ? { note: r.receipt.note } : {}) } : {}), distinct_from: sameSource,
+      ...(uncollapsed.length ? { collapses: uncollapsed } : {}) }, null, 2));
   } else {
     for (const d of decisions) console.log(`Recorded ${d.group_id} as different people or companies: ${d.members.map(memberText).join(', ')}. It will not be proposed again.`);
     console.log(storedText(r));
+    for (const c of uncollapsed) console.log(collapseText(c));
     for (const s of sameSource) console.log(`  ${s.source_id}:${s.slug} distinct_from: ${s.status}`);
   }
+  if (uncollapsed.some(c => c.status !== 'undone')) setCliExitVerdict(1);
   const changed = sameSource.filter(s => s.status === 'changed');
   if (changed.length) {
     throw opError('dedupe_page_changed', `gbrain dedupe reject: the decision is recorded, but ${changed.map(s => `${s.source_id}:${s.slug}`).join(', ')} changed while its distinct_from line was written, so it was not edited.`,
@@ -584,8 +606,18 @@ async function runUndo(engine: BrainEngine, args: string[]): Promise<void> {
   const f = parseFlags('undo', args, new Set());
   if (!f) return;
   if (!f.ids.length) { console.error(`gbrain dedupe undo: pass the decision ids to remove.\n\n${HELP}`); setCliExitVerdict(2); return; }
-  const before = (await engine.listIdentityDecisions()).decisions.filter(d => f.ids.includes(d.decision_id));
-  const r = await forgetDecisions(engine, f.ids, `dedupe: undo ${f.ids.length} duplicate decision(s)`);
+  const collapsed = new Map((await listCollapses(engine)).map(c => [c.collapse, c]));
+  const ids = f.ids.filter(id => !collapsed.has(id));
+  const undone: CollapseOutcome[] = [];
+  for (const id of new Set(f.ids.filter(x => collapsed.has(x)))) undone.push(await undoCollapse(engine, collapsed.get(id)!, loadConfig()));
+  if (undone.some(c => c.status !== 'undone')) setCliExitVerdict(1);
+  if (!ids.length) {
+    if (f.json) console.log(JSON.stringify({ removed: [], collapses: undone }, null, 2));
+    else for (const c of undone) console.log(collapseText(c));
+    return;
+  }
+  const before = (await engine.listIdentityDecisions()).decisions.filter(d => ids.includes(d.decision_id));
+  const r = await forgetDecisions(engine, ids, `dedupe: undo ${ids.length} duplicate decision(s)`);
   if (await identityLinksOn(engine)) {
     const google = new Set((await engine.listAllSources()).filter(s => parseSourceConfig(s.config).kind === 'google').map(s => s.id));
     const bySource = new Map<string, string[]>();
@@ -593,9 +625,10 @@ async function runUndo(engine: BrainEngine, args: string[]): Promise<void> {
     for (const [sourceId, slugs] of bySource) await linkGoogleContacts(engine, sourceId, { apply: true, slugs });
   }
   if (f.json) {
-    console.log(JSON.stringify({ removed: r.removed, store: r.store, ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}) }, null, 2));
+    console.log(JSON.stringify({ removed: r.removed, store: r.store, ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}), ...(undone.length ? { collapses: undone } : {}) }, null, 2));
     return;
   }
+  for (const c of undone) console.log(collapseText(c));
   console.log(`Removed ${r.removed.length} decision(s): ${r.removed.join(', ')}.`);
   console.log(r.store === 'database' ? 'Removed from the database (this brain has no repository).'
     : r.receipt ? `Removed from ${r.home!.sourceId}:.gbrain/identity/ (commit ${r.receipt.commit?.slice(0, 12) ?? 'none'}, ${r.receipt.outcome}).${r.receipt.note ? ' ' + r.receipt.note : ''}`
@@ -617,7 +650,6 @@ async function markDistinct(engine: BrainEngine, decisions: DecisionInput[]): Pr
         continue;
       }
       const { extractionOperations } = await import('../core/ops/extraction.ts');
-      const { loadConfig } = await import('../core/config.ts');
       const op = extractionOperations.find(o => o.name === 'extraction_review')!;
       const ctx = { engine, config: loadConfig() ?? ({ engine: engine.kind } as never), remote: false, dryRun: false, sourceId,
         logger: { info() {}, warn() {}, error() {} } } as unknown as Parameters<typeof op.handler>[0];
@@ -674,13 +706,21 @@ async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: 
     const autoClass = cls === undefined ? null : parseAutoClass(cls);
     if (!autoClass) return usage(`with --since, pass --class with one of the automatic classes: ${AUTO_CLASSES.join(', ')}`);
     if (exa || sourceId) return usage('--since samples recorded links: it takes no --exa or --source');
-    const recent = autoLinksSince(await engine.listIdentityDecisions(), Date.now() - since, autoClass)
-      .sort((a, b) => (a.decision_id < b.decision_id ? -1 : 1));
-    const picked = seededPick(recent, n ?? 20, seed);
-    const links = picked.map(d => ({ decision: d.decision_id, members: d.members, entity_id: d.entity_id, decided_at: d.decided_at }));
-    if (json) { console.log(JSON.stringify({ class: autoClass, since_hours: since / 3_600_000, n: n ?? 20, seed, total: recent.length, links }, null, 2)); return; }
-    console.log(`${links.length} of ${recent.length} automatic ${autoClass} link(s) from the last ${since / 3_600_000} hour(s) (seed ${seed}). Label each one same, different or unsure.`);
-    for (const l of links) console.log(`${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.decided_at}); if they are different people, keep it apart for good: gbrain dedupe reject ${l.entity_id}`);
+    const from = Date.now() - since;
+    const read = await engine.listIdentityDecisions();
+    const live = autoClass === 'C7'
+      ? (await collapsesSince(engine, from)).map(c => ({ decision: c.collapse, members: [{ source_id: c.source_id, slug: c.retired }, { source_id: c.source_id, slug: c.canonical }],
+        decided_at: c.at, reject: `gbrain dedupe reject ${c.collapse}` }))
+      : autoLinksSince(read, from, autoClass).map(d => ({ decision: d.decision_id, members: d.members, entity_id: d.entity_id, decided_at: d.decided_at, reject: `gbrain dedupe reject ${d.entity_id}` }));
+    const corrected = correctionsSince(read, from, autoClass).map(d => ({ decision: d.decision_id, members: d.members, decided_at: d.decided_at, corrected: true as const }));
+    const recent = [...live, ...corrected].sort((a, b) => (a.decision < b.decision ? -1 : a.decision > b.decision ? 1 : 0));
+    const links = seededPick(recent, n ?? 20, seed);
+    if (json) { console.log(JSON.stringify({ class: autoClass, since_hours: since / 3_600_000, n: n ?? 20, seed, total: recent.length, corrected: corrected.length, links }, null, 2)); return; }
+    const what = autoClass === 'C7' ? 'collapse(s)' : 'link(s)';
+    console.log(`${links.length} of ${recent.length} automatic ${autoClass} ${what} from the last ${since / 3_600_000} hour(s) (seed ${seed}), ${corrected.length} of them already rejected by you. Label each one same, different or unsure.`);
+    for (const l of links) {
+      console.log(`${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.decided_at}); ${'reject' in l ? `if they are different people, keep it apart for good: ${l.reject}` : 'you rejected it: count it as different'}`);
+    }
     return;
   }
   const pairClass = cls === undefined ? null : parsePairClass(cls);
@@ -734,22 +774,48 @@ async function runAuto(engine: BrainEngine, args: string[]): Promise<void> {
       else console.log(`Automatic ${cls} links are on; gbrain dedupe auto --apply links the pairs that qualify.`);
       return;
     }
-    const { removed } = await switchAutoClassOff(engine, cls);
-    if (json) console.log(JSON.stringify({ class: cls, switch: 'off', removed }, null, 2));
-    else console.log(`Automatic ${cls} links are off; removed ${removed.length} link(s). gbrain dedupe auto --on ${cls} switches the class back on.`);
+    const { removed, left } = await switchAutoClassOff(engine, cls, loadConfig());
+    if (left.length) setCliExitVerdict(1);
+    if (json) console.log(JSON.stringify({ class: cls, switch: 'off', removed, ...(left.length ? { left } : {}) }, null, 2));
+    else {
+      console.log(`Automatic ${cls} ${cls === 'C7' ? 'collapses' : 'links'} are off; removed ${removed.length}. gbrain dedupe auto --on ${cls} switches the class back on.`);
+      if (left.length) console.log(`${left.length} collapse(s) were not undone because a page changed since: ${left.join(', ')} (run gbrain dedupe undo <id> for each)`);
+    }
     return;
   }
   const plan = await planAutoLinks(engine, sourceId ? { sourceId } : {});
-  const r = apply ? await applyAutoLinks(engine, plan) : null;
+  const r = apply ? await applyAutoLinks(engine, plan, loadConfig()) : null;
+  if (r?.collapses.some(c => c.status !== 'collapsed')) setCliExitVerdict(1);
   if (json) {
-    console.log(JSON.stringify({ mode: apply ? 'apply' : 'preview', ...plan, ...(r ? { store: r.store, ...(r.receipt ? { commit: r.receipt.commit, outcome: r.receipt.outcome } : {}) } : {}) }, null, 2));
+    const rec = r?.record;
+    console.log(JSON.stringify({ mode: apply ? 'apply' : 'preview', ...plan, ...(r ? { linked: r.linked, changed: r.changed, collapsed: r.collapses } : {}),
+      ...(rec ? { store: rec.store, ...(rec.receipt ? { commit: rec.receipt.commit, outcome: rec.receipt.outcome } : {}) } : {}) }, null, 2));
     return;
   }
   const switches = AUTO_CLASSES.map(c => `${c} ${plan.switches[c]}`).join(', ');
-  console.log(`${apply ? 'Linked' : 'Would link'} ${plan.links.length} pair(s) of person pages automatically (${switches}); ${plan.set_aside.length} set aside.${apply ? '' : ' Nothing was changed; link them with gbrain dedupe auto --apply.'}`);
-  for (const l of plan.links) console.log(`  ${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.class}${apply ? `; undo: gbrain dedupe undo ${l.decision}` : ''})`);
+  const linked = r ? r.linked.length : plan.links.length;
+  const collapsed = r ? r.collapses.filter(c => c.status === 'collapsed').length : plan.collapses.length;
+  console.log(`${apply ? 'Linked' : 'Would link'} ${linked} pair(s) of person pages and ${apply ? 'collapsed' : 'collapse'} ${collapsed} automatically (${switches}); ${plan.set_aside.length} set aside.`
+    + (apply ? '' : ' Nothing was changed; do it with gbrain dedupe auto --apply.'));
+  for (const l of plan.links) {
+    const done = !r || r.linked.includes(l.decision);
+    console.log(`  ${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.class}${r ? (done ? `; a wrong one for good: gbrain dedupe reject ${l.entity_id}; undo: gbrain dedupe undo ${l.decision}` : '; not linked: its pages were rejected, linked or switched off since the plan') : ''})`);
+  }
+  for (const c of plan.collapses) {
+    const out = r?.collapses.find(x => x.collapse === c.collapse);
+    console.log(`  ${c.collapse}  ${c.source_id}:${c.retired}  ->  ${c.canonical}  (C7, ${c.store}${c.aliases.length ? `, alias ${c.aliases.join(', ')}` : ''}${out ? `; ${collapseText(out).trim()}` : ''})`);
+  }
   for (const s of plan.set_aside) console.log(`  set aside (${s.reason}): ${s.members.map(memberText).join('  +  ')}`);
-  if (r) console.log(storedText(r));
+  if (r?.record) console.log(storedText(r.record));
+}
+
+function collapseText(c: CollapseOutcome): string {
+  if (c.status === 'skipped') {
+    return `  ${c.collapse} not written: ${c.reason === 'frontmatter_not_editable' ? 'a page\'s frontmatter cannot be edited line by line without touching other keys; edit it by hand' : 'a page changed since it was read; run the command again'}`;
+  }
+  const where = c.store === 'git' ? `commit ${c.commit?.slice(0, 12) ?? 'none'}${c.outcome ? `, ${c.outcome}` : ''}${c.note ? `. ${c.note}` : ''}` : 'through the page door; each page keeps its earlier version (gbrain revert)';
+  return c.status === 'undone' ? `  undid collapse ${c.collapse} (${where})`
+    : `  collapsed ${c.collapse} (${where}); a wrong one for good: gbrain dedupe reject ${c.collapse}; undo: gbrain dedupe undo ${c.collapse}`;
 }
 
 function classesText(r: ClassesReport): string {
