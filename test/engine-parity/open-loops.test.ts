@@ -261,4 +261,25 @@ describe('engine parity: open loops', () => {
       };
     },
   );
+  parityTest(
+    'countOpenLoopsByCounterpartyEmail counts every open loop of the type per sender email in the source, with no limit',
+    { methods: ['upsertOpenLoop', 'closeOpenLoop', 'countOpenLoopsByCounterpartyEmail'] },
+    async (engine: BrainEngine, backend) => {
+      await createSource(engine, backend, 'g1');
+      await createSource(engine, backend, 'g2');
+      const at = '2026-03-01T10:00:00.000Z';
+      const add = (sourceId: string, key: string, email: string, loopType: OpenLoopUpsert['loopType'] = 'unanswered_inbound') => engine.upsertOpenLoop({
+        sourceId, dedupKey: key, loopType, counterpartyEmail: email, summary: key, evidence: [], detector: 'manual', lastActivityAt: at, openedAt: at });
+      const first = await add('g1', 'a1', 'a@example.com');
+      await add('g1', 'a2', 'a@example.com');
+      await add('g1', 'a3', 'a@example.com');
+      await add('g1', 'b1', 'b@example.com');
+      await add('g1', 'a-owed', 'a@example.com', 'commitment_owed_by_me');
+      await add('g2', 'a-other', 'a@example.com');
+      await engine.closeOpenLoop('g1', first.id, 'done', 'parity');
+      const count = async (emails: string[]) => (await engine.countOpenLoopsByCounterpartyEmail('g1', emails, 'unanswered_inbound'))
+        .map(r => `${r.email}=${r.n}`).sort();
+      return { both: await count(['a@example.com', 'b@example.com', 'c@example.com']), one: await count(['b@example.com']), none: await count([]) };
+    },
+  );
 });

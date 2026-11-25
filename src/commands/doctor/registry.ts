@@ -175,6 +175,7 @@ import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
+import { legacySlugSpellingsEntry } from './checks/legacy-slug-spellings.ts';
 import { unindexedFilesEntry } from './checks/unindexed-files.ts';
 import { syncLandingGapsEntry } from './checks/landing-gaps.ts';
 import { derivedOriginParkedEntry, purgeParkedPagesEntry } from './checks/purge-parks.ts';
@@ -372,6 +373,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   originTwinsEntry,
   slugPathMismatchEntry,
   renameIdentityDowngradesEntry,
+  legacySlugSpellingsEntry,
   purgeParkedPagesEntry,
   derivedOriginParkedEntry,
   purgeMirrorEntry,

@@ -160,11 +160,11 @@ export interface GBrainConfig {
   chat_model?: string;
   /**
    * Optional chat fallback chain for `chatWithFallback()` (v0.27+): tried in
-   * order when a chat call fails or refuses. Each entry is a "provider:modelId"
+   * order when a chat call fails (or refuses, with chat_fallback_on_refusal true). Each entry is a "provider:modelId"
    * string. Judge, critic and eval call sites pin their model (allowFallback).
    */
   chat_fallback_chain?: string[];
-  /** `false`: the chain still covers errors but never forwards a refused request. Default true (env, file, DB). */
+  /** `true`: the chain also forwards a refused request to the next model. Default false (env, file, DB): errors only. */
   chat_fallback_on_refusal?: boolean;
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
@@ -1559,6 +1559,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Always-loaded core memory + context-pressure notice (docs/guides/core-memory.md#configuration).
   'memory.core.enabled', 'memory.core.max_chars', 'memory.core.remote_edit',
   'memory.pressure.enabled', 'memory.pressure.warn_ratio', 'memory.pressure.context_window',
+  'learning.note.push', // nightly learning's session-start count line (default on; false turns it off); learning/push.ts
   // Declared brain audience: 'personal' | 'shared'. Set by the operator, by
   // company-brainify's Phase-5 handoff (shared), or from the bootstrap
   // interview. Declaration beats the conservative client-count heuristic in

@@ -152,7 +152,7 @@ export async function scan(engine: BrainEngine, opts: { kind?: DuplicateKind; so
 }
 
 /** Whether `gbrain dedupe confirm <id>` takes this group; every current group takes reject. */
-export const confirmable = (g: DuplicateGroup) => g.kind === 'cross_source' && CONFIRMABLE.has(g.class);
+export const confirmable = (g: DuplicateGroup) => g.kind === 'cross_source' && CONFIRMABLE.has(g.class) && !sharesSource(g);
 
 export async function runDedupe(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
