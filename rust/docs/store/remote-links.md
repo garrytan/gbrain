@@ -34,7 +34,7 @@ Also served:
   (a retired stamp too, which `stamped_rules` keeps) is not readable; a page under a pending prefix is not readable.
 - A labelled-only writer (`labelledOnly`, GBRA-108 design 1). `renderWriterReadPolicy` renders the rest of the policy ANDed with
   `labelledOnlyForSql`; the member checks the text is exactly those two parts, serves the rest as above, and sends the conjunct to
-  the store as `labelled_only: { identity, satisfiedRuleIds }`, the two sets `labelledOnlySql` embeds (`labelledOnlyTerms`). The
+  the store as `labelledOnly: { identity, satisfiedRuleIds }`, the two sets `labelledOnlySql` embeds (`labelledOnlyTerms`). The
   store hides a page unless its readers name one of `identity` (`page_readers && identity`, the `access_readers` normalization, a
   malformed `readable_by` names nobody) or a folder rule stamped on it is in `satisfiedRuleIds` (`folder_rule_ids && satisfied`,
   retired stamps included). No lineage: a write never reads through derived origins. So a labelled-only writer's rewrite of an open
@@ -50,5 +50,6 @@ names the writer: the slug has no live row, so `hiddenUnder` runs its raw fallba
 cover the slug through `gbrain_access_folder_rules`, which has no typed member. Nothing is written. This is the named loss
 32e-b-3 (docs/designs/RUST_ENGINE.md), pinned in the same parity file.
 
-An OAuth client writer (the HTTP transport) is not served: `readWriterSlugFence` refuses for `oauth_client`, since the
-store keeps no OAuth client write grant yet.
+An OAuth client writer (the HTTP transport) can use these reads: `readWriterSlugFence` reads its stored
+client's bound or delegated slug prefixes, and `readOAuthClientWriteGrant` serves its stored write grant
+([oauth-clients.md](oauth-clients.md)). The writer policy must still match one of the supported forms above.

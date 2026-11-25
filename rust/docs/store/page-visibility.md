@@ -72,7 +72,7 @@ member-access part alone (the page's readers, and the origin of a derived page):
   the writer's one identity with the folder rules it satisfies and the labelled-only grant
   ([remote-links.md](remote-links.md)), so a labelled-only member's rewrite of a page it is not named on ends on
   `page_not_found`, as on PGLite and Postgres.
-- **OAuth clients.** The store keeps OAuth clients ([oauth-clients.md](oauth-clients.md)), but `readWriterSlugFence`
-  does not read a client's fence yet, so for an `oauth_client` principal it refuses with `engine_capability_missing`.
+- **OAuth clients.** For an `oauth_client` principal, `readWriterSlugFence` reads the stored client's
+  `bound_slug_prefixes` (its `delegated_slug_prefixes` for a delegated write), or returns `null` when the client is gone.
 - **Writer ids.** PGLite casts the writer id to `uuid` and fails on an id that is not one. The store looks the
   id up as given (lowercased) and returns `null` when no writer has it.
