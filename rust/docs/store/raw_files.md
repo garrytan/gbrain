@@ -40,6 +40,9 @@ Cascades:
 - Page hard delete (`remove_page_rows`): deletes the page's raw data (`ON DELETE CASCADE`) and sets
   `page_id` to null on its files (`ON DELETE SET NULL`). The file rows and their `page_slug` stay.
   Soft delete changes nothing here; `getRawData` hides the rows of a soft-deleted page.
+- Page rename (`updateSlug`, `aliases.rs`): `rename_page_files` gives the page's files named by the old slug the new
+  `page_slug`, finding them through the `r 0x03` page index, so only rows bound by `page_id` move. A file with no
+  `page_id` stays, as on PGLite.
 - Source delete (`remove_source_rows`): deletes the files of that source and their page index entries.
   Raw data hangs off pages, so the page hook removes it. Files are keyed by path, so the hook scans every
   file record.
@@ -68,8 +71,8 @@ Each reads the typed arguments; the store never sees the statement.
 | --- | --- |
 | `listFileRowsForVerify` | a scan of the `r 0x02` records ordered by `storage_path`, 1000 rows (`files list` is the served `listFiles`); `size_bytes` as a number, `metadata` as the object |
 | `hasFileWithHash` | the record at the path and a compare of its `content_hash` |
-| `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | `upsertFile`'s write plus the metadata merge: the new keys over the old object (a stored value that is not an object reads as `{}`), then jsonb key order. The raw lane names `source_id`; the others take `default`. A repeat updates the hash, size and type only |
-| `upsertOpFileRow` | the same write; on a repeat the source and page change only when the new row names a page (`source_id` kept, `page_id` coalesced) |
+| `upsertCliFileRow`, `upsertRawFileRow`, `upsertSyncFileRow` | `upsertFile`'s write plus the metadata merge: the new keys over the old object (a stored value that is not an object reads as `{}`), then jsonb key order. The raw lane names `source_id`; the others take `default`. `upsertCliFileRow` and `upsertRawFileRow` bind the live page at `page_slug` in that source (`page_id`, as PGLite's `(SELECT id FROM pages WHERE source_id = .. AND slug = .. AND deleted_at IS NULL)`); `upsertSyncFileRow` binds none. A repeat updates the hash, size and type, and, when the row bound a page, takes the page's id and slug together (a row that binds none keeps its pair) |
+| `upsertOpFileRow` | the same write; the row names the page's slug as it is now, read by its id (a page renamed while the bytes uploaded is listed under its new slug), else the slug given; on a repeat the source, page id and slug change only when the new row names a page (`source_id` kept, `page_id` coalesced, `page_slug` kept otherwise) |
 | `registerFileRow` | insert, or refresh only when `page_slug`, `filename`, `source_id` and `page_id` all match (null equals null); false leaves the row alone |
 | `readFileOwner`, `claimFilePage`, `countFilesRegisteredElsewhere` | the record at the path; a source and page update that keeps the `r 0x03` page index in step; a count of 0 or 1 (a null filename never differs) |
 | `readPageIdInSource` | the page record by slug and source, soft-deleted pages included, as the statement did not filter them |

@@ -101,6 +101,11 @@ export function shadowRoot(): string {
   return join(configDir(), 'shadow');
 }
 
+/** True once this home has a shadow directory (shadow mode or shadow replay used it); one existsSync. */
+export function shadowHomeUsed(): boolean {
+  return existsSync(shadowRoot());
+}
+
 export function shadowDirFor(brainKey: string): string {
   return join(shadowRoot(), brainKey);
 }

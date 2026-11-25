@@ -836,6 +836,9 @@ mod tests {
         fn snapshot(&self) -> Result<Box<dyn KvRead>> {
             self.0.snapshot()
         }
+        fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+            self.0.versioned_snapshot()
+        }
         fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
             self.1.fetch_add(1, SeqCst);
             self.0.begin_write()

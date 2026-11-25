@@ -23,10 +23,12 @@
  *      compared with the saved set under an advisory lock; on change the set
  *      is saved, the source generation bumps, and only pages the change can
  *      affect are marked due (pages linking to a removed or retargeted
- *      target, plus pages whose text matches an added name through the real
- *      tokenizer, prefiltered by a substring superset). That scan has half the
+ *      target, plus pages whose text matches an added name or contains a
+ *      removed one through the real tokenizer, prefiltered by a substring
+ *      superset, one batch of pages per statement). That scan has half the
  *      time left in the run; pages it did not reach are marked due too. With
- *      no time left the set is not saved this run.
+ *      no time left the set is not saved this run, and the source stays
+ *      pending (coverage reads it as pending even with no page due).
  *   5. Reconcile due pages (content revision, extractor version or an
  *      invalidation differs): per batch, publish only when the source
  *      generations and each page's content revision are unchanged since the
@@ -369,7 +371,8 @@ async function refreshAliases(engine: BrainEngine, managed: boolean, sourceId: s
 
 /**
  * Live pages in `sourceIds` whose text the mini-gazetteer of `added` matches (real tokenizer, substring-superset prefilter),
- * scanned in page-id order until `deadline`. `through` is the last page id read when the deadline stopped the scan, null
+ * scanned in page-id order until `deadline`, PREFILTER_BATCH pages per statement whether they match or not (so one
+ * statement never reads a whole source looking for a rare name). `through` is the last page id read when the deadline stopped the scan, null
  * when every page was read.
  */
 async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], added: Gazetteer, allowCrossSource: boolean, deadline: number): Promise<{ ids: number[]; through: number | null }> {
@@ -386,6 +389,7 @@ async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], adde
     if (!rows.length) break;
     after = rows[rows.length - 1]!.id;
     for (const r of rows) {
+      if (r.body === null) continue;
       if (r.body_storage === 'segmented') { out.push(Number(r.id)); continue; }
       const hits = findMentionedEntities(r.body, added, { fromSlug: r.slug, fromSourceId: r.source_id, allowCrossSource });
       if (hits.length) out.push(Number(r.id));
@@ -394,12 +398,26 @@ async function pagesMatchingNames(engine: BrainEngine, sourceIds: string[], adde
   return { ids: out, through: null };
 }
 
-function miniGazetteer(gazetteer: Gazetteer, keys: Set<string>): Gazetteer {
+/**
+ * The names a save must look for in page text: the added entries as they are, and each removed name (any case, any
+ * spacing, since the saved form no longer has it; no target, so no guard skips it) because a page that contained it may now match another name it hid, even when it had
+ * no mention link to the removed target.
+ */
+function scanGazetteer(gazetteer: Gazetteer, added: GazetteerEntryKey[], removed: GazetteerEntryKey[]): Gazetteer {
+  const keys = new Set(added.map(entryKey));
   const out: Gazetteer = new Map();
   for (const [first, bucket] of gazetteer) {
     const kept = bucket.filter(e => keys.has(entryKey(e)));
     if (kept.length) out.set(first, kept);
   }
+  const seen = new Set<string>();
+  for (const k of removed) {
+    const tokens = k.name_norm.replace(/^@/, '').toLowerCase().split(' ').filter(Boolean);
+    if (!tokens.length || seen.has(`${k.source_id}\0${tokens.join(' ')}`)) continue;
+    seen.add(`${k.source_id}\0${tokens.join(' ')}`);
+    out.set(tokens[0]!, [...out.get(tokens[0]!) ?? [], { slug: '', source_id: k.source_id, title: k.name_norm, tokens, anySpacing: true }]);
+  }
+  for (const bucket of out.values()) bucket.sort((a, b) => b.tokens.length - a.tokens.length);
   return out;
 }
 
@@ -414,7 +432,7 @@ function entryKey(e: GazetteerEntry | GazetteerEntryKey): string {
  * the source's advisory lock. Returns false when the set changed but no time
  * was left before `deadline` to save it this run.
  *
- * The scan for pages naming an added name gets half the time left before
+ * The scan for pages naming an added or removed name gets half the time left before
  * `deadline`. When it stops early, every page in scope it did not reach is
  * marked due as well, so the save never waits on a scan longer than a run and
  * the reconcile picks those pages up in resumable batches.
@@ -436,8 +454,8 @@ async function saveEntries(engine: BrainEngine, sourceId: string, gazetteer: Gaz
   if (!firstSave) {
     const linked = removed.length ? await engine.listMentionLinkersOfTargets(sourceId, [...new Set(removed.map(k => k.target_slug))]) : [];
     const scanDeadline = deadline === Infinity ? Infinity : Date.now() + Math.max(0, deadline - Date.now()) / 2;
-    const matched = added.length ? await pagesMatchingNames(engine, scopeSources,
-      miniGazetteer(gazetteer, new Set(added.map(entryKey))), allowCrossSource, scanDeadline) : { ids: [], through: null };
+    const matched = added.length || removed.length ? await pagesMatchingNames(engine, scopeSources,
+      scanGazetteer(gazetteer, added, removed), allowCrossSource, scanDeadline) : { ids: [], through: null };
     candidates = [...new Set([...linked.map(r => Number(r.id)), ...matched.ids])];
     unscannedAfter = matched.through;
   }
