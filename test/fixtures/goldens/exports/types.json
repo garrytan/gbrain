@@ -7767,6 +7767,7 @@
           "localSourceImplicit?: boolean | undefined",
           "logger: Logger",
           "mcpCaller?: { client?: string; userAgent?: string; meta?: Record<string, unknown>; } | undefined",
+          "notifyToolListChanged?: (() => Promise<void>) | undefined",
           "remote: boolean",
           "replayAuthority?: WriteAuthority | undefined",
           "resultRows?: \"full\" | \"lean\" | undefined",
@@ -7780,7 +7781,7 @@
           "surfaceCeiling?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "takesHoldersAllowList?: string[] | undefined",
           "thinClient?: boolean | undefined",
-          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; } | undefined",
+          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; servedToClient?: (name: string) => boolean; } | undefined",
           "transport?: \"stdio\" | \"http\" | undefined",
           "viaSubagent?: boolean | undefined",
           "writeWaitMs?: number | undefined"
@@ -9982,7 +9983,7 @@
         "kind": "type",
         "name": "CatalogHandleOptions",
         "signature": [
-          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
+          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -10002,7 +10003,7 @@
         "kind": "type",
         "name": "CatalogTurnOptions",
         "signature": [
-          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
+          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -10077,6 +10078,7 @@
           "loadHint?: string | undefined",
           "namesOnly?: boolean | undefined",
           "now?: (() => number) | undefined",
+          "readRoot?: string | undefined",
           "router?: boolean | undefined",
           "sessionTokenBudget?: number | undefined"
         ],

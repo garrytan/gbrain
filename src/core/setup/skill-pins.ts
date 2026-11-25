@@ -13,7 +13,7 @@
  */
 import { existsSync, unlinkSync } from 'node:fs';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
-import { catalogSkillIds, parsePins, renderPinnedBlock, type Pin, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
+import { catalogSkillPaths, parsePins, renderPinnedBlock, type Pin, type PinnedBlock } from '../skills/resolver/pinned-block.ts';
 import { validCatalogName } from '../skills/resolver/paths.ts';
 import { readResolverConfig, type ResolverConfigRead } from './skill-resolver-config.ts';
 
@@ -51,7 +51,8 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
   atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
 }
 
-/** One catalog's pins rendered against its current index (what setup writes into a harness's surface). */
-export function pinnedBlockFor(home: string, catalog: string, harness?: string): PinnedBlock {
-  return renderPinnedBlock(readPins(readResolverConfig(home), catalog), { harness, known: catalogSkillIds(home, catalog) });
+/** One catalog's pins rendered against its current index (what setup writes into a harness's surface); OpenClaw's lines name each SKILL.md, as its load line reads the path first. */
+export function pinnedBlockFor(home: string, catalog: string, harness?: string, readRoot?: string): PinnedBlock {
+  const paths = catalogSkillPaths(home, catalog);
+  return renderPinnedBlock(readPins(readResolverConfig(home), catalog), { harness, known: paths ? new Set(paths.keys()) : null, ...(harness === 'openclaw' && paths ? { paths } : {}), ...(readRoot === undefined ? {} : { readRoot }) });
 }

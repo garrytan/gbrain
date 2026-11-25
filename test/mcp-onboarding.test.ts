@@ -20,6 +20,7 @@ import {
   ONBOARD_CALL_AFFINITY, collectOnboardOpportunities, mcpOnboardingNotices, startOnboardingRefresher,
   __awaitOnboardingRefreshForTests, __resetMcpOnboardingForTests, __warmOnboardingCacheForTests,
 } from '../src/core/onboard/mcp-onboarding.ts';
+import { __resetFirstSessionQuietForTests, markFirstSessionDelivered } from '../src/core/onboard/first-session.ts';
 import { processNoticeLedger, setNoticeMuted } from '../src/core/notice-ledger.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
@@ -361,5 +362,24 @@ describe('stale-chunk count (#5256)', () => {
     const counts = await collectOnboardOpportunities(engine, new AbortController().signal);
     expect(counts.staleChunks).toBe(await engine.countStaleChunks());
     expect(counts.staleChunks).toBe(1);
+  });
+});
+
+describe('first-session quiet window (roadmap PR 2)', () => {
+  test('after a confirmed first-session delivery coaching goes quiet in this serve, and the first-run ask still arrives', async () => {
+    await inHome(async () => {
+      await seedGaps();
+      await __warmOnboardingCacheForTests(engine as never);
+      markFirstSessionDelivered();
+      try {
+        await call('list_pages', {});
+        expect(notices(await call('list_pages', {})).find(n => n.code === 'first_run_decisions')?.kind).toBe('ask');
+        expect(onboard(await call('get_backlinks', { slug: 'people/alice-example' }))).toEqual([]);
+        __resetFirstSessionQuietForTests();
+        expect(onboard(await call('get_backlinks', { slug: 'people/bob-example' }))).toEqual(['onboard_link_coverage']);
+      } finally {
+        __resetFirstSessionQuietForTests();
+      }
+    });
   });
 });

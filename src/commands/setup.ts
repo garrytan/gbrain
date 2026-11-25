@@ -88,6 +88,7 @@ import {
 } from '../core/setup/claude-code.ts';
 import {
   applyCodexSetup,
+  CODEX_STARTUP_GRACE_KEY,
   codexSetupPaths,
   desiredCodexMcpEntry,
   inspectCodexSetup,
@@ -132,6 +133,7 @@ import {
 } from '../core/setup/brain-first.ts';
 import { HARNESS_ADAPTERS } from '../core/harness/registry.ts';
 import { HISTORY_VALUE_FLAGS, historyFor, parseHistoryFlags, recordHistoryReceipt, withHistoryDecision, type HistoryFlags, type HistoryOutcome } from './setup-history.ts';
+import { parseSuggestionFlag, suggestionFor, type SuggestionMarker } from './setup-suggestion.ts';
 import { applyBrainLayout, askBrainShape, brainShapeDecision, describeLayout, layoutNotices, parseLayoutFlags, withBrainShape, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { isInteractive } from '../core/interaction.ts';
 import { SETUP_HELP } from './setup-help.ts';
@@ -193,6 +195,8 @@ interface SetupFlags {
   team?: boolean;
   /** Onboarding PR 1: --history, --history-dir, --history-decision and --no-extract (setup-history.ts). */
   historyImport: HistoryFlags;
+  /** Onboarding PR 2: --no-suggestion turns the first-session suggestion off for this install (setup-suggestion.ts). */
+  noSuggestion: boolean;
 }
 
 export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member', '--owner', ...HISTORY_VALUE_FLAGS]);
@@ -242,6 +246,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (typeof layout === 'string') return layout;
   const historyImport = parseHistoryFlags(args, value, positionals[0], stdioMember);
   if (typeof historyImport === 'string') return historyImport;
+  const noSuggestion = parseSuggestionFlag(args, positionals[0]);
+  if (typeof noSuggestion === 'string') return noSuggestion;
   if (layout.brain && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || args.includes('--instructions-only') || args.includes('--remove'))) return '--shape shapes the brain behind gbrain setup claude-code or codex (not --instructions-only or --remove); nothing was written';
   const workspace = value('--workspace');
   if (workspace !== undefined && !workspace.startsWith('/') && !workspace.startsWith('~')) return '--workspace needs an absolute path';
@@ -303,6 +309,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     noStdioMember,
     ...layout,
     historyImport,
+    noSuggestion,
   };
 }
 
@@ -341,7 +348,7 @@ interface Target {
   /** GST-363: the serve --stdio-member this entry carries. */
   stdio_member?: string;
   registration_owner: 'none' | 'setup' | 'plugin';
-  live_owner: { pid: number; transport: 'stdio' | 'http'; ours: boolean } | null;
+  live_owner: { pid: number; transport: 'stdio' | 'http'; ours: boolean; started_at?: string } | null;
   scope: WiringScope;
   name: string;
   config_path: string;
@@ -572,9 +579,11 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
     const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('claude-code', flags, launcher, brainCreate, !!liveOwner, scope === 'project' ? ['--scope', 'project'] : []);
+    const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome, history });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves: servesDone, launcher, layout: layout.outcome, history, suggestion });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
+    if (suggestion?.failed) { process.stderr.write(`gbrain setup: --no-suggestion was not applied. ${suggestion.marker.why}\n`); return 1; }
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -609,7 +618,7 @@ function liveOwnerOf(cfg: GBrainConfig | null, ours: boolean): { dataDir?: strin
   const dataDir = cfg && cfg.engine === 'pglite' && !cfg.database_url ? cfg.database_path ?? gbrainPath('brain.pglite') : undefined;
   const lock = dataDir ? peekLock(dataDir) : null;
   return { dataDir, liveOwner: lock?.held && lock.isServe && lock.pid !== undefined
-    ? { pid: lock.pid, transport: lock.http ? 'http' : 'stdio', ours: ours && !lock.http } : null };
+    ? { pid: lock.pid, transport: lock.http ? 'http' : 'stdio', ours: ours && !lock.http, ...(lock.acquiredAt !== undefined ? { started_at: new Date(lock.acquiredAt).toISOString() } : {}) } : null };
 }
 
 function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: SetupHarnessId, name: string): OperationError {
@@ -778,11 +787,11 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const brainCreate = !cfg;
     const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
     if (flags.dryRun) {
-      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
+      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
       const steps: CodexSetupStep[] = [
         { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
         ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
-        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
+        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' && found.grace.state !== 'absent' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}${found.grace.state === 'absent' ? `, and ${CODEX_STARTUP_GRACE_KEY} = 0 (Codex waits for gbrain to start)` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.hooksPath}` : `no hooks (${found.hooksPath})` },
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
@@ -822,9 +831,11 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
     const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('codex', flags, launcher, brainCreate, !!liveOwner, []);
+    const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,
-      steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome, history });
+      steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes: [...notes, ...result.notes], preserved: result.preserved, instructions, skills, turnHook, resolver, serves: servesDone, layout: layout.outcome, history, suggestion });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('codex', turnHook, ['gbrain', 'setup', 'codex']), out);
+    if (suggestion?.failed) { process.stderr.write(`gbrain setup: --no-suggestion was not applied. ${suggestion.marker.why}\n`); return 1; }
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
@@ -1318,6 +1329,7 @@ async function finish(out: Out, doc: {
   launcher?: string;
   layout?: LayoutOutcome | null;
   history?: HistoryOutcome | null;
+  suggestion?: { marker: SuggestionMarker; line: string } | null;
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
@@ -1339,6 +1351,7 @@ async function finish(out: Out, doc: {
       ...(doc.serves ? { serves: doc.serves } : {}),
       ...(doc.layout ? { brain_layout: doc.layout } : {}),
       ...(doc.history ? { history: { ...doc.history, lines: undefined } } : {}),
+      ...(doc.suggestion ? { suggestion: doc.suggestion.marker } : {}),
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
       notes: doc.notes, notices: notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
@@ -1359,6 +1372,7 @@ async function finish(out: Out, doc: {
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
   if (state && !doc.remove) say(out, `Opt-ins (nothing is on until you turn it on): keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel: ${docsUrl('INSTALL_FOR_AGENTS.md#opt-ins')}`);
   for (const line of doc.history?.lines ?? []) say(out, line);
+  if (doc.suggestion) say(out, doc.suggestion.line);
   writeCliNotices(notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   if (doc.resolver?.error) return refuse(resolverRefusal(doc.resolver), out);

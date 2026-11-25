@@ -30,8 +30,11 @@ export interface ProfileFact {
 }
 export interface ProfileRelationship { type: string; direction: 'out' | 'in'; slug: string; context: string | null }
 export interface ProfileBlock {
-  /** The caller's own entity and how it was found (never the identifiers used to find it); null when the caller has none. */
-  entity: Pick<ProfileSelf, 'slug' | 'basis'> | null;
+  /**
+   * The caller's own entity and how it was found (never the identifiers used to find it); null when the caller has none.
+   * slug is null when the entity's page is in a source this caller cannot read.
+   */
+  entity: { slug: string | null; basis: ProfileSelf['basis'] } | null;
   facets: ProfileFact[];
   constraints: ProfileFact[];
   relationships: ProfileRelationship[];
@@ -52,7 +55,9 @@ const originOf = (row: FactRow): string | null => {
   const o = row.write_origin as { content_origin?: unknown } | null | undefined;
   return typeof o?.content_origin === 'string' ? o.content_origin : null;
 };
-const isProfileRow = (r: FactRow): boolean => facetOfMetric(r.claim_metric) !== null || (!r.claim_metric && r.kind === 'preference');
+/** A faceted row from any slug the profile reads, or an unfaceted preference on one of the profile's own pages (`homes`). */
+const isProfileRow = (r: FactRow, homes: ReadonlySet<string>): boolean =>
+  facetOfMetric(r.claim_metric) !== null || (!r.claim_metric && r.kind === 'preference' && homes.has(r.entity_slug ?? ''));
 /** readProfile's result: the block before packing, plus the owner's private profile rows this caller cannot read. */
 export type ProfileRead = Omit<ProfileBlock, 'withheld'> & { private_hidden?: number };
 /** user_said before inferred, then newest first. */
@@ -70,11 +75,15 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const visibility = worldOnlyFacts(ctx.remote) ? ['world' as const] : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const hideOwnerPrivate = visibility !== undefined && self.kind === 'owner';
+  const homes = new Set([self.slug, ...(self.homes ?? [])]);
   const rows: FactRow[] = [];
   const hidden: FactRow[] = [];
   let scanned = 0;
   let partial = sources.length === 0;
-  const targets: Array<[string, string]> = [...sources.map((s): [string, string] => [s, self.slug]), ...(self.homes ?? []).flatMap(h => readable.map((s): [string, string] => [s, h]))];
+  // A home is read in the owner page's source too: a bound owner's private profile fact is held on its member page there,
+  // and a rebuild from that page's fence files it under the member page.
+  const homeSources = [...new Set([...sources, ...readable])];
+  const targets: Array<[string, string]> = [...sources.map((s): [string, string] => [s, self.slug]), ...(self.homes ?? []).flatMap(h => homeSources.map((s): [string, string] => [s, h]))];
   for (const [src, home] of targets) {
     const slugs = await factEntitySlugs(ctx.engine, src, home, { excludePrivate: ctx.remote !== false }).catch(() => { partial = true; return [home]; });
     for (const slug of slugs) {
@@ -82,14 +91,14 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
         const page = await ctx.engine.listFactsByEntity(src, slug, { activeOnly: true, limit: PAGE, offset, visibility, excludePrivate, excludeAuditRows: true, eligibility });
         scanned += page.length;
-        rows.push(...page.filter(isProfileRow));
+        rows.push(...page.filter(r => isProfileRow(r, homes)));
         if (page.length < PAGE) break;
       }
       for (let offset = 0; hideOwnerPrivate; offset += PAGE) {
         if (scanned >= PROFILE_SCAN_CAP) { partial = true; break; }
         const page = await ctx.engine.listFactsByEntity(src, slug, { activeOnly: true, limit: PAGE, offset, visibility: ['private'], excludePrivate, excludeAuditRows: true, eligibility });
         scanned += page.length;
-        hidden.push(...page.filter(isProfileRow));
+        hidden.push(...page.filter(r => isProfileRow(r, homes)));
         if (page.length < PAGE) break;
       }
     }
@@ -113,7 +122,7 @@ export async function readProfile(ctx: OperationContext, readable: string[], eli
   const relationships = (card?.card?.edges ?? []).map(e => ({ type: e.type, direction: e.direction, slug: e.slug, context: e.context }));
   const faceted = items.filter(i => i.facet !== null);
   return {
-    entity: { slug: self.slug, basis: self.basis },
+    entity: { slug: self.source_id && sources.length === 0 ? null : self.slug, basis: self.basis },
     facets: faceted.filter(i => !CONSTRAINT_FACETS.includes(facetKind(i.facet!))),
     constraints: faceted.filter(i => CONSTRAINT_FACETS.includes(facetKind(i.facet!))),
     relationships,

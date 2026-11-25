@@ -615,7 +615,6 @@ src/core/access/actor.ts#attestRightOf	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	capability_refusal_swallowed	1
 src/core/access/caller.ts#appliedAccessSummary	catch_empty	1
 src/core/access/caller.ts#resolveAudienceIdentities	catch_empty	1
-src/core/access/caller.ts#stdioMemberId	catch_empty	1
 src/core/access/handover.ts#previewHandover	capability_refusal_swallowed	2
 src/core/access/labelled-only.ts#labelledOnlyFor	capability_refusal_swallowed	1
 src/core/access/lineage.ts#membersReadLineageOn	catch_empty	1
