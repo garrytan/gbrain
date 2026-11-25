@@ -34,6 +34,11 @@
  *    Three later changes are pinned on purpose: the owner-only read predicates also check the owner_only_held catalog
  *    mark, listCallOffCueFacts orders a future-dated fact by its created_at, and listFactProvenance is the facts-cycle
  *    member (it orders by id). Those pins hold the merged text, not the text at 2eb69f4613.
+ *  - Trust floor (master sync 18, #10276): a floor that names no tier is refused (`TrustFloorError`), so the "trust floor"
+ *    fixtures name `user_confirmed`, the strictest real tier, which admits one tier. They named `verified_user` before, which
+ *    is not a tier and rendered `trust_tier IN ()`; the texts and digests below differ from the old ones only by that
+ *    list (`IN ('user_confirmed')`, 16 characters longer each time it appears; checked by restoring `IN ()` and matching
+ *    the old digests).
  *  - Regression: a member that reorders a clause, renumbers a placeholder, binds a value differently, drops a cast or
  *    sends the iterative-scan settings in another order changes what Postgres answers while the parity cases may still
  *    pass on a small fixture.
@@ -75,7 +80,7 @@ interface Pin {
 }
 
 const scopeA = { sourceId: 's1', worldOnly: false, excludePrivate: false } as never;
-const scopeB = { sourceIds: ['s1', 's2'], worldOnly: true, excludePrivate: true, minTrust: 'verified_user', suppressFlagged: true } as never;
+const scopeB = { sourceIds: ['s1', 's2'], worldOnly: true, excludePrivate: true, minTrust: 'user_confirmed', suppressFlagged: true } as never;
 const VEC = { literal: '[0,0.1,0.2,0.3]', type: 'vector', model: 'openai:text-embedding-3-large', dims: 4 } as const;
 /** The call-off cue regex the old laterRetractions bound (saved-facts-match.ts RETRACTION plus the cancellation words). */
 const CALL_OFF_REGEX = "\\m(retract(s|ed|ing|ion)?|disregard|scratch that|i misspoke|i was wrong|not what (i|we) (posted|said|wrote)|ignore (the|my|that|what)|rumour|rumor|called off|cancelled|canceled|fell through|not happening|never happened|no longer planned)\\M";
@@ -247,18 +252,18 @@ const PINS: Pin[] = [
     from: "src/core/facts/contested-claims.ts:36 withDecideContested",
     member: 'listContestedProposalPairs',
     label: "remote, trust floor",
-    run: e => e.listContestedProposalPairs([1, 2], { remote: true, excludePrivate: false, eligibility: { floor: 'verified_user', suppressFlagged: true } as never }),
+    run: e => e.listContestedProposalPairs([1, 2], { remote: true, excludePrivate: false, eligibility: { floor: 'user_confirmed', suppressFlagged: true } as never }),
     statements: [{ text: `SELECT p.id, x.id AS delivered, p.new_fact_id, p.old_fact_id FROM unnest($1::bigint[]) AS x(id)
   JOIN decide_proposals p ON p.status = 'pending' AND (p.new_fact_id = x.id OR p.old_fact_id = x.id)
   JOIN facts n ON n.id = p.new_fact_id AND n.source_id = p.source_id
   JOIN facts o ON o.id = p.old_fact_id AND o.source_id = p.source_id
  WHERE n.expired_at IS NULL AND (n.valid_until IS NULL OR n.valid_until > now()) AND n.visibility = 'world' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = n.source_id
       AND elig_dp.slug = ANY(ARRAY[n.source_markdown_slug, n.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = n.source_id AND elig_qp.slug = n.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = n.id::text) AND n.trust_tier IN () AND NOT ((CASE n.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = n.id::text) AND n.trust_tier IN ('user_confirmed') AND NOT ((CASE n.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
     AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'facts' AND elig_r.target_id = n.id::text
       AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[])) AND o.expired_at IS NULL AND (o.valid_until IS NULL OR o.valid_until > now()) AND o.visibility = 'world' AND NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = o.source_id
       AND elig_dp.slug = ANY(ARRAY[o.source_markdown_slug, o.entity_slug]) AND elig_dp.deleted_at IS NOT NULL) AND NOT EXISTS (SELECT 1 FROM pages elig_qp WHERE elig_qp.source_id = o.source_id AND elig_qp.slug = o.source_markdown_slug
-      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = o.id::text) AND o.trust_tier IN () AND NOT ((CASE o.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
+      AND elig_qp.deleted_at IS NULL AND (COALESCE(elig_qp.frontmatter, '{}'::jsonb) ? 'quarantine')) AND NOT EXISTS (SELECT 1 FROM needs_rederive elig_nr WHERE elig_nr.derived_table = 'facts' AND elig_nr.derived_id = o.id::text) AND o.trust_tier IN ('user_confirmed') AND NOT ((CASE o.trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) <= 3
     AND EXISTS (SELECT 1 FROM write_gate_receipts elig_r WHERE elig_r.target_table = 'facts' AND elig_r.target_id = o.id::text
       AND elig_r.verdict = 'flag' AND elig_r.reason_families && ARRAY['standing_instruction','override','exfiltration','credential']::text[]))
  ORDER BY p.id`, params: [[1, 2]] }],
@@ -524,7 +529,7 @@ const PINS: Pin[] = [
     member: 'listReadablePageSlugs',
     label: 'remote scope, trust floor, two sources (the source filter is not applied)',
     run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
-    statements: [{ digest: { length: 8094, sha256: 'a0bc46f046af6b7f7bb8a9b28e0a03b2050fd9e7fdfd2007118d0258e28a9f74' }, params: ['s1', ['people/carol', 'companies/carol']] }],
+    statements: [{ digest: { length: 8110, sha256: 'cb5872de62eaaa5fd673b6c3afdfab503b21e5ea298a969d8c2f032ab455b7df' }, params: ['s1', ['people/carol', 'companies/carol']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:277 readSlotRows",
@@ -543,7 +548,7 @@ const PINS: Pin[] = [
     member: 'listSlotRows',
     label: "remote, trust floor, two sources",
     run: e => e.listSlotRows(scopeB, [{ source_id: 's1', entity_slug: 'people/x', dimension: 'role' }, { source_id: 's1', entity_slug: 'people/y', dimension: 'city' }]),
-    statements: [{ digest: { length: 26298, sha256: '6d68e6a114dc145fd9f13043e3b7c4366df945810c7028234506a8c713b86985' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1', 's1'], ['people/x', 'people/y'], ['role', 'city']] }],
+    statements: [{ digest: { length: 26314, sha256: '566a0d10f739436b1ebf4c5e1c3c55683dbe83b740b3cf88f5a95a514e2a56bf' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1', 's1'], ['people/x', 'people/y'], ['role', 'city']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:293 poolUnbackedKeys",
@@ -561,7 +566,7 @@ const PINS: Pin[] = [
     member: 'listPoolUnbackedKeys',
     label: "remote, trust floor, two sources",
     run: e => e.listPoolUnbackedKeys(scopeB, ['people/x'], 3),
-    statements: [{ digest: { length: 26113, sha256: '276a9d85c1d0a168af87833dad338769172fded9c2d0067f13f0438c1d4c1d9b' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
+    statements: [{ digest: { length: 26129, sha256: '9a3b8ac9c1f38568d08233187437c829ff3bf12c375e3464ee9309b617b2d29f' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['people/x'], 3] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:324 laterRetractions",
@@ -580,7 +585,7 @@ const PINS: Pin[] = [
     member: 'listCallOffCueFacts',
     label: "remote, trust floor, two sources",
     run: e => e.listCallOffCueFacts(scopeB, [{ source_id: 's1', entity_slug: 'people/x' }]),
-    statements: [{ digest: { length: 26374, sha256: '64060f4f6ef93975d217e653706a146d76d809441bb1607f5452bc598f546738' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
+    statements: [{ digest: { length: 26390, sha256: '84a0e5de167c674105336f8a3d56f4641ae07f1f4231afbb18ce870bf63dc208' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], CALL_OFF_REGEX, ['s1'], ['people/x'], 50] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:355 poolEntityPairs",
@@ -596,7 +601,7 @@ const PINS: Pin[] = [
     member: 'listPoolEntityPairs',
     label: "remote, trust floor, every filter",
     run: e => e.listPoolEntityPairs(scopeB, { entities: [{ sourceId: 's1', slug: 'people/x' }], sessionId: 'sess', since: new Date('2026-01-02T03:04:05Z'), grep: 'a_b', includeExpired: true }),
-    statements: [{ digest: { length: 26063, sha256: '1a430aa6873a3c1b4132cf98cb8eaf7ec179fcc59a789f0d8c03ecb8287374e7' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
+    statements: [{ digest: { length: 26079, sha256: '949066e0f24ccf7c220c4ff813c1afa15ff6a0e335d58ff6558f1ed930e4b2ce' }, params: [['s1', 's2'], ['cli:extract-conversation-facts:terminal:v2', 'cli:extract-conversation-facts:non-extractable:v2', 'cli:extract-conversation-facts:terminal'], ['s1'], ['people/x'], 'sess', '2026-01-02T03:04:05.000Z', '%a\\_b%'] }],
   },
   {
     from: 'src/core/search/fact-relevance.ts:224 collectFactCandidates (nearest); the text is the NEW renumbered one, see the header',
@@ -679,7 +684,7 @@ const PINS: Pin[] = [
     member: 'listReadablePageSlugs',
     label: 'remote scope, trust floor, two sources (the source filter is not applied)',
     run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
-    statements: [{ digest: { length: 8094, sha256: 'a0bc46f046af6b7f7bb8a9b28e0a03b2050fd9e7fdfd2007118d0258e28a9f74' }, params: ['s1', ['people/carol', 'companies/carol']] }],
+    statements: [{ digest: { length: 8110, sha256: 'cb5872de62eaaa5fd673b6c3afdfab503b21e5ea298a969d8c2f032ab455b7df' }, params: ['s1', ['people/carol', 'companies/carol']] }],
   },
 ];
 
