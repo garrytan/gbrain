@@ -71,8 +71,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    who runs gbrain, never in a shared temp directory), for one comparison only: it is deleted when the comparison ends,
    however it ends, and a killed shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence
    files hold no page content. The comparison counts as `comparable` when the two read-backs match and `unexplained_difference` when they do not.
-   A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
-   transaction, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds
+   A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds
    a withdrawn or purged fact (the primary then serves a redacted body the copy does not have), the Rust store cannot keep
    a copied column, or the shadow could not record that a comparison was starting) is `uncomparable` and never counts as
    `comparable`. On a Postgres brain, which other processes can write, a data fence catches another writer: every copied row
@@ -111,10 +110,17 @@ never a pass. With no shadow running, every criterion is `missing`.
    sample share is the write sample rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <rate>` (above 0,
    at most 1) sets another; it is separate from the read sample rate. Above about a 0.05 sample rate, bursts of writes only add `queue_full` (uncomparable) samples, because the child replays one write at a time and holds at most 16 in all (the one replaying and those waiting). A sampled write that never reaches a verdict (the pipe refused it, its read-back was still running at disconnect, or it was still queued when the child hit its exit deadline) is counted `uncomparable` as `send_shed`, `readback_abandoned` or `child_exit_deadline`, never dropped and never comparable. The serving process records the first two in a small file beside the tally without taking the tally's lock, so a busy lock can never stall a write; the shadow child adds them to the tally, and until it has, `gbrain engine shadow status` reads them as replays with no verdict, so no evidence; a journal that cannot be read, or that ends in an unfinished line while its writer is alive, reads the same way, and an unfinished line whose writer is gone is counted once as `lost_unreadable`. Every sampled write of another family is counted
    `capability_missing`, by family, never compared, so `gbrain engine shadow status` and the swap plan name the families sampled so far, which stay unchecked. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
-   touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and import run their page
-   write inside a transaction, so those are `uncomparable`: only link operations outside a transaction (`add_link`,
-   `remove_link`, a by-mention extract batch) can make a write `comparable`. Comparing a page write that ran inside a
-   transaction is a planned follow-up, not part of this check.
+   touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and the page write of an import (sync included) run inside a
+   transaction, and a sampled one can now be compared too: it reads the same rows on the transaction's own connection before it sends the write (in a
+   savepoint that is always rolled back, so the transaction is never changed or aborted; the transaction's other calls wait for that read, so their
+   statements keep their order), and it is read back and sent only after the transaction commits. A transaction that rolls back drops its samples, and
+   one that holds several pages sends one sample per page after the commit. Inside a transaction only `put_page` is compared; a link or delete write in one is
+   `uncomparable` (`in_transaction`). A page write is also `uncomparable` when: another write to anything the comparison reads came before it in the same transaction
+   (`in_transaction_prior_write`; a version row from `createVersion`, and a write of another page, do not count); the same page is written twice
+   in the transaction (`in_transaction_same_page`); a later write in it changes the page or its links (`in_transaction_later_write`; the chunk, alias, tag and projection writes an
+   import makes after the page do not count, and the contextual-retrieval stamp it makes is replayed with the write; a tag write moves the page's revision, so an import that adds tags is `uncomparable` as `moved`); or it carries an option the Rust store does not take (`unknown_option`: only `sourceId`,
+   `allowEmptyOverwrite`, `expectedRevision`, `force` and `inline` are carried, so an import whose contextual retrieval mode is not `none`, which sends the
+   `contextualRetrieval` option, is uncomparable until the Rust store takes it). **Two limits, named plainly.** (1) A sync import sends the `contextualRetrieval` option, which is on by default (mode `title`), and the Rust store does not accept it from this path yet, so on a default brain every sync-import page write is counted `uncomparable` (`unknown_option`); only a brain whose `search.contextual_retrieval` is `none` can produce a comparable import sample. (2) A new page whose import adds tags comes out `uncomparable` as `moved`, because the tag write moves the page's revision after the page is written; the same page imported again with its tags unchanged can be comparable. **Chunks, tags and aliases are not compared**, so a criterion 5 pass still covers page and link writes only.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
