@@ -121,6 +121,8 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     // The typed form of the shared `SELECT value FROM config WHERE key=$1` read (engine-sql/config.ts), once per key.
     if (key === 'readStoredConfigValue') return (name: string) => once(JSON.stringify([key, name]), () => target.readStoredConfigValue(name));
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
+    // The import path check's source-roots read (the typed form of the shared read above), once per host.
+    if (key === 'groupPublishStore') return async () => ({ ...await target.groupPublishStore(), importRoots: (hostId: string) => once(JSON.stringify([key, hostId]), async () => (await target.groupPublishStore()).importRoots(hostId)) });
     // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.
     if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
     if (key === 'readSourceIncarnation' || key === 'hasCompanyBrainReceipt') // the typed company-profile reads

@@ -45,7 +45,6 @@ import { defineNormalizer, expectGolden } from './helpers/golden.ts';
 import { idleProbeStatement, type IdleProbeSpec } from '../src/core/engine-sql/persistence-idle-probe.ts';
 import { overdueDeferredWorkSql } from '../src/core/persistence/refresh-barrier.ts';
 import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
 import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, CLAIM_SEGMENTED_PROJECTION_SQL, COMPACTABLE_RECEIPTS_SQL, MARK_PROJECTION_REBUILD_FAILED_SQL,
   PROJECTION_RETRY_READY_TEXT, RECEIPT_COMPACTION_CANDIDATES_SQL, SEGMENTED_JOB_PROBES_SQL, SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment,
@@ -59,6 +58,7 @@ import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-
 import { CLAIM_COALESCED_GIT_EFFECTS_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
 import { TOPOLOGY_STORE_STATEMENTS } from '../src/core/engine-sql/topology-store.ts';
 import { REFRESH_STORE_STATEMENTS } from '../src/core/engine-sql/refresh-store.ts';
+import { GROUP_PUBLISH_STORE_STATEMENTS } from '../src/core/engine-sql/group-publish-store.ts';
 import { MANUAL_LINK_STATEMENTS } from '../src/core/engine-sql/manual-links.ts';
 import { LINKS_FENCE_ORIGIN_FIELD } from '../src/core/links-fence.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
@@ -66,7 +66,7 @@ import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED
 import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
 import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
-import { CLAIM_ORDER, FOREGROUND_WAITING_ON, REFRESH_BARRIER_CLAIM_PREDICATE, SYNC_KIND } from '../src/core/persistence/journal.ts';
+import { CLAIM_ORDER, FOREGROUND_WAITING_ON, GROUP_KEY_SQL } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
@@ -614,6 +614,25 @@ describe('the refresh store sends the statements the refresh writer and the barr
     expect(flat(REFRESH_STORE_STATEMENTS.LATER_WRITE_SQL)).toBe(flat(`SELECT r.request_id::text AS request_id FROM persistence_requests r
     WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT (r.operation='submit_job'
       AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND COALESCE(r.outcome->>'imported_file','')='true' AND NOT (r.outcome ? 'connector_database')))) ORDER BY r.sequence LIMIT 1`));
+  });
+});
+
+describe('the group publish store sends the statements the group claim and completion built, fragments written out', () => {
+  const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  test('the follower candidates carry the group key, backoff and released-deferred fragments', () => {
+    const text = flat(GROUP_PUBLISH_STORE_STATEMENTS.FOLLOWER_CANDIDATES_SQL);
+    expect(text).toContain(flat(`SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,NOT ${BACKOFF_ELAPSED('persistence_requests')} AS backoff,transient_interruptions>0 AS charged FROM persistence_requests`));
+    expect(text).toContain(flat(`OR ${RELEASED_DEFERRED('persistence_requests')}) ORDER BY sequence LIMIT $3),`));
+    expect(text).toContain(flat(`SELECT r.id,r.state,${GROUP_KEY_SQL} AS grp,r.recovery IS NOT NULL AS recovering,r.claim_phase`));
+  });
+  test('the claim renewal and dispatch carry the protocol predicate', () => {
+    expect(flat(GROUP_PUBLISH_STORE_STATEMENTS.RENEW_CLAIMS_SQL)).toContain(`AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`);
+    expect(flat(GROUP_PUBLISH_STORE_STATEMENTS.MARK_DISPATCHED_SQL)).toContain(`AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`);
+  });
+  test('the group completion carries the effect-byte and true-up clamp fragments', () => {
+    const text = flat(GROUP_PUBLISH_STORE_STATEMENTS.COMPLETE_GROUP_SQL);
+    expect(text).toContain(`SUM(${EFFECT_BYTES_SQL}) AS bytes`);
+    expect(text).toContain(flat(TRUE_UP_CLAMP_SQL('SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes')));
   });
 });
 

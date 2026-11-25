@@ -171,10 +171,7 @@ export async function assertImportPaths(engine: BrainEngine, sourceId: string, r
   if (!isWriteTargetContained(target, root)) throw opError('source_changed', 'The import target escapes its canonical source root.',
     `The file would land outside source ${sourceId}'s canonical root (a symlinked directory or a path with ".."), so nothing was imported. Import it from a real path inside the source.`,
     { fix: ownerStatusFix(sourceId) });
-  const sources = await engine.executeRaw<{ id: string; local_path: string | null; worktree_path: string | null; relative_path: string | null }>(
-    `SELECT s.id,s.local_path,h.local_path AS worktree_path,b.relative_path FROM sources s
-      LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid WHERE NOT s.archived`, [hostIdFor(engine)]);
+  const sources = await (await engine.groupPublishStore()).importRoots(hostIdFor(engine));
   for (const source of sources) {
     if (source.id === sourceId) continue;
     const roots = [source.local_path, source.worktree_path && source.relative_path !== null ? join(source.worktree_path, source.relative_path) : null];

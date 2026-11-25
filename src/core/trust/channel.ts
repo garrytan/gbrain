@@ -220,9 +220,10 @@ export const SOURCE_TRUST_CONFIG_SQL = 'SELECT config FROM sources WHERE id = $1
  * import, reconcile, file repair, grandfather): `ownerPageTrust` from the
  * source's config, capped at agent_written when a remote caller admitted it.
  */
-export async function ownerImportTrust(engine: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'id' | 'source_id' | 'authority' | 'intent' | 'operation'>,
+export async function ownerImportTrust(engine: Pick<BrainEngine, 'getSource'>, row: Pick<WriteRequest, 'id' | 'source_id' | 'authority' | 'intent' | 'operation'>,
   frontmatter: Record<string, unknown> | null | undefined, sourceUri?: string | null): Promise<WriteTrust> {
-  const [source] = await engine.executeRaw<{ config: Record<string, unknown> | string | null }>(SOURCE_TRUST_CONFIG_SQL, [row.source_id]);
+  // The source's config through the typed read (the statement SOURCE_TRUST_CONFIG_SQL names); a group's preparation answers it once per source.
+  const source = await engine.getSource(row.source_id) as { config: Record<string, unknown> | string | null } | null;
   const config = typeof source?.config === 'string' ? JSON.parse(source.config) as Record<string, unknown> : source?.config ?? null;
   const trust = ownerPageTrust({ frontmatter, sourceConfig: config, channel: requestChannel(row), requestId: row.id, sourceUri });
   return row.authority?.remote === true ? { ...trust, tier: minTrust(trust.tier, 'agent_written') } : trust;
@@ -237,7 +238,7 @@ export function writeTrustOfGate(input: { tier: TrustTier; origin?: { channel?: 
 }
 
 /** The write-gate input for an owner-source page import: `ownerImportTrust` as the gate sees it (ENG-18). */
-export async function ownerGateInput(engine: Pick<BrainEngine, 'executeRaw'>, row: Pick<WriteRequest, 'id' | 'source_id' | 'authority' | 'intent' | 'operation'>,
+export async function ownerGateInput(engine: Pick<BrainEngine, 'getSource'>, row: Pick<WriteRequest, 'id' | 'source_id' | 'authority' | 'intent' | 'operation'>,
   frontmatter: Record<string, unknown> | null | undefined, sourceUri?: string | null) {
   const trust = await ownerImportTrust(engine, row, frontmatter, sourceUri);
   return { tier: trust.tier, origin: { channel: trust.origin?.channel ?? null, source_uri: trust.origin?.source_uri ?? null }, requestId: row.id };

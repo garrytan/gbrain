@@ -362,7 +362,6 @@ src/core/persistence/connector-state.ts	execute_raw	5
 src/core/persistence/connector-sync.ts	execute_raw	25	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
-src/core/persistence/context.ts	execute_raw	1
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
 src/core/persistence/derived-origin-hold.ts	execute_raw	4
@@ -395,14 +394,11 @@ src/core/persistence/graduation-schema.ts	execute_raw	8
 src/core/persistence/graduation-target.ts	driver_call	2
 src/core/persistence/graduation-target.ts	execute_raw	5
 src/core/persistence/graduation-verify.ts	execute_raw	15
-src/core/persistence/group-publish.ts	execute_raw	11
+src/core/persistence/group-publish.ts	execute_raw	4
 src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/identity.ts	execute_raw	3
-src/core/persistence/import-deferral.ts	execute_raw	1
-src/core/persistence/import-mutations.ts	execute_raw	3
-src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
-src/core/persistence/journal.ts	execute_raw	25
+src/core/persistence/journal.ts	execute_raw	19
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
@@ -416,14 +412,12 @@ src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	2
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/origin-index.ts	execute_raw	2
-src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	2
-src/core/persistence/page-prepare.ts	execute_raw	8
+src/core/persistence/page-prepare.ts	execute_raw	6
 src/core/persistence/page-upload.ts	execute_raw	15
 src/core/persistence/page-visibility.ts	execute_raw	5
-src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	8
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/preadmit-cache.ts	execute_raw	3
@@ -442,7 +436,6 @@ src/core/persistence/reconcile-prepare.ts	execute_raw	1
 src/core/persistence/reconcile-state.ts	execute_raw	5
 src/core/persistence/reconcile.ts	execute_raw	3
 src/core/persistence/recovery-resolve.ts	execute_raw	10
-src/core/persistence/refresh-barrier.ts	execute_raw	4
 src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
@@ -496,7 +489,7 @@ src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	28
+src/core/persistence/worktree-refresh.ts	execute_raw	2
 src/core/persistence/write-applied.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
@@ -611,7 +604,6 @@ src/core/transcripts/recover.ts	execute_raw	1
 src/core/transcripts/secret-audit.ts	execute_raw	1
 src/core/trust/allow-rules.ts	execute_raw	5
 src/core/trust/backfill.ts	execute_raw	6
-src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	7
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/held-removals.ts	execute_raw	4

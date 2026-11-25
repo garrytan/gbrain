@@ -1,42 +1,32 @@
 /**
- * The refresh writer (persistence/worktree-refresh.ts `refreshWorktree`, behind `gbrain sources refresh`) on an engine
- * without raw SQL.
+ * The refresh store (engine-sql/refresh-store.ts) on a Rust engine whose managed_persistence hold is kept.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on an engine whose capability set lacks `raw_sql` (the Rust engine, which reports managed_persistence)
- *    the refresh writer refuses `engine_capability_missing` with reason `raw_sql`, naming itself, before it reads or
- *    writes anything.
- *  - Regression: the store held managed_persistence back while the refresh writer was untyped. With it reported, a
- *    refresh on a Rust brain would start its run and stop on the first raw statement, part way through. Fail-first: on
- *    the parent head 524768a179 the call reaches past the capability check and touches another engine member, which
- *    this test's engine refuses with a different error.
- *  - Why existing coverage misses it: the refresh tests run on PGLite and Postgres, which serve raw SQL.
- *  - Seam: an engine object with only a capability set; any other member it is asked for throws, so a refusal that
- *    came after a read cannot pass.
+ *  - Contract: the refresh writer (persistence/worktree-refresh.ts `refreshWorktree`, behind `gbrain sources refresh`) now runs
+ *    on the Rust store, and the store members that replaced its raw statements (`refreshStore`, `groupPublishStore`) refuse
+ *    exactly as the `executeRaw` they replaced did while the hold is on: `engine_capability_missing`, reason `raw_sql`,
+ *    naming `executeRaw`. With the hold lifted on that engine instance (test/engine-parity/rust-managed.ts), they answer.
+ *  - Regression: lifting the refresh writer's raw-SQL stop without keeping the user-facing hold would let a user's Rust brain
+ *    run a managed refresh that the held `managed_persistence` capability forbids.
+ *  - Why existing coverage misses it: the parity files lift the hold on their own engine, and the refresh tests run on PGLite
+ *    and Postgres, which serve raw SQL.
+ *  - Seam: the store member's `heldStore` wrapper on an engine object that carries only a capability set.
  */
 import { describe, expect, test } from 'bun:test';
-import type { BrainEngine } from '../src/core/engine.ts';
-import { refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
+import { heldStore } from '../src/core/rust-engine/store-members/managed-hold.ts';
 
-function rustShaped(): { engine: BrainEngine; touched: PropertyKey[] } {
-  const touched: PropertyKey[] = [];
-  const capabilities = new Set(['transactions', 'persistence_journal', 'managed_persistence']);
-  const engine = new Proxy({}, {
-    get(_target, prop) {
-      if (prop === 'capabilities') return capabilities;
-      if (prop === 'then') return undefined;
-      touched.push(prop);
-      throw new Error(`the refresh writer touched ${String(prop)} before its capability check`);
-    },
-  }) as unknown as BrainEngine;
-  return { engine, touched };
-}
+const store = { readActive: async (id: string) => ({ id }), settings: async () => undefined };
 
-describe('the refresh writer on an engine without raw SQL', () => {
-  test('refuses by name with reason raw_sql, before any engine member', async () => {
-    const { engine, touched } = rustShaped();
-    const refusal = await refreshWorktree(engine, 'work').then(() => null, (e: { code?: string; reason?: string; message?: string }) => e);
-    expect({ code: refusal?.code, reason: refusal?.reason, named: refusal?.message?.includes('the refresh writer') }).toEqual({ code: 'engine_capability_missing', reason: 'raw_sql', named: true });
-    expect(touched).toEqual([]);
+describe('the refresh store on a Rust engine with the hold kept', () => {
+  test('refuses every call as executeRaw refused it, naming raw_sql', async () => {
+    const held = heldStore({ capabilities: new Set(['transactions', 'persistence_journal']) }, store);
+    const refusal = await held.readActive('x').then(() => null, (e: { code?: string; message?: string }) => e);
+    expect({ code: refusal?.code, named: refusal?.message?.includes('executeRaw') }).toEqual({ code: 'engine_capability_missing', named: true });
+    await expect(held.settings()).rejects.toMatchObject({ code: 'engine_capability_missing' });
+  });
+
+  test('answers once the engine reports managed_persistence', async () => {
+    const served = heldStore({ capabilities: new Set(['managed_persistence']) }, store);
+    expect(await served.readActive('x')).toEqual({ id: 'x' });
   });
 });

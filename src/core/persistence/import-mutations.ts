@@ -172,8 +172,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   const members = planned.map(entry => ({ ...entry, key: digest({ principal, incarnation: binding.source_incarnation, inputPath: entry.inputPath, sourcePath: entry.sourcePath,
     path: entry.path, inputHash: entry.inputHash, noEmbed: !!opts.noEmbed, activePack: opts.activePack ?? null, ...(opts.plainDirectorySync ? { plainDirectorySync: true } : {}) }),
     params: undefined as PendingImport | undefined, stored: undefined as StoredImport | undefined }));
-  const readPending = async (keys: string[]) => new Map((await engine.executeRaw<{ fingerprint: string; completed_keys: [StoredImport] }>(
-    'SELECT fingerprint,completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [IMPORT_OP, keys])).map(row => [row.fingerprint, row.completed_keys[0]]));
+  const readPending = async (keys: string[]) => new Map((await (await engine.groupPublishStore()).readImportCheckpoints<StoredImport>(IMPORT_OP, keys)).map(row => [row.fingerprint, row.completed_keys[0]]));
   const resume = (member: (typeof members)[number], stored: StoredImport) => {
     // The key binds the input hash and slug, so a mismatch is a checkpoint this binary cannot pair with the bytes.
     if (stored.inputHash !== member.inputHash || stored.slug !== member.slug) throw opError('internal_error', 'A pending import checkpoint does not match the file it is keyed by.',
@@ -213,9 +212,8 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
       } catch (error) { refuse(member, error); }
     } });
     if (fresh.length) {
-      await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-        SELECT $1,k,c::jsonb FROM unnest($2::text[],$3::text[]) AS u(k,c) ON CONFLICT DO NOTHING`,
-      [IMPORT_OP, fresh.map(member => member.key), fresh.map(member => { const { content: _content, ...stored } = member.params!; return JSON.stringify([stored]); })]);
+      await (await engine.groupPublishStore()).insertImportCheckpoints(IMPORT_OP, fresh.map(member => member.key),
+        fresh.map(member => { const { content: _content, ...stored } = member.params!; return JSON.stringify([stored]); }));
       const stored = await readPending(fresh.map(member => member.key));
       for (const member of fresh) { try { resume(member, stored.get(member.key)!); } catch (error) { refuse(member, error); } }
     }
@@ -243,9 +241,7 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   });
   if (!cleared.length) return;
   try {
-    await engine.executeRaw(`DELETE FROM op_checkpoints o USING unnest($2::text[],$3::text[]) AS d(k,c)
-      WHERE o.op=$1 AND o.fingerprint=d.k AND o.completed_keys=d.c::jsonb`,
-    [IMPORT_OP, cleared.map(member => member.key), cleared.map(member => JSON.stringify([member.stored]))]);
+    await (await engine.groupPublishStore()).deleteImportCheckpoints(IMPORT_OP, cleared.map(member => member.key), cleared.map(member => JSON.stringify([member.stored])));
   } catch (error) { for (const member of cleared) fail(member.i, error); }
 }
 

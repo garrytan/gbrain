@@ -16,6 +16,7 @@ import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { requestRow } from '../store-codec.ts';
 import { storeCall } from './common.ts';
+import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'refreshStore';
 
@@ -67,5 +68,5 @@ function rustRefreshStore(brain: StoreBrain): RefreshStore {
 
 /** `refreshStore()`: the store over this engine's store handle; called on a transaction, every call runs in it. */
 export const refreshStore = async function refreshStore(this: RustEngine, brain: StoreBrain): Promise<RefreshStore> {
-  return rustRefreshStore(brain);
+  return heldStore(this, rustRefreshStore(brain));
 };
