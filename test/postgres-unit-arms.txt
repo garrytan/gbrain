@@ -192,6 +192,7 @@ test/engine-parity/timeline.test.ts
 test/engine-parity/title-fuzzy-like-bound.test.ts
 test/engine-parity/title-fuzzy-unicode.test.ts
 test/engine-parity/traversal-cache.test.ts
+test/engine-parity/trust-floor-refusal.test.ts
 test/engine-parity/trust-tier-reads.test.ts
 test/engine-parity/versions-raw.test.ts
 test/engine-parity/wanted-links.test.ts
