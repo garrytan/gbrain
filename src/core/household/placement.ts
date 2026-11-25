@@ -22,7 +22,6 @@ import { ownerMemberId } from '../access/owner.ts';
 import { opError } from '../ops/contract.ts';
 import { memberIdentity } from '../access/members.ts';
 import { remoteTargetHidden } from '../persistence/page-visibility.ts';
-import { callerIsOwner } from '../search/private-visibility.ts';
 import { accountNumberFields, HOUSEHOLD_KINDS, HOUSEHOLD_ROLES, HOUSEHOLD_STATUSES, HOUSEHOLD_TRANSITIONS, HOUSEHOLD_TYPE, looksLikeAccountNumber, type HouseholdKind, type HouseholdStatus } from './record.ts';
 
 export type HouseholdAudience = 'adults' | 'shared';
@@ -266,7 +265,7 @@ export function nonOwnerChildRefusal(subject: string) {
  */
 export async function householdWriteAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage' | 'listPages'>, sourceId: string, slug: string,
   parsed: { type: string; frontmatter: Record<string, unknown>; tags: readonly string[]; compiled_truth?: string | null; timeline?: string | null },
-  previous: StoredPage | null | undefined, remote: boolean, owner: () => Promise<boolean> = async () => callerIsOwner()): Promise<void> {
+  previous: StoredPage | null | undefined, remote: boolean, owner?: () => Promise<boolean>): Promise<void> {
   const live = previous && !previous.deleted_at ? previous : null;
   if (live?.type === HOUSEHOLD_TYPE && parsed.type !== HOUSEHOLD_TYPE && remote) {
     throw reclassifyRefusal(`Only the brain's owner can change ${slug} from a household record to another type, since that would drop the readers the placement table gives it, so nothing was written.`,
@@ -285,7 +284,7 @@ export async function householdWriteAdmission(engine: Pick<BrainEngine, 'execute
 }
 
 async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'getPage' | 'listPages'>, sourceId: string, slug: string,
-  parsed: { type: string; frontmatter: Record<string, unknown> }, live: StoredPage | null, remote: boolean, owner: () => Promise<boolean>): Promise<void> {
+  parsed: { type: string; frontmatter: Record<string, unknown> }, live: StoredPage | null, remote: boolean, owner: (() => Promise<boolean>) | undefined): Promise<void> {
   const from = subjectClass(live);
   const to = subjectClass(parsed);
   const role = parsed.type === HOUSEHOLD_TYPE ? '' : String(parsed.frontmatter.household_role ?? '').trim().toLowerCase();
@@ -296,7 +295,7 @@ async function subjectAdmission(engine: Pick<BrainEngine, 'executeRaw' | 'getCon
       ['gbrain', 'household', 'replace', '--about', slug, ...(keep ? [] : ['--role', role])], 'Changes the role on the brain host and re-places the records about it.');
   }
   if (from === to || to === 'not_child' || from === 'child') return;
-  if (remote && await placedReaders(engine, 'adults') && !await owner()) {
+  if (remote && owner && await placedReaders(engine, 'adults') && !await owner()) {
     if (to === 'child') throw nonOwnerChildRefusal(slug);
     throw reclassifyRefusal('Only the brain\'s owner can take ' + slug + ' out of its household_role, since the household records about it may have to be narrowed to adults first, so nothing was written.',
       'Keep the page\'s household_role, or ask the brain\'s owner to run gbrain household replace --about ' + slug + ' on the brain host.',

@@ -290,7 +290,7 @@ export async function importFromContent(
     remote?: boolean;
     /** GST-2891: with `remote`, the writer read the page without its held fence rows (worldOnlyFacts), so the merge restores them as stored. */
     restoreHeldRows?: boolean;
-    /** With `remote`: whether the stored write is the brain owner's own, for the household admission (the request's caller record is gone by preparation). */
+    /** With `remote`: whether a stored remote write is the owner's own; set by the stored-write paths, which the household non-owner rule binds. */
     householdOwner?: () => Promise<boolean>;
     /**
      * #1699/#6259: gate-owned markers (`quarantine`, `content_flag`, `embed_skip`,
