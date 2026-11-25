@@ -3,6 +3,7 @@ advisor:
 agent: 
 anomalies: 
 append: 
+apple-contacts: 
 apply-migrations: --accept-reviewed-inventory --acknowledge-no-backup --backup-confirmed --confirm-quiesced --content-root --dry-run --export-db-only --export-source --force --force-all --force-orchestrator --force-retry --force-schema --host-dir --json --list --migration --mode --no-autopilot-install --non-interactive --require-db --skip-verify --yes
 attribution: --fact --slug --take --timeline --versions
 auth: 
@@ -42,6 +43,7 @@ creds:
 day: --date --limit --narrative --week
 db-repair: 
 decide: 
+dedupe: 
 delete: --expected-revision --force --purge --request-id --slug --source-id
 delete-skill: --expected-revision --name --pack-id --request-id --source-id --source-incarnation
 delta: --beliefs --budget-tokens --cursor --entities --include-private --min-trust --session-id --since --since-slug
@@ -88,6 +90,7 @@ guests:
 health: 
 history: --diff --include-body --known-as-of --limit --slug --source-id
 hook: 
+identity: 
 import: --allow-noncanonical-root --calls --fresh --include-gitignored --json --log-noop --no-embed --prefix --source --source-id --workers
 init: 
 integrations: 
@@ -95,6 +98,7 @@ integrity:
 jobs: 
 join-brain: --adapter --follow-policy
 last-seen: --asof --entity
+learned: --limit --since --stats
 leave-brain: --enrollment-epoch --installation-id
 link: --context --from --link-source --link-type --request-id --to --valid-from --valid-until
 link-add: --context --from --link-source --link-type --request-id --to --valid-from --valid-until
@@ -163,10 +167,11 @@ schema:
 search: --cursor --fields --limit --match --min-trust --mode --offset --query --recency --return-unit --return-window --salience --snippet-chars --source-id --source-ids --token-budget --types --where
 search-by-image: --image-data --image-mime --image-path --image-url --limit --offset --query --source-id
 search-exact: --after --case-sensitive --limit --max-seconds --min-trust --phrase --slug-prefix --source-id --types
+secrets: 
 self-upgrade: 
 serve: --access --advertise --bind --cli-socket --enable-dcr --enable-dcr-insecure --fail-fast --http --log-full-params --port --print-admin-token --public-url --source-guard --stdio-idle-timeout --stdio-member --suppress-bootstrap-token --surface --token-ttl
 set-skill-policy: --expected-policy-epoch --policy --source-id
-setup: 
+setup: --skill-loading
 since: --date --kind --limit
 skill: --expected-brain-id --name --pack-id --qualified-id --revision --schema-version --source-id --source-incarnation
 skill-asset: --expected-brain-id --name --pack-id --path --qualified-id --revision --source-id --source-incarnation
@@ -176,8 +181,20 @@ skill-retention: --source-id
 skillify: 
 skillopt: 
 skillpack: 
+skillpack doctor: 
+skillpack health: 
 skillpack-check: 
 skills: --cursor --limit --query --schema-version --section --source-id
+skills index: --bundled --catalog --claude-plugins --dir --from-json --harness --json --routing --scope --session --shadow
+skills index build: 
+skills index remove: 
+skills index status: 
+skills library: --json --out
+skills pin: --catalog --json --line
+skills pin add: 
+skills pin list: 
+skills pin remove: 
+skills resolve: --catalog --exclude --expect-catalog --explain-target --fail-open --harness --input-json --json --load-hint --min-match --names-only --previous --reset-session --session --shadow --shadow-log --text --top-gate --top-k
 smoke-test: 
 sources: 
 stats: --by --collapse-aliases --since

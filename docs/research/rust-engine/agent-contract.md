@@ -6,7 +6,7 @@ These maps describe what the Rust port of gbrain must keep exactly: the CLI (com
 
 | Repo | Commit | Notes |
 |---|---|---|
-| `garrytan/gbrain` (reference) | `master` `8bbfd0b5e8` | VERSION `0.60.733.0` |
+| `garrytan/gbrain` (reference) | `master` `8bbfd0b5e8` | VERSION `0.60.733.0`. Key numbers, cli.md and data/ refreshed to master `116d737413` (VERSION `0.60.769.0`) on 2026-11-24. |
 | `garrytan/gbrain-evals` (parity oracle) | `cd447b3ae` ("Release v0.10.237") | pins gbrain at `6ce7195b44a0`, not `#master` |
 
 The root `CLAUDE.md` in gbrain describes roughly v0.41. Where it disagrees with the code, these maps follow the code.
@@ -15,23 +15,23 @@ The root `CLAUDE.md` in gbrain describes roughly v0.41. Where it disagrees with 
 
 | File | What it covers |
 |---|---|
-| [cli.md](cli.md) | All 220 public CLI commands. Part A: op-backed commands, argv parsing, global flags, agent contract v1 (`--json` documents, notices, error envelope), exit codes. Part B: the 132 CLI-only commands by category. Part C: which commands agents and evals use. |
-| [mcp.md](mcp.md) | All 186 MCP tools: transports (stdio, OAuth HTTP), scopes, surfaces, publish gates, wire shapes, the full tool table, JSON schemas for the verbs and starter surfaces, MEMORY_VERBS and the qm-memory-provider contract, and which tools agents and evals use. |
+| [cli.md](cli.md) | All 237 public CLI commands. Part A: op-backed commands, argv parsing, global flags, agent contract v1 (`--json` documents, notices, error envelope), exit codes. Part B: the 136 CLI-only commands by category. Part C: which commands agents and evals use. |
+| [mcp.md](mcp.md) | All 186 MCP tools at `8bbfd0b5e8` (188 at `116d737413`; data/ has the current list): transports (stdio, OAuth HTTP), scopes, surfaces, publish gates, wire shapes, the full tool table, JSON schemas for the verbs and starter surfaces, MEMORY_VERBS and the qm-memory-provider contract, and which tools agents and evals use. |
 | [brain-format.md](brain-format.md) | The markdown brain: directory layout, frontmatter fields and YAML rules, compiled truth vs timeline, facts/takes/links fences, slugs, wikilinks and backlinks, import/sync/export, content hash, annotated fixture pages. |
 | [agent-and-eval-usage.md](agent-and-eval-usage.md) | How gbrain-evals touches gbrain (library imports, CLI argv, MCP calls, the HTTP protocol v1 seam) and how gbrain's own skills and instructions use the CLI and MCP. |
-| [data/](data/) | Machine-readable snapshots: the operation manifest (204 ops), `tools/list` output per surface (non-strict and strict), the public-surface lists (commands, flags, MCP params, exit codes, config keys), and captured MCP error envelopes. Regenerate with `bun docs/research/rust-engine/scripts/dump-contract-data.ts <gbrain-checkout> docs/research/rust-engine/data`. |
+| [data/](data/) | Machine-readable snapshots: the operation manifest (206 ops), `tools/list` output per surface (non-strict and strict), the public-surface lists (commands, flags, MCP params, exit codes, config keys), and captured MCP error envelopes. Regenerate with `bun docs/research/rust-engine/scripts/dump-contract-data.ts <gbrain-checkout> docs/research/rust-engine/data`. |
 
 ## Key numbers
 
 | Surface | Count | Source |
 |---|---|---|
-| Operations (single source for CLI and MCP) | 204 | `src/core/operation-manifest.generated.ts` |
-| Public CLI commands / flags | 220 / 613 | `docs/contracts/public-surface.json` (CI-enforced) |
-| CLI-only command records | 132 | `src/cli/command-table.ts` |
-| MCP tools (not `cliOnly`) | 186 | public-surface `mcp-tool` |
-| MCP tools an HTTP client can ever see | 176 | 186 minus 10 `localOnly` ops |
+| Operations (single source for CLI and MCP) | 206 | `src/core/operation-manifest.generated.ts` |
+| Public CLI commands / flags | 237 / 652 | `docs/contracts/public-surface.json` (CI-enforced) |
+| CLI-only command records | 136 | `src/cli/command-table.ts` |
+| MCP tools (not `cliOnly`) | 188 | public-surface `mcp-tool` |
+| MCP tools an HTTP client can ever see | 178 | 188 minus 10 `localOnly` ops |
 | Verbs / starter surfaces | 7 / 41 | `src/mcp/surface.ts` |
-| Error codes / distinct exit values | 707 / 17 (658 codes exit 1) | `src/core/error-catalogue.ts` |
+| Error codes / distinct exit values | 773 / 17 (724 codes exit 1) | `src/core/error-catalogue.ts` |
 | gbrain-evals files importing gbrain as a library | 131 (plus 116 path-based `src/` imports in 68 files) | agent-and-eval-usage.md section 1a |
 
 ## Contract risks
@@ -68,4 +68,4 @@ These are the places where a Rust port can break agents or evals without a compi
 - Five parallel research passes read the source with `file:line` citations. Handler-free modules (operation manifest, tool-defs, surface, callable, dispatch with a stub engine) were imported with Bun to produce the data files and the MCP error envelopes.
 - The gbrain CLI itself was not executed: it requires Bun >= 1.4.4 and the research host had 1.3.14. CLI JSON examples come from tests, golden fixtures and code literals, not live captures.
 - No test suites were run. Engine-method columns in the large tables are from reading handlers and are marked as heuristics where they are.
-- Line numbers refer to gbrain `8bbfd0b5e8`. Re-check them after gbrain moves.
+- Line numbers refer to gbrain `8bbfd0b5e8`. The key numbers above were recomputed at `116d737413` by importing the operation manifest, `src/cli/command-table.ts` and `docs/contracts/public-surface.json`. Re-check them after gbrain moves.

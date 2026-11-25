@@ -56,20 +56,24 @@ export async function rankDuplicateGroups(engine: BrainEngine): Promise<{ ranked
 }
 
 /**
- * The learning_derive step: keeps at most five duplicate questions open. A recorded anchor whose group the preview still
- * lists is open until it is confirmed or rejected; the free slots go to the best-ranked live anchors not asked yet, each once.
+ * The learning_derive step: keeps at most five duplicate questions open. A pending item whose group the preview still
+ * lists holds its slot until it is answered; one whose group left the preview (confirmed, rejected or
+ * re-anchored) is closed as expired. The free slots go to the best-ranked live anchors not asked yet, each once.
  */
 export async function recordDuplicateQuestions(engine: BrainEngine, opts: { runId: string; dryRun: boolean }):
-  Promise<{ recorded: number; groups: number; ranked_by: 'owner-contact' | 'preview'; owner_reason?: string }> {
+  Promise<{ recorded: number; groups: number; closed: number; ranked_by: 'owner-contact' | 'preview'; owner_reason?: string }> {
   const { groups, ...ranking } = await rankDuplicateGroups(engine);
   const anchors = [...new Set(groups.map(g => g.anchor))];
-  if (!anchors.length) return { recorded: 0, groups: 0, ...ranking };
+  const closed = opts.dryRun ? 0 : (await engine.executeRaw(`UPDATE learning_items SET state = 'expired', decided_at = now(), decided_by = 'dedupe_preview'
+      WHERE kind = 'duplicate_to_confirm' AND state = 'pending' AND NOT (target_id = ANY($1::bigint[])) RETURNING id`, [anchors])).length;
+  if (!anchors.length) return { recorded: 0, groups: 0, closed, ...ranking };
   const asked = (id: string) => `NOT ${notRecordedSql("'duplicate_to_confirm'", 'pages', id)}`;
   const fresh = `SELECT f.id, f.ord FROM (
        SELECT u.id, u.ord, x.asked, row_number() OVER (PARTITION BY x.asked ORDER BY u.ord) AS rn,
-              count(*) FILTER (WHERE x.asked) OVER () AS open
+              count(*) FILTER (WHERE x.open) OVER () AS open
          FROM unnest($1::bigint[]) WITH ORDINALITY AS u(id, ord) JOIN pages p ON p.id = u.id AND p.deleted_at IS NULL
-        CROSS JOIN LATERAL (SELECT ${asked('u.id')} AS asked) x) f
+        CROSS JOIN LATERAL (SELECT ${asked('u.id')} AS asked, EXISTS (SELECT 1 FROM learning_items li WHERE li.kind = 'duplicate_to_confirm'
+          AND li.target_table = 'pages' AND li.target_id = u.id AND li.state = 'pending') AS open) x) f
      WHERE NOT f.asked AND f.rn <= ${MAX_DUPLICATE_QUESTIONS} - f.open ORDER BY f.ord`;
   const rows = opts.dryRun
     ? await engine.executeRaw(fresh, [anchors])
@@ -78,7 +82,7 @@ export async function recordDuplicateQuestions(engine: BrainEngine, opts: { runI
           FROM (${fresh}) AS u JOIN pages p ON p.id = u.id
          ORDER BY u.ord
         ON CONFLICT (kind, target_table, target_id) DO NOTHING RETURNING id`, [anchors, opts.runId]);
-  return { recorded: rows.length, groups: groups.length, ...ranking };
+  return { recorded: rows.length, groups: groups.length, closed, ...ranking };
 }
 
 export interface LiveDuplicate { group: DuplicateGroup; members: DuplicateMemberPage[]; commands: { confirm?: string[]; reject: string[] } }

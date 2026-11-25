@@ -40,6 +40,7 @@ import { printHelpText } from '../cli/help/render.ts';
 import { cliRenderContext, renderAction, shellQuote, type Action } from '../core/agent-output.ts';
 import { codeEntry } from '../core/error-catalogue.ts';
 import { fetchSource } from '../core/sources-load.ts';
+import { completedFullCycle, recordDreamFullCycle } from '../core/dream-last-cycle.ts';
 import { existsSync } from 'fs';
 import { isAbsolute, resolve } from 'node:path';
 
@@ -927,6 +928,11 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   const failed = report.status === 'failed' || failedPhases.length > 0;
   // #7646: a phase that needs the user (sync_anchor_relative) fails again on every rerun; its ask_user fix leads instead.
   const askPhase = report.phases.find(p => failedPhases.includes(p.phase) && p.fix?.next === 'ask_user');
+  if (engine && !opts.dryRun && phases === undefined && (resolvedSourceId === undefined || fullImplicitSourceCycle)
+    && !failed && completedFullCycle(report)) {
+    await recordDreamFullCycle(engine, report)
+      .catch(e => console.warn(`[dream] could not record the completed cycle for gbrain status: ${e instanceof Error ? e.message : String(e)}`));
+  }
   if (!opts.json) printHuman(report);
   else if (!failed || !jsonGuardActive()) await writeJsonDocument(JSON.stringify(report, null, 2));
   else {
