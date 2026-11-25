@@ -784,20 +784,9 @@ export interface FactListOpts {
   grep?: string;
   /** Intersect entity reads with this exact source_session before LIMIT/OFFSET. Also honored by listFactsSince. */
   sessionId?: string;
-  /**
-   * When true, `listFactsSince`'s `since` comparison and ORDER BY use
-   * COALESCE(valid_from, created_at) — event time — instead of creation
-   * time. Batch backfill (e.g. `extract-conversation-facts` run over many
-   * pages at once) inserts many facts with the same `created_at` (the
-   * batch's run time), which makes creation-time ordering useless for
-   * "what happened yesterday" recall — results sort by extraction order,
-   * not by when the underlying event occurred. Off by default, so the
-   * facts meta-hook's hot-memory injection cache (`facts/meta-hook.ts`,
-   * a 24h recency window re-ranked by decayed confidence) keeps its
-   * creation-time semantics unchanged.
-   */
+  /** Event-window cutoffs use valid_from. Otherwise, cutoffs use created_at. */
   eventTime?: boolean;
-  /** A general read can sort undated rows by creation time without assigning an event time. */
+  /** Include undated rows in an unbounded timeline, ordered by creation time. */
   includeUndated?: boolean;
   /**
    * When true, exclude the durable audit checkpoint rows that

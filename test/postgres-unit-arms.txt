@@ -707,6 +707,7 @@ test/readers-noncanonical-owner-reads.test.ts
 test/readers-noncanonical.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
+test/recall-undated-rows.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
 test/reconcile-publish-opt-out-gst2250.test.ts
