@@ -287,7 +287,7 @@ async function authorizeStoredTakeHolders(engine: AuthorityEngine, row: WriteReq
  * #6007: one access check answers identical read-only statements once (the
  * current and the stored authority read the same writer row and visibility).
  * The memo lives for that single check and holds no locking reads. The typed
- * brain-identity and unlocked writer-row reads are memoized the same way.
+ * brain-identity, unlocked writer-row and write-visibility probe reads are memoized the same way.
  */
 function onceReads(engine: BrainEngine): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
@@ -304,6 +304,10 @@ function onceReads(engine: BrainEngine): BrainEngine {
     if (key === 'readPersistenceBrainId') return () => memo('typed:brain', () => target.readPersistenceBrainId());
     if (key === 'readLocalWriterRow') return (id: string, opts?: { lock?: boolean }) => opts?.lock ? target.readLocalWriterRow(id, opts)
       : memo(JSON.stringify(['typed:writer', id]), () => target.readLocalWriterRow(id));
+    // The visibility probe the current and the stored authority both open with (authorizePageVisibility) was one of the
+    // identical executeRaw statements answered here before it became a typed member; it still is, so a receipt read pays it once.
+    if (key === 'readWriteVisibilityProbe') return (sourceId: string, slug: string) =>
+      memo(JSON.stringify(['typed:visibility-probe', sourceId, slug]), () => target.readWriteVisibilityProbe(sourceId, slug));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

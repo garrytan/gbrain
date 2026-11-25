@@ -27,7 +27,7 @@ import { hardenedGitSync } from '../hardened-git.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
 import type { ContentReceiptRebind } from '../shared-skills/receipt-root.ts';
-import type { WorktreeBinding } from '../engine-sql/write-misc.ts';
+import { getWorktreeBindingRaw, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 
 const writerStatusFix = (sourceId: string): Action => readFix(
   `Shows source ${sourceId}'s owner host, epoch, worktree state, admin_state and any publication still recovering, read-only.`,
@@ -82,9 +82,13 @@ export async function graduationVerifyInheritsPersistence(engine: BrainEngine): 
 export async function persistenceEnabledForHealth(engine: BrainEngine): Promise<boolean> {
   return await managedPersistenceEnabled(engine) || await graduationVerifyInheritsPersistence(engine);
 }
-/** The source's binding as this host sees it (`BrainEngine.getWorktreeBinding`); null when the source has none. */
-export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = hostIdFor(engine)): Promise<WorktreeBinding | null> {
-  return (engine as unknown as Pick<BrainEngine, 'getWorktreeBinding'>).getWorktreeBinding(sourceId, hostId);
+/**
+ * The source's binding as this host sees it (`BrainEngine.getWorktreeBinding`); null when the source has none. An engine
+ * that carries the typed member answers it (a Rust brain does); an `executeRaw`-only handle runs the same statement.
+ */
+export async function getWorktreeBinding(engine: SqlEngine | (SqlEngine & Pick<BrainEngine, 'getWorktreeBinding'>), sourceId: string, hostId: string | null = hostIdFor(engine)): Promise<WorktreeBinding | null> {
+  if ('getWorktreeBinding' in engine && typeof engine.getWorktreeBinding === 'function') return engine.getWorktreeBinding(sourceId, hostId);
+  return getWorktreeBindingRaw(engine, sourceId, hostId);
 }
 /** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
 export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = hostIdFor(engine), expectedAdminState?: string,
