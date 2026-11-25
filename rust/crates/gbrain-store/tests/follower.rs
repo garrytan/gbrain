@@ -416,29 +416,49 @@ fn a_refused_snapshot_leaves_the_follower_byte_identical() {
             None,
             "a log meta past the record file",
         );
-        // A trim point past the log's newest.
+        // A trim point past the log's newest, written without moving the snapshot's sequence (so
+        // only the bounds check can refuse it).
         primary_image(&p.primary, &p.root.join("snap-d"));
-        {
-            let kv = RedbKv::open_path(&p.root.join("snap-d/records.redb")).unwrap();
-            let read = kv.snapshot().unwrap();
-            let mut meta = gbrain_store::commit_log::read_meta(&*read)
+        edit_snapshot(&p.root.join("snap-d"), |kv, tx| {
+            let mut meta = gbrain_store::commit_log::read_meta(&*kv.snapshot().unwrap())
                 .unwrap()
                 .unwrap();
-            drop(read);
             meta.trimmed_through = Some(CommitPosition::new(meta.newest.sequence + 3, 0));
-            let mut tx = kv.begin_write().unwrap();
             tx.put(
                 &gbrain_store::commit_log::meta_key(),
                 &serde_json::to_vec(&meta).unwrap(),
             )
-            .unwrap();
-            tx.commit().unwrap();
-        }
-        refused(
-            &p.root.join("snap-d"),
-            None,
-            "a trim point past the newest commit",
+        });
+        let err = follower
+            .install_snapshot(&p.root.join("snap-d"), None)
+            .unwrap_err();
+        assert!(err.message.contains("log bounds disagree"), "{err:?}");
+        assert_eq!(image_of(follower.records()), before);
+        // A corrupt retained record hidden behind a trim point at the newest commit.
+        primary_image(&p.primary, &p.root.join("snap-f"));
+        edit_snapshot(&p.root.join("snap-f"), |kv, tx| {
+            let mut meta = gbrain_store::commit_log::read_meta(&*kv.snapshot().unwrap())
+                .unwrap()
+                .unwrap();
+            let newest = meta.newest;
+            meta.trimmed_through = Some(newest);
+            tx.put(
+                &gbrain_store::commit_log::meta_key(),
+                &serde_json::to_vec(&meta).unwrap(),
+            )?;
+            tx.put(
+                &gbrain_store::commit_log::record_key(newest),
+                &[2, 0xFF, 0xFF],
+            )
+        });
+        let err = follower
+            .install_snapshot(&p.root.join("snap-f"), None)
+            .unwrap_err();
+        assert!(
+            err.message.contains("at or before its trim point"),
+            "{err:?}"
         );
+        assert_eq!(image_of(follower.records()), before);
         // A FORMAT that names another brain than the records.
         primary_image(&p.primary, &p.root.join("snap-e"));
         let mut format: serde_json::Value =
@@ -451,6 +471,63 @@ fn a_refused_snapshot_leaves_the_follower_byte_identical() {
         .unwrap();
         refused(&p.root.join("snap-e"), None, "a FORMAT of another brain");
     }
+}
+
+/// Edits a snapshot's record file in one write that keeps its commit sequence.
+fn edit_snapshot(
+    dir: &Path,
+    f: impl FnOnce(&RedbKv, &mut dyn gbrain_store::kv::KvWrite) -> gbrain_store::error::Result<()>,
+) {
+    let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
+    let sequence = kv.version().unwrap();
+    kv.replica_write(sequence, None, |tx| f(&kv, tx)).unwrap();
+}
+
+/// A follower record file that needs recovery and holds a newer format: refused, every byte as it
+/// was (the format is judged on a recovered copy, not on the file).
+#[test]
+fn a_follower_that_needs_recovery_and_holds_a_newer_format_is_refused_without_a_change() {
+    let (p, follower) = pair("newer-unclean", false);
+    drop(follower);
+    let dir = p.root.join("follower");
+    let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
+    let sequence = kv.version().unwrap();
+    kv.replica_write(sequence, None, |tx| {
+        let mut format: serde_json::Value =
+            serde_json::from_slice(&tx.get(&gbrain_store::keys::meta("format"))?.unwrap()).unwrap();
+        format["format_version"] = json!(99);
+        tx.put(
+            &gbrain_store::keys::meta("format"),
+            &serde_json::to_vec(&format).unwrap(),
+        )
+    })
+    .unwrap();
+    // An unclean stop: copy the file while the handle is still open; the copy has no FORMAT.
+    let crashed = p.root.join("crashed");
+    std::fs::create_dir_all(&crashed).unwrap();
+    std::fs::copy(dir.join("records.redb"), crashed.join("records.redb")).unwrap();
+    std::mem::forget(kv);
+    let bytes = std::fs::read(crashed.join("records.redb")).unwrap();
+    assert!(
+        gbrain_store::redb_kv::peek(
+            &crashed.join("records.redb"),
+            &gbrain_store::keys::meta("format")
+        )
+        .is_none(),
+        "the copy must need recovery for this case"
+    );
+    let err = Follower::open(&crashed).err().unwrap();
+    assert_eq!(err.code, gbrain_store::error::FORMAT_UNKNOWN, "{err:?}");
+    assert_eq!(
+        std::fs::read(crashed.join("records.redb")).unwrap(),
+        bytes,
+        "the refused open changed the file"
+    );
+    assert_eq!(
+        std::fs::read_dir(&crashed).unwrap().count(),
+        1,
+        "the check copy was left behind"
+    );
 }
 
 #[test]
@@ -720,19 +797,29 @@ fn install_cost_on_a_10k_page_brain() {
         let tx = primary.begin_transaction(false).unwrap();
         for i in 0..100u64 {
             let n = chunk * 100 + i;
-            tx.submit_page_mutation(&mutation(n + 1, &format!("notes/page-{n:05}"), &format!("{body} {n}")), None)
-                .unwrap();
+            tx.submit_page_mutation(
+                &mutation(n + 1, &format!("notes/page-{n:05}"), &format!("{body} {n}")),
+                None,
+            )
+            .unwrap();
         }
         tx.commit_transaction().unwrap();
     }
-    let manifest = primary.snapshot_to(&root.join("snap"), &SnapshotOp::new()).unwrap();
-    let bytes: u64 = std::fs::read_dir(root.join("snap")).unwrap().map(|e| e.unwrap().metadata().unwrap().len()).sum();
+    let manifest = primary
+        .snapshot_to(&root.join("snap"), &SnapshotOp::new())
+        .unwrap();
+    let bytes: u64 = std::fs::read_dir(root.join("snap"))
+        .unwrap()
+        .map(|e| e.unwrap().metadata().unwrap().len())
+        .sum();
     let mut ms = Vec::new();
     for run in 0..3 {
         let target = root.join(format!("follower-{run}"));
         let follower = Follower::open(&target).unwrap();
         let start = std::time::Instant::now();
-        follower.install_snapshot(&root.join("snap"), Some(&manifest)).unwrap();
+        follower
+            .install_snapshot(&root.join("snap"), Some(&manifest))
+            .unwrap();
         ms.push(start.elapsed().as_millis());
         drop(follower);
         std::fs::remove_dir_all(&target).unwrap();

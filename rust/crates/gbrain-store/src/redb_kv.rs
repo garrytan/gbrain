@@ -350,6 +350,19 @@ pub fn peek(path: &Path, key: &[u8]) -> Option<Vec<u8>> {
     Some(value.value().to_vec())
 }
 
+/// `peek` that tells a missing key (`Ok(None)`) from a file that cannot be read without opening it
+/// for writing (`Err`: redb must recover it first).
+pub fn peek_checked(path: &Path, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    let db = Database::builder().open_read_only(path).map_err(map)?;
+    let tx = db.begin_read().map_err(map)?;
+    let table = match tx.open_table(TABLE) {
+        Ok(table) => table,
+        Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(e) => return Err(map(e)),
+    };
+    Ok(table.get(key).map_err(map)?.map(|v| v.value().to_vec()))
+}
+
 /// Reads one record by key, from whichever transaction the caller holds.
 type KeyLookup<'a> = dyn FnMut(&[u8]) -> Result<Option<Vec<u8>>> + 'a;
 

@@ -63,6 +63,24 @@ fn snapshot_required(why: String) -> StoreError {
     StoreError::new(SNAPSHOT_REQUIRED, why)
 }
 
+/// The format record of `records` as redb's recovery would leave it, read from a recovered copy
+/// beside it (removed again), so the file itself is not touched.
+fn recovered_copy_format(records: &Path) -> Result<Option<Vec<u8>>> {
+    let copy = records.with_extension(format!("check-{}", std::process::id()));
+    std::fs::copy(records, &copy).map_err(|e| {
+        StoreError::io(format!(
+            "follower: copying the record file to check it: {e}"
+        ))
+    })?;
+    let outcome = (|| {
+        let kv = RedbKv::open_path(&copy)?;
+        let read = kv.snapshot()?;
+        read.get(&keys::meta("format"))
+    })();
+    let _ = std::fs::remove_file(&copy);
+    outcome
+}
+
 /// A follower holds only a commit log brain of a format this build reads.
 fn admit_format(stored: &StoredFormat) -> Result<()> {
     format::check_version_in(stored.format_version, format::OPENED_FORMATS)?;
@@ -100,10 +118,19 @@ impl Follower {
         // record file is opened for writing.
         format::read_in(dir, format::OPENED_FORMATS)?;
         let records = dir.join(format::RECORDS_FILE);
-        if let Some(bytes) = crate::redb_kv::peek(&records, &keys::meta("format")) {
-            let stored: StoredFormat = serde_json::from_slice(&bytes)
-                .map_err(|e| StoreError::new(STORE_CORRUPT, format!("the format record: {e}")))?;
-            admit_format(&stored)?;
+        if records.exists() {
+            let stored = match crate::redb_kv::peek_checked(&records, &keys::meta("format")) {
+                Ok(bytes) => bytes,
+                // The file cannot be read without recovery: recover a copy, never the file itself,
+                // and judge the format there, so a refusal changes no byte of the follower.
+                Err(_) => recovered_copy_format(&records)?,
+            };
+            if let Some(bytes) = stored {
+                let stored: StoredFormat = serde_json::from_slice(&bytes).map_err(|e| {
+                    StoreError::new(STORE_CORRUPT, format!("the format record: {e}"))
+                })?;
+                admit_format(&stored)?;
+            }
         }
         let kv = RedbKv::open_path(&records)?;
         Follower::over(kv, Some(dir.to_path_buf()))
@@ -358,21 +385,49 @@ impl Follower {
         {
             return Err(bad("its log bounds disagree".into()));
         }
-        // Every retained record decodes, gap-free, up to `newest`.
-        let page = commit_log::read_commit_log(
-            &*read,
-            meta.trimmed_through.or(Some(meta.since)),
-            usize::MAX,
-        );
-        let records = match page {
-            Ok(page) if !page.snapshot_required => page.records,
-            Ok(_) => return Err(bad("its log does not reach its own start".into())),
-            Err(e) => return Err(bad(format!("its log does not read: {}", e.message))),
-        };
-        if let Some(last) = records.last()
-            && last.position != meta.newest
-        {
-            return Err(bad("its newest record is not its log's newest".into()));
+        // Every retained record decodes, is after the trim point, and the records run gap-free
+        // from there to `newest` (none at all only when the trim point or `since` is `newest`).
+        let floor = meta.trimmed_through.unwrap_or(meta.since);
+        let mut records: Vec<CommitRecord> = Vec::new();
+        let mut failure: Option<String> = None;
+        let mut prev = floor;
+        read.scan(
+            &commit_log::record_key(CommitPosition::default()),
+            &[commit_log::COMMIT_LOG + 1],
+            false,
+            &mut |k, v| {
+                match decode_record(k, v) {
+                    Ok(r) if r.position <= floor => {
+                        failure = Some(format!(
+                            "it keeps a record at {} at or before its trim point",
+                            r.position.token()
+                        ));
+                    }
+                    Ok(r) if !r.position.follows(prev) => {
+                        failure = Some(format!(
+                            "its log jumps from {} to {}",
+                            prev.token(),
+                            r.position.token()
+                        ));
+                    }
+                    Ok(r) => {
+                        prev = r.position;
+                        records.push(r);
+                    }
+                    Err(e) => failure = Some(format!("a record does not decode: {}", e.message)),
+                }
+                failure.is_none()
+            },
+        )?;
+        if let Some(why) = failure {
+            return Err(bad(why));
+        }
+        if prev != meta.newest {
+            return Err(bad(format!(
+                "its records end at {}, its log's newest is {}",
+                prev.token(),
+                meta.newest.token()
+            )));
         }
         let time = read_commit_time(&*read)?;
         if let (Some(last), Some(t)) = (records.last(), time)
