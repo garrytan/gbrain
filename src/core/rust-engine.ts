@@ -30,7 +30,7 @@ import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
-import { electOwner, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
+import { electOwner, type ElectOptions, type OwnerRole } from './rust-engine/owner-ipc/election.ts';
 import { callEndCheck, installOwnerClient, untilCallEnds } from './rust-engine/owner-ipc/client.ts';
 import { ownerWholeOperations } from './rust-engine/owner-ipc/owner-ops.ts';
 import type { OwnerEngineServer, OwnerServerStats } from './rust-engine/owner-ipc/server.ts';
@@ -256,11 +256,10 @@ export class RustEngine implements BrainEngine {
     let storeFailure: { error: unknown } | null = null;
     let role: OwnerRole;
     try {
-      // Multi-user Rust on: the owner also speaks protocol v3 (rust-engine/served/); off, the key is absent.
-      const served = servedServerOptionsFor(this);
-      role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
+      // The election options; once the store is open and its multi-user mode resolved, a brain in multi-user mode
+      // also speaks protocol v3 (rust-engine/served/). Off, the key stays absent.
+      const electOpts: ElectOptions = {
         wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
-        ...(served ? { served } : {}),
         ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
         // Holding the owner lock: open the store before the socket serves, so no client call reaches this engine
         // without it. A call this process makes meanwhile waits for the open (`storeFor`), and ends at once when its
@@ -279,6 +278,8 @@ export class RustEngine implements BrainEngine {
             }
             opened = store;
             this._store = store;
+            const served = servedServerOptionsFor(this, store);
+            if (served) electOpts.served = served;
           } catch (error) {
             storeFailure = { error };
             throw error;
@@ -293,7 +294,8 @@ export class RustEngine implements BrainEngine {
             await store.close().catch(() => undefined);
           };
         },
-      });
+      };
+      role = await electOwner(this as unknown as BrainEngine, this.databasePath, electOpts);
     } catch (error) {
       this._claiming = false;
       const failure = storeFailure as { error: unknown } | null;

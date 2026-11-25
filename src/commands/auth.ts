@@ -136,28 +136,6 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
   }
 }
 
-/** `auth create <name> --rust-server-owner`: the owner server token of a served Rust brain (multi-user Rust only). */
-async function createRustServerOwner(rest: string[]) {
-  const { rustMultiuserOn } = await import('../core/rust-engine/multiuser.ts');
-  const name = rest[0] ?? '';
-  if (!rustMultiuserOn()) { console.error('Error: --rust-server-owner needs multi-user Rust: set GBRAIN_RUST_MULTIUSER=1.'); process.exit(1); }
-  if (!name || name.startsWith('--') || rest.length > 1) { console.error('Usage: auth create <name> --rust-server-owner'); process.exit(1); }
-  try {
-    await withConfiguredSql(async (_sql, engine) => {
-      const { mintOwnerServerToken } = await import('../core/rust-engine/served/owner-token.ts');
-      const { token, id } = await mintOwnerServerToken(engine, name);
-      console.log(`Owner server token created for "${name}" (id ${id}): a brain server accepts it over the network with the brain owner's full access.\n`);
-      console.log(`  ${token}\n`);
-      console.log('Save this token — it will not be shown again. Put it in the variable your client\'s rust_server.token_env names (default GBRAIN_RUST_SERVER_TOKEN).');
-      console.log(`Revoke with: gbrain auth revoke "${name}"`);
-    });
-  } catch (e: any) {
-    if (e instanceof OperationError) exitCliError(e, 'auth');
-    console.error(e?.code === '23505' ? `A token named "${name}" already exists. Revoke it first or use a different name.` : `Error: ${e?.message ?? e}`);
-    process.exit(1);
-  }
-}
-
 /** `auth set-min-trust <client|token> <tier|none>` (#5575, CEO-18): local-only, the one way to change a read floor. */
 async function setMinTrustCmd(rest: string[]) {
   const [target, value] = rest.filter(a => !a.startsWith('--'));
@@ -1490,7 +1468,7 @@ export async function runAuth(args: string[]): Promise<void> {
   switch (cmd) {
     case 'create': {
       // Multi-user Rust only: the owner server token a brain server accepts over the network (rust-engine/served/).
-      if (rest.includes('--rust-server-owner')) { await createRustServerOwner(rest.filter(a => a !== '--rust-server-owner')); return; }
+      if (rest.includes('--rust-server-owner')) { await (await import('./auth-rust-server-owner.ts')).createRustServerOwner(rest.filter(a => a !== '--rust-server-owner')); return; }
       // v0.28: optional --takes-holders world,garry,brain (default: world only)
       // #4043: optional --scopes read,write (default: full access, grandfathered)
       let binding: ReturnType<typeof takeBindingFlags>;

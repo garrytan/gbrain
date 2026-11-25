@@ -16,7 +16,7 @@ import { opError } from '../../ops/contract.ts';
 import { installOwnerClient, missingOnRustOwner } from '../owner-ipc/client.ts';
 import { capabilityMissing } from '../errors.ts';
 import { OWNER_IPC_ROUTES, ownerIpcRefusal } from '../owner-ipc/routes.ts';
-import { rustMultiuserOn } from '../multiuser.ts';
+import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
 import { connectServed, type ServedConnection } from './client.ts';
 
 export const RUST_SERVER_URL_ENV = 'GBRAIN_RUST_SERVER_URL';
@@ -32,7 +32,8 @@ export interface RustServerConfig { url?: string; token_env?: string; ca_file?: 
  * server configured. Off, a configured `rust_server` is ignored and nothing changes.
  */
 export function servedTargetFor(config: EngineConfig & { rust_server?: RustServerConfig }, env: Record<string, string | undefined> = process.env): ServedTarget | null {
-  if (!rustMultiuserOn(env)) return null;
+  // A client has no store of its own, so only the environment half of the switch can turn it on (multiuser-switch.ts).
+  if (!rustMultiuserFromEnv(env)) return null;
   const url = env[RUST_SERVER_URL_ENV] || config.rust_server?.url;
   if (!url) return null;
   const tokenVar = config.rust_server?.token_env || RUST_SERVER_TOKEN_ENV;

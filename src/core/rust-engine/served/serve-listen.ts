@@ -5,7 +5,7 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
-import { rustMultiuserOn, rustMultiuserSubSwitch, RUST_SERVED_SERIAL_TXN_ENV } from '../multiuser.ts';
+import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from '../multiuser-switch.ts';
 import type { OwnerEngineServer } from '../owner-ipc/server.ts';
 import { RUST_SERVER_LISTEN_ENV, listenServed, parseListenAddress, tlsFromEnv, type ServedListener } from './listener.ts';
 import type { ServedServerOptions } from './session.ts';
@@ -15,13 +15,29 @@ export function rustListenRequested(args: readonly string[], env: Record<string,
   return args.includes('--rust-listen') || !!env[RUST_SERVER_LISTEN_ENV];
 }
 
-/** The v3 options an owner starts with (rust-engine.ts election), or undefined with multi-user Rust off. */
-export function servedServerOptionsFor(engine: { capabilities?: ReadonlySet<string> }): ServedServerOptions | undefined {
-  if (!rustMultiuserOn()) return undefined;
+/**
+ * Test-only: run interactive transactions over the wire on today's serialized transaction before optimistic explicit
+ * transactions (lane L1) exist. Protocol evidence only; the final gate runs with it off.
+ */
+export const RUST_SERVED_SERIAL_TXN_ENV = 'GBRAIN_RUST_SERVED_SERIAL_TXN';
+
+/** The brain's resolved multi-user mode (multiuser-switch.ts): the store's answer, else the environment half. */
+export function storeMultiuser(store: object | null | undefined): { readonly multiuser: boolean } {
+  const resolved = (store as { multiuser?: unknown } | null | undefined)?.multiuser;
+  return { multiuser: typeof resolved === 'boolean' ? resolved : rustMultiuserFromEnv() };
+}
+
+/**
+ * The v3 options an owner starts with (rust-engine.ts election, once its store is open), or undefined when the brain
+ * is not in multi-user mode.
+ */
+export function servedServerOptionsFor(engine: { capabilities?: ReadonlySet<string> }, store: object | null | undefined): ServedServerOptions | undefined {
+  const mode = storeMultiuser(store);
+  if (!mode.multiuser) return undefined;
   return {
     // Interactive transactions over the wire: only with optimistic explicit transactions (lane L1, `multi_writer`),
     // or the test-only sub-switch that runs them on today's serialized transaction.
-    transactions: () => engine.capabilities?.has('multi_writer' as never) === true || rustMultiuserSubSwitch(RUST_SERVED_SERIAL_TXN_ENV),
+    transactions: () => engine.capabilities?.has('multi_writer' as never) === true || rustMultiuserSubSwitch(RUST_SERVED_SERIAL_TXN_ENV, mode),
   };
 }
 
@@ -29,7 +45,8 @@ export async function startRustListen(engine: BrainEngine, args: readonly string
   const at = args.indexOf('--rust-listen');
   const value = at >= 0 ? args[at + 1] : process.env[RUST_SERVER_LISTEN_ENV];
   if (!value || value.startsWith('--')) throw opError('invalid_params', '--rust-listen needs <host>:<port>.', 'Pass --rust-listen 127.0.0.1:4141 (or a TLS address with GBRAIN_RUST_SERVER_TLS_CERT and _KEY).');
-  if (!rustMultiuserOn()) {
+  const store = (engine as unknown as { openStoreIfOpen?: (m: string) => object | null }).openStoreIfOpen?.('rustListen');
+  if (!storeMultiuser(store).multiuser) {
     throw opError('engine_capability_missing', 'gbrain serve --rust-listen needs multi-user Rust, which is off.', 'Set GBRAIN_RUST_MULTIUSER=1 and start gbrain serve again.', { reason: 'served' });
   }
   const owner = engine.kind === 'rust' ? (engine as unknown as { ownerServer?: () => OwnerEngineServer | null }).ownerServer?.() ?? null : null;

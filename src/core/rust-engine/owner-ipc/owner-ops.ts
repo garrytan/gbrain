@@ -15,6 +15,7 @@ import { importManagedFiles } from '../../persistence/import-mutations.ts';
 import { ownerIpcRefusal } from './routes.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
+import { IMPORT_CLIENT_FILE, importClientFile } from '../served/client-files.ts';
 import {
   OWNER_FORWARDED_OPERATIONS, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
   type WholeOperationName,
@@ -52,7 +53,7 @@ async function runOperation(engine: BrainEngine, config: GBrainConfig | undefine
 }
 
 /** `config` is the owner's own (the engine's connect config); a registry operation runs with it. */
-export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Readonly<Record<WholeOperationName | typeof OWNER_RUN_OPERATION, OwnerWholeOperation>> {
+export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Readonly<Record<string, OwnerWholeOperation>> {
   return {
     importFromContent: (engine, ...args) => importFromContent(engine, ...(args as Args<typeof importFromContent>)),
     importFromFile: (engine, ...args) => importFromFile(engine, ...(args as Args<typeof importFromFile>)),
@@ -61,5 +62,8 @@ export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Read
     [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context),
     snapshotStore: (engine, target, options) => snapshotStore(engine, String(target), options as SnapshotStoreOptions),
     snapshotStatus: (_engine, opId) => Promise.resolve(snapshotStatus(String(opId))),
+    // Protocol v3 only: a network client's file import, sent as bytes (served/client-files.ts). The owner dispatcher
+    // refuses it on v2 as any operation it does not run (owner-ipc/server.ts V3_ONLY_OPERATIONS).
+    [IMPORT_CLIENT_FILE]: (engine: BrainEngine, ...args: unknown[]) => importClientFile(engine, args[0], args[1], args[2], args[3], args[4]),
   };
 }

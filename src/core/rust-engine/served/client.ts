@@ -293,6 +293,11 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     pending.delete(frame.id as number);
     call.cleanup();
     refresh();
+    // A busy owner past the caller's budget: the call never ran, and the caller sees its own deadline (decision R).
+    if (frame.ok !== true && code === 'owner_busy') {
+      call.reject(ownerCallTimeout(call.member, Date.now() - Number(call.frame.sent_at ?? Date.now()), 'queued'));
+      return;
+    }
     const position = frame.position as CommitPositionWire | undefined;
     if (position && typeof position.sequence === 'number' && typeof position.index === 'number'
       && (!lastPosition || comparePositions(position, lastPosition) > 0)) lastPosition = { sequence: position.sequence, index: position.index };
@@ -325,6 +330,7 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
         const ms = Math.max(0, deadlineAt - Date.now());
         grace = setTimeout(() => endLocally(ownerCallTimeout(member, ms, 'sent')), Math.min(2 ** 31 - 1, ms + CLIENT_DEADLINE_GRACE_MS));
       }
+      Object.defineProperty(frame, 'sent_at', { value: startedAt, enumerable: false });
       pending.set(id, { member, frame, tail: null, callbacks, resolve: resolveCall, reject: rejectCall, cleanup, txn,
         busyUntil: deadlineAt ?? Date.now() + DEFAULT_BUSY_BUDGET_MS });
       refresh();

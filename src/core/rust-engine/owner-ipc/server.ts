@@ -63,6 +63,10 @@ import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 import { servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
 import { encodeLengthFrame } from '../served/framing.ts';
+import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
+
+/** Whole operations only a protocol v3 session sends. */
+const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE]);
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
 export type OwnerWholeOperation = (engine: BrainEngine, ...args: unknown[]) => Promise<unknown>;
@@ -523,7 +527,8 @@ export async function serveOwnerEngine(
     const refuse = (error: unknown) => call.reply({ t: 'result', id, ok: false, error: served ? served.encodeError(error) : encodeError(error) });
     let target: (...args: unknown[]) => Promise<unknown>;
     if (frame.t === 'fn') {
-      const operation = Object.hasOwn(wholeOperations, member) ? wholeOperations[member] : undefined;
+      // An operation of protocol v3 only is, on v2, one the owner does not run (the same refusal as an unknown name).
+      const operation = Object.hasOwn(wholeOperations, member) && (served || !V3_ONLY_OPERATIONS.has(member)) ? wholeOperations[member] : undefined;
       if (!operation) { refuse(ownerIpcRefusal(member, 'the owner does not run this operation for other processes')); return; }
       target = (...args) => operation(engine, ...args);
     } else {

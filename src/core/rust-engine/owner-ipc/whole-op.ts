@@ -37,6 +37,7 @@ import {
   callEndCheck, callerIsRemote, ownerConnectionFor, ownerRejoinFor, rustOwnerServesPersistence, untilCallEnds, type OwnerConnection,
 } from './client.ts';
 import { ownerGone, ownerIpcRefusal } from './routes.ts';
+import { IMPORT_CLIENT_FILE, readClientFile, type ClientFilePayload } from '../served/client-files.ts';
 
 export type WholeOperationName =
   | 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles' | 'snapshotStore' | 'snapshotStatus';
@@ -112,6 +113,13 @@ export function forwardWholeOperation<T>(engine: object, name: WholeOperationNam
   // A connection that is still open is checked now; the one the election finds is checked when it is known.
   try { refuseUntrustedCaller(name); if (!rejoin) requireOwnerJournal(connection, name); }
   catch (error) { return Promise.reject(error); }
+  // A network client of a brain server (rust-engine/served/): its paths are not the server's, so a file import sends
+  // the file's bytes (served/client-files.ts) and an operation that names a server path refuses on the server.
+  if ((connection as { network?: boolean }).network === true && (name === 'importFromFile' || name === 'importImageFile') && !rejoin) {
+    let payload: ClientFilePayload;
+    try { payload = readClientFile(String(args[0])); } catch (error) { return Promise.reject(error); }
+    return connection.request('fn', IMPORT_CLIENT_FILE, [name, String(args[0]), args[1], payload, args[2]]) as Promise<T>;
+  }
   const sent = args.slice();
   for (const at of PATH_ARGS[name]) if (typeof sent[at] === 'string') sent[at] = resolve(sent[at] as string);
   if (name === 'importManagedFiles' && Array.isArray(sent[0])) {

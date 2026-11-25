@@ -330,3 +330,67 @@ describe('the Unix owner socket', () => {
     expect(await c.request('call', 'getPage', ['u'])).toEqual({ slug: 'u', title: 'T' });
   });
 });
+
+describe('off is identical', () => {
+  test('an owner started without served options answers a v3 hello with its v2 hello and closes, as for any other version', async () => {
+    const offDir = mkdtempSync(join(tmpdir(), 'gbrain-served-off-'));
+    const off = (await serveOwnerEngine(fake, join(offDir, 'owner.sock')))!;
+    try {
+      expect(off.attachServed).toBeUndefined();
+      const lines: string[] = [];
+      const socket = net.createConnection(off.socketPath);
+      await new Promise<void>(resolve => {
+        socket.on('data', d => lines.push(...String(d).split('\n').filter(Boolean)));
+        socket.once('close', () => resolve());
+        socket.once('connect', () => socket.write(JSON.stringify({ t: 'hello', v: 3, version: 3, caps: [] }) + '\n'));
+      });
+      expect(lines.map(l => JSON.parse(l))).toEqual([{ t: 'hello', version: 2, pid: process.pid, kind: 'rust', capabilities: ['persistence_journal'], serve: false }]);
+      const error = await connectServed(`gbrain+unix://${off.socketPath}`).then(() => null, (e: unknown) => e as { code?: string; reason?: string });
+      expect(error).toMatchObject({ code: 'owner_ipc_protocol', reason: 'version_mismatch' });
+    } finally {
+      await off.close();
+      rmSync(offDir, { recursive: true, force: true });
+    }
+  });
+
+  test('a v2 client of an owner with served options gets the same frames as before', async () => {
+    const { connectOwner } = await import('../src/core/rust-engine/owner-ipc/client.ts');
+    const c = await connectOwner(server.socketPath);
+    try {
+      expect(c.hello).toEqual({ t: 'hello', version: 2, pid: process.pid, kind: 'rust', capabilities: ['persistence_journal'], serve: false });
+      expect(await c.request('call', 'getPage', ['v2'])).toEqual({ slug: 'v2', title: 'T' });
+    } finally { c.close(); }
+  });
+
+  test('the switch: with GBRAIN_RUST_MULTIUSER unset no served options, no served target, no v3 operation', async () => {
+    const { servedServerOptionsFor } = await import('../src/core/rust-engine/served/serve-listen.ts');
+    const { servedTargetFor } = await import('../src/core/rust-engine/served/engine.ts');
+    const { ownerWholeOperations } = await import('../src/core/rust-engine/owner-ipc/owner-ops.ts');
+    const was = process.env.GBRAIN_RUST_MULTIUSER;
+    delete process.env.GBRAIN_RUST_MULTIUSER;
+    try {
+      expect(servedServerOptionsFor(fake, null)).toBeUndefined();
+      expect(servedServerOptionsFor(fake, { multiuser: false })).toBeUndefined();
+      // The store's resolved answer wins: a brain on through its own config row serves v3 with the environment unset.
+      expect(servedServerOptionsFor(fake, { multiuser: true })).toBeDefined();
+      expect(servedTargetFor({ engine: 'rust', rust_server: { url: 'gbrain+tls://h:1' } }, { GBRAIN_RUST_SERVER_URL: 'gbrain+tls://h:1' })).toBeNull();
+      expect(Object.keys(ownerWholeOperations())).toContain('importClientFile');
+    } finally { if (was !== undefined) process.env.GBRAIN_RUST_MULTIUSER = was; }
+  });
+
+  test('the v3-only file import is refused on v2 exactly as an operation the owner does not run', async () => {
+    const offDir = mkdtempSync(join(tmpdir(), 'gbrain-served-v2op-'));
+    const { ownerWholeOperations } = await import('../src/core/rust-engine/owner-ipc/owner-ops.ts');
+    const { connectOwner } = await import('../src/core/rust-engine/owner-ipc/client.ts');
+    const off = (await serveOwnerEngine(fake, join(offDir, 'owner.sock'), { wholeOperations: ownerWholeOperations() }))!;
+    try {
+      const c = await connectOwner(off.socketPath);
+      const refused = (name: string) => c.request('fn', name, []).then(() => null, (e: unknown) => ({ code: (e as { code?: string }).code, message: (e as Error).message.replace(name, '<op>') }));
+      expect(await refused('importClientFile')).toEqual(await refused('noSuchOperation'));
+      c.close();
+    } finally {
+      await off.close();
+      rmSync(offDir, { recursive: true, force: true });
+    }
+  });
+});
