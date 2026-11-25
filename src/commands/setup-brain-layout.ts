@@ -315,10 +315,17 @@ function writePages(exec: Run, launcher: string, pages: readonly StarterPage[], 
   });
 }
 
+/** Why a requested import folder cannot be read (the import would find nothing in it), or null. */
+function unreadableFolder(dir: string): string | null {
+  try { readdirSync(dir); return null; } catch (e) { return `cannot read ${dir}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`; }
+}
+
 /** One read-only import of `dir` into `source`, deferred to the agent above IMPORT_INLINE_MAX; returns the first file's title to search for. */
 function importFolder(exec: Run, launcher: string, dir: string, source: string | null, dryRun: boolean): { outcome: ImportOutcome; title: string | null } {
-  const { count, first } = countNotes(dir);
   const argv = ['gbrain', 'import', dir, '--no-embed', ...(source ? ['--source', source] : [])];
+  const unreadable = unreadableFolder(dir);
+  if (unreadable) return { outcome: { dir, files: 0, action: 'failed', argv, detail: unreadable }, title: null };
+  const { count, first } = countNotes(dir);
   if (count > IMPORT_INLINE_MAX) return { outcome: { dir, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} markdown files; run the import as its own step` }, title: null };
   if (dryRun) return { outcome: { dir, files: count, action: 'imported', argv, detail: 'would import (read only)' }, title: null };
   const imp = exec([launcher, 'import', dir, '--no-embed', '--json'], undefined, source);
@@ -355,9 +362,11 @@ function readersOf(exec: Run, launcher: string, slug: string): NonNullable<Trans
 
 /** One read-only import of a call-transcript folder into the company source, deferred to the agent above IMPORT_INLINE_MAX files. */
 function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean): TranscriptsOutcome {
-  const { count } = countNotes(dir, IMPORT_INLINE_MAX, CALL_FILES);
   const args = ['import', dir, '--calls', '--prefix', CALLS_PREFIX, '--no-embed'];
   const argv = ['gbrain', ...args, '--source', COMPANY_SOURCE];
+  const unreadable = unreadableFolder(dir);
+  if (unreadable) return { dir, files: 0, action: 'failed', argv, detail: unreadable };
+  const { count } = countNotes(dir, IMPORT_INLINE_MAX, CALL_FILES);
   if (count > IMPORT_INLINE_MAX) return { dir, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} call files; run the import as its own step` };
   if (dryRun) return { dir, files: count, action: 'imported', argv, detail: 'would import (read only)' };
   const imp = exec([launcher, ...args, '--json'], undefined, COMPANY_SOURCE);
@@ -479,6 +488,11 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
     } else {
       const company = outcome.company = ensureCompanySource(exec, launcher, flags.dryRun);
       if (company.action === 'failed' && !opts.instructionsDeclined) outcome.block = syncLayoutBlock(opts.instructionsPath, harness, scope, source, blockShape(flags.brain, true), flags.dryRun);
+      if (company.action === 'failed') {
+        const detail = `not run: the ${COMPANY_SOURCE} source could not be set up (${company.detail ?? 'unknown error'})`;
+        if (flags.docs) outcome.docs = { dir: flags.docs, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.docs, '--no-embed', '--source', COMPANY_SOURCE], detail };
+        if (flags.transcripts) outcome.transcripts = { dir: flags.transcripts, files: 0, action: 'failed', argv: ['gbrain', 'import', flags.transcripts, '--calls', '--prefix', CALLS_PREFIX, '--no-embed', '--source', COMPANY_SOURCE], detail };
+      }
       if (company.action !== 'failed') {
         outcome.pages.push(...writePages(exec, launcher, COMPANY_PAGES, COMPANY_SOURCE, flags.dryRun));
         if (flags.docs) {
