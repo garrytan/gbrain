@@ -8,8 +8,9 @@
  *    stalled-effect readers, the held-read stale stamp, the landing-gap and drift-conflict audits (pages, producers and the
  *    keyset cursor), the legacy-lock, derived-origin, managed-sync orphan and connector orphan listings, and the atom
  *    retirement ledger's newest-per-origin pick return the same rows in the same order on every engine arm (PGLite always;
- *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each case stops on the typed raw_sql
- *    refusal): byte order, as PGLite sorts and as Postgres sorts with `COLLATE "C"`.
+ *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each raw-SQL case stops on the typed
+ *    raw_sql refusal, and the atom retirement case, seeded and read through typed members, runs to the end): byte order,
+ *    as PGLite sorts and as Postgres sorts with `COLLATE "C"`.
  *  - Regression: on an en_US Postgres these reads sorted by the locale, which skips punctuation (`ab` before `a-z`), so a
  *    status list, a blocker list, a refusal naming "the first" source, a stale stamp taken from "the first" hold, and the
  *    drift audit's `next` cursor came back in another order than on PGLite, and a page crossing a cursor could repeat or vanish.
@@ -24,7 +25,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parityArms } from './harness.ts';
+import { createSource, parityArms } from './harness.ts';
+import { seedTypedEffects, seedTypedRequest, settleTypedEffects } from '../helpers/persistence-typed-seed.ts';
+import { seedHostBinding, seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { BYTE_IDS, BYTE_SLUGS, MIXED_IDS, MIXED_SLUGS, byteOrder } from '../helpers/byte-order.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -33,7 +36,7 @@ import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../../src/core/engine-sql/pers
 import { activatePersistence } from '../../src/core/persistence/activation.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
-import { atomRetirementsSql, ATOM_REEXTRACT_RETIRED_BY } from '../../src/core/persistence/atom-retirement-hold.ts';
+import { ATOM_REEXTRACT_RETIRED_BY } from '../../src/core/persistence/atom-retirement-hold.ts';
 import { orphanConnectorCheckpoints } from '../../src/core/persistence/connector-checkpoint-migration.ts';
 import { hostIdentityMismatches } from '../../src/core/persistence/consumer-diagnostics.ts';
 import { deactivationBlockers, physicalRootBlockers, deactivatePersistence } from '../../src/core/persistence/deactivation.ts';
@@ -126,15 +129,23 @@ async function lockRows(engine: BrainEngine, ids: readonly string[]): Promise<vo
   }
 }
 
+/** The same leases as `lockRows`, taken through the typed `acquireCycleLock` (a held lease an hour long). */
+async function typedLockRows(engine: BrainEngine, ids: readonly string[]): Promise<void> {
+  for (const id of ids) {
+    const taken = await engine.acquireCycleLock(id, { holderPid: 2_000_000_000, holderHost: 'collate-host', acquisitionToken: randomUUID(), ttlMinutes: 60, stealGraceSeconds: 0 });
+    if (!taken) throw new Error(`typedLockRows: lease ${id} was not free`);
+  }
+}
+
 async function checkpoint(engine: BrainEngine, op: string, fingerprint: string, keys: unknown[] = [], updatedAt = '2020-01-01T00:00:00Z'): Promise<void> {
   await engine.executeRaw('INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,$4::timestamptz)', [op, fingerprint, JSON.stringify(keys), updatedAt]);
 }
 
 describe('legacy writer lock and cycle-lock listings sort ids by byte', () => {
   parityTest('inspectLegacyWriterLocks and the deactivation lease blockers list lock ids by byte', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['acquireCycleLock', 'readCycleLocks'],
   }, async (engine) => inHome(async () => {
-    await lockRows(engine, MIXED_IDS);
+    await typedLockRows(engine, MIXED_IDS);
     const locks = (await inspectLegacyWriterLocks(engine)).map(lock => lock.id);
     const leases = (await deactivationBlockers(engine)).filter(blocker => blocker.kind === 'lease').map(blocker => blocker.id);
     expect(locks).toEqual([...BYTE_IDS]);
@@ -145,13 +156,13 @@ describe('legacy writer lock and cycle-lock listings sort ids by byte', () => {
 
 describe('writer diagnostics sort counters and effect kinds by byte', () => {
   parityTest('readWriterDiagnostics lists counters by byte key and the effect summary by byte kind', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
-    for (const key of MIXED_IDS) await engine.executeRaw('INSERT INTO persistence_counters(key) VALUES($1)', [key]);
-    const incarnation = await addSource(engine, 'ab');
+    methods: ['lockPersistenceCounters', 'insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'readWriterDiagnosticRows'],
+  }, async (engine, backend) => inHome(async () => {
+    for (const key of MIXED_IDS) await engine.lockPersistenceCounters([key]);
+    await createSource(engine, backend, 'ab');
     for (const kind of MIXED_IDS) {
-      const request = await seedRequest(engine, { source: 'ab', incarnation, state: 'committed' });
-      await seedEffect(engine, { request: request.id, kind, source: 'ab', incarnation, state: 'queued' });
+      const request = await seedTypedRequest(engine, { source: 'ab', state: 'committed' });
+      await seedTypedEffects(engine, { ...request, source: 'ab' }, [{ kind }]);
     }
     const status = await readWriterDiagnostics(engine) as unknown as { counters: Array<{ key: string }>; effects: Array<{ kind: string; state: string }> };
     const counters = status.counters.map(counter => counter.key);
@@ -164,11 +175,11 @@ describe('writer diagnostics sort counters and effect kinds by byte', () => {
 
 describe('connector, derived-origin and atom-retirement readers sort by byte', () => {
   parityTest('orphanConnectorCheckpoints lists orphans by byte op, then byte fingerprint', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['writeOpCheckpointRecord', 'listOrphanConnectorCheckpoints'],
   }, async (engine) => {
     for (const fingerprint of MIXED_IDS) {
-      await checkpoint(engine, 'managed-connector', fingerprint);
-      await checkpoint(engine, 'managed-connector-retry', fingerprint, [{ checkpointKey: `k-${fingerprint}` }]);
+      await engine.writeOpCheckpointRecord('managed-connector', fingerprint, []);
+      await engine.writeOpCheckpointRecord('managed-connector-retry', fingerprint, [{ checkpointKey: `k-${fingerprint}` }]);
     }
     const rows = await orphanConnectorCheckpoints(engine);
     const listed = rows.map(row => `${row.op}:${row.fingerprint}`);
@@ -179,44 +190,50 @@ describe('connector, derived-origin and atom-retirement readers sort by byte', (
   });
 
   parityTest('readDerivedOriginParks lists parks oldest first, ties by fingerprint', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage', 'writeOpCheckpointRecords', 'listDerivedOriginParks'],
   }, async (engine) => {
     const ids: number[] = [];
     for (const slug of ['collate/one', 'collate/two', 'collate/three']) {
-      const [page] = await engine.executeRaw<{ id: number }>(`INSERT INTO pages(slug,type,title,compiled_truth,deleted_at) VALUES($1,'note',$1,'x',now()) RETURNING id`, [slug]);
-      ids.push(Number(page!.id));
+      const page = await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x', timeline: '' });
+      await engine.softDeletePage(slug);
+      ids.push(Number(page.id));
     }
-    // Every park shares one timestamp, so the fingerprint breaks the tie. Page ids are decimal text, which orders the same by byte or locale.
-    for (const id of ids) await checkpoint(engine, DERIVED_ORIGIN_PARK_OP, String(id), [{ page_id: id }], '2021-01-01T00:00:00Z');
+    // Every park is written by one statement, so all share one timestamp and the fingerprint breaks the tie. Page ids
+    // are decimal text, which orders the same by byte or locale.
+    await engine.writeOpCheckpointRecords(DERIVED_ORIGIN_PARK_OP, ids.map(id => ({ fingerprint: String(id), record: { page_id: id } })));
     const parks = (await readDerivedOriginParks(engine)).map(park => park.page_id);
     expect(parks).toEqual(byteOrder(ids.map(String)).map(Number));
     return parks.length;
   });
 
   parityTest('atomRetirementsSql keeps the byte-latest retirement of an origin as the latest', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage', 'listRestorableAtoms', 'countKeptAtomRetirements'],
   }, async (engine) => {
+    const put = (slug: string, type: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: type as never, title: slug, compiled_truth: 'x', timeline: '', frontmatter }, { sourceId: 'default' });
+    await put('notes/origin', 'note', {});
     const retire = async (slug: string, hash: string, retiredAt: string) => {
-      await engine.executeRaw(`INSERT INTO pages(slug,type,title,compiled_truth,frontmatter,deleted_at) VALUES($1,'atom',$1,'x',$2::text::jsonb,now())`,
-        [slug, JSON.stringify({ retired_by: ATOM_REEXTRACT_RETIRED_BY, source_slug: 'notes/origin', source_hash: hash, retired_at: retiredAt })]);
+      await put(slug, 'atom', { retired_by: ATOM_REEXTRACT_RETIRED_BY, source_slug: 'notes/origin', source_hash: hash, retired_at: retiredAt });
+      await engine.softDeletePage(slug, { sourceId: 'default' });
     };
-    // en_US puts `ab` before `a-z`, so a descending locale sort would pick `a-z`; bytes pick `ab`.
+    // en_US puts `ab` before `a-z`, so a descending locale sort would pick `a-z`; bytes pick `ab`. The restorable atom
+    // is the latest retirement of its origin (atomRetirementsSql's `latest`); the other counts as an older generation.
     await retire('atoms/older', 'hash-older', 'a-z');
     await retire('atoms/newer', 'hash-newer', 'ab');
-    const rows = await engine.executeRaw<{ slug: string; latest: boolean }>(`SELECT slug,latest FROM (${atomRetirementsSql()}) r ORDER BY slug`);
-    const latest = rows.filter(row => row.latest).map(row => row.slug);
-    expect(latest).toEqual(['atoms/newer']);
-    return latest;
+    const latest = (await engine.listRestorableAtoms(['default'], null)).map(row => row.slug);
+    const kept = await engine.countKeptAtomRetirements(['default']);
+    expect({ latest, kept }).toEqual({ latest: ['atoms/newer'], kept: { origin_gone: 0, replaced: 0, older_generation: 1 } });
+    return { latest, kept };
   });
 });
 
 describe('drift, stalled-effect and retry listings sort by byte', () => {
   parityTest('auditDriftConflicts pages slugs by byte through its keyset cursor and lists producers by byte', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
-    const incarnation = await addSource(engine, 'ab');
+    methods: ['insertWriteRequest', 'completeWriteRow', 'listDriftConflictGroups', 'readDriftConflictDetails'],
+  }, async (engine, backend) => inHome(async () => {
+    await createSource(engine, backend, 'ab');
     for (const slug of MIXED_SLUGS) {
-      for (const operation of ['ab', 'a-z']) await seedRequest(engine, { source: 'ab', incarnation, slug, operation, state: 'conflict', errorCode: 'source_changed' });
+      for (const operation of ['ab', 'a-z']) await seedTypedRequest(engine, { source: 'ab', slug, operation, state: 'conflict', errorCode: 'source_changed' });
     }
     const access = { trusted: true, excludePrivate: false };
     const pages: string[][] = [];
@@ -235,15 +252,15 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
   }));
 
   parityTest('auditDriftConflicts keeps byte-distinct slugs that a locale ranks as near-equal in separate groups', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'listDriftConflictGroups'],
+  }, async (engine, backend) => inHome(async () => {
     // A soft hyphen (U+00AD) that a locale ignores, and NFC `é` beside NFD `e` + U+0301: distinct bytes that en_US ranks
-    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v333): each slug must stay its own
+    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v336): each slug must stay its own
     // group with its own receipt count, its exact bytes and its byte position, as the default-collation grouping gave.
     const counts = new Map<string, number>([['notes/ab', 1], ['notes/a\u00adb', 2], ['notes/caf\u00e9', 3], ['notes/cafe\u0301', 4]]);
-    const incarnation = await addSource(engine, 'ab');
+    await createSource(engine, backend, 'ab');
     for (const [slug, receipts] of counts) {
-      for (let n = 0; n < receipts; n++) await seedRequest(engine, { source: 'ab', incarnation, slug, state: 'conflict', errorCode: 'source_changed' });
+      for (let n = 0; n < receipts; n++) await seedTypedRequest(engine, { source: 'ab', slug, state: 'conflict', errorCode: 'source_changed' });
     }
     const access = { trusted: true, excludePrivate: false };
     const rows: Array<{ slug: string; receipts: number }> = [];
@@ -265,31 +282,83 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
   }));
 
   parityTest('readStalledCatchups lists stalled sources by byte id', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'retryBusyEffectRow', 'listStalledCatchupRows'],
+  }, async (engine, backend) => {
     for (const id of MIXED_SRC) {
-      const incarnation = await addSource(engine, id);
-      const request = await seedRequest(engine, { source: id, incarnation, state: 'committed' });
-      await seedEffect(engine, { request: request.id, source: id, incarnation, state: 'queued', errorCode: 'writer_busy',
-        data: { busy_since: new Date(Date.now() - 3_600_000).toISOString(), busy_retries: 2 } });
+      await createSource(engine, backend, id);
+      const request = await seedTypedRequest(engine, { source: id, state: 'committed' });
+      await seedTypedEffects(engine, { ...request, source: id }, [{ kind: 'git' }]);
     }
+    // Each effect found its writer busy for an hour, as the worker records it.
+    await settleTypedEffects(engine, () => ({ to: 'busy', data: { busy_since: new Date(Date.now() - 3_600_000).toISOString(), busy_retries: 2 } }));
     const stalled = (await readStalledCatchups(engine, undefined, 1000)).map(row => row.source_id);
     expect(stalled).toEqual([...BYTE_SRC]);
     return stalled;
   });
 
   parityTest('retryParkedEffects lists a request\'s tracked effects by byte kind', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'failEffectRow', 'listSourceRequestsByRequestId', 'listRetryTrackedEffects', 'lockEffectRow'],
+  }, async (engine, backend) => inHome(async () => {
     localHostId();
-    const incarnation = await addSource(engine, 'ab');
-    const request = await seedRequest(engine, { source: 'ab', incarnation, state: 'committed' });
-    for (const kind of MIXED_IDS) await seedEffect(engine, { request: request.id, kind, source: 'ab', incarnation, state: 'failed', errorCode: 'effect_failed' });
+    await createSource(engine, backend, 'ab');
+    const request = await seedTypedRequest(engine, { source: 'ab', state: 'committed' });
+    await seedTypedEffects(engine, { ...request, source: 'ab' }, MIXED_IDS.map(kind => ({ kind })));
+    await settleTypedEffects(engine, () => ({ to: 'failed', reason: 'effect_failed' }));
     const report = await retryParkedEffects(engine, 'ab', request.requestId, true) as { effects: Array<{ kind: string }> } | null;
     const kinds = report!.effects.map(effect => effect.kind);
     expect(kinds).toEqual([...BYTE_IDS]);
     return kinds;
   }));
+});
+
+describe('the typed retry and held-hit reads sort by byte', () => {
+  parityTest('the parked-effect retry reads find one source\'s request and list its tracked effects by byte kind', {
+    methods: ['insertWriteRequest', 'completeWriteRow', 'insertPublicationEffects', 'failEffectRow', 'readSourceRequestById',
+      'listSourceRequestsByRequestId', 'listRetryTrackedEffects', 'lockEffectRow', 'transaction'],
+  }, async (engine, backend) => {
+    for (const id of ['ab', 'a-z']) await createSource(engine, backend, id);
+    const request = await seedTypedRequest(engine, { source: 'ab', state: 'committed' });
+    await seedTypedEffects(engine, { ...request, source: 'ab' }, MIXED_IDS.map(kind => ({ kind })));
+    await settleTypedEffects(engine, () => ({ to: 'failed', reason: 'effect_failed' }));
+    const byRequestId = await engine.listSourceRequestsByRequestId<{ id: string }>('ab', request.requestId);
+    const otherSource = await engine.listSourceRequestsByRequestId('a-z', request.requestId);
+    const byId = await engine.readSourceRequestById('ab', request.id) as { request_id: string } | null;
+    const tracked = await engine.listRetryTrackedEffects<{ id: string | number; kind: string; state: string }>(request.id, false, []);
+    const parkedOnly = await engine.listRetryTrackedEffects(request.id, true, []);
+    const locked = await engine.transaction(tx => tx.lockEffectRow(tracked[0]!.id)) as { kind: string; error_code: string | null } | null;
+    const out = {
+      byRequestId: byRequestId.map(row => row.id === request.id), otherSource: otherSource.length, byId: byId?.request_id === request.requestId,
+      tracked: tracked.map(row => `${row.kind}:${row.state}`), parkedOnly: parkedOnly.length, locked: locked && `${locked.kind}:${locked.error_code}`,
+    };
+    expect(out).toEqual({ byRequestId: [true], otherSource: 0, byId: true, tracked: BYTE_IDS.map(kind => `${kind}:failed`), parkedOnly: 0, locked: `${BYTE_IDS[0]}:effect_failed` });
+    return out;
+  });
+
+  parityTest('readHeldHitRows lists a hit\'s holds by byte fingerprint and counts the holds that could affect the read', {
+    methods: ['putPage', 'readSourceMembership', 'writeOpCheckpointRecord', 'readHeldHitRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'ab');
+    const { incarnation } = (await engine.readSourceMembership('ab'))!;
+    const pageOf = async (slug: string, type: 'note' | 'meeting', title: string) => Number((await engine.putPage(slug, { type, title, compiled_truth: 'x', timeline: '' }, { sourceId: 'ab' })).id);
+    const hit = await pageOf('notes/hit', 'note', 'Hit');
+    const meeting = await pageOf('notes/meeting', 'meeting', 'Meeting');
+    const worded = await pageOf('notes/worded', 'note', 'The Alpha plan');
+    const other = await pageOf('notes/other', 'note', 'Alphabet');
+    const hold = (path: string, page: number) => engine.writeOpCheckpointRecord(GIT_HOLD_OP, `ab:${incarnation}:${path}`,
+      [{ version: 1, source_id: 'ab', incarnation, path, page_id: page, held_at: path, code: 'invalid_frontmatter' }]);
+    for (const path of MIXED_IDS) await hold(path, hit);
+    await hold('m', meeting);
+    await hold('w', worded);
+    await hold('o', other);
+    const rows = await engine.readHeldHitRows({ pageIds: [String(hit)], sourceIds: ['ab'], types: ['meeting'],
+      patterns: ['(^|[^[:alnum:]])alpha([^[:alnum:]]|$)'] }) as Array<{ record: { path: string } | null; revision: string | null; could_affect: number | string | null }>;
+    const holds = rows.filter(row => row.record);
+    const out = { paths: holds.map(row => row.record!.path), revisions: holds.every(row => typeof row.revision === 'string'),
+      couldAffect: Number(rows.at(-1)!.could_affect) };
+    // Every hold of the hit, the meeting page and the whole word `alpha`; `Alphabet` is no match.
+    expect(out).toEqual({ paths: [...BYTE_IDS], revisions: true, couldAffect: MIXED_IDS.length + 2 });
+    return out;
+  });
 });
 
 describe('git durability and push-hold readers sort by byte', () => {
@@ -402,37 +471,50 @@ describe('topology status and blocker lists sort source ids by byte', () => {
     return found[0]!.source_ids;
   });
 
-  parityTest('physicalRootBlockers names owned checkouts by byte source id, and the deactivation preview lists a worktree\'s roots by byte path', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
+  /** One worktree per MIXED_SRC id owned by this host, bound at a missing path, with further hosts bound to `ab`'s worktree, written through the typed claim store. */
+  async function seedOwnedCheckouts(engine: BrainEngine, backend: Parameters<typeof seedSource>[1]): Promise<Map<string, string>> {
     const host = localHostId();
     const worktrees = new Map<string, string>();
     for (const id of MIXED_SRC) {
-      const worktree = await addWorktree(engine, host);
+      const worktree = await seedWorktree(engine, host);
       worktrees.set(id, worktree);
-      await bind(engine, id, await addSource(engine, id), worktree);
-      await hostBind(engine, worktree, host, join(tmpdir(), 'gbrain-collate-pa-missing', id));
+      await seedSourceBinding(engine, id, await seedSource(engine, backend, id), worktree);
+      await seedHostBinding(engine, worktree, host, join(tmpdir(), 'gbrain-collate-pa-missing', id));
     }
     // Further hosts bound to one worktree, so its roots list more than one path.
-    for (const path of MIXED_IDS) await hostBind(engine, worktrees.get('ab')!, randomUUID(), `/collate/${path}`);
+    for (const path of MIXED_IDS) await seedHostBinding(engine, worktrees.get('ab')!, randomUUID(), `/collate/${path}`);
+    return worktrees;
+  }
+
+  parityTest('physicalRootBlockers names owned checkouts by byte source id', {
+    methods: ['worktreeClaimStore', 'writerReleaseStore'],
+  }, async (engine, backend) => inHome(async () => {
+    await seedOwnedCheckouts(engine, backend);
     const blockers = (await physicalRootBlockers(engine, 'managed')).map(blocker => blocker.source_id);
     expect(blockers).toEqual([...BYTE_SRC]);
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    return blockers;
+  }));
+
+  parityTest('the deactivation preview of a managed brain lists a worktree\'s roots by byte path', {
+    methods: ['worktreeClaimStore', 'writerReleaseStore'],
+  }, async (engine, backend) => inHome(async () => {
+    const worktrees = await seedOwnedCheckouts(engine, backend);
+    await (await engine.writerReleaseStore()).setBrainEnabled(true);
     const report = await deactivatePersistence(engine, { dryRun: true });
     const roots = report.retired_worktrees.find(entry => entry.id === worktrees.get('ab'))!.roots;
     expect(roots.filter(root => root.startsWith('/collate/'))).toEqual(BYTE_IDS.map(path => `/collate/${path}`));
-    return { blockers, roots: roots.length };
+    return { roots: roots.length };
   }));
 
   parityTest('activation lists database-only sources by byte source id, with the lock query left in plain id order', {
-    methods: ['executeRaw', 'setConfig'], requires: 'raw_sql',
-  }, async (engine) => inHome(async (home) => {
-    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    methods: ['writerReleaseStore', 'setConfig'],
+  }, async (engine, backend) => inHome(async (home) => {
+    await (await engine.writerReleaseStore()).setBrainEnabled(false);
     await engine.setConfig('sync.write_through', 'false');
     for (const id of MIXED_SRC) {
       const root = join(home, 'roots', id);
       mkdirSync(root, { recursive: true });
-      await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, root]);
+      await createSource(engine, backend, id, {}, root);
     }
     const report = await activatePersistence(engine, { confirmQuiesced: true, dryRun: true });
     const listed = (report.database_only_sources ?? []).filter(id => (MIXED_SRC as readonly string[]).includes(id));
@@ -462,32 +544,35 @@ describe('topology status and blocker lists sort source ids by byte', () => {
 
 describe('held-read and managed-sync orphan readers sort by byte', () => {
   parityTest('stampHeldHits stamps a page from its byte-first hold', {
-    methods: ['executeRaw', 'readHeldCoverageRows'], requires: 'raw_sql',
-  }, async (engine) => {
-    const incarnation = await addSource(engine, 'ab');
-    const [page] = await engine.executeRaw<{ id: number }>(`INSERT INTO pages(source_id,slug,type,title,compiled_truth) VALUES('ab','notes/held','note','held','x') RETURNING id`);
-    await checkpoint(engine, GIT_HOLD_SUMMARY_OP, `ab:${incarnation}`, [{ count: 2, stale: 2 }]);
+    methods: ['putPage', 'readSourceMembership', 'writeOpCheckpointRecord', 'readHeldCoverageRows', 'readHeldHitRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'ab');
+    const { incarnation } = (await engine.readSourceMembership('ab'))!;
+    const page = await engine.putPage('notes/held', { type: 'note', title: 'held', compiled_truth: 'x', timeline: '' }, { sourceId: 'ab' });
+    await engine.writeOpCheckpointRecord(GIT_HOLD_SUMMARY_OP, `ab:${incarnation}`, [{ count: 2, stale: 2 }]);
     // Two holds on one page: the first row read sets the stamp, and the byte-first fingerprint (`a-z`) is the 2020 hold.
     for (const [path, heldAt] of [['ab', '2021-01-01T00:00:00.000Z'], ['a-z', '2020-01-01T00:00:00.000Z']] as const) {
-      await checkpoint(engine, GIT_HOLD_OP, `ab:${incarnation}:${path}`, [{ version: 1, source_id: 'ab', incarnation, path, page_id: Number(page!.id), held_at: heldAt, code: 'invalid_frontmatter' }]);
+      await engine.writeOpCheckpointRecord(GIT_HOLD_OP, `ab:${incarnation}:${path}`, [{ version: 1, source_id: 'ab', incarnation, path, page_id: Number(page.id), held_at: heldAt, code: 'invalid_frontmatter' }]);
     }
-    const hits: Array<{ page_id: number; stale?: { held_since: string; last_indexed_revision: string | null } }> = [{ page_id: Number(page!.id) }];
+    const hits: Array<{ page_id: number; stale?: { held_since: string; last_indexed_revision: string | null } }> = [{ page_id: Number(page.id) }];
     await stampHeldHits(engine, hits, { sourceId: 'ab' }, { all: false, types: [], patterns: [], pageIds: [], exactTopPageId: null, imageArm: false });
     expect(hits[0]!.stale?.held_since).toBe('2020-01-01T00:00:00.000Z');
     return hits[0]!.stale?.held_since;
   });
 
   parityTest('classifyManagedSyncOrphans lists cursors and failure rows of one source by byte key', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => {
-    const incarnation = await addSource(engine, 'ab');
+    methods: ['readSourceMembership', 'writeOpCheckpointRecords', 'listManagedSyncOrphanRows'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'ab');
+    const { incarnation } = (await engine.readSourceMembership('ab'))!;
     const retired = randomUUID();
     const keys = (prefix: string) => MIXED_IDS.map(id => `${prefix}-${id}`);
-    // Every row of one kind shares one timestamp, so the key breaks the tie.
-    for (const key of keys('live')) await checkpoint(engine, 'managed-sync', key, [{ sourceId: 'ab', incarnation, runId: 'run-live', done: false }]);
-    for (const key of keys('gone')) await checkpoint(engine, 'managed-sync', key, [{ sourceId: 'ab', incarnation: retired, runId: 'run-gone', done: false }]);
-    for (const key of keys('fail')) await checkpoint(engine, 'managed-sync-failure', key, [{ source_id: 'ab', source_incarnation: incarnation, run_id: 'run-fail' }]);
-    for (const key of keys('lost')) await checkpoint(engine, 'managed-sync-failure', key, [{ source_id: 'ab', source_incarnation: retired, run_id: 'run-lost' }]);
+    // Every row of one kind is written by one statement, so all share one timestamp and the key breaks the tie.
+    const rows = (prefix: string, record: Record<string, unknown>) => keys(prefix).map(fingerprint => ({ fingerprint, record }));
+    await engine.writeOpCheckpointRecords('managed-sync', [...rows('live', { sourceId: 'ab', incarnation, runId: 'run-live', done: false }),
+      ...rows('gone', { sourceId: 'ab', incarnation: retired, runId: 'run-gone', done: false })]);
+    await engine.writeOpCheckpointRecords('managed-sync-failure', [...rows('fail', { source_id: 'ab', source_incarnation: incarnation, run_id: 'run-fail' }),
+      ...rows('lost', { source_id: 'ab', source_incarnation: retired, run_id: 'run-lost' })]);
     const { orphans } = await classifyManagedSyncOrphans(engine);
     const by = (kind: string, reason: string) => orphans.filter(orphan => orphan.kind === kind && orphan.reason === reason).map(orphan => orphan.cursor_key);
     const listed = { cursors: by('unfinished_cursor', 'principal_unadoptable'), retiredCursors: by('unfinished_cursor', 'incarnation_retired'),

@@ -20,6 +20,31 @@ struct RecordRow {
 
 #[napi]
 impl Brain {
+    /// `readAtomGeneration(pageId, contentHash)`: the generation, a number.
+    #[napi]
+    pub fn read_atom_generation<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+        content_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_atom_generation(page_id, &content_hash))
+    }
+
+    /// `recordAtomGenerationBump({ sourceId, incarnation, pageId, keepContentHash, keepGeneration })`: resolves null.
+    #[napi]
+    pub fn record_atom_generation_bump<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: gbrain_store::persistence::AtomGenerationBump =
+                required(args, "recordAtomGenerationBump args")?;
+            s.record_atom_generation_bump(&a)
+        })
+    }
+
     /// `readOpCheckpointKeys(op, fingerprint)`: `{ keys, corruptParent }`.
     #[napi]
     pub fn read_op_checkpoint_keys<'env>(
@@ -159,6 +184,51 @@ impl Brain {
         self.run(env, move |s| s.list_op_checkpoint_records(&op))
     }
 
+    /// `insertOpCheckpointIfAbsent(op, fingerprint, completedKeys)`: true when this call stored it.
+    #[napi]
+    pub fn insert_op_checkpoint_if_absent<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_op_checkpoint_if_absent(&op, &fingerprint, &completed_keys)
+        })
+    }
+
+    /// `upsertFenceTrendRunRecord(op, fingerprint, record)`: stores a sync run's fence trend row,
+    /// or rewrites it keeping the `day` of its first write.
+    #[napi]
+    pub fn upsert_fence_trend_run_record<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        record: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.upsert_fence_trend_run_record(&op, &fingerprint, &record)
+        })
+    }
+
+    /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: true when this
+    /// call replaced the records at version `expected`.
+    #[napi]
+    pub fn replace_op_checkpoint_at_version<'env>(
+        &self,
+        env: &'env Env,
+        op: String,
+        fingerprint: String,
+        completed_keys: Value,
+        expected: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.replace_op_checkpoint_at_version(&op, &fingerprint, &completed_keys, expected)
+        })
+    }
+
     /// `writeOpCheckpointRecord(op, fingerprint, completedKeys)`: the records replaced; null
     /// deletes the parent and its paths.
     #[napi]
@@ -187,6 +257,48 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.request_git_hold_retry(&source_id, &incarnation, &paths, &requested_at)
+        })
+    }
+
+    /// `recordConnectorSyncAttempt(sourceId, at, seed)`: resolves false for an unknown source; stamps
+    /// the source's first connector sync attempt once.
+    #[napi]
+    pub fn record_connector_sync_attempt<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        at: String,
+        seed: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_connector_sync_attempt(&source_id, &at, &seed)
+        })
+    }
+
+    /// `writeConnectorDbCursor(key, record)`: writes an unmanaged connector's cursor row.
+    #[napi]
+    pub fn write_connector_db_cursor<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        record: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.write_connector_db_cursor(&key, &record))
+    }
+
+    /// `recordSyncConversion(sourceId, incarnation, conversion, keep)`: the conversion first in the
+    /// source incarnation's log, keeping the newest `keep`.
+    #[napi]
+    pub fn record_sync_conversion<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        incarnation: String,
+        conversion: Value,
+        keep: u32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_sync_conversion(&source_id, &incarnation, &conversion, keep as usize)
         })
     }
 

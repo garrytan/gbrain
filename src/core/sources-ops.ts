@@ -44,6 +44,7 @@ import { isHostAbsolutePath, isPathContained, msysToNativePath } from './path-co
 import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import {
   parseRemoteUrl,
   cloneRepo,
@@ -214,10 +215,14 @@ export interface AddSourceOpts {
     loopsExcludeLabels?: string[];
     /** Managed dir where pages are materialized. */
     dir: string;
-    /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
-    access?: 'vault' | 'command' | 'env';
+    /** Token acquisition: gbrain vault (default), a token-printing command, an env var, or mail read through gbrain.io. */
+    access?: 'vault' | 'command' | 'env' | 'gbrainio';
     tokenCommand?: string;
     tokenEnv?: string;
+    /** The gbrainio command line for access 'gbrainio' (`g_gbrainio_command`). */
+    gbrainioCommand?: string;
+    /** One address or @domain per line; their threads become owner-only pages (`g_private_senders_file`). */
+    privateSendersFile?: string;
   };
   /**
    * Register a meetings-kind source (meeting notes from a provider API). The
@@ -426,7 +431,7 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
   const request = kind === 'apple-contacts' ? opts.appleContacts! : kind === 'slack' ? opts.slack! : opts.meetings!;
   const choice = chooseMeetingsRecord(opts.id, request.record, request.dir, kind);
   if (choice.dir) {
-    const overlap = (await engine.executeRaw<{ id: string; local_path: string }>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL'))
+    const overlap = (await engine.listSourcePathRows())
       .find(row => isPathContained(choice.dir!, row.local_path) || isPathContained(row.local_path, choice.dir!));
     if (overlap) throw new SourceOpError('overlapping_path',
       `${choice.dir} overlaps source "${overlap.id}" at ${overlap.local_path}; its pages would be imported by both sources. Choose a directory no other source covers.`);
@@ -590,10 +595,11 @@ export async function addSource(
       renameSync(tempDir, finalPath!);
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
-      // Best-effort DB rollback.
-      await engine
-        .executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id])
-        .catch(() => {});
+      // Best-effort DB rollback, through the typed source delete every engine serves. A Rust capability refusal
+      // is not "rolled back": it surfaces rather than leaving the half-added source row behind unnoticed.
+      await deleteSourceRow(engine, opts.id).catch((rollbackError) => {
+        rethrowCapabilityRefusal(rollbackError);
+      });
       throw new SourceOpError(
         'rename_failed',
         `Could not move clone to final path ${finalPath}: ${(e as Error).message}`,

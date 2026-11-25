@@ -32,6 +32,8 @@ import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFi
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 import { TOP_GATE_DEFAULT } from '../src/core/skills/resolver/limits.ts';
+import { DEFAULT_SESSION_TOKEN_BUDGET } from '../src/core/skills/resolver/config.ts';
+import { CODES } from '../src/core/error-registry.ts';
 
 const scratch: string[] = [];
 afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -346,16 +348,18 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', [...targets, ...weak]);
     const strong = [1, 10, 18, 25, 37, 50];
     const perTurn: { turn: number; n: number; tokens: number }[] = [];
+    // pregate-literal: DEFAULT_SESSION_TOKEN_BUDGET=2000 this test pins the old budget on purpose to check pacing under a tight budget
+    const budget = 2000;
     for (let t = 1; t <= 50; t++) {
       const s = strong.indexOf(t);
       const message = s >= 0 ? `can you ${targets[s]!.name} this` : `${pool[t % 12]} ${pool[(t + 5) % 12]}`;
-      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home });
+      const r = await resolveSkills({ message, session_id: 'fifty', top_gate: 0 }, { home, sessionTokenBudget: budget });
       perTurn.push({ turn: t, n: r.output.suggestions.length, tokens: r.output.block_tokens });
       expect(await r.commit()).toBe(true);
     }
     for (const t of [10, 25, 50]) expect({ turn: t, n: perTurn[t - 1]!.n > 0 }).toEqual({ turn: t, n: true });
     const total = perTurn.reduce((a, x) => a + x.tokens, 0);
-    expect(total).toBeLessThanOrEqual(2000);
+    expect(total).toBeLessThanOrEqual(budget);
     expect(sessionStatus('fifty', { home }).spent).toBe(total);
     const late = perTurn.filter(x => x.turn > 12 && !strong.includes(x.turn));
     expect(late.every(x => x.n === 0)).toBe(true);
@@ -366,9 +370,23 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', undefined, 'k');
     await commitSession(home, key, { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(3);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(3);
     await commitSession(home, key, { tokens: 600, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home })).output.ranker.k).toBe(1);
+    expect((await resolveSkills({ message: 'reports', session_id: 'k' }, { home, sessionTokenBudget: 2000 })).output.ranker.k).toBe(1);
+  });
+
+  test('with no budget set, a session gets 8,000 tokens: 2,000 spent leaves k at 5 and the block shown', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    await commitSession(home, sessionKey('on', undefined, 'default-budget'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    const r = await resolveSkills({ message: 'deploy', session_id: 'default-budget' }, { home });
+    expect([r.output.budget_exhausted, r.output.ranker.k]).toEqual([false, 5]);
+    expect(r.output.block).not.toBe('');
+    expect(sessionStatus('default-budget', { home }).budget).toBe(8000);
+  });
+
+  test('the config error names the current default budget', () => {
+    expect(CODES.skill_resolver_config_invalid.suggestion).toContain(`default budget ${DEFAULT_SESSION_TOKEN_BUDGET}`);
   });
 
   test('budget exhaustion empties the block until a compaction resets the session', async () => {
@@ -376,9 +394,9 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'b');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home });
+    const spent = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect([spent.output.budget_exhausted, spent.output.block]).toEqual([true, '']);
-    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home });
+    const reset = await resolveSkills({ message: 'deploy', session_id: 'b', harness: 'claude-code', reset_session: true }, { home, sessionTokenBudget: 2000 });
     expect(reset.output.budget_exhausted).toBe(false);
     expect(reset.output.block).not.toBe('');
     await reset.commit();
@@ -390,10 +408,10 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     await commitSession(home, sessionKey('on', 'claude-code', 'a'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
     for (const message of ['ok thanks', 'zzqxv']) {
-      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home });
+      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
       expect([r.output.no_skill, r.output.budget_exhausted, r.output.block_reason]).toEqual([true, true, message === 'zzqxv' ? 'no_match' : 'ack']);
     }
-    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home })).output.budget_exhausted).toBe(false);
+    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 })).output.budget_exhausted).toBe(false);
   });
 
   test('block_reason says why a block is empty: deduped, paced, budget_exhausted, filtered, shadow', async () => {
@@ -405,12 +423,12 @@ describe('sessions', () => {
     const again = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
     expect([again.output.block, again.output.block_reason]).toEqual(['', 'deduped']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home });
+    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 });
     expect([paced.output.block, paced.output.block_reason]).toEqual(['', 'paced']);
     await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
-    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home })).output.block_reason).toBe('budget_exhausted');
-    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home })).output.block_reason).toBe('filtered');
-    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home });
+    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('budget_exhausted');
+    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home, sessionTokenBudget: 2000 })).output.block_reason).toBe('filtered');
+    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home, sessionTokenBudget: 2000 });
     expect([shadow.output.block_reason, shadow.shadowOutput?.block_reason]).toEqual(['shadow', null]);
   });
 
@@ -419,7 +437,7 @@ describe('sessions', () => {
     await jsonCatalog(home, 'c', BASIC);
     const key = sessionKey('on', 'claude-code', 'n');
     await commitSession(home, key, { tokens: 2000, suggested: [], resuggested: [], reset: false });
-    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home });
+    const r = await resolveSkills({ message: 'run the deploy skill and write the reports', session_id: 'n', harness: 'claude-code' }, { home, sessionTokenBudget: 2000 });
     expect(r.output.budget_exhausted).toBe(true);
     expect(r.output.suggestions.map(s => [s.id, s.match_strength])).toEqual([['gbrain:deploy', 'named']]);
     expect(r.output.block).toContain('id: "gbrain:deploy"');
@@ -652,16 +670,16 @@ describe('block', () => {
 });
 
 describe('catalog sources and bounds', () => {
-  test('dir: symlinks out of the root, non-invocable skills and duplicate ids are skipped with a reason', async () => {
+  test('dir: symlinks out of the root that are not skills, non-invocable skills and duplicate ids are skipped with a reason', async () => {
     const home = tmp();
     const outside = tmp('skres-out-');
-    skillDir(outside, 'leak', { name: 'leak', description: 'Outside the root' });
+    skillDir(outside, 'notes/leak', { name: 'leak', description: 'Outside the root' });
     const a = tmp('skres-a-');
     const b = tmp('skres-b-');
     skillDir(a, 'deploy', { name: 'deploy', description: 'First deploy' });
     skillDir(b, 'deploy', { name: 'deploy', description: 'Second deploy' });
     skillDir(a, 'hidden', { name: 'hidden', description: 'Not for the model', 'disable-model-invocation': true });
-    symlinkSync(join(outside, 'leak'), join(a, 'leak'));
+    symlinkSync(join(outside, 'notes'), join(a, 'leak'));
     const rec = await buildSkillIndex({ catalog: 'c', dirs: [a, b] }, { home });
     expect(rec.catalog.skill_count).toBe(1);
     const reasons = rec.catalog.skipped.map(s => s.reason).sort();
@@ -669,6 +687,32 @@ describe('catalog sources and bounds', () => {
     expect(rec.catalog.skipped.find(s => s.reason === 'duplicate_id')!.kept).toContain(a);
     const r = await resolveSkills({ message: 'deploy leak hidden' }, { home });
     expect(r.output.suggestions.map(s => s.summary)).toEqual(['First deploy']);
+  });
+
+  test('dir: skill folders and SKILL.md files symlinked in from outside the root are indexed under the link (gstack-style install)', async () => {
+    const home = tmp();
+    const checkout = tmp('skres-checkout-');
+    skillDir(checkout, 'plan-review', { name: 'plan-review', description: 'Review a plan before building it' });
+    skillDir(checkout, 'ship-it', { description: 'Ship a pull request' });
+    skillDir(checkout, 'loose', { name: 'qa-pass', description: 'Run a QA pass on the app' });
+    const root = tmp('skres-user-');
+    symlinkSync(join(checkout, 'plan-review'), join(root, 'plan-review'));
+    symlinkSync(join(checkout, 'ship-it'), join(root, 'shipper'));
+    mkdirSync(join(root, 'qa'), { recursive: true });
+    symlinkSync(join(checkout, 'loose', 'SKILL.md'), join(root, 'qa', 'SKILL.md'));
+    symlinkSync(checkout, join(root, 'whole-checkout'));
+    writeFileSync(join(checkout, 'secret.txt'), 'not a skill');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    symlinkSync(join(checkout, 'secret.txt'), join(root, 'notes', 'SKILL.md'));
+    const rec = await buildSkillIndex({ catalog: 'c', dirs: [root] }, { home });
+    expect(rec.catalog.skill_count).toBe(3);
+    expect(rec.catalog.skipped).toEqual([
+      { reason: 'symlink_outside_root', path: join(root, 'whole-checkout') },
+      { reason: 'symlink_outside_root', path: join(root, 'notes', 'SKILL.md') },
+    ]);
+    const r = await resolveSkills({ message: 'review the plan, ship the pull request, run a qa pass', top_gate: 0 }, { home });
+    expect(r.output.suggestions.map(s => s.id).sort()).toEqual(['plan-review', 'qa-pass', 'shipper']);
+    expect(r.output.suggestions.find(s => s.id === 'shipper')!.path).toBe(join(root, 'shipper', 'SKILL.md'));
   });
 
   test('from-json: ineligible entries are skipped, malformed lists refuse, a stdin snapshot is kept', async () => {

@@ -23,7 +23,6 @@ writes_pages: true
 writes_to:
   - projects/
   - sources/
-upstream: bulk-skillify+manifest-driven-ingestion@fc834ee
 ---
 
 # bulk-ingestion — Trial → Improve → Bulk, on a Durable Manifest

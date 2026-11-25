@@ -68,11 +68,12 @@ and otherwise kept. `sealChunks` (replace) writes what it is given.
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
 | `brain.getEmbeddingsByChunkIds(ids)` | `[{ id, embedding }]` for visible chunks of sealed pages with a vector; the member builds the `Map` and checks the column name | `getEmbeddingsByChunkIds` |
-| `brain.countStaleChunks(opts)` / `brain.sumStaleChunkChars(opts)` | chunks (or their characters) with no vector, or with a vector on a page whose signature differs from `signature`, on live, non-`embed_skip` pages | `countStaleChunks`, `sumStaleChunkChars` |
-| `brain.listStaleChunks(opts)` | one keyset page of stale chunks, by page id and chunk index, or by `updated_desc` with its cursor; 2000 rows by default | `listStaleChunks` |
+| `brain.countStaleChunks(opts)` / `brain.sumStaleChunkChars(opts)` | chunks (or their characters) with no vector, or with a vector on a page whose signature differs from `signature`, on live, non-`embed_skip` pages without an applying embedding hold (`pageBudgetLimitedFilter`; see [embed-stale-work.md](embed-stale-work.md)) | `countStaleChunks`, `sumStaleChunkChars` |
+| `brain.listStaleChunks(opts)` | one keyset page of stale chunks (held pages left out, as above), by page id and chunk index, or by `updated_desc` with its cursor; 2000 rows by default | `listStaleChunks` |
 | `brain.setPageEmbeddingSignature(slug, { sourceId?, signature })` | writes the signature; a missing page is a no-op | `setPageEmbeddingSignature` |
+| `brain.readPageProvenanceComplete(slug, sourceId, model, dims)` | true when the page (in an unarchived source) has at least one chunk of its sealed projection that is visible at the page's body generation and every such chunk holds a vector in the target space (`in_current_space`: the label names the model or its bare tail, the text hash is the text's, the width is `dims`). A missing page or source, an unsealed page and `dims` null answer false. The shell refuses a column other than `embedding` | `readPageProvenanceComplete` (`engine-sql/embedding-provenance.ts`) |
 | `brain.invalidateStaleSignatureEmbeddings(opts)` | drops the vectors outside the target space (`currentSpaceChunkPredicate`) on pages whose signature differs; returns how many | `invalidateStaleSignatureEmbeddings` |
-| `brain.invalidateContentDriftEmbeddings(opts)` | drops the vectors whose text hash no longer matches the text; returns how many | `invalidateContentDriftEmbeddings` |
+| `brain.invalidateContentDriftEmbeddings(opts)` | drops the vectors whose text hash no longer matches the text, on pages without an applying embedding hold; returns how many | `invalidateContentDriftEmbeddings` |
 | `brain.readEmbeddingStateCounts(opts)` | the state counts in `ops` or `full` mode | `readEmbeddingStateCounts` |
 | `brain.listEmbeddingStateRows(opts)` | per-page state rows, ordered by state, source and slug, then limited | `listEmbeddingStateRows` |
 | `brain.getChunksWithEmbeddings(slug, opts)` | chunk rows with vectors, in every source unless `sourceId` names one; the member refuses a result that spans two pages | `getChunksWithEmbeddings` |
@@ -139,6 +140,7 @@ text hash where PGLite keeps md5; both answer "the text has not changed since th
 | `brain.readChunkVectorColumn({ name })` | `{ exists, dims }` for `embedding`: the width of the first stored chunk vector, else the config `embedding_dimensions`; with neither, `{ exists: false, dims: null }`. `embedding_image` and `embedding_multimodal`: always `{ exists: true, dims: 1024 }`. Any other column: `{ exists: false, dims: null }` | `readChunkVectorColumn` |
 | `brain.readEmbeddingIdentity()` | `{ model, dimensions }` with the same width; the model is the first chunk vector's, else the config `embedding_model`; null with no width | `readEmbeddingIdentity` |
 | `brain.hasStoredVectors({ name })` | whether `content_chunks`, `facts` or `takes` holds a vector (a take's only at its current claim revision); `query_cache` is always false | `hasStoredVectors` |
+| (no call) `invalidateQueryCacheRows(sourceId?)` | 0: the store keeps no query cache, so a schema-pack mutation's cache invalidation deletes nothing | `invalidateQueryCacheRows` |
 
 `listEmbeddingStores` is answered in TS (every table of `PRIMARY_EMBEDDING_TABLES`).
 `readChunkColumnTypes` (doctor embedding_column_registry) is answered in TS from `readChunkVectorColumn`: each
@@ -152,8 +154,6 @@ is still refused on write.
 
 ## Known edges
 
-- The stale queue keeps a held or capped page (`budgetLimited` is not kept). The plan then refuses the page
-  from its ledger row, so no money is spent on it, but each embedding run lists it again.
 - `reservePageSpend`'s embedding branch, `listBudgetLimitedPages` and `readPageSizeStates` are still raw SQL,
   so a Rust brain refuses them (`engine_capability_missing`). `holdPageEmbedding` and `readPageSizeRows` are
   served from the ledger row.
@@ -163,7 +163,6 @@ is still refused on write.
   row. A chunk whose occurrence a deferred retire closed is not read. The served reads (`getEmbeddingsByChunkIds`,
   `cosinesByChunkIds`, sealed `getChunksWithEmbeddings`) keep `chunkVisibleFilter`, the generation alone (`visible_at`).
 - A segmented page counts as having no chunkless content.
-- Segment chunks get no pending stamp.
 - `ops` mode counts `embedded` exactly; `unstamped_created_at_min` is null.
 - `moveDisplacedChunksAndPrune` (PGLite's re-index of displaced chunks) is not done.
 - The install path's zero-norm chunk update (`page-state/projections.ts`) is still raw SQL, so a Rust brain

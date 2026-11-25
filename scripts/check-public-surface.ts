@@ -39,7 +39,7 @@ export const NO_BEHAVIOR_CHANGE = /<!--\s*public-surface:\s*no-behavior-change:\
 const NOTICE_DAYS = 14;
 const SEE = 'See:  docs/STABILITY.md#what-stays-the-same-on-stable and deprecations.d/README.md';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const RECORD_SURFACES: readonly string[] = [...SURFACES, 'page-format', 'json-field'];
+const RECORD_SURFACES: readonly string[] = [...SURFACES, 'page-format', 'bundled-skill'];
 
 export interface Deprecation { id: string; surface: string; name: string; owner: string; remove_after: string }
 
@@ -211,10 +211,10 @@ export function main(opts: { cwd?: string; env?: Record<string, string | undefin
       || (surface === 'exit-code' ? name in (stable['exit-code'] ?? {}) && stable['exit-code'][name] !== head['exit-code']?.[name] : (stable[surface as Exclude<Surface, 'exit-code'>] ?? []).includes(name));
     for (const { surface, name } of dropped) {
       if (!onStable(surface, name) || (exceptions.has('revert') && !stable)) continue;
-      const parent = surface === 'cli-flag' ? { surface: 'cli-command', name: name.slice(0, name.lastIndexOf(' --')) }
-        : surface === 'mcp-param' ? { surface: 'mcp-tool', name: name.slice(0, name.indexOf('.')) } : null;
+      const coveredByParent = (r: Deprecation) => (r.surface === 'cli-command' && (surface === 'cli-command' || surface === 'cli-flag') && name.startsWith(`${r.name} `))
+        || (r.surface === 'mcp-tool' && surface === 'mcp-param' && name.startsWith(`${r.name}.`));
       const record = [...records.values()].find(r => r.surface === surface && r.name === name)
-        ?? [...records.values()].find(r => parent && r.surface === parent.surface && r.name === parent.name);
+        ?? [...records.values()].find(coveredByParent);
       if (!record) problems.push(`${surface} \`${name}\` is removed or changed with no ${DEPRECATION_DIR}/<id>.md naming it (surface: ${surface}, name: ${name})${exceptions.has('revert') ? '; it is on stable, so exception: revert does not cover it' : ''}`);
       else if (!matured(record)) problems.push(`${surface} \`${name}\` is removed before its record ${DEPRECATION_DIR}/${record.id}.md allows it (remove_after ${record.remove_after}); keep it working with a warning until then`);
     }

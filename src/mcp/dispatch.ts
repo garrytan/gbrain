@@ -6,9 +6,9 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { remoteAccessRefusal } from './engine-access-refusal.ts';
 import { savedFactsNoticeBlock, wholeItemsWithin, type SavedFactNotice } from './saved-facts-notice.ts';
 import { writeReceiptCapacityNotices } from '../core/persistence/capacity-snapshot.ts';
-import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -17,14 +17,14 @@ import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { currentCallerAccess, withCallerAccess } from '../core/search/private-visibility.ts';
-import { appliedAccessSummary, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
+import { appliedAccessSummary, boundIdentity, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
 import { credentialScopeFor, requesterScopeGate, requesterScopeRefuses, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
 import type { GuestChannels } from '../core/guests/admission.ts';
 import { assessRoom, readRoomDeclaration, roomResponseCapNotice, type RoomChannels, type RoomDeclaration } from '../core/access/room.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, scopeReadAccess, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
-import { attestedReadScope } from '../core/access/member-sources.ts';
+import { attestedReadScope, boundMemberId, memberFloorScope } from '../core/access/member-sources.ts';
 import { collectReturnedPages, readLogged, readLogMember, recordAccessRead, resultCode } from '../core/access/read-log.ts';
 import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
@@ -39,7 +39,7 @@ import { searchCountLine } from '../core/search/keyword-paging.ts';
 import { pageCapLine } from '../core/search/remote-page-cap.ts';
 import { dateLabelLine } from '../core/search/date-labels.ts';
 import { emptyRead, hiddenTakesNotice, localTranscriptsNotice, recallInteropNotices, wantsTranscriptHint } from '../core/interop-notices.ts';
-import { degradedStampFor, degradedStampLine, type DegradedStamp } from '../core/degraded-stamp.ts';
+import { degradedStampFor, degradedStampLine, emptyRetrievalStages, KEYWORD_ONLY_BY_CHOICE_EMPTY, type DegradedStamp } from '../core/degraded-stamp.ts';
 import { assertUnscopedReadReachesPages } from '../core/sources-not-readable.ts';
 import { accessPolicyNotices } from '../core/access/policy-notice.ts';
 import { hiddenToolHint, hiddenToolNext, hiddenToolRoute, itemParamKeys, paramCallable, paramNotOnSurface, type ToolConnection } from './hidden-tool-hint.ts';
@@ -517,12 +517,10 @@ export function buildEmptyRetrievalBlock(retrieval: unknown): string | null {
   if (typeof r.retrieved_count === 'number') parts.push(`retrieved ${r.retrieved_count} before trimming.`);
   // Ranking-only stages (a skipped reranker) cannot cause a miss — the model
   // must not be told recall was impaired when only ordering was.
-  const stages = (r.degraded ?? [])
-    .filter(affectsRecall)
-    .map(d => d?.stage)
-    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  const { stages, byChoice } = emptyRetrievalStages(r.degraded);
   parts.push(stages.length > 0
-    ? `degraded: ${[...new Set(stages)].join(', ')}.`
+    ? `degraded: ${stages.join(', ')}.`
+    : byChoice ? KEYWORD_ONLY_BY_CHOICE_EMPTY
     : 'retrieval healthy (no recall-impairing stage). Try the display name, a synonym or hybrid match (the default) before concluding the brain has nothing.');
   if (typeof r.hint === 'string' && r.hint.length > 0) parts.push(`hint: ${r.hint}`);
   return parts.join(' ');
@@ -1008,6 +1006,9 @@ export async function dispatchToolCall(
   // context_pack and delta stay world-only for every caller unless a trusted local one passes include_private, so no grant widens them.
   // GBRA-498: a room declaration only marks the answer; its argument is taken out here, before any validation,
   // handler, cache, retry call or stored write intent sees it, and a trusted local caller's is ignored.
+  // An engine without `access_control` (the Rust engine) answers only the trusted local caller (mcp/engine-access-refusal.ts).
+  const accessRefusal = remoteAccessRefusal(engine, name, opts.remote);
+  if (accessRefusal) return errorResult(accessRefusal, opts, { op: name });
   const roomRead = readRoomDeclaration(opts.remote === false ? undefined : opts.room, params);
   params = roomRead.args;
   const roomDeclaration = opts.remote === false ? undefined : roomRead.declaration ?? undefined;
@@ -1044,6 +1045,8 @@ export async function dispatchToolCall(
       access = readMode === 'scope' ? await scopeReadAccess(engine) : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
+      // GST-3747: a read from a key bound to another member that reads the federated floor drops other members' personal sources too.
+      else if (readOnly || op?.scope === 'read') scoped = await memberFloorScope(engine, resolved, async () => boundMemberId(await boundIdentity(engine, opts.auth, opts.transport, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined)));
       if (roomDeclaration) scoped = { ...scoped, roomDeclaration, roomAttested: !!attested?.actor };
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
       // GST-363: on a brain that serves several people, a read from a connection bound to nobody is refused (or, in its grace, noticed) before any work.

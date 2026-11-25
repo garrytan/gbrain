@@ -2,8 +2,9 @@
 //! plans, and the twin-merge conflict read (`src/core/engine-sql/repair-page-scans.ts`).
 //!
 //! Members: listSafeChunksPending, listOriginTwinGroups, listLegacyOriginPairs,
-//! listLiveOriginPages, countLiveFileBackedPages, listRepairScanPages, listTwinMergeLosers, and
-//! listFileTombstones (the tombstone read of `gbrain repair uncommitted-deletions`).
+//! listLiveOriginPages, listOriginClaimants, countLiveFileBackedPages, listRepairScanPages,
+//! listTwinMergeLosers, and listFileTombstones (the tombstone read of `gbrain repair
+//! uncommitted-deletions`).
 //!
 //! Each member reads every page record once and filters it as the SQL's `WHERE` does, so a brain
 //! the store never wrote through its own guards still answers what the SQL engines answer. A
@@ -16,16 +17,22 @@ use crate::chunks::{SAFE_FENCE_CHUNKER_VERSION, segmented};
 use crate::cli_reads::pg_text::{fm_text, jsonb_text};
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::PrivacyPolicy;
+use crate::facts::md5_hex;
+use crate::facts::privacy::page_hidden_with;
+use crate::facts::purge_ledger::purges_under_subject;
 use crate::journal::RequestRecord;
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
 use crate::link_queries::link_temporal::{TransitionRecord, all_transitions};
 use crate::links::{LinkRecord, in_links, origin_page_links, out_links};
+use crate::owner_only::OwnerOnlySources;
 use crate::pages::{PageRecord, all_pages};
 use crate::persistence::projection_queue::parse_timestamptz;
 use crate::persistence::{all_requests, extra_bool, op_checkpoint_completed_keys};
 use crate::raw_files::page_raw_rows;
 use crate::timeline::TimelineRecord;
+use crate::trust::withdrawals::has_subject_withdrawal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -70,6 +77,33 @@ pub struct LiveOriginPage {
     pub source_path: String,
 }
 
+/// A live page the origin-twins verdict judges (`OriginClaimant`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OriginClaimant {
+    pub id: u64,
+    pub slug: String,
+    pub revision: String,
+    /// `md5(compiled_truth) || md5(COALESCE(timeline, ''))`; `None` for a segmented body.
+    pub body_hash: Option<String>,
+    /// `frontmatter ->> 'id'`.
+    pub fm_id: Option<String>,
+    pub trust_tier: String,
+    /// The page policy of `privatePagesFilterFragment('p')` keeps the page (its SQL value, whatever its name).
+    pub private: bool,
+    /// A fact withdrawal or purge is keyed to the page's slug.
+    pub restricted: bool,
+}
+
+/// `listOriginClaimants`'s input: the source, the page ids and the no-caller page policy.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct OriginClaimantsInput {
+    pub source_id: String,
+    pub ids: Vec<u64>,
+    /// Required.
+    pub policy: Option<PrivacyPolicy>,
+}
+
 /// The `op_checkpoints.op` of a managed sync deletion's tombstone record
 /// (`src/core/persistence/sync-delete-tombstones.ts`).
 const SYNC_DELETE_TOMBSTONE_OP: &str = "sync-delete-tombstone";
@@ -85,6 +119,16 @@ pub struct FileTombstone {
     pub deleted_at: String,
     pub revision: String,
     pub by_sync: bool,
+}
+
+/// A tombstone a managed sync made that no live page of its source backs by content
+/// (`listUnreviewedSyncTombstones`); `expired` when it is older than the cutoff.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnreviewedSyncTombstone {
+    pub id: u64,
+    pub source_id: String,
+    pub slug: String,
+    pub expired: bool,
 }
 
 /// `listFileTombstones`'s query: the tombstones below page id `before` (all when `None`), at most
@@ -336,6 +380,57 @@ impl Store {
             .collect())
     }
 
+    /// `listOriginClaimants({ sourceId, ids, policy })`: the live pages of the source with these
+    /// ids, by id, each with the inputs of the origin-twins verdict.
+    pub fn list_origin_claimants(
+        &self,
+        input: &OriginClaimantsInput,
+    ) -> Result<Vec<OriginClaimant>> {
+        let policy = input
+            .policy
+            .as_ref()
+            .ok_or_else(|| StoreError::invalid("listOriginClaimants needs policy"))?;
+        let read = self.read()?;
+        let read = &*read;
+        let wanted: BTreeSet<u64> = input.ids.iter().copied().collect();
+        let mut pages: Vec<PageRecord> = all_pages(read)?
+            .into_iter()
+            .filter(|p| {
+                p.source_id == input.source_id
+                    && p.deleted_at_us.is_none()
+                    && wanted.contains(&p.id)
+            })
+            .collect();
+        pages.sort_by_key(|p| p.id);
+        let owner_only = OwnerOnlySources::read(read)?;
+        let mut out = Vec::with_capacity(pages.len());
+        for page in pages {
+            let restricted = has_subject_withdrawal(read, &page.source_id, &page.slug)?
+                || !purges_under_subject(read, &page.source_id, "private", &page.slug)?.is_empty()
+                || !purges_under_subject(read, &page.source_id, "world", &page.slug)?.is_empty();
+            out.push(OriginClaimant {
+                id: page.id,
+                body_hash: page.compiled_truth.as_deref().map(|truth| {
+                    format!(
+                        "{}{}",
+                        md5_hex(truth),
+                        md5_hex(page.timeline.as_deref().unwrap_or(""))
+                    )
+                }),
+                fm_id: field_text(&Value::Object(page.frontmatter.clone()), "id"),
+                trust_tier: page
+                    .trust_tier
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_owned()),
+                private: !page_hidden_with(read, &page, policy, &owner_only)?,
+                restricted,
+                revision: page.knowledge_revision,
+                slug: page.slug,
+            });
+        }
+        Ok(out)
+    }
+
     /// `countLiveFileBackedPages(sourceId, { nonBlank })`: the live pages of the source that record
     /// an origin; `non_blank` skips a blank one.
     pub fn count_live_file_backed_pages(&self, source_id: &str, non_blank: bool) -> Result<u64> {
@@ -432,6 +527,65 @@ impl Store {
                 })
             })
             .collect()
+    }
+
+    /// `listUnreviewedSyncTombstones(olderThanHours)` (persistence/sync-delete-tombstones.ts): every
+    /// soft-deleted page a managed sync made (its `sync-delete-tombstone` record at its `deleted_at`,
+    /// or an uncompacted committed `managed_sync_delete` receipt completed at or after it) whose
+    /// content no live page of its source holds, by `deleted_at`, then byte source id, then byte
+    /// slug. `expired` when `deleted_at` is older than `older_than_hours` before now. Read-only.
+    pub fn list_unreviewed_sync_tombstones(
+        &self,
+        older_than_hours: i64,
+    ) -> Result<Vec<UnreviewedSyncTombstone>> {
+        let now = self.env.now_micros();
+        let cutoff = now.saturating_sub(older_than_hours.max(0).saturating_mul(3_600_000_000));
+        let read = self.read()?;
+        let pages = all_pages(&*read)?;
+        let live: BTreeSet<(String, String)> = pages
+            .iter()
+            .filter(|p| p.deleted_at_us.is_none())
+            .filter_map(|p| p.content_hash.clone().map(|h| (p.source_id.clone(), h)))
+            .collect();
+        let receipts: Vec<RequestRecord> = all_requests(&*read)?
+            .into_iter()
+            .filter(sync_delete_receipt)
+            .collect();
+        let mut rows: Vec<(i64, UnreviewedSyncTombstone)> = Vec::new();
+        for p in &pages {
+            let Some(deleted_at_us) = p.deleted_at_us else {
+                continue;
+            };
+            let by_sync = tombstone_recorded(&*read, p.id, deleted_at_us)?
+                || receipts.iter().any(|r| {
+                    r.source_id == p.source_id
+                        && r.slug == p.slug
+                        && r.page_id == Some(p.id)
+                        && r.completed_at_us.is_some_and(|at| at >= deleted_at_us)
+                });
+            let twin = p
+                .content_hash
+                .as_ref()
+                .is_some_and(|h| live.contains(&(p.source_id.clone(), h.clone())));
+            if !by_sync || twin {
+                continue;
+            }
+            rows.push((
+                deleted_at_us,
+                UnreviewedSyncTombstone {
+                    id: p.id,
+                    source_id: p.source_id.clone(),
+                    slug: p.slug.clone(),
+                    expired: deleted_at_us < cutoff,
+                },
+            ));
+        }
+        rows.sort_by(|(a, x), (b, y)| {
+            a.cmp(b)
+                .then_with(|| x.source_id.as_bytes().cmp(y.source_id.as_bytes()))
+                .then_with(|| x.slug.as_bytes().cmp(y.slug.as_bytes()))
+        });
+        Ok(rows.into_iter().map(|(_, t)| t).collect())
     }
 
     /// `listTwinMergeLosers(survivorId, twinId)`: what moving the twin into the survivor would land
@@ -578,7 +732,12 @@ fn losers<T>(
     out
 }
 
-fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<TwinMergeLosers> {
+/// The link rows moving the twin that land on another row's key (`twinLinkLosersStatement`), by id.
+pub(crate) fn twin_link_losers(
+    read: &dyn KvRead,
+    survivor: u64,
+    twin: u64,
+) -> Result<Vec<LinkLoser>> {
     let mut links: BTreeMap<u64, LinkRecord> = BTreeMap::new();
     for page in [twin, survivor] {
         for link in out_links(read, page)?
@@ -615,7 +774,16 @@ fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<Twin
         same,
     })
     .collect();
+    Ok(link_losers)
+}
 
+/// The transition rows moving the twin that land on another row's key
+/// (`twinTransitionLosersStatement`), by id.
+pub(crate) fn twin_transition_losers(
+    read: &dyn KvRead,
+    survivor: u64,
+    twin: u64,
+) -> Result<Vec<TransitionLoser>> {
     let mut ts: Vec<TransitionRecord> = all_transitions(read)?;
     ts.sort_by_key(|t| t.id);
     let m: Vec<Moved<TransitionRecord>> = ts
@@ -643,7 +811,12 @@ fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<Twin
         same,
     })
     .collect();
+    Ok(transition_losers)
+}
 
+fn twin_merge_losers(read: &dyn KvRead, survivor: u64, twin: u64) -> Result<TwinMergeLosers> {
+    let link_losers = twin_link_losers(read, survivor, twin)?;
+    let transition_losers = twin_transition_losers(read, survivor, twin)?;
     let survivor_rows = timeline_rows(read, survivor)?;
     let mut timeline: Vec<TimelineLoser> = timeline_rows(read, twin)?
         .into_iter()

@@ -42,21 +42,20 @@ export interface ActorCaller {
 }
 
 /** The caller's live attest right: the verifier's on a live call, else a row lookup from the stored principal. */
-export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller): Promise<AttestRight | null> {
+export async function attestRightOf(engine: Pick<BrainEngine, 'readAccessTokenAttest' | 'readOauthClientAttest'>, caller: ActorCaller): Promise<AttestRight | null> {
   if (caller.auth?.attest !== undefined) return caller.auth.attest ?? null;
   const principal = caller.auth?.principal ?? caller.principal;
   try {
     if (principal?.kind === 'legacy_token') {
-      const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, to_jsonb(access_tokens)->'attest_sources' AS attest_sources, to_jsonb(access_tokens)->>'attest_read' AS attest_read, member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL`, [principal.id]);
-      return attestRightFrom(row, 'legacy', row?.member_id);
+      const stored = await engine.readAccessTokenAttest(principal.id);
+      const row = stored && stored.revoked_at == null ? stored : undefined;
+      return attestRightFrom(row as Record<string, unknown> | undefined, 'legacy', row?.member_id);
     }
     if (principal?.kind === 'oauth_client') {
-      const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, to_jsonb(oauth_clients)->>'attest_read' AS attest_read, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
-         WHERE client_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, [principal.id]);
-      const cc = Array.isArray(row?.grant_types) && (row!.grant_types as unknown[]).includes('client_credentials') && row!.confidential === true;
-      return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
+      const stored = await engine.readOauthClientAttest(principal.id);
+      const row = stored && stored.deleted_at == null ? stored : undefined;
+      const cc = Array.isArray(row?.grant_types) && row!.grant_types.includes('client_credentials') && row!.confidential === true;
+      return attestRightFrom(row as Record<string, unknown> | undefined, cc ? 'client_credentials' : null, row?.member_id);
     }
   } catch (e) {
     // A schema before the attest columns has no right. Any other failure (a lock timeout, an aborted transaction) is
@@ -184,7 +183,7 @@ export async function linkedMember(engine: Pick<BrainEngine, 'readLinkedMember'>
  * live attest right for the system, and a live link from the id to an enabled member. Returns that member's identity;
  * throws actor_not_attested (no_attest_right) or actor_unlinked.
  */
-export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'readLinkedMember'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string, source?: string):
+export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string, source?: string):
   Promise<{ member: string; groups: string[]; identity: string[] }> {
   const right = await attestRightOf(engine, caller);
   if (!right || right.system !== actor.system) throw actorNotAttested('no_attest_right', caller, { op: op ?? 'stored', transport });
@@ -200,7 +199,7 @@ export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw' | 're
  * A stored attested authority (a queued write, an agent job) re-resolved through actorCoverage: the same member must
  * still be covered and, when `op` is given (publication, a job tool call), the operation must still be attested.
  */
-export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw' | 'readLinkedMember'>, principal: Principal, actor: AttestedActor, op?: string, source?: string): Promise<string[]> {
+export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, principal: Principal, actor: AttestedActor, op?: string, source?: string): Promise<string[]> {
   const covered = await actorCoverage(engine, { principal }, actor, undefined, op, source);
   if (covered.member !== actor.member) throw actorUnlinked(actor.external_id);
   return covered.identity;
@@ -211,7 +210,7 @@ export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'
  * (no granted_sources, no operator hatch), whatever the attest credential's own grants say. An explicit mode, not B's
  * may_act_for path, which relaxes privacy for a one-member audience.
  */
-export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw' | 'readFolderAccess'>, actor: AttestedActor, identity: string[]): Promise<Partial<CallerAccess>> {
+export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw' | 'readFolderAccess' | 'hasLabelledOnlyMemberAmong'>, actor: AttestedActor, identity: string[]): Promise<Partial<CallerAccess>> {
   return {
     identity,
     audience: [`member:${actor.member}`],
@@ -238,7 +237,7 @@ export interface ActorChannels { header?: string | null; audience?: string | nul
  * `acting_user` stripped, or a refusal: actor_not_attested with its reason, actor_unlinked, or B's
  * on_behalf_of_invalid_audience when an on_behalf_of audience is asserted too.
  */
-export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readFolderAccess' | 'readLinkedMember'>, input: {
+export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readFolderAccess' | 'readLinkedMember' | 'hasLabelledOnlyMemberAmong' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, input: {
   channels?: ActorChannels; params: Record<string, unknown> | undefined; op: string; opShape: AttestableOpShape | undefined;
   auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean;
 }): Promise<{ actor?: AttestedActor; access?: Partial<CallerAccess>; params: Record<string, unknown>; read?: AttestRight['read'] } | null> {
@@ -280,7 +279,7 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
  * is argument_mismatch, so the argument never widens or switches whose notes are read, and never tells an existing id
  * from an unknown one. Every other caller is refused argument_without_attestation as before.
  */
-async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readLinkedMember'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
+async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
   argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown> }> {
   const own = input.transport === 'stdio' || input.audienceAsserted || !input.auth ? null
     : (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;

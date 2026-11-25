@@ -54,8 +54,8 @@ const SYNTH = { synthesized_by: 'dream', visibility: 'world' };
  * The main pages. Each carries the markers the page-marker reads look for, an effective date and an alias. The pages the
  * policy leaves visible are `notes/open`, `notes/open-moved`, `notes/other`, `concepts/from-open` and the three atoms
  * (written `visibility: world`; an atom with no visibility is private); every other main page is hidden for one rule.
- * No owner-only rule reads an atom's origin: the store keeps no `derivation_inputs`, and PGLite leaves these atoms visible
- * too. The store's `owner_only_marks` (a hard delete of an owner-only page) are read: see `markedCase`.
+ * No owner-only rule reads an atom's origin: these atoms have no recorded `derivation_inputs`, so every engine leaves
+ * them visible. The store's `owner_only_marks` (a hard delete of an owner-only page) are read: see `markedCase`.
  */
 const MAIN: readonly Fixture[] = [
   { source: 'default', slug: 'notes/open' },
@@ -360,7 +360,7 @@ describe('who-can-read and the open-page count on a brain that has, or once had,
   // the case ends on the raw_sql refusal. When the store serves those reads it must give these same readers and counts.
   parityTest(
     'who-can-read names the members get_page serves, and the open count counts every open page, with an iMessage source and after its removal',
-    { methods: ['executeRaw', 'putPage', 'setConfig'], requires: 'raw_sql' },
+    { methods: ['putPage', 'setConfig', 'readWhoCanReadRows', 'readPageAccessAllowed'] },
     async (engine, backend) => {
       // A real brain records its schema version in config; the arm reset empties config.
       await engine.setConfig('version', String(LATEST_SCHEMA_VERSION));

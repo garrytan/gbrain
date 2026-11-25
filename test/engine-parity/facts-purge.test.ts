@@ -30,9 +30,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { derivedRowsFrom, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -649,6 +649,53 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { before, closed, fn };
   });
 
+  // A remote caller always reads inside a caller record, which renders the floor without the live pending-coverage test
+  // and, for the owner, without the owner-only test; `restricted: false` renders the short member-access form. Each of
+  // these is a floor the store models, so the Rust member must answer them rather than stop.
+  parityTest('findActiveSingleFact under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not, even when the store's restriction flag is set (here by
+    // notes/readers), as for a caller whose flag read is stale.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
+    for (const page of pages) await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]);
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const find = async (sourceId: string, pageSlug: string | null) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor: true });
+      return row === null ? null : seed.name(row.id);
+    };
+    const readPages = async () => {
+      const out: Record<string, string | null> = {};
+      for (const p of [...pages, null]) out[p ?? 'none'] = await find(SRC, p);
+      return out;
+    };
+    const asRecords = async (read: () => Promise<unknown>) => {
+      const out: Record<string, unknown> = { none: await read() };
+      for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+      return out;
+    };
+    const byPage = await asRecords(readPages);
+    // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
+    const floor = { 'notes/open': 'notes/open', 'notes/private': null, 'notes/readers': null, 'notes/lineage': null, 'memory/members/alice-example': null, none: 'notes/open' };
+    const short = { ...floor, 'notes/lineage': 'notes/lineage' };
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    const ownerOnly = await asRecords(async () => ({ open: await find(SRC, 'notes/open'), chat: await find('fact-chat', null) }));
+    const hidden = { open: null, chat: null };
+    const shown = { open: 'notes/open', chat: 'chat-row' };
+    expect(ownerOnly).toEqual({ none: hidden, member: hidden, owner: shown, open: hidden, ownerOpen: shown });
+    return { byPage, ownerOnly };
+  });
+
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
@@ -836,41 +883,32 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { first, again, afterFirst, member, everyone, world, left, expired: history.map((r) => ({ visibility: r.visibility, expired: r.expired_at instanceof Date, closed: r.valid_until instanceof Date })) };
   });
 
-  // The derivation walk's edges are written only through raw SQL (recordDerivationInputs), which the Rust engine
-  // refuses, so only the SQL arms can record one; the Rust store keeps no derivation_inputs and every hop answers no
-  // rows. A page with no recorded derivation, an empty frontier and the walk itself answer the same on every arm.
-  parityTest('listDerivedRows answers one hop of the derivation walk; the Rust store records none and answers no rows', {
-    methods: ['putPage', 'listDerivedRows'],
-  }, async (engine, backend) => {
-    const id = async (slug: string) => String((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` })).id);
-    const [input, mid, leaf, alone] = [await id('derive/input'), await id('derive/mid'), await id('derive/leaf'), await id('derive/alone')];
-    const slugOf = new Map([[input, 'input'], [mid, 'mid'], [leaf, 'leaf'], [alone, 'alone']]);
-    const name = (table: string, rowId: string) => (table === 'pages' ? slugOf.get(rowId) ?? rowId : rowId);
-    if (backend !== 'rust') {
-      await recordDerivationInputs(engine, { table: 'pages', id: mid, sourceId: SRC }, [{ table: 'pages', id: input }, { table: 'facts', id: '7' }]);
-      await recordDerivationInputs(engine, { table: 'pages', id: leaf, sourceId: SRC }, [{ table: 'pages', id: mid }]);
-      await recordDerivationInputs(engine, { table: 'takes', id: '3', sourceId: SRC }, [{ table: 'pages', id: input }]);
-    }
-    const hop = async (frontier: Array<{ table: string; id: string }>, limit: number) =>
-      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${name(r.derived_table, r.derived_id)}`);
-    const fromInput = await hop([{ table: 'pages', id: input }], 10);
-    const capped = await hop([{ table: 'pages', id: input }, { table: 'facts', id: '7' }], 1);
-    const walk = await derivedRowsFrom(engine, [{ table: 'pages', id: input }]);
-    const walked = walk.rows.map((r) => `${r.table}:${name(r.table, r.id)}@${r.depth}`);
-    if (backend === 'rust') {
-      expect(fromInput).toEqual([]);
-      expect(capped).toEqual([]);
-      expect(walked).toEqual([]);
-    } else {
-      expect(fromInput).toEqual(['pages:mid', 'takes:3']);
-      expect(capped).toEqual(['pages:mid']);
-      expect(walked).toEqual(['pages:mid@1', 'takes:3@1', 'pages:leaf@2']);
-    }
-    expect(walk.truncated).toBe(false);
-    return {
-      unrecorded: await hop([{ table: 'pages', id: alone }], 10),
-      emptyFrontier: await hop([], 10),
-      unrecordedWalk: await derivedRowsFrom(engine, [{ table: 'pages', id: alone }]),
-    };
+  // recordDerivationEdges keeps each edge once (ON CONFLICT DO NOTHING) and listDerivedRows reads one hop back: the
+  // distinct rows derived from any frontier row, by table then id, at most `limit`. Ids share one width, so byte order
+  // and the Postgres collation agree.
+  parityTest('recordDerivationEdges records each input edge once and listDerivedRows reads one hop back', {
+    methods: ['recordDerivationEdges', 'listDerivedRows'],
+  }, async (engine) => {
+    const ref = (table: string, id: string) => ({ table, id });
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101'), ref('facts', '301')]);
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101')]);
+    await engine.recordDerivationEdges(ref('facts', '302'), SRC, [ref('pages', '101'), ref('pages', '201')]);
+    await engine.recordDerivationEdges(ref('takes', '401'), null, [ref('facts', '302')]);
+    await engine.recordDerivationEdges(ref('pages', '202'), SRC, []);
+    const hop = async (frontier: Array<{ table: string; id: string }>, limit = 10) =>
+      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${r.derived_id}`);
+    const fromInput = await hop([ref('pages', '101')]);
+    expect(fromInput).toEqual(['facts:302', 'pages:201']);
+    const fromTwo = await hop([ref('pages', '101'), ref('pages', '201')]);
+    expect(fromTwo).toEqual(['facts:302', 'pages:201']);
+    const limited = await hop([ref('pages', '101'), ref('facts', '302')], 2);
+    expect(limited).toEqual(['facts:302', 'pages:201']);
+    const sourceless = await hop([ref('facts', '302')]);
+    expect(sourceless).toEqual(['takes:401']);
+    const leaf = await hop([ref('takes', '401')]);
+    expect(leaf).toEqual([]);
+    const empty = await hop([]);
+    expect(empty).toEqual([]);
+    return { fromInput, fromTwo, limited, sourceless, leaf, empty };
   });
 });

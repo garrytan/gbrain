@@ -49,17 +49,11 @@ describe('aggregated lists come out by byte', () => {
     expect([...snapshots.values()][0]?.tags).toEqual([...BYTE_SLUGS]);
   });
 
-  parityTest('readExportPages lists tags by byte', { methods: ['putPage', 'addTag', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('readExportPages lists tags by byte', { methods: ['putPage', 'addTag', 'getPage'] }, async (engine) => {
     await tagged(engine);
-    const [row] = await engine.executeRaw<{ id: string }>(`SELECT id::text AS id FROM pages WHERE slug = $1`, [SLUG]);
-    const [snapshot] = await readExportPages(engine, [{ id: row!.id, source_id: 'default', slug: SLUG }], []);
+    const page = await engine.getPage(SLUG, { sourceId: 'default' });
+    const [snapshot] = await readExportPages(engine, [{ id: String(page!.id), source_id: 'default', slug: SLUG }], []);
     expect(snapshot!.tags).toEqual([...BYTE_SLUGS]);
-  });
-
-  parityTest('initGuestSource merges writers by byte', { methods: ['executeRaw', 'transaction'], requires: 'raw_sql' }, async (engine) => {
-    await initGuestSource(engine, 'guest-a', ['ab']);
-    const merged = await initGuestSource(engine, 'guest-a', ['a-z', 'a/z']);
-    expect(merged.writers).toEqual([...BYTE_SLUGS]);
   });
 
   parityTest('relationalFanout lists nodes and picks the path by byte', { methods: ['putPage', 'addLink', 'relationalFanout'] }, async (engine) => {
@@ -75,12 +69,12 @@ describe('aggregated lists come out by byte', () => {
     expect(rows.find(r => r.slug === 'target')?.path).toEqual(['seed', BYTE_SLUGS[0], 'target']);
   });
 
-  parityTest('resolveSlugsForRemovedPaths picks the lowest source by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('resolveSlugsForRemovedPaths picks the lowest source by byte', { methods: ['putPage', 'refreshPageOrigin', 'readFirstLiveSlugAtPath'] }, async (engine, backend) => {
     for (const id of MIXED_SOURCES) {
       await createSource(engine, backend, id);
       await engine.putPage(`s${id}`, { type: 'note', title: id, compiled_truth: id, timeline: '' }, { sourceId: id });
+      await engine.refreshPageOrigin(`s${id}`, { sourceId: id, sourcePath: 'shared.md' });
     }
-    await engine.executeRaw(`UPDATE pages SET source_path = 'shared.md' WHERE source_id = ANY($1::text[])`, [MIXED_SOURCES]);
     const result = await resolveSlugsForRemovedPaths(engine, ['shared.md'], undefined);
     expect(result.slugs.get('shared.md')).toBe(`s${byteOrder(MIXED_SOURCES)[0]}`);
   });

@@ -416,11 +416,12 @@ export async function setPurgeEffectData(raw: EngineRawRead, effectId: string, d
   await raw('UPDATE persistence_effects SET data = $2::text::jsonb WHERE id = $1::bigint', [effectId, JSON.stringify(data)]);
 }
 
-/** pageChangeReasons: the reasons the page's snapshots and its requests (intent and outcome) recorded, each once. */
+/** pageChangeReasons: the reasons the page's snapshots and its requests (intent and outcome) recorded, each once; NULL first, then in text order (the `UNION` has none). */
 export async function listPageChangeReasons(raw: EngineRawRead, sourceId: string, slug: string, pageId: number): Promise<Array<{ reason: string | null }>> {
-  return raw<{ reason: string | null }>(`SELECT change_reason AS reason FROM page_versions WHERE page_id = $1
+  const rows = await raw<{ reason: string | null }>(`SELECT change_reason AS reason FROM page_versions WHERE page_id = $1
     UNION SELECT intent->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3
     UNION SELECT outcome->'reason_recorded'->>'reason' FROM persistence_requests WHERE source_id = $2 AND slug = $3`, [pageId, sourceId, slug]);
+  return rows.sort((a, b) => (a.reason === b.reason ? 0 : a.reason === null ? -1 : b.reason === null ? 1 : a.reason < b.reason ? -1 : 1));
 }
 
 /** requestsRecordingReasons: the slug's requests whose intent or outcome records a reason, oldest first, compacted ones included. */
@@ -898,7 +899,7 @@ export async function deletePurgedFacts(raw: EngineRawRead, factIds: number[], s
   return (await raw(`DELETE FROM facts WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id`, [factIds, sourceId])).length;
 }
 
-/** submitPurgeFactMutation: Deletes the chunks of these pages and voids the text projection that certified them; how many pages had chunks deleted. Writes content_chunks and pages; run it in the purge transaction. */
+/** submitPurgeFactMutation: Deletes the chunks of these pages and voids the text projection that certified them; how many chunks it deleted (one row per deleted chunk). Writes content_chunks and pages; run it in the purge transaction. */
 export async function deletePurgedChunks(raw: EngineRawRead, pageIds: number[]): Promise<number> {
   return (await raw(`WITH gone AS (DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING page_id),
         unsealed AS (UPDATE pages SET text_projection_revision=NULL WHERE id IN (SELECT page_id FROM gone) AND text_projection_revision IS NOT NULL)

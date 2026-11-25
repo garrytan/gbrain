@@ -107,6 +107,7 @@
     "scripts/skill-drift-baseline.txt": ["test/skill-drift.test.ts"],
     "scripts/skill-drift-undeclared-subcommands.txt": ["test/skill-drift.test.ts"],
     "scripts/skills-commit-gate.sh": ["test/skill-health.test.ts", "test/skill-drift.test.ts"],
+    "scripts/check-pglite-embedded.sh": ["test/pglite-embedded-assets.test.ts", "test/shadow-fingerprint-probe.test.ts"],
     "skills/skill-budgets.tsv": ["test/skill-health.test.ts"],
     "skills/skills.lock.history.json": ["test/skills-integrity.test.ts", "test/skillpack-safe-update.test.ts"],
     "scripts/check-migration-projection.ts": ["test/scripts/check-migration-projection.test.ts"],
@@ -181,6 +182,7 @@
     "visibility": "public"
   },
   "remote_gate": "bash scripts/pregate-remote-gate.sh",
+  "serial_patterns": ["**/*.serial.test.*", "test/e2e/**/*.test.ts"],
   "run_profiles": {
     "test": {
       "workflow": "test.yml",
@@ -263,6 +265,46 @@
       ],
       "pattern": "\\[load_[a-z0-9_]+, \"(?:[a-z][A-Za-z]*Operations|[a-z]+(?:_[a-z]+)+)\"\\],?$",
       "reason": "generated operation-loader table: each value is a loader identifier and an operations export name, never a credential; an operation named like a secret (reveal_secret) trips the key-name heuristic"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/link_queries/link_temporal.rs"
+      ],
+      "pattern": "^&RelationshipKey,$",
+      "reason": "a Rust type annotation, `key: &RelationshipKey,` (three places): a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/persistence/effect_worker.rs"
+      ],
+      "pattern": "^Option<&str>,$",
+      "reason": "a Rust type annotation, `token: Option<&str>,`: a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/occ_kv.rs"
+      ],
+      "pattern": "^Mutex<HashMap<Vec<u8>, u64>>,$",
+      "reason": "a Rust type annotation, `by_key: Mutex<HashMap<Vec<u8>, u64>>,`: a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/write_attribution.rs"
+      ],
+      "pattern": "^Option<PrivacyPolicy>,$",
+      "reason": "a Rust type annotation, `exclude_private: Option<PrivacyPolicy>,`: a type, never a credential value"
+    },
+    {
+      "finding": "env.kv",
+      "paths": [
+        "rust/crates/gbrain-store/src/cli_reads/reads.rs"
+      ],
+      "pattern": "^:Char\\(c\\) => \\{$",
+      "reason": "a match arm, `Token::Char(c) => {`, in a tokenizer: an enum pattern, never a credential value"
     }
   ]
 }

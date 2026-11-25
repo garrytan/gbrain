@@ -134,9 +134,9 @@ pub(super) struct ClientRecord {
     pub(super) private_facts: String,
 }
 
-/// The characters of the POSIX class `[[:space:]]`.
+/// The POSIX class `[[:space:]]` as PGLite reads it (non-ASCII spaces such as U+3000 included).
 fn is_posix_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0B' | '\x0C' | '\r')
+    crate::cli_reads::pg_text::is_pg_space(c)
 }
 
 impl ClientRecord {
@@ -311,7 +311,7 @@ impl ClientRecord {
 
 /// A timestamp as `to_jsonb` prints one in a UTC session: `2026-01-02T03:04:05.5+00:00` (the fraction without trailing
 /// zeros, and none when it is zero).
-fn jsonb_time(micros: i64) -> String {
+pub(super) fn jsonb_time(micros: i64) -> String {
     let text = iso(micros);
     let (whole, frac) = text.trim_end_matches('Z').split_at(19);
     let frac = frac.trim_end_matches('0');
@@ -371,6 +371,62 @@ pub(super) fn all_clients(read: &dyn KvRead) -> Result<Vec<ClientRecord>> {
         true
     })?;
     bad.map_or(Ok(rows), Err)
+}
+
+/// The shadow seed (`seed.rs`): stores a client's spend columns copied from another engine (`budget_usd_per_day` in
+/// dollars, as the column holds it). `false` when the client id is already stored.
+pub(crate) fn seed_client(
+    tx: &mut dyn KvWrite,
+    client: (&str, &str, Option<&str>),
+    bound_tools: Option<Vec<String>>,
+    budget_usd_per_day: Option<f64>,
+    deleted_at: Option<i64>,
+) -> Result<bool> {
+    let (client_id, client_name, scope) = client;
+    if client_id.contains('\0')
+        || client_name.contains('\0')
+        || scope.is_some_and(|s| s.contains('\0'))
+    {
+        return Err(StoreError::new(
+            INVALID_ARGUMENT,
+            "seed oauth_clients: invalid byte sequence for encoding \"UTF8\": 0x00",
+        ));
+    }
+    if load_client(&*tx, client_id)?.is_some() {
+        return Ok(false);
+    }
+    // Every column the seed does not copy takes the record's serde default; `created_at` is the epoch.
+    let mut record: ClientRecord = serde_json::from_value(serde_json::json!({
+        "client_id": client_id,
+        "client_name": client_name,
+        "created_at": 0,
+    }))
+    .map_err(|e| StoreError::invalid(format!("seed oauth_clients: {e}")))?;
+    record.scope = scope.map(str::to_string);
+    record.bound_tools = bound_tools;
+    record.budget = budget_usd_per_day.map(budget_hundredths).transpose()?;
+    record.deleted_at = deleted_at;
+    put_json(tx, &client_key(client_id), &record)?;
+    Ok(true)
+}
+
+/// Format 5 to 6 (`seed/format_5.rs`): a client the v0.60.766.0 shadow seed stored kept only the spend columns
+/// (`client_id`, `client_name`, `scope`, `bound_tools`, `budget`, `deleted_at`) and no `created_at`. It is stored
+/// again as [`seed_client`] stores one: the epoch for `created_at`, the record's defaults for the rest. A record that
+/// has `created_at` is this build's and is left as it is.
+pub(crate) fn carry_over_format_5_clients(tx: &mut dyn KvWrite) -> Result<()> {
+    for (key, value) in crate::kv::collect_prefix(&*tx, &prefix(CLIENT), false, usize::MAX)? {
+        let mut row: serde_json::Map<String, Value> = serde_json::from_slice(&value)
+            .map_err(|e| StoreError::invalid(format!("oauth client record: {e}")))?;
+        if row.contains_key("created_at") {
+            continue;
+        }
+        row.insert("created_at".into(), Value::from(0));
+        let record: ClientRecord = serde_json::from_value(Value::Object(row))
+            .map_err(|e| StoreError::invalid(format!("oauth client record: {e}")))?;
+        put_json(tx, &key, &record)?;
+    }
+    Ok(())
 }
 
 /// `insertOauthClient(row)`: a column left out takes the table's default; `null` is NULL where the column allows it
@@ -770,9 +826,49 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the client `client_id`. `false` when there is none.
+pub(crate) fn remove_client(tx: &mut dyn KvWrite, client_id: &str) -> Result<bool> {
+    if client_id.contains('\0') || load_client(&*tx, client_id)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&client_key(client_id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_agent_word_split_uses_pglite_space_class() {
+        // `(^|[[:space:]])agent([[:space:]]|$)` in the SQL (src/core/grants/schema.ts).
+        let mismatches = crate::fingerprint_fixture::space_mismatches(is_posix_space);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_scope_split_by_a_pglite_space_holds_the_agent_word() {
+        // The call site, not just the predicate: `read<U+3000>agent` holds the word `agent` (U+3000 is in PGLite's
+        // `[[:space:]]`), so an agent grant missing its bindings is refused; `read\u{3000}agents` is not the word.
+        let client = |scope: &str| -> ClientRecord {
+            serde_json::from_value(serde_json::json!({
+                "client_id": "c", "client_name": "n", "scope": scope, "created_at": 0
+            }))
+            .expect("a minimal client row")
+        };
+        for separator in ['\u{3000}', '\u{2003}', '\u{85}', ' ', '\t'] {
+            assert!(
+                client(&format!("read{separator}agent")).has_agent_word(),
+                "U+{:04X} splits the scope",
+                separator as u32
+            );
+        }
+        assert!(!client("read\u{3000}agents").has_agent_word());
+        assert!(
+            !client("read\u{A0}agent").has_agent_word(),
+            "U+00A0 is not a PGLite space"
+        );
+    }
 
     #[test]
     fn budget_text_prints_two_decimals_with_the_sign() {

@@ -307,6 +307,48 @@ pub(crate) fn host_worktrees_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<
     Ok(out)
 }
 
+/// The topology lock's local read (`listHostTopologyRows`): every host binding of `host_id` with
+/// its worktree's owner, epoch, state and topology generation. A binding whose worktree row is
+/// gone is left out, as the SQL join leaves it out.
+pub(crate) fn host_topology_rows_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let mut out = Vec::new();
+    for h in scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")? {
+        if h.host_id != host {
+            continue;
+        }
+        let Some(w) = read_worktree_record(read, &h.worktree_id)? else {
+            continue;
+        };
+        out.push(json!({
+            "worktree_id": w.id,
+            "owner_host_id": w.owner_host_id,
+            "owner_epoch": w.owner_epoch,
+            "state": w.state,
+            "topology_generation": w.topology_generation,
+            "local_path": h.local_path,
+            "coordination_path": h.coordination_path,
+        }));
+    }
+    Ok(out)
+}
+
+/// The source bindings of one worktree (`listWorktreeMembers`): `{ source_id, relative_path }` by
+/// byte source id.
+pub(crate) fn worktree_members_in(read: &dyn KvRead, worktree_id: &str) -> Result<Vec<Value>> {
+    let id = uuid_param(worktree_id, "worktreeId")?;
+    let mut rows: Vec<SourceBindingRecord> =
+        scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?
+            .into_iter()
+            .filter(|b| b.worktree_id == id)
+            .collect();
+    rows.sort_by(|a, b| a.source_id.as_bytes().cmp(b.source_id.as_bytes()));
+    Ok(rows
+        .into_iter()
+        .map(|b| json!({ "source_id": b.source_id, "relative_path": b.relative_path }))
+        .collect())
+}
+
 /// One worktree's owner and state, or None.
 pub(crate) fn worktree_in(read: &dyn KvRead, id: &str) -> Result<Option<Value>> {
     let id = uuid_param(id, "worktreeId")?;
@@ -423,6 +465,79 @@ pub(crate) fn insert_source_binding_in(
 /// The `unbound` step of the source delete (engine-sql/sources.ts `deleteSourceRecord`): the
 /// source's binding goes when it binds `incarnation`, the deleted row's; a binding of another
 /// incarnation stays for `gbrain repair orphan-bindings`. The worktree and host rows stay.
+/// The request states `listOrphanBindings` counts as pending and `deleteOrphanBinding` refuses on.
+const PENDING_REQUEST_STATES: [&str; 4] = ["queued", "deferred", "running", "recovering"];
+
+fn pending_requests(read: &dyn KvRead, source_id: &str, incarnation: &str) -> Result<i64> {
+    Ok(all_requests(read)?
+        .iter()
+        .filter(|r| {
+            r.source_id == source_id
+                && r.source_incarnation.eq_ignore_ascii_case(incarnation)
+                && PENDING_REQUEST_STATES.contains(&r.state.as_str())
+        })
+        .count() as i64)
+}
+
+/// `listOrphanBindings({ limit })` (engine-sql/repair-bookkeeping.ts ORPHANS): each source binding whose source is gone
+/// (`source_removed`) or holds another incarnation (`incarnation_replaced`), with its pending requests, in byte order of
+/// source id, at most `limit` when given. The store's source delete removes its binding in the same write, so a binding
+/// written straight through `insertSourceBinding` is the way one shows up here.
+pub(crate) fn list_orphan_bindings_in(
+    read: &dyn KvRead,
+    limit: Option<usize>,
+) -> Result<Vec<Value>> {
+    let mut out = Vec::new();
+    let mut bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    bindings.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+    for b in bindings {
+        let reason = match read_source(read, &b.source_id)? {
+            None => "source_removed",
+            Some(s) if !s.incarnation.eq_ignore_ascii_case(&b.source_incarnation) => {
+                "incarnation_replaced"
+            }
+            Some(_) => continue,
+        };
+        out.push(json!({
+            "source_id": b.source_id,
+            "source_incarnation": b.source_incarnation,
+            "worktree_id": b.worktree_id,
+            "reason": reason,
+            "pending_requests": pending_requests(read, &b.source_id, &b.source_incarnation)?,
+        }));
+        if limit.is_some_and(|n| out.len() >= n) {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// `deleteOrphanBinding({ source_id, source_incarnation })`: deletes the binding when it is still that incarnation's,
+/// still orphaned and has no pending request; true when it deleted one.
+pub(crate) fn delete_orphan_binding_in(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    incarnation: &str,
+) -> Result<bool> {
+    let key = source_binding_key(source_id);
+    let Some(binding) = get_json::<SourceBindingRecord>(&*tx, &key)? else {
+        return Ok(false);
+    };
+    if !binding.source_incarnation.eq_ignore_ascii_case(incarnation) {
+        return Ok(false);
+    }
+    if read_source(&*tx, source_id)?
+        .is_some_and(|s| s.incarnation.eq_ignore_ascii_case(incarnation))
+    {
+        return Ok(false);
+    }
+    if pending_requests(&*tx, source_id, incarnation)? > 0 {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 pub(crate) fn remove_source_binding_in(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -803,6 +918,27 @@ pub(crate) fn swap_config_value_in(
 }
 
 impl Store {
+    /// `listOrphanBindings({ limit })`.
+    pub fn list_orphan_bindings(&self, limit: Option<usize>) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        list_orphan_bindings_in(&*read, limit)
+    }
+
+    /// `deleteOrphanBinding({ source_id, source_incarnation })`.
+    pub fn delete_orphan_binding(&self, source_id: &str, incarnation: &str) -> Result<bool> {
+        self.write(|tx| delete_orphan_binding_in(tx, source_id, incarnation))
+    }
+
+    /// `listHostTopologyRows(hostId)`.
+    pub fn list_host_topology_rows(&self, host_id: &str) -> Result<Vec<Value>> {
+        host_topology_rows_in(&*self.read()?, host_id)
+    }
+
+    /// `listWorktreeMembers(worktreeId)`.
+    pub fn list_worktree_members(&self, worktree_id: &str) -> Result<Vec<Value>> {
+        worktree_members_in(&*self.read()?, worktree_id)
+    }
+
     /// `readWriterAdminState()`: the writer topology as jsonb text.
     pub fn writer_admin_state_text(&self) -> Result<String> {
         writer_admin_state_text_in(&*self.read()?, self.brain_id())

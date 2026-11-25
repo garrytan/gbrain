@@ -579,12 +579,18 @@ fn decided_at_micros(text: &str) -> Option<i64> {
     if let Some(at) = parse_iso(text) {
         return Some(at);
     }
-    let base = text.strip_suffix("+00")?;
-    let (time, frac) = base.split_once('.').unwrap_or((base, ""));
-    if time.len() != 19 || time.as_bytes()[10] != b' ' || frac.len() > 6 {
+    // The listed text carries a zone (`+00`, or another offset such as `-01:30`); a time with none is refused.
+    // The zone is looked for from byte 19 on as bytes, never as a `str` slice: byte 19 can fall inside a
+    // non-ASCII character, and `+` and `-` are ASCII, so they never appear inside one.
+    let t = text.trim();
+    let zoned = t
+        .as_bytes()
+        .get(19..)
+        .is_some_and(|rest| !rest.is_empty() && rest.iter().any(|b| matches!(b, b'+' | b'-')));
+    if !zoned {
         return None;
     }
-    parse_iso(&format!("{}T{}.{:0<6}Z", &time[..10], &time[11..], frac))
+    crate::persistence::projection_queue::parse_timestamptz(t, "decided_at").ok()
 }
 
 #[cfg(test)]
@@ -626,13 +632,6 @@ mod tests {
     }
 
     #[test]
-    fn jsonb_orders_shorter_keys_first() {
-        let mut keys = vec!["emails".to_string(), "email".to_string(), "b".to_string()];
-        keys.sort_by(jsonb_key_order);
-        assert_eq!(keys, ["b", "email", "emails"]);
-    }
-
-    #[test]
     fn decided_at_reads_the_listed_text_back() {
         let at = parse_iso("2026-11-18T00:00:00.500000Z").unwrap();
         assert_eq!(decided_at_micros("2026-11-18 00:00:00.5+00"), Some(at));
@@ -642,5 +641,27 @@ mod tests {
             parse_iso("2026-11-18T00:00:00.000000Z")
         );
         assert_eq!(decided_at_micros("2026-11-18 00:00:00"), None);
+    }
+
+    #[test]
+    fn decided_at_refuses_non_ascii_text_without_panicking() {
+        // Byte 19 falls inside a two- or three-byte character: the zone test must not slice there.
+        for text in [
+            "2026-11-18 00:00:0\u{e9}+00",
+            "2026-11-18 00:00:00\u{e9}",
+            "2026-11-18 00:00:\u{2160}+00",
+            "\u{ff12}\u{ff10}\u{ff12}\u{ff16}-11-18 00:00:00+00",
+            "2026-11-18 00:00:00+\u{ff10}0",
+            "\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}",
+        ] {
+            assert_eq!(decided_at_micros(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn jsonb_orders_shorter_keys_first() {
+        let mut keys = vec!["emails".to_string(), "email".to_string(), "b".to_string()];
+        keys.sort_by(jsonb_key_order);
+        assert_eq!(keys, ["b", "email", "emails"]);
     }
 }

@@ -112,12 +112,14 @@ Rules:
 
 - Ids are big-endian `u64` (`keys::id_key`, `keys::page_id`). A chunk index is a big-endian `u32`. Text parts are
   UTF-8 joined by a `0x00` byte (`keys::text`); a text part never contains `0x00`.
-- **One tag per family.** Each planned family has one reserved tag below (also in `keys.rs`, one constant per
-  family). Every byte after the tag belongs to the family's module, which documents its sub-layout in its header.
+- **One tag per family.** Each planned family has one reserved tag below, one constant per family in `keys.rs`
+  (a tag claimed on a branch is listed in the "Tag registry" until its constant reaches this tree). A new family takes
+  a two-byte tag, `~` then one byte (see "Tag registry"). Every byte after the tag belongs to the family's module, which documents its sub-layout in its header.
   Use a second byte as a sub-table marker when the family has more than one table (for example `F 0x01 <id>` for
   rows and `F 0x02 <source> 0x00 <entity> 0x00 <id>` for an index).
 - **Never reuse, reorder or repurpose a byte.** A family that is not listed takes an unused byte in a reviewed
-  change to the reserved list. Byte `0x00` belongs to the storage engine adapter.
+  change to the reserved list. Byte `0x00` belongs to the storage engine adapter. The one-byte tags are nearly all
+  taken: claim a tag through the "Tag registry" below, and give a new family a two-byte tag (`~` then one byte).
 - **Id counters are family-prefixed:** `M next_<family>_id` through `pages::next_id(tx, "next_fact_id")`.
 - **A family writes only its own tag.** To read another family's records it calls that family's `pub(crate)`
   functions (for pages: `read_page`, `read_page_by_id`, `all_pages`, `scope_sources`, `find_in_scope`). To change
@@ -129,7 +131,7 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 2, `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 8 (`format.rs` lists each version; a build opens formats 1 to 8), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
   Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
@@ -170,11 +172,13 @@ Reserved tags:
 | telemetry | `a`, one sub-tag per table (below) | `TELEMETRY` | no |
 | jobs, the `dream_synthesis_completions` archive | `f` | `DREAM_SYNTHESIS_COMPLETION` | no |
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
-| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
+| persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows), the `derivation_inputs` edges and their input index (`h 0x0A`, `h 0x0B`) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | session_state | `y` | `SESSION_STATE` | no |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
+| secret_store (the `secret_store` entries and `secret_store_occurrence` rows; the module owns the sub-tags) | `3` | `SECRET_STORE` | yes (a hard page delete clears the occurrences' `page_id`, the purge then removes the page's occurrences and the entries only they held; a source delete removes the source's entries) |
+| family escape: the first byte of every two-byte family tag (`keys::family_tag`) | `~` | `FAMILY_ESCAPE` | no |
 
 The telemetry family (`telemetry.rs`) holds search telemetry (`src/core/search/telemetry.ts`), MCP usage
 (`src/core/mcp-usage.ts`), retrieval feedback (`src/core/feedback/`) and the budget ledger
@@ -199,9 +203,46 @@ in its module header:
 | `0x0E` | `TELEMETRY_CHRONICLE_ROW` | `chronicle_page_state` (a page or source delete removes its rows, `chronicle_state.rs`) |
 | `0x0F` | `TELEMETRY_CHRONICLE_RESERVATION` | `chronicle_judge_reservations` (read by `countRecentChronicleReservations`) |
 | `0x10` | `TELEMETRY_CHRONICLE_SEQUENCE` | the `chronicle_judge_reservations` id counter |
+| `0x11` | `TELEMETRY_ACCESS_READ_LOG` | `access_read_log` (`access_read_log.rs`) |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
+
+### Tag registry
+
+The one-byte tags on `rust-engine/main` are the "Key layout" and "Reserved tags" tables above: every capital letter,
+every small letter but `x` and `y`, and the digits `1` and `2`. The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
+records a claim whose constant is still only on the access branches, listed below as a branch claim. This table lists every other tag claimed on any
+branch, and the reserved ones, with the owner who claimed it. The rules:
+
+- **Claim before you write.** A branch that adds a one-byte tag adds its row here in the same commit, with status
+  `branch <name>`; the row stays until the constant reaches `rust-engine/main`, and then the "Reserved tags" row is
+  the record. No row may take a byte that another row or a constant of `keys.rs` holds.
+- **The digits `4` to `9` need approval.** A digit tag is claimed only by a row whose status starts with `approved`,
+  which the manager's review grants. Once this rule is on `rust-engine/main`, the trunk refuses any digit `4`-`9`
+  tag in `keys.rs` without an approved row here (the test below fails).
+- **Every later family takes a two-byte tag.** `~` (0x7E, `keys::FAMILY_ESCAPE`) is reserved as an escape and is
+  never a one-byte family. A new family takes `~` then one byte (`keys::family_tag(b'a')` is `~a`), declared in
+  `keys.rs` as `pub const NAME: [u8; 2] = family_tag(b'a');` with a row here. The family owns every byte after the
+  two. `~` sorts after every letter and digit, so each two-byte family is one contiguous range after the one-byte
+  tags, and a prefix scan of `~a` reads family `~a` only. The family byte is never `0x00`. Adding the escape and
+  two-byte tags writes nothing on disk, so `FORMAT_VERSION` does not change.
+
+| Tag | Constant | Owner | Status |
+|---|---|---|---|
+| `x` | `ACCESS_MEMBERS` | interfaces lane (session a9fd5b22) | branch rust-engine/access-rules-rust (row 32a-1) and the access branches stacked on it |
+| `y` | `SESSION_STATE` | not named on the branch; the trunk names it at intake | branch rust-engine/sync-checkpoint and the branches that contain 4601da37e0 |
+| `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
+| `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
+| `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
+
+Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
+unless a reviewed change to this table names it.
+
+`rust/crates/gbrain-store/tests/keys_registry.rs` fails when two constants of `keys.rs` take one tag byte (or one
+sub-tag of a family), when these tag tables and `keys.rs` disagree, when a Tag registry row takes a byte another
+constant or row holds, when a digit `4`-`9` tag has no approved row, when a constant other than `FAMILY_ESCAPE` takes
+`~`, and when two two-byte family tags share a byte or one has no row.
 
 The `q` tag is shared. link_queries and wanted_links both key records as `q <source id> 0x00 ...`; the byte after
 `0x00` is `W` for a wanted_links record (`q <origin source id> 0x00 W <origin page id BE8> ...`), `R` for a
@@ -541,8 +582,9 @@ store keeps the same rule in `pages.rs`.
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
-  pages it reads, the opening probe of its visibility check, and a stored writer's slug fence are typed engine members
-  (`readPageHiddenFromCaller`, `readCallerPageAccess`, `readWriteVisibilityProbe`, capability `pages`;
+  pages it reads, the opening probe of its visibility check, whether a live page fails the privacy part alone, and a
+  stored writer's slug fence are typed engine members (`readPageHiddenFromCaller`, `readCallerPageAccess`,
+  `readWriteVisibilityProbe`, `readPagePrivacyHidden`, capability `pages`;
   `readWriterSlugFence`, capability `persistence_journal`; SQL in
   `engine-sql/page-visibility.ts`). The store answers the page reads in `page_visibility.rs` and the fence from
   its local writer registration; an OAuth client's fence and an unrendered caller policy refuse. See
@@ -975,11 +1017,11 @@ Facts and their supersession chains.
     (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
     `test/engine-parity/repair-facts-previews.test.ts`.
     The previews of `fact-claim-dates` (`listFactsOnValidDay`), `url-clone-fences` (`readLivePageByPath`) and `purged-page-facts`
-    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. The applies of
-    `captured-facts`, `url-clone-fences` and `purged-page-facts` stop on a Rust brain by name (`engine_capability_missing`, raw_sql:
-    "repair captured-facts page write", "repair url-clone-fences page write", "repair purged-page-facts expire") before their first
-    write, until the page write door and the fact expiry move to typed members. Pinned by `test/engine-parity/repair-facts-previews-2.test.ts`.
-    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. `visibility` (except its `facts` class) and `open-facts` stop by name before any read (`engine_capability_missing`, raw_sql: "repair visibility privacy scan", "repair open-facts privacy scan"), as their reads build privacy predicates the store does not carry; the applies of `facts-home` and `visibility` stop at "repair facts-home page write" and "repair visibility page write". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
+    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. Their applies
+    are typed too (`engine-sql/repair-applies.ts`, `rust/docs/store/repair-applies.md`), so they run on a Rust brain; a
+    `fact-claim-dates` page move stops by name ("repair fact-claim-dates page write"). Pinned by
+    `test/engine-parity/repair-facts-previews-2.test.ts`.
+    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. The `visibility` and `open-facts` previews are typed (`engine-sql/visibility-scans.ts`, `open-facts-scans.ts`, `open-twins.ts`); a `visibility` page item or fenced fact stops at "repair visibility page write" and the `open-facts` apply at "repair open-facts privacy scan". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and
@@ -1336,6 +1378,18 @@ Cross-source identity groups (migration v137): manual links, lookups, the canoni
 - **Parity cases:** `test/engine-parity/entity-identities.test.ts`.
 - **Known gap:** the store page policy has no owner-only rule, so the list refuses a policy read typed while an owner-only source exists (TODOS `rust-owner-only-page-policy`).
 
+### secret_store
+
+The secret store (GST-2988) and the page-store reads and writes of `gbrain repair secret-spans`. Detail: `rust/docs/store/secret-store.md`.
+
+- **Files:** `gbrain-store/src/secret_store.rs`, `gbrain-store/src/repair_secret_spans.rs`, `gbrain-store/src/timeline_queries/redaction.rs`, `gbrain-napi/src/families/secret_store.rs`, `store-members/secret-store.ts`.
+- **Tag:** `3` (`SECRET_STORE`). Cascade on page delete: yes (see the tag table).
+- **Keys:** `3 0x01 <entry id>` the entry; `3 0x02 <source> 0x00 <value mac>` the entry id; `3 0x03 <entry id> 0x00 <occurrence id BE8>` and `3 0x05 <source> 0x00 <slug> 0x00 <occurrence id BE8>` and `3 0x06 <page id BE8> <occurrence id BE8>` (empty, the occurrence indexes); `3 0x04 <occurrence id BE8>` the occurrence. `M next_secret_occurrence_id`.
+- **Members (31), capability:** `persistence_journal`: `findSecretEntryByMac`, `secretEntryExists`, `insertSecretEntry`, `insertSecretOccurrence`, `readSecretEntry`, `listSecretOccurrences`, `listSecretEntrySummaries`, `countSecretsByRule`, `listAllowedSecretMacs`, `listSecretKeysInUse`, `readSecretStoreSnapshot`, `insertBackupSecretEntry`, `readBackupEntryHold`, `insertBackupSecretOccurrence`, `deleteUnreferencedSecretEntry`, `listSecretHoldingPages`, `countUnreferencedSecretEntries`, `readRestorePageHit`, `markSecretEntryAllowed`, `readPageRedactionRow`, `readPageRedactionRows`, `listTimelineDedupRows`, `listVersionBodiesForRedaction`, `countPageVersionRows`, `setRetainedVersionBody`, `listChunkTextsForRedaction`, `deleteChunksByIds`, `setRedactedPageFields`, `readRawDataValue`, `setRawDataValue`, `setRedactedRowText`; the queue row after a rewrite is main's `queuePageProjectionJob`. `deletePageViewDigests` (capability `facts`) is served with no rows.
+- **Postgres tables:** `secret_store`, `secret_store_occurrence`; SQL in `src/core/engine-sql/secret-store.ts`, `secret-spans-rows.ts`.
+- **Parity cases:** `test/engine-parity/repair-secret-spans.test.ts`.
+- **Known gaps:** none for the scan, the apply (inline and segmented) and the restore. On a Rust brain `clearCodeEdgesLeavingChunks` has no `edges_backfilled_at` marker to clear (the store keeps none), and a raw data row is named by its position, not a serial id.
+
 ### timeline_queries
 
 Timeline reads by date and event projections.
@@ -1509,7 +1563,7 @@ the same rows into one member, so the member counts here are smaller than the si
 
 These four sections are design only. No file, tag, constant or list entry below exists yet. The tags are proposed:
 core adds them to the reserved block in `keys.rs` and to the reserved tag table above in one reviewed change, and
-until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger).
+until then no family writes under them. The free lowercase bytes today are `z` (`g` is the code traversal cache) (`d`, `m` and `t` are now reserved above, `a` is telemetry, `f` is the dream synthesis completion archive, `x` is access_members and `h` is the derived generation ledger). `secret_store` takes the digit `3`: every letter is taken or reserved, and tag `2` is free (the `embedding_holds` family was dropped at the main join).
 
 | Family | Proposed tag | Proposed constant | Cascade on page delete | Owner |
 |---|---|---|---|---|

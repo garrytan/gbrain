@@ -55,6 +55,75 @@ impl Brain {
         })
     }
 
+    /// `renameSource(id, name)`: sets the display name; whether the source exists.
+    #[napi]
+    pub fn rename_source<'env>(
+        &self,
+        env: &'env Env,
+        id: String,
+        name: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.rename_source(&id, &name))
+    }
+
+    /// `readLiveSlugAliases(sourceId, targets)`: `{ alias_slug, canonical_slug }[]`.
+    #[napi]
+    pub fn read_live_slug_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        targets: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_live_slug_aliases(&source_id, &targets))
+    }
+
+    /// `readSourceSlugProbe(sourceId, afterId)`: `{ count, hash, maxId, added, addedHash }`.
+    #[napi]
+    pub fn read_source_slug_probe<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        after_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            if !(after_id.is_finite() && after_id >= 0.0 && after_id.fract() == 0.0) {
+                return Err(gbrain_store::error::StoreError::invalid(format!(
+                    "readSourceSlugProbe afterId must be a non-negative integer, got {after_id}"
+                )));
+            }
+            s.read_source_slug_probe(&source_id, after_id as u64)
+        })
+    }
+
+    /// `readStoredSlugSpellings(key, sourceId, sourceIds, after)`: up to 200 stored slugs, in byte order.
+    #[napi]
+    pub fn read_stored_slug_spellings<'env>(
+        &self,
+        env: &'env Env,
+        key: String,
+        source_id: Option<String>,
+        source_ids: Option<Vec<String>>,
+        after: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_stored_slug_spellings(&key, source_id.as_deref(), source_ids.as_deref(), &after)
+        })
+    }
+
+    /// `readFederationExposedPages(sourceId, hidePrivate, honorAliases)`: `{ slug, member, total }[]`.
+    #[napi]
+    pub fn read_federation_exposed_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hide_private: bool,
+        honor_aliases: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_federation_exposed_pages(&source_id, hide_private, honor_aliases)
+        })
+    }
+
     /// `markSourceSynced(id, { incarnation? }?)`: whether a source was stamped.
     #[napi]
     pub fn mark_source_synced<'env>(

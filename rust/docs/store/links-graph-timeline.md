@@ -4,7 +4,8 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Links and timeline entries are typed key-value records with their own index keys. Every write
 changes a record and all of its index keys in one transaction, so a crash keeps all of them or
-none (the simulation below checks this). The new key tags are additive; `FORMAT_VERSION` stays 1.
+none (the simulation below checks this). The new key tags are additive and took no format number; the store is at format 7 now
+([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -76,7 +77,7 @@ Where this engine differs from PGLite:
   TypeScript member sends `eligibleOnly: true` for any policy object, and the store applies the
   base clauses of `projectionEligibleSql('timeline_entries', 'te', ..)`: every row hangs on its
   depth page (`te.page_id`), so a soft-deleted page, or a page whose frontmatter has a
-  `quarantine` key (any value), reads no rows. The `needs_rederive` clause has no rows here. The
+  `quarantine` key (any value), reads no rows. The `needs_rederive` clause hides a row a purge marked (`generations/needs_rederive.rs`). The
   filter runs before `limit`. Without a policy a soft-deleted page still reads its rows, as the SQL
   has no `deleted_at` test. A policy `floor` drops a row whose stored tier ranks below it, and
   `suppressFlagged` drops a row at or below `agent_written` with a `flag` write-gate receipt

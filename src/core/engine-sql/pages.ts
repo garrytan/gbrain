@@ -31,6 +31,7 @@ import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMi
 import { DELETE_BATCH_SIZE } from '../engine-constants.ts';
 import { derivedOriginPurgeHold, OWED_PURGE_OP } from '../persistence/derived-origin-hold.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
+import { HOLD_BIND_CTE } from './hold-binding.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
 import { compileRowNormalizer } from './normalize.ts';
@@ -46,6 +47,8 @@ import { withTrustKeep } from '../persistence/context.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
+import { slugStoreScrubber } from './purge-slug-stores.ts';
+import { purgeStoreScrubber } from './purge-stores.ts';
 import { expireFactsOfGonePages } from './facts-purge.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
 
@@ -170,8 +173,10 @@ export async function putPage(
     const crSet = cr ? sqlFragment`
         contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode,
         corpus_generation     = EXCLUDED.corpus_generation,` : sqlFragment``;
+    // A page created here takes over the quarantine holds that were waiting for its slug in the same statement (engine-sql/hold-binding.ts).
     // origin-guard-ok: both engines' putPage run assertOriginUnclaimed in this transaction first
     const { rows } = await exec.run(sqlFragment`
+      WITH ins AS (
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at${crColumns})
       VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}${crValues})
       ON CONFLICT (source_id, slug) DO UPDATE SET${crSet}
@@ -195,6 +200,8 @@ export async function putPage(
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
+      ), ${HOLD_BIND_CTE}
+      SELECT * FROM ins
     `);
     if (rows.length === 0 && rereadOnEmptyReturning) {
       // The row WAS written; re-read instead of crashing in rowToPage(undefined).
@@ -229,7 +236,7 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
     }
     return exec.transaction(async (tx) => {
       const { rows: candidates } = await tx.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}`);
-      const secrets = await pageSecretOccurrences(tx, candidates.map(r => r.id));
+      const secrets = await pageSecretOccurrences(slugStoreScrubber(tx), candidates.map(r => r.id));
       const { rows } = await tx.run<{ slug: string; id: number }>(sqlFragment`
         DELETE FROM pages
          WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}
@@ -237,10 +244,11 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       `);
       const deleted = rows.map(r => r.slug);
       const gone = new Set(rows.map(r => Number(r.id)));
-      await scrubPurgedSlugs(tx, opts.sourceId, deleted);
-      await scrubPurgedNameStores(tx, opts.sourceId, deleted);
-      await scrubPurgedSlugStores(tx, opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
-      await scrubPurgedSlugHolds(tx, opts.sourceId, deleted.map(slug => ({ slug })));
+      await scrubPurgedSlugs(purgeStoreScrubber(tx), opts.sourceId, deleted);
+      await scrubPurgedNameStores(purgeStoreScrubber(tx), opts.sourceId, deleted);
+      // The holds go first: an unbound hold finds the purged page through the rename record, which the slug stores' scrub removes.
+      await scrubPurgedSlugHolds(slugStoreScrubber(tx), opts.sourceId, rows.map(r => ({ slug: r.slug, id: Number(r.id) })));
+      await scrubPurgedSlugStores(slugStoreScrubber(tx), opts.sourceId, deleted, { secretOccurrences: secrets.filter(o => gone.has(Number(o.page_id))).map(o => o.id) });
       return deleted;
     });
   }
@@ -378,7 +386,7 @@ export async function purgeDeletedPages(
         SELECT DISTINCT m.source_id, encode(m.sha256, 'hex') AS sha FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
         WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - (${hours} || ' hours')::interval${excludedManifest}`);
       const { rows: candidates } = await tx.run<{ id: number }>(sqlFragment`SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - (${hours} || ' hours')::interval`);
-      const secrets = await pageSecretOccurrences(tx, candidates.map(r => r.id));
+      const secrets = await pageSecretOccurrences(slugStoreScrubber(tx), candidates.map(r => r.id));
       const { rows } = await tx.run<{ id: number; slug: string; source_id: string; deleted_at: string }>(sqlFragment`
         DELETE FROM pages
         WHERE deleted_at IS NOT NULL
@@ -404,14 +412,14 @@ export async function purgeDeletedPages(
         WHERE t.source_id = d.source_id AND t.sha256 = decode(d.sha, 'hex')
           AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
-      const bySource = new Map<string, Array<{ slug: string; deletedAt: string }>>();
-      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, deletedAt: r.deleted_at }]);
+      const bySource = new Map<string, Array<{ slug: string; id: number; deletedAt: string }>>();
+      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, id: Number(r.id), deletedAt: r.deleted_at }]);
       for (const [sourceId, purged] of bySource) {
         const slugs = purged.map(p => p.slug);
-        await scrubPurgedSlugs(tx, sourceId, slugs);
-        await scrubPurgedNameStores(tx, sourceId, slugs);
-        await scrubPurgedSlugStores(tx, sourceId, slugs, { secretOccurrences: goneSecrets });
-        await scrubPurgedSlugHolds(tx, sourceId, purged);
+        await scrubPurgedSlugs(purgeStoreScrubber(tx), sourceId, slugs);
+        await scrubPurgedNameStores(purgeStoreScrubber(tx), sourceId, slugs);
+        await scrubPurgedSlugHolds(slugStoreScrubber(tx), sourceId, purged); // before the slug stores: their scrub removes the rename record the hold sweep reads
+        await scrubPurgedSlugStores(slugStoreScrubber(tx), sourceId, slugs, { secretOccurrences: goneSecrets });
       }
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length, pages: rows.map(r => ({ slug: r.slug, source_id: r.source_id, deleted_at: new Date(r.deleted_at) })) };
@@ -522,7 +530,9 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
     // slugPrefix uses the (source_id, slug) UNIQUE btree index for range scans.
     // Escape LIKE metacharacters so the user prefix is treated as a literal.
     const slugPrefix = filters?.slugPrefix;
-    const slugCondition = slugPrefix
+    const slugCondition = slugPrefix && filters?.slugPrefixAlso?.length
+      ? sqlFragment`AND p.slug LIKE ANY(${[slugPrefix, ...filters.slugPrefixAlso].map(prefix => prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%')}::text[])`
+      : slugPrefix
       ? sqlFragment`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sqlFragment``;
     // Search fallbacks must exclude before LIMIT: post-filtering can lose the
@@ -1325,4 +1335,12 @@ export const BUMP_LAST_RETRIEVED_SQL = renderFragment(bumpRetrievalsFragment([])
 export async function bumpPageRetrievals(exec: SqlExecutor, pageIds: number[]): Promise<void> {
   if (pageIds.length === 0) return;
   await exec.run(bumpRetrievalsFragment(pageIds));
+}
+
+/** The statement commands/reconcile-links.ts runReconcileLinks ran through executeRaw. */
+export const MARKDOWN_PAGE_SLUGS_SQL = `SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`;
+
+/** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. A failure is thrown unchanged. */
+export async function listMarkdownPageSlugs(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<string[]> {
+  return (await exec.executeRaw<{ slug: string }>(MARKDOWN_PAGE_SLUGS_SQL, [sourceId])).map(r => r.slug);
 }

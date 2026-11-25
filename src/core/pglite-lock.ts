@@ -7,6 +7,7 @@ import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lo
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseGlobalFlags } from './cli-options.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './persistence/native-lock.ts';
+import { runPgliteCreateGuard } from './pglite-create-guard.ts';
 import type { Action } from './agent-output.ts';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -226,6 +227,15 @@ function inspectHolderMetadata(dataDir: string | undefined): { holder: LockHolde
   return { holder: { held: true, pid, serve: isServeCommand(metadata),
     subcommand: typeof metadata.subcommand === 'string' ? metadata.subcommand : undefined }, metadata };
 }
+/**
+ * The owner token the live holder of `dataDir`'s lock recorded, or null (no holder, a dead holder, unreadable
+ * metadata). Read-only; a token proves nothing about ownership, it only lets two readers agree on which holder wrote
+ * a sidecar (`gbrain serve`'s brain reference, src/commands/serve-brain-ref.ts).
+ */
+export function liveHolderToken(dataDir: string | undefined): string | null {
+  const { holder, metadata } = inspectHolderMetadata(dataDir);
+  return holder.held && metadata && holder.pid !== undefined ? tokenOf(metadata) : null;
+}
 export interface LockPeekResult {
   held: boolean; isServe?: boolean; pid?: number;
   /** The holder is `gbrain serve --http` (read from its recorded argv). */
@@ -334,6 +344,7 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
       try {
         let migrated = false;
         try { migrated = JSON.parse(readFileSync(markerPath, 'utf8')).protocol === protocol; } catch { /* first upgrade */ }
+        runPgliteCreateGuard(canonical);
         mkdirSync(canonical, { recursive: true });
         let reaped = false;
         try { mkdirSync(lockDir); }

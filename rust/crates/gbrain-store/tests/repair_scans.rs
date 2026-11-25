@@ -293,3 +293,124 @@ fn file_tombstones_read_what_the_sql_reads() {
     let marked: Vec<(u64, bool)> = read(None, 10).iter().map(|t| (t.id, t.by_sync)).collect();
     assert_eq!(marked, vec![(b, false), (a, true)]);
 }
+
+/// listUnreviewedSyncTombstones: the tombstones a sync-delete record marks at their deleted_at,
+/// less those a live page of the same source backs by content, by deleted_at then source then slug.
+#[test]
+fn unreviewed_sync_tombstones_are_the_marked_tombstones_no_live_page_backs() {
+    let dir = TempDir::new("unreviewed-tombstones");
+    let store = open(&dir);
+    let page = |slug: &str, body: &str, path: &str| {
+        let input = serde_json::from_value(json!({
+            "type": "note", "title": "Same title", "compiled_truth": body, "timeline": "",
+            "frontmatter": {}, "page_kind": "markdown", "source_path": path,
+        }))
+        .unwrap();
+        let options = serde_json::from_value(json!({})).unwrap();
+        store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap()
+    };
+    let a = page("notes/a", "only a", "a.md");
+    let b = page("notes/b", "shared body", "b.md");
+    let c = page("notes/c", "only c", "c.md");
+    for slug in ["notes/a", "notes/b", "notes/c"] {
+        store.soft_delete_page(slug, None).unwrap();
+    }
+    // A live page with notes/b's content: b is backed, so it is not listed.
+    page("notes/b-copy", "shared body", "b-copy.md");
+    let tombstones = store
+        .list_file_tombstones(
+            "default",
+            &serde_json::from_value(json!({ "limit": 10 })).unwrap(),
+        )
+        .unwrap();
+    let deleted_at = |id: u64| {
+        tombstones
+            .iter()
+            .find(|t| t.id == id)
+            .unwrap()
+            .deleted_at
+            .clone()
+    };
+    for id in [a, b] {
+        store
+            .write_op_checkpoint_record(
+                "sync-delete-tombstone",
+                &id.to_string(),
+                Some(&json!([{ "deleted_at": deleted_at(id) }])),
+            )
+            .unwrap();
+    }
+    // c's record names another deletion time, so it does not mark c.
+    store
+        .write_op_checkpoint_record(
+            "sync-delete-tombstone",
+            &c.to_string(),
+            Some(&json!([{ "deleted_at": "2001-01-01T00:00:00+00:00" }])),
+        )
+        .unwrap();
+    let listed = store.list_unreviewed_sync_tombstones(24).unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|t| (t.id, t.slug.as_str(), t.expired))
+            .collect::<Vec<_>>(),
+        vec![(a, "notes/a", false)]
+    );
+    assert!(store.list_unreviewed_sync_tombstones(0).unwrap()[0].expired);
+}
+
+#[test]
+fn origin_claimants_read_the_verdict_inputs() {
+    let dir = TempDir::new("origin-claimants");
+    let store = open(&dir);
+    let a = put(
+        &store,
+        "a",
+        "markdown",
+        Some("x.md"),
+        json!({ "id": "note-1" }),
+    );
+    let b = put(
+        &store,
+        "b",
+        "markdown",
+        Some("X.md"),
+        json!({ "visibility": "private" }),
+    );
+    let c = put(&store, "c", "markdown", Some("y.md"), json!({}));
+    let gone = put(&store, "gone", "markdown", Some("z.md"), json!({}));
+    store.soft_delete_page("gone", None).unwrap();
+    store
+        .insert_fact_withdrawal("default", "private", "a claim", "c", None)
+        .unwrap();
+    let input = |ids: Vec<u64>| {
+        serde_json::from_value(json!({
+            "sourceId": "default", "ids": ids,
+            "policy": { "honorAliases": true, "entityPrivacy": true, "ownerOnly": "off" },
+        }))
+        .unwrap()
+    };
+    let rows = store
+        .list_origin_claimants(&input(vec![c, gone, a, b, 9_999]))
+        .unwrap();
+    let got: Vec<(&str, Option<&str>, bool, bool)> = rows
+        .iter()
+        .map(|r| (r.slug.as_str(), r.fm_id.as_deref(), r.private, r.restricted))
+        .collect();
+    // By id; the soft-deleted page and the unknown id are not claimants; the private page is not kept by the policy.
+    assert_eq!(
+        got,
+        vec![
+            ("a", Some("note-1"), true, false),
+            ("b", None, false, false),
+            ("c", None, true, true),
+        ]
+    );
+    // One body, one hash: md5 of the truth, then md5 of the timeline, as Postgres computes it (32 + 32 hex digits).
+    assert_eq!(rows[0].body_hash, rows[2].body_hash);
+    assert_eq!(rows[0].body_hash.as_deref().map(str::len), Some(64));
+    assert_eq!(rows[0].trust_tier, rows[2].trust_tier);
+    assert!(store.list_origin_claimants(&Default::default()).is_err());
+}

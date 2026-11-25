@@ -16,7 +16,8 @@
 import { describe, test, expect } from 'bun:test';
 import { autoLinkLockKey } from '../src/core/ops/pages.ts';
 import { registerClientNameLockKey } from '../src/commands/agent-register.ts';
-import { slugRegistryLockKey, BrainWriter } from '../src/core/output/writer.ts';
+import { BrainWriter } from '../src/core/output/writer.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ResolverContext } from '../src/core/resolvers/index.ts';
 
@@ -49,20 +50,6 @@ describe('registerClientNameLockKey (commands/agent-register.ts)', () => {
   });
 });
 
-describe('slugRegistryLockKey (output/writer.ts)', () => {
-  test('exact string with a sourceId', () => {
-    expect(slugRegistryLockKey('src-a', 'people/alice-example')).toBe('slug_registry:src-a:people/alice-example');
-  });
-
-  test("exact string with undefined sourceId falls back to 'default' (mirrors putPage's implicit source)", () => {
-    expect(slugRegistryLockKey(undefined, 'people/alice-example')).toBe('slug_registry:default:people/alice-example');
-  });
-
-  test('different sources produce different keys (no cross-source contention)', () => {
-    expect(slugRegistryLockKey('src-a', 'people/x')).not.toBe(slugRegistryLockKey('src-b', 'people/x'));
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Writer transaction routing proof (stub engine)
 // ---------------------------------------------------------------------------
@@ -86,7 +73,12 @@ function makeStubEngine(): { engine: BrainEngine; calls: RecordedCall[]; getTxCo
     },
     async executeRaw(sql: string, params?: unknown[]) {
       calls.push({ method: 'executeRaw', onTx: this.isTx, sql, params });
+      // As the Rust engine does: an advisory lock is raw SQL it refuses.
+      if (sql.includes('pg_advisory_xact_lock')) throw capabilityMissing('raw_sql', 'executeRaw');
       return [];
+    },
+    async lockPageKeys(keys: ReadonlyArray<{ sourceId: string; slug: string }>) {
+      calls.push({ method: 'lockPageKeys', onTx: this.isTx, params: keys.map(k => ({ ...k })) });
     },
     async readTransactionSettings(names: readonly string[]) {
       calls.push({ method: 'readTransactionSettings', onTx: this.isTx, params: [...names] });
@@ -116,7 +108,7 @@ function makeCtx(): ResolverContext {
   };
 }
 
-describe('createEntity advisory lock — transaction scope + key routing', () => {
+describe('createEntity slug lock — transaction scope + key routing', () => {
   test('lock + slug probes + putPage all run inside the ONE wrapping transaction, keyed per source', async () => {
     const { engine, calls, getTxCount } = makeStubEngine();
     const writer = new BrainWriter(engine, { strictMode: 'off', sourceId: 'src-a' });
@@ -133,10 +125,14 @@ describe('createEntity advisory lock — transaction scope + key routing', () =>
     // (nesting throws on both real engines).
     expect(getTxCount()).toBe(1);
 
-    const lock = calls.find((c) => c.sql?.includes('pg_advisory_xact_lock'));
+    // The lock is a typed page-identity lock every engine serves, never a raw advisory lock (which the Rust
+    // engine refuses, and the old catch swallowed, dropping the lock).
+    expect(calls.some((c) => c.sql?.includes('pg_advisory_xact_lock'))).toBe(false);
+    const lock = calls.find((c) => c.method === 'lockPageKeys');
     expect(lock).toBeDefined();
-    expect(lock!.params).toEqual([slugRegistryLockKey('src-a', 'people/alice-example')]);
-    expect(lock!.params).toEqual(['slug_registry:src-a:people/alice-example']);
+    expect(lock!.params).toEqual([{ sourceId: 'src-a', slug: 'people/alice-example' }]);
+    // It is held before the registry's first existence probe.
+    expect(calls.indexOf(lock!)).toBeLessThan(calls.findIndex((c) => c.method === 'getPage'));
 
     // Every statement in the TOCTOU window (lock, registry getPage probe,
     // putPage) flowed through the tx engine — the xact lock spans them all.
@@ -158,7 +154,7 @@ describe('createEntity advisory lock — transaction scope + key routing', () =>
       compiledTruth: 'Bob is a person.',
     }), makeCtx());
 
-    const lock = calls.find((c) => c.sql?.includes('pg_advisory_xact_lock'));
-    expect(lock!.params).toEqual(['slug_registry:default:people/bob-example']);
+    const lock = calls.find((c) => c.method === 'lockPageKeys');
+    expect(lock!.params).toEqual([{ sourceId: 'default', slug: 'people/bob-example' }]);
   });
 });

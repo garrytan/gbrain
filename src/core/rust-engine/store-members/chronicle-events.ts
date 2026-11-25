@@ -3,9 +3,10 @@
  * reads come from rust/crates/gbrain-store/src/generations/chronicle_events.rs, the projection rows from
  * timeline_queries/event_rows.rs.
  *
- * The store keeps no chronicle ledger (`chronicle_page_state`; see `hasExtractedEvents` in write-misc.ts), so it owns
- * no event hash and records no skip decision: those two members answer empty here, as the ledger tables do on a brain
- * that never ran an extraction.
+ * The store keeps the chronicle ledger's pending and skipped decisions (`chronicle_page_state`, chronicle_ledger.rs) but
+ * no extracted row (the extraction writer, chronicle/execute.ts, stays raw SQL and refuses here), so it owns no event
+ * hash (`listChronicleOwnedHashes` and `hasExtractedEvents` answer empty, as on a brain that never ran an extraction)
+ * and reads its skip decisions from the store.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -62,12 +63,21 @@ export const restoreEventProjection: Member<'restoreEventProjection'> = async (b
     depthPageId: row.depthPageId, date: row.date, source: row.source, summary: row.summary, detail: row.detail ?? null, eventPageId: row.eventPageId }));
 };
 
-/** The store keeps no chronicle ledger, so it records no skip decision. */
-export const hasChronicleSkipDecision: Member<'hasChronicleSkipDecision'> = async () => false;
+/** Whether the store's ledger records that skip decision for that page revision. */
+export const hasChronicleSkipDecision: Member<'hasChronicleSkipDecision'> = async (brain, d) =>
+  storeCall({ member: 'hasChronicleSkipDecision', sourceId: d.sourceId }, () =>
+    brain.hasChronicleSkipDecision(d.sourceId, d.pageId, d.contentHash, d.extractorVersion, d.reason)) as Promise<boolean>;
 
 /** The live generations of `kind` whose depth page is gone and that still hold a live item, oldest update first. */
 export const listOrphanedChronicleOwners: Member<'listOrphanedChronicleOwners'> = async (brain, sourceId, kind, limit) =>
   storeCall({ member: 'listOrphanedChronicleOwners', sourceId }, () => brain.listOrphanedChronicleOwners({ sourceId, kind, limit }));
+
+/** The chronicle advisor's coverage-gap rows; the store answers `effective_date` as ISO text, read here as a Date. */
+export const listChronicleCoverageGapRows: Member<'listChronicleCoverageGapRows'> = async (brain) => {
+  const rows = await storeCall({ member: 'listChronicleCoverageGapRows' }, () => brain.listChronicleCoverageGapRows()) as Array<{
+    type: string; effective_date: string | null; effective_date_source: string | null; fm_date: string | null; fm_start: string | null }>;
+  return rows.map(r => ({ ...r, effective_date: r.effective_date == null ? null : new Date(r.effective_date) }));
+};
 
 /** The `frontmatter.event` when, where and kind of each page of `slugs`. */
 export const listChronicleEventSlotRows: Member<'listChronicleEventSlotRows'> = async (brain, sourceId, slugs) => {

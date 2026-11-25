@@ -47,6 +47,7 @@
   "test/engine-parity/chunk-safe-fence.test.ts": 5714,
   "test/engine-parity/chunk-vector-overflow.test.ts": 7264,
   "test/engine-parity/fact-relink-writes.test.ts": 5017,
+  "test/engine-parity/jobs-worker-liveness.test.ts": 5910,
   "test/engine-parity/page-vector-flip.test.ts": 7249,
   "test/engine-parity/page-vector-overflow.test.ts": 7373,
   "test/engine-parity/private-page-reads.test.ts": 11000,

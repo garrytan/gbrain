@@ -5,6 +5,7 @@ import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { chargeCapabilityRefusal, settleCapabilityRefusal } from './capability-retry.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
+import { inStoredSlugScope } from './legacy-slug-put.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-identity.ts';
@@ -640,7 +641,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await declarePublication(tx);
       const journal = await tx.publicationJournalStore();
       const liveBinding = await guardOwnership(tx, journal, row, hostId);
-      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await journal.lockSource(row.source_id);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.lockSourceForUpdate(row.source_id);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,
@@ -801,6 +802,11 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
 
 export async function recoverPublication(engine: BrainEngine, id: string, hostId = hostIdFor(engine), alreadyLocked = false,
   terminalError?: PublicationFailure, capacityAlreadyHeld = false, hooks: PublicationHooks = {}): Promise<WriteRequest> {
+  const request = await getWriteRequestById(engine, id);
+  return inStoredSlugScope(request ?? { operation: '', slug: '' }, () => recoverPublicationRow(engine, id, hostId, alreadyLocked, terminalError, capacityAlreadyHeld, hooks));
+}
+async function recoverPublicationRow(engine: BrainEngine, id: string, hostId: string, alreadyLocked: boolean,
+  terminalError: PublicationFailure | undefined, capacityAlreadyHeld: boolean, hooks: PublicationHooks): Promise<WriteRequest> {
   let row = await getWriteRequestById(engine, id);
   if (!row) throw opError('not_found', 'Write request not found.',
     'The write request is no longer in the journal (it was compacted or never existed), so there is nothing to recover. Inspect the canonical owners for requests that still need recovery.',

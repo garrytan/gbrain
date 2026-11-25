@@ -94,6 +94,7 @@ import { isWatchdogSuspect, settleWatchdogAbort } from './watchdog-attribution.t
 import { IdleWaiter } from './idle-wait.ts';
 import { jobOutcomeResult, jobResultOutcome } from './job-outcome.ts';
 import { DEFAULT_LONG_JOB_NAMES, DEFAULT_SHORT_JOB_RESERVED_SLOTS, claimExclusions } from './lanes.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { jobRefusal, refusedJobResult } from './refusal.ts';
 import { readFileSync } from 'fs';
 import { parseRssFromProcStatus } from './proc-rss.ts';
@@ -400,13 +401,27 @@ export class MinionWorker extends EventEmitter {
     const dualPool = getConnectionRouting(this.engine)?.isDualPoolActive?.() === true;
     const getDiag = (this.engine as { getPoolDiagnostics?: () => PoolDiagnostics | null }).getPoolDiagnostics;
     return runDbProbe({
-      probeRead: async signal => { await this.engine.executeRaw('SELECT 1', undefined, { signal }); },
+      probeRead: async signal => { await this.engine.pingStore({ signal }); },
       ...(dualPool ? {
-        probeDirect: async (signal: AbortSignal) => { await this.engine.executeRawDirect('SELECT 1', undefined, { signal }); },
+        probeDirect: async (signal: AbortSignal) => { await this.engine.pingStore({ signal, direct: true }); },
       } : {}),
       ...(typeof getDiag === 'function' ? { getDiagnostics: () => getDiag.call(this.engine) } : {}),
       timeoutMs: this.opts.dbProbeTimeoutMs,
       directTimeoutMs: DIRECT_PROBE_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * One health-check tick. A capability refusal out of the stall count means this engine cannot count waiting jobs, so the
+   * check could never run: stop the worker as unhealthy, as a dead DB probe does. Any other error escapes as before.
+   */
+  private tickHealthCheck(run: () => Promise<void>, markExited: () => void, failures: () => number): void {
+    void run().catch((e: unknown) => {
+      if (!isEngineCapabilityRefusal(e)) throw e;
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[health] stall check refused: ${message} Emitting 'unhealthy' for process-manager restart.`);
+      markExited();
+      this.emitUnhealthy({ reason: 'db_dead', consecutiveFailures: failures(), message, verdict: 'unknown' });
     });
   }
 
@@ -744,16 +759,9 @@ export class MinionWorker extends EventEmitter {
               // jobs accumulate in `waiting`. Only counts work THIS worker would
               // actually have claimed.
               const handlerNames = this.registeredNames;
-              const rows = handlerNames.length === 0
-                ? [] as { cnt: string }[]
-                : await this.engine.executeRaw<{ cnt: string }>(
-                    `SELECT count(*)::text AS cnt FROM minion_jobs
-                     WHERE status = 'waiting'
-                       AND queue = $1
-                       AND name = ANY($2::text[])`,
-                    [this.opts.queue, handlerNames],
-                  );
-              const waiting = parseInt(rows[0]?.cnt ?? '0', 10);
+              const waiting = handlerNames.length === 0
+                ? 0
+                : await this.engine.countWaitingJobsForNames(this.opts.queue, handlerNames);
               const idleMinutes = Math.round(idleMs / 60_000);
               if (waiting > 0) {
                 // Two thresholds, both measured from `lastCompletionTime` (NOT
@@ -782,9 +790,7 @@ export class MinionWorker extends EventEmitter {
               } else {
                 stallWarningSince = null; // Queue empty (for our handlers) — not stalled, just idle
               }
-            } catch {
-              // DB query failed — the liveness probe above will catch persistent failures
-            }
+            } catch (e) { rethrowCapabilityRefusal(e); /* a refusal ends the worker via tickHealthCheck; else the liveness probe catches it */ }
           } else {
             stallWarningSince = null;
           }
@@ -792,14 +798,16 @@ export class MinionWorker extends EventEmitter {
         } finally {
           healthRunning = false;
           if (this.running && !healthExited) {
-            healthTimer = setTimeout(runHealthCheck, this.opts.healthCheckInterval);
+            healthTimer = setTimeout(tickHealthCheck, this.opts.healthCheckInterval);
           }
         }
       };
 
+      const tickHealthCheck = (): void => this.tickHealthCheck(runHealthCheck, () => { healthExited = true; if (healthTimer) clearTimeout(healthTimer); }, () => consecutiveDbFailures + 1);
+
       // First tick scheduled after one interval so newly-started workers have
       // a chance to do real work before the stall clock starts ticking.
-      healthTimer = setTimeout(runHealthCheck, this.opts.healthCheckInterval);
+      healthTimer = setTimeout(tickHealthCheck, this.opts.healthCheckInterval);
     }
 
     const runLoop = async () => {
@@ -994,15 +1002,11 @@ export class MinionWorker extends EventEmitter {
    */
   private async releaseClaimForPause(job: MinionJob, lockToken: string): Promise<void> {
     try {
-      await this.engine.executeRaw(
-        `UPDATE minion_jobs
-         SET status = 'delayed', lock_token = NULL, lock_until = NULL,
-             delay_until = now() + interval '1 minute',
-             updated_at = now()
-         WHERE id = $1 AND lock_token = $2`,
-        [job.id, lockToken],
-      );
+      await this.engine.releaseClaimForPause(job.id, lockToken);
     } catch (e) {
+      // A capability refusal is not a failed UPDATE: the engine cannot release a claim at all, so the claim would expire
+      // on every pause. Let it out (the worker loop stops loudly) instead of logging one line per job.
+      rethrowCapabilityRefusal(e);
       // Fail-open: if the release UPDATE itself fails, the claim lock simply
       // expires and the stall detector requeues the row — slower, same end
       // state, and never a reason to crash the worker.
@@ -1038,17 +1042,11 @@ export class MinionWorker extends EventEmitter {
       } else {
         // Defer: release back to delayed, push delay ~15 minutes to avoid
         // immediate re-claim loops when the claim query re-runs.
-        await this.engine.executeRaw(
-          `UPDATE minion_jobs
-           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
-               delay_until = now() + interval '15 minutes',
-               updated_at = now()
-           WHERE id = $1 AND lock_token = $2`,
-          [job.id, lockToken],
-        );
+        await this.engine.deferClaimForQuietHours(job.id, lockToken);
         console.log(`Quiet-hours defer: ${job.name} (id=${job.id}) → retry after 15m`);
       }
     } catch (e) {
+      rethrowCapabilityRefusal(e); // the engine cannot release or cancel the claim: say so, do not leave it to expire
       console.error(`handleQuietHoursDefer error for job ${job.id}:`, e instanceof Error ? e.message : String(e));
     }
   }

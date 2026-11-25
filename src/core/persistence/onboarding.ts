@@ -4,6 +4,8 @@ import type { BrainEngine } from '../engine.ts';
 import { persistenceHome, existingHostIdFor } from './identity.ts';
 import { containsPath, getWorktreeBinding, readManagedMode, type WorktreeBinding } from './ownership.ts';
 import { verifyOwnerRoot } from './owner-verification.ts';
+import { ownershipReservationRestoreFix } from './owner-marker.ts';
+import type { Action } from '../agent-output.ts';
 import { readPhysicalRootReservation, readWedgedPhysicalRootReservation } from './physical-root-record.ts';
 import { coordinationHomeIgnored, coordinationLockDirectory } from './coordination-lock.ts';
 import { inspectLegacyWriterLocks } from './legacy-locks.ts';
@@ -61,18 +63,20 @@ export async function writerOnboardingPreflight(engine: BrainEngine, sourceId?: 
     const binding = await getWorktreeBinding(engine, row.id, host), configured = row.local_path || (row.id === 'default' ? fallback : null);
     const connector = isConnectorSourceKind(row.kind);
     let state = !binding ? connector ? 'connector_database' : configured && writeThrough ? 'claim_required' : 'database_only' : !managed ? 'activation_required' : 'ready';
-    let physicalError: string | undefined;
+    let physicalError: string | undefined, physicalFix: Action | undefined;
     if (binding && (binding.source_incarnation !== row.incarnation || binding.state !== 'active')) state = 'recovery_required';
     if (binding && binding.owner_host_id !== host) state = 'owner_host_required';
     // #6741 C: the claim's owner verification, shared with background admissions (owner-verification.ts).
     const owner = binding?.owner_host_id === host ? verifyOwnerRoot(binding) : null;
     if (owner) { state = 'recovery_required'; physicalError = owner.physical_error; }
+    // #10260: a lost reservation the stamp still identifies names the self-transfer that re-creates it.
+    if (binding?.local_path && owner?.physical_detail === 'ownership_reservation_missing') physicalFix = ownershipReservationRestoreFix(row.id, { root: binding.local_path, epoch: String(binding.owner_epoch) });
     const root = binding?.local_path ?? (connector ? null : configured);
     const lock = root ? coordinationLockStatus(root, binding, host) : undefined;
     const lockDirectory = typeof lock?.path === 'string' ? dirname(lock.path) : typeof lock?.directory === 'string' ? lock.directory : join(persistenceHome(), 'locks');
     const paths = root ? containerPathPreflight({ canonical_root: root, reservation_parent: dirname(root), persistence_home: persistenceHome(),
       coordination_directory: lockDirectory }) : undefined;
-    sources.push({ source_id: row.id, state, write_through: writeThrough, ...(physicalError ? { physical_error: physicalError } : {}),
+    sources.push({ source_id: row.id, state, write_through: writeThrough, ...(physicalError ? { physical_error: physicalError } : {}), ...(physicalFix ? { physical_fix: physicalFix } : {}),
       ...(lock ? { coordination_lock: lock } : {}), ...(paths ? { storage: paths } : {}) });
   }
   return { sources, legacy_locks: await inspectLegacyWriterLocks(engine), unsupported_maintenance: [...UNSUPPORTED_MANAGED_BULK_WRITERS],

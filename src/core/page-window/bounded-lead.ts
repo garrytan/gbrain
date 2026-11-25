@@ -24,7 +24,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { BOUNDED_PREFIX_BYTES, boundedProjectedPrefix } from './document.ts';
 
@@ -63,7 +63,7 @@ export function prefixNeedsOverlay(prefix: string | null | undefined): boolean {
  * Returns new row objects; the input rows are not mutated.
  */
 export async function overlaidBoundedRows<T extends { slug: string; source_id: string; compiled_truth: string | null }>(
-  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals' | 'capabilities'>,
   rows: readonly T[],
 ): Promise<T[]> {
   const bounded = rows.map(row => ({ ...row, compiled_truth: row.compiled_truth == null ? null : boundedRawPrefix(row.compiled_truth) }));
@@ -72,14 +72,16 @@ export async function overlaidBoundedRows<T extends { slug: string; source_id: s
     .map(row => [pageSnapshotKey(row.source_id, row.slug), { slug: row.slug, sourceId: row.source_id }])).values()];
   if (pending.length === 0) return bounded;
   const overlaid = new Map<string, string>();
-  const query = <R>(sql: string, params?: unknown[]) => engine.executeRaw<R>(sql, params);
   try {
     for (let rest = pending; rest.length > 0;) {
       const batch = await engine.readPageSnapshotsBatch(rest);
       for (const [key, snapshot] of batch.snapshots) {
-        if (!isSegmentedPage(snapshot.page)) overlaid.set(key, boundedRawPrefix(snapshot.page.compiled_truth));
-        else overlaid.set(key, boundedRawPrefix((await overlayCanonicalBodies(query, leads.get(key)!, '', snapshot.withdrawals,
-          { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges })).compiled_truth));
+        if (!isSegmentedPage(snapshot.page)) { overlaid.set(key, boundedRawPrefix(snapshot.page.compiled_truth)); continue; }
+        // A failed overlay blanks only this page's lead (fail closed), never the other leads read with it.
+        try {
+          overlaid.set(key, boundedRawPrefix((await overlayCanonicalBodiesTyped(engine, leads.get(key)!, '', snapshot.withdrawals,
+            { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges })).compiled_truth));
+        } catch { /* left out of `overlaid`, so this lead is blank */ }
       }
       rest = rest.slice(Math.max(1, batch.covered));
     }
@@ -93,7 +95,7 @@ export async function overlaidBoundedRows<T extends { slug: string; source_id: s
 
 /** One page's overlaid raw prefix: the snapshot body when the raw prefix holds a facts fence, else the raw prefix. */
 export async function overlaidBoundedPrefix(
-  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals' | 'capabilities'>,
   page: { slug: string; source_id: string; compiled_truth: string | null },
 ): Promise<string> {
   const [row] = await overlaidBoundedRows(engine, [page]);
@@ -102,7 +104,7 @@ export async function overlaidBoundedPrefix(
 
 /** One page's sanitized, credential-projected lead text: the bounded overlaid prefix through boundedProjectedPrefix. */
 export async function projectedLead(
-  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw'>,
+  engine: Pick<BrainEngine, 'readPageSnapshotsBatch' | 'executeRaw' | 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals' | 'capabilities'>,
   page: { slug: string; source_id: string; compiled_truth: string | null },
 ): Promise<string> {
   return boundedProjectedPrefix(await overlaidBoundedPrefix(engine, page));

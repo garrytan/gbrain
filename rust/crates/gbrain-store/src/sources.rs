@@ -133,7 +133,7 @@ impl From<SourceRecord> for SourceDetailRow {
 pub struct SyncCheckpointAdvance {
     pub source_id: String,
     pub incarnation: String,
-    pub commit: String,
+    pub commit: Option<String>,
     pub from: Option<String>,
     pub accept_at_commit: bool,
     pub slug_mode: String,
@@ -360,6 +360,19 @@ impl Store {
         })
     }
 
+    /// `renameSource(id, name)`: sets the source's display name. Returns whether the source exists;
+    /// an unknown id changes nothing.
+    pub fn rename_source(&self, id: &str, name: &str) -> Result<bool> {
+        self.write(|tx| {
+            let Some(mut record) = read_source(&*tx, id)? else {
+                return Ok(false);
+            };
+            record.name = Some(name.to_string());
+            put_json(tx, &source_key(id), &record)?;
+            Ok(true)
+        })
+    }
+
     /// `advanceSourceCommit`: records that the source's git sync reached `commit` and stamps
     /// `last_sync_at` with the store clock. `newest_content_at` is left alone when `None`, cleared
     /// when `Some(None)` and set when `Some(Some(iso))`. An unknown id changes nothing, as the
@@ -440,8 +453,8 @@ impl Store {
     }
 
     /// `writeSourceUpstreamObservation(sourceId, checkedAt, commit, behind)`: the sync's upstream
-    /// observation of the source's checkout. `checked_at` is an ISO time. An unknown source changes
-    /// nothing.
+    /// observation of the source's checkout. `checked_at` is an ISO time, and it never moves back for
+    /// the same upstream commit (#9933). An unknown source changes nothing.
     pub fn write_source_upstream_observation(
         &self,
         source_id: &str,
@@ -456,7 +469,15 @@ impl Store {
             let Some(mut record) = read_source(&*tx, source_id)? else {
                 return Ok(());
             };
-            record.upstream_checked_at_us = Some(checked_us);
+            // A check time never moves back for the same upstream commit (#9933): a failed fetch empties
+            // FETCH_HEAD and the reflog can be older than the no-change fetch already recorded.
+            let moves_back = record.upstream_commit.as_deref() == Some(commit)
+                && record
+                    .upstream_checked_at_us
+                    .is_some_and(|recorded| recorded > checked_us);
+            if !moves_back {
+                record.upstream_checked_at_us = Some(checked_us);
+            }
             record.upstream_commit = Some(commit.to_owned());
             record.upstream_behind = behind;
             put_json(tx, &source_key(source_id), &record)
@@ -489,8 +510,10 @@ impl Store {
             }
             let pinned = config_text(&record.config, "slug_root_mode");
             let at_from = record.last_commit == input.from;
+            // `last_commit = $commit` is never true for a NULL commit (SQL equality), so only a commit accepts.
             let at_commit = input.accept_at_commit
-                && record.last_commit.as_deref() == Some(input.commit.as_str());
+                && input.commit.is_some()
+                && record.last_commit == input.commit;
             let mode_ok = input.keep_pinned_slug_mode
                 || pinned.is_none()
                 || pinned.as_deref() == Some(input.slug_mode.as_str());
@@ -510,7 +533,7 @@ impl Store {
             record
                 .config
                 .insert("slug_root_mode".into(), Value::String(mode));
-            record.last_commit = Some(input.commit.clone());
+            record.last_commit = input.commit.clone();
             record.last_sync_at_us = Some(self.env.now_micros());
             record.newest_content_at_us = newest_live_page_us(&*tx, &input.source_id)?;
             put_json(tx, &source_key(&input.source_id), &record)?;
@@ -613,6 +636,67 @@ mod tests {
         );
     }
 
+    /// A value nested 127 levels deep: the deepest a client can send (napi boundary tests).
+    fn deep(levels: usize) -> serde_json::Value {
+        let mut v = serde_json::json!(1);
+        for _ in 0..levels {
+            v = serde_json::Value::Array(vec![v]);
+        }
+        v
+    }
+
+    #[test]
+    fn a_source_config_too_deep_to_read_back_is_refused_and_the_source_still_reads() {
+        let store = crate::test_support::store();
+        let wiki = super::SourceInput {
+            id: "wiki".into(),
+            ..Default::default()
+        };
+        store.upsert_source(&wiki).unwrap();
+        let mut patch = serde_json::Map::new();
+        patch.insert("x".into(), deep(127));
+        let refused = store.update_source_config("wiki", &patch).unwrap_err();
+        assert_eq!(refused.code, crate::error::INVALID_ARGUMENT, "{refused}");
+        let mut config = serde_json::Map::new();
+        config.insert("x".into(), deep(127));
+        let deep_create = super::SourceInput {
+            id: "deep".into(),
+            config: Some(config),
+            ..Default::default()
+        };
+        assert_eq!(
+            store.upsert_source(&deep_create).unwrap_err().code,
+            crate::error::INVALID_ARGUMENT
+        );
+        // Nothing unreadable was stored: both sources read, and the shallow config still writes.
+        assert!(store.get_source_by_id("wiki").unwrap().is_some());
+        assert!(store.get_source_by_id("deep").unwrap().is_none());
+        // The deepest config that still fits: the record, the config object and 125 arrays are 127 levels,
+        // the most serde_json reads back, and it does. One level more is refused.
+        let mut over = serde_json::Map::new();
+        over.insert("x".into(), deep(126));
+        assert_eq!(
+            store.update_source_config("wiki", &over).unwrap_err().code,
+            crate::error::INVALID_ARGUMENT
+        );
+        let mut edge = serde_json::Map::new();
+        edge.insert("x".into(), deep(125));
+        assert!(store.update_source_config("wiki", &edge).unwrap());
+        let row = store.get_source_by_id("wiki").unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&row).unwrap()["config"]["x"],
+            deep(125)
+        );
+        let mut shallow = serde_json::Map::new();
+        shallow.insert("x".into(), deep(100));
+        assert!(store.update_source_config("wiki", &shallow).unwrap());
+        let row = store.get_source_by_id("wiki").unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(&row).unwrap()["config"]["x"],
+            deep(100)
+        );
+    }
+
     #[test]
     fn the_upstream_observation_lands_on_one_source_only() {
         let store = crate::test_support::store();
@@ -651,6 +735,61 @@ mod tests {
             super::read_source(&*store.read().unwrap(), "missing")
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn the_upstream_check_time_never_moves_back_for_the_same_commit() {
+        let store = crate::test_support::store();
+        let wiki = super::SourceInput {
+            id: "wiki".into(),
+            ..Default::default()
+        };
+        store.upsert_source(&wiki).unwrap();
+        let observe = |at: &str, commit: &str, behind: Option<i64>| {
+            store
+                .write_source_upstream_observation("wiki", at, commit, behind)
+                .unwrap();
+            let record = super::read_source(&*store.read().unwrap(), "wiki")
+                .unwrap()
+                .unwrap();
+            (
+                record.upstream_checked_at_us.map(crate::env::iso),
+                record.upstream_commit,
+                record.upstream_behind,
+            )
+        };
+        let at = |iso: &str| Some(iso.to_string());
+        assert_eq!(
+            observe("2026-01-03T03:04:05.000Z", "u1", Some(1)),
+            (
+                at("2026-01-03T03:04:05.000000Z"),
+                Some("u1".into()),
+                Some(1)
+            )
+        );
+        // An older time for the same commit keeps the recorded time and still records the count.
+        assert_eq!(
+            observe("2026-01-02T03:04:05.000Z", "u1", Some(2)),
+            (
+                at("2026-01-03T03:04:05.000000Z"),
+                Some("u1".into()),
+                Some(2)
+            )
+        );
+        // A newer time for the same commit moves forward.
+        assert_eq!(
+            observe("2026-01-04T03:04:05.000Z", "u1", Some(2)),
+            (
+                at("2026-01-04T03:04:05.000000Z"),
+                Some("u1".into()),
+                Some(2)
+            )
+        );
+        // A different commit takes its own time, older or not.
+        assert_eq!(
+            observe("2026-01-01T03:04:05.000Z", "u2", None),
+            (at("2026-01-01T03:04:05.000000Z"), Some("u2".into()), None)
         );
     }
 }

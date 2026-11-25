@@ -7,7 +7,7 @@
  */
 import type {
   ManagedSyncCursorRow, ManagedSyncFailureRow, ManagedSyncOrphanRows, ManagedSyncPassRow, ManagedSyncRetireMode,
-  ManagedSyncRetireTarget, ManagedSyncRetiredCursorRow,
+  ManagedSyncRetireTarget, ManagedSyncRetiredCursorRow, SourceManagedSyncFailure,
 } from '../../engine-sql/managed-sync-orphans.ts';
 import type { ContentReceiptBinding, OwnedContentRow } from '../../engine-sql/owned-content.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from '../../persistence/sync-slug-mode.ts';
@@ -401,6 +401,28 @@ export const deleteManagedSyncFailureRow: StoreMember<[key: string, retired: boo
     const incarnation = text(k0, 'source_incarnation');
     if (!s || incarnation === null || s.incarnation === incarnation) return false;
   }
+  await storeCall({ member }, () => brain.deleteOpCheckpoint('managed-sync-failure', key));
+  return true;
+};
+
+/** The source's `managed-sync-failure` rows (any incarnation) by byte key, each with whether an unfinished cursor shares its key. */
+export const listSourceManagedSyncFailures: StoreMember<[sourceId: string], Array<SourceManagedSyncFailure<never>>> = async (brain, sourceId) => {
+  const snap = new Snapshot(brain, 'listSourceManagedSyncFailures');
+  const cursors = new Map((await snap.checkpoints('managed-sync')).map(row => [row.fingerprint, row]));
+  return (await snap.checkpoints('managed-sync-failure'))
+    .filter(row => text(first(row.completed_keys), 'source_id') === sourceId)
+    .sort((a, b) => byteCmp(a.fingerprint, b.fingerprint))
+    .map(row => {
+      const cursor = cursors.get(row.fingerprint);
+      return { key: row.fingerprint, failure: (first(row.completed_keys) ?? null) as never, unfinished: cursor !== undefined && notDone(first(cursor.completed_keys)) };
+    });
+};
+
+/** Deletes the `managed-sync-failure` row under `key` while it still records `observationId`. */
+export const deleteManagedSyncFailureObservation: StoreMember<[key: string, observationId: string], boolean> = async (brain, key, observationId) => {
+  const member = 'deleteManagedSyncFailureObservation';
+  const f = await new Snapshot(brain, member).checkpoint('managed-sync-failure', key);
+  if (!f || text(first(f.completed_keys), 'observation_id') !== observationId) return false;
   await storeCall({ member }, () => brain.deleteOpCheckpoint('managed-sync-failure', key));
   return true;
 };

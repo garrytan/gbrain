@@ -58,13 +58,14 @@ same read gives on a PGLite brain with none (the precedent is `store-members/con
 members" in [journal.md](journal.md)). Each is listed in `TODOS.md` under "Rust engine lane 14 follow-ups" for the day
 the store gains the writer.
 
+`countParkedEffects()`, `listParkedEffects()`, `listGitPushHoldRows()`, `listStalledCatchupRows()`, `listParkedGroupRows()` and
+`listSourceBindingsForMovement()` are served from the store's
+effect, request, binding, worktree and source records: see "Writer status" in [persistence.md](persistence.md).
+
 | JS | Answer | Why |
 | --- | --- | --- |
 | `readLiveConsumerSummary()` | `{ live: "0", oldest_hours: null }` | no consumer heartbeat is recorded |
-| `countParkedEffects()`, `listParkedEffects()` | 0, `[]` | no effect is recorded |
-| `listGitPushHoldRows()`, `listStalledCatchupRows()`, `listParkedGroupRows()` | `[]` | no effect or worktree is recorded |
-| `readStaleEmbeddingCounts()`, `listStaleEmbeddingEffects()` | zeros, `[]` | no embedding effect is recorded |
-| `listOrphanBindingRows()`, `listWorktreeIds()`, `listSourceBindingsForMovement()`, `listOwnerBindings()`, `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no worktree, host binding or consumer |
+| `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no consumer or refresh row |
 | `listDerivationPurgeSweeps()` | `[]` | no derivation-result sweep of a fact purge is recorded |
 | `listUnboundSourcePages()` | `[]` | a page has no `database_only_reason` |
 | `listOverwriteCandidates()` | `[]` | page versions carry no link to the request that wrote them |
@@ -76,3 +77,22 @@ Reads in `src/core/repair/failed-writes.ts` after the first two (by slug, by dig
 refusal read in `src/core/persistence/refusal-breaker.ts` (the admission path), and the per-binding reads in
 `src/core/persistence/sync-movement.ts` still go through `executeRaw`; on a Rust brain they refuse with the typed
 capability error. They are listed in `TODOS.md`.
+
+## Binding reads (`crates/gbrain-store/src/persistence/binding_reads.rs`)
+
+These read the worktree, host binding and source binding rows the writer claim keeps (`persistence/worktrees.rs`).
+
+| JS | Resolves |
+| --- | --- |
+| `listOrphanBindingRows(limit \| null)` | source bindings whose source is gone (`source_removed`) or carries another incarnation (`incarnation_replaced`), by source id bytewise, at most `limit` when given; `pending_requests` counts that source and incarnation's queued, deferred, running and recovering requests |
+| `listWorktreeIds()` | every worktree id (no order in the SQL; the store answers in key order) |
+| `listOwnerBindings(hostId)` | worktrees a host other than `hostId` owns, not `recovering`, that have a host binding for their owner: the owner's `local_path`, `created_at` as Postgres timestamptz text, and the source ids bytewise (null when none), oldest first |
+
+## Served from the effect rows
+
+| JS | Reads |
+| --- | --- |
+| `brain.readStaleEmbeddingCounts(sourceIds \| null)` | `{ count, failed, requeued }` over the embedding effects of committed requests with no recovery and no claim that failed (with a code other than `targets_parked` or `embedding_zero_norm`), or are queued over an hour or re-queued by a repair; `sourceIds` narrows by the request's source |
+| `brain.listStaleEmbeddingEffects(sourceIds \| null)` | the first 10 of them by effect id: `{ effect_id, source_id, slug, request_id, state, updated_at }`, `updated_at` as `timestamptz::text` |
+
+Both live in `rust/crates/gbrain-store/src/persistence/embedding_candidates.rs` next to `listEmbeddingCandidates`, which applies the same stale rule with the repair's source scope.

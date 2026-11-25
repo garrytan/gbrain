@@ -292,13 +292,17 @@ const entity: Operation = {
           `Pass either name: "Alice Example" for one full card, or names: ["Alice Example", "WGCO"] (up to ${ENTITY_NAMES_MAX}) for compact rows.`);
       }
       const t0 = Date.now();
-      const out = await lookupEntityNames(ctx.engine, walk.home, names, { remote: ctx.remote !== false, sources: walk.sources, surfaceCeiling: ctx.surfaceCeiling, variants: p.variants !== false,
+      const { degraded, ...out } = await lookupEntityNames(ctx.engine, walk.home, names, { remote: ctx.remote !== false, sources: walk.sources, surfaceCeiling: ctx.surfaceCeiling, variants: p.variants !== false,
         emitNotice: n => ctx.emitNotice?.(n) });
+      // A failed lookup read is marked degraded (the shape search uses), never left as a clean found:false row.
+      if (degraded?.length) ctx.emitResponseMeta?.('retrieval', { degraded });
       ambientMiss(out.results.map(r => ({ name: r.name, ...(r.found ? { foundIn: r.source_id } : {}) })));
       return { protocol_version: 1, latency_ms: Date.now() - t0, ...out };
     }
     const name = typeof p.name === 'string' ? p.name.trim() : '';
     if (!name) {
+      const slug = typeof p.slug === 'string' ? p.slug.trim() : '';
+      if (slug) throw verbError('invalid_params', 'entity takes name, not slug.', `Pass the slug as name: entity {name: ${JSON.stringify(slug)}}.`);
       throw verbError(
         'invalid_params',
         'name must be a non-empty string.',
@@ -312,6 +316,9 @@ const entity: Operation = {
       omitQuarantined: ctx.remote !== false, // #5575: like get_page, a remote reader never gets a quarantined page's card
       emitNotice: n => ctx.emitNotice?.(n),
     });
+    // A failed lookup read rides _meta.retrieval.degraded: the call is marked `[gbrain degraded: entity_lookup_failed]`
+    // (MCP `_meta.degraded`, CLI `degraded` key or stderr line), and the body stays the unchanged found:false shape.
+    if (result.degraded?.length) ctx.emitResponseMeta?.('retrieval', { degraded: result.degraded });
     const coverage = result.card?.coverage ?? result.coverage;
     if (coverage) {
       const { mentionCoverageNotice } = await import('./mentions/coverage.ts');

@@ -17,10 +17,8 @@
  *  - Regression: each step ran raw SQL, so on Rust the phase failed on its housekeeping and no chronicle event was ever
  *    extracted.
  *  - Why existing coverage misses it: test/chronicle-*.test.ts run on PGLite and Postgres only.
- *  - Rust: case 3's event publication still runs the generations ledger through `executeRaw` (row L7-2), so on the
- *    Rust arm the phase judges the page through the reservation and then records the row `failed` (`publish_error`);
- *    `atGenerationsStop` pins that the first refusal is `raw_sql` at `orphanedDepthKeys`
- *    (generations/adapters/chronicle-events.ts). Delete the pin when generation-writes is on this branch.
+ *  - Rust: all three cases run to the end on the Rust arm and compare equal: the generations ledger and the derivation
+ *    edges of an event publication are typed members there (generation-writes and derivation-inputs-rust-recut).
  *  - Seam: an injected judge (no provider call). Real engines otherwise.
  */
 import { randomUUID } from 'node:crypto';
@@ -84,55 +82,10 @@ describe('engine parity: the chronicle executor', () => {
     return out;
   });
 
-/**
- * The named stop of case 3 on the Rust arm: the generations publication is typed there now (generation-writes, on
- * rust-engine/main), and the event publication's derivation edges (facts/derivation-inputs.ts, the
- * `recordDerivationEdges` member) are the first refusal, until rust-engine/derivation-inputs-rust-recut (lane 7, trunk
- * batch 11) reaches main. Delete the pin with that merge (chronicle step 6) and expect case 3 equal on Rust.
- */
-const RUST_GENERATIONS_STOP = { capability: 'facts', member: 'recordDerivationEdges', frame: 'src/core/facts/derivation-inputs.ts',
-  owner: 'lane 7, rust-engine/derivation-inputs-rust-recut (batch 11)', due: '5 PM PST Nov 28' };
-
-/**
- * On the Rust arm, run `fn` and require its first capability refusal to be the pinned one: `recordDerivationEdges`
- * refused for `facts` from the pinned frame, inside a transaction of the publication (the phase catches it and retries
- * the row later, so the run itself returns). The refusal is rethrown so the harness counts the case as stopped. Any
- * other first refusal, or none, fails the case. Other arms run `fn` as is.
- */
-async function atGenerationsStop<T>(engine: BrainEngine, backend: string, fn: () => Promise<T>): Promise<T> {
-  if (backend !== 'rust') return fn();
-  let first: { code?: unknown; stack?: unknown; message?: unknown } | undefined;
-  const note = (error: unknown) => { if ((error as { code?: unknown })?.code === 'engine_capability_missing') first ??= error as never; };
-  const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
-  const originals = { executeRaw: target.executeRaw, transaction: target.transaction, recordDerivationEdges: target.recordDerivationEdges };
-  const watch = (obj: Record<string, (...args: unknown[]) => Promise<unknown>>, name: string, self: unknown) => {
-    const original = obj[name];
-    if (typeof original !== 'function') return;
-    obj[name] = async (...args: unknown[]) => { try { return await original.apply(self, args); } catch (error) { note(error); throw error; } };
-  };
-  watch(target, 'executeRaw', engine);
-  watch(target, 'recordDerivationEdges', engine);
-  target.transaction = (...args: unknown[]) => originals.transaction.call(engine, (tx: unknown) => (args[0] as (tx: unknown) => Promise<unknown>)(new Proxy(tx as object, {
-    get(obj, prop) {
-      const value = Reflect.get(obj, prop, obj);
-      if ((prop === 'recordDerivationEdges' || prop === 'executeRaw') && typeof value === 'function') {
-        return async (...args: unknown[]) => { try { return await value.apply(obj, args); } catch (error) { note(error); throw error; } };
-      }
-      return typeof value === 'function' ? value.bind(obj) : value;
-    },
-  })));
-  try { await fn(); } catch (error) { note(error); first ??= error as never; } finally { Object.assign(target, originals); }
-  const frame = String(first?.stack ?? '').split('\n').find(line => line.includes(RUST_GENERATIONS_STOP.frame));
-  if (first?.code !== 'engine_capability_missing' || !String(first?.message ?? '').includes(RUST_GENERATIONS_STOP.member) || !frame) {
-    throw new Error(`case 3 no longer stops at its pin (${JSON.stringify(RUST_GENERATIONS_STOP)}): first refusal ${String(first?.code)} ${String(first?.message ?? '').slice(0, 160)}`);
-  }
-  throw first;
-}
-
   parityTest('a phase run extracts a meeting through the daily reservation', {
     methods: ['putPage', 'getPage', 'setConfig', 'readChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot'],
     timeout: 120_000,
-  }, async (engine, backend) => atGenerationsStop(engine, backend, async () => {
+  }, async (engine) => {
     try {
       await engine.setConfig('chronicle.auto_settle_seconds', '0');
       await engine.setConfig('chronicle.activated_at', new Date(Date.now() - 60_000).toISOString());
@@ -150,15 +103,9 @@ async function atGenerationsStop<T>(engine: BrainEngine, backend: string, fn: ()
         reserved: await engine.countRecentChronicleReservations(),
         timeline: (await engine.getTimelineForDate(today, {})).map((t) => t.summary),
       };
-      if (backend === 'rust') {
-        // The judge ran through the reservation; the event publication then stopped, so the row retries later.
-        expect({ calls, reserved: out.reserved, row: out.row?.state, reasons: (r.details as Record<string, unknown>).reasons })
-          .toEqual({ calls: 1, reserved: 1, row: 'failed', reasons: { publish_error: 1 } });
-        return out;
-      }
       expect(out).toEqual({ calls: 1, status: 'ok', details: { extracted: 1, events_written: 1 }, row: { state: 'extracted', events: 1, hashes: 1 },
         reserved: 1, timeline: ['Alice agreed to ship the beta'] });
       return out;
     } finally { await disposePersistenceConsumer(engine); }
-  }));
+  });
 });

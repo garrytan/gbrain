@@ -1297,7 +1297,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     }
     if (result.timeline_refused) setCliExitVerdict(1);
   } catch (e) {
-    if ((await import('../core/rust-engine/errors.ts')).isCapabilityMissing(e)) (await import('../cli/cli-error.ts')).exitCliError(e, 'extract', { json: jsonMode }); // keeps its code under --json
+    if ((await import('../core/engine-capability-refusal.ts')).isEngineCapabilityRefusal(e)) (await import('../cli/cli-error.ts')).exitCliError(e, 'extract', { json: jsonMode }); // keeps its code under --json
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);
   }

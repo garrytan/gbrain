@@ -9,24 +9,31 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+mod access_key_split;
 pub mod access_member_links;
 pub mod access_members;
 pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
 mod cascade;
+pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
 pub mod config;
 pub mod env;
 pub mod error;
+#[cfg(test)]
+mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
 pub mod format;
+pub mod git_gap_census;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
+pub mod keyspaces;
 pub mod kv;
+pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
 mod owner_only;
@@ -38,10 +45,13 @@ mod page_withdrawals;
 pub mod pages;
 pub mod read_shared;
 pub mod redb_kv;
+pub mod retrieval_feedback;
 pub mod search;
+pub mod seed;
 pub mod shared_skill_catalog;
 pub mod shared_skill_members;
 pub mod shared_skill_publication;
+pub mod slug_spellings;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -49,16 +59,21 @@ pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
+pub mod access_read_log;
 pub mod alias_fanout_reads;
 pub mod aliases;
+pub mod budget_ledger;
 pub mod chat_usage;
 pub mod chronicle_ledger;
 pub mod chronicle_state;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+#[cfg(test)]
+mod derivation_walks;
 pub mod dream;
 pub mod dream_config;
+pub mod dream_reads;
 pub mod drift_conflicts;
 pub mod edge_proposals;
 pub mod embedding_catalog;
@@ -67,23 +82,30 @@ pub mod embeddings;
 pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
+pub mod federation_exposure;
 pub mod field_usage;
 pub mod generations;
+pub mod handover_reads;
 pub mod identity_auto;
 pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
+pub mod label_door;
 pub mod large_page;
 pub mod link_queries;
+pub mod list_reads;
+pub mod meeting_pages;
 pub mod memory_mutation_reads;
 pub mod mention_state;
 pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
+pub mod page_mutation_reads;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
@@ -97,13 +119,17 @@ pub mod repair_failed_writes;
 pub mod repair_fence_scans;
 pub mod repair_plan_scans;
 pub mod repair_scans;
+pub mod repair_secret_spans;
+pub mod repair_twin_merge;
 pub mod repair_versions;
 pub mod salience;
 pub mod schema_detect;
+pub mod secret_store;
 pub mod session_state;
 pub mod source_cr_mode;
 pub mod stats;
 pub mod synopsis_tier;
+pub mod tail_reads;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;
@@ -111,6 +137,7 @@ pub mod transactions;
 pub mod trust;
 pub mod vectors;
 mod version_prune;
+pub mod volunteer_events;
 pub mod wanted_links;
 pub mod write_attribution;
 pub mod write_guards;
@@ -246,7 +273,47 @@ pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Re
 }
 
 pub(crate) fn put_json<T: Serialize>(tx: &mut dyn KvWrite, key: &[u8], value: &T) -> Result<()> {
-    tx.put(key, &serde_json::to_vec(value)?)
+    let bytes = serde_json::to_vec(value)?;
+    // `get_json` and every other reader decode with serde_json's nesting limit, so a record nested
+    // deeper than that would be stored and then read back only as `store_corrupt`. Refuse it here,
+    // before anything is written, as the caller's own input.
+    if json_depth(&bytes) > READABLE_JSON_DEPTH {
+        return Err(StoreError::invalid(format!(
+            "a value nested more than {READABLE_JSON_DEPTH} levels deep (with the record around it) cannot be stored"
+        )));
+    }
+    tx.put(key, &bytes)
+}
+
+/// The deepest nesting serde_json reads back with its default recursion limit (128 frames: a record
+/// 128 levels deep fails with "recursion limit exceeded").
+const READABLE_JSON_DEPTH: usize = 127;
+
+/// The deepest array or object nesting of serialized JSON, ignoring brackets inside strings.
+fn json_depth(bytes: &[u8]) -> usize {
+    let (mut depth, mut max, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for &b in bytes {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
 }
 
 impl Store {
@@ -366,6 +433,8 @@ impl Store {
                 }
             }
         };
+        // Sweep records kept before their source index existed get it.
+        page_body::purge_record::backfill_source_index(&*kv)?;
         let index = keyword::open_index(&*kv)?;
         let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
@@ -531,11 +600,37 @@ impl Store {
     /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
     /// for each run: a put of a page record that names readers sets the member-access flag in the
     /// same write (`access_flag::FlaggingWriter`).
-    pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+    pub(crate) fn write<T>(&self, f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        self.write_under(None, f)
+    }
+
+    /// [`Store::write`] under the trust context `trust` instead of the handle's write settings. The
+    /// shadow seed (`seed.rs`) copies rows with the tiers another engine stored for them.
+    pub(crate) fn write_as<T>(
+        &self,
+        trust: crate::trust::WriteTrust,
+        f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        self.write_under(Some(trust), f)
+    }
+
+    /// The body of [`Store::write`] and [`Store::write_as`]: `trust` is the context to stamp under,
+    /// or `None` for the handle's write settings.
+    fn write_under<T>(
+        &self,
+        trust: Option<crate::trust::WriteTrust>,
+        mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        let stamp_trust = || -> Result<crate::trust::WriteTrust> {
+            match &trust {
+                Some(trust) => Ok(trust.clone()),
+                None => self.write_trust(),
+            }
+        };
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+            let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
             return tx.statement(|w| write_chain(w, &mut f));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
@@ -548,7 +643,7 @@ impl Store {
             };
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
-                let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+                let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
@@ -619,8 +714,11 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
-/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
+/// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
+/// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
+/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -644,10 +742,74 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
     // column default, so the step rewrites nothing; the number keeps an older build from rewriting
     // a take without its tier.
+    // Format 6: the records the v0.60.766.0 addon's shadow seed wrote at format 5 in other shapes
+    // are carried over to this build's, or the brain is refused with the re-seed steps.
+    if stored.format_version <= 5 {
+        let from = stored.format_version;
+        seed::carry_over_format_5(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: carrying over its records failed"),
+                format!(
+                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over"
+                ),
+            )
+        })?;
+    }
+    // Format 7: the loop mutes leave the take purge ledger's `F 0x10` prefix for `F 0x11`, or the
+    // brain is refused naming the record that is neither.
+    if stored.format_version <= 6 {
+        let from = stored.format_version;
+        facts::key_split::split_take_purges_from_loop_mutes(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its take purges from its loop mutes failed"),
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes"
+                ),
+            )
+        })?;
+    }
+    // Format 8: the shared-skill token secret leaves the member links' `x 0x04` prefix for `x 0x0d`,
+    // or the brain is refused naming the record that is neither.
+    if stored.format_version <= 7 {
+        let from = stored.format_version;
+        access_key_split::split_token_secret_from_member_links(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its token secret from its member links failed"),
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret"
+                ),
+            )
+        })?;
+    }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
+}
+
+/// What the open reports when a format carry-over step fails. A record the step cannot convert is
+/// `shadow_reseed_required`, naming the record and the re-seed steps. A file system or storage
+/// engine failure (`StoreError::is_storage_failure`) keeps its own code and says nothing about
+/// re-seeding, because it is not about the records and a re-seed would not fix it. Either way the
+/// transaction is dropped and nothing changed.
+fn carry_over_failure(e: StoreError, failed: String, refused: String) -> StoreError {
+    if e.is_storage_failure() {
+        return StoreError::new(
+            e.code,
+            format!("{failed}: {}; nothing was changed", e.message),
+        );
+    }
+    StoreError::new(
+        error::SHADOW_RESEED_REQUIRED,
+        format!(
+            "{refused}: {}; nothing was changed. Re-seed the shadow store: {}",
+            e.message,
+            seed::RESEED_STEPS
+        ),
+    )
 }
 
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
@@ -1014,5 +1176,18 @@ mod older_build_tests {
             FORMAT_VERSIONS,
             (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
         );
+    }
+}
+
+#[cfg(test)]
+mod json_depth_tests {
+    use super::json_depth;
+
+    #[test]
+    fn brackets_inside_strings_and_escaped_quotes_do_not_count() {
+        assert_eq!(json_depth(br#"1"#), 0);
+        assert_eq!(json_depth(br#"{"a":[1,{"b":[]}]}"#), 4);
+        assert_eq!(json_depth(br#"{"a":"[[[{{{","b":"\"[["}"#), 1);
+        assert_eq!(json_depth(br#"["\\",[[]]]"#), 3);
     }
 }

@@ -271,6 +271,8 @@ impl Store {
             crate::persistence::remove_source_binding_in(tx, id, &record.incarnation)?;
             crate::trust::write_gate::remove_source_holds(tx, id)?;
             crate::eval_capture::remove_source_retrieved_slugs(tx, id)?;
+            crate::retrieval_feedback::remove_source_rows(tx, id)?;
+            crate::volunteer_events::remove_source_rows(tx, id)?;
             tx.delete(&source_key(id))?;
             Ok(true)
         })

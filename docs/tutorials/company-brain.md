@@ -10,7 +10,7 @@ tutorial are a different workflow, not follow-up steps for that import.
 
 This tutorial picks up where the [personal brain tutorial](personal-brain.md) leaves off. You already have a working agent (OpenClaw on Render, talking to you on Telegram, with GBrain as memory and Supabase storing embeddings). Now you want your whole team to use it as shared institutional memory, with each person seeing only what they're allowed to see.
 
-**Time:** about 90 more minutes on top of the personal-brain install.
+**Time:** about 90 more minutes of hands-on work on top of the personal-brain install. The commands themselves run in seconds; the time goes to the steps you and each teammate take.
 **Cost:** under $100 a month sustained for a 25-person company.
 
 > **Want a team brain without operating one?** [gbrain.io](https://gbrain.io/?ref=company-brain) is hosted GBrain built for exactly this: one brain the whole team prompts together, accounts connected once with a permission level for each AI, and pricing per workspace rather than per person. Keep reading to deploy and run it yourself.
@@ -126,6 +126,7 @@ readable_by: [alice-example, group:team-a]
 gbrain access member add alice-example --groups team-a
 gbrain access member add bob-example
 gbrain auth rescope --token alice-laptop --member alice-example
+gbrain auth create bob-laptop --member bob-example   # a new key bound to bob-example
 gbrain access check --token alice-laptop          # what this credential can read, axis by axis
 gbrain access who-can-read notes/renewal-notes    # the members and groups a page admits
 ```
@@ -135,6 +136,27 @@ A credential bound with `--member` whose write source is `default` (a token with
 A remote caller whose credential is bound to a listed member (directly or through a group) reads the page on every read path; every other remote caller, including an unbound token, an unbound stdio server, a bot with `--private-pages granted-sources` and an operator escape hatch (`GBRAIN_REMOTE_PRIVATE_PAGES=1`, `search.remote_private_pages=visible`), gets the same `not_found` as for a page that does not exist. `readable_by` only narrows: a `visibility: private` page stays private to a listed member unless the member's credential also has `--private-pages granted-sources`. What every designation means for each kind of caller is in [access designations](../guides/access-designations.md). A malformed `readable_by` reads as nobody. A page derived from a restricted page (an extracted atom, a synthesized concept, a chronicle event) is readable by no remote caller. The local CLI is unchanged; `--as <member>` previews one member's view. Pages that already carried `readable_by` before you upgraded read as nobody until `gbrain repair access` (preview, then `--apply`) derives their readers. This works the same on a repo-less brain: members, groups and bindings live in the database. `readable_by` limits who reads a page, not which providers process it: the brain's embedding provider still embeds restricted pages, so pick a provider whose data handling fits your most sensitive page ([where text goes](../guides/memory-boundaries.md#where-text-goes)).
 
 On a brain with two or more enabled members, Model C is required, not optional: a remote read from a token or OAuth client bound to no member is refused with [`requester_scope_required`](../guides/write-refusals.md#requester_scope_required) (connections that already existed get 14 days of notices first), and `gbrain auth create` refuses an unbound token. Bind each teammate's credential with `--member`; a bot serving a channel names its audience per call (`--may-act-for`); `--reads-unscoped --yes` opts one credential out on purpose.
+
+A key made with `gbrain auth create <name> --member <id>` and no `--scopes` can read and write, nothing more: admin tools such as `get_stats` answer `insufficient_scope`, so a key you hand one person can't see brain-wide counts. Pass `--scopes read,write,admin` when a key really needs admin. An explicit `--scopes` always wins, and keys that already exist keep the scopes they have.
+
+**Let setup do the labelling in one run.** On the brain host, `gbrain setup` can set up Model C for a list of people and wire your own Claude Code (or Codex) at the same time. Decide one thing first. If the brain served only you until now, it may hold your own pages that no rule or `readable_by` restricts (your journal, DMs, chat, mail, the conversation archive), and every member key would read them. So setup asks you to choose, with one of two flags:
+
+- `--labelled-only` keeps that history private: each member reads only pages labelled for them (by `readable_by` or a rule), never yours.
+- `--open-history` lets every member read it.
+
+Without either flag, setup stops with `setup_history_choice_required`, says how many pages are at stake, and writes nothing (a `--dry-run` stops the same way). A new brain, a brain with no such pages and a brain that already serves several people are not asked. Then preview the run with `--dry-run`, which writes nothing, and run it for real:
+
+```bash
+gbrain setup claude-code --serves several --members alice-example,bob-example --owner you-example --labelled-only --dry-run
+gbrain setup claude-code --serves several --members alice-example,bob-example --owner you-example --labelled-only
+```
+
+For each person it adds a member, a folder rule `people/<member>/` only that member reads, and one key bound to that member, saved to `~/.gbrain/member-keys/<member>.key` (mode 0600). At the end it prints a receipt: what it did, with the path of each key file but never the key itself. Two more things happen:
+
+- **It names an owner.** The owner is the one member whose keys read every page, private ones included: normally you. `--owner` takes any lowercase id you pick for yourself (here `you-example`; by default, your login name). When the brain has no owner, setup adds that member if it is missing and makes it the owner, as `gbrain access owner set` would. An owner that is already set is kept. Setup never rebinds a key you already have: the receipt lists each live token or OAuth client bound to no member, with the `gbrain auth rescope --token|--client <name> --member <owner>` command that binds it. Run those for your own keys.
+- **Member keys read the company pages.** Each key setup makes writes to one source (`--source`, else `default`) and reads a fixed list: that source, the `company` source when the brain has one (`gbrain setup claude-code --shape company` adds it), and every source federated when the key is made. So members read the company pages and imported calls without you federating `company`, which stays out of default search. A source you federate later reaches these keys only when you run setup again. On a brain with the `company` source, `--labelled-only` also adds one folder rule, `company/` in source `company`, readable by the owner and the members, so they still read the company pages and calls.
+
+`gbrain access serves several --members alice-example,bob-example` does the same labelling without wiring a harness (preview, then `--yes`). It takes `--labelled-only` and `--owner <id>` too; on a brain with the `company` source and no owner, `--labelled-only` refuses and writes nothing until you pass `--owner`. Every rule, refusal and re-run case: [a brain that serves several people](../guides/setup.md#a-brain-that-serves-several-people).
 
 **Calls are kept to the people on them.** On a brain with two or more enabled members, `gbrain import --calls` writes each new call with `readable_by` set to the brain owner plus the teammates its header names (an `Attendees:` or `Participants:` line near the top, or an `attendees:` key in its frontmatter). A name counts only on an exact match: an email matches the member who declared it, otherwise the member id, otherwise a display name exactly one enabled member holds. Anything else is listed in the import output for that call and never guessed, so a teammate who wasn't named doesn't read the call. A call with no list is kept to the owner. Name the owner first (`gbrain access owner set <member>`) and bind every connection to a member. If some connection that could be the owner's own would lose the call, the import keeps the call open, as before, and prints [`calls_not_scoped`](../guides/repair.md#calls-not-scoped) with the one command that fixes it. `--readers source` imports open on purpose.
 
@@ -555,7 +577,7 @@ The thin-client install creates a local config that knows how to talk to your br
 
 **2. Their AI client, connected directly to `https://brain.acme-co.com/mcp`.** Each client has its own connection shape; the per-client pages in [`docs/mcp/`](../mcp/) are the reference:
 
-- **Claude Code / Codex** — the scoped path is `gbrain agent register <name> --harness claude-code|codex --url https://brain.acme-co.com/mcp` run on the brain host (the Part 5 multi-agent subsection): it mints a source-scoped OAuth client plus a 30-day token and prints the exact paste block for the harness. The `gbrain connect https://brain.acme-co.com/mcp --token <token> --install` lane (see [CLAUDE_CODE.md](../mcp/CLAUDE_CODE.md) / [CODEX.md](../mcp/CODEX.md)) also works but uses **bearer tokens** (`gbrain auth create <name>`), which are full-access unless minted with `--scopes` — fine for you as the admin, wrong for source-scoped teammates.
+- **Claude Code / Codex** — the scoped path is `gbrain agent register <name> --harness claude-code|codex --url https://brain.acme-co.com/mcp` run on the brain host (the Part 5 multi-agent subsection): it mints a source-scoped OAuth client plus a 30-day token and prints the exact paste block for the harness. The `gbrain connect https://brain.acme-co.com/mcp --token <token> --install` lane (see [CLAUDE_CODE.md](../mcp/CLAUDE_CODE.md) / [CODEX.md](../mcp/CODEX.md)) also works with **bearer tokens** (`gbrain auth create <name>`). A token made with `--member <id>` (required on a brain that serves several people, unless you opt out with `--reads-unscoped --yes`) can read and write only; a token made without `--member` has full access, admin included, unless minted with `--scopes`. That is fine for you as the admin and wrong for teammates. The member keys `gbrain setup --serves several` saved under `~/.gbrain/member-keys/` are bearer tokens of the first kind.
 - **Claude Desktop** — remote servers are added through the GUI: **Settings > Integrations**, URL `https://brain.acme-co.com/mcp`. Do **not** put a remote server in `claude_desktop_config.json`; that file only works for local stdio servers and fails silently for remote ones. See [CLAUDE_DESKTOP.md](../mcp/CLAUDE_DESKTOP.md).
 - **ChatGPT** ([CHATGPT.md](../mcp/CHATGPT.md)) and **Perplexity** ([PERPLEXITY.md](../mcp/PERPLEXITY.md)) — both speak OAuth to the server directly, so per-teammate scoping carries into those tools. Perplexity uses the same `client_credentials` clients you registered in Part 5. ChatGPT needs an `authorization_code` (PKCE) client — register one per teammate with the same `--source` / `--federated-read` flags.
 - **OpenClaw / Hermes forks** — if the teammate's own agent runs on a machine with a full local gbrain install, it can use local stdio (`gbrain serve`) against its own brain and reach yours over HTTP MCP like any other remote client.
@@ -628,6 +650,18 @@ Returns a per-source dashboard: when each source last synced, how many pages, ho
 
 The admin dashboard at `https://brain.acme-co.com/admin` shows live request volume, registered OAuth clients, recent activity, and brain stats. Use the admin bootstrap token from Part 4 to log in the first time, then register additional admin users from inside the dashboard.
 
+`gbrain doctor` also warns when access stops reaching people. Each warning gives a count and a few ids, never page content, and a read-only command to look closer. It changes nothing.
+
+```bash
+gbrain doctor --only access_shared_source_unread,access_pages_read_by_nobody,access_disabled_member_credentials
+```
+
+- `access_shared_source_unread`: a source bound to no member holds pages that no enabled member's live key reads, through federation or a source the key lists. Your teammates get nothing from it. Federate it (`gbrain sources federate <id>`) or add it to the keys that should read it ([fixes](../guides/troubleshooting.md#access-reach)).
+- `access_pages_read_by_nobody`: pages no enabled member reads, such as pages a leaver kept to themselves.
+- `access_disabled_member_credentials`: live tokens or OAuth clients still bound to a member you disabled or removed. Every read they make is refused, yet `gbrain auth list` still shows them as active.
+
+`access_shared_source_unread` and `access_disabled_member_credentials` read every member's keys, so they run only on the brain host: a remote `run_doctor` that names either one is refused with the `gbrain doctor --only <check>` command to run there.
+
 ### When someone leaves
 
 Switch their member off, then give the pages they kept to themselves to the owner (preview first; nothing is written without `--yes --expect`):
@@ -637,7 +671,7 @@ gbrain access member disable bob-example
 gbrain access member handover bob-example
 ```
 
-Pages they shared with teammates stay as they are, and `--set kept=alice-example` gives their pages to a teammate instead. `gbrain doctor` lists any page no enabled member reads (`access_pages_read_by_nobody`). Details, undo and every choice: [When someone leaves](../guides/member-handover.md).
+Pages they shared with teammates stay as they are, and `--set kept=alice-example` gives their pages to a teammate instead. `gbrain doctor` lists any page no enabled member reads (`access_pages_read_by_nobody`), and any key of theirs that is still live (`access_disabled_member_credentials`): those keys can't read anything, but revoke them anyway with `gbrain auth revoke <name>` or `gbrain auth revoke-client <client_id>` (`gbrain access check --token <name>` shows whom a key is bound to). If they come back, `gbrain access member enable bob-example` turns their keys back on; pages the handover moved stay where it put them until you undo it (`gbrain access member handover bob-example --undo <handover id>`). A member removed with `gbrain access member rm` can't come back: the id is never reused. Details, undo and every choice: [When someone leaves](../guides/member-handover.md).
 
 ### If agents run as containers on the same Docker host
 
@@ -681,6 +715,12 @@ gbrain auth rescope --client <client_id> --read-shared on   # an OAuth client
 Writes stay in the key's own source. Shared means `default` plus every federated source; a guest source is never included, nor another member's own source unless the key is the brain owner's, and private pages and private facts stay closed in every source the key reaches only through the switch. A source you federate later is read on the next request with no re-grant (`gbrain sources federate` names the keys that now read it). `gbrain access check --token bot-alice-example` lists what the key reads now, and `--read-shared off` takes it back to its listed sources.
 
 Otherwise, check `gbrain auth list` on the host and confirm their client has `--source` set to a source that actually exists. Empty or null `--source` means the client falls through to the `default` source, which probably has no content if you set up three named sources. Under Model C, run `gbrain access check --token <their token>` to see what the credential reads, axis by axis, and `gbrain access who-can-read <slug>` for a page they expect: a credential bound to no member, or to one missing from the page's `readable_by` or a folder rule covering it, gets `not_found`.
+
+### "Search says keyword-only. Is it broken?"
+
+Not if you turned embeddings off on purpose. A brain made with `gbrain init --no-embedding` (what `gbrain setup` creates when there is no brain and you don't pass `--providers`) searches by keywords by design. Its search, query, find_experts and recall results don't carry the `[gbrain degraded: …]` stamp or a `degraded_recall` notice. An empty result says the search was keyword-only and that no page the caller can read holds those words within that search's filters, so an agent can honestly answer "no notes on that" for those words in that scope (a synonym or a display name may still match).
+
+A brain with no embedding provider that wasn't turned off on purpose, a brain set up for embeddings but missing its key, an embedding call that timed out and a search arm that failed are still marked degraded, and there an empty result is not proof the notes aren't there. To add semantic search to a keyless brain, run `gbrain embeddings enable --embedding-model <provider:model>` on the host.
 
 ### "Sync is slow and feels stuck"
 

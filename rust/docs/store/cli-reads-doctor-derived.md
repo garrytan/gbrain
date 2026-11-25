@@ -13,17 +13,19 @@ A doctor-derived member answers one of two ways on the Rust engine:
 1. Served from the store's records (the table below).
 2. Empty, with no store call, because the store keeps no writer for a relation the statement reads. No Rust brain ever holds a
    row there, so the empty answer is the one PGLite gives a brain that never wrote one. The relations: `belief_events`,
-   `page_embedding_budget`, `page_extraction_state`, `derived_generations`, `derived_generation_items`,
-   `derived_generation_activations`, `extract_rollup_7d`. Members: `listRecordedTombstones`, `listBudgetLimitedRows`,
-   `readBudgetHoldAge`, `listAmbiguousExtractionInputs`, `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
+   `page_extraction_state`, `derived_generations`, `derived_generation_items`,
+   `derived_generation_activations`, `extract_rollup_7d`. Members: `listRecordedTombstones`,
+   `listAmbiguousExtractionInputs`, `countLedgerCoveredAtomRetirements`, `listLiveGenerationRetirements`,
    `listHeldGenerations`, `listPendingGenerationMembers`, `listOrphanGenerationCandidates`, `readExtractRollup7d`,
-   `listRecordedHaltReasons7d`. If a Rust writer for one of these relations lands, its member must move to the first kind in the
+   `readExtractKindRollup7d` (the one all-null aggregate row), `listRecordedHaltReasons7d`. If a Rust writer for one of these relations lands, its member must move to the first kind in the
    same change.
 
 No member is refused any more: the nine that were (wave 1) are served now, and the table lists them.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
+| `brain.listBudgetLimitedRows(sourceId, signature)` | `{ source_id, state, reason, pages, chunks, chars }` per source, state and reason (`awaiting_approval` for none) of the holds not `open` on live pages without `embed_skip` that are over the inline limit (a segmented page's `body_bytes`, else the inline text's bytes) or held for an archive or call import, counting the live body's chunks with no vector (an inline page's chunk never embedded, or every chunk when the page carries another signature); groups with no waiting chunk are left out; by byte order of source, state and reason. The TypeScript side checks the column name as the SQL engines do | `listBudgetLimitedRows` |
+| `brain.readBudgetHoldAge()` | `{ stale, oldest }` over the same holds (chunks or not): how many were updated more than a day ago, and the oldest update time as ISO text or null | `readBudgetHoldAge` |
 | `brain.countSafeIndexPending(sourceIds?)` | `{ rebuildable, kept }` of live pages in unarchived sources chunked below the safe-chunk fence | `countSafeIndexPending` |
 | `brain.countPagesByTypeAndOwner(sourceIds?)` | `{ src, type, own, n }` per source, type and writer ownership, `n` as text | `countPagesByTypeAndOwner` |
 | `brain.listImageAssetFiles()` | the first 1000 `image/*` file rows by file id, with source root and page source path | `listImageAssetFiles` |

@@ -1,7 +1,6 @@
 ---
 name: maintain
 version: 1.1.0
-upstream: maintain@fc834ee
 description: |
   Brain health checks: back-link enforcement, citation audit, filing validation,
   stale info detection, orphan pages, and benchmarks. Use when asked to check
@@ -489,6 +488,8 @@ your operational heartbeat.
 Run `gbrain doctor --alert --json`. Exit 0: report nothing. Exit 17: report each
 `alert.items` entry with its fix. Exit 18: report only when
 `alert.consecutive_unknown` is 2 or more. Never alert on `health_score`.
+
+When the session-start context carries the nightly-learning line, offer the user the `learned` note; keep or undo items only on their answer (`learned_keep`, `learned_undo`).
 
 ### Weekly maintenance
 

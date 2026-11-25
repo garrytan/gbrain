@@ -88,6 +88,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_sources_unclaimed',
   // #7656: index-existing trust releases confirmed before their preview showed the fence row's fields (doctor/checks/trust-release-unpreviewed.ts).
   'trust_release_unpreviewed_fields',
+  // Held writes the v333 upgrade could not tie to one page (doctor/checks/write-gate-hold-ambiguous.ts).
+  'write_gate_hold_ambiguous',
+  // Held writes whose page was renamed or removed (doctor/checks/write-gate-holds-stranded.ts).
+  'write_gate_holds_stranded',
   'credential_projection_pending',
   'derived_visibility',
   'privacy_label_ignored',
@@ -120,6 +124,9 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_labelled_only_members',
   // GBRA-582 item 9: pages no enabled member reads (doctor/checks/access-pages-read-by-nobody.ts).
   'access_pages_read_by_nobody',
+  // GBRA-585: shared sources no member key reads, live keys of disabled members (doctor/checks/access-reach.ts).
+  'access_shared_source_unread',
+  'access_disabled_member_credentials',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).
@@ -309,6 +316,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'slug_path_mismatch',
   // #6729: inexact renames whose identity sync did not keep, until the pair gets a disposition (doctor/checks/rename-identity-downgrades.ts).
   'rename_identity_downgrades',
+  // Pages stored under an older spelling of their name, until `gbrain repair slug-spelling` moves them (doctor/checks/legacy-slug-spellings.ts).
+  'legacy_slug_spellings',
   // #6609: live pages of a classic checkout whose recorded file a full sync would not find (doctor/checks/missing-recorded-files.ts).
   'missing_recorded_files',
   // #7130: soft-deleted pages a managed sync removed although Git never held their file (doctor/checks/uncommitted-sync-deletions.ts).
@@ -462,6 +471,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'pglite_data_dir',
   // #6573: a local IPC socket path over the platform's AF_UNIX budget (doctor/checks/local-ipc.ts).
   'ipc_socket_path',
+  // Rust engine shadow mode's addon loads (doctor/checks/rust-engine-addon.ts); not_applicable unless shadow mode is on.
+  'rust_engine_addon',
   // db-availability loop: engine-fit + repair-recurrence signals.
   'pglite_scale',
   'db_repair_recurrence',

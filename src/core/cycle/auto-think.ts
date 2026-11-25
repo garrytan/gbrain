@@ -19,6 +19,7 @@ import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.
 import { resolveModel } from '../model-config.ts';
 import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } from './budget-meter.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 
 /**
  * Local phase-result type for auto-think/drift. These phases are not yet
@@ -190,9 +191,16 @@ export async function runPhaseAutoThink(
       const warnings = [...result.warnings];
       let slug: string | undefined;
       if (config.autoCommit) {
-        const persisted = await persistSynthesis(engine, result, opts.sourceId ? { sourceId: opts.sourceId } : {});
-        slug = persisted.slug || undefined;  // '' = persist-skip signal (#1698)
-        warnings.push(...persisted.warnings);
+        // GST-3612: a managed save accepted but still publishing is progress (#6052): it publishes under its request id,
+        // so the question counts as synthesized and the paid synthesis is not run again next cycle.
+        const persisted = await persistSynthesis(engine, result, opts.sourceId ? { sourceId: opts.sourceId } : {}).catch(e => {
+          const receipt = acceptedPendingReceipt(e);
+          if (!receipt) throw e;
+          warnings.push(`SAVE_PENDING: ${receipt.request_id}`);
+          return null;
+        });
+        slug = persisted?.slug || undefined;  // '' = persist-skip signal (#1698)
+        warnings.push(...persisted?.warnings ?? []);
       }
       results.push({
         question: q,

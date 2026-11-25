@@ -3,22 +3,23 @@
 //! fence-repair and entity-card paths ran through `executeRaw`.
 //!
 //! Members: listActiveFactsForEntity, listFreshExtractionOutcomes, listFenceRowGroups, readFactSubject,
-//! readFactForForget, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
+//! listFactProvenance, factsOrAliasesMayMatch, readFactForForget, listFactsForPage, countLegacyFactsPending, countUnconsolidatedFactsBySource, findBulkFactDays, maxFenceRowNum,
 //! listStoredFenceFactRows, countWorldFacts.
 //!
 //! Each member reads the rows its statement reads, through the indexes `facts.rs` keeps, and returns the columns the
 //! statement selects. A statement with no `ORDER BY` returns its rows in key order here (the TypeScript callers do
 //! not depend on an order). Each fact row keeps its stamped `trust_tier`, and the write gate keeps its receipts
-//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`). The facts store
-//! keeps no `needs_rederive` state (`takes.rs` reads it as empty) and no `page_readers` column (`privacy.rs`): a page
-//! names readers here only through a `readable_by` key, and sits under a folder through the store's folder rules. rust/docs/store/facts.md, "Group 5", lists what each member answers.
+//! (`trust/write_gate.rs`), so `countWorldFacts` applies the read eligibility (`trust::TrustPolicy`) and hides a row a
+//! purge marked in `needs_rederive` (`generations/needs_rederive.rs`). The facts store keeps no `page_readers` column
+//! (`privacy.rs`): a page names readers here only through a `readable_by` key, and sits under a folder through the store's folder rules. rust/docs/store/facts.md, "Group 5", lists what each member answers.
 
 use super::repair::folder_restricted;
 use super::{
-    FactRecord, PrivacyPolicy, ROW, bigint, count_arg, fact_by_number, hidden_by_deleted_page,
-    hidden_by_policy, hidden_by_quarantine, page_rows, real,
+    FactRecord, PrivacyPolicy, ROW, any_entity_slug, bigint, count_arg, fact_by_number,
+    hidden_by_deleted_page, hidden_by_policy, hidden_by_quarantine, page_rows, real,
 };
 use crate::Store;
+use crate::alias_fanout_reads::alias_row_exists;
 use crate::env::iso;
 use crate::error::Result;
 use crate::kv::{KvRead, scan_prefix};
@@ -95,6 +96,25 @@ pub struct PageFileOriginQuery {
     pub source_id: String,
     pub slug: String,
     pub include_deleted: bool,
+}
+
+/// `factsOrAliasesMayMatch` arguments: a source, slug tokens and normalised aliases.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MayMatchQuery {
+    pub source_id: String,
+    pub slug_tokens: Vec<String>,
+    pub alias_norms: Vec<String>,
+}
+
+/// `entity_slug ~ '(^|/)token(-|$)'`: `token` starts the slug or follows a `/`, and ends it or is followed by a `-`.
+/// A token is slugify output, so it holds no regex metacharacter.
+fn slug_segment_match(slug: &str, token: &str) -> bool {
+    slug.match_indices(token).any(|(i, _)| {
+        let before = i == 0 || slug.as_bytes()[i - 1] == b'/';
+        let after = slug.as_bytes().get(i + token.len());
+        before && after.is_none_or(|b| *b == b'-')
+    })
 }
 
 /// `readFenceRowOccupant` arguments: a page coordinate and a row number.
@@ -305,6 +325,29 @@ impl Store {
                 json!({ "source_id": r.source_id, "slug": slug })
             }),
         )
+    }
+
+    /// `factsOrAliasesMayMatch` (src/commands/recall.ts `splitMayMatch`): whether a fact of the source is keyed under a
+    /// slug a token matches (`slug_segment_match`), or a page alias row of the source is a listed alias.
+    pub fn facts_or_aliases_may_match(&self, q: &MayMatchQuery) -> Result<bool> {
+        let texts = q.slug_tokens.iter().chain(&q.alias_norms);
+        let mut items = vec![("sourceId", q.source_id.as_str())];
+        items.extend(texts.map(|t| ("token", t.as_str())));
+        no_nul("factsOrAliasesMayMatch", &items)?;
+        let read = self.read()?;
+        if !q.slug_tokens.is_empty()
+            && any_entity_slug(&*read, &q.source_id, &|slug| {
+                q.slug_tokens.iter().any(|t| slug_segment_match(slug, t))
+            })?
+        {
+            return Ok(true);
+        }
+        for alias in &q.alias_norms {
+            if alias_row_exists(&*read, &q.source_id, alias)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// `readFactForForget` (src/core/facts/forget.ts): `{ id, source_id, entity_slug, row_num, source_markdown_slug,
@@ -601,6 +644,7 @@ impl Store {
                     && !hidden_by_policy(&*read, &row, &q.exclude_private)?
                     && !hidden_by_deleted_page(&*read, &row)?
                     && !hidden_by_quarantine(&*read, &row)?
+                    && !super::hidden_by_rederive(&*read, &row)?
                     && trust.admits(&*read, "facts", row.id, row.tier())?
                 {
                     count += 1;
@@ -608,5 +652,24 @@ impl Store {
             }
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug_segment_match;
+
+    #[test]
+    fn a_token_matches_a_slug_segment_start_as_the_regex_does() {
+        // `(^|/)token(-|$)`, as recall's split pre-check reads entity_slug.
+        assert!(slug_segment_match("companies/acme-example", "acme-example"));
+        assert!(slug_segment_match("companies/acme-example", "acme"));
+        assert!(slug_segment_match("acme-example", "acme"));
+        assert!(slug_segment_match("companies/acme", "acme"));
+        assert!(!slug_segment_match("companies/acme-example", "example"));
+        assert!(!slug_segment_match("companies/acme-example", "acme-ex"));
+        assert!(!slug_segment_match("companies/acmes", "acme"));
+        // A later occurrence counts when the first does not.
+        assert!(slug_segment_match("x-acme/acme-y", "acme"));
     }
 }

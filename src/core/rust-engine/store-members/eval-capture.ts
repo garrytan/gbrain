@@ -1,11 +1,11 @@
 /**
- * Eval capture members (BrainEngine logEvalCandidate, listEvalCandidates, deleteEvalCandidatesBefore,
- * logEvalCaptureFailure, listEvalCaptureFailures). The store keeps the `eval_candidates` and `eval_capture_failures`
+ * Eval capture members (BrainEngine logEvalCandidate, listEvalCandidates, listEvalCandidateQueries,
+ * deleteEvalCandidatesBefore, logEvalCaptureFailure, listEvalCaptureFailures). The store keeps the `eval_candidates` and `eval_capture_failures`
  * rows (rust/docs/store/eval_capture.md); timestamps cross the binding as ISO strings and come back as `Date`s.
  */
 import type { EvalCandidate, EvalCandidateInput, EvalCaptureFailure, EvalCaptureFailureReason } from '../../types.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 /** A `Date` argument as the ISO string the store reads; anything else is passed on for the store to judge. */
 function isoArg(value: unknown): unknown {
@@ -27,6 +27,12 @@ export const listEvalCandidates: StoreMember<[filter?: { since?: Date; limit?: n
     const rows: EvalCandidate[] = await storeCall({ member: 'listEvalCandidates' }, () => brain.listEvalCandidates(scope));
     return rows.map((row) => withDates(row, ['created_at', 'as_of_ts']));
   };
+
+/** Postgres binds `LIMIT $1` as a bigint; a limit that is not an integer is refused rather than guessed at. */
+export const listEvalCandidateQueries: StoreMember<[limit: number], string[]> = (brain, limit) => {
+  if (!Number.isSafeInteger(limit)) refuseMember('listEvalCandidateQueries', 'a limit that is not an integer');
+  return storeCall({ member: 'listEvalCandidateQueries' }, () => brain.listEvalCandidateQueries(limit));
+};
 
 export const deleteEvalCandidatesBefore: StoreMember<[date: Date], number> = (brain, date) =>
   storeCall({ member: 'deleteEvalCandidatesBefore' }, () => brain.deleteEvalCandidatesBefore(isoArg(date)));

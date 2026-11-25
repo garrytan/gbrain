@@ -53,11 +53,17 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 mod event_rows;
+mod redaction;
 mod repair_reads;
 mod site_reads;
+mod twin_move;
 pub use event_rows::{
     EventProjectionIdSpec, EventProjectionRestoreSpec, EventProjectionRowsSpec,
     EventProjectionSlugsSpec,
+};
+pub(crate) use redaction::{
+    dedup_rows as redaction_dedup_rows, page_and_event_entries,
+    rewrite_column as rewrite_timeline_column,
 };
 pub use repair_reads::{
     ConnectorFenceInput, TimelineHistoryInput, TimelineMarkupInput, TimelinePageScanInput,
@@ -66,6 +72,7 @@ pub use repair_reads::{
 pub use site_reads::{
     DeleteTimelineRowsInput, SegmentedTimelineInput, TimelineOrphanInput, TimelineRowDeletion,
 };
+pub(crate) use twin_move::{move_twin_timeline, twin_timeline_reference};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 /// Second byte of an event index key.
@@ -136,6 +143,7 @@ pub(crate) fn remove_event_projections(tx: &mut dyn KvWrite, event_page_id: u64)
     for (key, value) in rows {
         let date = String::from_utf8_lossy(&key[prefix.len()..]).into_owned();
         if let Some(entry) = indexed_entry(&*tx, &value, event_page_id, &date)? {
+            crate::timeline::mark_entry_before_delete(tx, &entry)?;
             tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
             let dedup = entry.dedup_key();
             if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {

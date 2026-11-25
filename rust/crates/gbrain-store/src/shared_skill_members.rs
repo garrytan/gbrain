@@ -2,8 +2,10 @@
 //! `shared_skill_delivery_batches` tables of the PGLite engine, as join_brain, sync_brain_skills
 //! and leave_brain use them (engine-sql/shared-skill-members.ts).
 //!
-//! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`; access_members.rs holds 0x01-0x03):
-//! - `x 0x04` -> `StateRecord` (JSON): the catalog token secret.
+//! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`; access_members.rs holds 0x01-0x03,
+//! access_member_links.rs 0x04):
+//! - `x 0x0d` -> `StateRecord` (JSON): the catalog token secret. Store formats 7 and older kept it
+//!   at `x 0x04`, beside the member links; `access_key_split.rs` moves it when such a brain opens.
 //! - `x 0x05 <installation id>` -> `MemberRecord` (JSON).
 //! - `x 0x06 <installation id> 0x00 <token>` -> `BatchRecord` (JSON). A member's batches are the
 //!   prefix `x 0x06 <installation id> 0x00`; ids are lowercase UUID text, so they hold no NUL.
@@ -31,7 +33,10 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const STATE: u8 = 0x04;
+/// The token secret's sub-tag. Store formats 7 and older kept it at `x 0x04`, the member links'
+/// sub-tag (`access_member_links.rs`); format 8 moved it (`access_key_split.rs`). `0x0d` is the
+/// first byte no other kind under `x` uses (rust/docs/store/access-members.md lists them).
+pub(crate) const STATE: u8 = 0x0d;
 const MEMBER: u8 = 0x05;
 const BATCH: u8 = 0x06;
 
@@ -39,7 +44,7 @@ const HOUR_US: i64 = 3_600_000_000;
 const DAY_US: i64 = 24 * HOUR_US;
 const MINUTE_US: i64 = 60_000_000;
 
-fn state_key() -> Vec<u8> {
+pub(crate) fn state_key() -> Vec<u8> {
     vec![keys::ACCESS_MEMBERS, STATE]
 }
 
@@ -336,6 +341,67 @@ impl Store {
             }
         };
         Ok(found.as_ref().map(member_json).unwrap_or(Value::Null))
+    }
+
+    /// `listSharedMemberMigrationRows(sourceId)`: the members whose follow policy's `sources` names `sourceId` (an
+    /// object key, or a string element of an array, as jsonb `?` tests), by byte order of adapter and then by
+    /// installation id, at most 4096: each with its epoch, active flag, the approved incarnation
+    /// (`follow_policy->'sources'->>sourceId`), its views, and the `stage` of the evidence of its acknowledged batch at
+    /// its epoch and acknowledged sequence (null when that batch is absent or unacknowledged).
+    pub fn list_shared_member_migration_rows(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut members: Vec<MemberRecord> = all_members(&*read)?
+            .into_iter()
+            .filter(|m| match m.follow_policy.get("sources") {
+                Some(Value::Object(map)) => map.contains_key(source_id),
+                Some(Value::Array(items)) => items.iter().any(|v| v.as_str() == Some(source_id)),
+                Some(Value::String(s)) => s == source_id,
+                _ => false,
+            })
+            .collect();
+        members.sort_by(|a, b| {
+            a.adapter
+                .as_bytes()
+                .cmp(b.adapter.as_bytes())
+                .then_with(|| a.installation_id.cmp(&b.installation_id))
+        });
+        members.truncate(4096);
+        let mut rows = Vec::with_capacity(members.len());
+        for m in &members {
+            let approved = m
+                .follow_policy
+                .get("sources")
+                .and_then(|s| s.as_object())
+                .and_then(|map| map.get(source_id))
+                .and_then(crate::cli_reads::entities::arrow_text);
+            let mut stage: Option<String> = None;
+            scan_prefix(
+                &*read,
+                &batches_prefix(&m.installation_id),
+                false,
+                &mut |_, v| {
+                    if let Ok(b) = serde_json::from_slice::<BatchRecord>(v)
+                        && b.epoch == m.epoch
+                        && b.sequence == m.acknowledged_sequence
+                        && b.acknowledged_at_us.is_some()
+                    {
+                        stage = b
+                            .evidence
+                            .as_ref()
+                            .and_then(|e| e.get("stage"))
+                            .and_then(crate::cli_reads::entities::arrow_text);
+                        return false;
+                    }
+                    true
+                },
+            )?;
+            rows.push(json!({
+                "installation_id": m.installation_id, "adapter": m.adapter, "epoch": m.epoch, "active": m.active,
+                "approved_incarnation": approved, "desired_view": m.desired_view,
+                "acknowledged_view": m.acknowledged_view, "stage": stage,
+            }));
+        }
+        Ok(Value::Array(rows))
     }
 
     /// `countSharedSkillMembers()`: every member, active or not.

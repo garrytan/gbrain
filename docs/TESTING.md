@@ -600,7 +600,7 @@ above, and each E2E file keeps a PGLite arm in the unit lane.
 ### Rust parity arm (opt-in)
 
 Every `test/engine-parity/` file can add a Rust engine to its arms, next to PGLite and (with `DATABASE_URL`) Postgres.
-Nothing selects the Rust engine outside the test, and without the flag the suite runs as before.
+Without the flag the suite runs as before, on PGLite and (with `DATABASE_URL`) Postgres.
 
 ```bash
 bun run rust:build                                              # writes the addon under rust/target/addon
@@ -612,12 +612,24 @@ GBRAIN_TEST_RUST_ARM=1 bun test test/engine-parity/search.test.ts   # one file; 
   `GBRAIN_RUST_ENGINE_ADDON` from a test run, so that name does nothing here).
 - A case that reaches a member or an option the Rust engine refuses must end on the typed `engine_capability_missing`
   refusal. Every other case must return what PGLite returns.
+- A known Rust stop takes one of two forms; there is no third. A capability refusal uses the in-test pin: the case
+  catches the error, asserts that its code is `engine_capability_missing` on the Rust arm, and rethrows it. Any other
+  refusal code uses `rustStop: { code, pin }`: the Rust run must throw an Error with that code whose message carries
+  the pin (why, the owner, how to unpin), after it calls every member in `methods`. It counts as stopped. With a pin,
+  that stop is the only Rust outcome accepted: a case that returns, or ends on a capability refusal, fails until the
+  pin is removed.
 - A case that differs on purpose gets a row in `test/rust-expected-divergence/<family>.tsv` (parity file, case name,
   normaliser from `DIVERGENCE_NORMALIZERS` in `test/engine-parity/rust-arm.ts`, reason). Rust must still return a value, both
   answers must be equal after the normaliser, and when the case starts to match PGLite the run fails until the row is
   removed. A thrown error never passes. `search.tsv` is empty today.
 - Rules: `test/engine-parity/rust-arm.ts` header; what the engine serves and refuses: `docs/ENGINES.md` ("What a Rust
   brain serves now").
+- CLI parity: `test/rust-cli-parity.serial.test.ts` runs each read command through the real CLI on a PGLite brain and on
+  a brain whose config says `engine: 'rust'`, both filled from `test/fixtures/rust-cli-parity-brain/`. A command ends
+  `equal`, `refused` with the typed `engine_capability_missing`, or `diverged` (another answer or an untyped error),
+  and only `diverged` fails. It needs the addon from `bun run rust:build` and skips without it;
+  `GBRAIN_TEST_REQUIRE_RUST_ADDON=1` makes a missing addon an error, which the Rust engine workflow sets for this test
+  and `test/rust-cli-source-target.test.ts`.
 
 ### Native writer locks
 

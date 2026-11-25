@@ -8,6 +8,7 @@
  * onto the build already installed (doctor's `runtime_build_skew` fix);
  * `--dry-run` prints the plan and changes nothing.
  */
+import { isEngineCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
@@ -54,9 +55,12 @@ function processHome(pid: number): string | null | undefined {
   }
 }
 
-/** #9483: the systemd unit a process runs in, from its cgroup; null when none does or it cannot be read (only Linux exposes it). */
+/**
+ * #9483: the systemd unit a process runs in, from its cgroup; null when none does or it cannot be read (only Linux exposes it).
+ * Tests only: GBRAIN_TEST_UPGRADE_CGROUP stands in for every process's cgroup file, so a test never reads the units of the host it runs on.
+ */
 function processUnit(pid: number): ServiceUnit | null {
-  try { return unitFromCgroup(readFileSync(`/proc/${pid}/cgroup`, 'utf8')); } catch { return null; }
+  try { return unitFromCgroup(process.env.GBRAIN_TEST_UPGRADE_CGROUP ?? readFileSync(`/proc/${pid}/cgroup`, 'utf8')); } catch { return null; }
 }
 
 /** #9483: a serve's unit counts only when the unit's main process is the serve or its parent, not a unit it merely started under (a terminal, a CI runner). */
@@ -499,8 +503,9 @@ export async function restartServeAfterSelfUpgrade(isIdle: () => Promise<boolean
     if (!('detail' in result)) return;
     logSelfUpgrade({ channel: 'autopilot', action: 'restart_serve', current: VERSION, outcome: result.outcome === 'restarted' ? 'applied' : 'skipped', reason: result.outcome });
     console.log(`[autopilot] serve ${result.outcome === 'restarted' ? `restarted onto v${VERSION}` : `still on another build (${result.outcome})`}: ${result.detail}`);
-  } catch {
-    /* the serve restart must never break the autopilot tick */
+  } catch (e) {
+    // Never breaks the tick, but a brain whose engine cannot say whether it is idle is not "nothing to restart".
+    if (isEngineCapabilityRefusal(e)) console.error(`[autopilot] serve restart skipped this tick: ${(e as Error).message}`);
   }
 }
 

@@ -919,14 +919,74 @@ describe('engine parity: minion queue', () => {
       // S1 is touched last, so it sorts after S2 and S3 despite being created first.
       await engine.pauseJob(s1);
       await engine.resumeJob(s1);
+      // The hours=0 cut-off is now(): PGLite's clock ticks in milliseconds, so a read in the resume's millisecond saw
+      // S1's updated_at equal to now() and left it out, while Postgres and Rust (microseconds) kept it. Let the clock
+      // move past the resume, so every arm reads S1 as older than the cut-off.
+      await Bun.sleep(20);
       const r$ = (ids: number[]) => ids.map(id => id - s1);
-      return {
+      const out = {
         all: r$(await engine.listStaleWaitingJobIds('stale', -1, 10)), limited: r$(await engine.listStaleWaitingJobIds('stale', -1, 2)),
         now: r$(await engine.listStaleWaitingJobIds('stale', 0, 10)), fresh: await engine.listStaleWaitingJobIds('stale', 24, 10),
         other: r$(await engine.listStaleWaitingJobIds('other', -1, 10)), nobody: await engine.listStaleWaitingJobIds('nobody', -1, 10), zero: await engine.listStaleWaitingJobIds('stale', -1, 0),
         counts: [await engine.countTtlExpiredWaiting('stale', -1), await engine.countTtlExpiredWaiting('stale', 0), await engine.countTtlExpiredWaiting('stale', 24), await engine.countTtlExpiredWaiting('other', -1), await engine.countTtlExpiredWaiting('nobody', -1)],
         ids: r$([s2, s3, other, running]),
       };
+      const [d2, d3] = out.ids;
+      expect({ now: out.now, countNow: out.counts[1] }).toEqual({ now: [d2, d3, 0], countNow: 3 });
+      return out;
+    });
+
+  parityTest('the hours=0 stale read and count include a waiting job resumed just before them, round after round',
+    { methods: ['admitJob', 'pauseJob', 'resumeJob', 'listStaleWaitingJobIds', 'countTtlExpiredWaiting'], timeout: 120_000 }, async (engine) => {
+      // Ten resume-then-read rounds: before the clock moved past the resume, PGLite left the resumed job out of about
+      // half of them, so this failed on PGLite on almost every run.
+      const rounds: Array<{ listed: boolean; counted: number }> = [];
+      for (let i = 0; i < 10; i++) {
+        const name = `tie-${i}`;
+        await add(engine, name);
+        const resumed = await add(engine, name);
+        await engine.pauseJob(resumed);
+        await engine.resumeJob(resumed);
+        await Bun.sleep(20);
+        rounds.push({ listed: (await engine.listStaleWaitingJobIds(name, 0, 10)).includes(resumed), counted: await engine.countTtlExpiredWaiting(name, 0) });
+      }
+      expect(rounds).toEqual(Array(10).fill({ listed: true, counted: 2 }));
+      return rounds;
+    });
+
+  parityTest('listUnfinishedJobsByName lists every unfinished job of the names by id, whatever its status, and no finished one',
+    { methods: ['admitJob', 'claimNextJob', 'completeJob', 'failJob', 'pauseJob', 'cancelJobs', 'listUnfinishedJobsByName'] }, async (engine) => {
+      const waiting = await add(engine, 'm-waiting');
+      const running = await active(engine, 'm-active', 'w1:a');
+      const delayed = await add(engine, 'm-delayed', { status: 'delayed', delay_until: FAR });
+      const paused = await add(engine, 'm-paused');
+      await engine.pauseJob(paused);
+      // A parent waiting on children is inserted directly; the insert type lists only the two statuses a submission makes.
+      const children = await add(engine, 'm-children', { status: 'waiting-children' as unknown as 'waiting' });
+      const done = await finished(engine, 'm-done', 'completed');
+      const failed = await finished(engine, 'm-failed', 'failed');
+      const dead = await finished(engine, 'm-dead', 'dead');
+      const cancelled = await add(engine, 'm-cancelled');
+      await engine.cancelJobs([cancelled]);
+      const second = await add(engine, 'm-waiting');
+      const outside = await add(engine, 'm-elsewhere');
+      const names = ['m-waiting', 'm-active', 'm-delayed', 'm-paused', 'm-children', 'm-done', 'm-failed', 'm-dead', 'm-cancelled'];
+      const view = (rows: Array<{ id: number; name: string; status: string }>) => rows.map(r => ({ id: r.id - waiting, name: r.name, status: r.status }));
+      return {
+        all: view(await engine.listUnfinishedJobsByName(names)),
+        some: view(await engine.listUnfinishedJobsByName(['m-paused', 'm-done', 'm-waiting'])),
+        finishedOnly: await engine.listUnfinishedJobsByName(['m-done', 'm-failed', 'm-dead', 'm-cancelled']),
+        nobody: await engine.listUnfinishedJobsByName(['nobody']), none: await engine.listUnfinishedJobsByName([]),
+        ids: [waiting, running, delayed, paused, children, done, failed, dead, cancelled, second, outside].map(id => id - waiting),
+      };
+    });
+
+  parityTest('listUnfinishedJobsByName reads every matching job in one go: 1,001 waiting jobs of one name come back whole, by id',
+    { methods: ['admitJob', 'listUnfinishedJobsByName'], timeout: 180_000 }, async (engine) => {
+      const first = await add(engine, 'm-many');
+      for (let i = 1; i < 1001; i++) await admit(engine, { insert: values('m-many') });
+      const rows = await engine.listUnfinishedJobsByName(['m-many']);
+      return { count: rows.length, ordered: rows.every((r, i) => i === 0 || rows[i - 1]!.id < r.id), first: rows[0]!.id - first, last: rows[1000]!.id - first, statuses: [...new Set(rows.map(r => r.status))] };
     });
 
   parityTest('readJobStats counts by status, name, drain and queue depth, the stalled leases and one queue\'s wedge signature',

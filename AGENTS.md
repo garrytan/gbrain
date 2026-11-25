@@ -14,7 +14,7 @@ start here.
 >
 > **Creating a new personal agent, explicitly requested by the user:** follow [BOOTSTRAP_FOR_AGENTS.md](BOOTSTRAP_FOR_AGENTS.md), then return here for the operating protocol.
 
-## Install (5 min)
+## Install (a few minutes)
 
 <!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 1. Install gbrain via Bun (the canonical path):
@@ -308,7 +308,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  with regressions auto-flagged (a 10% drop, or a 10% rise for a
+  lower-is-better metric such as burn, churn or cost, but not cost_savings), or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
   same data — read scope, visibility-filtered for remote callers.

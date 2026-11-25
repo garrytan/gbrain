@@ -8,7 +8,9 @@
  * transaction, whose single writer is the lock, so the extract_facts commit step (lock, then 'complete' settle) runs whole.
  * `listSingleFactMetadata` is served by facts-trust-reads.ts. `readPurgeSourceLocalPath` and `lockPurgeSource` read the
  * source record, as memory-mutation-reads.ts's `readSourceLocalPath` and `readSourceWriteRow` do.
- * `listDerivedRows` answers no rows: the store keeps no `derivation_inputs`.
+ * `recordDerivationEdges` and `listDerivedRows` (src/core/engine-sql/facts-trust.ts) write and walk one hop of the store's
+ * `derivation_inputs` rows (generations/derivation_inputs.rs, keys `h 0x0A` and `h 0x0B`); the store calls the write
+ * `recordDerivationInputs`. `countLegacyDerivedPages` (purge-plan.ts) reads the same rows (facts/purge_plan.rs).
  * `findActiveSingleFact` serves the remote provenance floor for a caller that does not change it (storeFloorPolicy) and
  * `listSimilarActiveFacts` serves `excludePrivate`; each refuses a caller whose policy the store does not model
  * (private-provenance.ts).
@@ -20,6 +22,7 @@ import { FACTS_FENCE_BEGIN } from '../../facts-fence.ts';
 import { FACTLESS_SETTLE_LIMIT } from '../../engine-sql/facts-purge.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import type { StoreBrain } from '../store.ts';
+import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import { storeFloorPolicy, storePrivacyPolicy } from './private-provenance.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
@@ -142,15 +145,31 @@ export const lockPurgeSource: Member<'lockPurgeSource'> = async (brain, sourceId
 };
 
 /**
- * The store keeps no `derivation_inputs` (its only writer, recordDerivationInputs, goes through `executeRaw`, which this
- * engine refuses), so one hop of the walk reaches no rows (facts/purge.rs list_derived_rows). A limit or id that is not
- * what PGLite binds is refused rather than answered.
+ * Each edge goes to the store as `{ table, id }`; the store keeps it once, as `ON CONFLICT DO NOTHING` does. A source the
+ * store does not hold refuses as the SQL engines' foreign key does (code 23503), and records nothing.
+ */
+export const recordDerivationEdges: Member<'recordDerivationEdges'> = async (brain, derived, sourceId, edges) => {
+  try {
+    await brain.recordDerivationInputs({
+      derived: { table: derived.table, id: derived.id }, sourceId, inputs: edges.map((e) => ({ table: e.table, id: e.id })) });
+  } catch (error) {
+    if (storeErrorCode(error) === 'source_not_found') {
+      throw Object.assign(new Error('insert or update on table "derivation_inputs" violates foreign key constraint "derivation_inputs_source_id_fkey"'),
+        { code: '23503' });
+    }
+    throw mapStoreError(error, { member: 'recordDerivationEdges' });
+  }
+};
+
+/**
+ * One hop of the walk over the store's `derivation_inputs` rows (facts/purge.rs list_derived_rows, the `h 0x0B` index).
+ * A limit or id that is not what PGLite binds is refused rather than answered.
  */
 export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limit) => {
   const member = 'listDerivedRows';
   if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
   for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
-  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map(f => ({ table: f.table, id: f.id })), limit }));
+  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map((f) => ({ table: f.table, id: f.id })), limit }));
 };
 
 /** The ids of a `bigint[]` argument as the store reads them; an id that is not a safe integer is refused, not rounded. */

@@ -14,8 +14,8 @@
  * `worldOnly` visibility, a private-facts grant, refuses).
  * `listLexicalContestCandidates`, the keyless conflict slot's read of a remember, is served from
  * rust/crates/gbrain-store/src/facts/contest.rs. `listFactsFromQuotedPages` and `listOwnerTierFacts`, the quote reads of
- * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs; the store keeps no derivation
- * inputs, so only the holding page and a backstop's named page mark a fact quoted.
+ * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs: the holding page, a backstop's
+ * named page or a recorded input page (`derivation_inputs`) marks a fact quoted.
  *
  * `listRestatedPrivateCopies` is served by facts-trust-reads.ts; `readFactForOwnerAction`, `listStandingPreferences` and
  * `countDerivedFactTaint` by facts-trust-owner.ts. The `entity_ended` arm reads the withdrawal ledger through
@@ -30,10 +30,12 @@ import type { BrainEngine } from '../../engine.ts';
 import { grantedPrivateFactSql } from '../../access/member-facts.ts';
 import { getFtsLanguage } from '../../fts-language.ts';
 import { privateFactFilterForReader } from '../../search/private-visibility.ts';
+import { CORRECTION_CUE } from '../../search/saved-facts-match.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { poolArgs } from './fact-pool.ts';
 import { withDates } from '../store-codec.ts';
+import { assertOwnerTierFloor } from '../../engine-sql/facts-trust.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
@@ -94,8 +96,11 @@ export const listFactsFromQuotedPages: Member<'listFactsFromQuotedPages'> = (bra
   storeCall({ member: 'listFactsFromQuotedPages' }, () => brain.listFactsFromQuotedPages({
     ids: [...new Set(q.ids.map(Number))], pageTypes: [...q.pageTypes], backstop: q.backstop.map(([source, prefix]) => [source, prefix]) }));
 
-export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = (brain, q) =>
-  storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = async (brain, q) => {
+  if (!q.ids.length) return [];
+  assertOwnerTierFloor(q.floor);
+  return storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+};
 
 export const readEntityNewestFacts: Member<'readEntityNewestFacts'> = async (brain, q) => {
   const member = 'readEntityNewestFacts';

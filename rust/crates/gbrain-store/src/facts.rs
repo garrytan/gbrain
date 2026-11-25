@@ -5,7 +5,8 @@
 //! countUnconsolidatedFacts, findCandidateDuplicates, consolidateFact, findTrajectory,
 //! getFactsHealth, migrateFactsToCanonical, the `listUnattributedFacts` review-list read and
 //! the `pageCollapseFacts` search read (`facts/collapse.rs`) and the `moveKeptFactRows` fence
-//! row move (`facts/kept_rows.rs`). Other families read the rows
+//! row move (`facts/kept_rows.rs`), and the conversation publication and relink members
+//! (`facts/conversation.rs`, `facts/conversation_reads.rs`). Other families read the rows
 //! through `fact_exists`
 //! (eval capture) and write them through `write_fact` / `delete_fact` (ontology).
 //!
@@ -29,6 +30,12 @@
 //! - `F 0x0F source visibility subject fact_hash`: the `fact_purges` ledger
 //!   (`facts/purge_ledger.rs`).
 //! - `F 0x10 source subject claim_hash`: the `take_purges` ledger (`facts/take_purges.rs`).
+//! - `F 0x11 source kind value`: the `loop_suppressions` table, the loop mutes
+//!   (`facts/loops/mutes.rs`). Store formats 6 and older kept them at `F 0x10` beside the take
+//!   purges; `facts/key_split.rs` moves them when such a brain opens. `0x0E` is retired (the
+//!   v0.60.766.0 addon's inline generation ledger, `seed/format_5.rs`); never reuse it.
+//!
+//! No two record kinds may share an `F` sub-tag: `tests/key_registry.rs` fails when they do.
 //! - meta `next_facts_id`: the id sequence. An insert that `ON CONFLICT DO NOTHING` skips still
 //!   takes an id, as `nextval` does.
 //!
@@ -44,30 +51,48 @@
 pub mod captured;
 mod collapse;
 pub mod contest;
+pub mod conversation;
+pub mod conversation_reads;
 pub mod cycle;
+pub mod cycle_fence;
 pub mod doctor;
+pub mod doctor_pages;
 mod embedding;
 /// Postgres `md5(text)`, for the timeline retraction check's version digests.
 pub(crate) use embedding::md5_hex;
 pub mod extractor_classify;
 mod fence;
 mod fence_overlay;
+mod fence_projection;
 pub mod forget;
 pub mod generations;
 mod held_cells;
 pub mod held_moves;
 pub mod holding_purges;
 mod kept_rows;
+pub(crate) mod key_split;
 pub mod label_repair;
 pub mod loops;
 pub mod ontology_repair;
+pub mod open_facts_scans;
+pub(crate) mod page_purge_journal;
+pub(crate) mod page_purge_reads;
+pub(crate) mod page_purge_sweep;
 pub mod page_purges;
+pub(crate) use page_purges::{remove_purge, seed_purge};
+pub mod phantom;
 pub(crate) mod privacy;
+pub mod private_label_scans;
 pub mod provenance;
 pub mod purge;
+mod purge_claim_probe;
+pub mod purge_journal;
 pub mod purge_ledger;
 pub mod purge_plan;
 pub(crate) mod purge_probe;
+pub mod purge_receipt;
+pub mod purge_store_probe;
+pub mod purge_tx;
 pub mod purge_writes;
 pub mod quote;
 pub mod quoted;
@@ -77,6 +102,7 @@ pub mod relink;
 pub mod relink_writes;
 pub mod remember_reads;
 pub mod repair;
+pub mod repair_applies;
 pub mod repair_home;
 pub mod repair_previews;
 pub mod rest_sites;
@@ -87,6 +113,8 @@ pub mod text_repair;
 pub mod trust;
 pub mod trust_owner;
 pub mod trust_reads;
+mod unwithdrawn_restore;
+pub mod visibility_scans;
 mod widen;
 pub mod withdrawal_discovery;
 pub mod withdrawal_fence;
@@ -98,16 +126,16 @@ pub use crate::owner_only::OwnerOnlyForm;
 pub(crate) use crate::owner_only::OwnerOnlySources;
 pub(crate) use fence::jsonb_time;
 pub use fence::{FactRestore, FactSourcePrefix, FenceContext, FenceTarget};
-pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput};
+pub use fence_overlay::{FenceOverlayIncomingRow, FenceOverlayInput, FenceRowKey};
 pub use held_cells::{HeldFenceCellKey, HeldFenceCellsInput, HeldFenceMember};
 pub use page_purges::PagePurgeUpsert;
 pub(crate) use page_purges::has_page_purges;
 pub use privacy::PrivacyPolicy;
 use privacy::hidden_by_private_provenance;
 pub(crate) use privacy::{
-    OwnerOnlyCache, access_readers, caller_version_hidden, concept_inputs,
-    hidden_by_provenance_page, page_hidden, page_hidden_with, privacy_allows, stamped_rules,
-    successor_withholds_reason, version_hidden,
+    OwnerOnlyCache, access_readers, caller_version_hidden, chronicle_depth, concept_inputs,
+    declared_slugs, hidden_by_provenance_page, names_no_readers_or_rules, page_hidden,
+    page_hidden_with, privacy_allows, stamped_rules, successor_withholds_reason, version_hidden,
 };
 pub use widen::VisibilityWidening;
 use widen::{visibility_admits, world_admits};
@@ -120,7 +148,7 @@ use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::keyword::{
     or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd, with_query_stack,
 };
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{next_id, read_page};
 use crate::sources::read_source;
@@ -223,6 +251,10 @@ pub(crate) struct FactRecord {
     /// `write_origin`: the provenance JSON of the write that stamped the row (NULL: none).
     #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     pub write_origin: Option<Value>,
+    /// `source_window`: the conversation window a derived row came from (NULL: none). Absent from
+    /// a record that never had one, so older records read and write byte for byte as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_window: Option<Value>,
     /// The write receipt (`write_*`, `last_*`). Absent in a record stored before it, and omitted
     /// while every column is null. [`write_fact`] stamps it.
     #[serde(skip_serializing_if = "WriteReceipt::is_empty")]
@@ -650,6 +682,11 @@ pub(crate) fn stamp_fact(
 /// with the trust context `trust` ([`stamp_fact`], a `BEFORE` row trigger, so a refusal comes
 /// before a unique-index refusal). A unique index another row holds refuses as Postgres does
 /// (`23505`); the caller's write then rolls back.
+///
+/// An insert (`old` is `None`), or an update that changes a column the trigger watches, runs the
+/// withdrawal guard ([`preserve_withdrawal`]) before the purge refusal: an active row a withdrawal
+/// of its claim reaches is saved expired at the earliest such withdrawal, `valid_until` clamped to
+/// it. Every insert writes through here: `insert_fact`, `insert_facts` and the ontology inserts.
 pub(crate) fn write_fact(
     tx: &mut dyn KvWrite,
     trust: &WriteTrust,
@@ -717,6 +754,19 @@ pub(crate) fn delete_fact(
     trust: &WriteTrust,
     row: &FactRecord,
 ) -> Result<()> {
+    // Before it goes: an owner-only fact marks what was derived from it (v322's trigger on `facts`).
+    crate::owner_only_marks::mark_row_before_delete(
+        tx,
+        "facts",
+        row.id,
+        Some(&row.source_id),
+        None,
+    )?;
+    delete_fact_unmarked(tx, trust, row)
+}
+
+/// [`delete_fact`] without the owner-only mark: the row, its index entries and the referrers' `superseded_by`.
+fn delete_fact_unmarked(tx: &mut dyn KvWrite, trust: &WriteTrust, row: &FactRecord) -> Result<()> {
     for (key, _) in index_keys(row) {
         tx.delete(&key)?;
     }
@@ -729,6 +779,31 @@ pub(crate) fn delete_fact(
         }
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the fact `id`. With `clear_referrers`, a delete as
+/// [`delete_fact`] does it; without, only the row and its index entries go, for a fact that is
+/// replaced by a row of the same id (the rows that name it keep `superseded_by`). `false` when no
+/// such fact is stored.
+pub(crate) fn remove_fact(
+    tx: &mut dyn KvWrite,
+    trust: &WriteTrust,
+    id: u64,
+    clear_referrers: bool,
+) -> Result<bool> {
+    let Some(row) = read_fact(&*tx, id)? else {
+        return Ok(false);
+    };
+    if clear_referrers {
+        // The shadow follow copies the primary's marks, so this delete writes none.
+        delete_fact_unmarked(tx, trust, &row)?;
+    } else {
+        for (key, _) in index_keys(&row) {
+            tx.delete(&key)?;
+        }
+        tx.delete(&fact_key(row.id))?;
+    }
+    Ok(true)
 }
 
 /// The trailing 8-byte ids of the keys under `prefix`, in key order.
@@ -769,6 +844,41 @@ pub(crate) fn count_unexpired(read: &dyn KvRead) -> Result<u64> {
 
 pub(crate) fn source_rows(read: &dyn KvRead, source_id: &str) -> Result<Vec<FactRecord>> {
     rows_under(read, &text_key(BY_SOURCE, &[source_id]))
+}
+
+/// Calls `f` with each fact of the source, in index order, until it returns false: the rows are read a page of ids at a time, so
+/// a stop leaves the later ones unread (the purge receipt's bounded probes stop at their cap).
+pub(crate) fn for_each_source_fact(
+    read: &dyn KvRead,
+    source_id: &str,
+    f: &mut dyn FnMut(&FactRecord) -> bool,
+) -> Result<()> {
+    for_each_prefix_paged(read, &text_key(BY_SOURCE, &[source_id]), 8, &mut |k, _| {
+        let id = k.get(k.len().saturating_sub(8)..).and_then(keys::be8);
+        match id.map(|id| read_fact(read, id)).transpose()?.flatten() {
+            Some(row) => Ok(f(&row)),
+            None => Ok(true),
+        }
+    })
+}
+
+/// Whether some fact of the source is keyed under an entity slug `pred` accepts (the `BY_ENTITY` index).
+pub(crate) fn any_entity_slug(
+    read: &dyn KvRead,
+    source_id: &str,
+    pred: &dyn Fn(&str) -> bool,
+) -> Result<bool> {
+    let prefix = text_key(BY_ENTITY, &[source_id]);
+    let mut found = false;
+    scan_prefix(read, &prefix, false, &mut |k, _| {
+        // `prefix entity_slug \0 id`: the id is the last 8 bytes.
+        let entity = k
+            .get(prefix.len()..k.len().saturating_sub(9))
+            .unwrap_or_default();
+        found = pred(&String::from_utf8_lossy(entity));
+        !found
+    })?;
+    Ok(found)
 }
 
 pub(crate) fn entity_rows(
@@ -1151,8 +1261,8 @@ pub struct FactQuery {
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility (`eligibilityClause`, engine-sql/facts.ts):
     /// `projectionEligibleSql('facts')` replaces the deleted-page clause, so a row whose live
-    /// provenance page is quarantined is hidden too. The store keeps no `needs_rederive` queue,
-    /// so that clause hides nothing.
+    /// provenance page is quarantined is hidden too, and so is a row a purge marked in
+    /// `needs_rederive` (`generations/needs_rederive.rs`).
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1172,7 +1282,8 @@ pub struct SupersessionQuery {
     /// `excludePrivate`: the private-provenance policy (`facts/privacy.rs`).
     pub exclude_private: Option<PrivacyPolicy>,
     /// The caller passed a read eligibility: `projectionEligibleSql('facts')` replaces the
-    /// deleted-page clause, so a row whose live provenance page is quarantined is hidden too.
+    /// deleted-page clause, so a row whose live provenance page is quarantined, or a row marked in
+    /// `needs_rederive`, is hidden too.
     pub eligible: bool,
     /// `eligibility.floor`: `trustFloorSql` over the fact's stored tier; null sets none.
     pub min_trust: Option<String>,
@@ -1520,6 +1631,11 @@ pub(crate) fn hidden_by_policy(
     }
 }
 
+/// `rederiveHiddenSql('facts')`: a purge marked the row in `needs_rederive`.
+pub(crate) fn hidden_by_rederive(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    crate::generations::needs_rederive::is_marked(read, "facts", row.id)
+}
+
 /// `quarantinedProjectionHiddenSql('facts')`: the row's live page carries a `quarantine` key.
 pub(crate) fn hidden_by_quarantine(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     let Some(slug) = &row.source_markdown_slug else {
@@ -1574,7 +1690,8 @@ impl FactQuery {
         }
         Ok(!hidden_by_deleted_page(read, row)?
             && !hidden_by_policy(read, row, &self.exclude_private)?
-            && !(self.eligible && hidden_by_quarantine(read, row)?)
+            && !(self.eligible
+                && (hidden_by_quarantine(read, row)? || hidden_by_rederive(read, row)?))
             && trust.admits(read, "facts", row.id, row.tier())?)
     }
 
@@ -1866,8 +1983,8 @@ impl Store {
 
     /// `listSupersessions`: rows with a successor, by `COALESCE(expired_at, valid_until)` (NULL
     /// first) then id, both descending. With a read eligibility it also hides a row whose live
-    /// provenance page is quarantined and applies the trust floor and flag suppression; the store
-    /// keeps no `needs_rederive` queue, so that clause hides nothing.
+    /// provenance page is quarantined or that a purge marked in `needs_rederive`, and applies the
+    /// trust floor and flag suppression.
     pub fn list_supersessions(&self, q: &SupersessionQuery) -> Result<Vec<Value>> {
         const OP: &str = "listSupersessions";
         no_nul(OP, &[("sourceId", &q.source_id)])?;
@@ -1883,7 +2000,8 @@ impl Store {
                 || !visibility_admits(&*read, &q.visibility, &q.widen, &row)?
                 || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 || hidden_by_deleted_page(&*read, &row)?
-                || (q.eligible && hidden_by_quarantine(&*read, &row)?)
+                || (q.eligible
+                    && (hidden_by_quarantine(&*read, &row)? || hidden_by_rederive(&*read, &row)?))
                 || !trust.admits(&*read, "facts", row.id, row.tier())?
             {
                 continue;
@@ -2083,6 +2201,7 @@ impl Store {
                     || until.is_some_and(|u| row.valid_from_us > u)
                     || hidden_by_deleted_page(&*read, &row)?
                     || hidden_by_quarantine(&*read, &row)?
+                    || hidden_by_rederive(&*read, &row)?
                     || hidden_by_policy(&*read, &row, &q.exclude_private)?
                 {
                     continue;
@@ -2544,6 +2663,13 @@ mod tests {
     use super::*;
     use crate::kv::KvRead;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn lower_and_the_space_class_match_pglite_on_every_code_point() {
+        use crate::fingerprint_fixture::{lower_mismatches, space_mismatches};
+        assert_eq!(lower_mismatches(pg_lower_char), Vec::<String>::new());
+        assert_eq!(space_mismatches(pg_space), Vec::<String>::new());
+    }
 
     #[test]
     fn a_day_text_is_utc_midnight_and_an_iso_time_is_kept() {

@@ -102,6 +102,8 @@ size is the segmented body's byte count, or the byte length of `compiled_truth` 
 that hold `content`, and keeps one whose `activationId` is absent or names an activated activation. Rows come in slug
 byte order; the SQL has no `ORDER BY`, and the callers fold the rows into a set.
 
+The chronicle-backfill page batch is in [chronicle-reads.md](chronicle-reads.md).
+
 The Life Chronicle reads (`generations/chronicle_events.rs`, the members of `engine-sql/chronicle-events.ts`) add no
 keys. `readChronicleDepthRow` reads the page record of one slug (`{ id, live }`, or null when no record has the slug);
 `pageSlugExists` is true for a deleted page too. `listRetiredGenerationItemKeys` reads the ledger rows of the source and
@@ -112,7 +114,10 @@ left out). `listOrphanedChronicleOwners` keeps the live rows of the kind whose d
 `depth:`) has no live record and that hold at least one live item page, oldest `updated_at` first, then id, up to the
 limit; a negative limit refuses `INVALID_ARGUMENT` as Postgres refuses `LIMIT -1`. `listChronicleEventSlotRows` reads
 `frontmatter.event` `when`, `where` and `kind` as text (deleted pages included) in slug byte order; the SQL has no
-`ORDER BY`, and the caller folds the rows into a map. The chronicle ledger (`chronicle_page_state`) has no store yet:
+`ORDER BY`, and the caller folds the rows into a map. `listChronicleCoverageGapRows` (the chronicle advisor's
+coverage-gap read, `advisor/collect-chronicle.ts`) lists the live `meeting`, `conversation` and `calendar-event` pages
+of every source updated within 30 days of the store clock that own no timeline row with an event page, with
+`effective_date` as ISO text and `frontmatter->>'date'`/`'start'`, in page record order (the SQL has no `ORDER BY`). The chronicle ledger (`chronicle_page_state`) has no store yet:
 `listChronicleOwnedHashes` answers no hash and `hasChronicleSkipDecision` false, which is what a SQL brain answers for a
 page the ledger holds nothing for. The four projection members are in `timeline_queries.md`.
 
@@ -121,3 +126,13 @@ removes the source's rows of all five tables (`cascade.rs`).
 
 Every write goes through `Store::write`, so it runs on `access_flag::FlaggingWriter`; this family writes no page
 record, so it never sets the member-access flag itself.
+
+## The re-derive queue
+
+`markNeedsRederive` keeps the `needs_rederive` rows under `h 0x0C derived_table \0 derived_id`
+(`crates/gbrain-store/src/generations/needs_rederive.rs`), next to the derivation inputs (`h 0x0A`, `h 0x0B`). A
+purge's `hideDerivedRows` marks each derived row it hides. The reads whose SQL applies `rederiveHiddenSql` hide a
+marked row: the fact reads with a read eligibility, the fact pool, the saved-fact match, `countWorldFacts`,
+`findTrajectory`, `listContestedProposalPairs`, `factReadableUnder`, the take and timeline reads with a read
+eligibility, `listLiveTakesByIds`, and `getVersions` (a marked page shows no version). `pageAwaitsRederive` reads it.
+A source delete removes the source's rows.

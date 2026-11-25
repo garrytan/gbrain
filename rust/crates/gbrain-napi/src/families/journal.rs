@@ -196,13 +196,13 @@ impl Brain {
     /// `readWriteRequestsByRequestId(requestId)`: at most two `persistence_requests` rows with this
     /// request id, from any principal.
     #[napi]
-    pub fn list_write_requests_by_request_id<'env>(
+    pub fn read_write_requests_by_request_id<'env>(
         &self,
         env: &'env Env,
         request_id: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.list_write_requests_by_request_id(&request_id)
+            s.read_write_requests_by_request_id(&request_id)
         })
     }
 
@@ -370,6 +370,29 @@ impl Brain {
         self.run(env, move |s| {
             s.insert_withdrawal_effects(&required(spec, "insertWithdrawalEffects spec")?)
         })
+    }
+
+    /// `insertRemirrorEffects({ requestId, sourceId, data })`: the kinds inserted, in insert order.
+    #[napi]
+    pub fn insert_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.insert_remirror_effects(&required(spec, "insertRemirrorEffects spec")?)
+        })
+    }
+
+    /// `readRemirrorEffects(requestId)`: the request's effect states the segmented-mirror apply waits
+    /// on, in kind order.
+    #[napi]
+    pub fn read_remirror_effects<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_remirror_effects(&request_id))
     }
 
     /// `releaseUnpublishedClaim({ id, token, reason, charge })`: `true` when the claim was released.
@@ -695,6 +718,30 @@ impl Brain {
         })
     }
 
+    /// `readStaleEmbeddingCounts(sourceIds | null)`: `{ count, failed, requeued }` over doctor's stale embedding effects.
+    #[napi]
+    pub fn read_stale_embedding_counts<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_stale_embedding_counts(source_ids.as_deref())
+        })
+    }
+
+    /// `listStaleEmbeddingEffects(sourceIds | null)`: the first 10 of them by effect id.
+    #[napi]
+    pub fn list_stale_embedding_effects<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Vec<String>>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_stale_embedding_effects(source_ids.as_deref())
+        })
+    }
+
     /// `listEmbeddingCandidates(sourceIds, neverRetried)`: the stale queued and failed embedding
     /// effects `gbrain repair embedding-effects` settles, in effect id order.
     #[napi]
@@ -754,6 +801,121 @@ impl Brain {
         code: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.has_rearmable_targets(&request_ids, &code))
+    }
+
+    /// `readHeadBlockerRows({ ids, priority })`: one head-blocker probe row per queued request
+    /// asked about (`src/core/engine-sql/head-blocker.ts`).
+    #[napi]
+    pub fn read_head_blocker_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_head_blocker_rows(&required(spec, "readHeadBlockerRows spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceipt(spec)`: the request id of a receipt that blocks a managed sync
+    /// run's checkpoint, or null (`src/core/engine-sql/checkpoint-validation.ts`).
+    #[napi]
+    pub fn read_incomplete_sync_receipt<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt(&required(spec, "readIncompleteSyncReceipt spec")?)
+        })
+    }
+
+    /// `readOpenPassWork(spec)`: the request id of the work that blocks a pass stamp, or null.
+    #[napi]
+    pub fn read_open_pass_work<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_open_pass_work(&required(spec, "readOpenPassWork spec")?)
+        })
+    }
+
+    /// `readIncompleteSyncReceiptRows(spec)`: up to 20 receipts that block the run's checkpoint.
+    #[napi]
+    pub fn read_incomplete_sync_receipt_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_incomplete_sync_receipt_rows(&required(
+                spec,
+                "readIncompleteSyncReceiptRows spec",
+            )?)
+        })
+    }
+
+    /// `readIdentityDowngradeRows({ op, sourceIds })`: the open identity-downgrade records, oldest
+    /// first, each with the live slugs at its new path (`src/core/engine-sql/sync-status-reads.ts`).
+    #[napi]
+    pub fn read_identity_downgrade_rows<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_downgrade_rows(&required(spec, "readIdentityDowngradeRows spec")?)
+        })
+    }
+
+    /// `readIdentityDowngradeOldPage(sourceId, path, slug)`: the soft-deleted page an identity
+    /// downgrade record names, or null.
+    #[napi]
+    pub fn read_identity_downgrade_old_page<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        path: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_downgrade_old_page(&source_id, &path, &slug)
+        })
+    }
+
+    /// `countIdentityDowngradeCarry(sourceId, slug, pageId)`: the facts, links and aliases an old
+    /// page carries.
+    #[napi]
+    pub fn count_identity_downgrade_carry<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.count_identity_downgrade_carry(&source_id, &slug, page_id.max(0.0) as u64)
+        })
+    }
+
+    /// `readIdentityRemedySide(sourceId, pageId, slug)`: one page of the source by id (when given)
+    /// or slug, deleted or not, or null.
+    #[napi]
+    pub fn read_identity_remedy_side<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: Option<f64>,
+        slug: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_identity_remedy_side(
+                &source_id,
+                page_id.filter(|id| *id >= 1.0).map(|id| id as u64),
+                slug.as_deref(),
+            )
+        })
     }
 
     /// `probeIdleWork(spec)`: whether any worker of this host has work, and where the resident
@@ -1527,6 +1689,19 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.find_topology_changes(&principal_id, &request_ids)
+        })
+    }
+
+    /// `readTopologyChangeDigest(requestId, sourceId)`: the digest text, or `null`.
+    #[napi]
+    pub fn read_topology_change_digest<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_topology_change_digest(&request_id, &source_id)
         })
     }
 }

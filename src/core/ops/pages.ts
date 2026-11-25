@@ -1,3 +1,4 @@
+import { alsoPrefixes } from './slug-params.ts';
 import { funnelPassThrough } from '../funnel.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
 import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, REASON_PARAM, WRITE_WAIT_PARAM } from '../persistence/params.ts';
@@ -186,8 +187,8 @@ const get_page: Operation = {
       // should say WHERE the slug actually lives. Trusted local callers only
       // (`ctx.remote === false`) — for a remote caller the probe would be a
       // cross-source existence oracle outside its grant. Only when the lookup
-      // was actually scoped (an unscoped read already spanned every source).
-      if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
+      // was actually scoped (an unscoped read already spanned every source). GST-3747: never under --as, which answers as the member.
+      if (ctx.remote === false && !ctx.applyRemoteReadPolicy && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
         try {
           // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
           // deliberately spans all sources to name where the slug lives.
@@ -644,7 +645,7 @@ const list_pages: Operation = {
       excludePrivate,
       listColumnsOnly: true,
       where: whereOpParam(ctx, 'list_pages', p.where),
-      ...(typeof p.slug_prefix === 'string' && p.slug_prefix ? { slugPrefix: p.slug_prefix } : {}),
+      ...(typeof p.slug_prefix === 'string' && p.slug_prefix ? { slugPrefix: p.slug_prefix, ...alsoPrefixes('slugPrefixAlso', p.slug_prefix) } : {}),
       ...scope,
     }).catch((e: unknown) => {
       // #6103: an updated_after the database cannot parse is the caller's input, not a server fault.

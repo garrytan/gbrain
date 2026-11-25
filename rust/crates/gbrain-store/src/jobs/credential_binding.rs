@@ -188,6 +188,53 @@ impl Store {
         }
     }
 
+    /// `listCredentialMemberBindings(names)` (the brain-audience heuristic): `[{ name, member_id }]` for every token not
+    /// revoked whose name is one of `names`, then every client not deleted whose client id is one of them. Tokens come
+    /// in key order, then clients in key order (the SQL `UNION ALL` has no set order). An empty list reads nothing.
+    pub fn list_credential_member_bindings(&self, names: &[String]) -> Result<Value> {
+        if names.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
+        let wanted: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for t in all_tokens(&*read)? {
+            if t.revoked_at.is_none() && wanted.contains(t.name.as_str()) {
+                out.push(json!({ "name": t.name, "member_id": t.member_id }));
+            }
+        }
+        for c in all_clients(&*read)? {
+            if c.deleted_at.is_none() && wanted.contains(c.client_id.as_str()) {
+                out.push(json!({ "name": c.client_id, "member_id": c.member_id }));
+            }
+        }
+        Ok(Value::Array(out))
+    }
+
+    /// `readAccessTokenAttest(id)` and `readOauthClientAttest(clientId)`: `{ attest_actor, attest_ops, attest_sources,
+    /// attest_read, member_id }` of the token whose id text is exactly `id` with its `revoked_at`, or of the client with
+    /// this client id with `client_id`, `deleted_at`, `grant_types` and `confidential` (a secret hash is stored); a
+    /// revoked token and a deleted client are read too. None when no row has the id.
+    pub fn read_credential_attest(&self, kind: CredentialKind, id: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        Ok(match kind {
+            CredentialKind::Token => load_token(&*read, id)?.map(|t| {
+                json!({
+                    "revoked_at": t.revoked_at.map(iso), "attest_actor": t.attest_actor, "attest_ops": t.attest_ops,
+                    "attest_sources": t.attest_sources, "attest_read": t.attest_read, "member_id": t.member_id,
+                })
+            }),
+            CredentialKind::Client => load_client(&*read, id)?.map(|c| {
+                json!({
+                    "client_id": c.client_id, "deleted_at": c.deleted_at.map(iso), "attest_actor": c.attest_actor,
+                    "attest_ops": c.attest_ops, "attest_sources": c.attest_sources, "attest_read": c.attest_read,
+                    "member_id": c.member_id, "grant_types": c.grant_types,
+                    "confidential": c.client_secret_hash.is_some(),
+                })
+            }),
+        })
+    }
+
     /// `readAccessCredentials(by)`: `[{ kind, id, name }]`. By token name: the tokens not revoked with exactly that
     /// name, oldest first (a tie by id). By member: the tokens not revoked bound to exactly that member, by name in
     /// byte order (a tie by id), then the clients not deleted bound to it, by client id in byte order.
@@ -241,6 +288,51 @@ impl Store {
                         .into_iter()
                         .map(|c| row("client", c.client_id, c.client_name)),
                 )
+                .collect(),
+        ))
+    }
+
+    /// `listOwnerCredentialRows(memberId)`: `[{ kind, id, name, row }]`, the live credentials bound to `memberId` as
+    /// guests/owner-credentials.ts read them: each token that is not revoked (its row the grant columns and `min_trust`,
+    /// as `jsonb_build_object` builds them) and each client that is not deleted (its row as `to_jsonb(c) -
+    /// 'client_secret_hash'`, its name the client name). Ordered by kind, name and id, each by byte, as `COLLATE "C"`.
+    pub fn list_owner_credential_rows(&self, member_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut rows: Vec<(String, String, String, Value)> = Vec::new();
+        for t in all_tokens(&*read)? {
+            if t.revoked_at.is_some() || t.member_id.as_deref() != Some(member_id) {
+                continue;
+            }
+            let row = json!({
+                "id": t.id, "scopes": t.scopes, "permissions": t.permissions, "private_pages": t.private_pages,
+                "private_facts": t.private_facts, "grant_revision": t.grant_revision,
+                "read_shared_revision": t.read_shared_revision, "source_grant": t.source_grant,
+                "source_id": t.source_id, "federated_read": t.federated_read,
+                "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
+                "min_trust": t.min_trust,
+            });
+            rows.push(("token".into(), t.name.clone(), t.id.clone(), row));
+        }
+        for c in all_clients(&*read)? {
+            if c.deleted_at.is_some() || c.member_id.as_deref() != Some(member_id) {
+                continue;
+            }
+            rows.push((
+                "client".into(),
+                c.client_name.clone(),
+                c.client_id.clone(),
+                c.to_grant_json(),
+            ));
+        }
+        rows.sort_by(|a, b| {
+            a.0.as_bytes()
+                .cmp(b.0.as_bytes())
+                .then_with(|| a.1.as_bytes().cmp(b.1.as_bytes()))
+                .then_with(|| a.2.as_bytes().cmp(b.2.as_bytes()))
+        });
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|(kind, name, id, row)| json!({ "kind": kind, "id": id, "name": name, "row": row }))
                 .collect(),
         ))
     }

@@ -56,6 +56,10 @@ import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
 import { EFFECT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { ruleCoversSql } from '../src/core/access/folder-rules.ts';
 import { exactIdentityStatement } from '../src/core/engine-sql/exact-identity.ts';
+import { tokenGrantJsonSql } from '../src/core/guests/owner-credentials.ts';
+import { foldSql } from '../src/core/page-body/schema.ts';
+import { CLIENT_INSPECTION_COLUMNS } from '../src/core/harness/client-setup.ts';
+import { ownerOnlyPageSql } from '../src/core/access/owner-only.ts';
 
 const memberSql = (member: string) => `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
@@ -72,6 +76,32 @@ interface Pin {
 }
 
 const PINS: Pin[] = [
+  // The refusal-swallow sites (lane 8's triage) whose statements moved verbatim into typed members, at b7b18e5ab3.
+  {
+    from: 'src/commands/extract-explain.ts:169 the kind rollup (at b7b18e5ab3)',
+    case: { method: 'readExtractKindRollup7d', variant: 'default', run: e => e.readExtractKindRollup7d('meeting') },
+    texts: [`SELECT
+         SUM(cost_usd) AS cost_7d_usd,
+         SUM(eval_pass_count)::text AS eval_pass_count,
+         SUM(eval_fail_count)::text AS eval_fail_count,
+         SUM(halt_count)::text AS halt_count,
+         SUM(round_completed_count)::text AS round_completed_count,
+         MAX(updated_at) AS last_updated_at
+       FROM extract_rollup_7d
+       WHERE day >= CURRENT_DATE - 7 AND kind = $1`],
+  },
+  {
+    from: 'src/core/mentions/siblings.ts:110 siblingCanonical (at b7b18e5ab3)',
+    case: { method: 'readSiblingGroupRows', variant: 'default', run: e => e.readSiblingGroupRows('default', ['companies/a', 'companies/b']) },
+    texts: [`SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/mentions/siblings.ts:110 siblingCanonical, excludePrivate (at b7b18e5ab3)',
+    case: { method: 'readSiblingGroupRows', variant: 'excludePrivate', run: e => e.readSiblingGroupRows('default', ['companies/a', 'companies/b'], { excludePrivate: true }) },
+    texts: () => [`SELECT slug, title, type, frontmatter->>'identity' AS identity FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug = ANY($2::text[]) AND ${privatePagesFilterForCaller('pages')}`],
+  },
   // The segmented page projection check and the derive pass's conditional store, then the mention pass, the gazetteer, the extract walk's snapshot, the by-mention rebuild and explain, copied verbatim
   {
     from: 'src/core/persistence/searchable.ts:33 (at 0af1a6ecf0)',
@@ -248,6 +278,14 @@ const PINS: Pin[] = [
     texts: () => { return ['UPDATE page_mention_state SET mention_revision = NULL WHERE page_id = ANY($1::int[])']; },
   },
   {
+    from: 'src/core/mentions/pass.ts (GST-3609, #10161)',
+    case: { method: 'resetMentionRevisions', variant: 'tail', run: e => e.resetMentionRevisions({ pageIds: [1], sourceIds: ['default'], afterPageId: 1 }) },
+    texts: () => {
+      return [`UPDATE page_mention_state SET mention_revision = NULL
+          WHERE page_id = ANY($1::int[]) OR ($3::int IS NOT NULL AND source_id = ANY($2::text[]) AND page_id > $3::int)`];
+    },
+  },
+  {
     from: 'src/core/mentions/pass.ts:510 (at 0af1a6ecf0)',
     case: { method: 'readMentionGenerations', variant: 'plain', run: e => e.readMentionGenerations(['default'], false) },
     texts: () => { const lock = false; return [`SELECT source_id, generation::text AS generation FROM mention_index_status WHERE source_id = ANY($1::text[])${lock ? ' FOR SHARE' : ''}`]; },
@@ -307,13 +345,14 @@ const PINS: Pin[] = [
     texts: () => { return ['SELECT DISTINCT source_id AS id FROM pages WHERE deleted_at IS NULL']; },
   },
   {
-    from: 'src/core/by-mention.ts:527 (at 0af1a6ecf0)',
+    from: 'src/core/by-mention.ts:527 (at 0af1a6ecf0; the retired-page filter is master #9944)',
     case: { method: 'listGazetteerPages', variant: 'default', run: e => e.listGazetteerPages(['person'], ['x_handle', 'twitter', 'twitter_handle', 'x']) },
     texts: () => { return [`SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub,
             frontmatter ->> $2 AS h1, frontmatter ->> $3 AS h2, frontmatter ->> $4 AS h3, frontmatter ->> $5 AS h4
      FROM pages
      WHERE type = ANY($1::text[])
-       AND deleted_at IS NULL`]; },
+       AND deleted_at IS NULL
+       AND NOT ${retiredPageSql('pages')}`]; },
   },
   {
     from: 'src/core/by-mention.ts:550 (at 0af1a6ecf0)',
@@ -322,7 +361,8 @@ const PINS: Pin[] = [
        FROM page_aliases pa
        JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
        WHERE p.type = ANY($1::text[])
-         AND p.deleted_at IS NULL`]; },
+         AND p.deleted_at IS NULL
+         AND NOT ${retiredPageSql('p')}`]; },
   },
   {
     from: 'src/commands/extract.ts:207 (at 0af1a6ecf0)',
@@ -382,7 +422,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/sync-upstream.ts:71 recordUpstreamObservation',
     case: { method: 'writeSourceUpstreamObservation', variant: 'default', run: e => e.writeSourceUpstreamObservation('default', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'c1', behind: 2 }) },
-    texts: ['UPDATE sources SET upstream_checked_at=$2::timestamptz,upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
+    texts: ['UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,\n  upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
   },
   {
     from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
@@ -393,6 +433,21 @@ const PINS: Pin[] = [
     from: 'src/core/belief/purge.ts:50 bumpPurgeEpoch',
     case: { method: 'advanceSourcePurgeEpoch', variant: 'default', run: e => e.advanceSourcePurgeEpoch('default') },
     texts: ['UPDATE sources SET purge_epoch = purge_epoch + 1 WHERE id = $1 RETURNING purge_epoch'],
+  },
+  {
+    // Moved after 7470c703ed: the statement is copied verbatim from the caller at 51df179097.
+    from: 'src/core/page-body/segment-derive.ts:355 derivationNeedles',
+    case: { method: 'listDerivationClaimForms', variant: 'default', run: e => e.listDerivationClaimForms(['Alice likes tea']) },
+    texts: [`SELECT DISTINCT f COLLATE "C" AS f FROM (SELECT replace(translate(gbrain_fact_normalize(c), 'ς', 'σ'), 'i\u0307', 'i') AS f
+    FROM unnest($1::text[]) c) x WHERE f <> '' ORDER BY f`],
+  },
+  {
+    // Moved after 7470c703ed: the statement is copied verbatim from segment-derive.ts recordDerivationPurge at 4e49050bff.
+    from: 'src/core/page-body/segment-derive.ts:421 recordDerivationPurge',
+    case: { method: 'recordDerivationPurgeRow', variant: 'default', run: e => e.recordDerivationPurgeRow({ requestId: '00000000-0000-4000-8000-0000000000a1', sourceId: 'src-a',
+      needles: [' alice likes tea '], patterns: ['%alice%likes%tea%'], pageIds: [1, 2] }) },
+    texts: [`INSERT INTO page_segment_derivation_purges (request_id, source_id, needles, patterns, page_ids)
+    VALUES ($1::uuid, $2, $3::text[], $4::text[], $5::int[]) ON CONFLICT (request_id) DO NOTHING`],
   },
   {
     from: 'src/core/access/caller.ts:376 appliedAccessSummary (the text sort keys gain COLLATE "C" so Postgres sorts by byte like PGLite and the store)',
@@ -886,7 +941,7 @@ const PINS: Pin[] = [
   {
     from: 'src/core/ops/facts.ts:706 withProvenance, at 0a68889b57',
     case: { method: 'listFactProvenance', variant: 'default', run: e => e.listFactProvenance('default', [1, 2]) },
-    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[])'],
+    texts: ['SELECT id, source FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) ORDER BY id'],
   },
   {
     from: 'src/core/belief/writers.ts:41 ontologyStreamSlugs, at 432ac446f4',
@@ -1977,6 +2032,28 @@ const PINS: Pin[] = [
     'SELECT max(sequence) AS sequence FROM persistence_requests'],
   },
   {
+    from: 'src/core/persistence/sync-movement.ts:159,160,163 readSourceMovement (at b7b18e5ab3)',
+    case: { method: 'readSourceMovementRows', variant: 'default', run: e => e.readSourceMovementRows({ source_id: 'default', worktree_id: '00000000-0000-4000-8000-000000000001', source_incarnation: '00000000-0000-4000-8000-000000000002' }) },
+    texts: [`SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
+        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`,
+      `SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
+        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
+      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`,
+      `SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
+        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
+      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-movement.ts:133 liveSyncJob (at b7b18e5ab3)',
+    case: { method: 'readLiveSyncJobId', variant: 'default', run: e => e.readLiveSyncJobId('default') },
+    texts: [`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
+    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`],
+  },
+  {
     from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',
     case: { method: 'readSourceCheckoutRoot', variant: 'default', run: e => e.readSourceCheckoutRoot('default', null) },
     texts: [`SELECT s.incarnation::text AS incarnation,
@@ -2488,6 +2565,39 @@ const PINS: Pin[] = [
     texts: ['SELECT 1'],
   },
   {
+    // The minion worker's health probe sent this text on the direct lane (worker.ts probeDatabase, db-probe.ts assertWorkerDbReadiness).
+    from: 'src/core/minions/worker.ts:403 and :405, the worker health probe (at a6e972420c)',
+    case: { method: 'pingStore', variant: 'direct', run: e => e.pingStore({ direct: true }) },
+    texts: ['SELECT 1'],
+  },
+  {
+    from: 'src/core/minions/worker.ts:997-1003 releaseClaimForPause (at a6e972420c)',
+    case: { method: 'releaseClaimForPause', variant: 'default', run: e => e.releaseClaimForPause(7, 'w1:a') },
+    texts: [`UPDATE minion_jobs
+         SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+             delay_until = now() + interval '1 minute',
+             updated_at = now()
+         WHERE id = $1 AND lock_token = $2`],
+  },
+  {
+    from: 'src/core/minions/worker.ts:1041-1047 handleQuietHoursDefer, verdict defer (at a6e972420c)',
+    case: { method: 'deferClaimForQuietHours', variant: 'default', run: e => e.deferClaimForQuietHours(7, 'w1:a') },
+    texts: [`UPDATE minion_jobs
+           SET status = 'delayed', lock_token = NULL, lock_until = NULL,
+               delay_until = now() + interval '15 minutes',
+               updated_at = now()
+           WHERE id = $1 AND lock_token = $2`],
+  },
+  {
+    // The minion worker's stall check sent this text on the default lane when idle past stallWarnAfterMs (worker.ts, health tick).
+    from: 'src/core/minions/worker.ts:762-771 the stall check waiting-job count (at a59ee3ca58)',
+    case: { method: 'countWaitingJobsForNames', variant: 'default', run: e => e.countWaitingJobsForNames('default', ['noop']) },
+    texts: [`SELECT count(*)::text AS cnt FROM minion_jobs
+                     WHERE status = 'waiting'
+                       AND queue = $1
+                       AND name = ANY($2::text[])`],
+  },
+  {
     from: 'src/commands/serve-http-webhooks.ts:303 legacyIngestJob (at 1bc04e66a8)',
     case: { method: 'readJobDataByIdempotencyKey', variant: 'default', run: e => e.readJobDataByIdempotencyKey('ingest:pin') },
     texts: ['SELECT data FROM minion_jobs WHERE idempotency_key = $1'],
@@ -2614,6 +2724,191 @@ const PINS: Pin[] = [
     texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
     SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`],
+  },
+  {
+    from: 'src/core/guests/owner-credentials.ts:73 ownerCredentials (at b7b18e5ab3; the token row is tokenGrantJsonSql(\'t\'))',
+    case: { method: 'listOwnerCredentialRows', variant: 'default', run: e => e.listOwnerCredentialRows('owner-example') },
+    texts: () => ["SELECT * FROM (SELECT 'token' AS kind, t.id::text AS id, t.name, " + tokenGrantJsonSql('t') + " AS row FROM access_tokens t WHERE t.member_id = $1 AND t.revoked_at IS NULL "
+      + "UNION ALL SELECT 'client' AS kind, c.client_id AS id, COALESCE(c.client_name, c.client_id) AS name, to_jsonb(c) - 'client_secret_hash' AS row "
+      + "FROM oauth_clients c WHERE c.member_id = $1 AND (to_jsonb(c)->>'deleted_at') IS NULL) q ORDER BY kind COLLATE \"C\", name COLLATE \"C\", id COLLATE \"C\""],
+  },
+  {
+    from: 'src/core/shared-skills/migration-members.ts:13 inspectSharedMemberMigration (at b7b18e5ab3)',
+    case: { method: 'listSharedMemberMigrationRows', variant: 'default', run: e => e.listSharedMemberMigrationRows('s') },
+    texts: [`SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
+      m.desired_view,m.acknowledged_view,
+      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
+        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
+    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`],
+  },
+  {
+    from: 'src/commands/reconcile-links.ts:120 runReconcileLinks (at b7b18e5ab3)',
+    case: { method: 'listMarkdownPageSlugs', variant: 'default', run: e => e.listMarkdownPageSlugs('work') },
+    texts: [`SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/serve-http-clients.ts:21 mountAdminClients (at b7b18e5ab3)',
+    case: { method: 'listAdminClientRows', variant: 'default', run: e => e.listAdminClientRows() },
+    texts: () => [`SELECT ${CLIENT_INSPECTION_COLUMNS} FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`],
+  },
+  {
+    from: 'src/core/questions/store.ts:133 insertPin (at b7b18e5ab3)',
+    case: { method: 'insertPinnedQuestion', variant: 'default', run: e => e.insertPinnedQuestion({ sourceId: 'default', slug: 'q', question: 'q?', scopeSlugPrefix: null, scopeEntity: null, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 't' }) },
+    texts: [`INSERT INTO pinned_questions (source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (source_id, slug) DO NOTHING RETURNING id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at`],
+  },
+  {
+    from: 'src/core/questions/store.ts:104 getPin (at b7b18e5ab3; without forUpdate)',
+    case: { method: 'readPinnedQuestion', variant: 'default', run: e => e.readPinnedQuestion('default', 'q') },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = $1 AND slug = $2`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the all composition)',
+    case: { method: 'listPinnedQuestions', variant: 'all', run: e => e.listPinnedQuestions({ includeArchived: true }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions  ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the unarchived composition)',
+    case: { method: 'listPinnedQuestions', variant: 'unarchived', run: e => e.listPinnedQuestions({ includeArchived: false }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the states composition)',
+    case: { method: 'listPinnedQuestions', variant: 'states', run: e => e.listPinnedQuestions({ states: ['active'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE state = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources', run: e => e.listPinnedQuestions({ sourceIds: ['default'], includeArchived: true }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources-unarchived composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources-unarchived', run: e => e.listPinnedQuestions({ sourceIds: ['default'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state <> 'archived' ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/questions/store.ts:115 listPins (at b7b18e5ab3; the sources-states composition)',
+    case: { method: 'listPinnedQuestions', variant: 'sources-states', run: e => e.listPinnedQuestions({ sourceIds: ['default'], states: ['active'] }) },
+    texts: [`SELECT id, source_id, slug, question, scope_slug_prefix, scope_entity, state, inactive_reason, publish_mode, model,
+  cooldown_days, origin, created_by, revision, answer_revision, answer, answer_model, last_refresh_at, last_attempt_at,
+  last_error, watermark_generation, watermark_fact_id, watermark_at, lease_token, lease_owner, lease_expires_at,
+  refresh_attempts, spend_usd, created_at, archived_at FROM pinned_questions WHERE source_id = ANY($1::text[]) AND state = ANY($2::text[]) ORDER BY source_id COLLATE "C", created_at, id`],
+  },
+  {
+    from: 'src/core/context/volunteer-events.ts:178 insertVolunteerEvents (at b7b18e5ab3; two rows)',
+    case: { method: 'insertVolunteerEvents', variant: 'default', run: e => e.insertVolunteerEvents([
+      { source_id: 'default', slug: 'p', confidence: 0.5, match_arm: 'a', rationale: '', channel: 'op' },
+      { source_id: 'default', slug: 'q', confidence: 0.5, match_arm: 'b', rationale: '', channel: 'op', session_id: 's', turn: 1 }]) },
+    texts: [`INSERT INTO context_volunteer_events
+       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     SELECT v.* FROM (VALUES ($1::text, $2::text, $3::float8, $4::text, $5::text, $6::text, $7::text, $8::int), ($9::text, $10::text, $11::float8, $12::text, $13::text, $14::text, $15::text, $16::int)) AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`],
+  },
+  {
+    from: 'src/core/context/volunteer.ts:370 volunteerUsageStats (at b7b18e5ab3)',
+    case: { method: 'readVolunteerUsage', variant: 'default', run: e => e.readVolunteerUsage(['default'], 30) },
+    texts: [`SELECT e.match_arm, e.channel,
+              count(*)::text AS volunteered,
+              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
+         FROM context_volunteer_events e
+         LEFT JOIN pages p
+           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
+         LEFT JOIN page_retrievals r ON r.page_id = p.id
+        WHERE e.source_id = ANY($1::text[])
+          AND e.volunteered_at > now() - ($2 || ' days')::interval
+        GROUP BY e.match_arm, e.channel
+        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:153 censusGitGap (at b7b18e5ab3; the source row)',
+    case: { method: 'readGitGapSourceRow', variant: 'default', run: e => e.readGitGapSourceRow('work') },
+    texts: ['SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:167 censusGitGap (at b7b18e5ab3; the live page count)',
+    case: { method: 'countGitGapLivePages', variant: 'default', run: e => e.countGitGapLivePages('work') },
+    texts: ['SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:175 censusGitGap (at b7b18e5ab3; also :189 and :205)',
+    case: { method: 'markTransactionReadOnly', variant: 'default', run: e => e.markTransactionReadOnly() },
+    texts: ['SET TRANSACTION READ ONLY'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:176 censusGitGap (at b7b18e5ab3; the --newest pages)',
+    case: { method: 'listGitGapNewestPages', variant: 'default', run: e => e.listGitGapNewestPages('work', 5) },
+    texts: [`SELECT id::text, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT $2`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:178 censusGitGap (at b7b18e5ab3; facts on the pages --newest leaves unread)',
+    case: { method: 'countGitGapUnreadFacts', variant: 'default', run: e => e.countGitGapUnreadFacts('work', ['1', '2']) },
+    texts: [`SELECT count(*)::int AS n FROM facts f
+        JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
+        WHERE f.source_id=$1 AND f.row_num IS NOT NULL AND NOT (p.id = ANY($2::bigint[]))`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:190 censusGitGap (at b7b18e5ab3; the keyset batch)',
+    case: { method: 'readGitGapPageBatch', variant: 'after', run: e => e.readGitGapPageBatch('work', { after: '0' }) },
+    texts: () => [`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
+          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id > $2::bigint ORDER BY pages.id LIMIT 256`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:190 censusGitGap (at b7b18e5ab3; the --newest batch)',
+    case: { method: 'readGitGapPageBatch', variant: 'ids', run: e => e.readGitGapPageBatch('work', { ids: ['1', '2'] }) },
+    texts: () => [`SELECT id::text, slug, source_id, source_path, octet_length(source_path) AS source_path_bytes, source_uri, withheld_source_path, type, frontmatter,
+          database_only_reason, body_storage='segmented' AS segmented, knowledge_revision::text AS revision, NOT ${privacyPartSql('pages')} AS lineage_private
+        FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND pages.id = ANY($2::bigint[]) ORDER BY pages.id LIMIT 256`],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:369 countRowsWithoutFile (at b7b18e5ab3; the facts)',
+    case: { method: 'countGitGapFactsOnPages', variant: 'default', run: e => e.countGitGapFactsOnPages('work', ['notes/a']) },
+    texts: ['SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND row_num IS NOT NULL AND source_markdown_slug = ANY($2::text[])'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:371 countRowsWithoutFile (at b7b18e5ab3; the timeline rows)',
+    case: { method: 'countGitGapTimelineOnPages', variant: 'default', run: e => e.countGitGapTimelineOnPages([1, 2]) },
+    texts: ['SELECT count(*)::int AS n FROM timeline_entries WHERE page_id = ANY($1::int[])'],
+  },
+  {
+    from: 'src/commands/sources-git-gap.ts:385-398 countSourceRows (at b7b18e5ab3; the five statements, in order)',
+    case: { method: 'readGitGapSourceRows', variant: 'default', run: e => e.readGitGapSourceRows('work', ['frontmatter'], 'sync-hold') },
+    texts: ['SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND row_num IS NULL AND expired_at IS NULL',
+      `SELECT count(*)::int AS n FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL)`,
+      `SELECT COALESCE(l.link_source, '(none)') COLLATE "C" AS link_source, count(*)::int AS n
+    FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND p.deleted_at IS NULL AND (l.link_source IS NULL OR NOT (l.link_source = ANY($2::text[])))
+    GROUP BY 1 ORDER BY 1`,
+      `SELECT h.completed_keys->0->>'code' COLLATE "C" AS code, count(*)::int AS n FROM op_checkpoints h
+    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+    WHERE h.op=$1 AND s.id=$2 GROUP BY 1 ORDER BY 1`,
+      `SELECT e.kind COLLATE "C" AS kind, p->>'error_code' COLLATE "C" AS code, count(*)::int AS targets
+    FROM persistence_effects e CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.data->'parked')='array' THEN e.data->'parked' ELSE '[]'::jsonb END) p
+    WHERE e.source_id=$1 GROUP BY 1, 2 ORDER BY 1, 2`],
   },
   {
     from: 'src/core/persistence/sync-admission.ts:34 readSyncAdmission',
@@ -2820,10 +3115,48 @@ const PINS: Pin[] = [
     WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`],
   },
   {
+    from: 'src/core/persistence/connector-state.ts:151 recordConnectorSyncAttempt (at 0eb4da776e)',
+    case: { method: 'recordConnectorSyncAttempt', variant: 'default', rows: [[/^SELECT incarnation::text AS incarnation FROM sources/, [{ incarnation: '1' }]]],
+      run: e => e.recordConnectorSyncAttempt('default', '2026-01-01T00:00:00.000Z', [{ version: 1 }]) },
+    texts: ['SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', `INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_set(op_checkpoints.completed_keys, ARRAY['0','first_attempt_at'], to_jsonb($4::text), true), updated_at=now()
+    WHERE op_checkpoints.completed_keys->0->>'first_attempt_at' IS NULL`],
+  },
+  {
+    from: 'src/core/connectors/db-cursor.ts:37 writeConnectorDbCursor (at 0eb4da776e)',
+    case: { method: 'writeConnectorDbCursor', variant: 'default', run: e => e.writeConnectorDbCursor('cursor-key', [{ version: 1, state: {}, last_run: null }]) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'state',EXCLUDED.completed_keys->0->'state',
+      'last_run',COALESCE(EXCLUDED.completed_keys->0->'last_run',op_checkpoints.completed_keys->0->'last_run'))),updated_at=now()`],
+  },
+  {
+    from: 'src/core/link-extraction.ts:1836 makeResolver resolveAttendance (at 34057d8e2f)',
+    case: { method: 'listAttendanceMatches', variant: 'default', run: e => e.listAttendanceMatches('default', ['people/a'], 'A') },
+    texts: [`SELECT slug FROM pages
+        WHERE source_id=$1 AND deleted_at IS NULL AND type='person'
+          AND (slug=ANY($2::text[]) OR lower(title)=lower($3)
+            OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(frontmatter->'aliases')='array'
+              THEN frontmatter->'aliases' ELSE '[]'::jsonb END) alias WHERE lower(alias)=lower($3))) LIMIT 2`],
+  },
+  {
+    from: 'src/core/meetings/meetings-source.ts:297 existingPath (at 34057d8e2f)',
+    case: { method: 'readMeetingPage', variant: 'default', run: e => e.readMeetingPage('default', 'm-1') },
+    texts: [`SELECT slug,source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND frontmatter->>'meeting_id'=$2 ORDER BY id LIMIT 1`],
+  },
+  {
     from: 'src/core/persistence/sync-holds.ts:1168 readSyncConversions (at 77ac0ed0e9)',
     case: { method: 'readSyncConversionRows', variant: 'default', run: e => e.readSyncConversionRows(['default']) },
     texts: [`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
     FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`],
+  },
+  {
+    from: 'src/core/persistence/sync-holds.ts:1157 recordSyncConversion (at c03c5edfa2)',
+    case: { method: 'recordSyncConversion', variant: 'default', run: e => e.recordSyncConversion('default', '1', { request_id: 'r1', path: null, slug: null, run_id: 'run-1', outcome: 'held', converted_at: '2026-01-01T00:00:00.000Z' }) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
+      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
+      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
+        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`],
   },
   {
     from: 'src/core/persistence/sync-pass-row.ts:178 readPassRow (at 8b80bd80ab)',
@@ -2860,6 +3193,28 @@ const PINS: Pin[] = [
     FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
       WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`,
     'SELECT max(sequence) AS sequence FROM persistence_requests'],
+  },
+  {
+    from: 'src/core/persistence/sync-movement.ts:159,160,163 readSourceMovement (at b7b18e5ab3)',
+    case: { method: 'readSourceMovementRows', variant: 'default', run: e => e.readSourceMovementRows({ source_id: 'default', worktree_id: '00000000-0000-4000-8000-000000000001', source_incarnation: '00000000-0000-4000-8000-000000000002' }) },
+    texts: [`SELECT
+        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
+           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
+        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
+        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`,
+      `SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
+        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
+      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`,
+      `SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
+        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
+      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`],
+  },
+  {
+    from: 'src/core/persistence/sync-movement.ts:133 liveSyncJob (at b7b18e5ab3)',
+    case: { method: 'readLiveSyncJobId', variant: 'default', run: e => e.readLiveSyncJobId('default') },
+    texts: [`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
+    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
+      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at, id LIMIT 1`],
   },
   {
     from: 'src/core/persistence/applied-watermark.ts:104 readCheckoutRoot',
@@ -2947,6 +3302,72 @@ const PINS: Pin[] = [
     texts: ['SELECT alias_slug, canonical_slug FROM slug_aliases WHERE source_id = $1'],
   },
   {
+    from: 'src/core/persistence/links-preparation.ts:29 liveSlugAliases (at 0af1a6ecf0)',
+    case: { method: 'readLiveSlugAliases', variant: 'default', run: e => e.readLiveSlugAliases('default', ['a', 'b']) },
+    texts: [`SELECT a.alias_slug, a.canonical_slug FROM slug_aliases a
+      WHERE a.source_id=$1 AND a.alias_slug IN (SELECT unnest($2::text[]))
+        AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id AND p.slug=a.alias_slug AND p.deleted_at IS NULL)
+        AND EXISTS (SELECT 1 FROM pages c WHERE c.source_id=a.source_id AND c.slug=a.canonical_slug AND c.deleted_at IS NULL)`],
+  },
+  {
+    // An equivalent statement: links-preparation.ts:46/55 (at 0af1a6ecf0) sent the fingerprint with the slugs above the
+    // known max id, or the fingerprint with every slug; this one statement answers both (afterId 0 lists every slug).
+    from: 'src/core/persistence/links-preparation.ts:46 refreshSourceSlugIndex (at 0af1a6ecf0)',
+    case: { method: 'readSourceSlugProbe', variant: 'default', run: e => e.readSourceSlugProbe('default', 0) },
+    texts: [`SELECT
+      count(*)::int AS n, coalesce(sum(hashtextextended(slug, 0)), 0)::text AS h, coalesce(max(id), 0)::int AS m,
+      coalesce(array_agg(slug) FILTER (WHERE id > $2), '{}') AS added,
+      coalesce(sum(hashtextextended(slug, 0)) FILTER (WHERE id > $2), 0)::text AS added_h
+      FROM pages WHERE source_id=$1`],
+  },
+  {
+    from: 'src/core/ops/slug-params.ts:203 storedSpellings, unscoped (at a59ee3ca58)',
+    case: { method: 'readStoredSlugSpellings', variant: 'unscoped', run: e => e.readStoredSlugSpellings('notesab', {}, '') },
+    texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1  AND slug COLLATE "C" > $2 ORDER BY s LIMIT 200`],
+  },
+  {
+    from: 'src/core/ops/slug-params.ts:203 storedSpellings, source (at a59ee3ca58)',
+    case: { method: 'readStoredSlugSpellings', variant: 'source', run: e => e.readStoredSlugSpellings('notesab', { sourceId: 'default' }, '') },
+    texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = $2 AND slug COLLATE "C" > $3 ORDER BY s LIMIT 200`],
+  },
+  {
+    from: 'src/core/ops/slug-params.ts:203 storedSpellings, sources (at a59ee3ca58)',
+    case: { method: 'readStoredSlugSpellings', variant: 'sources', run: e => e.readStoredSlugSpellings('notesab', { sourceIds: ['default'] }, 'notes/a') },
+    texts: [`SELECT DISTINCT slug COLLATE "C" AS s FROM pages WHERE regexp_replace(normalize(translate(replace(replace(slug, chr(304), 'i' || chr(775)), chr(8490), 'k'), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), NFC), '[^a-z0-9]', '', 'g') = $1 AND source_id = ANY($2::text[]) AND slug COLLATE "C" > $3 ORDER BY s LIMIT 200`],
+  },
+  {
+    from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy part on (at 0af1a6ecf0)',
+    case: { method: 'readFederationExposedPages', variant: 'hidden', run: e => e.readFederationExposedPages('default', true) },
+    texts: () => { const hidden = ` AND ${privacyPartSql('p')}`; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
+     authored AS (
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
+       UNION ALL
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`]; },
+  },
+  {
+    from: 'src/core/access/federation-exposure.ts:32 remotePagesFederationExposes, privacy relaxed (at 0af1a6ecf0)',
+    case: { method: 'readFederationExposedPages', variant: 'relaxed', run: e => e.readFederationExposedPages('default', false) },
+    texts: () => { const hidden = ''; return [`WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
+     authored AS (
+       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
+       UNION ALL
+       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
+     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
+       FROM authored a
+       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
+       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
+      WHERE a.kind IN ('legacy_token', 'oauth_client')
+      GROUP BY a.slug ORDER BY a.slug LIMIT 5`]; },
+  },
+  {
     from: 'src/core/quarantine.ts:116 quarantinedSlugs (at 90ede8f55a)',
     case: { method: 'listQuarantinedSlugs', variant: 'default', run: e => e.listQuarantinedSlugs('default') },
     texts: [`SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND NOT NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine')`],
@@ -2963,6 +3384,19 @@ const PINS: Pin[] = [
     texts: [`SELECT p.source_id,p.slug FROM pages p
           JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug
           WHERE p.deleted_at IS NULL FOR SHARE OF p`],
+  },
+  {
+    from: 'src/core/facts/writeback-audience.ts:82 classifyBrainAudience (the credential binding read, at b7b18e5ab3)',
+    case: { method: 'listCredentialMemberBindings', variant: 'default', run: e => e.listCredentialMemberBindings(['alice-laptop', 'alice-agent']) },
+    texts: [`SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL
+       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL`],
+  },
+  {
+    from: 'src/core/search/facts-arm.ts:417 applyFactSourcePages (the fact source page read, at b7b18e5ab3)',
+    case: { method: 'listFactSourcePages', variant: 'default', run: e => e.listFactSourcePages([1, 2]) },
+    texts: [`SELECT f.id, p.id AS page_id, p.slug, p.title, p.type FROM facts f
+       JOIN pages p ON p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NULL
+       WHERE f.id = ANY($1::bigint[]) AND f.source_markdown_slug IS DISTINCT FROM f.entity_slug`],
   },
   {
     from: 'src/core/link-reconciliation.ts:229 fileLinkOwnership attendance origins (at 90ede8f55a)',
@@ -3139,6 +3573,17 @@ const PINS: Pin[] = [
     from: 'src/core/chronicle/ledger.ts:201 recordChronicleDecision (the truth-lead read), at ac7d551949',
     case: { method: 'readPageTruthLead', variant: 'default', run: e => e.readPageTruthLead(1) },
     texts: ['SELECT truth_lead FROM pages WHERE id=$1'],
+  },
+  // The reads a page write makes before admission (engine-sql/page-mutation-reads.ts), from page-mutations.ts at e4420913f5.
+  {
+    from: 'src/core/persistence/page-mutations.ts:350 unquotedPutContent, at e4420913f5',
+    case: { method: 'readStoredPageHead', variant: 'default', run: e => e.readStoredPageHead('default', 'notes/a') },
+    texts: ['SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2'],
+  },
+  {
+    from: 'src/core/persistence/page-mutations.ts:585 preparePageAdmission (a revert\'s version file), at e4420913f5',
+    case: { method: 'readVersionSourcePath', variant: 'default', run: e => e.readVersionSourcePath(1, 1) },
+    texts: ['SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2'],
   },
   {
     from: 'src/core/persistence/intent-redaction.ts:248 cancelRequestsHoldingStagings (at b220b0df91)',
@@ -3435,6 +3880,64 @@ const PINS: Pin[] = [
     texts: [`SELECT DISTINCT o.slug FROM links l
     JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
       AND l.link_type='attended' AND l.to_page_id=l.origin_page_id AND o.slug = ANY($2::text[])`],
+  },
+  // The takes publication's prepare step and a remote takes write's holder check, copied verbatim from their callers.
+  {
+    from: 'src/core/persistence/takes-prepare.ts:276 the resolved_at stamp (at a6e972420c)',
+    case: { method: 'stampTakeResolvedAt', variant: 'default', run: e => e.stampTakeResolvedAt(1, 2, '2026-11-20') },
+    texts: ['UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2'],
+  },
+  {
+    from: 'src/core/persistence/takes-prepare.ts:261 the request\'s takeHoldersUsed (at a6e972420c)',
+    case: { method: 'recordTakeHoldersUsed', variant: 'default', run: e => e.recordTakeHoldersUsed('00000000-0000-4000-8000-000000000001', ['world']) },
+    texts: [`UPDATE persistence_requests
+      SET authority=jsonb_set(authority,'{takeHoldersUsed}',$2::text::jsonb)
+      WHERE id=$1::uuid`],
+  },
+  {
+    from: 'src/core/persistence/authority.ts:279 authorizeStoredTakeHolders (at a6e972420c)',
+    case: { method: 'listTakeHoldersAtRows', variant: 'default', run: e => e.listTakeHoldersAtRows(1, [2, 3]) },
+    texts: ['SELECT DISTINCT holder FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])'],
+  },
+  // The frontmatter `where` check on finished search rows, copied verbatim from its caller (one key with one value, one
+  // whose string value also reads as a number).
+  {
+    from: 'src/core/search/frontmatter-where.ts:104 keepFrontmatterMatches (at 26a78ed132)',
+    case: { method: 'filterPageIdsByFrontmatter', variant: 'default', run: e => e.filterPageIdsByFrontmatter([1, 2], { status: ['active'], cycle: ['2024'] }) },
+    texts: ['SELECT p.id FROM pages p WHERE p.id = ANY($1::bigint[]) AND (p.frontmatter @> $2::text::jsonb OR p.frontmatter @> $3::text::jsonb)'
+      + ' AND (p.frontmatter @> $4::text::jsonb OR p.frontmatter @> $5::text::jsonb OR p.frontmatter @> $6::text::jsonb OR p.frontmatter @> $7::text::jsonb)'],
+  },
+  // The chronicle-backfill page batch (engine-sql/chronicle-reads.ts), carried from 6f801f6d17's pins of 3ac6224f3b;
+  // the builder at 68c48d9824 sends the same texts.
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (no scope, no since; the literals 5 and 500 spelled in), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'default', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.id > $4
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (a source list and since), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'sources-since', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceIds: ['default'], since: '2026-01-01', afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = ANY($4::text[]) AND p.updated_at >= $5::date AND p.id > $6
+        ORDER BY p.id LIMIT 500`],
+  },
+  {
+    from: 'src/core/chronicle/backfill.ts:139 runChronicleBackfill (one source), at 3ac6224f3b',
+    case: { method: 'readChronicleBackfillBatch', variant: 'source', run: e => e.readChronicleBackfillBatch({ types: ['meeting'], slugPatterns: ['meetings/%'], extractorVersion: 2, sourceId: 'default', afterId: 0 }) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
+              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
+                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < 5))) AS done
+         FROM pages p
+        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[])) AND p.source_id = $4 AND p.id > $5
+        ORDER BY p.id LIMIT 500`],
   },
 ];
 
@@ -4036,5 +4539,62 @@ describe('the OAuth code flow and the token grant send the same statements throu
       } }));
     expect(capture.error).toBeUndefined();
     expect(used).toEqual(['tx.readOauthClientForUpdate', 'tx.issueOauthTokens']);
+  });
+});
+
+describe('the typed job reads of the refusal-swallow fixes send the statement their callers sent, with the same parameters', () => {
+  // Copied verbatim from the callers at b7b18e5ab3 (src/core/remediation/run.ts manualOnlySkips, src/commands/autopilot-fanout.ts
+  // readRecentSourceFailures: the base text, then ` AND data->>'source_id' = $2` for one source, then ` GROUP BY ...`).
+  const UNFINISHED = `SELECT id, name, status FROM minion_jobs
+          WHERE name = ANY($1::text[]) AND status NOT IN ('completed', 'failed', 'dead', 'cancelled')
+          ORDER BY id`;
+  const FAILURES = `SELECT data->>'source_id' AS source_id,
+              count(*)::int AS fail_count,
+              max(finished_at) AS last_failed_at
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
+          AND data->>'source_id' IS NOT NULL
+          AND finished_at IS NOT NULL
+          AND finished_at > $1 GROUP BY data->>'source_id'`;
+  const FAILURES_ONE_SOURCE = `SELECT data->>'source_id' AS source_id,
+              count(*)::int AS fail_count,
+              max(finished_at) AS last_failed_at
+         FROM minion_jobs
+        WHERE name = 'autopilot-cycle'
+          AND status IN ('dead','failed')
+          AND (result->>'job_outcome' IS NULL OR result->>'job_outcome' <> 'phase_failed')
+          AND data->>'source_id' IS NOT NULL
+          AND finished_at IS NOT NULL
+          AND finished_at > $1 AND data->>'source_id' = $2 GROUP BY data->>'source_id'`;
+  const sent = async (run: (e: any) => Promise<unknown>) => {
+    const capture = await withPinnedSqlEnvironment(undefined, () => runCase({ method: 'pin', variant: 'default', run }));
+    expect(capture.error).toBeUndefined();
+    return capture.trace.filter(s => s.kind === 'query').map(s => ({ text: s.text, params: s.params }));
+  };
+
+  test('listUnfinishedJobsByName: the old text (one read, ordered by id) and the names as one array parameter', async () => {
+    expect(await sent(e => e.listUnfinishedJobsByName(['unify-types', 'extract-takes-from-pages'])))
+      .toEqual([{ text: UNFINISHED, params: [['unify-types', 'extract-takes-from-pages']] }]);
+  });
+
+  test('listRecentSourceCycleFailures: the old 471-byte statement and the cutoff, unscoped', async () => {
+    const cutoff = '2026-11-23T00:00:00.000Z';
+    expect(Buffer.byteLength(FAILURES)).toBe(471);
+    expect(await sent(e => e.listRecentSourceCycleFailures({ cutoff }))).toEqual([{ text: FAILURES, params: [cutoff] }]);
+  });
+
+  test('listRecentSourceCycleFailures: the old 499-byte statement, the cutoff then the source id, for one source', async () => {
+    const cutoff = '2026-11-23T00:00:00.000Z';
+    expect(Buffer.byteLength(FAILURES_ONE_SOURCE)).toBe(499);
+    expect(await sent(e => e.listRecentSourceCycleFailures({ cutoff, sourceId: 'src-1' }))).toEqual([{ text: FAILURES_ONE_SOURCE, params: [cutoff, 'src-1'] }]);
+  });
+
+  test('listRecentSourceCycleFailures: an empty or null source id is no filter (the unscoped statement)', async () => {
+    const cutoff = '2026-11-23T00:00:00.000Z';
+    for (const sourceId of ['', null, undefined]) {
+      expect(await sent(e => e.listRecentSourceCycleFailures({ cutoff, sourceId }))).toEqual([{ text: FAILURES, params: [cutoff] }]);
+    }
   });
 });

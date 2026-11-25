@@ -54,6 +54,30 @@ export const readSyncImportPageRows: StoreMember<[q: SyncImportPageQuery, window
     { sourceId: q.sourceId, incarnation: q.incarnation, expected: q.expected, chunkerVersion: MARKDOWN_CHUNKER_VERSION },
     'ids' in window ? { ids: [...window.ids] } : { after: window.after, limit: window.limit }));
 
+/**
+ * The whole-source sync pass cursor (engine-sql/sync-pass-pages.ts `declareSyncImportPageCursor`, `FETCH n`). The store
+ * has no SQL cursor: the declare records the query, and each fetch reads the next keyset page after the last id it
+ * returned (readSyncImportPageRows), so the rows come in page id order, one of the orders the statement allows. One cursor
+ * per open brain (a slot on the store handle), as one named cursor per transaction on SQL; a fetch with none declared refuses as FETCH does.
+ */
+const SYNC_PASS_CURSOR = Symbol('gbrain.syncPassCursor');
+type SyncPassCursor = { q: SyncImportPageQuery; after: number };
+const cursorSlot = (brain: object) => brain as { [SYNC_PASS_CURSOR]?: SyncPassCursor };
+
+export const declareSyncImportPageCursor: StoreMember<[q: SyncImportPageQuery], void> = async (brain, q) => {
+  cursorSlot(brain)[SYNC_PASS_CURSOR] = { q: { ...q }, after: 0 };
+};
+
+export const fetchSyncImportPageCursor: StoreMember<[rows: number], SyncImportPageRow[]> = async (brain, rows) => {
+  if (!Number.isFinite(rows) || !Number.isSafeInteger(rows) || rows < 1) throw new Error(`fetchSyncImportPageCursor: rows must be a positive integer, got ${rows}`);
+  const cursor = cursorSlot(brain)[SYNC_PASS_CURSOR];
+  if (!cursor) throw new Error('fetchSyncImportPageCursor: no sync pass cursor is open (declareSyncImportPageCursor first)');
+  const page = await readSyncImportPageRows(brain, cursor.q, { after: cursor.after, limit: rows });
+  if (page.length) cursor.after = Number(page[page.length - 1]!.id);
+  if (page.length < rows) delete cursorSlot(brain)[SYNC_PASS_CURSOR];
+  return page;
+};
+
 
 /**
  * A checkpoint parent whose keys are JSON records (the repair cursor, the preview-approval sets), or null; its stamp in
@@ -68,6 +92,21 @@ export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: stri
   async (brain, op, fingerprint, completedKeys) => {
     await storeCall({ member: 'writeOpCheckpointRecord' }, () => brain.writeOpCheckpointRecord(op, fingerprint, completedKeys));
   };
+/** The atom generation a page's content keys on (op_checkpoint.rs `read_atom_generation`). */
+export const readAtomGeneration: StoreMember<[pageId: number, contentHash: string], number> = (brain, pageId, contentHash) =>
+  storeCall({ member: 'readAtomGeneration' }, () => brain.readAtomGeneration(pageId, contentHash));
+
+/** A page's atom generation bump (op_checkpoint.rs `record_atom_generation_bump`); the store keeps no extract_atoms_page_state rows. */
+export const recordAtomGenerationBump: StoreMember<[sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null], void> =
+  async (brain, sourceId, incarnation, pageId, keepContentHash, keepGeneration) => {
+    await storeCall({ member: 'recordAtomGenerationBump' }, () =>
+      brain.recordAtomGenerationBump({ sourceId, incarnation, pageId, keepContentHash, keepGeneration }));
+  };
 /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
 export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
   storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));
+/**
+ * `purgeStaleAppliedCaptures`: the store keeps no applied captures (every writer, ingestion/applied-captures.ts, goes
+ * through `executeRaw`, which this engine refuses), so none is stale.
+ */
+export const purgeStaleAppliedCaptures: StoreMember<[ttlDays: number], number> = async () => 0;

@@ -1,7 +1,8 @@
 //! The facts members a remember, a proposal review, a page retire and a recall by id use: `readFactEntitySlugById`,
 //! `readSupersessionReplacement`, `linkSupersededFact`, `listFactsToRetireFromPage`, `listFactProvenance`,
 //! `listFactRowsByIds`, `readFactVisibility`, `readFactActivity`, `readReviewAcceptedMark`, `readPairFactRow`,
-//! `expireSupersededFact`, `restoreSupersededFact`, `readReplacementTarget` and `readMemberPageWithdrawal`.
+//! `expireSupersededFact`, `restoreSupersededFact`, `readReplacementTarget`, `readMemberPageWithdrawal` and
+//! `readClaimWithdrawal`.
 //!
 //! One `#[napi] impl Brain` block; each method runs one `gbrain_store::facts::remember_reads` call on the pool through
 //! `Brain::run` and resolves plain JSON. The TypeScript members
@@ -14,9 +15,9 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::remember_reads::{
-    AcceptedMarkArgs, ExpireSupersededFactArgs, FactIdArgs, LinkArgs, MemberWithdrawalArgs,
-    PairFactArgs, ReplacementPairArgs, ReplacementTargetArgs, RestoreSupersededFactArgs,
-    RetireArgs, RowsByIdsArgs, SourcedFactArgs,
+    AcceptedMarkArgs, ClaimWithdrawalArgs, ExpireSupersededFactArgs, FactIdArgs, LinkArgs,
+    MemberWithdrawalArgs, PairFactArgs, ReplacementPairArgs, ReplacementTargetArgs,
+    RestoreSupersededFactArgs, RetireArgs, RowsByIdsArgs, SourcedFactArgs,
 };
 
 #[napi]
@@ -151,6 +152,19 @@ impl Brain {
         })
     }
 
+    /// `retireSupersededFact(args)`: the remember consumer's supersede; resolves the row count.
+    #[napi]
+    pub fn retire_superseded_fact<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ExpireSupersededFactArgs = required(args, "retireSupersededFact args")?;
+            s.retire_superseded_fact(&a)
+        })
+    }
+
     /// `restoreSupersededFact(args)`: puts the old fact back; resolves the row count.
     #[napi]
     pub fn restore_superseded_fact<'env>(
@@ -187,6 +201,19 @@ impl Brain {
         self.run(env, move |s| {
             let a: MemberWithdrawalArgs = required(args, "readMemberPageWithdrawal args")?;
             s.read_member_page_withdrawal(&a)
+        })
+    }
+
+    /// `readClaimWithdrawal(args)`: resolves `{ hidden, row }` for a save of a forgotten claim.
+    #[napi]
+    pub fn read_claim_withdrawal<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: ClaimWithdrawalArgs = required(args, "readClaimWithdrawal args")?;
+            s.read_claim_withdrawal(&a)
         })
     }
 }

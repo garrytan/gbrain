@@ -9,7 +9,7 @@ use gbrain_store::sources::SourceInput;
 use gbrain_store::takes::TakeInput;
 use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, PageKeyRef, TrustScanQuery, VersionIdsQuery,
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, PageQuoteTierQuery, TrustScanQuery, VersionIdsQuery,
 };
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
@@ -704,6 +704,46 @@ fn page_refs_by_id_name_each_listed_page_once_deleted_pages_and_other_sources_in
     );
     let none: PageIdsQuery = args(json!({ "ids": [] }));
     assert!(b.list_page_refs_by_ids(&none).unwrap().is_empty());
+}
+
+#[test]
+fn page_quote_tiers_read_by_id_deleted_included_or_by_slug_live_pages_in_the_listed_sources() {
+    let b = brain("tier-reads-quote-tiers");
+    other_source(&b);
+    let chat = put_ref(&b, "default", "quote/chat", "chat");
+    let shared = put_ref(&b, "default", "quote/shared", "note");
+    let shared_other = put_ref(&b, "other", "quote/shared", "note");
+    let gone = put_ref(&b, "default", "quote/gone", "transcript");
+    b.soft_delete_page("quote/gone", Some("default")).unwrap();
+    let tier =
+        |id: i64, page_type: &str| json!({ "id": id, "type": page_type, "trust_tier": "unknown" });
+
+    let by_id: PageQuoteTierQuery = args(json!({ "ids": [gone, chat, chat, 987_654, -1] }));
+    assert_eq!(
+        b.list_page_quote_tiers(&by_id).unwrap(),
+        [tier(chat, "chat"), tier(gone, "transcript")]
+    );
+    let by_slug: PageQuoteTierQuery = args(
+        json!({ "slug": "quote/shared", "sourceIds": ["other", "default", "other", "absent"] }),
+    );
+    assert_eq!(
+        b.list_page_quote_tiers(&by_slug).unwrap(),
+        [tier(shared, "note"), tier(shared_other, "note")]
+    );
+    let deleted: PageQuoteTierQuery =
+        args(json!({ "slug": "quote/gone", "sourceIds": ["default"] }));
+    assert!(b.list_page_quote_tiers(&deleted).unwrap().is_empty());
+    for bad in [
+        json!({}),
+        json!({ "ids": [chat], "slug": "quote/chat", "sourceIds": ["default"] }),
+        json!({ "slug": "quote/chat" }),
+    ] {
+        let q: PageQuoteTierQuery = args(bad);
+        assert_eq!(
+            b.list_page_quote_tiers(&q).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
 }
 
 #[test]

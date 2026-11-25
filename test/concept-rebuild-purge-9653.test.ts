@@ -4,6 +4,7 @@ import { __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { rebuildNote, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { REBUILD_LINK_COLUMNS, REBUILD_STORES } from '../src/core/persistence/concept-rebuild.ts';
+import { CARRIED_LINK_COLUMNS, CARRY_LINKS_SQL } from '../src/core/engine-sql/concept-rebuild.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { runPages } from '../src/commands/pages.ts';
 import { runMaintain } from '../src/commands/maintain.ts';
@@ -13,6 +14,14 @@ import { requirePostgresTestDatabase, testBackends } from './helpers/test-backen
 import { MODEL, CONCEPT, NEW, atom, members, reply, put, deletePage, unmanagedWhile, age, raw, printedJson, purge, synthesize, state, heldConcept } from './helpers/concept-rebuild-9653.ts';
 
 afterEach(() => { installFaultHook(undefined); __setChatTransportForTests(null); });
+
+test('the link carry writes exactly the link columns the census marks carried', () => {
+  // engine-sql/concept-rebuild.ts spells the carry's columns out (its SQL guard rejects computed text); this pins them
+  // to REBUILD_LINK_COLUMNS, which the census below pins to the links table.
+  const carried = Object.entries(REBUILD_LINK_COLUMNS).filter(([, v]) => v === 'carried').map(([k]) => k);
+  expect([...CARRIED_LINK_COLUMNS] as string[]).toEqual(carried);
+  expect(CARRY_LINKS_SQL).toContain(`INSERT INTO links (${CARRIED_LINK_COLUMNS.join(', ')})`);
+});
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;

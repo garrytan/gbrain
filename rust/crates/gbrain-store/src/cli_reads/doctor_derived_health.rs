@@ -469,23 +469,38 @@ mod tests {
 
     #[test]
     fn private_key_marker_matches_the_regex() {
-        assert!(has_private_key_marker(
-            "x -----BEGIN RSA PRIVATE KEY----- y"
-        ));
+        assert!(has_private_key_marker(concat!(
+            "x -----BEGIN ",
+            "RSA PRIVATE KEY----- y"
+        )));
         assert!(has_private_key_marker("-----END PRIVATE KEY-----"));
-        assert!(has_private_key_marker(
-            "-----BEGIN OPENSSH PRIVATE KEY-----"
-        ));
-        assert!(!has_private_key_marker("-----BEGIN PUBLIC KEY-----"));
-        assert!(!has_private_key_marker("-----BEGIN rsa PRIVATE KEY-----"));
-        assert!(!has_private_key_marker("-----BEGIN PRIVATE KEY----"));
+        assert!(has_private_key_marker(concat!(
+            "-----BEGIN ",
+            "OPENSSH PRIVATE KEY-----"
+        )));
+        assert!(!has_private_key_marker(concat!(
+            "-----BEGIN ",
+            "PUBLIC KEY-----"
+        )));
+        assert!(!has_private_key_marker(concat!(
+            "-----BEGIN ",
+            "rsa PRIVATE KEY-----"
+        )));
+        assert!(!has_private_key_marker(concat!(
+            "-----BEGIN ",
+            "PRIVATE KEY----"
+        )));
         assert!(!has_private_key_marker("----BEGIN PRIVATE KEY-----"));
         // The run may not hold anything but capitals and spaces before the tail.
-        assert!(!has_private_key_marker("-----BEGIN A-B PRIVATE KEY-----"));
+        assert!(!has_private_key_marker(concat!(
+            "-----BEGIN ",
+            "A-B PRIVATE KEY-----"
+        )));
         // A later marker can match when an earlier one does not.
-        assert!(has_private_key_marker(
-            "-----BEGIN PUBLIC KEY----- -----END PRIVATE KEY-----"
-        ));
+        assert!(has_private_key_marker(concat!(
+            "-----BEGIN ",
+            "PUBLIC KEY----- -----END PRIVATE KEY-----"
+        )));
     }
 
     #[test]

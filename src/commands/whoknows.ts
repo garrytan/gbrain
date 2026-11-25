@@ -42,7 +42,7 @@ import { hybridSearch } from '../core/search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../core/search/internal-breadth.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
-import { rethrowCapabilityMissing } from '../core/rust-engine/errors.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 
 export interface WhoknowsOpts extends PageReadPolicy {
   topic: string;
@@ -229,7 +229,7 @@ export async function findExperts(
     source_id: c.source_id ?? 'default',
   }));
   const salienceMap = await engine.getSalienceScores(refs, opts).catch((e: unknown) => {
-    rethrowCapabilityMissing(e);
+    rethrowCapabilityRefusal(e);
     return new Map<string, number>();
   });
   // Admission must happen AFTER optional work: that work can race a source or

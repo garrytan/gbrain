@@ -1,6 +1,6 @@
 /**
  * A segmented page's lead (a bounded prefix of its body) is shown through the withdrawal overlay: a world claim a
- * person withdrew must not appear in it (page-window/bounded-lead.ts). The overlay reads the withdrawals the page
+ * person withdrew appears only struck through, as on PGLite (page-window/bounded-lead.ts). The overlay reads the withdrawals the page
  * snapshot carries, so the Rust engine's snapshot must carry the withdrawals its own ledger holds.
  *
  * Authoring gate (docs/TESTING.md): protects what an agent or user reads in a lead, snippet or synopsis of a large page
@@ -64,8 +64,32 @@ describe('the lead of a segmented page on a Rust brain', () => {
     const batch = await engine.readPageSnapshotsBatch([{ slug: 'people/example', sourceId: 'default' }]);
     expect(batch.snapshots.get(pageSnapshotKey('default', 'people/example'))?.withdrawals).toEqual(snapshot!.withdrawals);
     const [row] = await overlaidBoundedRows(engine, [{ slug: 'people/example', source_id: 'default', compiled_truth: LEAD }]);
-    // The withdrawn claim never reaches the reader; the overlay may strike it or, with no SQL on this engine, fail closed.
-    expect(row!.compiled_truth).not.toContain(WITHDRAWN_CLAIM);
+    // The overlay strikes the withdrawn claim, as it does on PGLite and Postgres: the row stays, inactive and marked
+    // forgotten, so the reader never sees it as a live claim.
+    expect(row!.compiled_truth).toContain(`~~${WITHDRAWN_CLAIM}~~`);
+    expect(row!.compiled_truth).toContain('forgotten: memory withdrawn');
+    expect(row!.compiled_truth.replaceAll(`~~${WITHDRAWN_CLAIM}~~`, '')).not.toContain(WITHDRAWN_CLAIM);
+  });
+
+  withAddon('overlays each lead with its own page\'s ledger, so a withdrawal on one page leaves another lead as it is', async () => {
+    // The Rust overlay now runs without SQL, so a withdrawal on the segmented page overlays its lead instead of failing
+    // it closed. A withdrawal of an unrelated claim strikes nothing in either lead: the segmented lead keeps its claim and
+    // the inline page read in the same call keeps its own. (bounded-lead.ts still blanks only the page whose overlay
+    // throws, never the other leads read with it.)
+    const { engine, brain } = await openSegmentedBrain();
+    const INLINE_CLAIM = 'Kept world claim about the inline example';
+    const INLINE = `Inline intro.\n\n${renderFactsTable([
+      { rowNum: 1, claim: INLINE_CLAIM, kind: 'fact', confidence: 1, visibility: 'world', notability: 'high', active: true },
+    ] as never)}\n\nInline closing.`;
+    await engine.putPage('people/inline', { type: 'person', title: 'Inline', compiled_truth: INLINE, timeline: '' });
+    expect(await brain.insertFactWithdrawal('default', 'world', 'Some unrelated claim', 'people/example', null)).toBe(true);
+    const rows = await overlaidBoundedRows(engine, [
+      { slug: 'people/example', source_id: 'default', compiled_truth: LEAD },
+      { slug: 'people/inline', source_id: 'default', compiled_truth: INLINE },
+    ]);
+    expect(rows[0]!.compiled_truth).toContain(WITHDRAWN_CLAIM);
+    expect(rows[0]!.compiled_truth).not.toContain(`~~${WITHDRAWN_CLAIM}~~`);
+    expect(rows[1]!.compiled_truth).toContain(INLINE_CLAIM);
   });
 
   withAddon('is left as it is when nothing was withdrawn', async () => {

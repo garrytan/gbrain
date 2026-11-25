@@ -16,6 +16,7 @@
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
  * unexported.
  */
+import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import { DELETE_BATCH_SIZE } from '../../engine-constants.ts';
 import { assertPurgeAge } from '../../engine-errors.ts';
 import type { FindPagesQuery, FoundPages } from '../../page-find.ts';
@@ -30,10 +31,11 @@ import type { MovedPageRow } from '../../engine-sql/moved-page-reads.ts';
 import type { StaleAtomRow } from '../../engine-sql/stale-atom-reads.ts';
 import type { PageRefRow, RelationalPageRow } from '../../engine-sql/relational-reads.ts';
 import { toGetPage } from '../store-codec.ts';
-import { overlayStoreSnapshot, type StoreSnapshot } from '../snapshot-overlay.ts';
+import { overlayStoreSnapshots, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { HYBRID_BAG_KEYS, WHOKNOWS_KEYS, storePagePolicy } from './private-provenance.ts';
+import type { MeetingPageRow } from '../../engine-sql/meeting-pages.ts';
 
 /** PGLite's single-batch primitives throw a plain `Error` past `DELETE_BATCH_SIZE`; the caller chunks. */
 function checkBatch(member: string, n: number): void {
@@ -75,13 +77,14 @@ export const readPageSnapshotsBatch: StoreMember<
   const { absentIsNull, ...options } = takeOptions('readPageSnapshotsBatch', opts, ['maxBytes', 'includeDeleted', 'absentIsNull']);
   const snapshots = new Map<string, PageSnapshot>();
   if (!refs.length) return { snapshots, covered: 0 };
+  const stored = new Map<string, StoreSnapshot>();
   const batch: { covered: number; snapshots: Array<StoreSnapshot | null> } = await storeCall({ member: 'readPageSnapshotsBatch' }, () =>
     brain.readPageSnapshotsBatch(refs.map((r) => ({ slug: r.slug, sourceId: r.sourceId })), options));
   for (const [i, snapshot] of batch.snapshots.entries()) {
     const ref = refs[i]!;
     const key = pageSnapshotKey(ref.sourceId, ref.slug);
     if (snapshot) {
-      snapshots.set(key, overlayStoreSnapshot({ ...snapshot, page: toGetPage(snapshot.page) }));
+      stored.set(key, { ...snapshot, page: toGetPage(snapshot.page) });
       continue;
     }
     // PGLite reads an absent ref again through readPageSnapshot (same exact key), unless absentIsNull; an empty
@@ -89,8 +92,11 @@ export const readPageSnapshotsBatch: StoreMember<
     if (absentIsNull || ref.sourceId === '') continue;
     const again: StoreSnapshot | null = await storeCall({ member: 'readPageSnapshotsBatch', slug: ref.slug }, () =>
       brain.readPageSnapshot(ref.slug, { sourceId: ref.sourceId, ...(options.includeDeleted ? { includeDeleted: true } : {}) }));
-    if (again) snapshots.set(key, overlayStoreSnapshot({ ...again, page: toGetPage(again.page) }));
+    if (again) stored.set(key, { ...again, page: toGetPage(again.page) });
   }
+  // One overlay of every page, the store normalizing the fence text of those with ledger rows to apply in one call.
+  const overlaid = await overlayStoreSnapshots(storeNormalizer(brain), [...stored.values()]);
+  [...stored.keys()].forEach((key, i) => snapshots.set(key, overlaid[i]!));
   return { snapshots, covered: batch.covered };
 };
 
@@ -380,6 +386,14 @@ export const listLivePagesByFileName: StoreMember<[sourceId: string, excludeId: 
   return storeCall({ member: 'listLivePagesByFileName', sourceId }, () => brain.listLivePagesByFileName(sourceId, excludeId, name));
 };
 
+/** The live page of the source holding the meeting, lowest id first, or null (engine-sql/meeting-pages.ts; rust/crates/gbrain-store/src/meeting_pages.rs). */
+export const readMeetingPage: StoreMember<[sourceId: string, meetingId: string], MeetingPageRow | null> = (brain, sourceId, meetingId) =>
+  storeCall({ member: 'readMeetingPage', sourceId }, () => brain.readMeetingPage(sourceId, meetingId)) as Promise<MeetingPageRow | null>;
+
+/** At most two live person pages of the source an attendee name can mean (engine-sql/attendance-pages.ts; meeting_pages.rs). */
+export const listAttendanceMatches: StoreMember<[sourceId: string, slugs: readonly string[], name: string], string[]> = (brain, sourceId, slugs, name) =>
+  storeCall({ member: 'listAttendanceMatches', sourceId }, () => brain.listAttendanceMatches(sourceId, [...slugs], name)) as Promise<string[]>;
+
 export const listLivePagesSharingFrontmatterId: StoreMember<[sourceId: string, pageId: number], string[]> = (brain, sourceId, pageId) => {
   wholeNumber('listLivePagesSharingFrontmatterId', 'a page id', pageId);
   return storeCall({ member: 'listLivePagesSharingFrontmatterId', sourceId }, () => brain.listLivePagesSharingFrontmatterId(sourceId, pageId));
@@ -402,3 +416,7 @@ export const listStaleAtoms: StoreMember<[sourceIds: readonly string[], atomId: 
   const rows: StaleAtomRow[] = await storeCall({ member: 'listStaleAtoms' }, () => brain.listStaleAtoms([...sourceIds], atomId));
   return rows.map(row => ({ ...row, id: Number(row.id), origin_page_id: row.origin_page_id == null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
 };
+
+/** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. */
+export const listMarkdownPageSlugs: StoreMember<[sourceId: string], string[]> = async (brain, sourceId) =>
+  await storeCall({ member: 'listMarkdownPageSlugs' }, () => brain.listMarkdownPageSlugs(sourceId)) as string[];

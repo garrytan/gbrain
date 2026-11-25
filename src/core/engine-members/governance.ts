@@ -32,6 +32,8 @@ export interface GovernanceMembers {
   readSharedSkillMember(by: SharedSkillMembersSql.SharedSkillMemberLookup): Promise<SharedSkillMembersSql.SharedSkillMemberRow | undefined>;
   /** The number of shared-skill members, active or not. */
   countSharedSkillMembers(): Promise<number>;
+  /** The members following source `sourceId`, by byte order of adapter, with their approved incarnation and acknowledged stage (shared-skills/migration-members.ts). */
+  listSharedMemberMigrationRows(sourceId: string): Promise<SharedSkillMembersSql.SharedMemberMigrationRow[]>;
   /** Inserts a shared-skill member or re-activates the one with its installation id at the next epoch. */
   enrollSharedSkillMember(spec: SharedSkillMembersSql.SharedSkillMemberEnroll): Promise<void>;
   /** Sets an active member's narrowed follow policy and epoch, and resets its sequences and views. */

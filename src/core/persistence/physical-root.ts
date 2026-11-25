@@ -6,8 +6,10 @@ import type { SqlEngine } from './model.ts';
 import type { WriterAdminStore } from '../engine-sql/writer-admin.ts';
 import { repairWedgedReservation, resolveCoordinationLock } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
+import { requireManagedPersistence } from '../rust-engine/errors.ts';
 import type { OperationError } from '../ops/contract.ts';
-import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, describeMovedPhysicalRoot, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
+import { ownershipReservationMissingError } from './owner-marker.ts';
+import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, describeMovedPhysicalRoot, lostReservationStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
   physicalRootMovedError, physicalRootMovedRefusal, readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp,
   type MovedPhysicalRoot, type PhysicalRootReservation } from './physical-root-record.ts';
 
@@ -58,7 +60,9 @@ export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: Phy
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? resolveCoordinationLock(root, worktreeId, { reservation: previous?.coordinationPath }, opts.hostId).path;
   // A copied marker without its original sibling reservation is not a new root; a moved checkout is named, path-free (#8625).
-  if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw await movedPhysicalRoot(tx, root, opts.hostId) ? physicalRootMovedError() : physicalRootError();
+  // #10260: a stamp that still identifies this exact directory lost only its reservation, which the plain self-transfer re-creates.
+  if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw await movedPhysicalRoot(tx, root, opts.hostId) ? physicalRootMovedError()
+    : lostReservationStamp(root, { brainId }) ? ownershipReservationMissingError() : physicalRootError();
   const reservation = previous ?? reservePhysicalRootRecord(root, { brainId, worktreeId, hostId: opts.hostId, coordinationPath });
   if (reservation.brainId !== brainId || reservation.worktreeId !== worktreeId || reservation.coordinationPath !== coordinationPath) throw physicalRootError();
   const owner = await facts.worktree(worktreeId);
@@ -74,6 +78,7 @@ export async function movedPhysicalRoot(tx: SqlEngine, path: string, hostId: str
   Promise<(MovedPhysicalRoot & { members: Array<{ sourceId: string; relativePath: string }> }) | null> {
   const moved = describeMovedPhysicalRoot(canonicalFilesystemPath(path));
   if (!moved || !hostId) return null;
+  requireManagedPersistence(tx, 'movedPhysicalRoot', 'it reads the managed worktree and source bindings a moved checkout belongs to');
   const [row] = await tx.executeRaw<{ brain_id: string; owner_host_id: string | null; local_path: string | null }>(`SELECT brain_id::text AS brain_id,
     (SELECT owner_host_id::text FROM persistence_worktrees WHERE id=$1::uuid) AS owner_host_id,
     (SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid) AS local_path
