@@ -7,9 +7,16 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Every `const NAME: u8 = 0x..;` in one source file, as (name, value).
+/// Every `const NAME: u8 = 0x..;` in one source file, as (name, value). A file under `src/jobs/` whose records sit under
+/// a family tag of their own says so with an `// own-family-tag: <CONSTANT>` line; its sub-tags are not `m` sub-tags.
 fn sub_tags(path: &Path) -> Vec<(String, u8)> {
     let text = fs::read_to_string(path).unwrap();
+    if text
+        .lines()
+        .any(|line| line.trim_start().starts_with("// own-family-tag: "))
+    {
+        return Vec::new();
+    }
     text.lines()
         .filter_map(|line| {
             let line = line.trim();

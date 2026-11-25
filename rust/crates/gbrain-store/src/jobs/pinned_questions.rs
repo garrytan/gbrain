@@ -14,6 +14,7 @@
 //! publish stay on the SQL engines (`src/core/questions/store.ts`, `refresh.ts`): a Rust brain serves the insert and the
 //! two reads, so a pin made here is listed here, and the lease and answer writes refuse as raw SQL.
 
+// own-family-tag: QUESTIONS (the sub-tags below are under `~q`, not `keys::JOBS`; tests/credential_keys.rs skips this file)
 use super::*;
 use crate::env::iso;
 use crate::links::no_nul;
