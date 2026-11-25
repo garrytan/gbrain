@@ -280,3 +280,64 @@ fn concurrent_takers_of_one_lease_get_one_winner() {
         clock.advance_ms(2_000);
     }
 }
+
+/// E1: the lease check reads the lease record inside the writing transaction, so the record is in its read set and
+/// the commit checks it again. On the concurrent store a write transaction that checked the lease, then saw a takeover
+/// commit before its own commit, loses with `write_conflict` at commit (the record was in its read set); an untouched
+/// lease lets it commit.
+#[test]
+fn the_lease_read_is_in_the_transaction_s_read_set_and_the_commit_checks_it_again() {
+    use crate::kv::Kv;
+    let clock = Clock::new();
+    let kv = Arc::new(occ_kv());
+    let store = Store::open_kv(kv.clone(), clock.clone(), OpenOptions { multiuser: true, ..OpenOptions::default() }).unwrap();
+    let a = store.acquire_lease("held", &origin("a"), 1_000).unwrap().unwrap();
+
+    // Untouched lease: the checked write commits.
+    let mut tx = kv.begin_write().unwrap();
+    assert_held(&*tx, &a, clock.clock_micros()).unwrap();
+    tx.put(b"Cprobe-1", b"1").unwrap();
+    tx.commit().unwrap();
+
+    // Takeover between the check and the commit: the commit itself refuses.
+    let mut tx = kv.begin_write().unwrap();
+    assert_held(&*tx, &a, clock.clock_micros()).unwrap();
+    clock.advance_ms(2_000);
+    let b = store.acquire_lease("held", &origin("b"), 1_000).unwrap().unwrap();
+    assert_eq!(b.epoch, 2);
+    tx.put(b"Cprobe-2", b"1").unwrap();
+    let e = tx.commit().unwrap_err();
+    assert_eq!(e.code, crate::error::WRITE_CONFLICT, "{e}");
+    assert_eq!(kv.snapshot().unwrap().get(b"Cprobe-2").unwrap(), None);
+
+    // A write that does not read the lease is not fenced by it: the control that shows the read is what conflicts.
+    let mut tx = kv.begin_write().unwrap();
+    clock.advance_ms(2_000);
+    let _c = store.acquire_lease("held", &origin("c"), 1_000).unwrap().unwrap();
+    tx.put(b"Cprobe-3", b"1").unwrap();
+    tx.commit().unwrap();
+}
+
+/// E1 on today's explicit transaction (which holds the writer exclusively): the check is a statement of the
+/// transaction, read through the transaction's own view (it sees a lease the transaction itself took, which no other
+/// reader sees yet), and a takeover tried while the transaction is open waits for its commit.
+#[test]
+fn inside_an_explicit_transaction_the_lease_is_read_through_the_transaction() {
+    let clock = Clock::new();
+    for (mode, store) in both(&clock) {
+        let store = Arc::new(store);
+        let tx = store.begin_transaction(false).unwrap();
+        let a = tx.acquire_lease("in-tx", &origin("a"), 1_000).unwrap().unwrap();
+        tx.assert_lease(&a).unwrap();
+        assert_eq!(store.read_lease("in-tx").unwrap(), None, "{mode}: outside readers do not see it before commit");
+        let taker = {
+            let store = store.clone();
+            std::thread::spawn(move || store.acquire_lease("in-tx", &origin("b"), 1_000).unwrap())
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!taker.is_finished(), "{mode}: the takeover waits for the transaction");
+        tx.commit_transaction().unwrap();
+        assert_eq!(taker.join().unwrap(), None, "{mode}: the committed lease is live, so the taker gets none");
+        store.assert_lease(&a).unwrap();
+    }
+}

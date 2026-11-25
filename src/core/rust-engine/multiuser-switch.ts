@@ -31,7 +31,11 @@ export function rustMultiuserConfigOn(value: string | null | undefined): boolean
   return value === 'true' || value === '1';
 }
 
-/** A lane sub-switch (`GBRAIN_RUST_COMMIT_LOG`, ...): read only while the main switch is on, else always false. */
-export function rustMultiuserSubSwitch(name: string, env: Env = processEnv()): boolean {
-  return rustMultiuserFromEnv(env) && env[name] === '1';
+/**
+ * A lane sub-switch (`GBRAIN_RUST_COMMIT_LOG`, ...), read only while the brain runs in multi-user mode, else always
+ * false. `store` is the store's resolved answer (`RustStore.multiuser`: the environment switch OR the brain's config
+ * row), so a brain that is on only through its config row gets its sub-switches too (I-0.v2).
+ */
+export function rustMultiuserSubSwitch(name: string, store: { readonly multiuser: boolean }, env: Env = processEnv()): boolean {
+  return store.multiuser === true && env[name] === '1';
 }

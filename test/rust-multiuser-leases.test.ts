@@ -69,13 +69,11 @@ afterEach(async () => {
 });
 
 describe('the multi-user switch (I-0)', () => {
-  test('reads exactly 1 from the environment, true or 1 from config, and sub-switches only under it', () => {
+  test('reads exactly 1 from the environment and true or 1 from config', () => {
     expect(rustMultiuserFromEnv({})).toBe(false);
     expect(rustMultiuserFromEnv({ GBRAIN_RUST_MULTIUSER: 'true' })).toBe(false);
     expect(rustMultiuserFromEnv({ GBRAIN_RUST_MULTIUSER: '1' })).toBe(true);
     expect([rustMultiuserConfigOn('true'), rustMultiuserConfigOn('1'), rustMultiuserConfigOn('yes'), rustMultiuserConfigOn(null)]).toEqual([true, true, false, false]);
-    expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { GBRAIN_RUST_COMMIT_LOG: '1' })).toBe(false);
-    expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { GBRAIN_RUST_COMMIT_LOG: '1', GBRAIN_RUST_MULTIUSER: '1' })).toBe(true);
   });
 
   withAddon('off by default; the environment and the brain config row each turn it on, per brain', async () => {
@@ -120,6 +118,27 @@ describe('leases with epochs (I-5)', () => {
         await rustLeases(tx as unknown as RustEngine).assert(b!);
         expect(await lost(() => rustLeases(tx as unknown as RustEngine).assert(a!))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       });
+    });
+  });
+});
+
+describe('sub-switches follow the store (I-0.v2)', () => {
+  test('a sub-switch reads on when the brain is on through its config row alone, and off when the brain is off', () => {
+    const env = { GBRAIN_RUST_COMMIT_LOG: '1' };
+    expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: true }, env)).toBe(true);
+    expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: false }, env)).toBe(false);
+    expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', { multiuser: true }, {})).toBe(false);
+  });
+
+  withAddon('a brain on only through its config row gets its sub-switches', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: undefined, GBRAIN_RUST_COMMIT_LOG: '1' }, async () => {
+      const off = await open();
+      await off.engine.setConfig(RUST_MULTIUSER_CONFIG_KEY, 'true');
+      await close(off.engine);
+      const configured = await open(off.dir);
+      expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', configured.engine.openStore('test'))).toBe(true);
+      const plain = await open();
+      expect(rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', plain.engine.openStore('test'))).toBe(false);
     });
   });
 });
