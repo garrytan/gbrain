@@ -9,7 +9,7 @@
  * caller that reaches the copy (in process or over the socket), a copy that holds a later commit.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
@@ -217,5 +217,16 @@ const plenty: FsStats = { bavail: 1_000_000_000, bsize: 4096, blocks: 2_000_000_
     const done = await snapshotStore(waiting, join(root, 'copy-waiting'), { opId: nextId() }, { statfs: () => plenty });
     expect(opened).toBe(true);
     expect(done.state).toBe('done');
+  }, 30_000);
+  test('the default scratch target under the home folder is accepted, and a target directly in /tmp is refused before anything is made', async () => {
+    // The shape the shadow drill uses: <home>/.gbrain/shadow/<brain>/drills/<scratch>, every directory the user owns.
+    const drills = join(root, 'home', '.gbrain', 'shadow', 'pglite-0123456789ab', 'drills');
+    mkdirSync(drills, { recursive: true });
+    expect((await snapshotStore(owner, join(drills, 'scratch-1'), { opId: nextId() }, { statfs: () => plenty })).state).toBe('done');
+    if (process.platform === 'win32') return;
+    const shared = join(tmpdir(), `gbrain-direct-${process.pid}`);
+    const refused = await snapshotStore(owner, shared, { opId: nextId() }, { statfs: () => plenty }).then(() => undefined, (error: Error) => error);
+    expect(refused?.message).toMatch(/refusing snapshot:/);
+    expect(existsSync(shared)).toBe(false);
   }, 30_000);
 });

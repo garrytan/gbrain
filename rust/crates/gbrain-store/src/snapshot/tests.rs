@@ -2,7 +2,7 @@
 //! read held on the source. The sink is a byte file that fails on demand.
 
 use super::*;
-use crate::error::{SNAPSHOT_CANCELLED, STORE_IO};
+use crate::error::{INVALID_ARGUMENT, SNAPSHOT_CANCELLED, STORE_IO};
 use crate::kv::FileBackend;
 use crate::{OpenOptions, Store};
 use std::sync::Mutex;
@@ -376,6 +376,20 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+thread_local! {
+    /// What a test runs right after `Reservation::make` created the target and before it opened it.
+    static AFTER_CREATE: std::cell::RefCell<Option<Hook>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Called by `Reservation::make` between creating the target and opening it.
+pub(super) fn after_create(root: &Path) {
+    AFTER_CREATE.with(|hook| {
+        if let Some(hook) = hook.borrow().as_ref() {
+            hook(root);
+        }
+    });
+}
+
 /// Called by `Reservation::cleanup` after its checks.
 pub(super) fn after_validation(root: &Path) {
     AFTER_VALIDATION.with(|hook| {
@@ -420,6 +434,147 @@ fn a_target_swapped_after_the_check_leaves_the_other_directory_untouched() {
         "{}",
         error.message
     );
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The race a reader found at the claim: between creating the target and opening it, the live
+/// brain's directory is renamed into the target's place. The claim must see that the directory it
+/// opened is not the empty one it made, refuse, and touch nothing in it.
+#[cfg(unix)]
+#[test]
+fn a_brain_swapped_into_the_target_between_create_and_open_is_refused_untouched() {
+    let (store, root) = brain("snap-swap-create-open");
+    let (brain_dir, target, aside) = (root.join("brain"), root.join("copy"), root.join("aside"));
+    let from = brain_dir.clone();
+    AFTER_CREATE.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move |path: &Path| {
+            fs::rename(path, &aside).unwrap();
+            fs::rename(&from, path).unwrap();
+        }));
+    });
+    let error = store.snapshot_to(&target, &SnapshotOp::new()).unwrap_err();
+    AFTER_CREATE.with(|hook| *hook.borrow_mut() = None);
+    // The live brain now sits at the target path; every one of its files is still there.
+    assert!(target.join(RECORDS_FILE).exists(), "records.redb survives");
+    assert!(target.join(format::FORMAT_FILE).exists(), "FORMAT survives");
+    assert_eq!(error.code, STORE_IO, "{error:?}");
+    assert!(error.message.contains("was not empty"), "{}", error.message);
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// The race a reader found at publication: the target is replaced by a link to another valid brain
+/// while the copy runs, and nothing may be written into that brain. The call fails.
+#[cfg(unix)]
+#[test]
+fn a_target_swapped_for_another_brain_mid_copy_fails_and_writes_nothing_there() {
+    let (store, root) = brain("snap-swap-publish");
+    let (other, other_root) = brain("snap-swap-publish-other");
+    drop(other);
+    let other_dir = other_root.join("brain");
+    let format_before = fs::read(other_dir.join(format::FORMAT_FILE)).unwrap();
+    let target = root.join("copy");
+    let (moved, to) = (root.join("moved"), other_dir.clone());
+    let from = target.clone();
+    let hook = Arc::new(move |number: u64| {
+        if number == 1 {
+            fs::rename(&from, &moved).unwrap();
+            std::os::unix::fs::symlink(&to, &from).unwrap();
+        }
+    });
+    let op = SnapshotOp::new()
+        .with_batch_bytes(4096)
+        .with_batch_hook(hook);
+    let error = store.snapshot_to(&target, &op).unwrap_err();
+    assert_eq!(error.code, STORE_IO, "{error:?}");
+    assert!(error.message.contains("copy"), "{}", error.message);
+    assert_eq!(
+        fs::read(other_dir.join(format::FORMAT_FILE)).unwrap(),
+        format_before,
+        "the other brain's FORMAT is unchanged"
+    );
+    assert!(
+        !other_dir.join(MANIFEST_FILE).exists(),
+        "no manifest was written there"
+    );
+    assert!(other_dir.join(RECORDS_FILE).exists());
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+    let _ = fs::remove_dir_all(other_root);
+}
+
+/// The default place a single-user brain's copy goes: a scratch directory under the brain's own
+/// folder in the user's home. It is accepted, and the copy verifies.
+#[cfg(unix)]
+#[test]
+fn the_default_home_target_of_a_single_user_brain_is_accepted() {
+    let (store, root) = brain("snap-default-target");
+    let drills = root.join("home/.gbrain/shadow/pglite-0123456789ab/drills");
+    fs::create_dir_all(&drills).unwrap();
+    let manifest = store
+        .snapshot_to(&drills.join("scratch-1"), &SnapshotOp::new())
+        .unwrap();
+    assert!(manifest.keys > 0);
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A directory above the target that the group can write is refused before anything is made, and
+/// the message names it, its mode and the way out.
+#[cfg(unix)]
+#[test]
+fn a_group_writable_grandparent_is_refused_before_anything_is_created() {
+    use std::os::unix::fs::PermissionsExt;
+    let (store, root) = brain("snap-group-writable");
+    let shared = root.join("shared");
+    let parent = shared.join("mine");
+    fs::create_dir_all(&parent).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o775)).unwrap();
+    let target = parent.join("copy");
+    let error = store.snapshot_to(&target, &SnapshotOp::new()).unwrap_err();
+    assert_eq!(error.code, INVALID_ARGUMENT, "{error:?}");
+    assert!(
+        error.message.starts_with("refusing snapshot:"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("shared"), "{}", error.message);
+    assert!(
+        error.message.contains("group-writable (mode 0775)"),
+        "{}",
+        error.message
+    );
+    assert!(
+        error.message.contains("choose a directory you own"),
+        "{}",
+        error.message
+    );
+    assert!(!target.exists(), "nothing was created");
+    assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
+    drop(store);
+    let _ = fs::remove_dir_all(root);
+}
+
+/// A target directly in a shared directory such as /tmp is refused: its direct parent is not
+/// owned by the user.
+#[cfg(unix)]
+#[test]
+fn a_target_directly_in_tmp_is_refused_with_the_named_refusal() {
+    let (store, root) = brain("snap-direct-tmp");
+    if !Path::new("/tmp").is_dir() {
+        return;
+    }
+    let target = PathBuf::from(format!("/tmp/gbrain-direct-{}", std::process::id()));
+    let error = store.snapshot_to(&target, &SnapshotOp::new()).unwrap_err();
+    assert_eq!(error.code, INVALID_ARGUMENT, "{error:?}");
+    assert!(
+        error.message.starts_with("refusing snapshot:"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("tmp"), "{}", error.message);
+    assert!(!target.exists(), "nothing was created");
     drop(store);
     let _ = fs::remove_dir_all(root);
 }

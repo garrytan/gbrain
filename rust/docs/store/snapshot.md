@@ -27,12 +27,28 @@ writes N and syncs. While it runs, the read keeps redb's old pages, so a long co
 the source file: the owner bounds that (see the TypeScript side). The read is dropped as soon as the
 source pass ends.
 
+**Threat model: the snapshot trusts only directories the caller's own user (or root) controls.** Before
+anything is created, every directory from `/` down to the target's parent must be owned by the current
+user or by root and must not be group- or world-writable (a root-owned sticky directory such as `/tmp` is
+allowed above the parent); the parent itself must be owned by the current user, with no group or world
+write and no sticky exception. A target that fails is refused with `invalid_argument`, naming the
+directory and its owner or mode, for example `refusing snapshot: /x/y is group-writable (mode 0775);
+remove group write or choose a directory you own`, and nothing is made. A copy goes to a directory you
+own, such as `<shadow dir>/drills/<scratch>` under the home folder, not directly into `/tmp`. A process of
+the same user that races the call (renaming directories under the target's parent while it runs) is not
+defended against beyond the checks below; that is a stated limit.
+
 `target` must not exist; `mkdir(target, 0700)` creating it is the reservation. Its parent must not be a
 symbolic link, and neither the target nor the brain directory may lie inside the other. A cancel or an
 error removes what the call created, and the call returns only after the read is released and the new
 file is closed, so a caller that sees the return may delete its scratch space. `SnapshotOp::progress()`
 reports `pinned`, false from that moment on. A cancel is checked for every entry of the source pass,
 including the relation digests of a seeded store, so the read is not held for the relations that remain.
+
+The directory is claimed once it is created: it is opened without following links, and it is refused
+(and left untouched) if it is not the empty directory just made. `FORMAT` and `SNAPSHOT.json` are
+published through that handle, and the path is checked against it before the copy file is reopened and
+after the last publish, so a path swapped mid-copy makes the call fail and nothing is written elsewhere.
 
 The removal is anchored: on Unix the call keeps the directory it created open (`O_DIRECTORY | O_NOFOLLOW`)
 and unlinks the files relative to that handle, so a path renamed or replaced by a link afterwards cannot

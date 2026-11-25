@@ -24,7 +24,7 @@
 //! disk space and age (`src/core/rust-engine/store-snapshot.ts`).
 
 use crate::error::{INVALID_STATE, Result, SNAPSHOT_CANCELLED, STORE_CORRUPT, StoreError};
-use crate::format::{self, FormatRecord, RECORDS_FILE};
+use crate::format::{self, RECORDS_FILE};
 use crate::kv::KvRead;
 use crate::redb_kv::{RedbReadOnlyKv, RedbSink};
 use crate::seed::{MANIFEST, SeedManifest, relation_digest_stream_until};
@@ -404,6 +404,10 @@ impl Reservation {
         if root.starts_with(&source) || source.starts_with(&root) {
             return invalid("it overlaps the brain directory");
         }
+        // Before anything is made: the snapshot trusts only directories the caller's own user (or
+        // root) controls, so a directory another user can write to is refused here.
+        #[cfg(unix)]
+        check_trusted(root.parent().unwrap_or(Path::new("/")))?;
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
@@ -416,6 +420,8 @@ impl Reservation {
         }
         // From here the directory exists: a failure removes it again, and only if it is still the
         // one just made (the handle and the path agree).
+        #[cfg(test)]
+        tests::after_create(&root);
         #[cfg(unix)]
         let reservation = {
             use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -433,6 +439,16 @@ impl Reservation {
                 }
                 Ok((dir, (meta.dev(), meta.ino())))
             });
+            // What was opened must be the empty directory just made. Another directory renamed
+            // into the target's place (the brain itself, for one) is refused and left exactly as
+            // it is: nothing is armed to remove it.
+            if made.is_ok() && fs::read_dir(&root).is_ok_and(|mut entries| entries.next().is_some())
+            {
+                return Err(StoreError::io(format!(
+                    "snapshot target {} was not empty when this call claimed it; it was not touched",
+                    root.display()
+                )));
+            }
             match made {
                 Ok((dir, identity)) => Reservation {
                     root,
@@ -452,6 +468,88 @@ impl Reservation {
         // cannot be synced fails the call, and the drop of `reservation` removes the directory.
         sync_dir(reservation.root.parent().unwrap_or(Path::new(".")))?;
         Ok(reservation)
+    }
+
+    /// Whether the path still names the directory this call created. A path that was renamed or
+    /// replaced makes the call fail; nothing more is written through it.
+    fn verify(&self) -> Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let same = fs::symlink_metadata(&self.root).is_ok_and(|meta| {
+                meta.is_dir()
+                    && !meta.file_type().is_symlink()
+                    && (meta.dev(), meta.ino()) == self.identity
+            });
+            if !same {
+                return Err(StoreError::io(format!(
+                    "snapshot target {} no longer names the directory this call made; the snapshot stopped",
+                    self.root.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Publishes `name` in the directory this call made: written to a new `<name>.tmp`, synced,
+    /// renamed into place and the directory synced, all relative to the held handle on Unix, so a
+    /// path swapped during the copy can never receive the file.
+    fn publish(&self, name: &str, body: &[u8]) -> Result<()> {
+        let io = |what: &str, e: std::io::Error| {
+            StoreError::io(format!("snapshot: {what} {name}: {}", e.kind()))
+        };
+        let temp = format!("{name}.tmp");
+        #[cfg(unix)]
+        {
+            use std::os::fd::{AsRawFd, FromRawFd};
+            let cstr = |text: &str| {
+                std::ffi::CString::new(text)
+                    .map_err(|_| io("naming", std::io::ErrorKind::InvalidInput.into()))
+            };
+            let (temp_c, name_c) = (cstr(&temp)?, cstr(name)?);
+            let fd = self.dir.as_raw_fd();
+            // SAFETY: `fd` is open for the call and the names are NUL-terminated strings that
+            // outlive it; the new descriptor is owned by the `File` made from it.
+            let mut file = unsafe {
+                let raw = libc::openat(
+                    fd,
+                    temp_c.as_ptr(),
+                    libc::O_WRONLY
+                        | libc::O_CREAT
+                        | libc::O_EXCL
+                        | libc::O_NOFOLLOW
+                        | libc::O_CLOEXEC,
+                    0o600 as libc::c_uint,
+                );
+                if raw < 0 {
+                    return Err(io("creating", std::io::Error::last_os_error()));
+                }
+                fs::File::from_raw_fd(raw)
+            };
+            file.write_all(body).map_err(|e| io("writing", e))?;
+            file.sync_all().map_err(|e| io("syncing", e))?;
+            drop(file);
+            // SAFETY: as above.
+            if unsafe { libc::renameat(fd, temp_c.as_ptr(), fd, name_c.as_ptr()) } != 0 {
+                return Err(io("publishing", std::io::Error::last_os_error()));
+            }
+            self.dir
+                .sync_all()
+                .map_err(|e| io("syncing the directory for", e))
+        }
+        #[cfg(not(unix))]
+        {
+            let temp = self.root.join(temp);
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .map_err(|e| io("creating", e))?;
+            file.write_all(body).map_err(|e| io("writing", e))?;
+            file.sync_all().map_err(|e| io("syncing", e))?;
+            fs::rename(&temp, self.root.join(name)).map_err(|e| io("publishing", e))?;
+            sync_dir(&self.root)
+        }
     }
 
     /// Removes what this call made. The files go relative to the open directory handle; the
@@ -514,6 +612,53 @@ impl Reservation {
     }
 }
 
+/// The snapshot trusts only directories the caller's own user (or root) controls. Every directory
+/// from `/` down to `parent` must be owned by the current user or by root and must not be group- or
+/// world-writable, except that a root-owned sticky directory (such as `/tmp`) may be written by
+/// others above the parent. The parent itself is held to the strict rule: owned by the current
+/// user, not group- or world-writable, no sticky exception. A directory that fails the rule is
+/// named, with its owner or mode and the way out.
+#[cfg(unix)]
+fn check_trusted(parent: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: `geteuid` takes no arguments and cannot fail.
+    let me = unsafe { libc::geteuid() };
+    let refuse =
+        |message: String| Err(StoreError::invalid(format!("refusing snapshot: {message}")));
+    let mut chain: Vec<&Path> = parent.ancestors().collect();
+    chain.reverse();
+    for path in chain {
+        let meta = fs::symlink_metadata(path).map_err(|e| {
+            StoreError::io(format!(
+                "snapshot target: reading {}: {}",
+                path.display(),
+                e.kind()
+            ))
+        })?;
+        let (owner, mode) = (meta.uid(), meta.mode() & 0o7777);
+        let direct = path == parent;
+        if owner != me && (direct || owner != 0) {
+            let trusted = if direct { "you" } else { "you or root" };
+            return refuse(format!(
+                "{} is owned by uid {owner}, not {trusted} (uid {me}); choose a directory you own",
+                path.display()
+            ));
+        }
+        if mode & 0o022 != 0 && !(!direct && owner == 0 && mode & 0o1000 != 0) {
+            let (who, fix) = match (mode & 0o020 != 0, mode & 0o002 != 0) {
+                (true, true) => ("group- and world-writable", "group and world write"),
+                (true, false) => ("group-writable", "group write"),
+                _ => ("world-writable", "world write"),
+            };
+            return refuse(format!(
+                "{} is {who} (mode {mode:04o}); remove {fix} or choose a directory you own",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Removes `name` from the open directory `dir` (`unlinkat`), never following a path.
 #[cfg(unix)]
 fn unlink_in(dir: &fs::File, name: &str) -> std::io::Result<()> {
@@ -551,23 +696,6 @@ fn sync_dir(dir: &Path) -> Result<()> {
     #[cfg(not(unix))]
     let _ = dir;
     Ok(())
-}
-
-fn write_manifest(root: &Path, manifest: &SnapshotManifest) -> Result<()> {
-    let io = |what: &str, e: std::io::Error| StoreError::io(format!("{what}: {}", e.kind()));
-    let temp = root.join("SNAPSHOT.json.tmp");
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .map_err(|e| io("creating the manifest", e))?;
-    let mut body = serde_json::to_vec_pretty(manifest)?;
-    body.push(b'\n');
-    file.write_all(&body)
-        .map_err(|e| io("writing the manifest", e))?;
-    file.sync_all().map_err(|e| io("syncing the manifest", e))?;
-    fs::rename(&temp, root.join(MANIFEST_FILE)).map_err(|e| io("publishing the manifest", e))?;
-    sync_dir(root)
 }
 
 impl Store {
@@ -608,7 +736,7 @@ impl Store {
             ));
         };
         let mut reservation = Reservation::make(dir, target)?;
-        match self.copy(dir, &reservation.root.clone(), op, reopen, make_sink) {
+        match self.copy(dir, &reservation, op, reopen, make_sink) {
             Ok(manifest) => {
                 reservation.kept = true;
                 Ok(manifest)
@@ -628,13 +756,15 @@ impl Store {
     fn copy(
         &self,
         dir: &Path,
-        root: &Path,
+        claim: &Reservation,
         op: &SnapshotOp,
         reopen: bool,
         make_sink: impl FnOnce(&Path) -> Result<RedbSink>,
     ) -> Result<SnapshotManifest> {
+        let root = claim.root.as_path();
         let record = format::read(dir)?
             .ok_or_else(|| StoreError::new(INVALID_STATE, "the brain has no FORMAT file"))?;
+        claim.verify()?;
         let sink = make_sink(&root.join(RECORDS_FILE))?;
         let (read, generation) = self.kv.versioned_snapshot()?;
         let pin = Pinned::new(read, &op.pinned);
@@ -704,13 +834,16 @@ impl Store {
         }
         let (keys, bytes, tags) = inventory.finish();
         sink.finish(generation)?;
+        claim.verify()?;
         if reopen {
             drop(RedbReadOnlyKv::open_path(&root.join(RECORDS_FILE))?);
         }
         if op.is_cancelled() {
             return Err(SnapshotOp::cancelled());
         }
-        write_format(root, &record)?;
+        let mut format_body = serde_json::to_vec_pretty(&record)?;
+        format_body.push(b'\n');
+        claim.publish(format::FORMAT_FILE, &format_body)?;
         let manifest = SnapshotManifest {
             version: MANIFEST_VERSION,
             brain_id: stored.brain_id,
@@ -723,14 +856,14 @@ impl Store {
             relations,
             created_at_us: self.env.now_micros(),
         };
-        write_manifest(root, &manifest)?;
+        let mut manifest_body = serde_json::to_vec_pretty(&manifest)?;
+        manifest_body.push(b'\n');
+        claim.publish(MANIFEST_FILE, &manifest_body)?;
+        // A path swapped after the last check still never received a byte (the files went through the
+        // held handle), but the copy is then somewhere the caller did not name: that is a failure.
+        claim.verify()?;
         Ok(manifest)
     }
-}
-
-fn write_format(root: &Path, record: &FormatRecord) -> Result<()> {
-    format::write(root, record)?;
-    sync_dir(root)
 }
 
 #[cfg(test)]
