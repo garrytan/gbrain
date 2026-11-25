@@ -82,7 +82,8 @@ never a pass. With no shadow running, every criterion is `missing`.
     file for another platform or another build, and a provisional or unfinished eval file all stay NOT READY, with the
     reason printed. The drill refuses (`addon_mismatch`) when the addon it loads is not the one the evidence started
     on. A copy that has pages passes only after a keyword search ran on it; while the copy's keyword index is complete
-    that search must get a hit (`no_probe_term` otherwise). **Say to your agent:** *"Run the shadow restore drill and
+    that search must get a hit (`no_probe_term` otherwise). What each half checks and keeps:
+    [engine-shadow-drill](engine-shadow-drill.md). **Say to your agent:** *"Run the shadow restore drill and
     fetch the eval gates."*
 11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
     is no evidence, `writer_coverage_unknown`, never "one host"), a personal brain (not a mounted team brain), and a
