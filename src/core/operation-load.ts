@@ -124,6 +124,8 @@ const OP_AREAS: Record<string, string> = {
   request_tools: 'discovery', capabilities: 'discovery',
   // agent policy (advisory rules for outside actions)
   policy_check: 'agent-policy', agent_policy: 'agent-policy',
+  // first-session suggestion (onboarding PR 2)
+  onboarding_status: 'onboarding', onboarding_off: 'onboarding',
 };
 
 const finalized = new WeakSet<Operation>();
