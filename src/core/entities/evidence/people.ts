@@ -145,7 +145,7 @@ export function handleOf(raw: string, countryCode: string): string | null {
 export function phoneHandle(raw: string, countryCode: string): string | null {
   const phone = canonicalPhone(raw, countryCode);
   if (!phone) return null;
-  const ext = /(?:[;,#]|ext(?:ension)?\.?|x)\s*(\d+)\D*$/i.exec(raw.normalize('NFKC').trim())?.[1];
+  const ext = /(?:[;,#]|ext(?:ension)?\.?|x)\s*=?\s*(\d+)\D*$/i.exec(raw.normalize('NFKC').trim())?.[1];
   return ext ? `p:${phone};ext=${ext}` : `p:${phone}`;
 }
 
@@ -269,7 +269,7 @@ export function classify(a: PersonPage, b: PersonPage, fa: EntityPage | undefine
     else { sharedId = true; why.push(`shared ${ka.key}`); }
   }
   const shared = [...a.handles].filter(h => b.handles.has(h)).sort();
-  if (!sharedId && (differingId || contestedId)) return { base: 'C6', names, shared, why };
+  if (differingId || (!sharedId && contestedId)) return { base: 'C6', names, shared, why };
   if (sharedId) {
     if (names !== true) return { base: 'C6', names, shared, why: [...why, 'names disagree'] };
     return { base: sameSource ? 'C7' : 'C3', names, shared, why };

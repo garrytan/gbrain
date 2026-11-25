@@ -154,7 +154,9 @@ for (const backend of testBackends()) describe(`C7 collapse without a repository
     const onKept = (error: Error) => spyOn(mutations, 'submitPageMutation').mockImplementation(async (ctx, req) =>
       ((req.params as { slug?: string }).slug === 'people/robert-example' ? Promise.reject(error) : real(ctx, req)));
     const spy = onKept(new Error('injected'));
-    try { await expect(applyAutoLinks(engine, await planAutoLinks(engine))).rejects.toThrow('injected'); } finally { spy.mockRestore(); }
+    let failed: Awaited<ReturnType<typeof applyAutoLinks>>;
+    try { failed = await applyAutoLinks(engine, await planAutoLinks(engine)); } finally { spy.mockRestore(); }
+    expect(failed.collapses).toEqual([expect.objectContaining({ collapse, status: 'skipped', reason: 'failed', note: expect.stringContaining('injected') })]);
     expect(await h.fm('people/bob-example')).not.toHaveProperty('merged_into');
     expect((await h.fm('people/robert-example')).aliases).toEqual(['Rob E']);
     await applyAutoLinks(engine, await planAutoLinks(engine));
@@ -193,6 +195,31 @@ for (const backend of testBackends()) describe(`C7 collapse without a repository
     expect(await h.json(['auto'])).toMatchObject({ switches: { C7: 'off' }, collapses: [] });
     await h.dedupe(['auto', '--on', 'C7']);
     expect((await h.json(['auto'])).collapses.map((c: any) => c.collapse)).toEqual([id]);
+  });
+
+  test('two ids that disagree veto a collapse even when a third id matches', async () => {
+    await h.person('people/ida-example', 'Ida Example', { github: 'idaex', linkedin: 'in/ida-one' });
+    await h.person('people/ida-example-2', 'Ida Example', { github: 'https://github.com/idaex', linkedin: 'in/ida-two' });
+    expect((await h.json(['auto'])).collapses.some((c: any) => c.retired.startsWith('people/ida-example'))).toBe(false);
+    for (const slug of ['people/ida-example', 'people/ida-example-2']) await engine.deletePage(slug, { sourceId: 'default' } as never);
+  });
+
+  test('a read-only source is set aside, and a collapse in a source made read-only afterwards is not undone through it', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('side-a', 'side-a', '{}'::jsonb) ON CONFLICT DO NOTHING");
+    await h.person('people/jo-example', 'Jo Example', { github: 'joex' }, 'side-a');
+    await h.person('people/jo-example-2', 'Jo Example', { github: 'https://github.com/joex' }, 'side-a');
+    await h.dedupe(['auto', '--apply']);
+    const jo = (await listCollapses(engine)).find(c => c.source_id === 'side-a')!;
+    expect((await h.fm('people/jo-example-2', 'side-a')).merged_into).toBe('people/jo-example');
+    await engine.executeRaw(`UPDATE sources SET config = '{"mirror_read_only": true}'::jsonb WHERE id = 'side-a'`);
+    expect((await h.json(['undo', jo.collapse])).collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'read_only_source' })]);
+    expect((await h.fm('people/jo-example-2', 'side-a')).merged_into).toBe('people/jo-example');
+    await engine.executeRaw(`UPDATE sources SET config = '{}'::jsonb WHERE id = 'side-a'`);
+    await h.dedupe(['undo', jo.collapse]);
+    await engine.executeRaw(`UPDATE sources SET config = '{"mirror_read_only": true}'::jsonb WHERE id = 'side-a'`);
+    const plan = await h.json(['auto']);
+    expect(plan.collapses.some((c: any) => c.source_id === 'side-a')).toBe(false);
+    expect(plan.set_aside).toContainEqual(expect.objectContaining({ reason: 'read_only_source' }));
   });
 });
 
@@ -335,6 +362,17 @@ describe('with a repository', () => {
     for (const path of ['people/hal-example.md', 'people/hal-example-2.md']) expect(read(path)).toBe(extra[path]!);
     expect(git(root, 'status', '--porcelain')).toBe('');
     await h.dedupe(['auto', '--on', 'C7']);
+  });
+
+  test('in git, a file with edits not committed yet is left alone, so a collapse commit never carries them', async () => {
+    const [hal] = await planFor('people/hal-example');
+    const path = `${hal!.retired}.md`;
+    const draft = `${read(path)}A draft line.\n`;
+    writeFileSync(join(root, path), draft);
+    const out = await applyAutoLinks(engine, { ...(await planAutoLinks(engine)), links: [], collapses: [hal!] });
+    expect(out.collapses).toEqual([expect.objectContaining({ status: 'skipped', reason: 'uncommitted_changes', store: 'git' })]);
+    expect(read(path)).toBe(draft);
+    git(root, 'checkout', '--', path);
   });
 
   test('in git, a reject or a distinct_from committed after the plan is read under the lock and never written over', async () => {

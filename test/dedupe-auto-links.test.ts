@@ -278,6 +278,7 @@ describe('the notes ruled on #10300', () => {
     expect(phoneHandle('+1 555-555-0400 x12', '1')).toBe('p:+15555550400;ext=12');
     expect(phoneHandle('(555) 555-0400 ext. 12', '1')).toBe('p:+15555550400;ext=12');
     expect(phoneHandle('+1 555-555-0400', '1')).toBe('p:+15555550400');
+    expect(phoneHandle('+1 555-555-0400;ext=12', '1')).toBe('p:+15555550400;ext=12');
     await person('people/yara-example', 'Yara Example', { phone: '+1 555-555-0400 x12' });
     await person('contacts/zed-card', 'zedcard', { phone: '+1 555-555-0400 x34' }, 'people-c');
     await person('contacts/yara-card', 'yaracard', { phone: '(555) 555-0400 ext 12' }, 'people-b');

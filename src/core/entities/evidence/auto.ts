@@ -129,7 +129,10 @@ export async function applyAutoLinks(engine: BrainEngine, plan: AutoPlan, config
   }
   const linked = record?.recorded ?? [];
   const collapses: CollapseOutcome[] = [];
-  for (const c of plan.collapses) collapses.push(await applyCollapse(engine, c, config, () => stillCollapsible(engine, c)));
+  for (const c of plan.collapses) {
+    collapses.push(await applyCollapse(engine, c, config, () => stillCollapsible(engine, c))
+      .catch((error): CollapseOutcome => ({ collapse: c.collapse, status: 'skipped', reason: 'failed', store: c.store, note: error instanceof Error ? error.message : String(error) })));
+  }
   return { record, linked, changed: plan.links.map(l => l.decision).filter(id => !linked.includes(id)), collapses };
 }
 
@@ -151,14 +154,18 @@ async function stillLinkable(engine: BrainEngine, pending: DecisionInput[], read
 }
 
 /**
- * A planned collapse may still be written: C7 is on and no "different" decision covers the pair (in the database, or
- * committed to the decisions repository and not read back yet). applyCollapse runs it inside the write.
+ * A planned collapse may still be written: C7 is on, neither page has become restricted, and no "different" decision
+ * covers the pair (in the database, or committed to the decisions repository for this pair or either page and not read
+ * back yet). applyCollapse runs it inside the write.
  */
 async function stillCollapsible(engine: BrainEngine, c: CollapsePlan): Promise<boolean> {
   if ((await autoSwitches(engine))[c.class] !== 'on') return false;
+  const members = [c.retired, c.canonical].map(slug => ({ source_id: c.source_id, slug }));
+  if ((await engine.listRestrictedIdentityMembers(members)).length) return false;
   const home = await identityHome(engine);
-  const keys = [c.retired, c.canonical].map(slug => memberKey({ source_id: c.source_id, slug }));
-  return ![...(await engine.listIdentityDecisions()).decisions, ...(home ? await committedDecisions(home) : [])].some(d => {
+  const keys = members.map(memberKey);
+  const ids = new Set([decisionId(members), ...members.map(m => decisionId([m]))]);
+  return ![...(await engine.listIdentityDecisions()).decisions, ...(home ? await committedDecisions(home, ids) : [])].some(d => {
     if (d.verdict !== 'different') return false;
     const set = new Set(d.members.map(memberKey));
     return set.size === 1 ? keys.some(k => set.has(k)) : keys.every(k => set.has(k));
@@ -185,14 +192,17 @@ export async function collapsesSince(engine: BrainEngine, since: number): Promis
 /** Every automatic link of a class, read from the committed decision files too on a brain that keeps them in git. */
 async function autoDecisionIds(engine: BrainEngine, cls: AutoClass): Promise<string[]> {
   const home = await identityHome(engine);
-  const all = [...(await engine.listIdentityDecisions()).decisions, ...(home ? await committedDecisions(home) : [])];
-  return [...new Set(all.filter(d => d.verdict === 'same' && d.decided_by === `${AUTO_DECIDED_BY}${cls}`).map(d => d.decision_id))];
+  const committed = new Map((home ? await committedDecisions(home) : []).map(d => [d.decision_id, d]));
+  const auto = (d: { verdict: string; decided_by: string }) => d.verdict === 'same' && d.decided_by === `${AUTO_DECIDED_BY}${cls}`;
+  const all = [...(await engine.listIdentityDecisions()).decisions, ...committed.values()];
+  return [...new Set(all.filter(d => auto(d) && (!committed.has(d.decision_id) || auto(committed.get(d.decision_id)!))).map(d => d.decision_id))];
 }
 
 /**
- * Removes everything a class did, then switches it off, then removes anything a run that read the switch before it
- * flipped added meanwhile. Links go in one write (like gbrain dedupe undo); each collapse is undone in its own write.
- * `left` names collapses whose pages changed since, so they were not undone (undo each one by hand).
+ * Switches a class off, then removes everything it did, twice, so a run that read the switch before it flipped and wrote
+ * meanwhile is removed too (each write also re-reads the switch). Links go in one write (like gbrain dedupe undo); each
+ * collapse is undone in its own write. `left` names collapses that were not undone (a page changed, a read-only source,
+ * or a write that failed): undo each one by hand.
  */
 export async function switchAutoClassOff(engine: BrainEngine, cls: AutoClass, config: GBrainConfig | null = null): Promise<{ removed: string[]; left: string[] }> {
   const removed: string[] = [];
@@ -200,7 +210,8 @@ export async function switchAutoClassOff(engine: BrainEngine, cls: AutoClass, co
   const sweep = async () => {
     if (cls === 'C7') {
       for (const c of (await listCollapses(engine)).filter(x => !removed.includes(x.collapse))) {
-        const r = await undoCollapse(engine, c, config);
+        const r = await undoCollapse(engine, c, config).catch((): null => null);
+        if (!r) { left.add(c.collapse); continue; }
         if (r.status === 'undone') { removed.push(c.collapse); left.delete(c.collapse); } else left.add(c.collapse);
       }
       return;
@@ -209,8 +220,8 @@ export async function switchAutoClassOff(engine: BrainEngine, cls: AutoClass, co
     if (!ids.length) return;
     removed.push(...(await forgetDecisions(engine, ids, `dedupe: switch automatic ${cls} links off and remove ${ids.length}`)).removed);
   };
-  await sweep();
   await engine.setConfig(autoSwitchKey(cls), 'off');
+  await sweep();
   await sweep();
   return { removed, left: [...left] };
 }

@@ -28,13 +28,13 @@ import type { Page } from '../../types.ts';
 import type { GBrainConfig } from '../../config.ts';
 import type { IdentityMemberRef } from '../../engine-sql/identity-decisions.ts';
 import { isGitWorkTree, sourcePolicyRoot } from '../../access/policy-git.ts';
-import { parseSourceConfig } from '../../sources-load.ts';
+import { readOnlyCheckout } from '../../persistence/mirror-read-only.ts';
 import { loadBoundedYaml } from '../../data-frontmatter.ts';
 import { serializePageToMarkdown } from '../../markdown.ts';
 import { withoutBody } from '../../page-body/page-shape.ts';
 import { importFromFile } from '../../import-file.ts';
 import { OperationError } from '../../ops/contract.ts';
-import { canonicalOf, commitBrainFiles, decisionId } from '../identity-decisions.ts';
+import { canonicalOf, commitBrainFiles, decisionId, git } from '../identity-decisions.ts';
 import { personPageTypes, strictNameFold } from '../duplicates.ts';
 
 export const COLLAPSE_KEY = 'dedupe_collapse';
@@ -58,16 +58,18 @@ export interface CollapsePlan {
 export interface CollapseRecord { collapse: string; class: CollapseClass; source_id: string; retired: string; canonical: string; at: string; aliases: string[] }
 
 /**
- * skipped: nothing was written, because a page changed since the plan or the undo (changed), or because a file's
- * frontmatter cannot be edited line by line without touching other keys (frontmatter_not_editable; edit it by hand).
+ * skipped: nothing was written, because a page changed since the plan or the undo (changed), a file's frontmatter cannot
+ * be edited line by line without touching other keys (frontmatter_not_editable; edit it by hand), a file has edits not
+ * committed yet (uncommitted_changes; commit them first), the source's checkout is read-only (read_only_source), or the
+ * write failed (failed, with the error in note). A note on any outcome names what is left to do by hand.
  */
-export interface CollapseOutcome { collapse: string; status: 'collapsed' | 'undone' | 'skipped'; reason?: 'changed' | 'frontmatter_not_editable'; store: 'git' | 'database'; commit?: string | null; outcome?: string; note?: string }
+export type CollapseSkip = 'changed' | 'frontmatter_not_editable' | 'uncommitted_changes' | 'read_only_source' | 'failed';
+export interface CollapseOutcome { collapse: string; status: 'collapsed' | 'undone' | 'skipped'; reason?: CollapseSkip; store: 'git' | 'database'; commit?: string | null; outcome?: string; note?: string }
 
 type Store = { kind: 'git'; root: string } | { kind: 'database' } | { kind: 'read_only' };
 
 async function storeOf(engine: BrainEngine, sourceId: string): Promise<Store> {
-  const s = (await engine.listAllSources()).find(x => x.id === sourceId);
-  if (!s || parseSourceConfig(s.config).mirror_read_only === true) return { kind: 'read_only' };
+  if (!(await engine.listAllSources()).some(x => x.id === sourceId) || await readOnlyCheckout(engine, sourceId)) return { kind: 'read_only' };
   const root = await sourcePolicyRoot(engine, sourceId);
   return root && isGitWorkTree(root) ? { kind: 'git', root } : { kind: 'database' };
 }
@@ -123,7 +125,7 @@ function headOf(text: string): Head {
     set: yaml => (raw ? text.slice(0, start) + yaml + text.slice(start + raw.length) : text.slice(0, start) + (yaml ? `${yaml}\n` : '') + text.slice(start)) };
 }
 
-const block = (obj: Record<string, unknown>) => dump(obj, { lineWidth: -1, noRefs: true, schema: JSON_SCHEMA }).trimEnd();
+const block = (obj: Record<string, unknown>) => dump(obj, { lineWidth: -1, noRefs: true }).trimEnd();
 
 /** The line range [from, to) of a top-level key, or null. */
 function keyLines(lines: string[], key: string): [number, number] | null {
@@ -183,28 +185,29 @@ function undoDelta(rec: CollapseRecord, goneFm: Record<string, unknown>, keptFm:
 
 async function writeInGit(engine: BrainEngine, root: string, sourceId: string, slugs: { retired: string; canonical: string }, message: string,
   change: (gone: { title: string; fm: Record<string, unknown> }, kept: { title: string; fm: Record<string, unknown> } | null) =>
-    { retired: Record<string, unknown>; kept: Record<string, unknown> } | null, guard?: () => Promise<boolean>): Promise<{ written: boolean; unsafe?: true; commit?: string | null; outcome?: string; note?: string }> {
+    { retired: Record<string, unknown>; kept: Record<string, unknown> } | null, guard?: () => Promise<boolean>): Promise<{ written: boolean; blocked?: CollapseSkip; commit?: string | null; outcome?: string; note?: string }> {
   const [gone, kept] = [await engine.getPage(slugs.retired, { sourceId }), await engine.getPage(slugs.canonical, { sourceId })];
   if (!gone) return { written: false };
   const paths = { retired: filePath(gone), kept: kept ? filePath(kept) : null };
-  let unsafe = false;
+  let blocked: CollapseSkip | undefined;
   const receipt = await commitBrainFiles(root, [], message, async () => {
     if (guard && !(await guard())) return [];
+    if ((await git(root, ['status', '--porcelain', '-z', '--', paths.retired, ...(paths.kept ? [paths.kept] : [])])).length) { blocked = 'uncommitted_changes'; return []; }
     const read = (p: string) => (existsSync(join(root, p)) ? readFileSync(join(root, p), 'utf8') : null);
     const goneText = read(paths.retired);
     const keptText = paths.kept ? read(paths.kept) : null;
     if (goneText === null) return [];
     let goneHead: Head, keptHead: Head | null;
-    try { [goneHead, keptHead] = [headOf(goneText), keptText === null ? null : headOf(keptText)]; } catch { unsafe = true; return []; }
+    try { [goneHead, keptHead] = [headOf(goneText), keptText === null ? null : headOf(keptText)]; } catch { blocked = 'frontmatter_not_editable'; return []; }
     const title = (h: Head, fallback: string) => (typeof h.fm.title === 'string' ? h.fm.title : fallback);
     const delta = change({ title: title(goneHead, gone.title), fm: goneHead.fm }, keptHead && { title: title(keptHead, kept!.title), fm: keptHead.fm });
     if (!delta) return [];
     const files = [{ path: paths.retired, text: editFile(goneText, delta.retired) }];
     if (keptText !== null && Object.keys(delta.kept).length) files.push({ path: paths.kept!, text: editFile(keptText, delta.kept) });
-    if (files.some(f => f.text === null)) { unsafe = true; return []; }
+    if (files.some(f => f.text === null)) { blocked = 'frontmatter_not_editable'; return []; }
     return files as Array<{ path: string; text: string }>;
   });
-  if (!receipt) return { written: false, ...(unsafe ? { unsafe: true as const } : {}) };
+  if (!receipt) return { written: false, ...(blocked ? { blocked } : {}) };
   for (const p of receipt.paths) await importFromFile(engine, join(root, p), p, { sourceId, noEmbed: true });
   return { written: true, commit: receipt.commit, outcome: receipt.outcome, ...(receipt.note ? { note: receipt.note } : {}) };
 }
@@ -250,7 +253,7 @@ async function revisionOf(engine: BrainEngine, slug: string, sourceId: string) {
 
 const gitOutcome = (collapse: string, done: 'collapsed' | 'undone', r: Awaited<ReturnType<typeof writeInGit>>): CollapseOutcome => (r.written
   ? { collapse, status: done, store: 'git', commit: r.commit ?? null, ...(r.outcome ? { outcome: r.outcome } : {}), ...(r.note ? { note: r.note } : {}) }
-  : { collapse, status: 'skipped', reason: r.unsafe ? 'frontmatter_not_editable' : 'changed', store: 'git' });
+  : { collapse, status: 'skipped', reason: r.blocked ?? 'changed', store: 'git' });
 
 /**
  * Collapses one planned pair; skipped, writing nothing, when a page changed since the plan or `guard` (run inside the
@@ -260,7 +263,7 @@ const gitOutcome = (collapse: string, done: 'collapsed' | 'undone', r: Awaited<R
 export async function applyCollapse(engine: BrainEngine, c: CollapsePlan, config: GBrainConfig | null = null, guard?: () => Promise<boolean>): Promise<CollapseOutcome> {
   const at = new Date().toISOString();
   const store = await storeOf(engine, c.source_id);
-  if (store.kind === 'read_only') return { collapse: c.collapse, status: 'skipped', reason: 'changed', store: c.store };
+  if (store.kind === 'read_only') return { collapse: c.collapse, status: 'skipped', reason: 'read_only_source', store: c.store };
   const message = `dedupe: collapse ${c.source_id}:${c.retired} into ${c.canonical} (C7)\n\nDedupe-Collapse: ${c.collapse}`;
   if (store.kind === 'git') {
     const r = await writeInGit(engine, store.root, c.source_id, c, message, (gone, kept) => {
@@ -280,14 +283,22 @@ export async function applyCollapse(engine: BrainEngine, c: CollapsePlan, config
   const first = await editPageHead(engine, config, c.source_id, c.retired, reason, null,
     fm => (retiredFm(fm) || strings(fm.distinct_from).includes(c.canonical) ? null : delta.retired), guard);
   if (first !== 'edited') return { collapse: c.collapse, status: 'skipped', reason: 'changed', store: 'database' };
-  const takeBack = (why: string) => editPageHead(engine, config, c.source_id, c.retired, `${reason}: ${why}, so the collapse is taken back`, null,
-    fm => (fm[COLLAPSE_KEY] !== undefined ? { merged_into: undefined, [COLLAPSE_KEY]: undefined } : {}));
+  const takeBack = async (why: string): Promise<string | undefined> => {
+    const r = await editPageHead(engine, config, c.source_id, c.retired, `${reason}: ${why}, so the collapse is taken back`, null,
+      fm => (fm[COLLAPSE_KEY] !== undefined ? { merged_into: undefined, [COLLAPSE_KEY]: undefined } : {})).catch(() => 'changed' as const);
+    return r === 'changed' ? `${c.retired} still points at ${c.canonical}: run gbrain dedupe undo ${c.collapse}` : undefined;
+  };
   let second: HeadEdit;
   try { second = await editPageHead(engine, config, c.source_id, c.canonical, reason, kept.revision, () => delta.kept); }
-  catch (error) { await takeBack('the kept page could not be edited'); throw error; }
+  catch (error) {
+    if (error instanceof OperationError && error.code === 'write_pending') return { collapse: c.collapse, status: 'collapsed', store: 'database',
+      note: `the aliases for ${c.canonical} were accepted and are still being written` };
+    const note = await takeBack('the kept page could not be edited');
+    return { collapse: c.collapse, status: 'skipped', reason: 'failed', store: 'database', note: [error instanceof Error ? error.message : String(error), note].filter(Boolean).join('; ') };
+  }
   if (second === 'changed') {
-    await takeBack('the kept page changed');
-    return { collapse: c.collapse, status: 'skipped', reason: 'changed', store: 'database' };
+    const note = await takeBack('the kept page changed');
+    return { collapse: c.collapse, status: 'skipped', reason: 'changed', store: 'database', ...(note ? { note } : {}) };
   }
   return { collapse: c.collapse, status: 'collapsed', store: 'database' };
 }
@@ -295,6 +306,7 @@ export async function applyCollapse(engine: BrainEngine, c: CollapsePlan, config
 /** Removes exactly what a collapse added: the retired page's pointer and record, and the aliases it gave the kept page. */
 export async function undoCollapse(engine: BrainEngine, rec: CollapseRecord, config: GBrainConfig | null = null): Promise<CollapseOutcome> {
   const store = await storeOf(engine, rec.source_id);
+  if (store.kind === 'read_only') return { collapse: rec.collapse, status: 'skipped', reason: 'read_only_source', store: 'database' };
   if (store.kind === 'git') {
     const r = await writeInGit(engine, store.root, rec.source_id, rec,
       `dedupe: undo the collapse of ${rec.source_id}:${rec.retired} into ${rec.canonical} (C7)\n\nDedupe-Collapse-Undo: ${rec.collapse}`,

@@ -112,7 +112,7 @@ joins only classes that passed a labelled sample, today C2 and C7:
   page gets the newer one's title and aliases in `aliases`. Lookups, links, search and mentions follow `merged_into`,
   and the newer page keeps its body: nothing is deleted or renamed. With a repository, both files change in one commit
   (its parent is the backup); without one, both pages are edited through the page history (`gbrain revert` works too).
-  A read-only source is left out.
+  A read-only source (a mirror or a URL clone) and a file with edits not committed yet are left out.
 
 Auto leaves out a pair with a family, minor or non-person page or a page not every reader may read (private
 visibility, named readers, a privacy label, a folder rule or an owner-only source, with or without a repository), a

@@ -110,7 +110,7 @@ export async function identityHome(engine: BrainEngine): Promise<IdentityHome | 
   return root && isGitWorkTree(root) ? { sourceId: s.id, root } : null;
 }
 
-async function git(root: string, args: string[]): Promise<string> {
+export async function git(root: string, args: string[]): Promise<string> {
   const r = await execFileBounded('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args],
     { env: gitChildEnv(NO_LAZY_FETCH_ENV), timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw new Error(`git ${args[0]} failed in ${root}: ${String(r.stderr).trim() || r.error.message}`);
@@ -139,10 +139,10 @@ export async function committedDecisionFiles(root: string, rev = 'HEAD'): Promis
   return files;
 }
 
-/** The decisions committed at HEAD in the home source's repository, read from the files themselves rather than their projection. */
-export async function committedDecisions(home: IdentityHome): Promise<Array<DecisionInput & { decided_at: string; decision_id: string }>> {
+/** The decisions committed at HEAD in the home source's repository (only `ids` when given), read from the files themselves rather than their projection. */
+export async function committedDecisions(home: IdentityHome, ids?: ReadonlySet<string>): Promise<Array<DecisionInput & { decided_at: string; decision_id: string }>> {
   const out: Array<DecisionInput & { decided_at: string; decision_id: string }> = [];
-  for (const f of await committedDecisionFiles(home.root)) {
+  for (const f of (await committedDecisionFiles(home.root)).filter(x => !ids || ids.has(x.id))) {
     const parsed = parseDecisionFile(await git(home.root, ['cat-file', 'blob', f.blob]), f.id);
     if (parsed) out.push({ ...parsed, decision_id: f.id });
   }
