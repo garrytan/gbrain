@@ -567,9 +567,10 @@ neither relaxes anything else:
   the stamp against this brain and the worktree this host owns under the
   worktree lock, accept re-creates the reservation with the stamp's token
   (exclusive create, so a racing claimant wins and accept refuses). An active
-  source sync imported from Git whose folder no longer has a `.git` holding its
-  last imported commit refuses `checkout_git_missing`, at prepare and again at
-  accept, until the folder is restored.
+  source sync imported from Git whose repository (found from its folder, as sync
+  finds it) no longer holds its last imported commit refuses
+  `checkout_git_missing`, at prepare and again at accept, until the repository
+  is restored.
 - *Recorded path now a symlink to the moved checkout:* run
   `gbrain sources set-path <source> <recorded-or-real-path>` on the owner host.
   When the recorded path resolves to the target and the reservation under the

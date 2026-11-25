@@ -169,20 +169,42 @@ for (const kind of testBackends()) describe(`#10260 lost ownership reservation (
         : administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }));
       expect(refusal).toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing', fix: { ask_user: true, actor: 'user', verify: { argv: ['git', '-C', s.root, 'cat-file', '-e', `${head}^{commit}`] } } });
       expect(refusal!.suggestion).toContain(head);
-      expect(refusal!.suggestion).toContain('.git');
+      expect(refusal!.suggestion).toContain('Git repository');
     }
     expect((await getWorktreeBinding(engine, s.id))!.state).toBe('active');
     expect(existsSync(physicalRootReservationPath(s.root))).toBe(false);
   }), 120_000);
 
-  test('(c) a Git repository in a folder above the checkout does not stand in for the checkout\'s own .git', () => withEnv(env(), async () => {
-    const parent = join(directory, `outer-${randomUUID().slice(0, 8)}`);
-    mkdirSync(parent); git(parent, 'init', '-q');
-    const s = await managedSource(true, parent);
-    await withSyncedCommit(s.id, git(s.root, 'rev-parse', 'HEAD'));
+  /** A checkout claimed repo-less whose parent folder became the repository afterwards, so Git's top level is above the root (#8713). */
+  async function belowTopLevel() {
+    const outer = join(directory, `outer-${randomUUID().slice(0, 8)}`);
+    mkdirSync(outer);
+    const s = await managedSource(false, outer);
+    git(outer, 'init', '-q'); git(outer, 'add', '-A');
+    git(outer, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'outer');
+    return { ...s, outer };
+  }
+
+  test('(c) a repository above the checkout root that holds the last imported commit recovers', () => withEnv(env(), async () => {
+    const s = await belowTopLevel();
+    await withSyncedCommit(s.id, git(s.outer, 'rev-parse', 'HEAD'));
     rmSync(physicalRootReservationPath(s.root));
-    rmSync(join(s.root, '.git'), { recursive: true, force: true });
-    await expect(administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true })).rejects.toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing' });
+    const prepared = await administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }) as { owner_epoch: string; manifest: { digest: string } };
+    await administer('writer_transfer_accept', { source_id: s.id, path: s.root, expected_epoch: prepared.owner_epoch, manifest: prepared.manifest.digest, self_transfer: true });
+    expect(existsSync(physicalRootReservationPath(s.root))).toBe(true);
+  }), 120_000);
+
+  test('(c) a repository above the checkout root without the last imported commit refuses, and never asks for a .git inside the folder', () => withEnv(env(), async () => {
+    const s = await belowTopLevel();
+    const elsewhere = join(directory, `elsewhere-${randomUUID().slice(0, 8)}`);
+    mkdirSync(elsewhere); writeFileSync(join(elsewhere, 'x.md'), note('X')); git(elsewhere, 'init', '-q'); git(elsewhere, 'add', '-A');
+    git(elsewhere, '-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'elsewhere');
+    const commit = git(elsewhere, 'rev-parse', 'HEAD');
+    await withSyncedCommit(s.id, commit);
+    rmSync(physicalRootReservationPath(s.root));
+    const refusal = await refused(administer('writer_transfer_prepare', { source_id: s.id, self_transfer: true }));
+    expect(refusal).toMatchObject({ code: 'recovery_required', detail: 'checkout_git_missing', fix: { verify: { argv: ['git', '-C', s.root, 'cat-file', '-e', `${commit}^{commit}`] } } });
+    expect(`${refusal!.suggestion} ${refusal!.fix.user_message}`).not.toMatch(/\.git (into|in\b)|move its \.git/);
     expect(existsSync(physicalRootReservationPath(s.root))).toBe(false);
   }), 120_000);
 

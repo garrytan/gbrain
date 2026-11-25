@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { pipelined } from '../page-state/transactions.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -23,7 +23,6 @@ import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
 import { checkoutGitMissingError, ownerMarkerMissingError, ownershipReservationMissingError } from './owner-marker.ts';
-import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { hardenedGitSync } from '../hardened-git.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { inspectPhysicalRootRecovery, repairPhysicalRoot, type PhysicalRootRecovery } from './physical-root-recovery.ts';
@@ -52,14 +51,28 @@ export interface WorktreeBinding {
   canonical_git?: boolean | null;
 }
 export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
-/** #10260: whether a `.git` sits at the source folder `relativePath` of `root` or a folder between it and `root`; folders above `root` never count. */
-function gitRepositoryHolding(root: string, relativePath: string, commit: string): boolean {
-  if (!/^[0-9a-f]{7,64}$/i.test(commit)) return false;
-  for (let at = resolve(root, relativePath); containsPath(root, at); at = dirname(at)) {
-    if (isGitCheckoutRoot(at)) return hardenedGitSync(at, ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`], { timeoutMs: 30_000, maxBytes: 4096 }).ok;
-    if (at === root) break;
+/**
+ * #10260: whether the repository Git finds from a source folder (as sync does, so a top level above the root counts)
+ * still holds the commit sync last imported. Only Git's clean answers are `missing`: no repository, or exit 1 with
+ * nothing on stderr from `rev-parse --verify --quiet`; a timeout, a lock or any other failure is `unverified`.
+ */
+function sourceHistory(root: string, relativePath: string, commit: string): 'held' | 'missing' | 'unverified' {
+  if (!/^[0-9a-f]{7,64}$/i.test(commit)) return 'missing';
+  const top = hardenedGitSync(resolve(root, relativePath), ['rev-parse', '--show-toplevel'], { timeoutMs: 30_000, maxBytes: 64 * 1024, stderr: true });
+  if (!top.ok) return top.reason === 'exit' && /not a git repository|cannot change to/i.test(top.stderr ?? '') ? 'missing' : 'unverified';
+  const probe = hardenedGitSync(top.stdout.toString().trim(), ['rev-parse', '--verify', '--quiet', `${commit}^{commit}`], { timeoutMs: 30_000, maxBytes: 4096, stderr: true });
+  if (probe.ok) return 'held';
+  return probe.reason === 'exit' && probe.status === 1 && !(probe.stderr ?? '').trim() ? 'missing' : 'unverified';
+}
+function assertSourceHistory(sourceId: string, root: string, sources: Array<{ source: string; path: string; commit: string }> | undefined): void {
+  for (const source of sources ?? []) {
+    const state = sourceHistory(root, source.path, source.commit);
+    if (state === 'held') continue;
+    const folder = resolve(root, source.path);
+    if (state === 'missing') throw checkoutGitMissingError(sourceId, { sourceId: source.source, folder, lastCommit: source.commit });
+    throw opError('git_unavailable', 'Git could not be read to check the checkout\'s history, so ownership was not re-established.',
+      `Checking that the repository for source ${source.source}'s folder ${folder} still holds commit ${source.commit} did not finish (a timeout, a lock, or Git could not run). Nothing was changed. Run the same command again in a moment; if it keeps failing, check that git -C ${folder} cat-file -e ${source.commit}^{commit} works on this host.`);
   }
-  return false;
 }
 export function containsPath(root: string, path: string): boolean {
   const rel = relative(root, path);
@@ -391,8 +404,7 @@ export async function prepareWriterTransfer(engine: BrainEngine, sourceId: strin
         }
         // #10260: re-creating a lost reservation over a checkout whose Git repository is gone too would adopt whatever was left behind.
         if (!recovery.before.reservation) gitChecked = brain.synced ?? [];
-        const gitless = gitChecked?.find(source => !gitRepositoryHolding(binding.local_path!, source.path, source.commit));
-        if (gitless) throw checkoutGitMissingError(sourceId, { sourceId: gitless.source, folder: resolve(binding.local_path!, gitless.path), lastCommit: gitless.commit });
+        assertSourceHistory(sourceId, binding.local_path!, gitChecked);
       }
       if (!opts.selfTransfer) assertPhysicalRoot(binding.local_path!, { worktreeId: binding.worktree_id, coordinationPath: binding.coordination_path });
       if (hashed instanceof Error) throw hashed;
@@ -490,8 +502,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
         `A write or mirror effect started publishing in source ${sourceId}'s worktree after preparation, so nothing was accepted. Wait for writer status to show it settled, then have the owner prepare the transfer again.`,
         { fix: writerStatusFix(sourceId) });
       // #10260: a Git repository checked at prepare must still hold its source's last imported commit when the reservation is re-created.
-      const gitless = opts.selfTransfer ? owner.manifest.recovery_git?.find(source => !gitRepositoryHolding(root, source.path, source.commit)) : undefined;
-      if (gitless) throw checkoutGitMissingError(sourceId, { sourceId: gitless.source, folder: resolve(root, gitless.path), lastCommit: gitless.commit });
+      if (opts.selfTransfer) assertSourceHistory(sourceId, root, owner.manifest.recovery_git);
       if (opts.selfTransfer) repairPhysicalRoot(root, owner.manifest.self_transfer!, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination }, opts.dryRun);
       else if (!opts.dryRun) await preparePhysicalRootTransfer(tx, root, { hostId, worktreeId: binding.worktree_id, coordinationPath: coordination, expectedEpoch });
       if (opts.dryRun) return { content_receipts: [] };
