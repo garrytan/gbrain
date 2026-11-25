@@ -114,7 +114,7 @@ pub struct SingleFlightKey {
 /// `#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)] pub struct CommitPosition`, ordered by
 /// (sequence, index); the single-writer index is always 0. The field order is what makes the derived
 /// `Ord` the right one.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct CommitPosition {
     pub sequence: u64,
     pub index: u32,
@@ -129,14 +129,142 @@ impl CommitPosition {
 
 // ---- I-4 ---------------------------------------------------------------------------------------
 
-/// `LogPage { records, oldest_retained, newest, snapshot_required }`. The interface list leaves the
-/// record and position field types open; positions are `Option<CommitPosition>` and records are JSON.
+/// One operation of a commit record (I-4: op u8, key, operand; the operand is the full value for a put, never a reference).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitOp {
+    /// 1 put, 2 delete, 3 add_i64, 4 raise_counter.
+    pub op: u8,
+    pub key: Vec<u8>,
+    pub operand: Vec<u8>,
+}
+
+/// A commit record as I-4.v2 lays it out, decoded: the position it sits at, who wrote it, its commit time, the request ids and
+/// the ops. JSON form (wire, tests) adds `commit_time_us`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitRecord {
+    /// The record version; only 2 is read.
+    pub version: u8,
+    pub position: CommitPosition,
+    pub origin: WriteOrigin,
+    /// Microseconds since the Unix epoch, UTC; strictly rises in position order across the whole log.
+    pub commit_time_us: i64,
+    pub write_ids: Vec<String>,
+    pub ops: Vec<CommitOp>,
+}
+
+fn put_str(out: &mut Vec<u8>, s: &[u8]) {
+    out.extend_from_slice(&(s.len() as u32).to_be_bytes());
+    out.extend_from_slice(s);
+}
+
+impl CommitRecord {
+    /// The v2 value: `[2][host_id][incarnation][writer_id][commit_time i64 BE][write_ids: u32 BE count, each length-prefixed]
+    /// [ops: u32 BE count, each: op u8, key, operand]`, every string or byte run a u32 BE length then its bytes.
+    pub fn encode_v2(&self) -> Vec<u8> {
+        let mut out = vec![2u8];
+        for field in [
+            &self.origin.host_id,
+            &self.origin.incarnation,
+            &self.origin.writer_id,
+        ] {
+            put_str(&mut out, field.as_bytes());
+        }
+        out.extend_from_slice(&self.commit_time_us.to_be_bytes());
+        out.extend_from_slice(&(self.write_ids.len() as u32).to_be_bytes());
+        for id in &self.write_ids {
+            put_str(&mut out, id.as_bytes());
+        }
+        out.extend_from_slice(&(self.ops.len() as u32).to_be_bytes());
+        for op in &self.ops {
+            out.push(op.op);
+            put_str(&mut out, &op.key);
+            put_str(&mut out, &op.operand);
+        }
+        out
+    }
+
+    /// Reads a v2 value at `position`. Any other version, version 1 included, is `format_unknown`, not corruption; a short or
+    /// overlong value is `store_corrupt`.
+    pub fn decode_v2(position: CommitPosition, bytes: &[u8]) -> gbrain_store::Result<CommitRecord> {
+        fn corrupt() -> StoreError {
+            StoreError::new("store_corrupt", "a commit record is cut short")
+        }
+        fn take<'a>(b: &mut &'a [u8], n: usize) -> gbrain_store::Result<&'a [u8]> {
+            if b.len() < n {
+                return Err(corrupt());
+            }
+            let (head, tail) = b.split_at(n);
+            *b = tail;
+            Ok(head)
+        }
+        fn u32_be(b: &mut &[u8]) -> gbrain_store::Result<u32> {
+            Ok(u32::from_be_bytes(take(b, 4)?.try_into().unwrap()))
+        }
+        fn run<'a>(b: &mut &'a [u8]) -> gbrain_store::Result<&'a [u8]> {
+            let n = u32_be(b)? as usize;
+            take(b, n)
+        }
+        fn text(b: &mut &[u8]) -> gbrain_store::Result<String> {
+            String::from_utf8(run(b)?.to_vec()).map_err(|_| corrupt())
+        }
+        let mut b = bytes;
+        let version = take(&mut b, 1)?[0];
+        if version != 2 {
+            return Err(StoreError::new(
+                "format_unknown",
+                format!("a commit record of version {version}; only 2 is read"),
+            ));
+        }
+        let origin = WriteOrigin {
+            host_id: text(&mut b)?,
+            incarnation: text(&mut b)?,
+            writer_id: text(&mut b)?,
+        };
+        let commit_time_us = i64::from_be_bytes(take(&mut b, 8)?.try_into().unwrap());
+        let mut write_ids = Vec::new();
+        for _ in 0..u32_be(&mut b)? {
+            write_ids.push(text(&mut b)?);
+        }
+        let mut ops = Vec::new();
+        for _ in 0..u32_be(&mut b)? {
+            let op = take(&mut b, 1)?[0];
+            ops.push(CommitOp {
+                op,
+                key: run(&mut b)?.to_vec(),
+                operand: run(&mut b)?.to_vec(),
+            });
+        }
+        if !b.is_empty() {
+            return Err(corrupt());
+        }
+        Ok(CommitRecord {
+            version,
+            position,
+            origin,
+            commit_time_us,
+            write_ids,
+            ops,
+        })
+    }
+}
+
+/// `LogPage { records, oldest_retained, newest, snapshot_required }`. The interface list leaves the position field types
+/// open; positions are `Option<CommitPosition>`. Records are decoded I-4.v2 records.
 #[derive(Clone, Debug, Default)]
 pub struct LogPage {
-    pub records: Vec<Value>,
+    pub records: Vec<CommitRecord>,
     pub oldest_retained: Option<CommitPosition>,
     pub newest: Option<CommitPosition>,
     pub snapshot_required: bool,
+}
+
+/// The clock floor of a server that takes over as primary from the log (I-4.v2): the larger of its own `M\0ctime` and the last
+/// applied record's commit time. `None` when there is neither.
+pub fn clock_floor(local_ctime: Option<i64>, last_applied: Option<&CommitRecord>) -> Option<i64> {
+    match (local_ctime, last_applied.map(|r| r.commit_time_us)) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 // ---- I-5 ---------------------------------------------------------------------------------------
@@ -296,6 +424,13 @@ pub trait MuStore {
     /// `leases::check_claim_epoch`: fails `lease_lost` / `claim_epoch_mismatch` unless claim `id` of `family` was taken
     /// under `fence`'s lease name and epoch (a claim with no record refuses too).
     fn check_claim_epoch(&self, family: u8, id: &str, fence: &LeaseToken) -> MuResult<()>;
+    /// I-4.v2 `Store::last_commit_time(&self) -> Result<Option<i64>>`: the commit time of the newest commit, read from `M\0ctime`
+    /// (written only while the multi-user switch is on); the clock floor at open. Owner: L2.
+    fn last_commit_time(&self) -> MuResult<Option<i64>>;
+    /// A follower that applied the log up to `applied` and takes over as primary: opens its clock at the floor
+    /// `clock_floor(its M\0ctime, the last applied record)` and returns that floor. Stand-in for the promotion step; owners:
+    /// L2 (the log) and L5 (the election).
+    fn promote_from_log(&self, applied: Option<CommitPosition>) -> MuResult<Option<i64>>;
     /// I-4 `Store::read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> Result<LogPage>`.
     /// Owner: L2.
     fn read_commit_log(&self, after: Option<CommitPosition>, max: usize) -> MuResult<LogPage>;
@@ -342,6 +477,15 @@ impl MuStore for Store {
     }
     fn check_claim_epoch(&self, _family: u8, _id: &str, _fence: &LeaseToken) -> MuResult<()> {
         pending(L5_HOSTS, "leases::check_claim_epoch (claim under a fence)")
+    }
+    fn last_commit_time(&self) -> MuResult<Option<i64>> {
+        pending(L2_LOG, "Store::last_commit_time")
+    }
+    fn promote_from_log(&self, _applied: Option<CommitPosition>) -> MuResult<Option<i64>> {
+        pending(
+            L2_LOG,
+            "promote a follower from the log (clock floor = max(M\\0ctime, last applied commit_time)); election: L5 hosts",
+        )
     }
     fn read_commit_log(&self, _after: Option<CommitPosition>, _max: usize) -> MuResult<LogPage> {
         pending(L2_LOG, "Store::read_commit_log")

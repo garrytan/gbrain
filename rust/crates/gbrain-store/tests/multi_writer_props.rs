@@ -238,9 +238,12 @@ fn run_property<S: Strategy>(
     }
 }
 
-/// P-B: facts of one entity read back in commit order, whatever the writers and their counts.
+/// P-B: facts of one entity read back in commit order, whatever the writers and their counts. Stays ignored for this reason:
+/// the read it compares with commit order lists facts by `created_at` (then id), and I-4.v2.1 says `created_at` is the
+/// transaction's clock time, not the commit time, so a later commit can carry an earlier one. It waits for a read in commit-position
+/// order (the per-entity fact sequence); the property then holds by position.
 #[test]
-#[ignore = "multi_writer"]
+#[ignore = "multi_writer: I-4.v2.1, created_at order is not commit order"]
 fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
     run_property((1usize..=4, 1usize..=4), |(writers, per_writer)| {
         let dir = TempDir::new("p-b");

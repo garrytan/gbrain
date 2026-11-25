@@ -25,7 +25,7 @@ use common::mu::{
     self, CLAIM_JOB, CLAIM_WRITE, CommitPosition, L1_TXN, L2_LOG, L3_SERVER, L5_HOSTS, LEASE_LOST,
     LeaseToken, LostReason, MuStore, MuTxn, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin,
 };
-use common::{StoreMode, TempDir, open, open_in};
+use common::{StoreMode, TempDir, clock, open, open_in};
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
 use gbrain_store::facts::{FactQuery, InsertFactArgs};
@@ -1230,11 +1230,11 @@ fn c10_facts_of_one_entity_form_one_total_order_multi_writer() {
     facts_of_one_entity_form_one_total_order(store);
 }
 
-/// C11, `append_fact` with a sequence assigned at commit: the order a reader sees is commit order.
-/// New rule. The runnable part is the single-owner case: explicit transactions commit one at a time, and the reader's
-/// order (newest first) is the reverse of the order their commits returned.
+/// C11, runnable part: explicit transactions appending to one entity each get their own commit sequence, rising with the order
+/// they committed in, and every fact is read back. It does not compare the reader's order with commit order: readers list facts
+/// by `created_at` (then id), which is not commit order (I-4.v2.1).
 #[test]
-fn c11_per_entity_order_equals_commit_order() {
+fn c11_per_entity_commit_sequences_are_distinct_and_no_fact_is_lost() {
     let dir = TempDir::new("c11");
     let store = Arc::new(open(&dir));
     let s = store.clone();
@@ -1245,6 +1245,29 @@ fn c11_per_entity_order_equals_commit_order() {
     });
     let sequences: BTreeSet<u64> = committed.iter().map(|(seq, _)| *seq).collect();
     assert_eq!(sequences.len(), WRITERS, "two commits share a sequence");
+    let wrote: BTreeSet<String> = committed.into_iter().map(|(_, text)| text).collect();
+    let read: BTreeSet<String> = facts_read(&store).into_iter().collect();
+    assert_eq!(
+        read, wrote,
+        "a fact was lost or one never committed was read"
+    );
+}
+
+/// C11, `append_fact` with a sequence assigned at commit: the order a reader sees is commit order. Stays ignored, with this reason:
+/// the test compares the reader's order, which is `created_at` then id, with the order of the commits; I-4.v2.1 says a row's
+/// `created_at` is the transaction's clock time, so a later commit can carry an earlier one and `created_at` order is not commit
+/// order. The multi-user rule compares commit positions (the multi-writer twin).
+#[test]
+#[ignore = "I-4.v2.1: created_at order is not commit order; the check is by commit position (see the multi_writer twin)"]
+fn c11_per_entity_order_equals_commit_order() {
+    let dir = TempDir::new("c11-created-at");
+    let store = Arc::new(open(&dir));
+    let s = store.clone();
+    let committed = together(WRITERS, move |i| {
+        let tx = s.begin_transaction(false).unwrap();
+        fact(&tx, &format!("fact {i}"));
+        (tx.commit_transaction().unwrap(), format!("fact {i}"))
+    });
     let mut by_commit = committed;
     by_commit.sort();
     let commit_order: Vec<String> = by_commit.into_iter().map(|(_, text)| text).collect();
@@ -1284,11 +1307,21 @@ fn c11_per_entity_order_equals_commit_order_multi_writer() {
     });
     let positions: BTreeSet<CommitPosition> = committed.iter().map(|(p, _)| *p).collect();
     assert_eq!(positions.len(), WRITERS, "two commits share a position");
+    // The commit times in the log rise in position order (I-4.v2).
+    let log = store
+        .read_commit_log(None, 10_000)
+        .unwrap_or_else(|e| panic!("{e}"));
+    clock::commit_times_rise(&log.records).unwrap_or_else(|e| panic!("{e}"));
+    // The order a reader sees is the commit-position order. Not `created_at` order (I-4.v2.1): that is the transaction's
+    // clock time, and a later commit can carry an earlier one. The by-position read is the per-entity fact sequence of the hosts lane.
     let mut by_commit = committed;
     by_commit.sort();
     let commit_order: Vec<String> = by_commit.into_iter().map(|(_, text)| text).collect();
-    let mut read_order = facts_read(&store);
-    read_order.reverse();
+    let read_order: Vec<String> = mu::pending_member::<Vec<String>>(
+        L5_HOSTS,
+        "a per-entity fact read in commit-position order (the ~L 0x03 sequence)",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(
         read_order, commit_order,
         "the reader's order is not commit order"
@@ -2040,6 +2073,33 @@ fn c19_crash_after_commit_keeps_acknowledged_writes_multi_writer() {
     crash_keeps_acknowledged_writes(&dir, StoreMode::Optimistic, killed, 8);
 }
 
+/// C19, I-4.v2 clocks: after a SIGKILL of eight optimistic writers and a reopen, the commit times in the log strictly rise in
+/// position order and the newest equals `last_commit_time()`; every acknowledged write has a record.
+#[test]
+#[ignore = "multi_writer"]
+fn c19_crash_keeps_commit_times_rising_and_equal_to_last_commit_time_multi_writer() {
+    let dir = TempDir::new("c19-clock");
+    {
+        let probe = open_optimistic(&dir);
+        probe
+            .read_commit_log(None, 1)
+            .unwrap_or_else(|e| panic!("{e}"));
+    }
+    let killed = kill_child_writer(&dir, 8, true, true, 80);
+    let store = open_optimistic(&dir);
+    let log = store
+        .read_commit_log(None, usize::MAX)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+    clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        log.records.len() >= killed.acked.len(),
+        "{} records for {} acknowledged writes",
+        log.records.len(),
+        killed.acked.len()
+    );
+}
+
 /// Not C19: a store handle dropped without `close` and opened again keeps every acknowledged write. The kill is C19.
 #[test]
 fn acknowledged_writes_survive_a_dropped_handle_clean_reopen() {
@@ -2318,6 +2378,162 @@ fn c22_commit_position_strictly_increases_multi_writer() {
     assert_eq!(log.newest, all.iter().next_back().copied());
     assert!(!log.snapshot_required);
     assert!(log.records.len() >= WRITERS * 4, "the log lost a commit");
+    // Each transaction in a group commit has its own, strictly rising commit time (I-4.v2).
+    let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+    clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// The creation time of a page row, in microseconds.
+fn page_created_us(s: &Store, slug: &str) -> i64 {
+    let snap = s
+        .read_page_snapshot(slug, &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    gbrain_store::env::parse_iso(snap["page"]["created_at"].as_str().unwrap()).unwrap()
+}
+
+/// C22, log replay by a follower (I-4.v2, I-4.v2.1): the log's commit times strictly rise in position order and the newest equals
+/// `last_commit_time()`; every row time written after an open is at or above the floor read at that open; a follower promoted
+/// from the log opens its clock at `max(its M\0ctime, the last applied record's commit_time)` and writes no row time below it.
+#[test]
+#[ignore = "multi_writer"]
+fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer() {
+    let dir = TempDir::new("c22-follower");
+    let store = open_optimistic(&dir);
+    store
+        .read_commit_log(None, 1)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let page_n = |s: &Store, n: usize| put(s, &format!("rows/{n}"), "a row written after open");
+    for i in 0..8 {
+        let tx = begin_host(&store, i);
+        put(&tx, &format!("c22f/{i}"), "primary commit");
+        commit_host(&store, tx);
+    }
+    let log = store
+        .read_commit_log(None, 10_000)
+        .unwrap_or_else(|e| panic!("{e}"));
+    let last = store.last_commit_time().unwrap_or_else(|e| panic!("{e}"));
+    clock::replay_clock_checks(&log.records, last, None, &[]).unwrap_or_else(|e| panic!("{e}"));
+    // The floor at open: the store reopens, reads `last_commit_time()`, and every row it then writes is at or above it.
+    drop(store);
+    let store = open_optimistic(&dir);
+    let floor = store
+        .last_commit_time()
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("a commit time after commits");
+    assert_eq!(Some(floor), log.records.last().map(|r| r.commit_time_us));
+    for n in 0..4 {
+        page_n(&store, n);
+    }
+    let times: Vec<i64> = (0..4)
+        .map(|n| page_created_us(&store, &format!("rows/{n}")))
+        .collect();
+    clock::row_times_at_or_above_floor(floor, &times).unwrap_or_else(|e| panic!("{e}"));
+    // A follower that applied the log and is promoted: its floor is the larger of its own time and the last applied record's.
+    let other = TempDir::new("c22-promoted");
+    let promoted = open_optimistic(&other);
+    let promoted_floor = promoted
+        .promote_from_log(log.newest)
+        .unwrap_or_else(|e| panic!("{e}"))
+        .expect("a floor after a promotion from a non-empty log");
+    let own = promoted
+        .last_commit_time()
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        Some(promoted_floor),
+        clock::floor_of(own, log.records.last()),
+        "the floor is not max(local M\\0ctime, last applied commit_time)"
+    );
+    assert!(promoted_floor >= log.records.last().unwrap().commit_time_us);
+    for n in 0..4 {
+        page_n(&promoted, n);
+    }
+    let times: Vec<i64> = (0..4)
+        .map(|n| page_created_us(&promoted, &format!("rows/{n}")))
+        .collect();
+    clock::row_times_at_or_above_floor(promoted_floor, &times).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// The clock checks fail what they claim to: a repeated or falling commit time, records out of position order, a stale
+/// `last_commit_time`, a row time below the floor, and a floor below the last applied commit time. They pass a rising log.
+#[test]
+fn the_clock_checks_pass_a_rising_log_and_fail_each_violation() {
+    let rising = vec![
+        clock::record(1, 0, 1_000),
+        clock::record(1, 1, 1_001),
+        clock::record(2, 0, 5_000),
+    ];
+    clock::replay_clock_checks(&rising, Some(5_000), Some(5_000), &[5_000, 5_100]).unwrap();
+    // Within one group commit each transaction still has its own time: a repeat fails.
+    let repeated = vec![clock::record(1, 0, 1_000), clock::record(1, 1, 1_000)];
+    assert!(
+        clock::commit_times_rise(&repeated)
+            .unwrap_err()
+            .contains("does not rise")
+    );
+    // A falling time fails.
+    let falling = vec![clock::record(1, 0, 2_000), clock::record(2, 0, 1_500)];
+    assert!(clock::commit_times_rise(&falling).is_err());
+    // Records out of position order fail.
+    let unordered = vec![clock::record(2, 0, 1_000), clock::record(1, 0, 2_000)];
+    assert!(
+        clock::commit_times_rise(&unordered)
+            .unwrap_err()
+            .contains("position order")
+    );
+    // A last_commit_time that is not the newest record's time fails, and so does one reported for an empty log.
+    assert!(clock::last_commit_time_matches(&rising, Some(4_999)).is_err());
+    assert!(clock::last_commit_time_matches(&[], Some(1)).is_err());
+    assert!(clock::last_commit_time_matches(&[], None).is_ok());
+    // A row time below the floor fails.
+    assert!(clock::row_times_at_or_above_floor(5_000, &[5_000, 4_999]).is_err());
+    assert!(clock::replay_clock_checks(&rising, Some(5_000), Some(5_000), &[100]).is_err());
+    // The promoted floor is the larger of the local time and the last applied record's time.
+    let last = clock::record(3, 0, 7_000);
+    assert_eq!(clock::floor_of(Some(9_000), Some(&last)), Some(9_000));
+    assert_eq!(clock::floor_of(Some(6_000), Some(&last)), Some(7_000));
+    assert_eq!(clock::floor_of(None, Some(&last)), Some(7_000));
+    assert_eq!(clock::floor_of(None, None), None);
+    assert_eq!(mu::clock_floor(Some(6_000), Some(&last)), Some(7_000));
+}
+
+/// A commit record is the I-4.v2 layout: it round-trips through its bytes, carries `commit_time_us` in its JSON form, and a
+/// reader refuses version 1, or any version but 2, with `format_unknown` (not `store_corrupt`).
+#[test]
+fn a_commit_record_v2_round_trips_and_other_versions_are_format_unknown() {
+    let mut record = clock::record(4, 2, 1_795_619_334_140_229);
+    record.write_ids = vec!["00000000-0000-4000-8000-000000000001".into()];
+    record.ops = vec![
+        mu::CommitOp {
+            op: 1,
+            key: b"p/a".to_vec(),
+            operand: b"value".to_vec(),
+        },
+        mu::CommitOp {
+            op: 2,
+            key: b"p/b".to_vec(),
+            operand: Vec::new(),
+        },
+    ];
+    let bytes = record.encode_v2();
+    assert_eq!(bytes[0], 2);
+    assert_eq!(
+        mu::CommitRecord::decode_v2(record.position, &bytes).unwrap(),
+        record
+    );
+    let json = serde_json::to_value(&record).unwrap();
+    assert_eq!(json["commit_time_us"], 1_795_619_334_140_229i64);
+    for version in [0u8, 1, 3] {
+        let mut other = bytes.clone();
+        other[0] = version;
+        let refused = mu::CommitRecord::decode_v2(record.position, &other).unwrap_err();
+        assert_eq!(
+            refused.code, "format_unknown",
+            "version {version}: {refused}"
+        );
+    }
+    let cut = mu::CommitRecord::decode_v2(record.position, &bytes[..bytes.len() - 1]).unwrap_err();
+    assert_eq!(cut.code, "store_corrupt", "{cut}");
 }
 
 /// The adapter's stubs are still stubs, each naming its owner. Landing a member means editing `common/mu.rs` and this list
@@ -2371,6 +2587,11 @@ fn mu_adapter_stubs_are_still_pending() {
         L5_HOSTS
     );
     assert_eq!(owner("read_lease", store.read_lease("n")), L5_HOSTS);
+    assert_eq!(owner("last_commit_time", store.last_commit_time()), L2_LOG);
+    assert_eq!(
+        owner("promote_from_log", store.promote_from_log(None)),
+        L2_LOG
+    );
     assert_eq!(
         owner(
             "record_claim_epoch",
