@@ -9,6 +9,12 @@ import { join } from 'node:path';
 import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
+import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
+import { performSync } from '../../src/commands/sync.ts';
+import { claimWorktree } from '../../src/core/persistence/ownership.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { makeGitFixture } from '../helpers/git-fixture.ts';
+import { mkdirSync } from 'node:fs';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { attachShadow, attachShadowParts } from '../../src/shadow/attach.ts';
 import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../src/shadow/follow-status.ts';
@@ -864,6 +870,78 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect((await sampleOf(inbox)).length).toBe(1);
     }, 60_000);
 
+    test('a write that is not alone on the transaction is never sampled through the savepoint: concurrent inline page writes and a pipelined version row all survive the commit (in_transaction_busy)', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/kim-example', page('Kim Example'));
+      const { inbox, wrapped } = rig();
+      const snapshot = await primary().readPageSnapshot('people/kim-example');
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([ // sent together, as a pipelined import sends its writes
+          tx.putPage('people/lee-example', page('Lee Example'), { sourceId: 'default', inline: true }),
+          tx.putPage('people/max-example', page('Max Example'), { sourceId: 'default', inline: true }),
+          tx.createVersion('people/kim-example', { sourceId: 'default', preimage: snapshot } as never),
+          tx.putPage('people/kim-example', page('Kim Renamed'), { sourceId: 'default', inline: true }),
+        ]);
+      });
+      for (const slug of ['people/lee-example', 'people/max-example']) expect(await primary().getPage(slug)).not.toBeNull();
+      expect((await primary().getPage('people/kim-example'))?.title).toBe('Kim Renamed');
+      expect(await primary().getVersions('people/kim-example')).toHaveLength(1); // the version row is not rolled back with a savepoint
+      await sampleOf(inbox, 3);
+      expect(verdicts(inbox).filter(([, reason]) => reason === 'in_transaction_busy').length).toBe(2); // the two that were not alone; the first one was
+    }, 60_000);
+
+    test('a member that is queued behind the preimage read counts as busy too, and nothing it sends is lost', async () => {
+      const { inbox, wrapped } = await fresh();
+      await wrapped.transaction(async (tx) => {
+        const first = tx.putPage('people/ned-example', page('Ned Example'), { sourceId: 'default', inline: true });
+        const second = tx.putPage('people/oli-example', page('Oli Example'), { sourceId: 'default', inline: true }); // held by the gate: not started
+        await Promise.all([first, second]);
+      });
+      expect(await primary().getPage('people/ned-example')).not.toBeNull();
+      expect(await primary().getPage('people/oli-example')).not.toBeNull();
+      await sampleOf(inbox, 2);
+      expect(verdicts(inbox).map(([, reason]) => reason).sort()).toEqual([undefined, 'in_transaction_busy'].sort());
+    }, 60_000);
+
+    test('writes of a rolled-back nested transaction are forgotten: a stamp it made is neither a later write nor replayed, and the outer sample stays', async () => {
+      const { inbox, wrapped } = await fresh();
+      await wrapped.transaction(async (tx) => {
+        await tx.putPage('people/pia-example', page('Pia Example'));
+        await tx.transaction(async (nested) => { await nested.updatePageContextualRetrievalState('people/pia-example', 'default', 'title', null); await nested.addLink('people/pia-example', 'companies/acme-example', 'x', 'invests_in'); throw new Error('roll back'); }).catch(() => undefined);
+      });
+      const [event] = await sampleOf(inbox);
+      expect(event!.outcome).toBeUndefined(); // a full sample: the undone link write and stamp are not judged
+      expect(event!.then).toBeUndefined(); // and the stamp is not replayed
+    }, 60_000);
+
+    test('a raw write is benign when every table it writes is bookkeeping, and not otherwise: a table outside the set, a statement that mixes one in, and a drifted page statement are uncomparable', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const after = async (statement: (tx: BrainEngine) => Promise<unknown>) => {
+        const { inbox, wrapped } = rig();
+        await wrapped.transaction(async (tx) => { await tx.putPage('people/quin-example', page('Quin Example')); await statement(tx); });
+        await sampleOf(inbox);
+        return verdicts(inbox)[0];
+      };
+      const bookkeeping = "UPDATE sources SET name = name WHERE id = 'default'";
+      expect(await after((tx) => tx.executeRaw(bookkeeping))).toEqual(['sample', undefined]);
+      expect(await after((tx) => tx.executeRaw("UPDATE facts SET fact = fact WHERE id = -1"))).toEqual(['uncomparable', 'in_transaction_later_write']);
+      expect(await after((tx) => tx.executeRaw(`WITH done AS (${bookkeeping} RETURNING 1) UPDATE facts SET fact = fact WHERE id = -1`))).toEqual(['uncomparable', 'in_transaction_later_write']);
+      // The page statement a sync makes after the write: its exact text only.
+      const unbound = "UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND database_only_reason='unbound_source'";
+      expect(await after((tx) => tx.executeRaw(unbound, ['default', 'people/quin-example']))).toEqual(['sample', undefined]);
+      expect(await after((tx) => tx.executeRaw(unbound.replace('unbound_source', 'origin_twin'), ['default', 'people/quin-example']))).toEqual(['uncomparable', 'in_transaction_later_write']);
+      expect(await after((tx) => tx.executeRaw(unbound.replace('NULL', "'x'"), ['default', 'people/quin-example']))).toEqual(['uncomparable', 'in_transaction_later_write']);
+      // The same page statement before the page write is an earlier write to the page, and a bookkeeping write before it is not.
+      let { inbox, wrapped } = rig();
+      await wrapped.transaction(async (tx) => { await tx.executeRaw(unbound, ['default', 'people/quin-example']); await tx.putPage('people/quin-example', page('Quin Again')); });
+      await sampleOf(inbox);
+      expect(verdicts(inbox)).toEqual([['uncomparable', 'in_transaction_prior_write']]);
+      ({ inbox, wrapped } = rig());
+      await wrapped.transaction(async (tx) => { await tx.executeRaw(bookkeeping); await tx.putPage('people/quin-example', page('Quin Third')); });
+      await sampleOf(inbox);
+      expect(verdicts(inbox)).toEqual([['sample', undefined]]);
+    }, 60_000);
+
     test('calls made while the preimage is read keep their order behind the sampled write (a tag added right after a new page lands on it)', async () => {
       const { inbox, wrapped } = await fresh();
       await wrapped.transaction(async (tx) => { const put = tx.putPage('people/fay-example', page('Fay Example')); const tag = tx.addTag('people/fay-example', 'first'); await Promise.all([put, tag]); });
@@ -901,6 +979,63 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(putEvents(inbox).map((e) => (e.args as string[])[0]).sort()).toEqual(['people/ivy-example', 'people/jon-example']);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
+
+    test('a rolled-back nested stamp is not replayed: the sample is comparable', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      await wrapped.transaction(async (tx) => {
+        await tx.putPage('people/ron-example', page('Ron Example'));
+        await tx.transaction(async (nested) => { await nested.updatePageContextualRetrievalState('people/ron-example', 'default', 'title', null); throw new Error('roll back'); }).catch(() => undefined);
+      });
+      await until(() => putEvents(inbox).length === 1);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('a real put_page through the operation layer, with contextual retrieval off, is compared: comparable when it runs alone on its transaction, otherwise busy by name; never a difference', async () => {
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().setConfig('search.contextual_retrieval', 'none');
+      const { inbox, wrapped } = rig();
+      const ctxOf = { engine: wrapped, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true } as unknown as OperationContext;
+      await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nFirst body.\n' });
+      const current = await primary().readPageSnapshot('notes/op-example');
+      await operationsByName.put_page.handler(ctxOf, { slug: 'notes/op-example', content: '---\ntitle: Op Example\n---\nSecond body.\n', expected_revision: current?.revision } as never);
+      await until(() => putEvents(inbox).length >= 2);
+      const tally = await real(putEvents(inbox));
+      // The first write creates the page and runs alone on its transaction. An update sends its version row (with the page it read) in the same wave as the page write on Postgres, so the page write is not alone there.
+      expect(tally.unexplained_difference).toBe(0);
+      if (ctx.kind === 'pglite') expect(tally).toMatchObject({ comparable: 2, uncomparable: 0 });
+      else expect(tally).toMatchObject({ comparable: 1, uncomparable: 1, uncomparable_by_reason: { in_transaction_busy: 1 } });
+    }, 120_000);
+
+    test('a real managed sync of a new file and then a changed one: every page write ends in the tally, comparable or with a named reason, never a difference', async () => {
+      await ctx.reset();
+      await primary().setConfig('search.contextual_retrieval', 'none');
+      const home = ctx.tempDir(); const id = `sync-${Date.now()}`; const root = join(home, id); mkdirSync(root);
+      const { inbox, wrapped } = rig();
+      const opts = { noPull: true, noEmbed: true, noExtract: true, noSchemaPack: true, sourceId: id, repoPath: root };
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined }, async () => {
+        try {
+          await disposePersistenceConsumer(primary());
+          await primary().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+          const git = await makeGitFixture(root); mkdirSync(join(root, 'records'));
+          const file = join(root, 'records/example.md');
+          const write = (body: string) => writeFileSync(file, `---\ntitle: Example record\n---\n${body}\n`);
+          write('A synthetic record about durable processing.'); git.commitAll('first');
+          await primary().executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, root]);
+          await claimWorktree(primary(), id, root);
+          await primary().executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+          expect(await performSync(wrapped, opts as never)).toMatchObject({ status: 'first_sync' });
+          write('A synthetic record about durable processing, changed.'); git.commitAll('second');
+          expect(await performSync(wrapped, opts as never)).toMatchObject({ status: 'synced' });
+        } finally { await disposePersistenceConsumer(primary()); await primary().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
+      });
+      await until(() => putEvents(inbox).length >= 2);
+      const tally = await real(putEvents(inbox));
+      console.log('managed sync:', JSON.stringify([tally.comparable, tally.unexplained_difference, tally.uncomparable, tally.uncomparable_by_reason]));
+      expect(tally.unexplained_difference).toBe(0);
+      expect(tally.comparable + tally.uncomparable).toBe(2); // each page write is counted once
+      for (const reason of Object.keys(tally.uncomparable_by_reason)) expect(['in_transaction_busy', 'preimage_not_loaded']).toContain(reason);
+    }, 180_000);
 
     test('a real sync import of a new page and then a changed one ends up in the tally: comparable when contextual retrieval is off, uncomparable by name when it stamps the write', async () => {
       await ctx.reset();

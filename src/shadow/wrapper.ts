@@ -62,7 +62,7 @@ export interface ShadowWrapperOptions {
 }
 
 /** Whether the outermost transaction saw a write, and (with write comparisons on) the sampler's scope of it; shared by the transaction engine proxies it hands out. `nested`: inside a savepoint. */
-interface TxWrites { wrote: boolean; scope?: TxScope; nested: boolean }
+interface TxWrites { wrote: boolean; scope?: TxScope; nested: boolean; /** Ids of the nested transactions (savepoints) this proxy runs in, outermost first: the writes it notes are dropped if one of them rolls back. */ path: number[] }
 
 const TX_MEMBERS: ReadonlySet<PropertyKey> = new Set(SHADOW_TRANSACTION_MEMBERS);
 /** The members that return a value, not a promise: `registerBeforeDisconnect` is the only one BrainEngine declares (read off its type), `holdsDatastoreLock` the only one an engine class adds that callers reach. */
@@ -170,7 +170,8 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     // A nested transaction (a savepoint) keeps its own mark and hands it to the enclosing one only when it succeeds, so a write
     // that a caught inner rollback undid does not make the outer transaction look like it wrote.
     const outer = txWrites;
-    const writes: TxWrites = { wrote: false, scope: outer ? outer.scope : opts.writes?.scope(engine), nested: !!outer };
+    const scope = outer ? outer.scope : opts.writes?.scope(engine);
+    const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [] };
     const call = (scope: Frame | null) => fn.apply(engine, [
       (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx),
       ...rest,
@@ -178,7 +179,8 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
     if (!outer) return committed(afterCommit(out, () => writes.wrote), writes.scope);
     const merge = (value: unknown): unknown => { if (writes.wrote) outer.wrote = true; return value; };
-    return isThenable(out) ? out.then(merge) : merge(out);
+    const dropped = (error: unknown): never => { try { if (scope) scope.drop(writes.path.at(-1)!); } catch { /* the shadow never fails a call */ } throw error; }; // a rolled-back savepoint's writes are not in the final state
+    return isThenable(out) ? out.then(merge, dropped) : merge(out);
   };
 
   /** Calls onCommittedWrite once `out` resolves (a thenable) or now (a plain value), when `wrote()` says so. */
@@ -199,14 +201,18 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   };
 
   /** Tells the sampler's scope each write member the transaction makes (before it runs); an ignored member (locks, logs, caches) changes nothing the comparison reads. */
-  const noted = (name: string, fn: Function, scope: TxScope): Function => function notedWrite(this: unknown, ...args: unknown[]) {
-    try { if (memberKind(name) !== 'ignored' && mayWrite(name, args)) scope.note(name, args); } catch { /* the shadow never fails a call */ }
+  const noted = (name: string, fn: Function, scope: TxScope, path: number[]): Function => function notedWrite(this: unknown, ...args: unknown[]) {
+    try { if (memberKind(name) !== 'ignored' && mayWrite(name, args)) scope.note(name, args, path); } catch { /* the shadow never fails a call */ }
     return fn.apply(this, args);
   };
 
   /** While a sampled write reads its preimage on the transaction's connection, other members wait, so the statements keep their order on it. A member that returns a plain value (never a statement) is never held: held, it would return a promise. */
   const gated = (name: PropertyKey, fn: Function, scope: TxScope): Function => SYNC_MEMBERS.has(name) ? fn : function gatedMember(this: unknown, ...args: unknown[]) {
-    return scope.gate ? scope.gate.then(() => fn.apply(this, args)) : fn.apply(this, args);
+    scope.inflight++; // counted from the call to the settling of its promise: a sampled write takes its savepoint only when it is the only one (write-capture.ts)
+    let out: unknown;
+    try { out = scope.gate ? scope.gate.then(() => fn.apply(this, args)) : fn.apply(this, args); } catch (error) { scope.inflight--; throw error; }
+    if (isThenable(out)) out.then(() => { scope.inflight--; }, () => { scope.inflight--; }); else scope.inflight--;
+    return out;
   };
 
   /** A member that may write: inside a transaction it marks the transaction, outside it notes after it resolves. */
@@ -249,7 +255,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
       else wrapped = value.bind(target);
       const scope = txWrites?.scope;
-      if (scope && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = noted(prop, wrapped, scope);
+      if (scope && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = noted(prop, wrapped, scope, txWrites!.path);
       if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite, scope, nested: txWrites?.nested });
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
       if (scope) wrapped = gated(prop, wrapped, scope);

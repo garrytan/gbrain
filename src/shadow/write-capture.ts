@@ -9,8 +9,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
 import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/graduation-digest.ts';
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
+import { pageSearchVectorSql } from '../core/fts-language.ts';
 import { relationRead } from './seed.ts';
 import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 
 /** How long the preimage read may hold a sampled write. */
@@ -36,8 +38,14 @@ export interface WriteSamplerOptions {
 export interface TxScope {
   /** Set while a sampled write reads its preimage on the transaction's connection: the wrapper holds other members until it is open again. */
   gate: Promise<void> | null;
-  /** A member that may write is about to run. */
-  note(name: string, args: unknown[]): void;
+  /** Member calls on the transaction that have started and not yet settled, queued ones included (the wrapper counts them). */
+  inflight: number;
+  /** A member that may write is about to run, inside the nested transactions `path` names (none: the outermost). */
+  note(name: string, args: unknown[], path?: number[]): void;
+  /** A nested transaction (savepoint) opened: its id. */
+  open(): number;
+  /** The nested transaction `id` rolled back: the writes it noted are not in the final state, so they are forgotten. */
+  drop(id: number): void;
   /** The transaction committed: the samples are judged against the writes it made, read back and sent. A rolled-back transaction never calls this. */
   commit(): void;
 }
@@ -122,10 +130,29 @@ const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPa
 const STAMP = 'updatePageContextualRetrievalState'; // changes a compared page column (contextual_retrieval_mode) after the page write: the replay runs the same call (WriteEvent.then)
 /** Writes after a sampled putPage in its transaction that leave the compared page row and links as the write made them (chunks are not compared). */
 const LATER_WRITES: ReadonlySet<string> = new Set(['upsertChunks', 'deleteChunks', 'deleteChunksExcept', 'moveChunkIndexes', 'setPageAliases', 'replaceDerivedAliases', 'pruneFrontmatterTags', 'addPageTagsById', 'writeTextProjectionSeal', STAMP]);
+/** Tables only the writer's own bookkeeping touches; nothing the comparison reads. A raw write is benign when every table it writes is one of these. `timeline_entries`, `takes` and `content_chunks` are not compared. */
+const BOOKKEEPING: ReadonlySet<string> = new Set(['persistence_counters', 'persistence_effects', 'persistence_requests', 'op_checkpoints', 'write_gate_receipts', 'sources', 'timeline_entries', 'takes', 'content_chunks', 'page_projection_jobs', 'config']);
+const squash = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
+/** The raw page updates a sync or put_page makes after the page write, matched by their exact text (whitespace aside): the unbound-origin clear, the chunker and text seal, and the chunker-version stamp. Any other text, drifted or new, is an ordinary write. */
+const AFTER_PAGE_WRITE: ReadonlySet<string> = new Set([
+  squash("UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND database_only_reason='unbound_source'"),
+  squash(`UPDATE pages SET chunker_version=$5,
+    text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
+    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN ${pageSearchVectorSql('title', '$3')} ELSE search_vector END
+    WHERE source_id=$1 AND slug=$2 RETURNING id`),
+  squash('UPDATE pages SET chunker_version=$3 WHERE source_id=$1 AND slug=$2'),
+]);
+function rawKind(args: unknown[]): 'bookkeeping' | 'seal' | undefined {
+  const sql = args[0];
+  if (typeof sql !== 'string') return undefined;
+  if (AFTER_PAGE_WRITE.has(squash(sql))) return 'seal';
+  if (/^\s*LOCK\s+TABLE\s/i.test(sql)) return 'bookkeeping'; // a table lock changes no row
+  try { const writes = sqlWrites(sql); return writes.length > 0 && writes.every((w) => w.kind === 'relation' && BOOKKEEPING.has(w.relation)) ? 'bookkeeping' : undefined; } catch { return undefined; }
+}
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
 interface TxSample { at: number; key: string; op: string; bad?: string; read?: (then: unknown[][]) => void }
-interface Scope extends TxScope { root: BrainEngine; log: Array<{ name: string; key: string; args?: unknown[] }>; samples: TxSample[] }
+interface Scope extends TxScope { root: BrainEngine; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
 
 const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
 
@@ -137,7 +164,7 @@ const timeout = <T>(promise: Promise<T>, ms: number, onTimeout: () => void): Pro
 /** Why a putPage sample cannot be compared given the writes its transaction made, or null: an earlier write to anything the comparison reads (a version row is not read), a later one that is not a chunk write, or another putPage of the same page. */
 function judge(sc: Scope, s: TxSample): string | null {
   for (const [i, w] of sc.log.entries()) {
-    if (i === s.at || w.name === 'createVersion' || (w.name === 'putPage' && w.key !== s.key) || (i > s.at && LATER_WRITES.has(w.name))) continue;
+    if (i === s.at || w.name === 'createVersion' || w.kind === 'bookkeeping' || (i > s.at && w.kind === 'seal') || (w.name === 'putPage' && w.key !== s.key) || (i > s.at && LATER_WRITES.has(w.name))) continue;
     return w.name === 'putPage' ? 'in_transaction_same_page' : i < s.at ? 'in_transaction_prior_write' : 'in_transaction_later_write';
   }
   return null;
@@ -177,6 +204,9 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   const inTransaction = (scope: Scope, tx: BrainEngine, name: string, args: unknown[], run: () => unknown): Promise<unknown> => {
     const s: TxSample = { at: scope.log.length, key: pageKey(name, args), op: name };
     scope.samples.push(s);
+    // Another member call that has started and not settled (a pipelined sibling, a write waiting on a page lock) may still send statements of its own, and they would run inside the
+    // preimage savepoint and be rolled back with it. Then nothing is read and nothing is held: the write goes through untouched.
+    if (scope.inflight > 1) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
     const before = o.generation?.();
     let open!: () => void;
     scope.gate = new Promise<void>((resolve) => { open = () => { scope.gate = null; resolve(); }; });
@@ -243,8 +273,10 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     },
     scope(root) {
       const sc: Scope = {
-        root, log: [], samples: [], gate: null,
-        note: (name, args) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', ...(name === STAMP ? { args } : {}) }); },
+        root, log: [], samples: [], gate: null, inflight: 0, nested: 0,
+        note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
+        open: () => ++sc.nested,
+        drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
         commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!)); } },
       };
       return sc;
