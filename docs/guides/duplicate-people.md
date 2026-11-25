@@ -99,15 +99,17 @@ pair same, different or unsure; a class with more than 2 wrong in 100 stays manu
 `gbrain dedupe auto` lists the pairs it would link and changes nothing; `gbrain dedupe auto --apply` links them. It
 links only classes that passed a labelled sample, today C2: an email or phone that only these two person pages hold,
 in two sources. It leaves out a pair with a family, minor or non-person page, a pair with any contradiction, a pair
-whose page is in another pair it would link, and pages that sit in two different identity groups.
+whose page is in another pair it would link (in any source, whatever `--source` names), and a pair whose page is
+already in an identity group, so a third page never joins two linked ones on a second signal.
 
 Each link is a "same" decision, recorded like your own `gbrain dedupe confirm` (in git when the brain has a
 repository, in the database otherwise) with `decided_by: dedupe:auto:<class>`. So:
 
 - `gbrain dedupe undo <decision>` removes one link (the next `--apply` can make it again);
-- `gbrain dedupe reject <identity id>` marks the pair as different people for good;
+- `gbrain dedupe reject <identity id>` marks a wrong pair as different people for good;
 - `gbrain dedupe auto --off <class>` stops a class and removes every link it made; `--on <class>` starts it again;
 - `gbrain doctor` prints the last 24 hours of automatic links by class, with the undo commands (`dedupe_auto_links`).
 
 Check each class weekly: `gbrain dedupe sample --class C2 --since 7d --n 20 --json` picks 20 of the links it made in
-the last week. More than one wrong in 20 means switching the class off.
+the last week, each with the reject command that keeps it apart if it is wrong. More than one wrong in 20 means
+switching the class off.

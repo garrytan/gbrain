@@ -214,7 +214,7 @@ async function runDedupeAutoLinks(ctx: DoctorContext): Promise<Check[]> {
       byClass.set(cls, [...byClass.get(cls) ?? [], d.decision_id]);
     }
     const classes = [...byClass].map(([cls, ids]) => ({ class: cls, links: ids.length, undo: `gbrain dedupe undo ${ids.slice(0, SHOWN).join(' ')}`, off: `gbrain dedupe auto --off ${cls}` }));
-    const text = classes.map(c => `${c.class} ${c.links} (undo: ${c.undo}${c.links > SHOWN ? ` and ${c.links - SHOWN} more` : ''}; all of them: ${c.off})`).join('; ');
+    const text = classes.map(c => `${c.class} ${c.links} (undo: ${c.undo}${c.links > SHOWN ? ` and ${c.links - SHOWN} more` : ''}; a wrong one for good: gbrain dedupe reject <identity id>; all of them: ${c.off})`).join('; ');
     checks.push({ name: 'dedupe_auto_links', status: 'ok',
       message: recent.length ? `${recent.length} person link(s) made automatically in the last 24 hours: ${text}.` : 'No person links made automatically in the last 24 hours.',
       details: { links: recent.length, classes } });

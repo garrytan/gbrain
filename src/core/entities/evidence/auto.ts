@@ -11,8 +11,9 @@
  * 100; and C7, two pages in one source, which are collapsed by a pointer and an alias rather than linked.
  *
  * A pair is linked only when nothing holds it back: no family or minor page and no page that is not a person (hold), no
- * contradiction (X2, Mx), no page in two pairs of the run (which would join three pages on two signals), no two pages in
- * different identity groups, and, on a brain that keeps decisions in git, no page that must stay out of the repository.
+ * contradiction (X2, Mx), no page in another pair that would link, counted over every source whatever --source names,
+ * and no page already in an identity group (either would join three pages on two signals), and, on a brain that keeps
+ * decisions in git, no page that must stay out of the repository.
  */
 import type { BrainEngine } from '../../engine.ts';
 import type { IdentityDecisionsRead, IdentityMemberRef } from '../../engine-sql/identity-decisions.ts';
@@ -42,7 +43,7 @@ export async function autoSwitches(engine: BrainEngine): Promise<Record<AutoClas
 }
 
 export interface AutoLink { pair: string; class: AutoClass; decision: string; members: IdentityMemberRef[]; entity_id: string; canonical: IdentityMemberRef }
-export interface AutoSetAside { pair: string; class: AutoClass; reason: 'shared_member' | 'in_two_groups' | 'not_publishable'; members: IdentityMemberRef[] }
+export interface AutoSetAside { pair: string; class: AutoClass; reason: 'shared_member' | 'in_group' | 'not_publishable'; members: IdentityMemberRef[] }
 export interface AutoPlan { switches: Record<AutoClass, 'on' | 'off'>; links: AutoLink[]; set_aside: AutoSetAside[] }
 
 const ref = (m: { source_id: string; slug: string }): IdentityMemberRef => ({ source_id: m.source_id, slug: m.slug });
@@ -50,7 +51,7 @@ const ref = (m: { source_id: string; slug: string }): IdentityMemberRef => ({ so
 /** What `gbrain dedupe auto --apply` would link now. Read-only. */
 export async function planAutoLinks(engine: BrainEngine, opts: { sourceId?: string } = {}): Promise<AutoPlan> {
   const switches = await autoSwitches(engine);
-  const { pairs } = await classifyPairs(engine, opts.sourceId ? { sourceId: opts.sourceId } : {});
+  const { pairs } = await classifyPairs(engine);
   const eligible = pairs.flatMap(p => {
     const cls = autoClassOf(p);
     return cls && switches[cls] === 'on' ? [{ p, cls }] : [];
@@ -61,19 +62,18 @@ export async function planAutoLinks(engine: BrainEngine, opts: { sourceId?: stri
   const links: AutoLink[] = [];
   const setAside: AutoSetAside[] = [];
   for (const { p, cls } of eligible) {
+    if (opts.sourceId && !p.members.some(m => m.source_id === opts.sourceId)) continue;
     const members = p.members.map(ref);
     const aside = (reason: AutoSetAside['reason']) => setAside.push({ pair: p.id, class: cls, reason, members });
     if (members.some(m => (seen.get(memberKey(m)) ?? 0) > 1)) { aside('shared_member'); continue; }
-    const groups = new Set<string>();
+    let grouped = false;
     for (const m of members) {
-      const row = (await listEntityIdentities(engine, { slug: m.slug, slugSourceId: m.source_id })).find(x => x.slug === m.slug && x.source_id === m.source_id);
-      if (row) groups.add(row.entity_id);
+      grouped ||= (await listEntityIdentities(engine, { slug: m.slug, slugSourceId: m.source_id })).some(x => x.slug === m.slug && x.source_id === m.source_id);
     }
-    if (groups.size > 1) { aside('in_two_groups'); continue; }
+    if (grouped) { aside('in_group'); continue; }
     if (home && (await unpublishableMembers(engine, home.sourceId, [{ members }])).some(b => b !== null)) { aside('not_publishable'); continue; }
     const decision = decisionId(members);
-    links.push({ pair: p.id, class: cls, decision, members, entity_id: [...groups][0] ?? `person-${decision}`,
-      canonical: await canonicalOf(engine, members, home?.sourceId ?? null) });
+    links.push({ pair: p.id, class: cls, decision, members, entity_id: `person-${decision}`, canonical: await canonicalOf(engine, members, home?.sourceId ?? null) });
   }
   return { switches, links, set_aside: setAside };
 }

@@ -98,6 +98,10 @@ describe('candidates after the labelled sample', () => {
     expect(link({ tags: ['Close Family'] })).toBe('family');
     expect(link({ family: true })).toBe('family');
     expect(link({ birth_year: 2015 })).toBe('minor');
+    for (const r of ['wife of 12 years', 'mother of my kids', "my wife's sister", 'brother (friends with Bob)', 'daughter, goes to Example school', 'son-in-law']) {
+      expect([r, link({ relationship: r })]).toEqual([r, 'family']);
+    }
+    expect(sensitivityOf({ relationship: 'son-in-law' })).toBe('family');
     await person('people/gus-example', 'Gus Example', { email: 'gus@example.invalid', tags: ['family-office'] });
     await person('contacts/gus-example', 'Gus Example', { email: 'gus@example.invalid' }, 'people-b');
     await person('people/hope-example', 'Hope Example', { email: 'hope@example.invalid', relationship: 'sister' });
@@ -142,7 +146,8 @@ describe('gbrain dedupe auto', () => {
   test('the doctor line and the weekly sample read the recorded links', async () => {
     const line = await doctorLine();
     expect(line).toMatchObject({ name: 'dedupe_auto_links', status: 'ok', details: { links: 1 } });
-    expect(line.message).toContain(`C2 1 (undo: gbrain dedupe undo ${linked}; all of them: gbrain dedupe auto --off C2)`);
+    expect(line.message).toContain(`C2 1 (undo: gbrain dedupe undo ${linked}; a wrong one for good: gbrain dedupe reject <identity id>; all of them: gbrain dedupe auto --off C2)`);
+    expect(await dedupe(['sample', '--class', 'C2', '--since', '7d'])).toContain(`keep it apart for good: gbrain dedupe reject person-${linked}`);
     const sample = JSON.parse(await dedupe(['sample', '--class', 'C2', '--since', '7d', '--json']));
     expect(sample).toMatchObject({ class: 'C2', total: 1, n: 20 });
     expect(sample.links[0].decision).toBe(linked);
@@ -175,5 +180,22 @@ describe('gbrain dedupe auto', () => {
     expect(JSON.parse(await dedupe(['auto', '--json']))).toMatchObject({ switches: { C2: 'off' }, links: [] });
     await dedupe(['auto', '--on', 'C2']);
     expect(JSON.parse(await dedupe(['auto', '--apply', '--json'])).links).toHaveLength(1);
+  });
+
+  test('a page in two pairs is set aside whatever --source a run names, and a page already in a group takes no new page', async () => {
+    await person('people/max-example', 'Max Example', { phone: '+1 555-555-0301', email: 'max@example.invalid' });
+    await person('contacts/max-b', 'Mo Other', { phone: '+1 555-555-0301' }, 'people-b');
+    await person('contacts/max-c', 'Zed Other', { email: 'max@example.invalid' }, 'people-c');
+    const scoped = JSON.parse(await dedupe(['auto', '--source', 'people-b', '--apply', '--json']));
+    expect(scoped.links).toEqual([]);
+    expect(scoped.set_aside).toContainEqual(expect.objectContaining({ reason: 'shared_member', members: [{ source_id: 'default', slug: 'people/max-example' }, { source_id: 'people-b', slug: 'contacts/max-b' }] }));
+    await person('people/nia-example', 'Nia Example', { phone: '+1 555-555-0302', email: 'nia@example.invalid' });
+    await person('contacts/nia-b', 'Nell Other', { phone: '+1 555-555-0302' }, 'people-b');
+    expect(JSON.parse(await dedupe(['auto', '--apply', '--json'])).links.map((l: any) => l.members.map((m: any) => m.slug).sort())).toEqual([['contacts/nia-b', 'people/nia-example']]);
+    await person('contacts/nia-c', 'Nora Other', { email: 'nia@example.invalid' }, 'people-c');
+    const later = JSON.parse(await dedupe(['auto', '--apply', '--json']));
+    expect(later.links).toEqual([]);
+    expect(later.set_aside).toContainEqual(expect.objectContaining({ reason: 'in_group', members: [{ source_id: 'default', slug: 'people/nia-example' }, { source_id: 'people-c', slug: 'contacts/nia-c' }] }));
+    expect((await identities()).some(r => r.slug === 'contacts/nia-c')).toBe(false);
   });
 });

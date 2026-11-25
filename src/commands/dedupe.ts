@@ -115,9 +115,10 @@ sample              a seeded random sample of one class's pairs with their evide
 auto                list the pairs of person pages that link automatically, in the classes that passed a labelled
                     sample (${AUTO_CLASSES.join(', ')}: an email or phone only those two person pages hold, in two
                     sources); a pair with a family, minor or non-person page, a contradiction, a page in two such
-                    pairs, or pages in two identity groups is set aside; changes nothing
+                    pairs (in any source), or a page already in an identity group is set aside; changes nothing
   --apply           link them: one "same" decision per pair (decided_by dedupe:auto:<class>), each printed with the
-                    gbrain dedupe undo command that removes it; gbrain dedupe reject keeps a pair apart for good
+                    gbrain dedupe undo command that removes it (a later --apply can link it again);
+                    gbrain dedupe reject <identity id> keeps a wrong pair apart for good
   --off <class>     stop linking the class and remove every link it made
   --on <class>      link the class again from the next --apply
 
@@ -678,8 +679,8 @@ async function runClasses(engine: BrainEngine, cmd: 'classes' | 'sample', args: 
     const picked = seededPick(recent, n ?? 20, seed);
     const links = picked.map(d => ({ decision: d.decision_id, members: d.members, entity_id: d.entity_id, decided_at: d.decided_at }));
     if (json) { console.log(JSON.stringify({ class: autoClass, since_hours: since / 3_600_000, n: n ?? 20, seed, total: recent.length, links }, null, 2)); return; }
-    console.log(`${links.length} of ${recent.length} automatic ${autoClass} link(s) from the last ${since / 3_600_000} hour(s) (seed ${seed}). Label each one same, different or unsure; undo a wrong one with gbrain dedupe undo <decision>.`);
-    for (const l of links) console.log(`${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.decided_at})`);
+    console.log(`${links.length} of ${recent.length} automatic ${autoClass} link(s) from the last ${since / 3_600_000} hour(s) (seed ${seed}). Label each one same, different or unsure.`);
+    for (const l of links) console.log(`${l.decision}  ${l.members.map(memberText).join('  +  ')}  (${l.decided_at}); if they are different people, keep it apart for good: gbrain dedupe reject ${l.entity_id}`);
     return;
   }
   const pairClass = cls === undefined ? null : parsePairClass(cls);

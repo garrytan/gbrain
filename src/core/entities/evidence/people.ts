@@ -89,12 +89,26 @@ const PERSON_KEYS = ['email', 'emails', 'phone', 'phones', 'company', 'employer'
   'readable_by', 'tags', 'groups', 'relationship', 'relation', 'family', 'minor', 'is_minor', 'age', 'born', 'birth_year', 'birthday', 'birthdate'];
 const FAMILY_WORDS = new Set(['family', 'spouse', 'wife', 'husband', 'mother', 'father', 'mom', 'mum', 'dad', 'parent', 'son', 'daughter', 'child',
   'sibling', 'brother', 'sister', 'grandmother', 'grandfather', 'grandparent', 'grandchild', 'aunt', 'uncle', 'cousin', 'niece', 'nephew', 'stepson',
-  'stepdaughter', 'stepmother', 'stepfather', 'in-law']);
+  'stepdaughter', 'stepmother', 'stepfather', 'in-law', 'son-in-law', 'daughter-in-law', 'mother-in-law', 'father-in-law', 'brother-in-law',
+  'sister-in-law']);
 const MINOR_TAGS = new Set(['minor', 'child', 'children', 'kid', 'kids']);
 /** A label word beside "family" that names something other than the owner's family (a family office, family friends). */
 const NOT_FAMILY_LABEL = new Set(['office', 'offices', 'friend', 'friends', 'foundation']);
-/** A relationship that is someone else's ("wife of ...", "a friend's son") or a school acquaintance's, not the owner's. */
-const OTHERS_RELATION = /(^|[^a-z])(of|school|friends?|colleagues?|classmates?)([^a-z]|$)|'s([^a-z]|$)/;
+/**
+ * A relationship that is someone else's, not the owner's: a family word owned by another person ("wife of Bob", "a
+ * friend's son", never "mother of my kids", "wife of 12 years" or "my wife's sister"), or "parent" beside "school".
+ */
+function othersRelation(text: string): boolean {
+  const words = text.split(/[^a-z-]+/).filter(w => FAMILY_WORDS.has(w));
+  if (!words.length) return false;
+  for (const m of text.matchAll(/([a-z-]+)\s+of\s+([a-z0-9]+)/g)) {
+    if (FAMILY_WORDS.has(m[1]!) && !['my', 'our', 'two', 'three', 'four', 'five'].includes(m[2]!) && !/^\d/.test(m[2]!)) return true;
+  }
+  for (const m of text.matchAll(/([a-z-]+)'s\s+([a-z-]+)/g)) {
+    if (FAMILY_WORDS.has(m[2]!) && !FAMILY_WORDS.has(m[1]!) && !['my', 'our'].includes(m[1]!)) return true;
+  }
+  return /(^|[^a-z])school([^a-z]|$)/.test(text) && words.every(w => w === 'parent');
+}
 const NON_PERSON_WORDS = new Set(['team', 'teams', 'room', 'rooms', 'office', 'offices', 'mailbox', 'inbox', 'desk', 'department', 'committee',
   'service', 'services', 'support', 'helpdesk', 'noreply', 'partners', 'fund', 'funds', 'construction', 'inc', 'llc', 'ltd', 'corp', 'corporation',
   'group', 'conference']);
@@ -119,12 +133,12 @@ export const isRoleHandle = (h: string) => h.startsWith('e:') && ROLE_MAILBOXES.
 /**
  * Family or minor, from tags, groups, a relationship field or a birth year (frontmatter only). use 'web' (the Exa block)
  * reads every family word; use 'link' (the hold on automatic links) leaves out labels and relationships that are
- * someone else's: a family office, family friends, "wife of ...", a school parent. The minor rules are the same for both.
+ * someone else's: a family office, family friends, "wife of Bob", a school parent. The minor rules are the same for both.
  */
 export function sensitivityOf(keys: Record<string, unknown>, now = new Date(), use: 'web' | 'link' = 'web'): Sensitivity | null {
   const labels = [...strings(keys.tags), ...strings(keys.groups)].map(s => s.toLowerCase());
   const relationText = [...strings(keys.relationship), ...strings(keys.relation)].join(' ').toLowerCase();
-  const relation = use === 'link' && OTHERS_RELATION.test(relationText) ? [] : relationText.split(/[^a-z-]+/);
+  const relation = use === 'link' && othersRelation(relationText) ? [] : relationText.split(/[^a-z-]+/);
   const familyLabel = (l: string) => {
     const words = l.split(/[^a-z]+/);
     return words.includes('family') && !(use === 'link' && words.some(w => NOT_FAMILY_LABEL.has(w)));
