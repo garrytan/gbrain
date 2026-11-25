@@ -955,7 +955,7 @@ const context_pack: Operation = {
       ...(await (await import('../questions/service.ts')).pinnedAnswersForPack(ctx, (res.cards ?? []).map((c) => ({ source_id: c.entity.source_id, slug: c.entity.slug })))
         .catch(() => null)),
       ...(await (await import('../policy/check.ts')).policyStateForPack(ctx.engine, ctx.remote !== false).catch(() => null)),
-      ...(p.include_rules === true ? await (await import('../rules/section.ts')).rulesForPack(ctx, p.source_id) : {}),
+      ...(p.include_rules === true ? await (await import('../rules/section.ts')).rulesForPack(ctx, p.source_id).catch(() => ({})) : {}),
     };
   },
 };

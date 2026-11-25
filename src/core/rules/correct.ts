@@ -21,8 +21,9 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { loadConfig } from '../config.ts';
 import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
 import { refuseGuestSourceWrite } from '../guests/admission.ts';
-import { callerIsOwner } from '../search/private-visibility.ts';
-import { callerMember } from '../access/member-facts.ts';
+import { callerIsOwner, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { callerMember, memberPageSlug } from '../access/member-facts.ts';
+import { readForgetTarget } from '../persistence/forget-prepare.ts';
 import { detectInstructionLike } from '../write-gate.ts';
 import { confirmOnTerminal, confirmRequiredError, terminalAuthorityProblem, type OwnerProof, type TerminalProbe } from '../policy/authority.ts';
 import { withRuleWriter } from './admission.ts';
@@ -36,8 +37,10 @@ export type ReceiptState = 'committed' | 'pending' | 'partial' | 'proposed' | 'c
 const REFUSED_FAMILIES = new Set(['override', 'exfiltration', 'credential']);
 /** Codes a remote caller may simply retry; anything else stops at the host operator. */
 const RETRYABLE = new Set(['write_pending', 'commit_lock_busy', 'owner_unavailable', 'timeout', 'interrupted']);
+/** Authority refusals of the first write: nothing took effect, so the call fails and leaves no receipt. */
+const REFUSED_AT_START = new Set(['permission_denied', 'scope_denied', 'insufficient_scope', 'writer_registration_required', 'source_changed', 'rule_owner_only']);
 
-interface StepRecord { state: 'started' | 'committed' | 'pending'; request_id: string; revision?: string; fact_id?: string }
+interface StepRecord { state: 'started' | 'committed' | 'pending'; request_id: string; revision?: string; fact_id?: string; contested?: boolean }
 
 export interface CorrectReceipt {
   receipt_id: string;
@@ -62,13 +65,26 @@ export const __correctFaults: { after?: (step: CorrectStep) => void } = {};
 
 const receiptKey = (id: string) => `${RECEIPT_PREFIX}${id}`;
 const digestOf = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
-const codeOf = (e: unknown) => e instanceof OperationError ? String((e as OperationError & { canonicalCode?: string }).canonicalCode ?? e.code) : 'interrupted';
+const codeOf = (e: unknown) => !(e instanceof OperationError) ? 'interrupted'
+  : (e as { writeError?: unknown }).writeError === 'write_pending' ? 'write_pending' : String((e as OperationError & { canonicalCode?: string }).canonicalCode ?? e.code);
 
 async function readReceipt(engine: BrainEngine, id: string): Promise<CorrectReceipt | null> {
   if (!/^cr-[0-9a-f]{16}$/.test(id)) return null;
   const raw = await engine.getConfig(receiptKey(id));
   if (!raw) return null;
   try { return JSON.parse(raw) as CorrectReceipt; } catch { return null; }
+}
+
+/** Finished receipts kept (committed or conflicted); older ones are dropped when a new correction starts, so the config table stays bounded. */
+export const RECEIPTS_KEPT = 100;
+
+async function pruneReceipts(engine: BrainEngine): Promise<void> {
+  const keys = await engine.listConfigKeys(RECEIPT_PREFIX);
+  if (keys.length < RECEIPTS_KEPT) return;
+  const finished = (await engine.getConfigValues(keys)).flatMap(({ key, value }) => {
+    try { const r = JSON.parse(value) as CorrectReceipt; return r.state === 'committed' || r.state === 'conflicted' ? [{ key, at: r.created_at }] : []; } catch { return [{ key, at: '' }]; }
+  }).sort((a, b) => a.at.localeCompare(b.at));
+  for (const row of finished.slice(0, keys.length - RECEIPTS_KEPT + 1)) await engine.unsetConfig(row.key);
 }
 
 async function saveReceipt(engine: BrainEngine, r: CorrectReceipt): Promise<void> {
@@ -123,7 +139,10 @@ export function parseCorrectInput(ctx: OperationContext, p: Record<string, unkno
   if (!RULE_SCOPES.includes(scope)) throw opError('invalid_params', 'scope must be me or team.', 'Omit scope for your own rule, or pass team for a rule every agent in this brain follows.');
   const factId = p.fact_id === undefined || p.fact_id === null || p.fact_id === '' ? null : String(p.fact_id).trim();
   if (factId !== null && !/^[1-9][0-9]{0,15}$/.test(factId)) throw opError('invalid_params', `fact_id "${factId.slice(0, 20)}" is not a fact id.`, 'Pass the fact_id that recall or remember returned.');
-  const corrected = typeof p.corrected_fact === 'string' && p.corrected_fact.trim() ? p.corrected_fact.trim().slice(0, 2000) : null;
+  if (p.corrected_fact !== undefined && p.corrected_fact !== null && (typeof p.corrected_fact !== 'string' || !p.corrected_fact.trim())) {
+    throw opError('invalid_params', 'corrected_fact is empty, so nothing was written.', 'Pass the right fact in corrected_fact, or omit corrected_fact to withdraw the wrong fact.');
+  }
+  const corrected = typeof p.corrected_fact === 'string' ? p.corrected_fact.trim().slice(0, 2000) : null;
   if (corrected && !factId) throw opError('invalid_params', 'corrected_fact needs fact_id: the wrong fact it replaces.', 'Pass fact_id from recall, or save a new fact with remember.');
   const entity = typeof p.entity === 'string' && p.entity.trim() ? p.entity.trim().slice(0, 200) : null;
   const provenance = (typeof p.provenance === 'string' && p.provenance.trim() ? p.provenance.trim() : 'the user\'s correction').slice(0, 500);
@@ -135,6 +154,8 @@ export function parseCorrectInput(ctx: OperationContext, p: Record<string, unkno
 /** What the caller can do next, and who does it; null when nothing is left. */
 export function nextFor(r: CorrectReceipt, remote: boolean): CorrectNext | null {
   const id = ruleIdOf(r.rule.slug);
+  const src = r.source_id && r.source_id !== 'default' ? ['--source', r.source_id] : [];
+  const srcText = src.length ? ` ${src.join(' ')}` : '';
   const revision = r.steps.activate?.revision ?? r.steps.rule?.revision ?? '';
   if (r.state === 'pending') return { who: 'caller', why: `The ${r.step} write is accepted and still in flight.`, argv: ['gbrain', 'correct', 'status', r.receipt_id], mcp: { tool: 'correct', arguments: { receipt_id: r.receipt_id } } };
   if (r.state === 'partial') {
@@ -144,11 +165,11 @@ export function nextFor(r: CorrectReceipt, remote: boolean): CorrectNext | null 
       : { who: 'host_operator', why: `Stopped at the ${r.step} step (${r.error?.code}); this connection cannot clear that, so the brain host's operator resumes it.`, argv: ['gbrain', 'correct', 'resume', r.receipt_id],
         user_message: `A correction stopped part way. On the brain host, run: gbrain correct resume ${r.receipt_id}` };
   }
-  if (r.state === 'proposed') return { who: 'owner', code: 'rule_proposed', why: 'The rule is proposed; the owner approves it, which also fixes the fact.', argv: ['gbrain', 'rules', 'approve', `${id}@${revision}`],
-    user_message: `Your agent proposed a standing rule: "${r.rule.text}". To approve it, run in your own terminal: gbrain rules approve ${id}@${revision}` };
-  if (r.state === 'conflicted') return { who: 'caller', why: `The rule page changed under the ${r.step} step, so nothing more was written.`, argv: ['gbrain', 'rules', 'show', id] };
+  if (r.state === 'proposed') return { who: 'owner', code: 'rule_proposed', why: 'The rule is proposed; the owner approves it, which also fixes the fact.', argv: ['gbrain', 'rules', 'approve', `${id}@${revision}`, ...src],
+    user_message: `Your agent proposed a standing rule: "${r.rule.text}". To approve it, run in your own terminal: gbrain rules approve ${id}@${revision}${srcText}` };
+  if (r.state === 'conflicted') return { who: 'caller', why: `The rule page changed under the ${r.step} step, so nothing more was written.`, argv: ['gbrain', 'rules', 'show', id, ...src] };
   if (!r.confirmed) return { who: 'owner', code: 'rule_proposed', why: 'The rule is active for retrieval; it joins the standing-rules section once the owner confirms this revision.',
-    argv: ['gbrain', 'rules', 'approve', `${id}@${revision}`], user_message: `To have your agents load "${r.rule.text}" at session start, run in your own terminal: gbrain rules approve ${id}@${revision}` };
+    argv: ['gbrain', 'rules', 'approve', `${id}@${revision}`, ...src], user_message: `To have your agents load "${r.rule.text}" at session start, run in your own terminal: gbrain rules approve ${id}@${revision}${srcText}` };
   return null;
 }
 
@@ -160,7 +181,7 @@ export function receiptView(r: CorrectReceipt, remote: boolean): Record<string, 
     revision: r.steps.activate?.revision ?? r.steps.rule?.revision ?? null,
     effect: {
       rule: done('activate') ? 'active' : done('rule') ? 'proposed' : 'none',
-      fact: r.fact.action === 'none' ? 'unchanged' : done('fact') ? (r.fact.action === 'replace' ? 'replaced' : 'withdrawn') : r.steps.fact?.state === 'pending' ? 'pending' : 'unchanged',
+      fact: r.fact.action === 'none' ? 'unchanged' : done('fact') ? (r.steps.fact?.contested ? 'contested' : r.fact.action === 'replace' ? 'replaced' : 'withdrawn') : r.steps.fact?.state === 'pending' ? 'pending' : 'unchanged',
       ...(r.steps.fact?.fact_id ? { new_fact_id: r.steps.fact.fact_id } : {}),
       standing: done('activate') && r.confirmed,
     },
@@ -184,6 +205,7 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
     if (step === 'fact' && r.fact.action === 'none') { r.steps.fact = { state: 'committed', request_id: '' }; continue; }
     if (step !== 'rule' && !owner) { r.state = 'proposed'; r.step = step; await saveReceipt(engine, r); return r; }
     const requestId = `${r.receipt_id}.${step}`;
+    const tried = r.steps[step] !== undefined;
     r.steps[step] = { ...(r.steps[step] ?? {}), state: 'started', request_id: requestId };
     r.state = 'partial'; r.step = step; delete r.error;
     await saveReceipt(engine, r);
@@ -191,6 +213,13 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
       if (step === 'rule') {
         await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('proposed'), request_id: requestId } }));
       } else if (step === 'fact') {
+        const snap = await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id });
+        const live = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: r.source_id }) : null;
+        if (!live || live.status !== 'proposed' || String(snap!.revision) !== r.steps.rule?.revision) {
+          throw new OperationError('rule_transition', 'The rule page changed or was retired before its fact was fixed, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
+        }
+        if (tried && (await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false))?.expired_at) { r.steps.fact!.state = 'committed'; r.steps.fact!.request_id = requestId; }
+        else {
         const { verbOperations } = await import('../verbs.ts');
         const verb = verbOperations.find(o => o.name === (r.fact.action === 'replace' ? 'remember' : 'forget'))!;
         const out = await verb.handler(ctx, r.fact.action === 'replace'
@@ -199,6 +228,8 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
         if (out?.status === 'pending' || out?.state === 'pending') throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
         const newId = out?.id;
         if (newId !== undefined) r.steps.fact!.fact_id = String(newId);
+        if (out?.contested) r.steps.fact!.contested = true;
+        }
       } else {
         await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('active'),
           expected_revision: r.steps.rule!.revision, request_id: requestId } }));
@@ -206,8 +237,9 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
       __correctFaults.after?.(step);
     } catch (e) {
       const code = codeOf(e);
+      if (step === 'rule' && !tried && REFUSED_AT_START.has(code)) { await engine.unsetConfig(receiptKey(r.receipt_id)); throw e; }
       if (code === 'write_pending') { r.steps[step]!.state = 'pending'; r.state = 'pending'; }
-      else if (step === 'activate' && (code === 'revision_conflict' || code === 'rule_transition')) r.state = 'conflicted';
+      else if ((step === 'activate' && code === 'revision_conflict') || code === 'rule_transition') r.state = 'conflicted';
       else r.state = 'partial';
       r.error = { code, message: (e instanceof Error ? e.message : String(e)).slice(0, 300) };
       await saveReceipt(engine, r);
@@ -245,6 +277,13 @@ async function chooseSlug(engine: BrainEngine, sourceId: string, scope: RuleScop
 
 export interface CorrectOptions { probe?: TerminalProbe }
 
+/** A non-owner names only a fact it reads: a world fact, or one on its own member page. The owner's approval runs the fact step. */
+async function callerReadsFact(engine: BrainEngine, id: number, sourceId: string, member: string | null): Promise<boolean> {
+  const excludePrivate = await resolveExcludePrivatePages(engine, true);
+  if (await readForgetTarget(engine, id, sourceId, true, excludePrivate)) return true;
+  return !!member && !!(await readForgetTarget(engine, id, sourceId, true, excludePrivate, false, memberPageSlug(member)));
+}
+
 const intentOf = (i: CorrectInput) => digestOf([i.rule, i.scope, i.fact_id, i.corrected_fact, i.entity, i.checks, i.source_id]);
 
 export async function runCorrect(ctx: OperationContext, p: Record<string, unknown>, opts: CorrectOptions = {}): Promise<Record<string, unknown>> {
@@ -262,13 +301,17 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
   const key = principalKey(principal);
   let receiptId = `cr-${digestOf([key, input.request_id ?? intentOf(input)]).slice(0, 16)}`;
   const author = authorOf(ctx);
+  if (input.fact_id && !author.owner && !(await callerReadsFact(ctx.engine, Number(input.fact_id), input.source_id, author.member))) {
+    throw opError('fact_not_found', `No fact with id "${input.fact_id}" that this connection can read, so nothing was written.`, 'Pass a fact_id that recall returned to this same connection.');
+  }
   const intent = intentOf(input);
   let prior = await readReceipt(ctx.engine, receiptId);
   if (prior && !input.request_id && prior.state === 'committed') { receiptId = `cr-${randomBytes(8).toString('hex')}`; prior = null; }
   if (prior) {
     if (prior.intent !== intent) throw opError('idempotency_conflict', 'The request_id already belongs to a different correction, so nothing was written.', 'Use a new request_id for a new correction.');
-    return receiptView(await advance(ctx, prior, author.owner, null), remote);
+    return receiptView(prior.state === 'conflicted' ? prior : await advance(ctx, prior, author.owner, null), remote);
   }
+  await pruneReceipts(ctx.engine);
   const slug = await chooseSlug(ctx.engine, input.source_id, input.scope, input.rule, receiptId, input.scope === 'me' && !author.owner ? (author.member ?? key) : '');
   const fact: ApprovedFact | null = input.fact_id ? { action: input.corrected_fact ? 'replace' : 'withdraw', id: input.fact_id, text: input.corrected_fact } : null;
   const proof = !remote && !terminalAuthorityProblem(opts.probe)
@@ -297,7 +340,7 @@ async function ownReceipt(ctx: OperationContext, id: string): Promise<CorrectRec
 
 export async function correctStatus(ctx: OperationContext, id: string): Promise<Record<string, unknown>> {
   const r = await ownReceipt(ctx, id);
-  if (r.state === 'pending') return receiptView(await advance(ctx, r, r.author.owner, null), ctx.remote !== false);
+  if (r.state === 'pending') return receiptView(await advance(ctx, r, authorOf(ctx).owner, null), ctx.remote !== false);
   if (r.state === 'committed' && !r.confirmed) {
     const c = (await readConfirmations(ctx.engine, [{ source_id: r.source_id, slug: r.rule.slug }])).values().next().value;
     if (c && c.revision === r.steps.activate?.revision) { r.confirmed = true; await saveReceipt(ctx.engine, r); }
@@ -307,8 +350,8 @@ export async function correctStatus(ctx: OperationContext, id: string): Promise<
 
 export async function resumeCorrect(ctx: OperationContext, id: string, _opts: CorrectOptions = {}): Promise<Record<string, unknown>> {
   const r = await ownReceipt(ctx, id);
-  if (r.state === 'committed' || r.state === 'proposed') return correctStatus(ctx, id);
-  return receiptView(await advance(ctx, r, r.author.owner, null), ctx.remote !== false);
+  if (r.state === 'committed' || r.state === 'proposed' || r.state === 'conflicted') return correctStatus(ctx, id);
+  return receiptView(await advance(ctx, r, authorOf(ctx).owner, null), ctx.remote !== false);
 }
 
 export function localRulesCtx(engine: BrainEngine, sourceId = 'default'): OperationContext {
@@ -347,7 +390,7 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
   const proof = opts.proof ? opts.proof(bound) : await confirmOnTerminal({ argv, digest: bound, probe: opts.probe, subject: 'standing rule',
     summary: [`Rule ${rule.id} (${rule.scope}, ${rule.status}): ${rule.text}`, `Saved: ${rule.attribution || 'outside gbrain correct'}`,
       `Applies to: ${rule.scope === 'team' ? 'every agent in this brain' : rule.readable_by?.length ? `the agents of member ${rule.readable_by.join(', ')}` : 'your own agents'}`,
-      ...(fact ? [`Approving also changes a fact. ${factLine(fact)}`] : [])] });
+      ...(fact ? [`Approving also changes a fact. ${factLine(fact)} (on ${(await readForgetTarget(engine, Number(fact.id), sourceId, false, false))?.entity_slug ?? 'no page; the fact is not found'})`] : [])] });
   if (proof.digest !== bound) throw confirmRequiredError(argv, { reason: 'declined' });
   const ctx = localRulesCtx(engine, sourceId);
   let finalRevision = revision;

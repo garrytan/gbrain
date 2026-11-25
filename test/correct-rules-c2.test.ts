@@ -312,3 +312,57 @@ describe('proposed rule receipts: approve and retire for each fact kind', () => 
   }
 });
 
+
+describe('a member names only facts it reads', () => {
+  test('a private fact the member cannot read is refused before anything is written', async () => {
+    const hidden = await seedFact('Alice Example keeps a private calendar.');
+    await engine.executeRaw("UPDATE facts SET visibility='private' WHERE id=$1", [Number(hidden)]);
+    const r = await remote(MEMBER, 'correct', { rule: 'Alice Example keeps no calendar at all.', fact_id: hidden, scope: 'team' });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('fact_not_found');
+    const pages = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE slug LIKE 'rules/team/alice-example-keeps-no-calendar%'");
+    expect(pages).toHaveLength(0);
+    expect((await factRow(hidden))!.expired_at).toBeNull();
+  });
+});
+
+
+describe('second-model review fixes', () => {
+  test('retiring an unfinished correction stops a later resume or replay from changing the fact', async () => {
+    const wrong = await seedFact('Alice Example drives a red car.');
+    const params = { rule: 'Alice Example drives a blue car.', fact_id: wrong, corrected_fact: 'Alice Example drives a blue car.', entity: 'people/alice-example', request_id: 'retire-then-resume' };
+    __correctFaults.after = s => { if (s === 'rule') throw new Error('killed'); };
+    let first: any;
+    try { first = await runCorrect(localRulesCtx(engine), params, { probe: noTty }); } finally { __correctFaults.after = undefined; }
+    expect(first).toMatchObject({ state: 'partial', step: 'rule' });
+    await retireRule(engine, first.rule_id);
+    const resumed = await runCorrect(localRulesCtx(engine), { receipt_id: first.receipt_id, resume: true }) as any;
+    expect(resumed.state).toBe('conflicted');
+    const replayed = await runCorrect(localRulesCtx(engine), params, { probe: noTty }) as any;
+    expect(replayed.state).toBe('conflicted');
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+  });
+
+  test('an empty corrected_fact is refused instead of withdrawing the fact', async () => {
+    const wrong = await seedFact('Alice Example plays the cello.');
+    for (const blank of ['', '   ']) {
+      const e = await runCorrect(localRulesCtx(engine), { rule: 'Alice Example plays the viola.', fact_id: wrong, corrected_fact: blank }, { probe: noTty }).catch(x => x);
+      expect(e.code).toBe('invalid_params');
+    }
+    expect((await factRow(wrong))!.expired_at).toBeNull();
+  });
+});
+
+
+describe('receipts stay bounded', () => {
+  test('a new correction drops the oldest finished receipts past RECEIPTS_KEPT', async () => {
+    const { RECEIPTS_KEPT } = await import('../src/core/rules/correct.ts');
+    const keys = await engine.listConfigKeys('correct.receipt.');
+    for (let i = keys.length; i < RECEIPTS_KEPT + 5; i++) {
+      await engine.setConfig(`correct.receipt.cr-${i.toString(16).padStart(16, '0')}`, JSON.stringify({ state: 'committed', created_at: '2000-01-01T00:00:00Z' }));
+    }
+    await runCorrect(localRulesCtx(engine), { rule: 'Keep receipts bounded for alice-example.' }, { probe: noTty });
+    expect((await engine.listConfigKeys('correct.receipt.')).length).toBeLessThanOrEqual(RECEIPTS_KEPT);
+  });
+});
+
