@@ -8,7 +8,7 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
-import { rustMultiuserFromEnv } from './multiuser-switch.ts';
+import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './multiuser-switch.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -26,7 +26,18 @@ export interface StoreOpenOptions {
   writeGateDetectorVersion?: number;
   /** Multi-user mode from the environment (I-0, multiuser-switch.ts); sent only when true, so an open with the switch off is unchanged. */
   multiuser?: boolean;
+  /** Multi-user sub-switches (`GBRAIN_RUST_COMMIT_LOG=1`, `GBRAIN_RUST_WRITE_ORIGIN=1`), sent only when set; the store applies them only in multi-user mode. */
+  commitLog?: boolean;
+  writeOrigin?: boolean;
+  /** This machine's host id, the write origin the sub-switches stamp; sent only with one of them. */
+  hostId?: string;
 }
+
+/** The start of the store's refusal of a multi-user open whose write origin names no machine (`gbrain_store::HOST_ID_REQUIRED`). */
+const HOST_ID_REQUIRED_TEXT = "multi-user write origin needs this machine's host id";
+
+/** The answer a sub-switch is read under before the open resolves the brain's mode: the store decides (I-0.v2). */
+const MODE_MAY_BE_ON = { multiuser: true } as const;
 
 /** The strategy the SQL engines' schema seeds as config `chunk_strategy` (src/schema.sql). */
 const SEED_CHUNK_STRATEGY = 'semantic';
@@ -64,6 +75,8 @@ export interface RustStore {
   readonly brain: StoreBrain;
   /** True when the store runs in multi-user mode (I-0): the environment switch or the brain's own config row. */
   readonly multiuser: boolean;
+  /** True when the store keeps a commit log (multi-user mode): the engine then reports `commit_log`. */
+  readonly commitLog: boolean;
   /**
    * Copies one batch of a primary relation into this store for the shadow seed (rust/docs/store/seed.md).
    * Every value is the column's text form (`::text`, UTC) or null. Not a BrainEngine member.
@@ -277,19 +290,48 @@ export interface SeedImportResult {
  * Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`.
  * A created brain records `embedding` as its embedding identity; an existing brain keeps its own.
  */
-export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number }): Promise<RustStore> {
+export async function openRustStore(
+  addon: object,
+  databasePath: string,
+  embedding?: { model: string; dimensions: number },
+  origin?: { hostId?: string; mint?: () => string },
+): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
   let multiuser = false;
+  let commitLog = false;
   try {
-    const info = await brain.open(databasePath, {
+    // The commit log and write origin sub-switches, sent only when set: an open without them sends what it always
+    // sent. The brain's mode is resolved by this very open (the switch or its config row), so they go as requests the
+    // store applies only when it resolves the mode on (I-0.v2). The host id comes from the caller (`origin`), which
+    // reads it only when the switch itself is on or a sub-switch is set.
+    const commitLogOn = rustMultiuserSubSwitch('GBRAIN_RUST_COMMIT_LOG', MODE_MAY_BE_ON);
+    const writeOriginOn = rustMultiuserSubSwitch('GBRAIN_RUST_WRITE_ORIGIN', MODE_MAY_BE_ON);
+    const writes = (hostId: string | undefined) => ({
+      ...(commitLogOn ? { commitLog: true } : {}),
+      ...(writeOriginOn ? { writeOrigin: true } : {}),
+      ...((commitLogOn || writeOriginOn) && hostId ? { hostId } : {}),
+    });
+    const base = {
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
       ...(rustMultiuserFromEnv() ? { multiuser: true } : {}),
-    }) as { multiuser?: unknown } | null;
+    };
+    let info: { multiuser?: unknown; commit_log?: unknown } | null;
+    try {
+      info = await brain.open(databasePath, { ...base, ...writes(origin?.hostId) }) as typeof info;
+    } catch (error) {
+      // The store resolved multi-user mode on (its config row) and write origin needs this machine's id, which was not
+      // sent because the mode was not known before the open: name the machine now and open again. Nothing was written.
+      const needsHost = (writeOriginOn || commitLogOn) && !origin?.hostId && origin?.mint
+        && String((error as { message?: unknown } | null)?.message ?? '').includes(HOST_ID_REQUIRED_TEXT);
+      if (!needsHost) throw error;
+      info = await brain.open(databasePath, { ...base, ...writes(origin!.mint!()) }) as typeof info;
+    }
     multiuser = info?.multiuser === true;
+    commitLog = info?.commit_log === true;
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
     throw mapStoreError(error, { member: 'connect' });
@@ -305,6 +347,7 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
   return {
     brain,
     multiuser,
+    commitLog,
     importRelation: (seedId, relation, rows, digests) => call('importRelation', () => brain.importRelation(seedId, relation, rows, digests ?? null)),
     replaceRelationRows: (seedId, relation, generation, keys, rows, digests) =>
       call('replaceRelationRows', () => brain.replaceRelationRows(seedId, relation, generation, keys, rows, digests)),

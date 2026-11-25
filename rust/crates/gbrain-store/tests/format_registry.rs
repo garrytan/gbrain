@@ -1,6 +1,7 @@
 //! The store format registry (`rust/docs/store/format.md`) and the code agree, so two branches
 //! cannot ship one format number: the second claim fails here or collides in the table.
 
+use gbrain_store::format::LOG_FORMAT_VERSION;
 use gbrain_store::{FORMAT_VERSION, FORMAT_VERSIONS};
 
 const REGISTRY: &str = include_str!(concat!(
@@ -73,8 +74,8 @@ fn the_registry_numbers_every_format_once_in_order() {
             "format numbers must be unique and run 1, 2, 3, … with no gap"
         );
         assert!(
-            row.status == "shipped" || row.status == "reserved",
-            "format {} has status {:?}; use shipped or reserved",
+            row.status == "shipped" || row.status == "reserved" || row.status == "opt-in",
+            "format {} has status {:?}; use shipped, reserved or opt-in (written only behind a switch)",
             row.format,
             row.status
         );
@@ -84,6 +85,24 @@ fn the_registry_numbers_every_format_once_in_order() {
             row.format
         );
     }
+}
+
+#[test]
+fn the_only_opt_in_format_is_the_commit_log_format() {
+    let opt_in: Vec<u32> = rows()
+        .iter()
+        .filter(|row| row.status == "opt-in")
+        .map(|row| row.format)
+        .collect();
+    assert_eq!(
+        opt_in,
+        [LOG_FORMAT_VERSION],
+        "the opt-in rows of rust/docs/store/format.md must be exactly format::LOG_FORMAT_VERSION"
+    );
+    assert!(
+        !FORMAT_VERSIONS.contains(&LOG_FORMAT_VERSION),
+        "FORMAT_VERSIONS lists the base formats only; the log format is opened through its own path"
+    );
 }
 
 #[test]
@@ -103,11 +122,15 @@ fn format_version_is_the_last_shipped_row() {
         shipped, FORMAT_VERSIONS,
         "the shipped rows must be exactly FORMAT_VERSIONS"
     );
-    for row in rows.iter().filter(|row| row.status == "reserved") {
+    for row in rows
+        .iter()
+        .filter(|row| row.status == "reserved" || row.status == "opt-in")
+    {
         assert!(
             row.format > FORMAT_VERSION,
-            "format {} is reserved but this build already ships format {FORMAT_VERSION}",
-            row.format
+            "format {} is {} but this build already ships format {FORMAT_VERSION}",
+            row.format,
+            row.status
         );
     }
 }
