@@ -227,8 +227,9 @@ for the message's vector; never turn text) to `skill-index/logs/lane-<UTC date>.
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. When one
-harness's recent turns miss the deadline on more than 5% of at least 20 turns
-it ranked, it warns with
+harness misses the deadline on more than 5% of at least 20 recent user
+prompts it ranked (SessionStart deliveries and blank prompts do not count), it
+warns with
 [`skill_resolve_timeout`](#skill_resolve_timeout). A hook from
 before the compaction reset (UserPromptSubmit without SessionStart) shows as
 `outdated` and warns with its fix, `gbrain setup codex --skill-loading

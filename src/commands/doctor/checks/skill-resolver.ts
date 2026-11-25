@@ -36,8 +36,11 @@ const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
 /** Lane-log lines doctor reads (the newest), and the tail it reads them from. */
 const RECENT_LINES = 200;
 const LOG_TAIL_BYTES = 64 * 1024;
-/** Outcomes of turns the lane never ranked; they cannot miss the deadline, so the miss rate leaves them out. */
-const UNRANKED = new Set(['off', 'yield', 'reset', 'empty', 'no_catalog']);
+/** Outcomes of prompts the lane never ranked; they cannot miss the deadline, so the miss rate leaves them out. */
+const UNRANKED = new Set(['off', 'yield', 'reset', 'no_catalog']);
+/** A user prompt the lane ranked or ran out of time on. `empty` before ranking (a blank prompt) has no catalogs; `empty` after it (every match already offered) does. */
+const rankedPrompt = (event: unknown, outcome: string, catalogs: unknown) =>
+  event === 'user-prompt' && !UNRANKED.has(outcome) && !outcome.startsWith('skipped_') && (outcome !== 'empty' || Array.isArray(catalogs));
 /** Below this many ranked turns of one harness, its miss rate is not judged. */
 const MISS_MIN_TURNS = 20;
 
@@ -98,13 +101,13 @@ function recentLane(home: string): SkillResolverView['recent'] | null {
   const lines = text.split('\n').filter(Boolean).slice(-RECENT_LINES);
   let turns = 0;
   for (const line of lines) {
-    let j: { outcome?: unknown; code?: unknown; harness?: unknown };
+    let j: { outcome?: unknown; code?: unknown; harness?: unknown; event?: unknown; catalogs?: unknown };
     try { j = JSON.parse(line); } catch { continue; }
     if (typeof j.outcome !== 'string') continue;
     turns++;
     outcomes[j.outcome] = (outcomes[j.outcome] ?? 0) + 1;
     if (typeof j.code === 'string') errors[j.code] = (errors[j.code] ?? 0) + 1;
-    if (typeof j.harness !== 'string' || UNRANKED.has(j.outcome) || j.outcome.startsWith('skipped_')) continue;
+    if (typeof j.harness !== 'string' || !rankedPrompt(j.event, j.outcome, j.catalogs)) continue;
     const m = (misses[j.harness] ??= { ranked: 0, missed: 0 });
     m.ranked++;
     if (j.code === 'skill_resolve_timeout') m.missed++;
