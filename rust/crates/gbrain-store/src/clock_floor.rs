@@ -301,6 +301,66 @@ mod commit_time_floor {
             );
         }
     }
+
+    /// Acceptance check from L6's commit-log proof (c22, first step): a brain with the commit log on, its commits made
+    /// through explicit transactions, reopened on a clock 5 s below the persisted floor: the floor read at open is the
+    /// persisted commit time, and every row time written after open is at or above it.
+    #[test]
+    fn c22_a_reopen_on_a_clock_below_the_floor_writes_no_row_time_below_it_with_the_commit_log_on()
+    {
+        for (mode, kv) in [
+            ("single", mem_kv()),
+            ("concurrent", Arc::new(occ_kv()) as Arc<dyn crate::kv::Kv>),
+        ] {
+            let options = || OpenOptions {
+                multiuser: true,
+                keyword_index_builder: false,
+                multiuser_writes: crate::MultiUserWrites {
+                    commit_log: true,
+                    host_id: Some("h".into()),
+                    ..Default::default()
+                },
+                ..OpenOptions::default()
+            };
+            let origin = WriteOrigin {
+                host_id: "h".into(),
+                incarnation: "i".into(),
+                writer_id: "local_cli:t".into(),
+            };
+            let t0 = 1_800_000_000_000_000;
+            let store = Store::open_kv(kv.clone(), Arc::new(Frozen(t0)), options()).unwrap();
+            for i in 0..8 {
+                let tx = store.begin_transaction(false).unwrap();
+                tx.set_config(&format!("c22/{i}"), "primary commit")
+                    .unwrap();
+                tx.commit_transaction().unwrap();
+            }
+            let floor = store.last_commit_time().unwrap().expect("a commit time");
+            drop(store);
+            let reopened =
+                Store::open_kv(kv.clone(), Arc::new(Frozen(floor - 5_000_000)), options()).unwrap();
+            assert_eq!(
+                reopened.last_commit_time().unwrap(),
+                Some(floor),
+                "{mode}: the floor at open"
+            );
+            for n in 0..4 {
+                reopened
+                    .acquire_lease(&format!("rows/{n}"), &origin, 60_000)
+                    .unwrap()
+                    .unwrap();
+                let t = reopened
+                    .read_lease(&format!("rows/{n}"))
+                    .unwrap()
+                    .unwrap()
+                    .acquired_at_us;
+                assert!(
+                    t >= floor,
+                    "{mode}: a row time {t} is below the clock floor {floor} read at open"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
