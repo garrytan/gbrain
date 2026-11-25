@@ -105,6 +105,7 @@ const OP_AREAS: Record<string, string> = {
   // v0.47 open-loop engine (google source kind)
   open_loops: 'loops', loops_close: 'loops', loops_mute: 'loops', loops_unmute: 'loops',
   household_due: 'household', household_add: 'household', household_mark: 'household', household_replace: 'household',
+  correct: 'correct', // C2 standing rules (ops/correct.ts)
   learned: 'insights', learned_keep: 'insights', learned_undo: 'insights', // nightly learning ledger (ops/learned.ts)
   questions_pin: 'questions', questions_list: 'questions', questions_status: 'questions', questions_refresh: 'questions', questions_unpin: 'questions', // C4
   // insight / signal reads

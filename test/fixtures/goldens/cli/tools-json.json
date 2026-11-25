@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 321154,
-    "stdoutSha256": "7ad8fb126cb3f8152f5eea2de78c4e4d51a8c23a0afb0692e0f62c2a41a2365e",
+    "stdoutBytes": 324297,
+    "stdoutSha256": "13720b05dfe9e55ceb96e2fabfd7cd1c1c427177a5ec7a158a50e1dcf7dcd0e0",
     "toolNames": [
       "remember",
       "entity",
@@ -101,6 +101,7 @@
       "storage_update",
       "reveal_secret",
       "check_claims",
+      "correct",
       "policy_check",
       "agent_policy",
       "capabilities",
@@ -4832,6 +4833,114 @@
         "scope": "read"
       },
       {
+        "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "correct",
+        "parameters": {
+          "checks": "array?",
+          "content_origin": "string?",
+          "corrected_fact": "string?",
+          "entity": "string?",
+          "fact_id": "string?",
+          "provenance": "string?",
+          "receipt_id": "string?",
+          "request_id": "string?",
+          "resume": "boolean?",
+          "rule": "string?",
+          "scope": "string?",
+          "source_id": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "checks": {
+              "description": "Regression checks for gbrain rules check: [{question, expect[], reject[]}].",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "expect": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "question": {
+                    "type": "string"
+                  },
+                  "reject": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "content_origin": {
+              "description": "user_said only; tool_output and inferred are refused.",
+              "enum": [
+                "user_said",
+                "tool_output",
+                "inferred"
+              ],
+              "type": "string"
+            },
+            "corrected_fact": {
+              "description": "The right fact.",
+              "type": "string"
+            },
+            "entity": {
+              "description": "Subject slug.",
+              "type": "string"
+            },
+            "fact_id": {
+              "description": "The wrong fact.",
+              "type": "string"
+            },
+            "provenance": {
+              "description": "Where the user said it.",
+              "type": "string"
+            },
+            "receipt_id": {
+              "description": "Alone: that receipt's status.",
+              "type": "string"
+            },
+            "request_id": {
+              "description": "Reuse only to retry.",
+              "type": "string"
+            },
+            "resume": {
+              "description": "With receipt_id: run the steps not yet committed.",
+              "type": "boolean"
+            },
+            "rule": {
+              "description": "The rule, in the user's words.",
+              "type": "string"
+            },
+            "scope": {
+              "description": "me (default) or team.",
+              "enum": [
+                "me",
+                "team"
+              ],
+              "type": "string"
+            },
+            "source_id": {
+              "description": "Write source.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
         "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
         "idempotent": true,
         "local_only": false,
@@ -7661,6 +7770,7 @@
           "entity_refs": "array?",
           "include_private": "boolean?",
           "include_quarantined": "boolean?",
+          "include_rules": "boolean?",
           "intent": "string?",
           "min_trust": "string?",
           "prefer_source_id": "string?",
@@ -7707,6 +7817,10 @@
             },
             "include_quarantined": {
               "description": "Admin or memory_confirm: quarantined cards.",
+              "type": "boolean"
+            },
+            "include_rules": {
+              "description": "true: add your confirmed standing rules (rules field).",
               "type": "boolean"
             },
             "intent": {

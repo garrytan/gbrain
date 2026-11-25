@@ -27,6 +27,10 @@
           "cliHintsHidden": true,
           "op": "capture"
         },
+        "correct": {
+          "cliHintsHidden": true,
+          "op": "correct"
+        },
         "forget": {
           "cliHintsHidden": false,
           "op": "forget"
@@ -72,6 +76,7 @@
         "apple-contacts",
         "beliefs",
         "claims",
+        "correct",
         "dedupe",
         "diag",
         "edge-proposals",
@@ -83,6 +88,7 @@
         "onboarding",
         "policy",
         "questions",
+        "rules",
         "secrets",
         "trust",
         "watch"
@@ -137,6 +143,7 @@
         "connectors",
         "conversation-parser",
         "core",
+        "correct",
         "creds",
         "db-repair",
         "decide",
@@ -216,6 +223,7 @@
         "resolvers",
         "retrieval-upgrade",
         "routing-eval",
+        "rules",
         "salience",
         "schema",
         "secrets",
@@ -271,6 +279,7 @@
         "connectors",
         "conversation-parser",
         "core",
+        "correct",
         "creds",
         "db-repair",
         "decide",
@@ -335,6 +344,7 @@
         "resolvers",
         "retrieval-upgrade",
         "routing-eval",
+        "rules",
         "salience",
         "schema",
         "secrets",
@@ -438,6 +448,7 @@
         "code-refs",
         "compile-context",
         "config",
+        "correct",
         "decide",
         "dedupe",
         "diag",
@@ -469,6 +480,7 @@
         "repair",
         "repair-jsonb",
         "retrieval-upgrade",
+        "rules",
         "secrets",
         "serve",
         "sources",
