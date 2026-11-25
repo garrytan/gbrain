@@ -52,7 +52,8 @@ import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequ
 import { CLAIM_LOST, DEFAULT_CLAIM_LEASE_TIMING, endLostLease, holdClaimForPublication, startClaimLease, type ClaimLeaseTiming } from './claim-lease.ts';
 import { claimPhaseStamp, enterClaimPhase, startClaimPhase, type ClaimPhaseClock } from './claim-phase.ts';
 import { DEFAULT_PREPARATION_POLICY, preparationBudgetMs, startPreparation, type PreparationPolicy, type PreparationRun } from './preparation-budget.ts';
-import { setMemberAttribution, withCoordinatedWrite } from './context.ts';
+import { setMemberAttributionIn, withCoordinatedWrite } from './context.ts';
+import { SOURCE_TRUST_CONFIG_SQL } from '../trust/channel.ts';
 import { publicationAttribution } from './attribution.ts';
 import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects, queuesMentionLinks, reconcileFinishedBatch } from './effect-journal.ts';
@@ -169,6 +170,11 @@ function groupReads(tx: BrainEngine): BrainEngine {
       STABLE_IN_GROUP.has(flat(sql)) ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     // The typed owner-binding read (the effect journal's Git target) shares the HOST_BINDING_SQL answer, so the group
     // reads the binding once whichever way it is asked first.
+    // The group's store sends the owner binding's statement through the same once-per-group answer.
+    if (key === 'groupPublishStore') return async () => {
+      const store = await target.groupPublishStore();
+      return { ...store, hostBinding: (worktreeId: string) => once<{ local_path: string | null }[]>(JSON.stringify([flat(HOST_BINDING_SQL), [worktreeId]]), () => store.hostBinding(worktreeId)) };
+    };
     if (key === 'readOwnerHostBinding') return (worktreeId: string) =>
       once<{ local_path: string | null }[]>(JSON.stringify([flat(HOST_BINDING_SQL), [worktreeId]]),
         () => target.readOwnerHostBinding(worktreeId).then(path => path === null ? [] : [{ local_path: path }]))
@@ -238,6 +244,12 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
     if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
+    // The owner trust config read, once per source when a caller names its statement stable (sync-convergence.ts's screen).
+    if (key === 'groupPublishStore') return async () => {
+      const store = await target.groupPublishStore();
+      return !stable.has(flat(SOURCE_TRUST_CONFIG_SQL)) ? store : { ...store,
+        sourceTrustConfig: (sourceId: string) => once(JSON.stringify([flat(SOURCE_TRUST_CONFIG_SQL), [sourceId]]), () => store.sourceTrustConfig(sourceId)) };
+    };
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     // The source row (contextual retrieval policy) is one read per source for the group, taking no member's deadline or signal.
     if (key === 'getSource') return (sourceId: string) => once(`source:${sourceId}`, () => withoutReadDeadline(() => target.getSource(sourceId)));
@@ -324,8 +336,10 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
     // The recovery check and the journal limits the recovery record is sized against go out together.
     // A lane group passes the recovery record of a foreground write this process publishes beside it (Phase 4.5,
     // another page); any other record still blocks it, and the group releases its claims to retry.
+    // The store is opened first: each statement of the pipeline below is sent in its place, ahead of any later call's.
+    const recoveryStore = await engine.groupPublishStore();
     const [blocked, limits] = await pipelined(engine, [
-      async () => (await engine.groupPublishStore()).recoveryBlocked(head.worktree_id!, [...rows.map(row => row.id), ...(lane ? publishingBeside : [])]),
+      () => recoveryStore.recoveryBlocked(head.worktree_id!, [...rows.map(row => row.id), ...(lane ? publishingBeside : [])]),
       () => prepared.some(member => member.file && !member.noop) ? readJournalLimits(engine) : Promise.resolve(undefined),
     ]) as [boolean, JournalLimits | undefined];
     if (blocked) return lane ? { ...none, reason: 'busy' } : none;
@@ -366,17 +380,18 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
         ...(prepared[i]!.additionalPageKeys ?? []).map(key => key.sourceId === row.source_id ? { ...key, incarnation: row.source_incarnation } : key)]);
       // Opened before the pipeline, so guardOwnership sends its worktree lock ahead of lockPageKeys' source locks.
       const journal = await tx.publicationJournalStore();
+      const groupStore = await tx.groupPublishStore();
       const ready = pipelined(tx, [
         () => declarePublication(tx, opened),
         () => guardOwnership(tx, journal, head, hostId),
         // A published file needs recovery even if this transaction rolls back; claims are verified first.
-        async () => members.length ? (await tx.groupPublishStore()).startPublication(members.map(row => ({ id: row.id, token: row.execution_token! }))) : [],
+        () => members.length ? groupStore.startPublication(members.map(row => ({ id: row.id, token: row.execution_token! }))) : Promise.resolve([]),
         () => prepared.some(member => member.file) ? sourceMirrorReadOnly(tx, head.source_id, true) : Promise.resolve(false),
         // A group prepared strict rechecks its flag under the source lock; one prepared without it publishes as before.
         () => strict ? sourceCanonicalGit(tx, head.source_id, true) : Promise.resolve(false),
         () => tx.lockPageKeys(keys),
         // The owner's host binding every file member's Git effect records (a STABLE_IN_GROUP read), fetched with the guards.
-        () => prepared.some(member => member.file && !member.noop) ? tx.readOwnerHostBinding(head.worktree_id!) : Promise.resolve(null),
+        () => prepared.some(member => member.file && !member.noop) ? groupStore.hostBinding(head.worktree_id!) : Promise.resolve([]),
         ...storedAuthorizationReads(tx, rows, true),
       ]).then(results => {
         const [, live, started, readOnly, strictNow] = results as [unknown, Awaited<ReturnType<typeof guardOwnership>>, unknown[], boolean, boolean];
@@ -422,7 +437,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
                 return snapshot;
               },
               async () => { if (sync) await member.validate?.(tx); },
-              async () => { if (!file && attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust)); },
+              async () => { if (!file && attribute) await setMemberAttributionIn(groupStore, publicationAttribution(row, member.trust)); },
             ]) as [unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>];
             if (!sync) await member.validate?.(tx);
             // G7a (git-declared.ts): a strict member never writes or commits a private page's bytes; one refusal rolls the group back.
@@ -432,7 +447,7 @@ export async function publishGroup(engine: BrainEngine, rows: WriteRequest[], pr
               await seam('before_publication', row);
               await withFilesystemPublication([file.record.root], async () => publishPersistenceFile(member.file!, file.record.staging?.publication?.path));
               await seam('after_publication', row);
-              if (attribute) await setMemberAttribution(tx, publicationAttribution(row, member.trust));
+              if (attribute) await setMemberAttributionIn(groupStore, publicationAttribution(row, member.trust));
             }
             member.postimage = undefined;
             const outcome = await withBeliefBatch(tx, publicationBeliefOptions(row, member.additionalPageKeys, beliefReport),
@@ -580,7 +595,7 @@ async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: G
   const laneFault = reason === 'lock_timeout' || reason === 'statement_timeout' ? reason : null;
   if (laneFault) stepDownLanes(rows[0]!.worktree_id!, `${reason} on a lane group`);
   const after = windowPredecessor(rows[0]!);
-  const prior = after ? (await engine.readWriteRequest(rows[0]!.principal_kind, rows[0]!.principal_id, after))?.state ?? null : 'committed';
+  const prior = after ? await (await engine.groupPublishStore()).requestState(rows[0]!.principal_kind, rows[0]!.principal_id, after) : 'committed';
   // A group that found the worktree busy (another holder or no publication capacity) releases its claims and is
   // claimed again as a lane head; publishing its members one at a time would hold the lanes back.
   if (prior !== null && ['committed', 'failed', 'conflict', 'cancelled'].includes(prior) && reason !== 'busy') return null;

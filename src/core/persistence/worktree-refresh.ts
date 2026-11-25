@@ -499,7 +499,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     `gbrain sources writer status ${sourceId}, let the owner finish recovery, then gbrain sources refresh ${sourceId}`);
   if (active) throw inProgress(`Refresh ${active.id} of this worktree is ${active.state}, held by ${describeHolder(holderOf(active))}; only one refresh per worktree runs at a time.`,
     sourceId, active.id);
-  const members = (await (await engine.topologyStore()).worktreeMembers(binding.worktree_id)).map(row => row.source_id);
+  const members = await (await engine.refreshStore()).memberIds(binding.worktree_id);
   await assertNoUnfinishedSync(engine, members);
   if (classifyGitCheckout(root) === 'not_git') throw refusal('refresh_no_upstream',
     `The checkout ${root} is not a Git checkout, so there is no upstream to fast-forward to; gbrain never initializes Git on its own.`,
@@ -777,8 +777,7 @@ async function boundedMemberSync(budgetMs: number, run?: RefreshRun) {
   };
 }
 async function lastCommit(engine: BrainEngine, sourceId: string): Promise<string | null> {
-  const [row] = await engine.listSourceLastCommits([sourceId]);
-  return row?.last_commit ?? null;
+  return (await engine.refreshStore()).sourceLastCommit(sourceId);
 }
 
 function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; blocked: RefreshSyncBlocked[]; atTarget: boolean }, preserved = row.preserved_uncommitted): WorktreeRefreshResult {
@@ -1152,7 +1151,7 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
 }
 
 async function hostRoot(engine: BrainEngine, worktreeId: string, hostId = hostIdFor(engine)): Promise<string | null> {
-  return (await (await engine.topologyStore()).hostBinding(worktreeId, hostId))?.local_path ?? null;
+  return (await engine.refreshStore()).hostLocalPath(worktreeId, hostId);
 }
 
 /**
