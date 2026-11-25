@@ -49,7 +49,6 @@ const STOPS: ReadonlyArray<{ version: string; phase: string; member: string; cap
   { version: '0.29.1', phase: 'backfill_effective_date', member: 'executeRaw', capability: 'raw_sql', owner: 'rust-engine apply-migrations item 2 (old SQL repairs on a Rust store)' },
   { version: '0.31.0', phase: 'schema', member: 'executeRaw', capability: 'raw_sql', owner: 'rust-engine apply-migrations item 2 (old SQL repairs on a Rust store)' },
   { version: '0.32.2', phase: 'schema', member: 'executeRaw', capability: 'raw_sql', owner: 'rust-engine apply-migrations item 2 (old SQL repairs on a Rust store)' },
-  { version: '0.53.0', phase: 'content-checkpoints', member: 'executeRaw', capability: 'raw_sql', owner: 'rust-engine apply-migrations item 2 (v0.53.0 content checkpoints on a Rust store; re-runs on every upgrade)' },
   { version: '0.60.31', phase: 'credential_projection', member: 'executeRaw', capability: 'raw_sql', owner: 'managed-mode / owner-write work (runs once; a swapped brain has it recorded)' },
 ];
 
