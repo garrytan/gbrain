@@ -327,8 +327,9 @@ async function stableRerun(d: AskDeps, watch: LsnWatch, sid: string, sample: Sam
   const result = await Promise.race([read, sleep(left()).then(() => { throw coded('timeout'); })]);
   if (!f.idle() || f.published !== published || f.lastInvalidatedAt !== invalidated) throw coded('write_after_barrier');
   const encoded = encodeValue(result);
+  // The registry's byte cap holds for a rerun's answer too: one that would pass it is not kept, the rerun ends unresolved (counted), and nothing stays in memory.
+  if (!d.samples.charge(sid, JSON.stringify(encoded)?.length ?? 0)) { sample.reruns?.delete(attemptId); throw coded('too_large'); }
   attempt.result = encoded; // kept here for the privacy question; only its digest goes back
-  d.samples.charge(sid, JSON.stringify(encoded)?.length ?? 0);
   const members = SHADOW_READ_MEMBERS[sample.op as ShadowReadMember] === 'ranked' ? membersDigest(encoded) : undefined;
   return { stamp: ack.stamp, epoch_id: epoch, digest: resultDigest(encoded), ...(members === undefined ? {} : { members }), ...(sample.op === 'searchVector' ? { keys: firstTenKeys(encoded) } : {}), attempt: attemptId };
 }

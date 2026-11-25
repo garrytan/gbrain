@@ -143,16 +143,25 @@ export class FollowChild {
    * invalidation runs in between. Resolves with its value when nothing changed since the barrier's `stamp` and the
    * watermark is still valid before and after the read, else null (the sample stays inconclusive).
    */
-  exclusive<T>(stamp: number, read: () => Promise<T>): Promise<T | null> {
+  exclusive<T, W = never>(stamp: number, read: () => Promise<T>, wait?: { ms: number; onTimeout: W }): Promise<T | W | null> {
+    let abandoned = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const run = this.chain.then(async () => {
+      if (abandoned) return null; // the caller gave up waiting for the lock: the read never runs
+      if (timer) clearTimeout(timer);
       const stable = (): boolean => { this.readForeign(); return this.changes === stamp && this.file?.watermark.valid === true; };
       if (!stable()) return null;
       const value = await read();
       return stable() ? value : null;
     });
     this.chain = run.then(() => undefined, () => undefined);
-    return run;
+    if (!wait) return run;
+    // The wait for the lock has a deadline of its own: an apply that never ends holds the chain, and a caller behind it must not wait for ever.
+    return Promise.race([run, new Promise<W>((resolve) => { timer = setTimeout(() => { abandoned = true; resolve(wait.onTimeout); }, Math.max(1, wait.ms)); (timer as { unref?: () => void }).unref?.(); })]);
   }
+
+  /** Settles when everything queued so far has ended: a caller that gave up on the lock tracks it as a stall (child.ts), so a chain that never ends is seen. */
+  pending(): Promise<void> { return this.chain; }
 
   /** Flushes follower.json (called on the heartbeat). */
   tick(): void { this.readForeign(); this.syncEpoch(); this.write(true); }

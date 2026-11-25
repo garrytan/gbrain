@@ -49,22 +49,28 @@ export class SampleRegistry {
     return id;
   }
 
+  /** Drops the oldest entries, never `keep`, until the registry is within both caps. A single new sample over the byte cap is kept until the next one arrives. */
   private evict(keep: string): void {
     for (const [oldest, e] of this.entries) {
       if (this.entries.size <= this.maxEntries && this.bytes <= this.maxBytes) break;
-      if (oldest === keep) break; // a single sample over the byte cap is kept until the next one arrives
+      if (oldest === keep) continue; // the entry being charged stays; every other one, older or newer, can go
       this.entries.delete(oldest);
       this.bytes -= e.bytes;
     }
   }
 
-  /** Charges `bytes` more to an entry (a rerun's answer kept beside the sample); the oldest entries go first when the cap is passed. */
-  charge(id: string, bytes: number): void {
+  /**
+   * Charges `bytes` more to an entry (a rerun's answer kept beside the sample); the oldest other entries go first until the total is within the cap.
+   * Returns false, and charges nothing, when the entry itself would pass the byte cap with it: the answer is not kept. An entry that is gone holds nothing and answers true.
+   */
+  charge(id: string, bytes: number): boolean {
     const e = this.entries.get(id);
-    if (!e) return;
+    if (!e) return true;
+    if (e.bytes + bytes > this.maxBytes) return false;
     e.bytes += bytes;
     this.bytes += bytes;
     this.evict(id);
+    return true;
   }
 
   get(id: unknown): Sample | undefined { return typeof id === 'string' ? this.entries.get(id)?.sample : undefined; }
@@ -75,4 +81,7 @@ export class SampleRegistry {
   }
 
   get size(): number { return this.entries.size; }
+
+  /** The bytes charged to every entry held. */
+  get totalBytes(): number { return this.bytes; }
 }

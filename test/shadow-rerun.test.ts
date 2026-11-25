@@ -189,3 +189,80 @@ describe('the child\'s questions run in a context of their own', () => {
     expect(seen).toEqual([{ aborted: false, own: true }]);
   });
 });
+
+describe('the registry\'s memory cap holds for a rerun\'s answer', () => {
+  test('charging an older entry evicts the others, newest included, until the total is at or under the cap', () => {
+    const samples = new SampleRegistry(1024, 100);
+    const a = samples.add({ op: 'listPages', args: [], at: 1 }, 40);
+    const b = samples.add({ op: 'listPages', args: [], at: 2 }, 40);
+    expect(samples.charge(a, 40)).toBe(true); // 120 > 100: b is newer than a, and goes
+    expect(samples.totalBytes).toBeLessThanOrEqual(100);
+    expect([samples.get(a) !== undefined, samples.get(b) !== undefined]).toEqual([true, false]);
+  });
+
+  test('an answer that would pass the cap on its own is refused and charged nothing', () => {
+    const samples = new SampleRegistry(1024, 100);
+    const a = samples.add({ op: 'listPages', args: [], at: 1 }, 40);
+    expect(samples.charge(a, 200)).toBe(false);
+    expect([samples.totalBytes, samples.get(a) !== undefined]).toEqual([40, true]);
+    expect(samples.charge('unknown-id', 1000)).toBe(true); // an entry that is gone holds nothing
+  });
+
+  test('a rerun whose answer is over the cap ends as too_large and keeps nothing in memory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-cap-'));
+    const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 3, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
+    const samples = new SampleRegistry(1024, 64);
+    const sample = { op: 'listPages', args: [] as unknown[], at: Date.now() };
+    const sid = samples.add(sample, 10);
+    const handler = makeAskHandler({ engine, reads: {} as never, dir, samples, rpc: (async () => ({ stamp: 1 })) as never,
+      follower: { idle: () => true, blocked: () => null, settle: async () => {}, published: 0, lastInvalidatedAt: 0 } as never, watch: { current: () => 'lsn', live: async () => 'lsn', ready: async () => {} } });
+    await expect(handler({ id: 1, kind: 'rerun', sid, epoch_id: epoch.epoch_id })).rejects.toMatchObject({ code: 'too_large' });
+    expect([...((sample as { reruns?: Map<string, unknown> }).reruns?.values() ?? [])].some((r) => (r as { result?: unknown }).result !== undefined)).toBe(false);
+    expect(samples.totalBytes).toBe(10);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('the wait for the follow lock has a deadline', () => {
+  const hungApply = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-lock-'));
+    writeSeedRecord(dir, SEED);
+    const hang = gate();
+    const store = { replaceRelationRows: async () => { await hang.wait; return {}; }, replaceInterval: async () => ({ upserted: 0, deleted: 0, displaced: 0 }), seedPlan: async () => ({ relations: [] }) } as never;
+    const child = new FollowChild({ dir, store: async () => store, owner: () => true, writeControl: () => {} });
+    child.handle({ t: 'apply', seq: 1, committed_at: Date.now(), relation: 'pages', generation: 1, keys: [], rows: [{ fact: 'x' }], digests: [] } as never); // the apply never ends: it holds the chain
+    return { child, hang, dir };
+  };
+
+  test('a caller behind a hung apply times out at its own deadline, its read never runs, and the callers after it time out too', async () => {
+    const { child, hang, dir } = hungApply();
+    let ran = 0;
+    const started = Date.now();
+    expect(await child.exclusive(0, async () => ++ran, { ms: 60, onTimeout: 'lock_timeout' })).toBe('lock_timeout');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(await child.exclusive(0, async () => ++ran, { ms: 60, onTimeout: 'lock_timeout' })).toBe('lock_timeout'); // the next one is not stuck behind the first
+    hang.open(); // the apply ends: the abandoned reads pass through without running
+    await child.pending();
+    expect(ran).toBe(0);
+    await child.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('through the child: a hung apply behind the barrier ends the rerun as a timeout at its deadline instead of waiting for ever', async () => {
+    const hang = gate();
+    let applying = false;
+    const rig = await mismatching({ child: { timeoutMs: 300, random: () => 0.5, sleep: async () => undefined }, store: { replaceRelationRows: async () => { applying = true; await hang.wait; return {} as never; } } });
+    try {
+      await rig.settled();
+      rig.rust.listPages = async () => []; // every sample differs from the primary
+      const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
+      const real = sup.onAsk;
+      sup.onAsk = async (ask) => { const answer = await real(ask); if (ask.kind === 'rerun' && !applying) { rig.attached.follower!.publish(batch(1, [{ kind: 'rows', relation: 'config', selector: { key: 'x' }, before_keys: keys(1) }])); await until(() => applying); } return answer; }; // an apply arrives after the barrier and never ends
+      const started = Date.now();
+      await sample(rig);
+      await until(() => rig.rows().some((r) => r.rerun === 'skipped:timeout'));
+      expect(Date.now() - started).toBeLessThan(20_000);
+      expect(rig.rows().find((r) => r.rerun === 'skipped:timeout')).toMatchObject({ outcome: 'inconclusive' }); // unresolved and counted, never silent
+    } finally { hang.open(); }
+  }, 30_000);
+});

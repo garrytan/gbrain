@@ -46,6 +46,8 @@ export const SHADOW_HEARTBEAT_MS = 5_000;
 export const SHADOW_CHILD_EXIT_DEADLINE_MS = 30_000;
 /** Timed-out calls that may still be running at once; past it new reads are shed and the heartbeat stops, so the supervisor restarts the child. */
 export const SHADOW_CHILD_STALL_LIMIT = 4;
+/** What a wait for the follow lock that ran out of time answers (child.ts `rerunOne`, `scoreWithReruns`): a timeout whose stall is the lock's chain, not a Rust call. */
+const LOCK_WAIT_TIMEOUT = Object.freeze({ timedOut: true as const });
 /** Runs of one sample (the first check, then reruns from a new freshness token) before one that keeps moving stays unresolved. */
 export const RERUN_ATTEMPTS = 3;
 /** Waits before a run that follows a check whose freshness token moved: the 1st, 2nd and 3rd such move. Each is scaled by 1 +/- RERUN_BACKOFF_JITTER; the worst total (13.1 s) stays inside RERUN_BACKOFF_TOTAL_MS. */
@@ -437,8 +439,9 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
         }
         if (curEpoch() === null || answer.epoch_id !== curEpoch()) return skip('epoch_changed'); // an answer for another epoch is dropped, never restamped
         let call!: Promise<unknown>;
-        const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }));
-        if (out?.timedOut) trackStall(call);
+        // The wait for the follow lock has the same deadline as the call: an apply that never ends holds the lock, and the rerun then ends as a timeout and records a stall (the chain it waits on), so the queue moves on to the next rerun.
+        const out = await follow.exclusive(answer.stamp, () => callRust(event.op, args, event.access, Math.max(1, Math.min(timeoutMs, deadline - now())), (p) => { call = p; }), { ms: Math.max(1, Math.min(timeoutMs, deadline - now())), onTimeout: LOCK_WAIT_TIMEOUT });
+        if (out === LOCK_WAIT_TIMEOUT) trackStall(follow.pending()); else if (out?.timedOut) trackStall(call);
         if (out === null || out.timedOut) return skip(out === null ? 'watermark_moved' : 'timeout');
         const c2 = await judge(event.op, event.args, { digest: answer.digest, members: answer.members, attempt: answer.attempt, list: Array.isArray(event.result) }, encodeValue(out.value), event.sid, 'rerun', now(), null);
         if (c2.outcome === 'inconclusive' && c2.reason?.startsWith('privacy_check_')) unsettled = c2.reason; // this rerun's own privacy check could not be settled
@@ -456,7 +459,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // Vector recall (recall.ts): at most one reference run a minute, asked of the serving process off the request path.
   const recallGate = new IntervalGate(RECALL_INTERVAL_MS, now);
   let recalling: Promise<void> | null = null;
-  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, pause: waiter.pause, random: deps.random, exclusive: (stamp, fn) => follow.exclusive(stamp, fn) as never, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
+  const recallEnv: RecallEnv = { ask, now, timeoutMs, curEpoch, pause: waiter.pause, random: deps.random, exclusive: async (stamp, fn) => { const out = await follow.exclusive(stamp, fn, { ms: timeoutMs, onTimeout: LOCK_WAIT_TIMEOUT }); if (out === LOCK_WAIT_TIMEOUT) trackStall(follow.pending()); return out as never; }, callRust: (op, a, access, ms) => callRust(op, a, access, ms) as never,
     write: (score, epoch) => appendRecall(shadowDir, { ts: new Date(now()).toISOString(), epoch_id: epoch, ...score }, { currentEpochOnly: true }) };
   const scoreRecallLater = (event: ReadEvent, args: unknown[], rust: unknown): void => {
     if (event.op !== 'searchVector' || !curEpoch() || recalling || !recallEligible(args) || !recallGate.take()) return;
