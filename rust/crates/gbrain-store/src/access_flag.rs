@@ -401,14 +401,17 @@ mod tests {
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
         //   addon's records into an empty record file before any store opens it;
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
-        //   transaction fail like a disk and passes every call on (4 calls and definitions).
+        //   transaction fail like a disk and passes every call on (4 calls and definitions);
+        // - `kv.rs`'s `Unserialized`, which wraps a record store to withhold
+        //   `serialized_transactions` and passes every call on (6 calls and definitions beside the
+        //   trait's 5).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),
-            ("kv.rs", 5),
+            ("kv.rs", 11),
             ("lib.rs", 4),
             ("occ_kv.rs", 4),
             ("page_body/purge_record.rs", 1),
