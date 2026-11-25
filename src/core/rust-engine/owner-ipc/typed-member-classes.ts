@@ -339,7 +339,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listLocalEditAdoptions', 'listManagedRoots', 'listManagedSyncBacklogHeaders', 'listManagedSyncCursorFailureRows',
   'listManagedSyncOrphanRowsets', 'listManagedSyncPassStops', 'listNameVariantCandidates',
   'listOauthClientAuthShapes', 'listOauthGrantAudit', 'listOlderDriftReceiptSlugs', 'listOnboardingSources',
-  'listOntologyStreamSlugs', 'listOpenIdentityDowngrades', 'listOpenPassCheckpointBlockers', 'listOrphanBindingRows',
+  'listOntologyStreamSlugs', 'listOpenIdentityDowngrades', 'listOpenPassCheckpointBlockers', 'listOrphanBindingRows', 'readRequestIndexStates',
   'listOrphanGenerationCandidates', 'listOrphanWorkspaceSources', 'listOrphanedAliasCounts',
   'listOutstandingHolders', 'listOversizedPages', 'listOwnerBindings', 'listOwnerMemberLinks',
   'listPageRefsForSlugs', 'readClaimWithdrawal', 'listEdgeProposalCliRows',

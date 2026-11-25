@@ -355,6 +355,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'readStaleEmbeddingCounts': OOS.doctorPersistence,
   'listStaleEmbeddingEffects': OOS.doctorPersistence,
   'listOrphanBindingRows': OOS.doctorPersistence,
+  'readRequestIndexStates': OOS.doctorPersistence,
   'readPersistenceBrainIdText': OOS.doctorPersistence,
   'listWorktreeIds': OOS.doctorPersistence,
   'listManagedRoots': OOS.doctorPersistence,

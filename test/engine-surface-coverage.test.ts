@@ -240,7 +240,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readMaxRequestSequence', 'listRefusalBreakerRows', 'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs',
   'readPublicationRefusals', 'countParkedEffects', 'listParkedEffects', 'listGitPushHoldRows',
   'listStalledCatchupRows', 'listParkedGroupRows', 'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects',
-  'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'listManagedRoots',
+  'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'readRequestIndexStates', 'listManagedRoots',
   'listUnboundSourcePages', 'listRecentWriterVersions', 'listRecentPurgeRequests',
   'listStuckWorktreeRefreshes', 'listSourceBindingsForMovement', 'listRunningClaimOwners', 'listOwnerBindings',
   'listConsumerOwners', 'listCallerRefusalRows', 'countCompactedCallerRefusals',
