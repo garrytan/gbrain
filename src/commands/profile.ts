@@ -9,6 +9,7 @@ import type { ProfileBlock, ProfileFact } from '../core/profile/read.ts';
 interface Flags { json: boolean; budget?: number }
 
 const HELP = `Usage: gbrain profile [--json] [--budget-tokens <n>]
+       gbrain profile import <file> [--yes --preview <hash>]   (gbrain profile import --help)
 
 Your own profile: the facts remember saved with a facet (diet, allergy, size.<item>, brand, style, constraint,
 schedule, household, other), relationships from your page's links, and unfaceted preferences. The brain owner reads
@@ -57,25 +58,41 @@ export function renderProfile(block: ProfileBlock): string {
 }
 
 export async function runProfile(engine: BrainEngine | null, args: string[]): Promise<void> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
+  if (args[0] !== 'import' && (args.includes('--help') || args.includes('-h'))) { console.log(HELP); return; }
+  const { loadConfig, isThinClient, configDir } = await import('../core/config.ts');
+  const cfg = loadConfig();
+  let call: (tool: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  if (isThinClient(cfg)) {
+    const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
+    call = async (tool, params) => unpackToolResult(await callRemoteTool(cfg!, tool, params, { timeoutMs: 30_000 }));
+  } else if (args[0] !== 'import' || !(args.includes('--help') || args.includes('-h'))) {
+    const [{ operationsByName }, { resolveSourceId }] = await Promise.all([import('../core/operations.ts'), import('../core/source-resolver.ts')]);
+    const ctx = { engine: engine!, config: cfg ?? { engine: engine!.kind }, logger: { info() {}, warn: console.error, error: console.error }, dryRun: false,
+      remote: false, sourceId: await resolveSourceId(engine!, null) } as unknown as OperationContext;
+    call = async (tool, params) => await operationsByName[tool]!.handler(ctx, params) as Record<string, unknown>;
+  } else call = async () => ({});
+  if (args[0] === 'import') {
+    const { runProfileImport } = await import('./profile-import.ts');
+    const principal = isThinClient(cfg) ? `remote:${cfg!.remote_mcp!.mcp_url}#${cfg!.remote_mcp!.oauth_client_id}` : `local:${configDir()}`;
+    const target = async () => {
+      const entity = ((await call('context_pack', { profile: true, budget_tokens: 1 })).profile as ProfileBlock | undefined)?.entity;
+      if (!entity) {
+        const { opError } = await import('../core/ops/contract.ts');
+        throw opError('profile_entity_not_self', 'profile import: this credential has no profile (it speaks for no member and is not the brain owner); nothing was sent.',
+          'Import from the brain owner\'s CLI or a member credential.');
+      }
+      return { principal, profile: entity.slug };
+    };
+    await runProfileImport(args.slice(1), call, target, configDir());
+    return;
+  }
   const flags = parseProfileArgs(args);
   if ('error' in flags) {
     const { opError } = await import('../core/ops/contract.ts');
     throw opError('invalid_params', flags.error, 'Run gbrain profile [--json] [--budget-tokens <n>]; gbrain profile --help lists the flags.');
   }
   const params: Record<string, unknown> = { profile: true, ...(flags.budget !== undefined ? { budget_tokens: flags.budget } : {}) };
-  const { loadConfig, isThinClient } = await import('../core/config.ts');
-  const cfg = loadConfig();
-  let result: { profile?: ProfileBlock };
-  if (isThinClient(cfg)) {
-    const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
-    result = unpackToolResult(await callRemoteTool(cfg!, 'context_pack', params, { timeoutMs: 30_000 }));
-  } else {
-    const [{ operationsByName }, { resolveSourceId }] = await Promise.all([import('../core/operations.ts'), import('../core/source-resolver.ts')]);
-    const ctx = { engine: engine!, config: cfg ?? { engine: engine!.kind }, logger: { info() {}, warn: console.error, error: console.error }, dryRun: false,
-      remote: false, sourceId: await resolveSourceId(engine!, null) } as unknown as OperationContext;
-    result = await operationsByName.context_pack!.handler(ctx, params) as { profile?: ProfileBlock };
-  }
+  const result = await call('context_pack', params) as { profile?: ProfileBlock };
   const block = result.profile;
   if (!block) { console.error('The brain did not return a profile: it may predate context_pack {profile: true}; upgrade it with gbrain upgrade.'); process.exit(1); }
   if (!flags.json) { console.log(renderProfile(block)); return; }
