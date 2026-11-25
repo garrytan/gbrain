@@ -12,7 +12,7 @@
  * 3. Existing coverage (by-mention*.test.ts, link-extraction*.test.ts) pins
  *    hand-picked mentions and refs, not the helpers' exact output over
  *    thousands of mixed-script inputs.
- * 4. Seam: maskRanges is exported (a pure helper; no behaviour seam).
+ * 4. Seam: none. maskRanges lives in its own internal module (not a published subpath).
  *
  * The reference implementations below are verbatim copies of the replaced
  * code. The last test checks the fixture tells a broken variant apart.
@@ -20,7 +20,7 @@
 import { describe, expect, it } from 'bun:test';
 import { CJK_SLUG_CHARS } from '../src/core/cjk.ts';
 import { tokenizeForScan } from '../src/core/by-mention.ts';
-import { maskRanges } from '../src/core/link-extraction.ts';
+import { maskRanges } from '../src/core/mask-ranges.ts';
 
 type Range = [number, number];
 interface Tok { text: string; offset: number; length: number }
