@@ -190,7 +190,8 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
     },
     write_comparisons: {
       state: writes && !writes.in_flight.length && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
-      comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0, unresolved_replays: writes?.in_flight.length ?? 0,
+      comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0,
+      ...(writes?.in_flight.length ? { unresolved_replays: writes.in_flight.length } : {}),
       ...(writes ? { capability_missing_by_family: writes.capability_missing_by_family, uncomparable_by_reason: writes.uncomparable_by_reason } : {}),
     },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },

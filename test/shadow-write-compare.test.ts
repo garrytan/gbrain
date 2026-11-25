@@ -110,7 +110,7 @@ describe('the locked write tally', () => {
   test('a verdict that cannot be saved leaves the mark standing, and status reads that as no evidence, never a pass', async () => {
     const dir = tmp();
     const { epoch } = tallyOn(dir); saved(dir, epoch);
-    expect(status(dir)).toMatchObject({ state: 'measured', comparable: 1000, unresolved_replays: 0 });
+    expect(status(dir)).toMatchObject({ state: 'measured', comparable: 1000 });
     const mine = tallyOn(dir); // the mark is published, then the verdict save fails
     expect(mine.tally.begin()).toBe(true);
     expect(status(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1 });
@@ -124,7 +124,8 @@ describe('the locked write tally', () => {
     expect(status(dir).state).toBe('capability_missing'); // still unresolved: two verdicts held, none saved
     unblock();
     mine.tally.note('comparable', undefined, 1, true);
-    expect(status(dir)).toMatchObject({ state: 'measured', comparable: 1003, unresolved_replays: 0 }); // nothing restarted, nothing lost
+    expect(status(dir)).toMatchObject({ state: 'measured', comparable: 1003 });
+    expect(status(dir).unresolved_replays).toBeUndefined(); // none standing; nothing restarted, nothing lost
   });
 
   test('a dead process\'s mark is recovered as unexplained_difference, which fails the epoch, and the mark of an earlier process with this pid is too', () => {

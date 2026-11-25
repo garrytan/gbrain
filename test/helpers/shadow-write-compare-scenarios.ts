@@ -187,7 +187,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       });
       if (pid) await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, 60_000); // the child drained what it was sent and exited
       const status = buildFollowStatus(home, state as never, NOW);
-      expect(status.write_comparisons).toMatchObject({ state: 'measured', sample_rate: 1, comparable: 1, unexplained_difference: 0, capability_missing: 1, unresolved_replays: 0, capability_missing_by_family: { tags: 1 } });
+      expect(status.write_comparisons).toMatchObject({ state: 'measured', sample_rate: 1, comparable: 1, unexplained_difference: 0, capability_missing: 1, capability_missing_by_family: { tags: 1 } });
       const row = row5({ write_comparisons: status.write_comparisons as ShadowStatus['write_comparisons'] });
       expect(row.state).toBe('fail'); // 1 of 1,000 comparable: the pass rule is unchanged
       expect(row.detail).toContain('1 of 1000 comparable');

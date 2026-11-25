@@ -187,7 +187,7 @@ export class WriteTally {
       });
       this.delta = null; this.ending = false;
       return true;
-    } catch { return false; }
+    } catch { return false; } // silent-read-ok: false is the answer, never a pass: begin() refuses the replay, and note() keeps the unsaved verdicts for the next save
   }
   /** Publishes this pid as having a replay in flight. True only when that is on disk: on false the replay must not run. */
   begin(): boolean { return this.update((file) => { if (!file.in_flight.includes(this.pid)) file.in_flight.push(this.pid); }); }
