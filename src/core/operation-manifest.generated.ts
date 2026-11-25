@@ -127,7 +127,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "facet": {
         "type": "string",
-        "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile."
+        "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.",
+        "fullSurfaceOnly": true
       }
     },
     "mutating": true,
@@ -6580,7 +6581,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "profile": {
         "type": "boolean",
-        "description": "true: add your own profile (facets, constraints, relationships, preferences)."
+        "description": "true: add your own profile (facets, constraints, relationships, preferences).",
+        "fullSurfaceOnly": true
       }
     },
     "scope": "read",

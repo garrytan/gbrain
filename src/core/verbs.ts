@@ -119,7 +119,7 @@ const remember: Operation = {
     claim_value: { type: 'number', description: 'Typed claim value (finite number).', fullSurfaceOnly: true },
     claim_unit: { type: 'string', description: 'Typed claim unit, e.g. USD.', fullSurfaceOnly: true },
     claim_period: { type: 'string', description: 'Typed claim period, e.g. monthly.', fullSurfaceOnly: true },
-    facet: { type: 'string', description: 'Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.' },
+    facet: { type: 'string', description: 'Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',

@@ -6,28 +6,15 @@ import type { BrainEngine } from '../core/engine.ts';
 import type { OperationContext } from '../core/ops/contract.ts';
 import type { ProfileBlock, ProfileFact } from '../core/profile/read.ts';
 
-const HELP = `Usage: gbrain profile [--json] [--budget-tokens N]
-
-Shows your own profile: the facts saved with remember --facet (diet, allergy, size.<item>, brand, style,
-constraint, schedule, household, other), relationships from your page's links, and unfaceted preferences.
-The brain owner reads the owner's profile; a member credential reads its own. Zero model calls.
-
-  --json              Print the profile block as JSON.
-  --budget-tokens N   Pack the profile into N tokens; the rest is counted as withheld.
-
-Save a profile fact: gbrain remember "Allergic to peanuts" --facet allergy --provenance "<where, with the date>"
-Guide: docs/guides/profile.md`;
-
 interface Flags { json: boolean; budget?: number }
 
-export function parseProfileArgs(args: string[]): Flags | { help: true } | { error: string } {
+export function parseProfileArgs(args: string[]): Flags | { error: string } {
   const flags: Flags = { json: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    if (a === '--help' || a === '-h') return { help: true };
     if (a === '--json') flags.json = true;
-    else if (a === '--budget-tokens' || a.startsWith('--budget-tokens=')) {
-      const raw = a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[++i];
+    else if (a === '--budget-tokens') {
+      const raw = args[++i];
       const n = Number(raw);
       if (!Number.isInteger(n) || n <= 0) return { error: `--budget-tokens takes a positive whole number of tokens; got ${JSON.stringify(raw ?? '')}.` };
       flags.budget = n;
@@ -55,8 +42,10 @@ export function renderProfile(block: ProfileBlock): string {
 
 export async function runProfile(engine: BrainEngine | null, args: string[]): Promise<void> {
   const flags = parseProfileArgs(args);
-  if ('help' in flags) { console.log(HELP); return; }
-  if ('error' in flags) { console.error(flags.error + '\n\n' + HELP); process.exit(2); }
+  if ('error' in flags) {
+    const { opError } = await import('../core/ops/contract.ts');
+    throw opError('invalid_params', flags.error, 'Run gbrain profile [--json] [--budget-tokens <n>]; gbrain profile --help lists the flags.');
+  }
   const params: Record<string, unknown> = { profile: true, ...(flags.budget !== undefined ? { budget_tokens: flags.budget } : {}) };
   const { loadConfig, isThinClient } = await import('../core/config.ts');
   const cfg = loadConfig();
@@ -72,5 +61,7 @@ export async function runProfile(engine: BrainEngine | null, args: string[]): Pr
   }
   const block = result.profile;
   if (!block) { console.error('The brain did not return a profile: it may predate context_pack {profile: true}; upgrade it with gbrain upgrade.'); process.exit(1); }
-  console.log(flags.json ? JSON.stringify(block, null, 2) : renderProfile(block));
+  if (!flags.json) { console.log(renderProfile(block)); return; }
+  const { writeJsonDocument } = await import('../core/cli-force-exit.ts');
+  await writeJsonDocument(JSON.stringify(block, null, 2));
 }

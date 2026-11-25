@@ -104,11 +104,11 @@ describe('reservation and engine guards', () => {
     expect(e.code).toBe('engine_capability_missing');
   });
   test('Rust trajectory: newer profile rows never crowd older points out of the page', async () => {
-    const row = (metric: string, i: number) => ({ id: i, metric, text: metric + i, valid_from: '2026-01-0' + (9 - i), valid_until: null });
-    const native = [row('profile.diet', 1), row('profile.allergy', 2), row('profile.style', 3), row('mrr', 4), row('mrr', 5)];
-    const brain = { findTrajectory: async (o: { limit: number }) => native.slice(0, o.limit) };
+    const row = (metric: string, i: number) => ({ id: i, metric, text: metric + i, valid_from: '2026-01-0' + i, valid_until: null });
+    const native = [row('mrr', 1), row('mrr', 2), row('mrr', 3), row('profile.diet', 4), row('profile.allergy', 5)];
+    const brain = { findTrajectory: async (o: { limit: number }) => native.slice(Math.max(0, native.length - o.limit)) };
     const points = await rustFindTrajectory(brain as never, { entitySlug: 'memory/owner', sourceId: 'default', remote: false, limit: 2 } as never);
-    expect(points.map(p => p.metric)).toEqual(['mrr', 'mrr']);
+    expect(points.map(p => p.text)).toEqual(['mrr2', 'mrr3']);
   });
 });
 
@@ -117,7 +117,7 @@ describe('gbrain profile output', () => {
     valid_from: '2026-01-01', visibility: 'private' as const, confidence: 1 });
   const empty = { facets: [], constraints: [], relationships: [], preferences: [], withheld: 0 };
   test('parses flags and refuses a bad budget or an unknown argument', () => {
-    expect(parseProfileArgs(['--json', '--budget-tokens=200'])).toEqual({ json: true, budget: 200 });
+    expect(parseProfileArgs(['--json', '--budget-tokens', '200'])).toEqual({ json: true, budget: 200 });
     expect(parseProfileArgs(['--budget-tokens', '50'])).toEqual({ json: false, budget: 50 });
     for (const bad of [['--budget-tokens', '0'], ['--budget-tokens', '1.5'], ['--budget-tokens'], ['--nope']]) expect(parseProfileArgs(bad)).toHaveProperty('error');
   });

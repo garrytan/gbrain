@@ -258,10 +258,6 @@
             "prefer_source_id": {
               "type": "string",
               "description": "Source to try first (thin clients send .gbrain-source here); never narrows."
-            },
-            "profile": {
-              "type": "boolean",
-              "description": "true: add your own profile (facets, constraints, relationships, preferences)."
             }
           },
           "required": []

@@ -734,7 +734,7 @@ const context_pack: Operation = {
     entity_refs: { type: 'array', items: { type: 'object', properties: { source_id: { type: 'string' }, slug: { type: 'string' } } },
       description: 'Source-qualified entities: [{"source_id":"wiki","slug":"people/alice-example"}].', fullSurfaceOnly: true },
     prefer_source_id: { type: 'string', description: 'Source to try first (thin clients send .gbrain-source here); never narrows.', fullSurfaceOnly: true },
-    profile: { type: 'boolean', description: 'true: add your own profile (facets, constraints, relationships, preferences).' },
+    profile: { type: 'boolean', description: 'true: add your own profile (facets, constraints, relationships, preferences).', fullSurfaceOnly: true },
   },
   scope: 'read',
   verb: true,

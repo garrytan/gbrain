@@ -274,8 +274,10 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
   // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL); the native read
-  // takes the 500 cap so dropping them here cannot shorten the caller's page.
-  return rows.filter((row) => !String(row.metric ?? '').startsWith('profile.')).slice(0, limit)
+  // takes the 500 cap so dropping them here cannot shorten the caller's page. It returns the newest rows in date order, so the
+  // page is the last `limit` of them.
+  const points = rows.filter((row) => !String(row.metric ?? '').startsWith('profile.'));
+  return points.slice(Math.max(0, points.length - limit))
     .map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };
 
