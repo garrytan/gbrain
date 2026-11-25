@@ -240,7 +240,7 @@ test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFi
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
-test/mcp-registration.test.ts	every stdio registration path builds from REGISTRATION_SURFACE	5	readFileSync
+test/mcp-registration.test.ts	every stdio registration path builds from registrationProfile	5	readFileSync
 test/meeting-ingestion-attendance-template.test.ts	(file-level)	3	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper
@@ -305,7 +305,7 @@ test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structur
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	source-surface-helper
-test/release-workflow.test.ts	release.yml addon_dry_run publishes nothing	3	readFileSync
+test/release-workflow.test.ts	release.yml addon_dry_run publishes nothing	4	readFileSync
 test/release-workflow.test.ts	release.yml publish-template skip is visible (D-10)	1	readFileSync
 test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	12	readFileSync
 test/release-workflow.test.ts	release.yml ↔ gbrain engine install rust	3	readFileSync
@@ -323,6 +323,7 @@ test/scripts/build-lookup-table.test.ts	build-lookup-table	2	readFileSync
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
+test/scripts/check-bytecode-parity.test.ts	bytecode release build	6	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
 test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	3	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
