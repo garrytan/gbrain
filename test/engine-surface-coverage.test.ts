@@ -505,7 +505,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'deleteRekeyLosers', 'restoreOntologyFact',
   'listVisiblePageSlugs', 'readPagesForVersionHistory',
   // `gbrain schema detect` page-shape reads (engine-sql/schema-detect.ts; test/engine-parity/schema-detect.test.ts)
-  'pageTypeTotals', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'listPrefixAnchoredPages', 'readQuestionPageRow', 'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows', 'pagePrefixSamples', 'countPagesByTypeForSource',
+  'pageTypeTotals', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline', 'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'readQuestionPageRow', 'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows', 'pagePrefixSamples', 'countPagesByTypeForSource',
   // Takes
   'addTakesBatch', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
   'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake',
@@ -590,6 +590,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding', 'listTopologyRecoveries', 'readSegmentedGateEvidence',
   'claimNotifierLease', 'readNotifierLease', 'holdsNotifierLease', 'releaseNotifierLease', 'readNotifierSources', 'writeNotifierState', 'writeNotifierCoverage', 'recordNotifierSyncerHost', 'readNotifierStatusRows', 'hasNotifierCoverage', 'upsertWantedMarker', 'attachWantedMarkerJob', 'readWantedMarkers', 'readDueWantedMarkers', 'pruneSatisfiedWantedMarkers', 'clearWantedMarker', 'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue',
   'readLivePageFrontmatter', 'readEntityAnchoredPages', 'readPageTitlesById', 'readTextMentionPages',
+  'readImageSealProbe', 'readPageChunkerVersion', 'readPrefixAnchoredPages', 'readPrivateOnlySlugs',
   'readSourceSyncShape', 'readNotifierFirstDue',
   'readSourceLastCommit', 'readDrainHolderProgress', 'readLiveJobIds', 'readDrainLeaseBeacon', 'writeDrainLeaseHolder',
   'refreshDrainLeaseHolder', 'releaseDrainLeaseHolder',

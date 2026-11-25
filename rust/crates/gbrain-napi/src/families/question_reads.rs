@@ -1,5 +1,5 @@
-//! The pinned-question reads the store serves (gbrain-store `question_reads`): the evidence facts of a refresh, the
-//! newest pages under a pin's slug prefix, and whether new facts arrived since an answer's watermark
+//! The pinned-question reads the store serves (gbrain-store `question_reads`): the evidence facts of a refresh and
+//! whether new facts arrived since an answer's watermark
 //! (src/core/rust-engine/store-members/question-reads.ts).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -22,19 +22,6 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.list_question_evidence_facts(&source_id, &entity_slugs)
-        })
-    }
-
-    /// `listPrefixAnchoredPages(sourceId, prefix)`: `[{ id, slug }]` of the newest pages under the prefix.
-    #[napi]
-    pub fn list_prefix_anchored_pages<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        prefix: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_prefix_anchored_pages(&source_id, &prefix)
         })
     }
 

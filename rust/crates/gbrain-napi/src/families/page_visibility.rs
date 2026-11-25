@@ -85,4 +85,27 @@ impl Brain {
             )
         })
     }
+
+    /// `readPrivateOnlySlugs(slugs, sourceId, sourceIds, includeDeleted, policy)`: the slugs whose
+    /// every in-scope page row the caller's page policy hides.
+    #[napi]
+    pub fn read_private_only_slugs<'env>(
+        &self,
+        env: &'env Env,
+        slugs: Vec<String>,
+        source_id: Option<String>,
+        source_ids: Option<Vec<String>>,
+        include_deleted: bool,
+        policy: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_private_only_slugs(
+                &slugs,
+                source_id,
+                source_ids,
+                include_deleted,
+                &required(policy, "readPrivateOnlySlugs policy")?,
+            )
+        })
+    }
 }

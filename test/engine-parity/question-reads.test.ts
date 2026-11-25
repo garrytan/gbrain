@@ -69,7 +69,7 @@ describe('pinned-question reads on every engine', () => {
   });
 
   parityTest('a slug prefix anchors the newest live pages under it, without question, synthesis or pinned-question pages', {
-    methods: ['listPrefixAnchoredPages'],
+    methods: ['readPrefixAnchoredPages'],
   }, async (engine) => {
     for (const slug of ['projects/a', 'projects/b', 'projects/c', 'projectsx/d', 'proj_a/e', 'projxa/f']) await engine.putPage(slug, page(slug));
     await engine.putPage('projects/q', page('q', { type: 'question' }));
@@ -152,7 +152,7 @@ describe('pinned-question reads on every engine', () => {
   // The pin records and pages.generation are not in the Rust store yet: the pin's first write refuses there by name
   // before anything is written (rust-engine/question-stops.ts). The SQL engines pin, refresh and publish end to end.
   parityTest('a pin with a slug prefix refreshes end to end and publishes a cited answer', {
-    methods: ['listPrefixAnchoredPages', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'readQuestionEvidenceClock',
+    methods: ['readPrefixAnchoredPages', 'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'readQuestionEvidenceClock',
       'readQuestionPageRow', 'listQuestionEvidenceJoin', 'lockQuestionEvidenceRows'],
     requires: 'raw_sql',
   }, async (engine) => {

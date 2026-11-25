@@ -2526,6 +2526,10 @@ export class PostgresEngine implements BrainEngine {
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
   readEntityAnchoredPages(sourceId: string, entitySlug: string) { return entityReadsImpl.readEntityAnchoredPages(this, sourceId, entitySlug); }
   readPageTitlesById(ids: readonly number[]) { return entityReadsImpl.readPageTitlesById(this, ids); }
+  readImageSealProbe(sourceId: string, slug: string) { return this.ownRawRead(exec => entityReadsImpl.readImageSealProbe(exec, sourceId, slug)); }
+  readPageChunkerVersion(pageId: number) { return this.ownRawRead(exec => entityReadsImpl.readPageChunkerVersion(exec, pageId)); }
+  readPrefixAnchoredPages(sourceId: string, prefix: string) { return this.ownRawRead(exec => entityReadsImpl.readPrefixAnchoredPages(exec, sourceId, prefix)); }
+  readPrivateOnlySlugs(slugs: readonly string[], scope?: pageVisibilityImpl.PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }) { return this.ownRawRead(exec => pageVisibilityImpl.readPrivateOnlySlugs(exec, slugs, scope, opts)); }
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]) { return entityReadsImpl.readTextMentionPages(this, sourceIds, slugs); }
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }
@@ -4866,7 +4870,6 @@ export class PostgresEngine implements BrainEngine {
   listQuestionEvidenceTimeline(pageIds: readonly number[]) { return questionReadsImpl.listQuestionEvidenceTimeline(this.executeRaw.bind(this), pageIds); }
   listQuestionEvidenceTakes(pageIds: readonly number[]) { return questionReadsImpl.listQuestionEvidenceTakes(this.executeRaw.bind(this), pageIds); }
   readQuestionEvidenceClock(sourceId: string) { return questionReadsImpl.readQuestionEvidenceClock(this.executeRaw.bind(this), sourceId); }
-  listPrefixAnchoredPages(sourceId: string, prefix: string) { return questionReadsImpl.listPrefixAnchoredPages(this.executeRaw.bind(this), sourceId, prefix); }
   readQuestionPageRow(sourceId: string, slug: string) { return questionReadsImpl.readQuestionPageRow(this.executeRaw.bind(this), sourceId, slug); }
   listQuestionEvidenceJoin(questionId: number, answerRevision: number) { return questionReadsImpl.listQuestionEvidenceJoin(this.executeRaw.bind(this), questionId, answerRevision); }
   hasNewQuestionPages(sourceId: string, generation: number, prefix: string | null) { return questionReadsImpl.hasNewQuestionPages(this.executeRaw.bind(this), sourceId, generation, prefix); }

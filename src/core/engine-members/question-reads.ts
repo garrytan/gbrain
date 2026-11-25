@@ -17,8 +17,6 @@ export interface QuestionReadMembers {
   listQuestionEvidenceTakes(pageIds: readonly number[]): Promise<QuestionSql.QuestionEvidenceTake[]>;
   /** The highest page generation of the brain and the highest fact id of the source. */
   readQuestionEvidenceClock(sourceId: string): Promise<QuestionSql.QuestionEvidenceClock>;
-  /** The newest live pages of `sourceId` under `prefix` that are not question or synthesis pages, at most 10. */
-  listPrefixAnchoredPages(sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>>;
   /** The live question page `slug` of `sourceId`, or null. */
   readQuestionPageRow(sourceId: string, slug: string): Promise<QuestionSql.QuestionPageRow | null>;
   /** The evidence rows of one answer revision of a pin, joined to what each cites. */

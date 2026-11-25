@@ -37,9 +37,9 @@ export async function entityAnchoredPages(engine: BrainEngine, sourceId: string,
   return { entity: entity ? { id: entity.id, slug: entitySlug } : null, pages };
 }
 
-/** The newest pages under a slug prefix (question and synthesis pages excluded), at most MAX_ANCHORED (engine-sql/question-reads.ts). */
+/** The newest pages under a slug prefix (question and synthesis pages excluded), at most MAX_ANCHORED. */
 export async function prefixAnchoredPages(engine: BrainEngine, sourceId: string, prefix: string): Promise<AnchoredPage[]> {
-  return engine.listPrefixAnchoredPages(sourceId, prefix);
+  return engine.readPrefixAnchoredPages(sourceId, prefix);
 }
 
 /** Asks for the present state of something: "now", "currently", "latest", "these days" and similar. */

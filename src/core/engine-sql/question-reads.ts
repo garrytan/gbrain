@@ -1,6 +1,6 @@
 /**
- * The reads of pinned questions (src/core/questions/): evidence retrieval and its anchored pages (refresh.ts,
- * search/entity-anchor.ts), the question page row (pages.ts), the freshness reads (freshness.ts), the refresh clock and
+ * The reads of pinned questions (src/core/questions/): evidence retrieval (refresh.ts; its slug-prefix anchor is
+ * readPrefixAnchoredPages, engine-sql/entity-reads.ts), the question page row (pages.ts), the freshness reads (freshness.ts), the refresh clock and
  * the publication's revalidation reads. One implementation for both SQL engines; the Rust store serves the members that
  * read no `pages.generation` and no pin record (src/core/rust-engine/store-members/question-reads.ts), and refuses the
  * others by name until it keeps a page generation counter and the pin records (rust-engine/question-stops.ts).
@@ -55,9 +55,6 @@ const TAKES_SQL = `SELECT k.id, k.claim, k.holder, k.weight, p.id AS page_id, p.
        ORDER BY k.id DESC LIMIT 20`;
 const CLOCK_SQL = `SELECT (SELECT COALESCE(MAX(generation), 0) FROM pages) AS generation,
               (SELECT COALESCE(MAX(id), 0) FROM facts WHERE source_id = $1) AS fact_id`;
-const PREFIX_SQL = `SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
-       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? 'pinned_question')
-     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT 10`;
 const QUESTION_PAGE_SQL = `SELECT id, generation, knowledge_revision::text AS revision, compiled_truth, body_storage,
        COALESCE(frontmatter->>'status', '') = 'archived' AS archived
      FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`;
@@ -124,11 +121,6 @@ export async function listQuestionEvidenceTakes(raw: EngineRawRead, pageIds: rea
 export async function readQuestionEvidenceClock(raw: EngineRawRead, sourceId: string): Promise<QuestionEvidenceClock> {
   const [row] = await raw<QuestionEvidenceClock>(CLOCK_SQL, [sourceId]);
   return { generation: num(row?.generation ?? 0), fact_id: num(row?.fact_id ?? 0) };
-}
-
-/** The newest live pages of `sourceId` under `prefix` that are not question or synthesis pages, at most 10. */
-export async function listPrefixAnchoredPages(raw: EngineRawRead, sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>> {
-  return (await raw<{ id: number; slug: string }>(PREFIX_SQL, [sourceId, likePrefix(prefix)])).map(r => ({ id: num(r.id), slug: r.slug }));
 }
 
 /** The live question page `slug` of `sourceId`, or null. */

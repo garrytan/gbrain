@@ -352,7 +352,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals',
   // The pinned-question reads (engine-sql/question-reads.ts).
   'listQuestionCandidatePages', 'listPublishedQuestionAnswers', 'listQuestionEvidenceFacts', 'listQuestionEvidenceTimeline',
-  'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'listPrefixAnchoredPages', 'readQuestionPageRow',
+  'listQuestionEvidenceTakes', 'readQuestionEvidenceClock', 'readQuestionPageRow',
   'listQuestionEvidenceJoin', 'hasNewQuestionPages', 'hasNewQuestionFacts', 'lockQuestionEvidenceRows',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenAttest', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
@@ -374,6 +374,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readOauthClientForUpdate', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate',
   'readOldestPageCreatedAt', 'readOldestSourceCreatedAt', 'readOntologyRival', 'readPageCompiledTruths',
   'readPageIdentity', 'readPageReferenceDate', 'readPageTitlesById', 'readPageViewDigest', 'readPagesRowEstimate',
+  // The search-caller reads (import-file importImageFile's seal probe, safe-chunks provenanceDistrusted, entity-anchor
+  // prefixAnchoredPages, get_page's private-only fuzzy candidates): plain SELECTs; the store functions only `self.read`.
+  'readImageSealProbe', 'readPageChunkerVersion', 'readPrefixAnchoredPages', 'readPrivateOnlySlugs',
   'readPendingWriteHealth', 'readPersistenceBrainIdText', 'readProjectionBacklog', 'readPublicationRefusals',
   'readRawProvenanceGaps', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readReferrerRecordCandidates',
   'readReferrerRecordPages', 'readReferrerRows', 'readReferrerTargetCounts', 'readReferrerTypes',

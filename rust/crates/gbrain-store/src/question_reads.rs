@@ -1,5 +1,5 @@
 //! The pinned-question reads the store serves (`src/core/engine-sql/question-reads.ts`): the evidence facts of a
-//! refresh, the newest pages under a pin's slug prefix, and whether new facts arrived since an answer's watermark.
+//! refresh and whether new facts arrived since an answer's watermark.
 //! The other question reads return or compare `pages.generation` or read the pin records, which the store does not
 //! keep yet; the engine refuses them by name (`src/core/rust-engine/question-stops.ts`).
 //!
@@ -11,7 +11,7 @@ use crate::facts::{
     FactRecord, entity_rows, hidden_by_deleted_page, md5_hex, ranked_time, source_rows,
 };
 use crate::kv::KvRead;
-use crate::pages::{PageRecord, all_pages, read_page};
+use crate::pages::{PageRecord, read_page};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -21,8 +21,6 @@ const PINNED_QUESTION_MARKER: &str = "pinned_question";
 const QUARANTINE_KEY: &str = "quarantine";
 /// The evidence read's fact limit (`LIMIT 30`).
 const MAX_FACTS: usize = 30;
-/// The prefix read's page limit (`LIMIT 10`, `ENTITY_ANCHORED_LIMIT`).
-const MAX_ANCHORED: usize = 10;
 
 /// The page `(source_id, slug)`, live or soft-deleted, when there is one.
 fn page_at(
@@ -107,32 +105,6 @@ impl Store {
                         "hash": fact_hash(f),
                     })
                 })
-                .collect(),
-        ))
-    }
-
-    /// `listPrefixAnchoredPages(sourceId, prefix)`: `{ id, slug }` of the live pages of the source whose slug starts
-    /// with `prefix`, that are not question or synthesis pages and carry no pinned-question marker, newest first by
-    /// `effective_date` (else `updated_at`), then id, at most 10.
-    pub fn list_prefix_anchored_pages(&self, source_id: &str, prefix: &str) -> Result<Value> {
-        let read = self.read()?;
-        let mut rows: Vec<PageRecord> = all_pages(&*read)?
-            .into_iter()
-            .filter(|p| {
-                p.deleted_at_us.is_none()
-                    && p.source_id == source_id
-                    && p.slug.starts_with(prefix)
-                    && p.page_type != "question"
-                    && p.page_type != "synthesis"
-                    && !p.frontmatter.contains_key(PINNED_QUESTION_MARKER)
-            })
-            .collect();
-        let at = |p: &PageRecord| p.effective_date_us.unwrap_or(p.updated_at_us);
-        rows.sort_by_key(|a| std::cmp::Reverse((at(a), a.id)));
-        rows.truncate(MAX_ANCHORED);
-        Ok(Value::Array(
-            rows.into_iter()
-                .map(|p| json!({ "id": p.id, "slug": p.slug }))
                 .collect(),
         ))
     }

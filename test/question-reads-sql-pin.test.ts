@@ -1,6 +1,6 @@
 /**
  * The pinned-question reads (src/core/engine-sql/question-reads.ts) send the statements their callers sent through
- * executeRaw at f9592f7a7e (questions/refresh.ts, freshness.ts, pages.ts and search/entity-anchor.ts), rebuilt here from
+ * executeRaw at f9592f7a7e (questions/refresh.ts, freshness.ts and pages.ts), rebuilt here from
  * the same fragments those callers interpolated, so a drift in a fragment or in the written-out text fails.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
@@ -17,7 +17,7 @@ import { quarantinedProvenanceFilterFragment, quarantineFilterFragment } from '.
 import { projectionEligibleSql } from '../src/core/eligibility/sql.ts';
 import { FACT_HASH_SQL, OWNER_BODY_HASH_SQL, TAKE_HASH_SQL, TIMELINE_HASH_SQL } from '../src/core/questions/freshness.ts';
 
-const MAX_FACTS = 30, MAX_TIMELINE = 20, MAX_TAKES = 20, limit = 10;
+const MAX_FACTS = 30, MAX_TIMELINE = 20, MAX_TAKES = 20;
 const OLD: Record<string, string> = {
 CANDIDATES: `SELECT id, slug, source_id, generation, knowledge_revision::text AS revision, type, compiled_truth, updated_at,
        (frontmatter ? '${PINNED_QUESTION_MARKER}') AS marker
@@ -42,9 +42,6 @@ TAKES: `SELECT k.id, k.claim, k.holder, k.weight, p.id AS page_id, p.slug, p.gen
        ORDER BY k.id DESC LIMIT ${MAX_TAKES}`,
 CLOCK: `SELECT (SELECT COALESCE(MAX(generation), 0) FROM pages) AS generation,
               (SELECT COALESCE(MAX(id), 0) FROM facts WHERE source_id = $1) AS fact_id`,
-PREFIX: `SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
-       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? '${PINNED_QUESTION_MARKER}')
-     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT ${limit}`,
 QUESTION_PAGE: `SELECT id, generation, knowledge_revision::text AS revision, compiled_truth, body_storage,
        COALESCE(frontmatter->>'status', '') = 'archived' AS archived
      FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`,
@@ -94,7 +91,6 @@ describe('pinned-question reads send their callers\' statements', () => {
     await Q.listQuestionEvidenceTimeline(r.raw, [1, 2]);
     await Q.listQuestionEvidenceTakes(r.raw, [1, 2]);
     await Q.readQuestionEvidenceClock(r.raw, 'default');
-    await Q.listPrefixAnchoredPages(r.raw, 'default', 'proj_a/');
     await Q.readQuestionPageRow(r.raw, 'default', 'questions/x');
     await Q.listQuestionEvidenceJoin(r.raw, 7, 3);
     await Q.hasNewQuestionPages(r.raw, 'default', 5, null);
@@ -109,7 +105,6 @@ describe('pinned-question reads send their callers\' statements', () => {
       [OLD.TIMELINE, [[1, 2]]],
       [OLD.TAKES, [[1, 2]]],
       [OLD.CLOCK, ['default']],
-      [OLD.PREFIX, ['default', 'proj\\_a/%']],
       [OLD.QUESTION_PAGE, ['default', 'questions/x']],
       [OLD.EVIDENCE_JOIN, [7, 3]],
       [OLD.NEW_PAGES, ['default', 5]],
