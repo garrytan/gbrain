@@ -146,6 +146,8 @@ export async function bindResolveIpcForServe(
     rememberCallable?: boolean | (() => boolean);
     /** #7599: a lean serve (a read-only stdio serve on Postgres, `readOnlyServeSkipsResidentDuties`) registers no delegated sync, nudge or sweep kind (clients get the polite refusal); PGLite keeps them. #7612: it binds only its read socket, never the source or legacy socket a read-write serve answers delegation on. */
     lean?: boolean;
+    /** Onboarding PR 2: the hook lane this serve answers for. Only 'owner' (a stdio serve bound to no member or to the owner) gets the first-session section; unset (HTTP) gets none. */
+    firstSessionLane?: import('../core/onboard/first-session.ts').FirstSessionLane;
     /** Delay before each re-bind attempt of a socket this serve does not hold; tests inject a short one. */
     rebindDelayMs?: () => number;
   } = {},
@@ -280,7 +282,7 @@ export async function bindResolveIpcForServe(
       // context-pack-handler.ts (directly testable against a real engine);
       // the runtime owns entity merge, banking, the since-cursor, and the
       // complete-pack-only monotonic cursor advance.
-      context_pack: makeContextPackIpcHandler(engine, defaultSource),
+      context_pack: makeContextPackIpcHandler(engine, defaultSource, opts.firstSessionLane ? { firstSessionLane: opts.firstSessionLane } : {}),
       ...syncHandlers,
       ...sweepHandlers,
     };
