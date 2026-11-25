@@ -307,9 +307,13 @@ export function runSyncStatement<R>(raw: Pick<BrainEngine, 'executeRaw'>, name: 
 }
 
 /** An engine that serves `runSyncStatement`, or an `executeRaw`-only view of one. */
-export type SyncExec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'runSyncStatement'>>;
+export type SyncExec = Pick<BrainEngine, 'executeRaw'> & Partial<Pick<BrainEngine, 'kind' | 'runSyncStatement'>>;
 
-/** The rows of the named statement: the engine's typed answer, else its text over `executeRaw`. */
+/**
+ * The rows of the named statement. A Rust brain answers by name from its records; every other engine, and every view of one that
+ * overrides `executeRaw` (a statement fault a test injects, the preparation's config view, the import reads' batch), sends the
+ * statement's text over `executeRaw`, exactly as the caller sent it before the text moved here.
+ */
 export function syncRows<R = Record<string, unknown>>(exec: SyncExec, name: SyncStatementName, params: readonly unknown[] = [], opts?: SyncStatementOptions): Promise<R[]> {
-  return typeof exec.runSyncStatement === 'function' ? exec.runSyncStatement<R>(name, params, opts) : runSyncStatement<R>(exec, name, params, opts);
+  return exec.kind === 'rust' && typeof exec.runSyncStatement === 'function' ? exec.runSyncStatement<R>(name, params, opts) : runSyncStatement<R>(exec, name, params, opts);
 }
