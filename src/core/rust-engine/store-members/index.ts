@@ -61,6 +61,8 @@ import * as trustWriteGate from './trust-write-gate.ts';
 import * as cliSources from './cli-sources.ts';
 import * as filesSources from './files-sources.ts';
 import * as dreamConfig from './dream-config.ts';
+import * as dreamCycle from './dream-cycle.ts';
+import * as tailReads from './tail-reads.ts';
 import * as factsHeld from './facts-held.ts';
 import * as factsRest from './facts-rest.ts';
 import * as factsHoldingPurges from './facts-holding-purges.ts';
@@ -80,7 +82,14 @@ import * as embeddingCatalog from './embedding-catalog.ts';
 import * as fenceHolds from './fence-holds.ts';
 import * as derivedGenerations from './derived-generations.ts';
 import * as factsCycle from './facts-cycle.ts';
+import * as factsCycleFence from './facts-cycle-fence.ts';
+import * as factsPhantom from './facts-phantom.ts';
 import * as factsPurge from './facts-purge.ts';
+import * as factsPurgeJournal from './facts-purge-journal.ts';
+import * as factsConversation from './facts-conversation.ts';
+import * as factsPurgeProbe from './facts-purge-probe.ts';
+import * as factsPurgeReceipt from './facts-purge-receipt.ts';
+import * as factsPurgeTx from './facts-purge-tx.ts';
 import * as purgePlan from './purge-plan.ts';
 import * as purgeEffects from './purge-effects.ts';
 import * as beliefPurge from './belief-purge.ts';
@@ -216,7 +225,7 @@ export const STORE_MEMBERS = {
   // The minion queue and its cycle locks (rust/crates/gbrain-store/src/jobs.rs).
   ...jobs,
   // Typed reads that replace raw SQL in CLI paths (rust/crates/gbrain-store/src/cli_reads/).
-  ...cliSources, ...filesSources, ...dreamConfig, ...factsHeld, ...factsRest, ...factsHoldingPurges,
+  ...cliSources, ...filesSources, ...dreamConfig, ...dreamCycle, ...tailReads, ...factsHeld, ...factsRest, ...factsHoldingPurges,
   // Typed reads that CLI paths ran through executeRaw (docs/research/rust-cli-executeraw-map.md).
   ...cliReadsImport, ...cliReadsOps, ...cliReadsSearchPages, ...sweepReads,
   // The reads gbrain export makes (rust/docs/store/cli-reads-export.md).
@@ -226,6 +235,7 @@ export const STORE_MEMBERS = {
   ...factsDoctor, ...embeddingCatalog, ...fenceHolds, ...derivedGenerations, ...factsCycle, ...factsPurge, ...purgePlan, ...purgeEffects, ...beliefPurge, ...projectionRebuild, ...factsRepair, ...labelRepairReads, ...factTextRepair, ...lostFenceReads, ...factsTrust, ...derivationTrust, ...factsTrustReads, ...factsTrustOwner, ...factRelinkAttempts,
   ...ontologyRepair, ...factsRecall, ...factsForget, ...factsRemember, ...factsWritePath, ...factsProvenance, ...factsQuoted,
   ...factRelinkWrites,
+  ...factsCycleFence, ...factsPhantom, ...factsPurgeReceipt, ...factsPurgeTx, ...factsPurgeJournal, ...factsPurgeProbe, ...factsConversation,
   // The `gbrain schema detect` page-shape reads (rust/docs/store/schema_detect.md).
   ...schemaDetect,
   // The edge-contradictions dream phase and its proposal ledger (rust/docs/store/edge_proposals.md).

@@ -379,6 +379,7 @@ export const FACTS_MEMBERS = {
   softDeleteDerivedPages: 'facts',
   markNeedsRederive: 'facts',
   readMemberPageWithdrawal: 'facts',
+  readClaimWithdrawal: 'facts',
   readFactVisibility: 'facts',
   readReplacementTarget: 'facts',
   readPairFactRow: 'facts',

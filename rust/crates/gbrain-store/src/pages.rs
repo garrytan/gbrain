@@ -2005,6 +2005,11 @@ impl Store {
                 {
                     continue;
                 }
+                // `rederiveHiddenSql('pages', 'p')`: a page a purge marked in `needs_rederive`
+                // shows no saved version until it is derived again.
+                if crate::generations::needs_rederive::is_marked(&*read, "pages", page.id)? {
+                    continue;
+                }
                 // A row that does not parse is kept as `None` in key (id) order: it is never listed,
                 // and as a successor it counts as withholding, so the version before it shows no
                 // reason (fail closed) instead of taking the next readable row as its successor.

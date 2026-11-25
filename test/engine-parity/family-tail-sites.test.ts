@@ -24,7 +24,7 @@
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18),
  *    so no case compared them across engines.
  *  - Seam: none. Pages come from putPage (or put_page, which derives the links and dated evidence; on a Rust brain that
- *    write queues on a refused link-preparation read, so those cases stop on that typed refusal: a named known stop at
+ *    write queues or fails on a refused link-preparation read, so those cases stop on that typed refusal: a named known stop at
  *    liveSlugAliases, persistence/links-preparation.ts:29, which lane 1 (rust-engine/wikilink-put-rust) serves; the pin
  *    comes out when that lands), links from addLink or
  *    replaceDerivedLinks, takes from

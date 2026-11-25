@@ -637,6 +637,8 @@ export interface FactsStatementMembers {
   matchSavedFacts(q: FactsTrustSql.SavedFactsMatchQuery): Promise<FactsTrustSql.SavedFactMatchRow[]>;
   /** A named entity's newest active facts under the caller's read policy, with the collapse columns (search/entity-facts.ts). */
   readEntityNewestFacts(q: FactsTrustSql.EntityNewestFactsQuery): Promise<FactsTrustSql.EntityNewestFactRow[]>;
+  /** The withdrawal a save of a forgotten claim meets, or `hidden` when the caller sees none of its withdrawn rows (facts/single-prepare.ts factWithdrawnRefusal). */
+  readClaimWithdrawal(q: FactsTrustSql.ClaimWithdrawalQuery): Promise<FactsTrustSql.ClaimWithdrawal>;
   /** The query terms each name head matches after stemming with the brain's full-text language, one row per head. */
   matchHeadStems(heads: readonly string[], terms: readonly string[]): Promise<FactsTrustSql.HeadStemRow[]>;
   /** The fact an owner action targets, with its stored trust tier, or null when no fact has the id. */

@@ -460,6 +460,37 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
+/// How many proposals hold fact `fact_id` narrower in the sense of [`held_narrower`], counting only those of
+/// `source_id` when it is given (engine-sql/facts-cycle.ts `listHeldWideningFactIds`: `source_id = $1`, one row
+/// per proposal).
+pub(crate) fn held_narrower_in(
+    read: &dyn KvRead,
+    source_id: Option<&str>,
+    fact_id: u64,
+) -> Result<usize> {
+    let Ok(row_id) = i64::try_from(fact_id) else {
+        return Ok(0);
+    };
+    let mut n = 0;
+    for id in ids_naming(read, "facts", row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if source_id.is_none_or(|s| p.source_id == s)
+            && matches!(p.action.as_str(), "supersede_fact" | "confirm")
+            && p.related_table.as_deref() == Some("facts")
+            && p.related_id == Some(row_id)
+            && matches!(p.status.as_str(), "pending" | "rejected" | "undone")
+            && p.before_state
+                .as_object()
+                .is_some_and(|state| state.contains_key("visibility"))
+        {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// The fact pairs a pending `supersede_fact` proposal between two facts covers, both ways round (the claim-conflict
 /// read leaves them out: `trust_proposals` with `status = 'pending'`, `target_table` and `related_table` `facts`).
 pub(crate) fn pending_fact_supersessions(read: &dyn KvRead) -> Result<HashSet<(i64, i64)>> {

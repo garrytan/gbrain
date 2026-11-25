@@ -71,6 +71,7 @@ mod derivation_inputs;
 mod fence_evidence;
 mod fence_restore;
 mod lost_fence;
+pub mod needs_rederive;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
@@ -174,7 +175,7 @@ struct GenerationRecord {
 struct ItemRecord {
     identity_hash: String,
     action: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     preimage: Option<Value>,
     #[serde(default)]
     preimage_bytes: Option<i32>,
@@ -1564,6 +1565,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     }
     activations::remove_source_activations(tx, source_id)?;
     derivation_inputs::remove_source_edges(tx, source_id)?;
+    needs_rederive::remove_source_rows(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;
@@ -1869,6 +1871,7 @@ mod tests {
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
         put_open_page(&store, "notes/closed");
+        assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
                 let record = AttemptRecord {

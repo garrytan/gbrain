@@ -16,6 +16,13 @@
  *    distance-ordered query with an outer id tie-break (the literal is bound once more), and dims bind only once when the column has declared
  *    dimensions (the pool then skips its vector_dims filter). This is the same shape listFactsForRelevance
  *    has used since lane 4's first batch.
+ *    The three quote-read members (listFactsFromQuotedPages, listOwnerTierFacts, listReadablePageSlugs) are pinned
+ *    to their callers at c33606182c (search/transcript-quote.ts, search/slot-history.ts),
+ *    captured the same way. readClaimWithdrawal is pinned to factWithdrawnRefusal (facts/single-prepare.ts) at 8a5229aa8c,
+ *    captured the same way.
+ *    The digests of readClaimWithdrawal and of the remote listReadablePageSlugs case were re-captured at the merge of
+ *    8d2e667543: the shared owner-only fragment gained the owner_only_held guard there, the same change that moved the
+ *    readMemberPageWithdrawal digest from 15378 to 16084 characters. No other text changed.
  *  - Main join (da99c637a7): the cli-members line's callers (fact-relevance.ts at de72811022) sorted the pool keys and
  *    entity pairs with `COLLATE "C"` (`SELECT DISTINCT f.source_id COLLATE "C", f.entity_slug COLLATE "C"` and the same
  *    ORDER BY), and read the nearest facts in an inner query ordered by distance alone with an outer
@@ -310,6 +317,23 @@ const PINS: Pin[] = [
     statements: [{ digest: { length: 16084, sha256: 'c8b42eacf1f3b3db6638a34fa8ab1c73273a2cd98e2c09631a08e279c1c6d335' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] }],
   },
   {
+    from: "src/core/facts/single-prepare.ts:106,117 factWithdrawnRefusal (at 8a5229aa8c)",
+    member: 'readClaimWithdrawal',
+    label: 'remote',
+    run: e => e.readClaimWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', ownPage: 'memory/members/m1', excludePrivate: true }),
+    statements: [
+      { digest: { length: 17340, sha256: 'e6494bb95c3c4571460c0da4300f24bd781aae82ab00501c263ea0454533bd4d' }, params: ['s1', 'world', 'F', 'people/x', 'memory/members/m1'] },
+      { digest: { length: 9396, sha256: '65a9fd8216e195f50edf644623a55189274a5b8e74c7f20fbc27ff28d949b128' }, params: ['s1', 'world', 'F', 'people/x', true, 'memory/members/m1'] },
+    ],
+  },
+  {
+    from: "src/core/facts/single-prepare.ts:117 factWithdrawnRefusal (at 8a5229aa8c)",
+    member: 'readClaimWithdrawal',
+    label: 'local',
+    run: e => e.readClaimWithdrawal({ sourceId: 's1', visibility: 'world', fact: 'F', entitySlug: 'people/x', ownPage: 'memory/members/m1', excludePrivate: false }),
+    statements: [{ digest: { length: 9396, sha256: '65a9fd8216e195f50edf644623a55189274a5b8e74c7f20fbc27ff28d949b128' }, params: ['s1', 'world', 'F', 'people/x', false, 'memory/members/m1'] }],
+  },
+  {
     from: "src/core/facts/single-prepare.ts:215 replacementVisibility",
     member: 'readFactVisibility',
     run: e => e.readFactVisibility(7, 's1'),
@@ -463,6 +487,38 @@ const PINS: Pin[] = [
     member: 'listFactRowsByIds',
     run: e => e.listFactRowsByIds(['s1', 's2'], [1, 2]),
     statements: [{ text: `SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])`, params: [['s1', 's2'], [1, 2]] }],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:135 factsFromQuotedPages (at c33606182c)',
+    member: 'listFactsFromQuotedPages',
+    run: e => e.listFactsFromQuotedPages({ ids: [3, 1, 3], pageTypes: ['chat', 'transcript'], backstop: [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']] }),
+    statements: [{ text: `SELECT f.id FROM facts f WHERE f.id = ANY($1::bigint[]) AND (
+       EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages p ON p.id = (CASE WHEN d.input_id ~ '^[0-9]{1,18}$' THEN d.input_id::bigint END)
+         WHERE d.derived_table = 'facts' AND d.derived_id = f.id::text AND d.input_table = 'pages' AND p.type = ANY($2::text[]))
+       OR EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.type = ANY($2::text[]) AND p.slug = (CASE
+         WHEN f.source = $3::text AND left(f.source_session, length($4::text)) = $4::text THEN substr(f.source_session, length($4::text) + 1)
+         WHEN f.source = $5::text AND left(f.source_session, length($6::text)) = $6::text THEN substr(f.source_session, length($6::text) + 1) END)))`, params: [[3, 1], ['chat', 'transcript'], 'sync:import', 'sync:', 'mcp:put_page', 'put_page:'] }],
+  },
+  {
+    from: 'src/core/search/transcript-quote.ts:510 ownerTierFacts (at c33606182c)',
+    member: 'listOwnerTierFacts',
+    run: e => e.listOwnerTierFacts({ ids: [3, 1, 3], floor: 'agent_written' }),
+    statements: [{ text: `SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND (CASE trust_tier WHEN 'user_confirmed' THEN 6 WHEN 'operator_curated' THEN 5 WHEN 'tool_observed' THEN 4 WHEN 'agent_written' THEN 3 WHEN 'unknown' THEN 2 WHEN 'external_untrusted' THEN 1 ELSE 0 END) >= $2::int`, params: [[3, 1], 3] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'local scope',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], { sourceId: 's1', worldOnly: false, excludePrivate: false } as never, 2),
+    statements: [{ text: `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'quarantine') AND EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = p.source_id AND NOT read_source.archived) LIMIT 2`, params: ['s1', ['people/carol', 'companies/carol']] }],
+  },
+  {
+    from: 'src/core/search/slot-history.ts:88 entityKeys (at c33606182c)',
+    member: 'listReadablePageSlugs',
+    label: 'remote scope, trust floor, two sources (the source filter is not applied)',
+    run: e => e.listReadablePageSlugs('s1', ['people/carol', 'companies/carol'], scopeB, 2),
+    statements: [{ digest: { length: 8094, sha256: 'a0bc46f046af6b7f7bb8a9b28e0a03b2050fd9e7fdfd2007118d0258e28a9f74' }, params: ['s1', ['people/carol', 'companies/carol']] }],
   },
   {
     from: "src/core/search/fact-relevance.ts:277 readSlotRows",

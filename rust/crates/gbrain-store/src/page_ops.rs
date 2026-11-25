@@ -454,7 +454,11 @@ fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
 
 /// A canonical field changed: a new knowledge revision, and the chunks no longer match the text
 /// (as `pages::tag_change`).
-fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
+pub(crate) fn write_changed(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &mut PageRecord,
+) -> Result<()> {
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)

@@ -3438,6 +3438,18 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   markEdgeProposalUndone(id: number): Promise<void>;
   /** Applied proposals whose closure transition is gone become reverted_by_user; returns how many. Writes link_edge_proposals. */
   markRevertedEdgeProposals(): Promise<number>;
+  /** `gbrain edge-proposals`: the proposals of `filter` with their slugs, newest first, at most `limit` (1 to 1000). Reads link_edge_proposals, pages. */
+  listEdgeProposalCliRows(filter: ContradictionsCycleSql.EdgeProposalCliFilter, limit: number): Promise<ContradictionsCycleSql.EdgeProposalCliRow[]>;
+  /** `gbrain edge-proposals retry --all-held`: deletes the judge errors held after their attempts; the deleted ids. Writes link_edge_proposals. */
+  deleteHeldEdgeProposalErrors(): Promise<Array<{ id: number }>>;
+  /** `gbrain edge-proposals undo --all-applied`: the applied proposals in id order. Reads link_edge_proposals. */
+  listAppliedEdgeProposalIds(): Promise<Array<{ id: number }>>;
+  /** `gbrain edge-proposals retry <id>`: deletes the proposal while it is a judge error; the deleted id. Writes link_edge_proposals. */
+  deleteEdgeProposalError(id: number): Promise<Array<{ id: number }>>;
+  /** `gbrain edge-proposals date`: the proposal's source, null when none. Reads link_edge_proposals. */
+  readEdgeProposalSourceId(id: number): Promise<string | null>;
+  /** `gbrain edge-proposals date`: rejects the proposal the user dated. Writes link_edge_proposals. */
+  markEdgeProposalDated(id: number): Promise<void>;
   /** The live chunks with these ids that the caller's read policy (and trust floor) admits, for the scoped contradiction reader. Reads content_chunks, pages. */
   listLiveChunksByIds(ids: number[], policy: PageReadPolicy, floor: import('./trust/tier.ts').TrustTier | undefined): Promise<ContradictionsCycleSql.LiveChunkRow[]>;
   /** The active takes with these ids that the caller's read policy (holder allow-list, trust floor) admits. Reads takes, pages. */

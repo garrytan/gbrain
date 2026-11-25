@@ -51,10 +51,8 @@ export type FactPurgeEntryPoint = 'purge' | 'continue';
 export type FactPurgeEntry = PurgePathEntry<'purge'>;
 
 const { ours, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite } = PURGE_OWNERS;
-const { nov23, nov24, nov25 } = PURGE_DUE;
+const { nov23, nov24 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): FactPurgeEntry[] => members.map(member => ({ member, owner }));
-const tx = (member: keyof BrainEngine & string, stop: string, reached: 'purge' | 'purge and continue' = 'purge'): FactPurgeEntry =>
-  ({ member, owner: factPurgeTx, due: nov23, ...(reached === 'purge' ? { entry: 'purge' as const } : {}), stop });
 
 /**
  * Raw sites a fact purge reaches on PGLite and Postgres whose branch a Rust brain does not take. The Rust purge (with
@@ -78,18 +76,22 @@ const GUARDED_SITES: FactPurgeEntry[] = [
   ['quotingSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
 ].map(([site, guarded]) => ({ site: site!, owner: ours, guarded: guarded! }));
 
-/** The purge's path, in the order a real run reaches it: the stops, then the members it calls and the Rust engine serves, then the raw sites guarded away from it. */
+/**
+ * The purge's path, in the order a real run reaches it: the members it calls (lane 4's rust-5a serves the purge
+ * transaction's statements, the fact-context probe and the effect read, so they are no stops), the raw-SQL stops, then
+ * the members the Rust engine serves, then the raw sites guarded away from it.
+ */
 export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // assertNoPendingPublication, then the belief streams of the facts.
-  tx('findPurgeBlockedPublication', 'the pending-publication check over the write journal is not served'),
-  tx('listPurgeStreamSlugs', 'the belief stream slugs of the facts are not served'),
+  ...served(factPurgeTx, 'findPurgeBlockedPublication'),
+  ...served(factPurgeTx, 'listPurgeStreamSlugs'),
   // hideDerivedRows: the rows derived from the facts are hidden through their own tables and marked for re-derivation.
-  tx('expireDerivedFacts', 'hiding a derived fact is not served'),
-  tx('deactivateDerivedTakes', 'hiding a derived take is not served'),
-  tx('softDeleteDerivedPages', 'hiding a derived page is not served'),
-  tx('markNeedsRederive', 'the re-derive queue is not served'),
+  ...served(factPurgeTx, 'expireDerivedFacts'),
+  ...served(factPurgeTx, 'deactivateDerivedTakes'),
+  ...served(factPurgeTx, 'softDeleteDerivedPages'),
+  ...served(factPurgeTx, 'markNeedsRederive'),
   // The deletes of the purge itself.
-  tx('deletePurgeTakeProposals', 'the delete of the take proposals that carry the claim is not served'),
+  ...served(factPurgeTx, 'deletePurgeTakeProposals'),
   // rewritePageBodies: the pages that held the claim lose its fence rows. A segmented page publishes a new generation
   // (rewriteLiveSegmentedFences, then a version of the old revision); an inline page is versioned first, then rewritten.
   { site: 'rewriteLiveSegmentedFences (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
@@ -98,25 +100,25 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   ...served(segmentedRewrite, 'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks'),
   ...served(ours, 'normalizeFenceLines'),
   // redactPageVersions: the change reasons first, then the inline versions, then the segmented ones.
-  tx('redactVersionChangeReasons', 'the redaction of change reasons that quote the claim is not served'),
-  tx('setPurgeVersionBody', 'the rewrite of a saved version body is not served'),
-  tx('listSegmentedVersionsForPurge', 'the read of the segmented versions to rewrite is not served'),
+  ...served(factPurgeTx, 'redactVersionChangeReasons'),
+  ...served(factPurgeTx, 'setPurgeVersionBody'),
+  ...served(factPurgeTx, 'listSegmentedVersionsForPurge'),
   { site: 'rewriteSegmentedGeneration (page-body/segment-rewrite.ts)', owner: segmentedRewrite, due: nov23, entry: 'purge',
     stop: 'rebuilding a retained generation of a segmented page locks the page and rewrites its manifest through raw SQL (segment-rewrite.ts:216-244); typed and served on Rust by segmented-staging-2' },
   // purgeSegmentStorage: the writes that would publish a staged body are cancelled, the stagings aborted, the texts deleted.
-  tx('abortPurgedStagings', 'aborting the uncommitted stagings that hold the claim is not served'),
-  tx('deletePurgedStagingParts', 'the delete of those stagings\' upload parts is not served'),
+  ...served(factPurgeTx, 'abortPurgedStagings'),
+  ...served(factPurgeTx, 'deletePurgedStagingParts'),
   ...served(factPurgeTx, 'deletePageViewDigests'),
-  tx('deleteUnreferencedPurgedTexts', 'the delete of the segment texts that held the claim is not served'),
+  ...served(factPurgeTx, 'deleteUnreferencedPurgedTexts'),
   // The purge effects of the git mirror.
-  tx('listPurgedPageRevisions', 'the read of the rewritten pages\' revisions is not served'),
-  tx('insertPurgeEffects', 'the purge effect rows are not served'),
+  ...served(factPurgeTx, 'listPurgedPageRevisions'),
+  ...served(factPurgeTx, 'insertPurgeEffects'),
   // verifyFactPurge: the receipt.
   { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, entry: 'purge', stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
-  { member: 'listFactContextsForPurgeProbe', owner: factContextProbe, due: nov24, entry: 'purge', stop: 'the receipt pages the live fact contexts that quote the purged claims; not served' },
+  ...served(factContextProbe, 'listFactContextsForPurgeProbe'),
   // The completion of a purge (also read by `--status --continue`): the effect rows, then the fingerprint count.
-  { member: 'listPurgeEffects', owner: receiptReads, due: nov25, stop: 'the purge effect read of the completion is not served' },
-  tx('countPurgeFingerprintResidue', 'the receipt\'s count of the rows that still hold the claim\'s fingerprint is not served', 'purge and continue'),
+  ...served(receiptReads, 'listPurgeEffects'),
+  ...served(factPurgeTx, 'countPurgeFingerprintResidue'),
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the derivation sweep after the commit (and again by `--status --continue`): served on Rust since part B of step 6

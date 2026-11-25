@@ -99,7 +99,8 @@ pub struct PrivacyPolicy {
     /// `page_readers IS NULL AND folder_rule_ids IS NULL`), so a page that names readers fails
     /// whatever the identity. The store's own flag (`access.restrictions_present`) decides the
     /// rest: unset, nothing else applies, as the short form says; set (the caller's flag read was
-    /// stale), the full form's origin walk applies too. See [`readers_allowed`].
+    /// stale), the full form's origin walk applies too. See [`readers_allowed`]. The remote floor
+    /// (`provenance_only`) is the exception: it judges the short form alone, as the SQL does.
     #[serde(default)]
     pub open: bool,
     /// The folder rules the caller satisfies (`CallerAccess.satisfiedRuleIds`, `source:rule_id`).
@@ -118,6 +119,13 @@ pub struct PrivacyPolicy {
     /// the no-caller rendering reads them.
     #[serde(default)]
     pub caller_record: bool,
+    /// The owner read rule (`ownerReadPolicyFragment`, the opt-in off): a derived page's origins are
+    /// judged by `identity` (`gbrain_access_origin_hidden_for`: an origin that names readers closes
+    /// the page only when none of them is a principal of `identity`, and a stamped rule the caller
+    /// does not satisfy or a pending prefix closes it as for any caller) instead of by any reader
+    /// list (`gbrain_access_origin_restricted`).
+    #[serde(default)]
+    pub owner_read: bool,
     /// The fact policy of a local owner reading with privacy off (`hidePrivate` false): its text
     /// judges the provenance page by the member-access part only, with no privacy part. Only the
     /// TypeScript member's exact owner-record match sets it; every other policy judges the
@@ -218,7 +226,10 @@ pub(crate) fn hidden_by_private_provenance(
     if owner_only.fact_hidden(read, policy.owner_only, row.id, &row.source_id)? {
         return Ok(true);
     }
-    if hidden_by_provenance_page_with(read, row, policy, true, owner_only)? {
+    // The remote floor (`provenance_only`) of a caller that renders the short member-access form
+    // (`open`) has no origin test, whatever the store's restriction flag says, as the forget floor.
+    let restricted = !(policy.provenance_only && policy.open);
+    if hidden_by_provenance_page_with(read, row, policy, restricted, owner_only)? {
         return Ok(true);
     }
     if policy.provenance_only {
@@ -391,10 +402,15 @@ fn member_access_allows(
         coverage: &policy.folder_coverage,
         record: policy.caller_record,
     };
-    Ok(
-        readers_allowed(read, page, identity, folders, policy.open, derived)?
-            && !owner_only.page_hidden(read, page, policy.owner_only)?,
-    )
+    Ok(readers_allowed(
+        read,
+        page,
+        identity,
+        folders,
+        policy.open,
+        derived,
+        policy.owner_read,
+    )? && !owner_only.page_hidden(read, page, policy.owner_only)?)
 }
 
 /// `accessAllowedSql(alias, identity)` for one page under a caller record's page policy: the
@@ -699,6 +715,7 @@ fn readers_allowed(
     folders: FolderAccess<'_>,
     open: bool,
     derived: bool,
+    owner_read: bool,
 ) -> Result<bool> {
     // A caller record's rendering reads no live pending prefix, so a page under one is judged by
     // the ids its last stamp kept (`folder_rule_ids`), not the rules installed since; elsewhere the
@@ -722,17 +739,33 @@ fn readers_allowed(
     if folder_closed || (!open && folders.covers(page)) || (!folders.record && pending) {
         return Ok(false);
     }
-    if names_readers(page)
-        && !access_readers(&page.frontmatter)
-            .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
-    {
+    if names_readers(page) && !readers_name(page, identity) {
         return Ok(false);
     }
     let plain = !matches!(
         page.page_type.as_str(),
         "atom" | "question" | "concept" | "event"
     ) && !page.frontmatter.contains_key("derived_from");
-    Ok(plain || !origin_restricted(read, page)?)
+    if plain {
+        return Ok(true);
+    }
+    let closed = if owner_read {
+        origin_restricted_by(read, page, &|o| {
+            Ok(pending_covers(read, &o.source_id, &o.slug)?
+                || (names_readers(o) && !readers_name(o, identity))
+                || !folders
+                    .satisfies_all(stamped_rules(read, o)?.iter().filter(|r| r.covers_derived)))
+        })?
+    } else {
+        origin_restricted_by(read, page, &|o| origin_closed(read, o))?
+    };
+    Ok(!closed)
+}
+
+/// `page_readers && identity`: the page's readers name one of the principals.
+fn readers_name(page: &PageRecord, identity: &[String]) -> bool {
+    access_readers(&page.frontmatter)
+        .is_some_and(|readers| readers.iter().any(|r| identity.contains(r)))
 }
 
 /// Whether the store's member-access flag (`access.restrictions_present`) is `'1'`.
@@ -741,34 +774,32 @@ fn restrictions_present(read: &dyn KvRead) -> Result<bool> {
     Ok(read.get(&key)?.as_deref() == Some(b"1".as_slice()))
 }
 
-/// `gbrain_access_origin_restricted(id, source_id, type, frontmatter)`.
-fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+/// The origin walk of `gbrain_access_origin_restricted(id, source_id, type, frontmatter)` (every caller,
+/// `closes` = [`origin_closed`]) and of `gbrain_access_origin_hidden_for(...)` (an owner read, `closes` judges the
+/// origin's readers by the reader's identity): whether an origin of the page closes it.
+fn origin_restricted_by(
+    read: &dyn KvRead,
+    page: &PageRecord,
+    closes: &dyn Fn(&PageRecord) -> Result<bool>,
+) -> Result<bool> {
     let fm = &page.frontmatter;
     let source = page.source_id.as_str();
     let restricted = if page.page_type == "atom" {
-        origin_where(read, source, text(fm, "source_slug").as_deref(), |p| {
-            origin_closed(read, p)
-        })?
+        origin_where(read, source, text(fm, "source_slug").as_deref(), closes)?
     } else if page.page_type == "question"
         || (page.page_type == "concept" && text(fm, "synthesized_by").is_some())
     {
         let mut any = false;
         for input in concept_inputs(read, page)? {
             let origin = text(&input.frontmatter, "source_slug");
-            if origin_closed(read, &input)?
-                || origin_where(read, &input.source_id, origin.as_deref(), |p| {
-                    origin_closed(read, p)
-                })?
-            {
+            if closes(&input)? || origin_where(read, &input.source_id, origin.as_deref(), closes)? {
                 any = true;
                 break;
             }
         }
         any
     } else if page.page_type == "event" && life_chronicle(page) {
-        origin_where(read, source, chronicle_depth(page).as_deref(), |p| {
-            origin_closed(read, p)
-        })?
+        origin_where(read, source, chronicle_depth(page).as_deref(), closes)?
     } else {
         false
     };
@@ -776,7 +807,7 @@ fn origin_restricted(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
         return Ok(true);
     }
     for slug in declared_slugs(fm).unwrap_or_default() {
-        if origin_where(read, source, Some(&slug), |p| origin_closed(read, p))? {
+        if origin_where(read, source, Some(&slug), closes)? {
             return Ok(true);
         }
     }
@@ -983,6 +1014,7 @@ mod tests {
                 FolderAccess::default(),
                 open,
                 derived,
+                false,
             )
             .unwrap()
         };
@@ -1007,6 +1039,7 @@ mod tests {
                     coverage,
                     record: true,
                 },
+                false,
                 false,
                 false,
             )
@@ -1048,7 +1081,7 @@ mod tests {
             prefix: "../x".into(),
         }];
         let allowed = |page: &PageRecord, folders: FolderAccess<'_>, open: bool, derived: bool| {
-            readers_allowed(&*read, page, &identity, folders, open, derived).unwrap()
+            readers_allowed(&*read, page, &identity, folders, open, derived, false).unwrap()
         };
         let named = FolderAccess {
             satisfied: &satisfied,

@@ -155,6 +155,8 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listEdgeContradictionCandidates', 'listKnownEdgeProposals', 'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
     'edgeClosureLanded', 'readEdgeProposalEvidence', 'readEdgeProposalHash', 'markEdgeProposalStale', 'setEdgeProposalStatus',
     'rejectOpenEdgeProposal', 'markEdgeProposalUndone', 'markRevertedEdgeProposals', 'listLiveChunksByIds', 'listLiveTakesByIds',
+    'listEdgeProposalCliRows', 'deleteHeldEdgeProposalErrors', 'listAppliedEdgeProposalIds', 'deleteEdgeProposalError',
+    'readEdgeProposalSourceId', 'markEdgeProposalDated',
     'readLastContradictionsPromptVersion', 'listEvalCandidateQueries'],
   facts: ['insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset',
     'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts', 'findCandidateDuplicates', 'consolidateFact',
@@ -347,7 +349,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // facts_trust: search relevance and trust reads
   facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
     'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listFactsFromQuotedPages', 'listOwnerTierFacts', 'listRestatedPrivateCopies', 'countDerivedFactTaint', 'readFactEntitySlugById', 'readSupersessionReplacement', 'linkSupersededFact', 'listLivePageTitles', 'listPageAliasNames', 'listCaptureDuplicateCandidates', 'computeFactFingerprints', 'listClaimConflictPairs', 'countClaimConflictPairs', 'listUnarchivedSourceRows',
-    'readPendingWriteReceipt', 'lockSourceShared', 'listOversizedStaleFacts', 'listLivePersonTitles', 'readLiveFactEntityPage', 'lockAgentWritebackSetting', 'listFactsToRetireFromPage', 'listContestedProposalPairs', 'listFactProvenance', 'recordDerivationEdges', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'readMemberPageWithdrawal', 'readFactVisibility', 'readReplacementTarget', 'readPairFactRow', 'expireSupersededFact', 'retireSupersededFact', 'restoreSupersededFact', 'readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'readWithdrawalAnchor', 'readFactActivity', 'readReviewAcceptedMark', 'readFactsFtsIndexState', 'swapFactsFtsIndex', 'listDerivedRows',
+    'readPendingWriteReceipt', 'lockSourceShared', 'listOversizedStaleFacts', 'listLivePersonTitles', 'readLiveFactEntityPage', 'lockAgentWritebackSetting', 'listFactsToRetireFromPage', 'listContestedProposalPairs', 'listFactProvenance', 'recordDerivationEdges', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'readMemberPageWithdrawal', 'readClaimWithdrawal', 'readFactVisibility', 'readReplacementTarget', 'readPairFactRow', 'expireSupersededFact', 'retireSupersededFact', 'restoreSupersededFact', 'readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'readWithdrawalAnchor', 'readFactActivity', 'readReviewAcceptedMark', 'readFactsFtsIndexState', 'swapFactsFtsIndex', 'listDerivedRows',
     'listAllUnarchivedSourceIds', 'readEntityNewestFacts', 'matchHeadStems', 'listOntologyStreamSlugs', 'readOntologyRival', 'listBeliefStreamSlugs',
     ],
 

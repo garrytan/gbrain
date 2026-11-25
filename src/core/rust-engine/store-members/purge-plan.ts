@@ -184,9 +184,6 @@ export const listPageSourcePathsForPurge: Member<'listPageSourcePathsForPurge'> 
 export const listNearestFactsForPurge: Member<'listNearestFactsForPurge'> = (brain, embedding, sourceId, model, fact) =>
   storeCall({ member: 'listNearestFactsForPurge' }, () => brain.listFactNeighbours({ embedding, sourceId, model, claim: fact }));
 
-/** A store read has no statement deadline to set. */
-export const setPurgeProbeTimeout: Member<'setPurgeProbeTimeout'> = async () => {};
-
 export const countPurgeProbe: Member<'countPurgeProbe'> = async (brain, probe, rows) => {
   // The SQL arms refuse a bad bound before they build a statement (boundedCountSql); so does a probe the store never sees.
   if (!Number.isSafeInteger(rows) || rows < 0) throw new Error('purge probe: the row bound must be a non-negative integer');

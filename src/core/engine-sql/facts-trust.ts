@@ -5,7 +5,7 @@
  * remaining raw reads (`poolWhere`, `FactPoolScope`, `FactPoolFilters`) live here too: search/fact-relevance.ts renders them.
  */
 import type { TrustTier } from '../trust/tier.ts';
-import { TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
+import { isTrustTier, TRUST_TIER_RANK, trustRankSql } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { claimBucketSql } from '../facts/typed-claim.ts';
 import { CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
@@ -409,9 +409,18 @@ export async function listFactsFromQuotedPages(raw: EngineRawRead,
   return rows.map(r => Number(r.id));
 }
 
-/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. */
+/**
+ * Refuses an owner-tier floor that names no trust tier. Without this, Postgres refuses the missing rank in its driver
+ * (UNDEFINED_VALUE) while PGLite binds NULL and returns no fact, so one call answers differently per engine.
+ */
+export function assertOwnerTierFloor(floor: unknown): asserts floor is TrustTier {
+  if (!isTrustTier(floor)) throw new Error(`listOwnerTierFacts: unknown trust tier ${JSON.stringify(floor)}`);
+}
+
+/** Of `ids`, the facts whose stored tier ranks at or above `floor`; an id with no row is not among them. An unknown floor is refused. */
 export async function listOwnerTierFacts(raw: EngineRawRead, opts: { ids: readonly number[]; floor: TrustTier }): Promise<number[]> {
   if (!opts.ids.length) return [];
+  assertOwnerTierFloor(opts.floor);
   const ids = [...new Set(opts.ids.map(Number))];
   const { text, params } = renderFragment(sqlFragment`SELECT id FROM facts WHERE id = ANY(${ids}::bigint[]) AND ${trustedSql(trustRankSql('trust_tier'))} >= ${TRUST_TIER_RANK[opts.floor]}::int`);
   const rows = await raw<{ id: number | string }>(text, params);
@@ -726,6 +735,60 @@ export async function readMemberPageWithdrawal(raw: EngineRawRead, q: MemberPage
   const { text } = renderFragment(sqlFragment`${trustedSql(MEMBER_WITHDRAWAL_HEAD)}${trustedSql(withdrawalReachedFactSql('w', 'f'))}${trustedSql(MEMBER_READABLE_HEAD)}${trustedSql(q.owner ? MEMBER_READABLE_OWNER : MEMBER_READABLE_WORLD)}${trustedSql(MEMBER_READABLE_PAGE)}${trustedSql(memberReadsSql('pp', q))}${trustedSql(MEMBER_READABLE_ENTITY)}${trustedSql(memberReadsSql('ep', q))}${trustedSql(MEMBER_WITHDRAWAL_TAIL)}`);
   const [row] = await raw<WithdrawalRow>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.page]);
   return row ?? null;
+}
+
+export interface ClaimWithdrawalQuery {
+  sourceId: string; visibility: string; fact: string; entitySlug: string | null | undefined;
+  /** The owned memory page the save lands on (`ownedPageWithdrawalSubject`), or null: its withdrawals apply and the caller sees its rows. */
+  ownPage: string | null;
+  /** A remote caller: only withdrawals whose withdrawn rows pass the remote provenance floor, or that no row backs, count. */
+  excludePrivate?: boolean;
+}
+/** `hidden`: under `excludePrivate`, every withdrawn row backing the claim is one the caller cannot see (no `row` then). */
+export interface ClaimWithdrawal { hidden: boolean; row: WithdrawalRow | null }
+
+const CLAIM_SEEN_OWN_BACKING = ' OR COALESCE(f.source_markdown_slug = $5::text, false))';
+const CLAIM_SEEN_OWN_LEDGER = ' OR COALESCE(f.source_markdown_slug = $6::text, false))';
+const CLAIM_BACKING_HEAD = `SELECT
+        COALESCE(bool_or(`;
+const CLAIM_BACKING_HIDDEN = `), false) AS visible,
+        COALESCE(bool_or(NOT `;
+const CLAIM_BACKING_FROM = `), false) AS hidden
+      FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
+        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
+        AND `;
+const CLAIM_BACKING_WHERE = `
+      WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
+        AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`;
+const CLAIM_LEDGER_HEAD = `SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
+    FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
+      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND `;
+const CLAIM_LEDGER_HAVING = `
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+      AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
+    GROUP BY w.subject,w.visibility,w.withdrawn_at
+    HAVING $5::boolean=false OR COALESCE(bool_or(`;
+const CLAIM_LEDGER_TAIL = `), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
+    ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`;
+
+/**
+ * The withdrawal a save of a forgotten claim meets (facts/single-prepare.ts factWithdrawnRefusal): the most specific
+ * subject first, then the newest withdrawal, among the withdrawals whose withdrawn rows the caller sees, or that no row
+ * backs. GST-359 D: a member saving to its own memory page sees that page's withdrawn rows.
+ */
+export async function readClaimWithdrawal(raw: EngineRawRead, q: ClaimWithdrawalQuery): Promise<ClaimWithdrawal> {
+  const floor = trustedSql(remoteProvenanceFloorSql('f'));
+  const reached = trustedSql(withdrawalReachedFactSql('w', 'f'));
+  if (q.excludePrivate) {
+    const seen = sqlFragment`(${floor}${trustedSql(CLAIM_SEEN_OWN_BACKING)}`;
+    const { text } = renderFragment(sqlFragment`${trustedSql(CLAIM_BACKING_HEAD)}${seen}${trustedSql(CLAIM_BACKING_HIDDEN)}${seen}${trustedSql(CLAIM_BACKING_FROM)}${reached}${trustedSql(CLAIM_BACKING_WHERE)}`);
+    const [backing] = await raw<{ visible: boolean; hidden: boolean }>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.ownPage]);
+    if (backing?.hidden && !backing.visible) return { hidden: true, row: null };
+  }
+  const seen = sqlFragment`(${floor}${trustedSql(CLAIM_SEEN_OWN_LEDGER)}`;
+  const { text } = renderFragment(sqlFragment`${trustedSql(CLAIM_LEDGER_HEAD)}${reached}${trustedSql(CLAIM_LEDGER_HAVING)}${seen}${trustedSql(CLAIM_LEDGER_TAIL)}`);
+  const [row] = await raw<WithdrawalRow>(text, [q.sourceId, q.visibility, q.fact, q.entitySlug, q.excludePrivate === true, q.ownPage]);
+  return { hidden: false, row: row ?? null };
 }
 
 /** The visibility of one fact of the source, or null. */

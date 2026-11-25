@@ -1447,6 +1447,12 @@ export const DOMAIN_OF: Record<string, string> = {
   'rejectOpenEdgeProposal': OOS.contradictionsCycle,
   'markEdgeProposalUndone': OOS.contradictionsCycle,
   'markRevertedEdgeProposals': OOS.contradictionsCycle,
+  'listEdgeProposalCliRows': OOS.contradictionsCycle,
+  'deleteHeldEdgeProposalErrors': OOS.contradictionsCycle,
+  'listAppliedEdgeProposalIds': OOS.contradictionsCycle,
+  'deleteEdgeProposalError': OOS.contradictionsCycle,
+  'readEdgeProposalSourceId': OOS.contradictionsCycle,
+  'markEdgeProposalDated': OOS.contradictionsCycle,
   'listLiveChunksByIds': OOS.contradictionsCycle,
   'listLiveTakesByIds': OOS.contradictionsCycle,
   'readLastContradictionsPromptVersion': OOS.contradictionsCycle,
@@ -1899,6 +1905,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'softDeleteDerivedPages': OOS.factsRestSites,
   'markNeedsRederive': OOS.factsRestSites,
   'readMemberPageWithdrawal': OOS.factsRestSites,
+  'readClaimWithdrawal': OOS.factsRestSites,
   'readFactVisibility': OOS.factsRestSites,
   'readReplacementTarget': OOS.factsRestSites,
   'readPairFactRow': OOS.factsRestSites,
@@ -2762,6 +2769,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
     ['world-only', (e) => e.listUnreadablePrivacyHoldIds([1, 2])],
     ['granted', (e) => withCallerAccess({ privateFactSources: ['default'] }, () => e.listUnreadablePrivacyHoldIds([1, 2]))],
   ]),
+
   ...variants('readMayActFor', [
     ['legacy-token', (e) => e.readMayActFor('legacy_token', '00000000-0000-4000-8000-0000000000a1')],
     ['oauth-client', (e) => e.readMayActFor('oauth_client', 'client-a')],

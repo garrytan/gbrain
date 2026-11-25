@@ -108,6 +108,16 @@ impl Store {
         self.write(|tx| crate::trust::proposals::purge_rows(tx, source_id, &facts, &takes))
     }
 
+    /// `deletePurgeTakeProposals(sourceId, factHash)`: the source's take proposals whose claim has the
+    /// purged fingerprint; how many.
+    pub fn delete_purge_take_proposals(&self, source_id: &str, fact_hash: &str) -> Result<u64> {
+        no_nul(
+            "deletePurgeTakeProposals",
+            &[("sourceId", source_id), ("factHash", fact_hash)],
+        )?;
+        self.write(|tx| crate::takes::proposals::remove_for_fingerprint(tx, source_id, fact_hash))
+    }
+
     /// `deletePurgeOpenLoops(sourceId, factIds)`: the source's open loops on one of the facts.
     pub fn delete_purge_open_loops(&self, source_id: &str, fact_ids: &[i64]) -> Result<u64> {
         no_nul("deletePurgeOpenLoops", &[("sourceId", source_id)])?;

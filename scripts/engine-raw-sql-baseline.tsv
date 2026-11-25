@@ -65,7 +65,6 @@ src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
 src/commands/doctor/report-remote.ts	execute_raw	1
 src/commands/doctor/schema-pack-checks.ts	execute_raw	2
-src/commands/edge-proposals.ts	execute_raw	6
 src/commands/engine-status.ts	execute_raw	1
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1

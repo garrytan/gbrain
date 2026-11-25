@@ -67,9 +67,9 @@ for byte (pinned by `test/engine-sql-held-take-rows-golden.test.ts`). Parity cas
 `test/engine-parity/take-held-rows.test.ts`.
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
-whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge
-writes `needs_rederive` and `executeRaw` refuses on Rust, so that clause never hides a row here. The
-members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
+whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. A purge marks rows in
+that queue through `markNeedsRederive` (`generations/needs_rederive.rs`). The members send `eligible_only: true` for
+any eligibility object and the store applies all three clauses.
 `listTakes`, `searchTakes` and `searchTakesVector` also take `min_trust` (`eligibility.floor`: `trustFloorSql`, the take's stamped
 tier at or above the floor) and `suppress_flagged` (`eligibility.suppressFlagged`: `activationSuppressedSql`
 over the take's tier and its write-gate receipts), through `trust::TrustPolicy`.

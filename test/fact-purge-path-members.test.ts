@@ -252,7 +252,9 @@ describe('the fact purge calls only what the list names', () => {
       ['belief ledger: real', 'rich page: real', 'rich page: resume', 'segmented page and staged upload: real']);
     for (const trace of runs) {
       const called = trace.names.filter(name => stops.has(name));
-      expect(called.length).toBeGreaterThan(trace.phase === 'resume' ? 1 : 10);
+      // With lane 4's rust-5a the purge transaction's members are served: a real run still reaches the receipt's belief
+      // probe stop (and a segmented page the raw-SQL stops); a resume reaches none.
+      expect(called.length).toBeGreaterThanOrEqual(trace.phase === 'resume' ? 0 : 1);
       // Lists, not sets: the order in which a run first made each call, against the order of the list.
       expect({ run: `${trace.scenario}: ${trace.phase}`, called }).toEqual({ run: `${trace.scenario}: ${trace.phase}`, called: [...called].sort((a, b) => rank(a) - rank(b)) });
     }
@@ -295,7 +297,9 @@ describe('the fact purge calls only what the list names', () => {
     expect(real.map(stop => stop.name)).toEqual(FACT_PURGE_PATH
       .filter(entry => 'site' in entry ? entry.stop : entry.refuses || rustMemberCapability(entry.member) !== null).map(purgeEntryName));
     expect(resume.map(stop => stop.name)).toEqual(real.filter(stop => stop.entry.entry !== 'purge').map(stop => stop.name));
-    expect(resume.length).toBeGreaterThan(0);
+    // Everything the continue reaches is served on Rust (the sweep, the effect read and the fingerprint count), so it has no
+    // stop left; the real run keeps the receipt's belief probe and the segmented raw-SQL sites.
+    expect(resume).toEqual([]);
     expect(resume.length).toBeLessThan(real.length);
   });
 

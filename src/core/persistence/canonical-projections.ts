@@ -598,7 +598,7 @@ function timelineChunks(timeline: ReadonlyMap<string, ExtractedTimelineEntry>): 
 
 /**
  * #6574: a page's canonical timeline rows in one statement per chunk, in body order. The publication already holds the page's
- * row lock (lockPageKeys), so the rows go straight to its id; free text is sanitized as addTimelineEntry does (#2011).
+ * row lock (lockPageKeys), so the rows go straight to its id; the engine sanitizes free text as addTimelineEntry does (#2011).
  */
 function insertCanonicalTimeline(tx: BrainEngine, pageId: number, entries: ExtractedTimelineEntry[]) {
   return tx.insertCanonicalTimelineRows(pageId, entries.map(entry => ({ date: entry.date, source: sanitizeForJsonb(entry.source || ''),

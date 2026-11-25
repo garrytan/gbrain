@@ -368,7 +368,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Repair, doctor and write-path statements (engine-sql/facts-repair.ts, facts-doctor.ts, facts-trust.ts; test/engine-parity/facts-repair-sites.test.ts)
   'listActiveSourceIds', 'readRepairBrainId', 'listAgentSessionTakeCandidates', 'listSettledSessionFacts', 'reattributeSessionFacts', 'retireSessionTakes', 'listFenceRewriteRows', 'listOtherAttributedFactIds', 'listInactiveTakeIds', 'expireCapturedFacts', 'listExpiredFactIds', 'readEntityRehomeState', 'rehomeEntityFacts', 'countSegmentedCensusPages', 'readFactTableCatalog', 'readFactEntitySlugById', 'readSupersessionReplacement', 'linkSupersededFact', 'listLivePageTitles', 'listPageAliasNames', 'listCaptureDuplicateCandidates', 'computeFactFingerprints', 'listClaimConflictPairs', 'countClaimConflictPairs', 'listUnarchivedSourceRows',
   // Facts write-path and recall-pool statements (engine-sql/facts-trust.ts, facts-recall.ts; test/engine-parity/facts-rest-sites.test.ts)
-  'readPendingWriteReceipt', 'lockSourceShared', 'listOversizedStaleFacts', 'listLivePersonTitles', 'readLiveFactEntityPage', 'lockAgentWritebackSetting', 'listFactsToRetireFromPage', 'listContestedProposalPairs', 'listFactProvenance', 'recordDerivationEdges', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'readMemberPageWithdrawal', 'readFactVisibility', 'readReplacementTarget', 'readPairFactRow', 'expireSupersededFact', 'retireSupersededFact', 'restoreSupersededFact', 'readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'readWithdrawalAnchor', 'readFactActivity', 'readReviewAcceptedMark', 'readFactsFtsIndexState', 'swapFactsFtsIndex',
+  'readPendingWriteReceipt', 'lockSourceShared', 'listOversizedStaleFacts', 'listLivePersonTitles', 'readLiveFactEntityPage', 'lockAgentWritebackSetting', 'listFactsToRetireFromPage', 'listContestedProposalPairs', 'listFactProvenance', 'recordDerivationEdges', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'readMemberPageWithdrawal', 'readClaimWithdrawal', 'readFactVisibility', 'readReplacementTarget', 'readPairFactRow', 'expireSupersededFact', 'retireSupersededFact', 'restoreSupersededFact', 'readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'readWithdrawalAnchor', 'readFactActivity', 'readReviewAcceptedMark', 'readFactsFtsIndexState', 'swapFactsFtsIndex',
   'listAllUnarchivedSourceIds',
   'readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
   'readEntityNewestFacts', 'matchHeadStems',
@@ -500,7 +500,9 @@ const INTERFACE_METHODS: readonly string[] = [
   'listEdgeContradictionCandidates', 'listKnownEdgeProposals', 'listLinkContexts', 'recordEdgeProposal',
   'readEdgeProposal', 'edgeClosureLanded', 'readEdgeProposalEvidence', 'readEdgeProposalHash',
   'markEdgeProposalStale', 'setEdgeProposalStatus', 'rejectOpenEdgeProposal', 'markEdgeProposalUndone',
-  'markRevertedEdgeProposals', 'listLiveChunksByIds', 'listLiveTakesByIds', 'readLastContradictionsPromptVersion',
+  'markRevertedEdgeProposals', 'listEdgeProposalCliRows', 'deleteHeldEdgeProposalErrors', 'listAppliedEdgeProposalIds',
+  'deleteEdgeProposalError', 'readEdgeProposalSourceId', 'markEdgeProposalDated',
+  'listLiveChunksByIds', 'listLiveTakesByIds', 'readLastContradictionsPromptVersion',
   'listEvalCandidateQueries', 'listRekeyLosers', 'repointSupersededToKept', 'clearOntologySlots',
   'deleteRekeyLosers', 'restoreOntologyFact',
   'listVisiblePageSlugs', 'readPagesForVersionHistory',
