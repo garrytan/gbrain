@@ -497,7 +497,7 @@ Related:
 
 // ─── Human-friendly report printing ────────────────────────────────
 
-function printHuman(report: CycleReport) {
+function printHuman(report: CycleReport, databaseConnected = true) {
   if (report.status === 'skipped') {
     if (report.reason === 'cycle_already_running') {
       const h = report.lock_holder;
@@ -507,6 +507,12 @@ function printHuman(report: CycleReport) {
     } else {
       console.log(`Skipped: ${report.reason ?? 'unknown reason'}.`);
     }
+    return;
+  }
+
+  if (report.status === 'clean' && !databaseConnected) {
+    const skipped = report.phases.filter(p => p.status === 'skipped').length;
+    console.log(`Filesystem phases only: database not connected. ${skipped} phase(s) skipped.`);
     return;
   }
 
@@ -714,7 +720,11 @@ function drainCommand(opts: DreamArgs): string {
   return `gbrain dream --drain --window ${opts.windowSeconds}${opts.source ? ` --source ${opts.source}` : ''}`;
 }
 
-export async function runDream(engine: BrainEngine | null, args: string[]): Promise<CycleReport | void> {
+export async function runDream(
+  engine: BrainEngine | null,
+  args: string[],
+  run: { databaseUnreachable?: boolean } = {},
+): Promise<CycleReport | void> {
   // ─── `dream retriage` subverb (#4152) — dispatched BEFORE parseArgs so its
   // flag set never collides with the cycle flags. `dream --help` never reaches
   // here (args[0] is '--help'); `dream retriage --help` prints subcommand help
@@ -919,6 +929,13 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       'Fix the brain connection (`gbrain doctor --json` names the cause), then run the phase again.'), opts.json);
   }
 
+  // A configured brain that couldn't be reached skipped its DB phases: the
+  // report says failed so --json readers and the exit status agree.
+  if (run.databaseUnreachable) {
+    report.status = 'failed';
+    report.reason = 'database_unreachable';
+  }
+
   // Exit non-zero when the cycle failed overall or any phase failed (agent-first
   // operator wave E4): a 'partial' cycle whose phase reports 'fail' — thrown and
   // contained, or caught inside the runner — is never success. Warn-only
@@ -927,7 +944,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   const failed = report.status === 'failed' || failedPhases.length > 0;
   // #7646: a phase that needs the user (sync_anchor_relative) fails again on every rerun; its ask_user fix leads instead.
   const askPhase = report.phases.find(p => failedPhases.includes(p.phase) && p.fix?.next === 'ask_user');
-  if (!opts.json) printHuman(report);
+  if (!opts.json) printHuman(report, engine !== null);
   else if (!failed || !jsonGuardActive()) await writeJsonDocument(JSON.stringify(report, null, 2));
   else {
     // D2: under the --json guard a failed cycle is one envelope leading with the CycleReport keys.
@@ -935,6 +952,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       askPhase ? `The ${askPhase.phase} phase needs the user: ${askPhase.summary} Follow phases[].fix before rerunning.`
         : `Read phases[].error for the cause, fix it, then rerun the phase: gbrain dream --phase ${failedPhases[0] ?? '<phase>'}`),
     'dream', { json: true, stderr: false, legacy: { ...report }, ...(askPhase ? { extra: { fix: askPhase.fix } } : {}) });
+  }
+  if (run.databaseUnreachable && !opts.json) {
+    console.error('Dream failed: database unreachable; DB-dependent phases did not run.');
   }
   if (failed && !opts.json && failedPhases.length > 0) {
     console.error(askPhase

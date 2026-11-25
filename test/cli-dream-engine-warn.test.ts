@@ -56,13 +56,12 @@ describe('#1422 — dream surfaces connectEngine failures', () => {
       const { stderr, status } = runDream(['--dir', tmpBrain, '--phase', 'lint'], {
         GBRAIN_HOME: tmpHome,
       });
-      // Filesystem-only phases still run; exit code reflects cycle outcome,
-      // not connect failure. The KEY contract: the WARNING text appears.
+      // Filesystem-only phases still run. The KEY contract: the WARNING text
+      // appears. test/dream-unreachable-db-exit.test.ts owns the exit status.
       expect(stderr).toContain('[dream] WARNING: could not connect to DB');
       expect(stderr).toContain('Running filesystem-only phases');
       expect(stderr).toContain('DB-dependent phases');
-      // Sanity: process did not hang / segfault. Exit is success or non-zero
-      // (filesystem phases are tolerant). We assert it terminated, not the code.
+      // Sanity: process did not hang / segfault. We assert it terminated, not the code.
       expect(status).toBeGreaterThanOrEqual(0);
     } finally {
       rmSync(tmpHome, { recursive: true, force: true });
