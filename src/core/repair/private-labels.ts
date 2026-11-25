@@ -60,7 +60,6 @@ import { isTerminal } from '../persistence/model.ts';
 import { requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { digest } from '../persistence/digest.ts';
 import { modeRequiresSynopsis } from '../embedding-context.ts';
-import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { PRIVACY_ALIASES, privacyAliasSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
@@ -80,6 +79,7 @@ export const PRIVATE_LABELS_CLASSES: readonly LabelsClass[] = [...CLEAR_CLASSES,
 const DEFAULT_CLASSES: readonly ClearClass[] = ['alias', 'alias-and-visibility'];
 export const PRIVATE_LABELS_WINDOW = 1000;
 export const PRIVATE_LABELS_WINDOW_MAX = 10_000;
+/** The scan's page size: the LIMIT of listLabelledPages (engine-sql/private-label-scans.ts). */
 const SCAN_PAGE = 5000;
 const bounded = { timeoutMs: 120_000 };
 
@@ -119,13 +119,7 @@ export function classifyPrivateLabel(row: Pick<LabelRow, 'type' | 'frontmatter' 
 /** Live pages of the sources that a label makes private, in page id order (`ids` narrows to those pages). */
 async function scanLabelled(engine: BrainEngine, sourceIds: string[], visit: (row: LabelRow) => void, ids?: number[]): Promise<void> {
   for (let after = 0; ;) {
-    const rows = await engine.executeRaw<LabelRow>(`SELECT p.id, p.source_id, p.slug, p.type, p.frontmatter, p.knowledge_revision::text AS revision,
-        COALESCE(p.body_bytes, 0) AS chars, COALESCE(s.config->>'canonical' = 'git', false) AS git
-      FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.id > $2
-        AND (p.frontmatter->>'visibility' = 'private' OR (p.frontmatter->>'visibility' IS NULL AND ${privacyAliasSql('p')}))
-        AND ($3::integer[] IS NULL OR p.id = ANY($3::integer[]))
-      ORDER BY p.id LIMIT ${SCAN_PAGE}`, [sourceIds, after, ids ?? null], bounded);
+    const rows: LabelRow[] = await engine.listLabelledPages(sourceIds, after, ids ?? null, bounded.timeoutMs);
     for (const row of rows) visit(row);
     if (rows.length < SCAN_PAGE) return;
     after = Number(rows[rows.length - 1]!.id);
@@ -211,8 +205,7 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
     else if (line.phase === 'committed' && line.revision_after && latest.has(key)) latest.get(key)!.landed = line;
   }
   const removals = [...latest.values()];
-  const live = removals.length ? await engine.executeRaw<LabelRow>(`SELECT id, source_id, slug, type, frontmatter, knowledge_revision::text AS revision, COALESCE(body_bytes, 0) AS chars
-    FROM pages WHERE id = ANY($1::integer[]) AND deleted_at IS NULL`, [removals.map(({ removal }) => removal.page_id)], bounded) : [];
+  const live: Array<Omit<LabelRow, 'git'>> = removals.length ? await engine.listLiveLabelRows(removals.map(({ removal }) => removal.page_id), bounded.timeoutMs) : [];
   const byId = new Map(live.map(row => [Number(row.id), row]));
   const counts = { restorable: 0, already_restored: pages.size - removals.length, page_gone: 0, removed_after_restore: 0 };
   const entries: Approved[] = [];
@@ -245,9 +238,8 @@ async function windowDependents(engine: BrainEngine, window: Approved[]): Promis
   const clears = window.filter(entry => entry.mode === 'clear');
   if (!clears.length) return { counts, exposes };
   await readHonorAliases(engine);
-  const rows = await engine.executeRaw<{ id: number; cleared_id: number; category: keyof Dependents }>(dependentsSql(),
-    [clears.map(entry => entry.page_id), clears.map(entry => entry.source_id), clears.map(entry => entry.slug), clears.map(entry => Object.keys(entry.labels).sort().join(','))],
-    { ...bounded, jitOff: true, prepare: false });
+  const rows = await engine.listClearDependents({ ids: clears.map(entry => entry.page_id), sourceIds: clears.map(entry => entry.source_id),
+    slugs: clears.map(entry => entry.slug), keys: clears.map(entry => Object.keys(entry.labels).sort().join(',')) }, bounded.timeoutMs);
   const counted = new Set<number>();
   for (const row of rows) {
     const id = Number(row.id);
@@ -282,12 +274,10 @@ function triedBefore(ledger: PrivateLabelsLedger | undefined, brainId: string): 
 async function reembedding(engine: BrainEngine, items: LabelsItem[]): Promise<LabelsItem[]> {
   if (!items.length) return [];
   const ids = items.map(item => item.entry.page_id);
-  const rows = await engine.executeRaw<{ id: number; mode: string }>(`SELECT id, contextual_retrieval_mode AS mode FROM pages
-    WHERE id = ANY($1::integer[]) AND contextual_retrieval_mode IS NOT NULL`, [ids], bounded);
-  const unembedded = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT cc.page_id AS id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-    WHERE cc.page_id = ANY($1::integer[]) AND cc.embedding IS NULL AND ${chunkGenerationFilter('p', 'cc')}`, [ids], bounded);
+  const rows = await engine.listContextualRetrievalModes(ids, bounded.timeoutMs);
+  const unembedded = await engine.listUnembeddedChunkPages(ids, bounded.timeoutMs);
   const embeds = new Set([...rows.filter(row => modeRequiresSynopsis(row.mode as Parameters<typeof modeRequiresSynopsis>[0])).map(row => Number(row.id)),
-    ...unembedded.map(row => Number(row.id))]);
+    ...unembedded]);
   return items.filter(item => embeds.has(item.entry.page_id));
 }
 
@@ -381,9 +371,6 @@ export const privateLabelsRepair: RepairHandler = {
   /** GBRA-443: a label-only edit keeps every stored vector; the plan names the pages that re-embed anyway (embedding_items). */
   embeds: false,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
-    // The label scan and the dependents read evaluate the privacy predicate (privacyAliasSql, privacyPartSql), which has
-    // no typed member: an engine without raw SQL stops here by name, before it reads or writes anything.
-    requireRawSql(engine, 'repair private-labels privacy scan');
     const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts) };
     const command = previewCommand(scope, selection);
     const ledger = opts?.privateLabelsLedger;
@@ -394,6 +381,9 @@ export const privateLabelsRepair: RepairHandler = {
       chars: entry.chars, action: `${entry.mode === 'clear' ? 'remove' : 're-add'} ${describeLabels(entry.labels)}`, entry, ledger: ledger!,
       ...(entry.tried ? { retried: true } : {}) }));
     if (opts?.apply) {
+      // The apply's label writes and its re-embedding read still run raw SQL, so a Rust brain stops an apply here by name,
+      // before it reads or writes anything; the preview's scans are typed (engine-sql/private-label-scans.ts).
+      requireRawSql(engine, 'repair private-labels page write');
       if (!opts.expect) {
         throw opError('invalid_params', 'gbrain repair private-labels --apply changes only the set a preview printed (clearing a label widens remote reads).',
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);

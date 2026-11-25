@@ -21,6 +21,7 @@ export const LEDGER_MEMBERS = {
   deleteTakesByIds: 'takes',
   findTakeId: 'takes',
   readChronicleBackfillBatch: 'pages',
+  listTakeHoldersAtRows: 'takes',
   // The grade_takes verdict cache and `gbrain takes grades` (store A 0x05, takes/grades.rs).
   listLatestTakeGrades: 'takes',
   readTakeGrade: 'takes',
@@ -59,6 +60,11 @@ export const LEDGER_MEMBERS = {
   writeOpCheckpointDoc: 'takes',
   listWriteRequestsByRequestId: 'takes',
   listGuardedTakeRows: 'takes',
+  listQuotedTakeRows: 'takes',
+  listPageTakeRowNums: 'takes',
+  clearChangedTakeResolutions: 'takes',
+  writeFenceTakeResolutions: 'takes',
+  hasFenceAbsentHold: 'takes',
   // The extract receipt write's page reads and the extract_rollup_7d day upsert (store A 0x0A, extract_bookkeeping.rs).
   readExtractReceiptSlot: 'pages',
   readExtractReceiptSeal: 'pages',
@@ -154,6 +160,8 @@ export const LEDGER_MEMBERS = {
   listVisibleBeliefLifetimes: 'belief_ledger',
   // belief ledger writes (engine-sql/belief-ledger.ts): the append guards and insert, the commit marks and the page lifetimes
   readBeliefTombstones: 'belief_ledger',
+  readLegacyClaimFingerprints: 'belief_ledger',
+  readLegacyBeliefTombstones: 'belief_ledger',
   readLatestBeliefCoverage: 'belief_ledger',
   hasBeliefBaseline: 'belief_ledger',
   listBeliefBaselinePending: 'belief_ledger',
@@ -161,15 +169,9 @@ export const LEDGER_MEMBERS = {
   listBeliefDriftCandidates: 'belief_ledger',
   readNewestBeliefEvent: 'belief_ledger',
   listOrphanLifetimes: 'belief_ledger',
-  // cycle and identity-downgrade reads (engine-sql/cycle-reads.ts), and a segmented page's rewrite reads (engine-sql/segmented-rewrite.ts)
+  // the cycle's changed-page window (engine-sql/cycle-reads.ts)
   readCycleListingInstant: 'pages',
   listSourceChangedPagesAfter: 'pages',
-  readSoftDeletedPageAtOrigin: 'pages',
-  listLivePagesAtOrigin: 'pages',
-  countPageCarryRows: 'pages',
-  readSegmentedRewritePage: 'page_body',
-  restorePageDeletedAt: 'page_body',
-  readSegmentedLivePage: 'page_body',
   readBeliefRedactions: 'belief_ledger',
   insertBeliefRedaction: 'belief_ledger',
   releaseBeliefRedactions: 'belief_ledger',

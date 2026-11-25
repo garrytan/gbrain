@@ -1,6 +1,6 @@
 /**
- * BrainEngine parity — the context-volunteer event members (`insertVolunteerEventRows`, `listVolunteerChannels`,
- * `listVolunteerUsage`, `deleteVolunteerEventsOlderThan`, and the purge scrub and receipt check the log shares with
+ * BrainEngine parity — the context-volunteer event members (`insertVolunteerEvents`, `listVolunteerChannels`,
+ * `readVolunteerUsage`, `deleteVolunteerEventsOlderThan`, and the purge scrub and receipt check the log shares with
  * `deletePurgedNameStoreRows` and the `context_volunteer_events` store probe of `countPurgeProbe`)
  * that `src/core/context/volunteer-events.ts` and `volunteer.ts` call instead of raw SQL, and the scrubs that remove the rows
  * with their page or source.
@@ -61,7 +61,7 @@ const ALL = [['alpha', 'notes/a'], ['alpha', 'notes/b'], ['beta', 'notes/a'], ['
 
 describe('engine parity: context-volunteer events', () => {
   parityTest('the insert writes only the rows of pages that exist, and the channel listing and usage read count them', {
-    methods: ['putPage', 'softDeletePage', 'insertVolunteerEventRows', 'listVolunteerChannels', 'listVolunteerUsage', 'countPurgeProbe'],
+    methods: ['putPage', 'softDeletePage', 'insertVolunteerEvents', 'listVolunteerChannels', 'readVolunteerUsage', 'countPurgeProbe'],
   }, async (engine) => {
     await engine.putPage('notes/a', note('A'), { sourceId: 'default' });
     await engine.putPage('notes/soft', note('Soft'), { sourceId: 'default' });
@@ -95,7 +95,7 @@ describe('engine parity: context-volunteer events', () => {
   });
 
   parityTest('the retention delete removes only the rows older than its window', {
-    methods: ['putPage', 'insertVolunteerEventRows', 'deleteVolunteerEventsOlderThan', 'countPurgeProbe'],
+    methods: ['putPage', 'insertVolunteerEvents', 'deleteVolunteerEventsOlderThan', 'countPurgeProbe'],
   }, async (engine) => {
     await engine.putPage('notes/a', note('A'), { sourceId: 'default' });
     await insertVolunteerEvents(engine, [event('default', 'notes/a'), event('default', 'notes/a', 'hook')]);
@@ -110,7 +110,7 @@ describe('engine parity: context-volunteer events', () => {
   });
 
   parityTest('deletePages removes the volunteer events of the deleted pages and keeps every other row', {
-    methods: ['putPage', 'deletePages', 'insertVolunteerEventRows', 'countPurgeProbe'],
+    methods: ['putPage', 'deletePages', 'insertVolunteerEvents', 'countPurgeProbe'],
   }, async (engine, backend) => {
     await seedTwoSources(engine, backend);
     const before = await named(engine, ALL);
@@ -127,7 +127,7 @@ describe('engine parity: context-volunteer events', () => {
   });
 
   parityTest('a soft delete keeps the volunteer events and purgeDeletedPages removes them with the page', {
-    methods: ['putPage', 'softDeletePage', 'restorePage', 'purgeDeletedPages', 'insertVolunteerEventRows', 'countPurgeProbe'],
+    methods: ['putPage', 'softDeletePage', 'restorePage', 'purgeDeletedPages', 'insertVolunteerEvents', 'countPurgeProbe'],
   }, async (engine, backend) => {
     await seedTwoSources(engine, backend);
     await engine.softDeletePage('notes/a', { sourceId: 'alpha' });
@@ -145,7 +145,7 @@ describe('engine parity: context-volunteer events', () => {
   });
 
   parityTest('the purge name-store scrub removes the volunteer rows of those slugs of one source and counts them', {
-    methods: ['putPage', 'insertVolunteerEventRows', 'transaction', 'deletePurgedNameStoreRows', 'countPurgeProbe'],
+    methods: ['putPage', 'insertVolunteerEvents', 'transaction', 'deletePurgedNameStoreRows', 'countPurgeProbe'],
   }, async (engine, backend) => {
     await seedTwoSources(engine, backend);
     await insertVolunteerEvents(engine, [event('alpha', 'notes/a', 'again')]);
@@ -159,7 +159,7 @@ describe('engine parity: context-volunteer events', () => {
   });
 
   parityTest('a source delete removes the volunteer events of the source and keeps the other source\'s', {
-    methods: ['putPage', 'insertVolunteerEventRows', 'deleteSourceRecord', 'listVolunteerChannels', 'countPurgeProbe'],
+    methods: ['putPage', 'insertVolunteerEvents', 'deleteSourceRecord', 'listVolunteerChannels', 'countPurgeProbe'],
   }, async (engine, backend) => {
     await seedTwoSources(engine, backend);
     const before = await named(engine, ALL);

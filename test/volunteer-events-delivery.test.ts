@@ -15,17 +15,22 @@ import {
 import { logDeliveredReflexPointers, type ReflexPointer } from '../src/core/context/retrieval-reflex.ts';
 import type { VolunteeredPage } from '../src/core/context/volunteer.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { insertVolunteerEvents as insertVolunteerEventRows } from '../src/core/engine-sql/volunteer-events.ts';
 
 interface CapturedInsert { sql: string; params: unknown[] }
 
-/** The typed insert (insertVolunteerEventRows) the sink calls; each call is captured with its rows' values flattened. */
 function stubEngine(captured: CapturedInsert[], fail = false): BrainEngine {
-  return {
-    insertVolunteerEventRows: async (rows: Array<Record<string, unknown>>) => {
+  const stub = {
+    executeRaw: async (sql: string, params: unknown[]) => {
       if (fail) throw new Error('insert exploded');
-      captured.push({ sql: 'insertVolunteerEventRows', params: rows.flatMap((row) => Object.values(row)) });
+      captured.push({ sql, params });
+      return [];
     },
-  } as unknown as BrainEngine;
+    // The typed member the delivery log writes through; it sends its one statement through the stub's executeRaw,
+    // as both SQL engines do (engine-sql/volunteer-events.ts).
+    insertVolunteerEvents: (rows: Parameters<typeof insertVolunteerEventRows>[1]) => insertVolunteerEventRows(stub, rows),
+  };
+  return stub as unknown as BrainEngine;
 }
 
 const PAGE: VolunteeredPage = {
@@ -109,8 +114,9 @@ describe('logTurnContextDeliveryFireAndForget — the shipped serve wiring', () 
 describe('logDeliveredReflexPointers — ambient reflex channel', () => {
   test('registers its write before returning so an immediate CLI drain cannot miss it', async () => {
     const engine = {
-      insertVolunteerEventRows: async () => {
+      executeRaw: async () => {
         await Promise.resolve();
+        return [];
       },
     } as unknown as BrainEngine;
 

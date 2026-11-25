@@ -255,7 +255,7 @@ describe('facts-repair.ts rendered SQL', () => {
         ${EXPIRY_TEXT('f.expired_at')} AS expired_at,
         EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
           AND (w.subject='*' OR w.subject=f.entity_slug)
-          AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
+          AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
         f.consolidated_into IS NOT NULL AS consolidated,
         ${DUPLICATE_SQL('f')} AS duplicate
         FROM facts f

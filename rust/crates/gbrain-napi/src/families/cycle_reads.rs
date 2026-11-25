@@ -1,6 +1,5 @@
 //! The cycle, belief and sync reads that ran raw SQL and are now typed members: the cycle's
-//! changed-page window (cycle-window.md), the identity-downgrade page reads (identity-downgrades.md)
-//! and the belief ledger's orphan lifetimes (trust.md). The propose_takes failure tombstones are
+//! changed-page window (cycle-window.md) and the belief ledger's orphan lifetimes (trust.md). The propose_takes failure tombstones are
 //! `insertTakeProposal` and `listTakeProposalTombstones` (takes/proposals.rs), and the stale-mention
 //! scan is `readStaleMentionScan` (list_reads.rs).
 //!
@@ -36,47 +35,6 @@ impl Brain {
         })
     }
 
-    /// `readSoftDeletedPageAtOrigin(sourceId, path, slug)`: `{ id, slug, deleted_at }` or `null`.
-    #[napi]
-    pub fn read_soft_deleted_page_at_origin<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        path: String,
-        slug: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.read_soft_deleted_page_at_origin(&source_id, &path, &slug)
-        })
-    }
-
-    /// `listLivePagesAtOrigin(sourceId, sourcePath)`: `[{ id, slug }]` by slug bytes.
-    #[napi]
-    pub fn list_live_pages_at_origin<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        source_path: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_live_pages_at_origin(&source_id, &source_path)
-        })
-    }
-
-    /// `countPageCarryRows(sourceId, slug, pageId)`: `{ facts, links, aliases }`.
-    #[napi]
-    pub fn count_page_carry_rows<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        slug: String,
-        page_id: u32,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.count_page_carry_rows(&source_id, &slug, u64::from(page_id))
-        })
-    }
-
     /// `listOrphanLifetimes(sourceId, limit, deep)`: `{ count, samples: [{ slug, page_lifetime, reason }] }`.
     #[napi]
     pub fn list_orphan_lifetimes<'env>(
@@ -88,21 +46,6 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.list_orphan_lifetimes(&source_id, limit, deep)
-        })
-    }
-
-    /// `listRootPageSlugsAfter(sourceId, take, held, after)`: `[{ slug }]` in byte order.
-    #[napi]
-    pub fn list_root_page_slugs_after<'env>(
-        &self,
-        env: &'env Env,
-        source_id: String,
-        take: u32,
-        held: Vec<String>,
-        after: String,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| {
-            s.list_root_page_slugs_after(&source_id, take as usize, &held, &after)
         })
     }
 }

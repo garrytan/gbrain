@@ -18,7 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
-import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -66,13 +66,14 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'hasLabelledOnlyMemberAmong'>, identities: readonly (readonly string[])[]): Promise<boolean> {
   const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
   if (!members.length) return false;
   try {
-    return (await engine.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
-      AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [members, OWNER_MEMBER_KEY])).length > 0;
-  } catch {
+    return await engine.hasLabelledOnlyMemberAmong(members);
+  } catch (e) {
+    // An engine that refuses the read is reported, never read as labelled-only for every member.
+    if (isEngineCapabilityRefusal(e)) throw e;
     return true;
   }
 }

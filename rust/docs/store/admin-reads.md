@@ -1,13 +1,12 @@
 # Admin reads
 
-The two page reads of the admin operations (`src/core/ops/admin.ts`), SQL in
+The page read of the admin operations (`src/core/ops/admin.ts`), SQL in
 `src/core/engine-sql/admin-reads.ts`, served by `gbrain_store::cli_reads::admin_reads`
-(TypeScript members in `src/core/rust-engine/store-members/admin-reads.ts`).
+(`readPagesForVersionHistory` is `tail_reads.rs`, `tail_reads.md`; TypeScript member in `src/core/rust-engine/store-members/admin-reads.ts`).
 
 | Member | Answer | SQL |
 |---|---|---|
 | `brain.listVisiblePageSlugs(slugs, sourceIds, policy)` | `string[]`: the distinct slugs among `slugs` that name a live page (no `deleted_at`) in one of `sourceIds` (every source when null) that `policy` does not hide (`page_hidden`; a null policy hides nothing). Byte order; the SQL `SELECT DISTINCT` names no order | `listVisiblePageSlugs` |
-| `brain.readPagesForVersionHistory(pageIds)` | `{ id, slug, source_id, frontmatter }[]` of the pages with these ids, soft-deleted ones included (the SQL has no `deleted_at` test), each id once, in id order. An id no page has reads nothing | `readPagesForVersionHistory` |
 
 The TypeScript member turns the policy part into the store page policy the way the retirement hop does
 (`retirementHopPolicy` in `private-provenance.ts`): `read` is the caller's page policy

@@ -1,24 +1,13 @@
-//! The two reads of the admin operations (`src/core/ops/admin.ts`) served from the store (SQL in
+//! The read of the admin operations (`src/core/ops/admin.ts`) served from the store (SQL in
 //! `src/core/engine-sql/admin-reads.ts`, docs in `rust/docs/store/admin-reads.md`): which of the
-//! `most_connected` slugs a caller may see, and the pages the version history of a page belongs to.
+//! `most_connected` slugs a caller may see. The pages a version history belongs to are `tail_reads.rs`.
 
 use crate::Store;
 use crate::error::Result;
 use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden_with};
-use crate::pages::{read_page, read_page_by_id};
+use crate::pages::read_page;
 use crate::sources::all_sources;
-use serde::Serialize;
-use serde_json::{Map, Value};
 use std::collections::BTreeSet;
-
-/// One row of `readPagesForVersionHistory`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct VersionPageRow {
-    pub id: u64,
-    pub slug: String,
-    pub source_id: String,
-    pub frontmatter: Map<String, Value>,
-}
 
 impl Store {
     /// `listVisiblePageSlugs(slugs, sourceIds, policy)`: the distinct slugs among `slugs` that name
@@ -60,28 +49,5 @@ impl Store {
             }
         }
         Ok(out.into_iter().collect())
-    }
-
-    /// `readPagesForVersionHistory(pageIds)`: the id, slug, source and frontmatter of each page
-    /// with one of these ids, in id order. Like the SQL (`WHERE id = ANY($1)`), a soft-deleted page
-    /// is read too, a repeated id is read once, and an id no page has reads nothing.
-    pub fn read_pages_for_version_history(&self, page_ids: &[i64]) -> Result<Vec<VersionPageRow>> {
-        let read = self.read()?;
-        let ids: BTreeSet<u64> = page_ids
-            .iter()
-            .filter_map(|id| u64::try_from(*id).ok())
-            .collect();
-        let mut rows = Vec::new();
-        for id in ids {
-            if let Some(page) = read_page_by_id(&*read, id)? {
-                rows.push(VersionPageRow {
-                    id: page.id,
-                    slug: page.slug,
-                    source_id: page.source_id,
-                    frontmatter: page.frontmatter,
-                });
-            }
-        }
-        Ok(rows)
     }
 }

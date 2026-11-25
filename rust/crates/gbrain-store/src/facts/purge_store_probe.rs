@@ -6,8 +6,7 @@
 //! Kinds served here, with the store each reads:
 //! - `slug_key`: `pages` (a soft-deleted page counts), `facts` (by `source_markdown_slug`), `take_proposals`, `open_loops`,
 //!   `page_aliases`, `slug_aliases` (by canonical slug), `eval_candidates.retrieved_slugs` (a slug a page of another covered
-//!   source still holds does not count), `context_volunteer_events` (`volunteer_events.rs`), `files` (detached, naming the
-//!   slug) and `write_gate_holds`;
+//!   source still holds does not count), `context_volunteer_events` (`volunteer_events.rs`), `files` (detached, naming the slug) and `write_gate_holds`;
 //! - `page_rows`: the page's chunks, versions, takes and timeline entries;
 //! - `fact_refs`: the decide proposals and the review queue and proposals that name a fact id;
 //! - `trust_proposals`, `page_requests`, `page_segment_texts`, `segment_texts` and `effect_payload`;
@@ -492,11 +491,14 @@ fn slug_key(
         "page_aliases" => crate::aliases::count_alias_rows(read, source_id, slug, false),
         "slug_aliases" => crate::aliases::count_alias_rows(read, source_id, slug, true),
         "eval_candidates.retrieved_slugs" => count_retrieved_slug(read, source_id, slug),
+        "files" => crate::raw_files::purge::count_detached_named(read, source_id, slug),
+        "write_gate_holds" => crate::trust::write_gate::count_for_slug(read, source_id, slug),
+        "mention_gazetteer_entries" => {
+            crate::mention_state::count_for_target(read, source_id, slug)
+        }
         "context_volunteer_events" => {
             crate::volunteer_events::count_for_slug(read, source_id, slug)
         }
-        "files" => crate::raw_files::purge::count_detached_named(read, source_id, slug),
-        "write_gate_holds" => crate::trust::write_gate::count_for_slug(read, source_id, slug),
         other => Err(invalid(format!("{op}: the {other} rows are not kept"))),
     }
 }

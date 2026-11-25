@@ -6,6 +6,8 @@
 //! readEdgeProposal, edgeClosureLanded, readEdgeProposalEvidence, readEdgeProposalHash,
 //! markEdgeProposalStale, setEdgeProposalStatus, rejectOpenEdgeProposal, markEdgeProposalUndone
 //! and markRevertedEdgeProposals.
+//! The six members of `gbrain edge-proposals` (listEdgeProposalCliRows and the rest) live in
+//! edge_proposals/cli.rs.
 //!
 //! Keys (every one starts with `keys::CONTRADICTIONS`, `Q`; contradictions.rs owns the sub-tags
 //! 0x01 to 0x03 of the same prefix):
@@ -43,6 +45,9 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod cli;
+pub use cli::EdgeProposalCliFilter;
 
 const PROPOSAL: u8 = 0x04;
 const PROPOSAL_BY_EVIDENCE: u8 = 0x05;

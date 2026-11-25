@@ -46,7 +46,7 @@ fn live(read: &dyn KvRead, source: &str, slug: &str) -> Result<bool> {
 }
 
 /// Every page record of `source_id`, deleted pages included, in page id order.
-fn source_pages(read: &dyn KvRead, source_id: &str) -> Result<Vec<PageRecord>> {
+pub(crate) fn source_pages(read: &dyn KvRead, source_id: &str) -> Result<Vec<PageRecord>> {
     let mut prefix = keys::text(keys::PAGE, &[source_id]);
     prefix.push(0);
     let mut out = Vec::new();

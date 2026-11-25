@@ -33,8 +33,6 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readClockMillisText', 'listLiveSourceIncarnations', 'readAttendanceWindow', 'listEmailAliasPages', 'readUploadSessionByRequest', 'readSourceIncarnationArchived', 'listEnabledLabelledOnlyMemberIds', 'readChatCensusRows',
   'readWhoCanReadRows', 'readPageAccessAllowed', 'readPageFolderRulesAllowed', 'countLineageClosingRules', 'readOpCheckpointCompletedKeys',
   'readForecastPredictions', 'readPredictionLedgerEvents', 'readTakeHorizonRows', 'readLatestTakeGrades', 'readBeliefCoverageEvents',
-  // The push-context log's usage read (engine-sql/volunteer-events.ts).
-  'listVolunteerUsage',
   // The mention pass's and the gazetteer, extract snapshot and explain reads (engine-sql/mention-pass.ts, mention-reads.ts).
   // readMentionPageRevisions and readMentionGenerations take row locks (FOR SHARE) only, so they stay reads.
   'readSegmentedPageSealed',
@@ -150,7 +148,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages',
   'listSubagentTimelineAppendCalls', 'listSubagentToolExecutions', 'listSubagentWriteOutcomes',
   'listSymbolTypesForName', 'listSynopsisSourceIds', 'listSynthesisCompletionKeys', 'listSynthesisPageBodies',
-  'listTakeIdsLeavingFence', 'listTakeNudges', 'listTakePreimages', 'listTakeRowsForPage', 'listTakeSupersessionCandidates',
+  'listTakeHoldersAtRows', 'listTakeIdsLeavingFence', 'listTakeNudges', 'listTakePreimages', 'listTakeRowsForPage', 'listTakeSupersessionCandidates',
   'listTimelineOrphanPages', 'listTrueUpRequests', 'listTrustAllowRuleRows', 'listTrustProposals',
   'listTrustScanRows', 'filterUnarchivedSourceIds', 'listUnattributedFacts', 'listUnbackedConversationRows',
   'listUnfencedFactRows', 'listUnlinkedConversationRows', 'listUnlinkedConversationSlugs',
@@ -164,7 +162,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'pageHasFrontmatterKey', 'pageHasTimelineEntries', 'pendingTrustProposalsFor', 'pickValidTimeEdition',
   'planFactPurgeIds', 'planFactPurgeTakes', 'probeIdleWork', 'probeLiveConsumerRows', 'probeNoopEmbeddingSettle',
   'probePurgeDerivations', 'projectionRebuildProgress', 'purgeSubjectPageLive', 'rankEntities',
-  'readAccessCredentials', 'readAccessMembers', 'readAccessTokenWriteGrant', 'readAdmissionRate',
+  'readAccessCredentials', 'listOwnerCredentialRows', 'readGitGapSourceRow', 'countGitGapLivePages', 'markTransactionReadOnly', 'listGitGapNewestPages', 'countGitGapUnreadFacts', 'readGitGapPageBatch', 'countGitGapFactsOnPages', 'countGitGapTimelineOnPages', 'readGitGapSourceRows', 'readRetrievalEvent', 'readVolunteerUsage', 'readPinnedQuestion', 'listPinnedQuestions', 'listSharedMemberMigrationRows', 'listMarkdownPageSlugs', 'listAdminClientRows', 'readAccessMembers', 'readAccessTokenWriteGrant', 'readAdmissionRate',
   'readAdmissionSource', 'readAgentClientSpend', 'readAudiencePrincipals', 'readBeliefHistoryRows',
   'readBodyManifestMeta', 'readBodyManifestOutline', 'readBodyManifestRows', 'readCallerPageAccess',
   'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions', 'readChronicleBackfillBatch',
@@ -209,7 +207,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readRetainedSources', 'readSegmentedVersionBodyBytes', 'readSourceCheckoutPath', 'readSourceChunkerVersion', 'readSourceIncarnation',
   'readSourceJobCounts', 'readSourceLocalPath', 'readSourceLocalPathForVerify', 'readSourceMembership',
   'readSourcePurgeFlags', 'readSourceRow', 'readSourcesNotReadable', 'readSourceState', 'readSourceWriteRow', 'readStoredConversationEntry',
-  'readStoredPageTier', 'readSupersessionReplacement', 'readTopologyChange', 'readTrustGeneration',
+  'readStoredPageTier', 'readSupersessionReplacement', 'readTopologyChange', 'readTrustGeneration', 'readUntakenWaitingJobs',
   'readVersionAttributions', 'readVoiceGateHealth', 'readWaitingQueueDepths', 'readWaitingScopeState',
   'readWakeDoctor', 'readWedgeSignals', 'readWithdrawalAnchor', 'readWithdrawalDiscovery',
   'readWriteAttributionNames', 'readWriteRequest', 'readWriteRequestById', 'readWriteRequestProgress',
@@ -228,15 +226,13 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'hasDrainableProjectionJob', 'hasSegmentedHistory', 'hasSegmentedPage', 'hasTakeClaim',
   'isDeferredReplacementHeld', 'listAcceptedTakeRemovals', 'listAccessReaderDrift', 'listAliasTargets',
   'listArchivedSourceIds', 'listArchivedSourceRows', 'listAtomFenceCandidates', 'listBeliefBaselinePending',
-  'listBeliefDriftCandidates', 'listClosedConsolidationTies', 'listLivePagesAtOrigin', 'listOrphanLifetimes',
-  'listSourceChangedPagesAfter', 'countPageCarryRows', 'readCycleListingInstant',
-  'readSoftDeletedPageAtOrigin', 'readSegmentedRewritePage',
-  'readSegmentedLivePage', 'listConceptInputRows', 'listConceptLineageRows', 'listConnectorFencePages',
+  'listBeliefDriftCandidates', 'listClosedConsolidationTies', 'listOrphanLifetimes',
+  'listSourceChangedPagesAfter', 'readCycleListingInstant', 'listConceptInputRows', 'listConceptLineageRows', 'listConnectorFencePages',
   'listConnectorSources', 'listContactRowPages', 'listDateBulletPages', 'listDriftConflictGroups',
   'listDuplicateFactRows', 'listEmbeddingCandidates', 'listExpiredArchivedSources', 'listFactsHomeCandidates',
   'listFactsOnValidDay', 'listFailedWriteRequests', 'listFenceFactRowNums', 'listFileTombstones',
   'listHeldHomeRows', 'listInlineVersionTexts', 'listLabelFactCandidates', 'listLegacyOriginPairs',
-  'listLiveOriginPages', 'listOriginClaimants', 'listLivePagesByFileName', 'listLivePagesBySourcePaths', 'listLivePagesSharingFrontmatterId', 'readMeetingPage', 'listAttendanceMatches',
+  'listLiveOriginPages', 'listOriginClaimants', 'listLivePagesByFileName', 'listLivePagesBySourcePaths', 'listLivePagesSharingFrontmatterId', 'readMeetingPage', 'listAttendanceMatches', 'listFreshnessTargets', 'listHostTopologyRows',
   'listLoopSuppressions', 'listManagedSyncFailureKeys', 'listManagedSyncOrphanRows', 'listManualLinkTransitions',
   'listMaterializedMarkerPages', 'listMuteRecheckThreads', 'listNamedVisibilityRows', 'listOriginTwinCounts',
   'listOriginTwinGroups', 'listOrphanBindings', 'listOrphanConnectorCheckpoints', 'listOrphanedFenceRows',
@@ -248,13 +244,14 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSegmentedLabelPages', 'listSegmentedPageSlugs', 'listSourceHoldRecords', 'listSourceManagedSyncFailures', 'listSourceOAuthClients',
   'listSplitFactsPages', 'listStaleAtoms', 'listStaleChunkVectors', 'listTakePointers',
   'listTakeRowNums', 'listTakeSupersedeReceipts', 'listTimelineHistoryPages', 'listTimelineMarkupRows',
-  'listTimelineVersionWitnesses', 'listTwinMergeLosers', 'listUnexpiredFactIds', 'listUntiledSegmentedPages',
+  'listTimelineVersionWitnesses', 'listTwinMergeLosers', 'listUnexpiredFactIds', 'listUntiledSegmentedPages', 'listUnreviewedSyncTombstones',
   'listUnverifiedArchivedSourceIds', 'listVersionsAfter', 'listVersionsByChangeReason', 'listWriteRequestsByRequestIds',
   'probeProjectionWindowCandidates', 'probeTornPages', 'readArchivedVersionBody', 'readBeliefFactsById',
   'readBeliefRedactions', 'readBeliefStateRows', 'readBeliefTombstones', 'readChunkKeepState',
   'readChunkRowsFingerprint', 'readConfigForUpdate', 'readContentReceiptBinding', 'readDriftConflictBounds',
   'readDriftConflictDetails', 'readEngineMigrationHistory', 'readFactSnapshots', 'readFactTrustTier',
-  'readJobPrincipal', 'readLatestBeliefCoverage', 'readLiveFactRowTier', 'readLivePageByPath',
+  'readJobPrincipal', 'readLatestBeliefCoverage', 'readLegacyBeliefTombstones', 'readLegacyClaimFingerprints',
+  'readLiveFactRowTier', 'readLivePageByPath',
   'readLivePagesByIds', 'readLoopFactState', 'readMaxFactRowNum', 'readMigrationPageColumns',
   'readMigrationRows', 'readMovedBeliefLifetimes', 'readOpCheckpointRecord', 'readOpenBeliefLifetimes',
   'readOriginIndexState', 'readPageDatabaseOnlyReason', 'readProjectionHead', 'readProjectionJobReason',
@@ -264,8 +261,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // Added when the sync and notifier lanes merged: each reads only, as its engine-sql function and the Rust store function it calls
   // show (test/rust-owner-ipc-read-classes.test.ts scans both). A cursor declare or fetch and a lock take no entry here.
   'countBrainLivePages', 'countChunksBySource', 'countCompanyPages', 'countGitHolds',
-  'countHeldBehindImport', 'countLivePagesBySource', 'countPeopleFolderPages', 'countRepoBoundSources',
-  'countWaitingJobs', 'hasAccessPolicyState', 'hasCompletedFactsExtraction', 'hasDeferralRoom',
+  'countHeldBehindImport', 'countIdentityDowngradeCarry', 'countLivePagesBySource', 'countPeopleFolderPages', 'countRepoBoundSources',
+  'countWaitingJobs', 'countWaitingJobsForNames', 'hasAccessPolicyState', 'hasCompletedFactsExtraction', 'hasDeferralRoom',
   'hasNotifierCoverage', 'hasPendingFactsExtraction', 'holdsNotifierLease', 'listAccessCoverage',
   'listAccessPolicySources', 'listAccessPrefixSlugs', 'listAccessRules', 'listAttendedOriginSlugs',
   'listKeysReadingSource', 'listLinkPageMetadataForSlugs', 'listNotifierHostSourceRows', 'listPageTrustTiersByKey',
@@ -276,11 +273,13 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readDueWantedMarkers', 'readFirstDue', 'readGitHoldCodeCountRows', 'readGitHoldListingRows',
   'readGitHoldRecords', 'readGitHoldReportInputs', 'readGitHoldRetryRequest', 'readGitHoldRow',
   'readGitImageHoldCountRows', 'readIdentityDowngradeRows', 'readLinkTargetPages', 'readLiveAccessToken',
-  'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncJobId', 'readLiveSyncPassRows',
+  'readLiveIdentityHolders', 'readLivePageTypes', 'readLiveSlugs', 'readLiveSyncJobId', 'readLiveSyncPassRows', 'readIdentityDowngradeOldPage', 'readIdentityRemedySide',
   'readManagedSyncCursorHeader', 'readManagedSyncFailureRows', 'readNamedEntitySlugs', 'readNotifierLease',
   'readNotifierSources', 'readNotifierStatusRows', 'readOpCheckpointRecords', 'readOrphanedManagedSyncFailureRows',
   // Link preparation's slug reads (engine-sql/link-slug-reads.ts, link_slug_reads.rs): SELECTs and a store read only.
   'readLiveSlugAliases', 'readSourceSlugProbe',
+  // A scalar slug read's stored-spelling scan (engine-sql/slug-spellings.ts, slug_spellings.rs): a SELECT and a store read only.
+  'readStoredSlugSpellings',
   // The federation warning's exposed-pages read (engine-sql/federation-exposure.ts, federation_exposure.rs): a SELECT and a store read only.
   'readFederationExposedPages',
   'readOwnedLinks', 'readOwnerHostBinding', 'readPageRevisionWriter', 'readPageSizeRows',
@@ -305,6 +304,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readFenceOriginGone', 'readGenerationActivationState', 'readGenerationFenceBlocks', 'readGenerationItemsByIds',
   'readGenerationPageRows', 'readGenerationRestored', 'readGenerationValve', 'readHeldGenerationContext',
   'readHeldGenerationProposal', 'readLiveGenerationId', 'readLiveGenerationRow', 'readTakePreimages',
+  // the write-time chronicle decision's reads (engine-sql/chronicle-ledger.ts) and a page write's pre-admission reads
+  // (engine-sql/page-mutation-reads.ts): SELECTs only
+  'countRecentChronicleReservations', 'hasPendingAutoChronicleRow', 'readChronicleRow', 'readPageTruthLead', 'readStoredPageHead', 'readVersionSourcePath',
   // Added when the batch 10 lanes merged (cli-members-next and the lanes after it): each reads only (a row-lock read included),
   // as its engine-sql function and the Rust store function it calls show (test/rust-owner-ipc-read-classes.test.ts scans both).
   'accessTokenLive', 'countAtomExtractionBacklog', 'countChunkColumnCoverage', 'countClaimLiftedRows',
@@ -340,7 +342,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listOntologyStreamSlugs', 'listOpenIdentityDowngrades', 'listOpenPassCheckpointBlockers', 'listOrphanBindingRows',
   'listOrphanGenerationCandidates', 'listOrphanWorkspaceSources', 'listOrphanedAliasCounts',
   'listOutstandingHolders', 'listOversizedPages', 'listOwnerBindings', 'listOwnerMemberLinks',
-  'listPageRefsForSlugs', 'listPageTypePairs', 'listPagesNamingReader', 'listPagesReadByNobody', 'listParkedEffects',
+  'listPageRefsForSlugs', 'readClaimWithdrawal', 'listEdgeProposalCliRows',
+  'listAppliedEdgeProposalIds', 'readEdgeProposalSourceId', 'listPageTypePairs', 'listPagesNamingReader', 'listPagesReadByNobody', 'listParkedEffects',
   'listParkedGroupRows', 'listPassAdmittedReceipts', 'listPendingRoster', 'listPersistentWriterContention',
   'listPrivilegedDcrClients', 'listProjectionDrainPreview', 'listPurgeParks', 'listRawOnlyRules',
   'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings', 'countAccessFolderDrift',
@@ -354,9 +357,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listTruncatedMarkdownBodies', 'listTrustClaimTargets', 'listTrustColumns', 'listUnboundSourcePages',
   'listUnfinishedManagedSyncCursors', 'listUnpricedDerivationModels', 'listUnreadablePrivacyHoldIds',
   'listUnretiredPagesBySlugPattern', 'listUntiledSegmentedPageRows', 'listVisibilityCandidatePages',
-  'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'lockActiveAccessTokens',
+  'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'listWorktreeMembers', 'lockActiveAccessTokens',
   'lockAllSourceRows', 'lockLegacyAccessTokens', 'lockSharedSkillBrainId', 'matchHeadStems',
-  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals',
+  'oauthClientHoldsAuthorization', 'oauthClientLive', 'originIndexPresent', 'pagePrefixSamples', 'pageTypeTotals', 'listHandoverReaderPages', 'listHandoverPrefixPages', 'countMemberPage', 'countMemberPageFacts', 'countMemberBoundCredentials', 'readLastUndoneHandoverId', 'readHandoverRow', 'listMemberSourceRows', 'countLivePagesAtPathPrefix', 'probeUntypedPathPrefix', 'hasLabelledOnlyMemberAmong', 'readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages',
   'pingStore', 'probePageTypes', 'readAccessGroups', 'readAccessMemberLink', 'readAccessTokenAttest', 'readAccessTokenMemberGrant',
   'readAccessTokenReceiptGrant', 'readActiveAccessTokenByHash', 'readActiveAccessTokenGrant', 'readAdmissionSample',
   'readAtomProvenanceCounts', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions', 'readBriefEditPage', 'readBriefEmailAliasPages', 'readBriefEntityPages',
@@ -388,6 +391,16 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readSyncAdmissionSettingRow', 'readTakeRowTrust', 'readTakeTrustRef', 'readTerminalFailureGroups',
   'readTextMentionPages', 'readTokenLifetimeClampedClients', 'readTrustScanCeilings', 'readTrustScanCursor',
   'readWorktreeManifest', 'readWriteRequestsByRequestId', 'readWriterDiagnosticRows', 'readWriterStatusRows',
+  // A page publication's fence projection and fence guard reads, the tier-only change's reads and the unwithdrawn-facts
+  // page body read (engine-sql/fence-projection.ts, trust-fence.ts, row-tier.ts, unwithdrawn-restore.ts).
+  'listQuotedTakeRows', 'listPageFenceFactCells', 'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums',
+  'listOccupiedFenceRowNums', 'listTrustedPrivateCopies', 'readLiveFenceFactAt', 'listFactsAboveWriter',
+  'readRowTrustTier', 'readTierProjectionPage', 'readPageInlineBody',
+
+  // The repair applies' rechecks (engine-sql/repair-applies.ts).
+  'listLiveDuplicateRows', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'readSourceCloneRow', 'readPageVersionRow', 'hasDatabaseOnlyClaim', 'readAtomGeneration', 'listPageAccessKeys',
+  'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages', 'listOpenTwinRows', 'listOpenFactsWindow', 'countOpenFactReasons',
+  'listLabelledPages', 'listLiveLabelRows', 'listClearDependents', 'listContextualRetrievalModes', 'listUnembeddedChunkPages',
   // The page purge port's own typed reads (each reads only: its engine-sql function and the store function it calls):
   'countPageCascadeRows', 'countPageManifestRows', 'factsOrAliasesMayMatch', 'isConceptStillHeld',
   'listCatalogForeignKeys', 'listCatalogRelations', 'listCheckoutFiles', 'listConceptIncomingLinks', 'listDerivationClaimForms', 'listHorizonScanRows',
@@ -412,6 +425,8 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // engine-sql functions and the Rust store functions they call show (test/rust-owner-ipc-read-classes.test.ts scans both).
   'countReadersNoncanonicalHolds', 'listAtomBacklogSourceIds', 'listReaderCandidatePages', 'listRetryTrackedEffects',
   'listRevivalPages', 'listSourceRequestsByRequestId', 'lockEffectRow', 'readHeldHitRows', 'readSourceRequestById',
+  // The segmented write path's reads (engine-sql/segmented-writes.ts). lockSegmentedGenerationPage takes a row lock only.
+  'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'readSegmentedRewritePage', 'lockSegmentedGenerationPage', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'listLiveEmbedSegments', 'listSegmentChunkRows',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -425,6 +440,7 @@ const nothingLock = 'nothing: the lock is released when the call ends, so runnin
 
 /** Typed writes and the read that confirms each. */
 export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> = {
+  invalidateQueryCacheRows: 'nothing: the delete removes cached search results only, so running it again deletes none of what the first run removed',
   // repair-rust batches 6b and 6c: the twin merge's moves, the rename alias, the segmented chunk retire, the code edge clear, the secret store writes and
   // the secret-spans page rewrites. Each is one store write (`self.write`).
   moveTwinRelationships: 'getLinks and getBacklinks for the survivor page (the twin\'s derived links and transitions are on it)',
@@ -458,14 +474,14 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   // embed --stale (engine-sql/embed-stale-work.ts): the content-drift sweep's cursor row and one drift batch.
   lockContentDriftState: 'getConfig for that key (the row holds the initial state or a later one)',
   invalidateContentDriftChunks: 'countStaleChunks for that source (each chunk it dropped a vector from counts as stale)',
-  // The push-context log's writes (engine-sql/volunteer-events.ts).
-  insertVolunteerEventRows: 'listVolunteerChannels for those sources (a row of a page that exists is counted in the last 7 days)',
-  deleteVolunteerEventsOlderThan: 'listVolunteerUsage for the sources (no row older than the window is left)',
   // The mention pass's writes (engine-sql/mention-pass.ts). The two advisory locks take nothing on the rust store.
   storeSegmentDerivationsIfLive: 'readSegmentDerivations for that page (the rows are there only when the page was live at that generation)',
   writeMentionIndexStatus: 'readMentionStatusStates and readMentionPolicyFingerprints for that source (a bumped generation shows in readMentionGenerations)',
   lockMentionSources: nothingLock,
   lockMentionEntries: nothingLock,
+  // The takes publication's prepare step (engine-sql/takes-reads.ts): each sets a value to the one given.
+  stampTakeResolvedAt: 'nothing: the stamp sets resolved_at to the value given, so running it again writes the same value',
+  recordTakeHoldersUsed: 'nothing: it sets the request\'s recorded take holders to the list given, so running it again writes the same list',
   // The semantic query-cache clear (engine-sql/query-cache.ts). The rust store keeps no query cache, so it clears nothing.
   deleteSourceMentionLinks: 'listMentionLinkOrigins for that source (no plain mention link left on the origins it deleted)',
   clearMentionSourceIndex: 'listGazetteerEntryKeys and listDerivedAliasRows for that source (both empty)',
@@ -491,6 +507,14 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   writePageViewDigest: nothingDigest,
   deleteRewrittenSegmentDerivations: 'readSegmentDerivations for that page',
   deleteUnstagedSegmentChunks: 'getChunks for that page generation',
+  // The segmented write path's writes (engine-sql/segmented-writes.ts).
+  setMaterializingRevision: "nothing: the setting lasts only for the call's transaction, so running it again repeats no write",
+  restorePageUpdatedAt: 'readSegmentedRechunkPage for that page (updated_us is the restored value)',
+  restorePageDeletedAt: 'readSegmentedRewritePage for that page (deleted_at is the restored value)',
+  splitManifestGeneration: 'readManifest for that page and staging',
+  publishRebuiltGeneration: 'readManifest for that page at that generation',
+  setSegmentedVersionHash: 'getVersions for that page (the segmented version rows of that generation carry the hash)',
+  installSegmentedVectors: 'readSegmentChunkInputHashes for that page at the chunk indexes sent (a row took its vector when its embedding_input_hash equals the hash installed; a count of rows without a vector cannot show a re-install of already-embedded rows, which is what --all sends)',
   deletePurgeDecideProposals: 'probePurgeDerivations for that purge',
   deletePurgeOpenLoops: 'probePurgeDerivations for that purge',
   deletePurgeReviewProposals: 'probePurgeDerivations for that purge',
@@ -583,6 +607,18 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   repointSupersededToKept: 'listActiveFactsForEntity for that fact\'s entity',
   restoreOntologyFact: 'listActiveFactsForEntity for that fact\'s entity',
   setConsolidatedFactValidUntil: 'listActiveFactsForEntity for that fact\'s entity',
+  // The repair applies' writes (engine-sql/repair-applies.ts).
+  restoreConsolidationTie: 'listClosedConsolidationTies for that source (a reopened fact is no longer a closed tie)',
+  supersedeDuplicateFacts: 'listLiveDuplicateRows for those facts (a superseded copy no longer reads live)',
+  linkStruckDuplicateFacts: 'listFactRowsByIds for those facts (their superseded_by names the kept fact)',
+  restoreExtractorFact: 'listActivePositionedFactIds for that fact (a restored fact is active at its row)',
+  moveFactClaimDates: 'listFactsOnValidDay for that source and day (a moved fact no longer reads on the bulk day)',
+  detachFenceRowFacts: 'hasDatabaseOnlyClaim for that fact\'s claim (a detached fact is database-only)',
+  lockApprovedFacts: nothingLock,
+  tightenDatabaseFactVisibility: 'listWorldFactsFromPrivateSources for those facts (a tightened fact is no longer world)',
+  expireApprovedFacts: 'listActivePositionedFactIds for those facts (an expired fact is no longer active)',
+  // Additive: a rerun bumps the generation once more, which only re-keys the page's next atom extraction (a rebuildable run key).
+  recordAtomGenerationBump: 'readAtomGeneration for that page (the generation moved on)',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',
   completeSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   failSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
@@ -638,6 +674,8 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   lockReconcileRevision: nothingLock, lockSourceRow: nothingLock, lockSourceShared: nothingLock,
   lockWriteRequest: nothingLock, lockWriteRequestsById: nothingLock, shareLockWriteCredential: nothingLock,
   logChatUsage: 'readChatUsage',
+  insertAccessReadLogRows: 'readAccessReadLog over the batch window (the rows are there only when the insert committed)',
+  pruneAccessReadLog: nothingPurge,
   logMcpRequest: 'readMcpLifetimeUsage', pruneMcpRequestLogBatch: 'readMcpLifetimeUsage',
   markEdgeProposalStale: 'readEdgeProposal for that proposal',
   markEdgeProposalUndone: 'readEdgeProposal for that proposal',
@@ -645,6 +683,9 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   recordEdgeProposal: 'readEdgeProposal for that proposal',
   rejectOpenEdgeProposal: 'readEdgeProposal for that proposal',
   setEdgeProposalStatus: 'readEdgeProposal for that proposal',
+  markEdgeProposalDated: 'readEdgeProposal for that proposal',
+  deleteEdgeProposalError: 'listEdgeProposalCliRows for that proposal: an error row already gone is not deleted again',
+  deleteHeldEdgeProposalErrors: 'listEdgeProposalCliRows for the held proposals: an error row already gone is not deleted again',
   markNeedsRederive: 'pageAwaitsRederive for that page',
   moveFactToPage: 'listFactsForPage for the source and the target page',
   openPageEmbeddingHold: 'readPageEmbeddingBudget for that page',
@@ -680,6 +721,11 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   renameSource: 'getSource for that source id',
   setSourceContextualMode: 'getSource for that source id',
   writeOpCheckpointRecords: 'readOpCheckpointRecords for those fingerprints',
+  applyRetrievalRatings: 'readFeedbackStatus (the ratings and weights a batch moved, and a rerun of a stored rating moves nothing)',
+  insertRetrievalEvents: 'readRetrievalEvent for those events',
+  insertVolunteerEvents: 'readVolunteerUsage for those sources (a rerun logs the events again, and the log is telemetry the 90-day purge trims)',
+  deleteVolunteerEventsOlderThan: 'readVolunteerUsage for the sources (no row older than the window is left)',
+  insertPinnedQuestion: 'readPinnedQuestion for that source and slug',
   writeSyncAdmissionStamp: 'readOpCheckpointRecords for that fingerprint',
   purgeStaleCheckpoints: nothingPurge,
   purgeStaleAppliedCaptures: nothingPurge,
@@ -819,7 +865,6 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   insertBeliefRedaction: 'readBeliefRedactions',
   releaseBeliefRedactions: 'readBeliefRedactions',
   insertBeliefEvents: 'readBeliefStateRows',
-  restorePageDeletedAt: 'readSegmentedRewritePage',
   markBeliefCommits: 'readBeliefStateRows',
   endBeliefLifetime: 'readOpenBeliefLifetimes',
   mintBeliefLifetime: 'readOpenBeliefLifetimes',
@@ -933,4 +978,13 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   deletePurgedSlugStoreRows: 'nothing: it deletes the rows of those slugs in each slug store, so running it again deletes nothing more',
   deletePurgedSlugHolds: 'nothing: it deletes the held writes of those slugs and the receipts of those holds, so running it again deletes nothing more',
   carryConceptIncomingLinks: 'listConceptIncomingLinks for that page',
+  // A page publication's fence projection and fence guard writes (engine-sql/fence-projection.ts, trust-fence.ts).
+  expireFenceFacts: 'listPageFenceFactCells for that page (an expired row holds no row number)',
+  refreshFenceFactFields: 'readFactPreimages for the page\'s fact ids at those row numbers',
+  detachFenceFactRows: 'readFactPreimages for those fact ids (their row numbers)',
+  moveGuardedFenceRows: 'readFactPreimages for those fact ids (their row numbers and visibility)',
+  clearChangedTakeResolutions: 'listTakes for that page (the resolution columns)',
+  writeFenceTakeResolutions: 'listTakes for that page (the resolution columns)',
+  // A tier-only row change (engine-sql/row-tier.ts).
+  setRowTrustTier: 'readRowTrustTier for that row',
 };

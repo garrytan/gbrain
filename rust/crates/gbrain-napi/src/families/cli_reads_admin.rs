@@ -1,4 +1,4 @@
-//! The admin operations' page reads (`listVisiblePageSlugs`, `readPagesForVersionHistory`):
+//! The admin operations' page read (`listVisiblePageSlugs`):
 //! `gbrain_store::cli_reads::admin_reads` (rust/docs/store/admin-reads.md).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
@@ -30,15 +30,5 @@ impl Brain {
                 .transpose()?;
             s.list_visible_page_slugs(&slugs, source_ids.as_deref(), policy.as_ref())
         })
-    }
-
-    /// `readPagesForVersionHistory(pageIds)`: resolves `{ id, slug, source_id, frontmatter }` per page.
-    #[napi]
-    pub fn read_pages_for_version_history<'env>(
-        &self,
-        env: &'env Env,
-        page_ids: Vec<i64>,
-    ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_pages_for_version_history(&page_ids))
     }
 }

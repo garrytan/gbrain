@@ -111,8 +111,8 @@ the shape `searchTakes` returns, with the cosine as `score`.
   drops per page before ranking (`activationSuppressedSql`, `trust::activation_suppressed`), so a limit counts only
   kept pages. A flag in another family, or on a page above `agent_written`, suppresses nothing.
 - **Take options.** The store applies `exclude_private`, `min_trust` and `suppress_flagged` to
-  `searchTakesVector`. The TypeScript member (`store-members/vectors.ts`) still refuses `excludePrivate`,
-  `eligibility.floor` and `eligibility.suppressFlagged` with `engine_capability_missing` until it sends them.
+  `searchTakesVector`; the TypeScript member (`store-members/vectors.ts`) sends `excludePrivate`,
+  `eligibility.floor` and `eligibility.suppressFlagged` as those three.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
   whose config sets `search_embedding_column` or `embedding_columns`, refuse with

@@ -22,7 +22,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
-import type { JsonObject, SegmentedPageMeta } from '../page-body/types.ts';
+import type { SegmentedPageMeta } from '../page-body/types.ts';
 import type { PreparedSegmentedBody, SegmentChunkingContext, SegmentedLivePage, SegmentedStagingOwner } from '../page-body/ingest.ts';
 import { materializeSegmentedBody, prepareSegmentedBody, segmentWriteScope, stringBodyFlags, stringRegion } from '../page-body/ingest.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';

@@ -1,15 +1,13 @@
 /**
- * BrainEngine parity — the cycle, identity-downgrade, belief and segmented-write reads that ran through `executeRaw` and are
- * typed members now (src/core/engine-sql/cycle-reads.ts and segmented-rewrite.ts).
+ * BrainEngine parity — the cycle, belief and segmented-write reads that ran through `executeRaw` and are typed members now
+ * (src/core/engine-sql/cycle-reads.ts and segmented-writes.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1)
  *    each member answers the same: the cycle's changed-page window (live pages after a cursor, by time then slug bytes), the
- *    identity-downgrade page reads (the latest soft-deleted page of a file, the live pages at a path, what a carry would
- *    move), the belief ledger's orphan lifetimes, and a segmented page's write statements (the rewrite's page read and
+ *    belief ledger's orphan lifetimes, and a segmented page's write statements (the rewrite's page read and
  *    deleted_at restore and the live page) over an inline page that holds no segmented rows.
- *  - Regression: each of these was raw SQL, so a Rust brain refused the cycle window, the identity-downgrade record and the
- *    segmented fence rewrite.
+ *  - Regression: each of these was raw SQL, so a Rust brain refused the cycle window and the segmented fence rewrite.
  *  - Why existing coverage misses it: the cases of collate-belief-cycle-walks, tie-break-stale-orphan-edge-downgrade and
  *    forget-whole reach the members through their callers; none calls one directly or covers its edges (an unknown source,
  *    a NUL byte, an empty list).
@@ -44,33 +42,6 @@ describe('engine parity: cycle and sync reads', () => {
       after: after.map(r => r.slug), limited: (await engine.listSourceChangedPagesAfter('default', null, '', 2)).map(r => r.slug),
       otherSource: await engine.listSourceChangedPagesAfter('no-such-source', null, '', 10), instant: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(instant ?? '') };
     expect(answer).toEqual({ slugs: ['a-z', 'a0', 'ab'], stampsAlike: 1, micros: true, after: ['a0', 'ab'], limited: ['a-z', 'a0'], otherSource: [], instant: true });
-    return answer;
-  });
-
-  parityTest('the identity-downgrade reads name the old file\'s latest soft-deleted page, the live pages at a path and a carry\'s rows', {
-    methods: ['putPage', 'transaction', 'softDeletePage', 'addLink', 'readSoftDeletedPageAtOrigin', 'listLivePagesAtOrigin', 'countPageCarryRows'],
-  }, async (engine) => {
-    const ids: Record<string, number> = {};
-    await engine.transaction(async tx => {
-      for (const slug of ['notes/m', 'notes/c']) {
-        ids[slug] = (await tx.putPage(slug, note(slug, { source_path: 'notes/old.md' }))).id;
-        await tx.softDeletePage(slug, { sourceId: 'default' });
-      }
-    });
-    ids['notes/bare'] = (await engine.putPage('notes/bare', note('bare'))).id;
-    await engine.softDeletePage('notes/bare', { sourceId: 'default' });
-    ids['notes/b'] = (await engine.putPage('notes/b', note('b', { source_path: 'notes/new.md' }))).id;
-    await engine.putPage('notes/a', note('a'));
-    await engine.addLink('notes/b', 'notes/a', '', 'mentions');
-    await engine.addLink('notes/a', 'notes/b', '', 'mentions');
-    await engine.addLink('notes/b', 'notes/b', '', 'mentions');
-    const old = await engine.readSoftDeletedPageAtOrigin('default', 'notes/old.md', 'notes/none');
-    const bare = await engine.readSoftDeletedPageAtOrigin('default', 'elsewhere.md', 'notes/bare');
-    const answer = { oldSlug: old?.slug, oldIsLowest: old?.id === Math.min(ids['notes/m']!, ids['notes/c']!), bare: bare?.slug,
-      none: await engine.readSoftDeletedPageAtOrigin('default', 'nothing.md', 'nothing'),
-      live: (await engine.listLivePagesAtOrigin('default', 'notes/new.md')).map(r => r.slug), noLive: await engine.listLivePagesAtOrigin('default', 'notes/old.md'),
-      carry: await engine.countPageCarryRows('default', 'notes/b', ids['notes/b']!) };
-    expect(answer).toEqual({ oldSlug: 'notes/m', oldIsLowest: true, bare: 'notes/bare', none: null, live: ['notes/b'], noLive: [], carry: { facts: 0, links: 3, aliases: 0 } });
     return answer;
   });
 

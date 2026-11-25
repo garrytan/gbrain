@@ -10,13 +10,7 @@ export interface SharedMemberMigration {
 }
 
 export async function inspectSharedMemberMigration(engine: BrainEngine, sourceId: string, incarnation: string): Promise<SharedMemberMigration[]> {
-  const rows = await engine.executeRaw<{ installation_id: string; adapter: string; epoch: string | number; active: boolean;
-    approved_incarnation: string | null; desired_view: string | null; acknowledged_view: string | null; stage: string | null }>(
-    `SELECT m.installation_id,m.adapter,m.epoch,m.active,m.follow_policy->'sources'->>$1 AS approved_incarnation,
-      m.desired_view,m.acknowledged_view,
-      (SELECT b.evidence->>'stage' FROM shared_skill_delivery_batches b WHERE b.installation_id=m.installation_id
-        AND b.epoch=m.epoch AND b.sequence=m.acknowledged_sequence AND b.acknowledged_at IS NOT NULL LIMIT 1) AS stage
-    FROM shared_skill_members m WHERE m.follow_policy->'sources' ? $1 ORDER BY m.adapter COLLATE "C",m.installation_id LIMIT 4096`, [sourceId]);
+  const rows = await engine.listSharedMemberMigrationRows(sourceId);
   return rows.map(row => {
     const state: SharedMemberMigration['state'] = !row.active ? 'left' : row.approved_incarnation !== incarnation ? 'source_changed'
       : row.desired_view !== row.acknowledged_view ? 'refresh_pending' : row.stage === 'installed' ? 'delivery_reported' : 'joined';

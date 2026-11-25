@@ -73,8 +73,9 @@ The store stamps a page when it is written, as the trigger `pages_access_stamp_f
 under a key that held no record of the same page (an insert, a rename or a move) takes the `0x05` rule ids that cover
 it now when its source has access state, and none otherwise, in the same write (`FlaggingWriter`,
 `access_policy::stamp_page_put`). A put over the same page keeps its ids, as an UPDATE that names no slug, source or
-stamp column does. So `pages_restamped` counts the same pages as on PGLite and Postgres. What a caller can read does
-not depend on the stamps: the store judges each read against the rules it holds.
+stamp column does. So `pages_restamped` counts the same pages as on PGLite and Postgres. What a caller can read
+depends on the stamps only for an id whose rule was removed and not yet restamped (below): otherwise the store judges
+each read against the rules it holds.
 
 The store has no row-level security, so `readFolderAccess` never returns the `'!unreadable'` row and the unreadable
 part of `isFolderRestricted` is always false.
@@ -103,6 +104,16 @@ caller reads:
 One difference remains: PGLite stamps `folder_rule_ids` when a page is written and changes it only on a restamp, and
 the store judges a page against the rules it holds when the read runs. The two agree after `restampSource`, which is
 the state a finished policy change leaves.
+
+The one window where that difference could open a page is a rule removed before its restamp: SQL keeps the deleted id
+in `folder_rule_ids`, which no caller satisfies, so the page stays hidden until the restamp. The store closes it the
+same way. `facts::privacy::stamped_rules`, the one helper every privacy read takes its folder rules from (the readers
+and folder test, the short open form, the origin tests and the owner read rule), also returns a retired rule for each
+id in the page's kept `0x05` record that is no longer a live rule of its source (`access_policy::retired_rules`): no
+readers, so nobody satisfies it, and `covers_derived` true, so the origin tests close too, as `gbrain_access_lineage_rules`
+keeps a stamped id whose rule is gone ("fail closed"). A page with no `0x05` record keeps the live rules alone, and a
+retired rule only ever hides a page, never shows one
+(`a_page_stamped_with_a_removed_rule_stays_hidden_until_the_restamp`; parity case in `access-policy.test.ts`).
 
 The folder test reads the store's rules and pending prefixes, and the policy's `satisfiedRuleIds` and `folderCoverage`
 (both default to empty). `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).

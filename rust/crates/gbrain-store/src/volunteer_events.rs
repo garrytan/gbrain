@@ -1,71 +1,62 @@
-//! Context-volunteer events: the `context_volunteer_events` table of the SQL engines (migration v117),
-//! the log of every page the brain volunteered (`src/core/context/volunteer-events.ts`,
-//! `src/core/engine-sql/volunteer-events.ts`, `rust/docs/store/volunteer-events.md`).
+//! Volunteered-page events: the `context_volunteer_events` table of the PGLite engine, as the members of
+//! `src/core/engine-sql/volunteer-events.ts` run it (rust/docs/store/volunteer-events.md).
 //!
-//! Members: `insertVolunteerEventRows`, `listVolunteerChannels`, `listVolunteerUsage` and
-//! `deleteVolunteerEventsOlderThan`; the page purge's scrub is `deletePurgedNameStoreRows`
-//! (`delete_volunteer_events_for_slugs`) and its receipt probe is the `context_volunteer_events` store probe
-//! (`count_for_slug`).
+//! Members: insertVolunteerEvents, listVolunteerChannels, readVolunteerUsage, deleteVolunteerEventsOlderThan; the page
+//! purge's name-store scrub is `deletePurgedNameStoreRows` (`delete_volunteer_events_for_slugs`) and its receipt probe is
+//! the `context_volunteer_events` store probe (`count_for_slug`).
 //!
-//! Keys (family `META`, name `volunteer_event`; text parts joined with `0x00`):
-//! `M volunteer_event \0 source \0 slug \0 <id, 20 digits>` holds an [`EventRecord`]. The id is the
-//! table's `BIGSERIAL`, so a slug's rows list in the order they were written.
+//! Keys (every record starts with `keys::TELEMETRY`, `a`):
+//! - `a 0x0C id BE8 -> VolunteerRecord`: one event, its id the `BIGSERIAL`.
+//! - `a 0x0D -> last id` (JSON integer): the id sequence.
 //!
-//! A row names a page by source and slug outside any foreign key, and its rationale quotes the matched
-//! name, so every hard delete scrubs it as the SQL engines do (`scrubPurgedNameStores`, the source delete's
-//! `scrub_context_volunteer_events`): `scrub_slugs` runs after `delete_pages` and `purge_deleted_pages`, and
-//! `remove_source_rows` runs in `cascade::remove_source_rows`. A soft delete keeps the rows, because
-//! `restore_page` can bring the page back. `purge_probe_rows` is the row set a purge verification's inventory
-//! probe searches.
+//! A page is "used" when its
+//! retrieval record (`page_ops/retrievals.rs`) is later than the event, as `GREATEST(p.last_retrieved_at,
+//! r.last_retrieved_at) > e.volunteered_at` reads it: a Rust page has no separate column.
 
-use std::collections::BTreeMap;
-
+use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::kv::{KvRead, scan_prefix};
+use crate::links::no_nul;
+use crate::{Store, get_json, keys, page_ops, pages, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
-use crate::env::iso;
-use crate::error::{INVALID_ARGUMENT, Result, StoreError};
-use crate::facts::purge_probe::{ProbeCell, ProbeRow};
-use crate::kv::{KvRead, KvWrite, collect_prefix};
-use crate::pages::read_page;
-use crate::{Store, keys, put_json};
-
-const NAME: &str = "volunteer_event";
-const NEXT_ID: &str = "next_volunteer_event_id";
-const OP_INSERT: &str = "insertVolunteerEventRows";
+const OP_INSERT: &str = "insertVolunteerEvents";
 const OP_RETENTION: &str = "deleteVolunteerEventsOlderThan";
-/// One day of PGLite's `interval '1 day'`. PGLite runs in `Etc/GMT0`, so a day is always 24 hours.
 const DAY_US: i64 = 86_400_000_000;
-/// `VOLUNTEER_SCOPED_SQL`'s window: `volunteered_at > now() - interval '7 days'`.
-const CHANNEL_WINDOW_US: i64 = 7 * DAY_US;
 
-fn key(source: &str, slug: &str, id: u64) -> Vec<u8> {
-    keys::text(keys::META, &[NAME, source, slug, &format!("{id:020}")])
+fn event_prefix() -> [u8; 2] {
+    [keys::TELEMETRY, keys::TELEMETRY_VOLUNTEER_EVENT]
 }
 
-fn prefix(parts: &[&str]) -> Vec<u8> {
-    let mut all = vec![NAME];
-    all.extend_from_slice(parts);
-    let mut key = keys::text(keys::META, &all);
-    key.push(0);
-    key
+fn sequence_key() -> [u8; 2] {
+    [keys::TELEMETRY, keys::TELEMETRY_VOLUNTEER_SEQUENCE]
 }
 
-fn nul(member: &str) -> StoreError {
-    StoreError::new(
-        INVALID_ARGUMENT,
-        format!("{member}: invalid byte sequence for encoding \"UTF8\": 0x00"),
-    )
+/// One `context_volunteer_events` row; `volunteered_at` is microseconds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct VolunteerRecord {
+    source_id: String,
+    slug: String,
+    confidence: f64,
+    match_arm: String,
+    rationale: String,
+    channel: String,
+    session_id: Option<String>,
+    turn: Option<i32>,
+    volunteered_at: i64,
 }
 
-/// One row to insert: the columns `insertVolunteerEvents` writes (`volunteered_at` defaults to now).
+/// One volunteered page of `insertVolunteerEvents`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VolunteerEventInput {
     pub source_id: String,
     pub slug: String,
     pub confidence: f64,
     pub match_arm: String,
+    #[serde(default)]
     pub rationale: String,
+    #[serde(default = "default_channel")]
     pub channel: String,
     #[serde(default)]
     pub session_id: Option<String>,
@@ -73,202 +64,114 @@ pub struct VolunteerEventInput {
     pub turn: Option<i32>,
 }
 
-/// One `context_volunteer_events` row.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct EventRecord {
-    pub id: u64,
-    pub source_id: String,
-    pub slug: String,
-    pub confidence: f64,
-    pub match_arm: String,
-    pub rationale: String,
-    pub channel: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub turn: Option<i32>,
-    pub volunteered_at_us: i64,
-}
-
-fn all_events(read: &dyn KvRead) -> Result<Vec<EventRecord>> {
-    Ok(events_under(read, &[])?
-        .into_iter()
-        .map(|(_, r)| r)
-        .collect())
-}
-
-/// The rows under `parts` (none: every row; a source; a source and a slug), with their keys.
-fn events_under(read: &dyn KvRead, parts: &[&str]) -> Result<Vec<(Vec<u8>, EventRecord)>> {
-    let mut out = Vec::new();
-    for (key, value) in collect_prefix(read, &prefix(parts), false, usize::MAX)? {
-        out.push((key, serde_json::from_slice::<EventRecord>(&value)?));
-    }
-    Ok(out)
-}
-
-/// Deletes the rows named by `parts` (a source, or a source and a slug); how many went.
-fn delete_under(tx: &mut dyn KvWrite, parts: &[&str]) -> Result<u64> {
-    if parts.iter().any(|p| p.contains('\0')) {
-        return Ok(0);
-    }
-    let mut removed = 0;
-    for (key, _) in events_under(&*tx, parts)? {
-        tx.delete(&key)?;
-        removed += 1;
-    }
-    Ok(removed)
-}
-
-/// A source delete removes every row of the source (`scrub_context_volunteer_events`).
-pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
-    delete_under(tx, &[source_id]).map(|_| ())
-}
-
-/// The scrub of a hard page delete (`scrubPurgedNameStores`): the rows of each slug of the source.
-pub(crate) fn scrub_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -> Result<u64> {
-    let mut removed = 0;
-    for slug in slugs {
-        removed += delete_under(tx, &[source_id, slug])?;
-    }
-    Ok(removed)
-}
-
-/// The rows a purge verification's inventory probe searches (`crate::facts::purge_probe`): the inventory
-/// columns of `context_volunteer_events` as `col::text` prints them.
-pub(crate) fn purge_probe_rows(read: &dyn KvRead) -> Result<Vec<ProbeRow>> {
-    Ok(all_events(read)?
-        .into_iter()
-        .map(|r| ProbeRow {
-            cells: vec![
-                ("source_id", ProbeCell::text(&r.source_id)),
-                ("slug", ProbeCell::text(&r.slug)),
-                ("match_arm", ProbeCell::text(&r.match_arm)),
-                ("rationale", ProbeCell::text(&r.rationale)),
-                ("channel", ProbeCell::text(&r.channel)),
-                ("session_id", ProbeCell::opt_text(r.session_id.as_deref())),
-            ],
-            source_id: Some(r.source_id),
-        })
-        .collect())
-}
-
-/// How many rows still name the slug: the page purge receipt's `context_volunteer_events` probe
-/// (`facts/purge_store_probe.rs`, the SQL's `SELECT 1 FROM context_volunteer_events WHERE source_id = $1 AND slug = $2`).
-pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
-    if source_id.contains('\0') || slug.contains('\0') {
-        return Ok(0);
-    }
-    Ok(events_under(read, &[source_id, slug])?.len())
+fn default_channel() -> String {
+    "op".to_string()
 }
 
 impl Store {
-    /// `insertVolunteerEventRows(rows)`: one multi-row insert of the rows whose page still exists
-    /// (deleted or not, as the SQL's `EXISTS (SELECT 1 FROM pages ...)` reads), so a write built before a
-    /// page purge and landing after it drops that page's slug and rationale (#9068). All rows are checked
-    /// first, so a bad row inserts none, as one statement does. Returns how many rows it wrote.
-    pub fn insert_volunteer_event_rows(&self, rows: &[VolunteerEventInput]) -> Result<u64> {
-        for row in rows {
-            let texts = [
-                Some(row.source_id.as_str()),
-                Some(row.slug.as_str()),
-                Some(row.match_arm.as_str()),
-                Some(row.rationale.as_str()),
-                Some(row.channel.as_str()),
-                row.session_id.as_deref(),
-            ];
-            if texts.iter().flatten().any(|t| t.contains('\0')) {
-                return Err(nul(OP_INSERT));
-            }
+    /// `insertVolunteerEvents(rows)`: one event per row whose page row exists (deleted or not), all stamped now.
+    pub fn insert_volunteer_events(&self, rows: &[VolunteerEventInput]) -> Result<()> {
+        for r in rows {
+            no_nul(
+                OP_INSERT,
+                &[
+                    ("source_id", &r.source_id),
+                    ("slug", &r.slug),
+                    ("match_arm", &r.match_arm),
+                    ("rationale", &r.rationale),
+                    ("channel", &r.channel),
+                    ("session_id", r.session_id.as_deref().unwrap_or("")),
+                ],
+            )?;
         }
-        if rows.is_empty() {
-            return Ok(0);
-        }
+        let now = self.env.now_micros();
         self.write(|tx| {
-            let now = self.env.now_micros();
-            let mut written = 0;
-            for row in rows {
-                if read_page(&*tx, &row.source_id, &row.slug)?.is_none() {
+            let mut last = get_json::<i64>(&*tx, &sequence_key())?.unwrap_or(0);
+            for r in rows {
+                if pages::read_page(&*tx, &r.source_id, &r.slug)?.is_none() {
                     continue;
                 }
-                let id = crate::pages::next_id(tx, NEXT_ID)?;
-                let record = EventRecord {
-                    id,
-                    source_id: row.source_id.clone(),
-                    slug: row.slug.clone(),
-                    confidence: row.confidence,
-                    match_arm: row.match_arm.clone(),
-                    rationale: row.rationale.clone(),
-                    channel: row.channel.clone(),
-                    session_id: row.session_id.clone(),
-                    turn: row.turn,
-                    volunteered_at_us: now,
-                };
-                put_json(tx, &key(&row.source_id, &row.slug, id), &record)?;
-                written += 1;
+                last += 1;
+                let mut k = event_prefix().to_vec();
+                k.extend_from_slice(&(last as u64).to_be_bytes());
+                put_json(
+                    tx,
+                    &k,
+                    &VolunteerRecord {
+                        source_id: r.source_id.clone(),
+                        slug: r.slug.clone(),
+                        confidence: r.confidence,
+                        match_arm: r.match_arm.clone(),
+                        rationale: r.rationale.clone(),
+                        channel: r.channel.clone(),
+                        session_id: r.session_id.clone(),
+                        turn: r.turn,
+                        volunteered_at: now,
+                    },
+                )?;
             }
-            Ok(written)
+            put_json(tx, &sequence_key(), &last)
         })
     }
 
-    /// `listVolunteerChannels(sourceIds)`: the events of the last 7 days per channel, in byte order of the
-    /// channel, as `{ channel, n, last_fired }`; `source_ids` `None` reads the whole brain.
-    pub fn list_volunteer_channels(&self, source_ids: Option<&[String]>) -> Result<Vec<Value>> {
-        let now = self.env.now_micros();
+    /// `listVolunteerChannels(sourceIds)`: `{ channel, n, last_fired }` per channel over the events of the last 7 days
+    /// (of those sources, or every source when `None`), by byte of channel; `last_fired` is the newest event time.
+    pub fn list_volunteer_channels(&self, source_ids: Option<&[String]>) -> Result<Value> {
         let read = self.read()?;
-        let mut channels: BTreeMap<String, (i64, i64)> = BTreeMap::new();
-        for r in all_events(&*read)? {
-            if r.volunteered_at_us <= now.saturating_sub(CHANNEL_WINDOW_US)
-                || source_ids.is_some_and(|ids| !ids.contains(&r.source_id))
+        let cutoff = self.env.now_micros().saturating_sub(7 * DAY_US);
+        let mut groups: BTreeMap<String, (i64, i64)> = BTreeMap::new();
+        for (_, e) in all_events(&*read)? {
+            if e.volunteered_at <= cutoff
+                || source_ids.is_some_and(|ids| !ids.contains(&e.source_id))
             {
                 continue;
             }
-            let entry = channels.entry(r.channel).or_insert((0, i64::MIN));
-            entry.0 += 1;
-            entry.1 = entry.1.max(r.volunteered_at_us);
+            let slot = groups.entry(e.channel).or_insert((0, i64::MIN));
+            slot.0 += 1;
+            slot.1 = slot.1.max(e.volunteered_at);
         }
-        Ok(channels
-            .into_iter()
-            .map(|(channel, (n, last))| json!({ "channel": channel, "n": n, "last_fired": iso(last) }))
-            .collect())
+        Ok(Value::Array(
+            groups
+                .into_iter()
+                .map(|(channel, (n, last))| json!({ "channel": channel, "n": n, "last_fired": crate::env::iso(last) }))
+                .collect(),
+        ))
     }
 
-    /// `listVolunteerUsage(sourceIds, days)`: per `(match_arm, channel)` in byte order, the events of the
-    /// sources in the last `days` days (`volunteered`) and those whose live page was retrieved after the
-    /// event (`used`), both as the text `count(*)::text` prints. The store keeps no legacy
-    /// `pages.last_retrieved_at` column, so the page's retrieval record is the whole `GREATEST(...)`.
-    pub fn list_volunteer_usage(&self, source_ids: &[String], days: i64) -> Result<Vec<Value>> {
-        let since = self
+    /// `readVolunteerUsage(sourceIds, days)`: `{ match_arm, channel, volunteered, used }` per arm and channel over the
+    /// events of those sources newer than `days` days, by byte of arm then channel.
+    pub fn read_volunteer_usage(&self, source_ids: &[String], days: i64) -> Result<Value> {
+        let read = self.read()?;
+        let cutoff = self
             .env
             .now_micros()
             .saturating_sub(days.saturating_mul(DAY_US));
-        let read = self.read()?;
-        let mut groups: BTreeMap<(String, String), (u64, u64)> = BTreeMap::new();
-        for r in all_events(&*read)? {
-            if r.volunteered_at_us <= since || !source_ids.contains(&r.source_id) {
+        let events = all_events(&*read)?;
+        let mut groups: BTreeMap<(String, String), (i64, i64)> = BTreeMap::new();
+        for (_, e) in events {
+            if !source_ids.contains(&e.source_id) || e.volunteered_at <= cutoff {
                 continue;
             }
-            let used = match read_page(&*read, &r.source_id, &r.slug)? {
-                Some(page) if page.deleted_at_us.is_none() => {
-                    crate::page_ops::retrievals::last_retrieved_us(&*read, page.id)?
-                        .is_some_and(|at| at > r.volunteered_at_us)
+            let used = match pages::read_page(&*read, &e.source_id, &e.slug)? {
+                Some(p) if p.deleted_at_us.is_none() => {
+                    page_ops::retrievals::last_retrieved_us(&*read, p.id)?
+                        .is_some_and(|at| at > e.volunteered_at)
                 }
                 _ => false,
             };
-            let entry = groups.entry((r.match_arm, r.channel)).or_insert((0, 0));
-            entry.0 += 1;
-            entry.1 += u64::from(used);
+            let slot = groups.entry((e.match_arm, e.channel)).or_insert((0, 0));
+            slot.0 += 1;
+            slot.1 += i64::from(used);
         }
-        Ok(groups
-            .into_iter()
-            .map(|((match_arm, channel), (volunteered, used))| {
-                json!({
-                    "match_arm": match_arm, "channel": channel,
-                    "volunteered": volunteered.to_string(), "used": used.to_string(),
+        Ok(Value::Array(
+            groups
+                .into_iter()
+                .map(|((arm, channel), (n, used))| {
+                    json!({ "match_arm": arm, "channel": channel, "volunteered": n, "used": used })
                 })
-            })
-            .collect())
+                .collect(),
+        ))
     }
-
     /// `deleteVolunteerEventsOlderThan(ttlDays)`: deletes the rows older than `ttl_days` days
     /// (`volunteered_at < now() - interval`) and returns how many. A day count that is not a number refuses,
     /// as the interval cast does.
@@ -284,8 +187,8 @@ impl Store {
         self.write(|tx| {
             let cutoff = self.env.now_micros() - (ttl_days * DAY_US as f64).round() as i64;
             let mut removed = 0;
-            for (key, record) in events_under(&*tx, &[])? {
-                if record.volunteered_at_us < cutoff {
+            for (key, e) in all_events(&*tx)? {
+                if e.volunteered_at < cutoff {
                     tx.delete(&key)?;
                     removed += 1;
                 }
@@ -304,7 +207,7 @@ impl Store {
         if slugs.is_empty() {
             return Ok(0);
         }
-        self.write(|tx| scrub_slugs(tx, source_id, slugs))
+        self.write(|tx| scrub_purged_slugs(tx, source_id, slugs))
     }
 
     /// How many rows still name the slug (the purge receipt's `context_volunteer_events` probe through
@@ -315,213 +218,80 @@ impl Store {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cli_reads::pg_text::pg_lower;
-    use crate::pages::{PageInput, PutPageOptions};
-    use crate::test_support::store;
+fn all_events(read: &dyn crate::kv::KvRead) -> Result<Vec<(Vec<u8>, VolunteerRecord)>> {
+    let mut events = Vec::new();
+    let mut bad = None;
+    scan_prefix(read, &event_prefix(), false, &mut |k, v| {
+        match serde_json::from_slice::<VolunteerRecord>(v) {
+            Ok(r) => events.push((k.to_vec(), r)),
+            Err(e) => {
+                bad = Some(crate::error::StoreError::invalid(format!(
+                    "unreadable volunteer event record: {e}"
+                )));
+                return false;
+            }
+        }
+        true
+    })?;
+    bad.map_or(Ok(events), Err)
+}
 
-    fn put(s: &Store, slug: &str) {
-        let input: PageInput = serde_json::from_value(
-            json!({ "type": "note", "title": slug, "compiled_truth": format!("{slug} body") }),
-        )
-        .unwrap();
-        s.put_page(slug, &input, &PutPageOptions::default())
-            .unwrap();
-    }
-
-    fn row(source: &str, slug: &str, channel: &str) -> VolunteerEventInput {
-        VolunteerEventInput {
-            source_id: source.into(),
-            slug: slug.into(),
-            confidence: 0.9,
-            match_arm: "exact".into(),
-            rationale: format!("matched {slug}"),
-            channel: channel.into(),
-            session_id: None,
-            turn: Some(2),
+/// The volunteer log rows of a hard-deleted page's slug go with it (`scrubPurgedNameStores`,
+/// src/core/persistence/purge-name-stores.ts): every event of `source_id` naming one of `slugs`.
+pub(crate) fn scrub_purged_slugs(
+    tx: &mut dyn crate::kv::KvWrite,
+    source_id: &str,
+    slugs: &[String],
+) -> Result<u64> {
+    let mut removed = 0;
+    for (key, e) in all_events(&*tx)? {
+        if e.source_id == source_id && slugs.contains(&e.slug) {
+            tx.delete(&key)?;
+            removed += 1;
         }
     }
+    Ok(removed)
+}
 
-    #[test]
-    fn keys_of_a_slug_never_cover_another_slug() {
-        assert!(key("s", "a", 1).starts_with(&prefix(&["s", "a"])));
-        assert!(!key("s", "ab", 1).starts_with(&prefix(&["s", "a"])));
-        assert!(!key("sx", "a", 1).starts_with(&prefix(&["s"])));
+/// How many rows still name the slug: the page purge receipt's `context_volunteer_events` probe
+/// (`facts/purge_store_probe.rs`, the SQL's `SELECT 1 FROM context_volunteer_events WHERE source_id = $1 AND slug = $2`).
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    if source_id.contains('\0') || slug.contains('\0') {
+        return Ok(0);
     }
+    Ok(all_events(read)?
+        .into_iter()
+        .filter(|(_, e)| e.source_id == source_id && e.slug == slug)
+        .count())
+}
 
-    #[test]
-    fn the_insert_drops_rows_of_pages_that_do_not_exist() {
-        let s = store();
-        put(&s, "notes/a");
-        let wrote = s
-            .insert_volunteer_event_rows(&[
-                row("default", "notes/a", "op"),
-                row("default", "notes/gone", "op"),
-            ])
-            .unwrap();
-        assert_eq!(wrote, 1);
-        assert_eq!(
-            s.count_volunteer_events_for_slug("default", "notes/a")
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            s.count_volunteer_events_for_slug("default", "notes/gone")
-                .unwrap(),
-            0
-        );
-        assert_eq!(s.insert_volunteer_event_rows(&[]).unwrap(), 0);
-    }
+/// The `context_volunteer_events` rows a purge probe searches (src/core/deletion-inventory.ts).
+pub(crate) fn purge_probe_rows(
+    read: &dyn crate::kv::KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_events(read)?
+        .into_iter()
+        .map(|(_, e)| ProbeRow {
+            cells: vec![
+                ("source_id", ProbeCell::text(&e.source_id)),
+                ("slug", ProbeCell::text(&e.slug)),
+                ("match_arm", ProbeCell::text(&e.match_arm)),
+                ("rationale", ProbeCell::text(&e.rationale)),
+                ("channel", ProbeCell::text(&e.channel)),
+                ("session_id", ProbeCell::opt_text(e.session_id.as_deref())),
+            ],
+            source_id: Some(e.source_id),
+        })
+        .collect())
+}
 
-    #[test]
-    fn a_nul_byte_refuses_the_whole_batch() {
-        let s = store();
-        put(&s, "notes/a");
-        let err = s
-            .insert_volunteer_event_rows(&[
-                row("default", "notes/a", "op"),
-                row("default", "notes/a", "o\0p"),
-            ])
-            .unwrap_err();
-        assert_eq!(err.code, INVALID_ARGUMENT);
-        assert_eq!(
-            s.count_volunteer_events_for_slug("default", "notes/a")
-                .unwrap(),
-            0
-        );
+/// The volunteer log rows of a removed source (`removedSourceScrubCtes`, src/core/engine-sql/sources.ts).
+pub(crate) fn remove_source_rows(tx: &mut dyn crate::kv::KvWrite, source_id: &str) -> Result<()> {
+    for (key, e) in all_events(&*tx)? {
+        if e.source_id == source_id {
+            tx.delete(&key)?;
+        }
     }
-
-    #[test]
-    fn channels_list_in_byte_order_scoped_and_brain_wide() {
-        let s = store();
-        put(&s, "notes/a");
-        s.insert_volunteer_event_rows(&[
-            row("default", "notes/a", "b"),
-            row("default", "notes/a", "a-z"),
-            row("default", "notes/a", "ab"),
-            row("default", "notes/a", "a-z"),
-        ])
-        .unwrap();
-        let names = |rows: Vec<Value>| -> Vec<(String, i64)> {
-            rows.iter()
-                .map(|r| {
-                    (
-                        r["channel"].as_str().unwrap().to_string(),
-                        r["n"].as_i64().unwrap(),
-                    )
-                })
-                .collect()
-        };
-        let all = names(s.list_volunteer_channels(None).unwrap());
-        assert_eq!(
-            all,
-            vec![("a-z".into(), 2), ("ab".into(), 1), ("b".into(), 1)]
-        );
-        let scoped = s
-            .list_volunteer_channels(Some(&["default".to_string()]))
-            .unwrap();
-        assert_eq!(names(scoped), all);
-        assert!(
-            s.list_volunteer_channels(Some(&["other".to_string()]))
-                .unwrap()
-                .is_empty()
-        );
-        assert!(s.list_volunteer_channels(Some(&[])).unwrap().is_empty());
-    }
-
-    #[test]
-    fn usage_counts_events_and_retrievals_by_arm_and_channel() {
-        let s = store();
-        put(&s, "notes/a");
-        s.insert_volunteer_event_rows(&[
-            row("default", "notes/a", "op"),
-            row("default", "notes/a", "hook"),
-        ])
-        .unwrap();
-        let rows = s
-            .list_volunteer_usage(&["default".to_string()], 30)
-            .unwrap();
-        let shown: Vec<(&str, &str, &str, &str)> = rows
-            .iter()
-            .map(|r| {
-                (
-                    r["match_arm"].as_str().unwrap(),
-                    r["channel"].as_str().unwrap(),
-                    r["volunteered"].as_str().unwrap(),
-                    r["used"].as_str().unwrap(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            shown,
-            vec![("exact", "hook", "1", "0"), ("exact", "op", "1", "0")]
-        );
-        assert!(
-            s.list_volunteer_usage(&["other".to_string()], 30)
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn retention_deletes_only_rows_older_than_the_window() {
-        let s = store();
-        put(&s, "notes/a");
-        s.insert_volunteer_event_rows(&[row("default", "notes/a", "op")])
-            .unwrap();
-        assert_eq!(s.delete_volunteer_events_older_than(90.0).unwrap(), 0);
-        assert_eq!(s.delete_volunteer_events_older_than(-1.0).unwrap(), 1);
-        assert!(s.delete_volunteer_events_older_than(f64::NAN).is_err());
-    }
-
-    #[test]
-    fn a_slug_scrub_and_a_source_delete_remove_the_rows() {
-        let s = store();
-        put(&s, "notes/a");
-        put(&s, "notes/b");
-        s.insert_volunteer_event_rows(&[
-            row("default", "notes/a", "op"),
-            row("default", "notes/b", "op"),
-        ])
-        .unwrap();
-        assert_eq!(
-            s.delete_volunteer_events_for_slugs("default", &[]).unwrap(),
-            0
-        );
-        assert_eq!(
-            s.delete_volunteer_events_for_slugs("default", &["notes/a".to_string()])
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            s.count_volunteer_events_for_slug("default", "notes/b")
-                .unwrap(),
-            1
-        );
-        s.write(|tx| remove_source_rows(tx, "default")).unwrap();
-        assert_eq!(
-            s.count_volunteer_events_for_slug("default", "notes/b")
-                .unwrap(),
-            0
-        );
-    }
-
-    #[test]
-    fn the_probe_rows_carry_the_rationale() {
-        let s = store();
-        put(&s, "notes/a");
-        s.insert_volunteer_event_rows(&[row("default", "notes/a", "op")])
-            .unwrap();
-        let rows = purge_probe_rows(&*s.read().unwrap()).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].source_id.as_deref(), Some("default"));
-        let rationale = rows[0]
-            .cells
-            .iter()
-            .find(|(n, _)| *n == "rationale")
-            .unwrap();
-        assert!(matches!(&rationale.1, ProbeCell::Text(t) if pg_lower(t) == "matched notes/a"));
-    }
+    Ok(())
 }

@@ -115,8 +115,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Trunk Dynamic CI filter (docs/ci-event-parity.md#trunk-dynamic-ci): it asks Trunk
+  # whether this pull-request push needs tla and writes one output per job;
+  # each runs unless its output is exactly 'false'. It fails open: a missing token (a
+  # fork's pull request gets no secrets), a Trunk outage or a job with no verdict runs
+  # the job. In Learning mode it records verdicts and skips nothing.
+  # Event parity (docs/ci-event-parity.md#trunk-dynamic-ci): pull_request only; on a push, the nightly
+  # schedule or a dispatch it is skipped, its output is empty, and tla runs as before.
+  # tla-nightly is not gated.
+  # scripts/check-dynamic-ci.ts guards the wiring.
+  dynamic-ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      tla: ${{ steps.dynamic-ci.outputs.tla }}
+    steps:
+      - id: dynamic-ci
+        uses: trunk-io/dynamic-ci@09739668b8d766d05e3dbf6f3eb0159da6597aaf  # v1 (v0.1.12)
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          token: ${{ secrets.TRUNK_API_TOKEN }}
+          job-keys: tla
+          enable-annotation: 'true'
+
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   tla:
     name: TLC and guard mutants (${{ matrix.spec }})
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.tla != 'false' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     strategy:

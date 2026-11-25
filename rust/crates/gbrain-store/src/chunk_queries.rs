@@ -30,7 +30,6 @@ use crate::chunks::{
 };
 use crate::error::Result;
 use crate::facts::{OwnerOnlySources, PrivacyPolicy, page_hidden, page_hidden_with};
-use crate::keyword::served;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages, find_in_scope, read_page_by_id};
 use crate::sources::read_source;
@@ -38,16 +37,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
-mod live_rereads;
 mod segment_regions;
 mod site_reads;
-pub use live_rereads::{LiveChunkRow, LiveChunksInput, LiveTakeRow, LiveTakesInput};
 pub use segment_regions::SegmentHit;
-pub(crate) use site_reads::Policy as PageReadPolicy;
 pub use site_reads::{
     ChunkReadScope, CodeChunksExistInput, CodeSymbolInput, DeleteChunksExceptInput, FrozenHit,
     FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
 };
+pub(crate) use site_reads::{Policy as PageReadPolicy, served};
 
 /// `listChunklessPagesWithContent`'s default batch size.
 const DEFAULT_CHUNKLESS_BATCH: u64 = 50;

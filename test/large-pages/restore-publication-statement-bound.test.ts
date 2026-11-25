@@ -46,7 +46,7 @@ afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 
 /**
  * The two probes the seal decision runs (page-body/ingest.ts occurrencesWithoutChunks, projection.ts hasStaleChunks) and the
- * retirement that shares the second's statement text. They are typed engine members now (engine-sql/segmented-rewrite.ts), so
+ * retirement that shares the second's statement text. They are typed engine members now (engine-sql/segmented-writes.ts), so
  * the proxy ends the member call as it once ended the statement.
  */
 const SEAL_PROBE_MEMBERS = ['listChunkedOccurrences', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks'];

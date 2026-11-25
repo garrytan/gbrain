@@ -278,3 +278,16 @@ export function requireOauthClientColumns<T extends object>(row: T, columns: rea
 
 /** The members of this file a fake engine takes (test/helpers/queue-engine-members.ts). */
 export const OAUTH_CLIENT_MEMBER_NAMES = ['insertOauthClient', 'readOauthClient', 'listOauthClients', 'patchOauthClient'] as const;
+
+/** The statement commands/serve-http-clients.ts mountAdminClients ran through executeRaw (its columns are harness/client-setup.ts CLIENT_INSPECTION_COLUMNS). */
+export const ADMIN_CLIENT_ROWS_SQL = `SELECT client_id, client_name, redirect_uris, grant_types,
+  token_endpoint_auth_method, client_id_issued_at, client_secret_expires_at, created_at, deleted_at,
+  scope, source_id, federated_read, bound_slug_prefixes, allowed_operations, bound_tools,
+  bound_source_id, bound_brain_id, delegated_slug_prefixes, delegated_namespace,
+  bound_max_concurrent, budget_usd_per_day, surface, surface_set_by, token_ttl,
+  grant_profile, grant_revision, grant_repair_reasons FROM oauth_clients ORDER BY created_at DESC, client_id COLLATE "C"`;
+
+/** The inspection columns of every client, deleted ones included, newest first and then by byte order of client id. */
+export function listAdminClientRows(tx: Raw): Promise<Array<Record<string, unknown>>> {
+  return tx.executeRaw<Record<string, unknown>>(ADMIN_CLIENT_ROWS_SQL);
+}

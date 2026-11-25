@@ -25,6 +25,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { proactiveEligibility } from '../eligibility/registry.ts';
@@ -367,9 +368,12 @@ export async function volunteerUsageStats(
   const safeDays = Number.isFinite(days) && days > 0 ? Math.floor(days) : 30;
   let rows: Array<{ match_arm: string; channel: string; volunteered: string | number; used: string | number }> = [];
   try {
-    rows = await engine.listVolunteerUsage(sourceIds, safeDays);
-  } catch {
-    rows = []; // pre-v117 brain — table doesn't exist yet
+    // engine-sql/volunteer-events.ts VOLUNTEER_USAGE_SQL.
+    rows = await engine.readVolunteerUsage(sourceIds, safeDays);
+  } catch (e) {
+    // A brain from before v117 has no events table: zero events. Anything else (a refusal, a lost connection) surfaces.
+    if (!isMissingSchemaObject(e, 'table', 'context_volunteer_events')) throw e;
+    rows = [];
   }
   const by_arm: VolunteerArmStats[] = rows.map((r) => {
     const volunteered = Number(r.volunteered);

@@ -474,13 +474,18 @@ export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { enti
 
 /**
  * How many live unquarantined entity pages there are and how many have an inbound link or a timeline entry. The store
- * reads every page, so it has no sample to draw: a `samplePercent` of 100 (TABLESAMPLE BERNOULLI (100) keeps every row)
- * reads the whole population, and any other percent refuses.
+ * reads every page. A 100 percent sample draws every row (TABLESAMPLE BERNOULLI (100)), so it is served as the whole
+ * population; a lower percent is a random draw no other engine can match, so it refuses by name. Doctor and onboard
+ * ask for a sample only on Postgres. A malformed percent fails with the SQL engines' message (engine-sql/link-reads.ts).
  */
 export const entityFeatureCoverage: StoreMember<[filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }], { sampleSize: number; matched: number }> =
   async (brain, filter, feature, opts) => {
-    if (opts?.samplePercent !== undefined && opts.samplePercent !== 100) refuseMember('entityFeatureCoverage', 'a TABLESAMPLE percent below 100 (the store reads every page)');
     if (feature !== 'links' && feature !== 'timeline') refuseMember('entityFeatureCoverage', `the feature ${String(feature)}`);
+    const pct = opts?.samplePercent;
+    if (pct !== undefined && !(Number.isFinite(pct) && pct > 0 && pct <= 100)) {
+      throw new Error(`entityFeatureCoverage: samplePercent must be a number in (0, 100], got ${String(pct)}`);
+    }
+    if (pct !== undefined && pct !== 100) refuseMember('entityFeatureCoverage', `a TABLESAMPLE of ${pct} percent (a random draw; the store reads every page)`);
     const r: { sampleSize: number; matched: number } = await storeCall({ member: 'entityFeatureCoverage' },
       () => brain.entityFeatureCoverage({ filter, feature }));
     return { sampleSize: Number(r.sampleSize), matched: Number(r.matched) };

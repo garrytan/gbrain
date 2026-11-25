@@ -1,22 +1,24 @@
 /**
- * Context-volunteer event members (BrainEngine insertVolunteerEventRows, listVolunteerUsage, deleteVolunteerEventsOlderThan).
- * The store keeps the `context_volunteer_events` rows and removes
- * them with their page or source (rust/docs/store/volunteer-events.md); the channel listing is in doctor-acc.ts. Counts cross
- * the binding as numbers or text and come back as the engine-sql rows read.
+ * The volunteered-page log members (BrainEngine insertVolunteerEvents, readVolunteerUsage, deleteVolunteerEventsOlderThan; SQL in
+ * engine-sql/volunteer-events.ts), served from the store's event records (rust/crates/gbrain-store/src/volunteer_events.rs,
+ * rust/docs/store/volunteer-events.md); the 90-day purge (deleteVolunteerEventsOlderThan) is served there too.
  */
-import type { BrainEngine } from '../../engine.ts';
+import type { VolunteerEventInsert, VolunteerUsageRow } from '../../engine-sql/volunteer-events.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
-type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
-
-export const insertVolunteerEventRows: Member<'insertVolunteerEventRows'> = async (brain, rows) => {
+export const insertVolunteerEvents: StoreMember<[rows: readonly VolunteerEventInsert[]], void> = async (brain, rows) => {
   if (!rows.length) return;
-  await storeCall({ member: 'insertVolunteerEventRows' }, () => brain.insertVolunteerEventRows(
-    rows.map(r => ({ ...r, session_id: r.session_id ?? null, turn: r.turn ?? null }))));
+  await storeCall({ member: 'insertVolunteerEvents' }, () => brain.insertVolunteerEvents(rows.map(r => ({
+    source_id: r.source_id, slug: r.slug, confidence: r.confidence, match_arm: r.match_arm, rationale: r.rationale, channel: r.channel,
+    session_id: r.session_id ?? null, turn: r.turn ?? null,
+  }))));
 };
 
-export const listVolunteerUsage: Member<'listVolunteerUsage'> = (brain, sourceIds, days) =>
-  storeCall({ member: 'listVolunteerUsage' }, () => brain.listVolunteerUsage([...sourceIds], days));
+export const readVolunteerUsage: StoreMember<[sourceIds: readonly string[], days: number], VolunteerUsageRow[]> = async (brain, sourceIds, days) => {
+  const rows = await storeCall({ member: 'readVolunteerUsage' }, () => brain.readVolunteerUsage([...sourceIds], days)) as Array<{ match_arm: string; channel: string; volunteered: number; used: number }>;
+  // The SQL casts both counts to text.
+  return rows.map(r => ({ match_arm: r.match_arm, channel: r.channel, volunteered: String(r.volunteered), used: String(r.used) }));
+};
 
-export const deleteVolunteerEventsOlderThan: Member<'deleteVolunteerEventsOlderThan'> = (brain, ttlDays) =>
-  storeCall({ member: 'deleteVolunteerEventsOlderThan' }, () => brain.deleteVolunteerEventsOlderThan(ttlDays));
+export const deleteVolunteerEventsOlderThan: StoreMember<[ttlDays: number], number> = async (brain, ttlDays) =>
+  Number(await storeCall({ member: 'deleteVolunteerEventsOlderThan' }, () => brain.deleteVolunteerEventsOlderThan(ttlDays)));

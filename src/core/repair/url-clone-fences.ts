@@ -53,7 +53,6 @@ import { resolveSlugForPath } from '../sync.ts';
 import { isOwnedClone, trackedChanges, urlCloneReadOnly, urlCloneRepairPreviewArgv } from '../url-clone.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
 import { readSourceStates } from '../source-rows.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#url-clone-fences';
 /** preview-approval's command union predates this kind; the store keys on the string alone. */
@@ -165,14 +164,10 @@ async function keepRowsDatabaseOnly(engine: BrainEngine, file: ClonedFile, added
     let moved = 0;
     let inserted = 0;
     for (const row of added) {
-      const updated = await tx.executeRaw<{ id: number }>(
-        'UPDATE facts SET row_num = NULL, source_markdown_slug = NULL WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3 RETURNING id',
-        [file.source_id, file.slug, row.rowNum]);
+      const updated = await tx.detachFenceRowFacts(file.source_id, file.slug, row.rowNum);
       moved += updated.length;
       if (updated.length) continue;
-      const kept = await tx.executeRaw<{ id: number }>(
-        'SELECT id FROM facts WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL AND fact = $3 LIMIT 1', [file.source_id, file.slug, row.claim]);
-      if (kept.length) continue;
+      if (await tx.hasDatabaseOnlyClaim(file.source_id, file.slug, row.claim)) continue;
       const { row_num: _row, source_markdown_slug: _slug, superseded_by_row: _superseded, ...fact } = extractFactsFromFenceText([row], file.slug, file.source_id)[0]!;
       await tx.insertFact(fact, { source_id: file.source_id }); // gbrain-allow-direct-insert: url-clone-fences keeps a fence row the database lost as a database-only row before its file is restored
       inserted++;
@@ -235,9 +230,6 @@ export const urlCloneFencesRepair: RepairHandler = {
     return { items: files.map((file, index) => toItem(file, index)), residuals, listing, ...(files.length ? { preview_hash: hash } : {}), details: { listing } };
   },
   async apply(ctx, entry, opts) {
-    // The page import publishes through the page write door and the clone checks read sources through raw SQL, so a Rust brain
-    // stops here by name, before the filesystem lock, the backup or the first write.
-    requireRawSql(ctx.engine, 'repair url-clone-fences page write');
     const item = entry as FileItem;
     const { file } = item;
     const outcome = await withSourceFilesystemLock(ctx.engine, file.root,

@@ -175,7 +175,7 @@ export async function readFenceOverlayRows(raw: EngineRawRead, page: { sourceId:
     (SELECT ${flagged} FROM facts f WHERE f.source_id = v.source_id AND f.source_markdown_slug = v.slug AND f.row_num = i.row_num
       ORDER BY f.id DESC LIMIT 1) AS row_flagged,
     EXISTS (SELECT 1 FROM fact_purges fp WHERE fp.source_id = v.source_id AND fp.visibility = i.visibility
-      AND fp.fact_hash = gbrain_fact_fingerprint(i.claim) AND (fp.subject = '*' OR fp.subject = v.slug)) AS purged,
+      AND fp.fact_hash IN (gbrain_fact_fingerprint(i.claim), gbrain_fact_fingerprint_v2(i.claim)) AND (fp.subject = '*' OR fp.subject = v.slug)) AS purged,
     EXISTS (SELECT 1 FROM write_gate_holds h WHERE h.kind = 'fact' AND h.source_id = v.source_id
       AND h.status = 'held' AND h.fingerprint = i.fp AND ${trustedSql(holdAppliesToPageSql('h', '(SELECT p.id FROM pages p WHERE p.source_id = v.source_id AND p.slug = v.slug)', 'v.slug'))}) AS held,
     ${narrower} AS narrower

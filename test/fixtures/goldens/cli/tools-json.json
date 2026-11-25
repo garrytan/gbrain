@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 303641,
-    "stdoutSha256": "c4f2fd8a343cb8d111c422a2f09687762a741871247cd41f6afd69027e5943ba",
+    "stdoutBytes": 305648,
+    "stdoutSha256": "54fa11331ea9a25a4ae004439873bd38bdfe7f62f9e8c32c05c40bd10ad2638f",
     "toolNames": [
       "remember",
       "entity",
@@ -210,7 +210,9 @@
       "questions_refresh",
       "questions_unpin",
       "mute_notice",
-      "learned"
+      "learned",
+      "learned_keep",
+      "learned_undo"
     ],
     "tools": [
       {
@@ -9376,6 +9378,59 @@
           "type": "object"
         },
         "scope": "read"
+      },
+      {
+        "description": "Keep items from the learned note: mark what the brain learned as right. Writes only the note's own record (no page or fact changes). Takes item ids from learned (comma separated), or all for every pending change you can read from the last 7 days (up to 100). Questions (facts that disagree, possible duplicate people) are answered, not kept.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "learned_keep",
+        "parameters": {
+          "ids": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "ids": {
+              "description": "Item ids from learned, comma separated (e.g. 12,15), or all.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ids"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Undo items from the learned note through the operation that owns each change: a new fact is forgotten (withdrawn; history kept), a promise is dropped, a filled-in page is reverted to the version before it was filled (refused when the page was edited since, with the commands to choose a version). For facts that disagree it rejects the newer fact on the brain host; for possible duplicate people it returns the gbrain dedupe reject command for the brain host. Each result says what happened.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "learned_undo",
+        "parameters": {
+          "ids": "string",
+          "reason": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "ids": {
+              "description": "Item ids from learned, comma separated (e.g. 12,15).",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why it was wrong; recorded on the reversal (forget reason, loop note or revert reason).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ids"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
       }
     ]
   },

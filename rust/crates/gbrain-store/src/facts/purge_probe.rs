@@ -213,7 +213,6 @@ pub(crate) fn table_rows(
             crate::eval_capture::calibration_profiles::purge_probe_rows(read)?
         }
         "decision_receipts" => crate::eval_capture::decide_store::purge_probe_receipt_rows(read)?,
-        "context_volunteer_events" => crate::volunteer_events::purge_probe_rows(read)?,
         "dream_verdicts" => crate::dream::purge_probe_rows(read)?,
         "eval_candidates" => crate::eval_capture::purge_probe_rows(read)?,
         "eval_contradictions_cache" => crate::contradictions::purge_probe_cache_rows(read)?,
@@ -221,9 +220,12 @@ pub(crate) fn table_rows(
         "fact_relink_attempts" => super::relink::purge_probe_rows(read, source_id)?,
         "ingest_log" => crate::stats::purge_probe_rows(read)?,
         "mcp_request_log" => crate::telemetry::purge_probe_rows(read)?,
+        "mention_gazetteer_entries" => crate::mention_state::purge_probe_rows(read)?,
         "minion_attachments" => crate::jobs::purge_probe_attachment_rows(read)?,
         "minion_inbox" => crate::jobs::purge_probe_inbox_rows(read)?,
         "minion_jobs" => crate::jobs::purge_probe_job_rows(read)?,
+        "pinned_questions" => crate::jobs::purge_probe_pin_rows(read)?,
+        "context_volunteer_events" => crate::volunteer_events::purge_probe_rows(read)?,
         "persistence_topology_changes" => crate::persistence::purge_probe_topology_rows(read)?,
         "subagent_messages" => crate::jobs::purge_probe_message_rows(read)?,
         "subagent_tool_executions" => crate::jobs::purge_probe_tool_rows(read)?,

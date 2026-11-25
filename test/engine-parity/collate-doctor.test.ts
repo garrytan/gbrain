@@ -15,7 +15,7 @@
  *    in C.UTF-8. Every case here mixes keys such as `a-z`, `ab`, `a.b` and `a_b`; run it against an en_US Postgres to see
  *    it fail.
  *  - Seam: none. The pages go through putPage, the derivation receipts through upsertSegmentDerivations, the volunteer
- *    events through insertVolunteerEventRows and the extraction receipts through writePageExtractionReceipt; the
+ *    events through insertVolunteerEvents and the extraction receipts through writePageExtractionReceipt; the
  *    retirement stamps are the rows the writers leave.
  */
 import { describe, expect } from 'bun:test';
@@ -54,13 +54,13 @@ const rawProbe = (engine: BrainEngine) => engine.executeRaw('SELECT 1 AS one');
 
 describe('doctor lists text keys by byte', () => {
   parityTest('volunteer channels list by byte name, scoped to sources and brain-wide', {
-    methods: ['putPage', 'insertVolunteerEventRows'],
+    methods: ['putPage', 'insertVolunteerEvents'],
   }, async (engine, backend) => {
     for (const source of SOURCES) await createSource(engine, backend, source);
     for (const [i, channel] of MIXED_IDS.entries()) {
       const sourceId = SOURCES[i % 2]!;
       await engine.putPage(`notes/n${i}`, { type: 'note', title: `N${i}`, compiled_truth: `Note ${i}.`, timeline: '' }, { sourceId });
-      await engine.insertVolunteerEventRows([{ source_id: sourceId, slug: `notes/n${i}`, confidence: 0.9, match_arm: 'exact', rationale: '', channel }]);
+      await engine.insertVolunteerEvents([{ source_id: sourceId, slug: `notes/n${i}`, confidence: 0.9, match_arm: 'exact', rationale: '', channel }]);
     }
     const unscoped = await checkVolunteerChannels(engine);
     const scoped = await checkVolunteerChannels(engine, { sourceIds: SOURCES });

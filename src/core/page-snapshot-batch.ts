@@ -20,7 +20,8 @@
  * Engines run every statement on `query`, so
  * Postgres can bind the batch's sources for RLS (`engine.readPageSnapshotsBatch`).
  */
-import { overlayWithdrawalBody } from './facts/withdrawal-overlay.ts';
+import { overlayWithdrawalBody, withLegacyLedgerRows } from './facts/withdrawal-overlay.ts';
+import { FACT_SPACE_CLASS } from './facts/withdrawal-schema.ts';
 import { readPageSnapshot, resolveGlobalPurges } from './page-state/snapshot.ts';
 import type { GlobalPurgeMarker, PageSnapshot, PageWithdrawal } from './page-state/types.ts';
 import { REVISION_BACKFILL_PENDING } from './page-state/types.ts';
@@ -59,9 +60,9 @@ export async function readPageSnapshotsBatch(
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
     wd.snapshot_withdrawals, wd.snapshot_global_purges,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.compiled_truth,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_body,
-    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
+    CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '${FACT_SPACE_CLASS}+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
@@ -90,8 +91,9 @@ export async function readPageSnapshotsBatch(
     const withdrawals = [...row.snapshot_withdrawals as PageWithdrawal[], ...await resolveGlobalPurges(query, page.source_id, globalPurges,
       [String(row.fingerprint_body ?? ''), String(row.fingerprint_timeline ?? '')])];
     if (!isSegmentedPage(page)) {
-      page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), withdrawals);
-      page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), withdrawals);
+      const overlay = await withLegacyLedgerRows(query, [page.compiled_truth, page.timeline], withdrawals, { sourceId: page.source_id, marker: globalPurges });
+      page.compiled_truth = overlayWithdrawalBody(page.compiled_truth, String(row.fingerprint_body ?? ''), overlay);
+      page.timeline = overlayWithdrawalBody(page.timeline, String(row.fingerprint_timeline ?? ''), overlay);
     }
     snapshots.set(key, { page, tags: row.snapshot_tags as string[], revision: row.knowledge_revision == null ? REVISION_BACKFILL_PENDING : String(row.knowledge_revision),
       sourceIncarnation: String(row.source_incarnation), withdrawals, ...(globalPurges.count > 0 ? { globalPurges } : {}),

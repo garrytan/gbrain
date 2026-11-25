@@ -1,13 +1,11 @@
 /**
  * The cycle, belief and sync statements that ran through `engine.executeRaw` and are now typed members, so a Rust brain
- * answers each from its store (rust/docs/store/cycle-window.md, identity-downgrades.md, trust.md). PGLite and Postgres run the statements their callers ran; the notes below name the
+ * answers each from its store (rust/docs/store/cycle-window.md, trust.md). PGLite and Postgres run the statements their callers ran; the notes below name the
  * few places a statement changed shape.
  *
  *  - the per-source cycle's changed-page window (cycle/source-window.ts): the listing instant and one window of pages.
  *    The "is the listing instant before the last page" comparison now happens on the two UTC ISO texts, which sort as
  *    time, instead of in a third statement.
- *  - `recordIdentityDowngrades` (sync-identity-downgrades.ts): the soft-deleted page a renamed file once backed, the
- *    live pages at the new path (by slug bytes) and what a carry would move.
  *  - the belief ledger's orphan lifetimes (belief/coverage-report.ts): the limit is a bound parameter, not spliced text.
  *  - the phantom-redirect pass's walk of root pages lives in engine-sql/facts-cycle.ts (`listRootPageSlugsAfter`).
  */
@@ -36,41 +34,6 @@ export async function listSourceChangedPagesAfter(raw: EngineRawRead, sourceId: 
   return raw<SourceChangedPageRow>(`SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at FROM pages
       WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug COLLATE "C") > ($2::text::timestamptz, $3::text))
       ORDER BY updated_at, slug COLLATE "C" LIMIT $4`, [sourceId, since, slug, limit]);
-}
-
-// ─── identity downgrades ─────────────────────────────────────────────────
-
-/** A soft-deleted page; `deleted_at` is the column's `::text` form. */
-export interface SoftDeletedPageRow { id: number; slug: string; deleted_at: string }
-
-/** The soft-deleted page of a source whose origin is `path`, or whose slug is `slug` when it has no origin: the latest deletion first, the lowest page id among equals. */
-export async function readSoftDeletedPageAtOrigin(raw: EngineRawRead, sourceId: string, path: string, slug: string): Promise<SoftDeletedPageRow | null> {
-  const [row] = await raw<{ id: number | string; slug: string; deleted_at: string }>(
-    `SELECT id, slug, deleted_at::text AS deleted_at FROM pages WHERE source_id = $1 AND deleted_at IS NOT NULL
-        AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC, id LIMIT 1`, [sourceId, path, slug]);
-  return row ? { id: Number(row.id), slug: row.slug, deleted_at: row.deleted_at } : null;
-}
-
-/** A live page at a file path. */
-export interface LivePageAtOriginRow { id: number; slug: string }
-
-/** The live pages of a source whose origin is `sourcePath`, by slug bytes. */
-export async function listLivePagesAtOrigin(raw: EngineRawRead, sourceId: string, sourcePath: string): Promise<LivePageAtOriginRow[]> {
-  const rows = await raw<{ id: number | string; slug: string }>(
-    `SELECT id, slug FROM pages WHERE source_id = $1 AND source_path = $2 AND deleted_at IS NULL ORDER BY slug COLLATE "C"`, [sourceId, sourcePath]);
-  return rows.map(r => ({ id: Number(r.id), slug: r.slug }));
-}
-
-/** What a carry would move off a page. */
-export interface PageCarryCounts { facts: number; links: number; aliases: number }
-
-/** The facts about a slug, the links of a page and the aliases of a slug. */
-export async function countPageCarryRows(raw: EngineRawRead, sourceId: string, slug: string, pageId: number): Promise<PageCarryCounts> {
-  const [row] = await raw<{ facts: number | string; links: number | string; aliases: number | string }>(`SELECT
-        (SELECT count(*) FROM facts WHERE source_id = $1 AND entity_slug = $2) AS facts,
-        (SELECT count(*) FROM links WHERE from_page_id = $3 OR to_page_id = $3) AS links,
-        (SELECT count(*) FROM page_aliases WHERE source_id = $1 AND slug = $2) AS aliases`, [sourceId, slug, pageId]);
-  return { facts: Number(row?.facts ?? 0), links: Number(row?.links ?? 0), aliases: Number(row?.aliases ?? 0) };
 }
 
 // ─── the belief ledger's orphan lifetimes ────────────────────────────────

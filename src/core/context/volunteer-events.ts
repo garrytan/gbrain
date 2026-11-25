@@ -179,8 +179,8 @@ export async function insertVolunteerEvents(
   engine: BrainEngine,
   rows: VolunteerEventRow[],
 ): Promise<void> {
-  if (!rows.length) return;
-  await engine.insertVolunteerEventRows(rows);
+  // One statement for the batch (engine-sql/volunteer-events.ts insertVolunteerEvents).
+  await engine.insertVolunteerEvents(rows);
 }
 
 // ── Fire-and-forget sink (eng-review D4) ─────────────────────────────────

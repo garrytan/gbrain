@@ -105,6 +105,7 @@ pub const TELEMETRY_VOLUNTEER_SEQUENCE: u8 = 0x0D; // the context_volunteer_even
 pub const TELEMETRY_CHRONICLE_ROW: u8 = 0x0E; // chronicle_page_state
 pub const TELEMETRY_CHRONICLE_RESERVATION: u8 = 0x0F; // chronicle_judge_reservations
 pub const TELEMETRY_CHRONICLE_SEQUENCE: u8 = 0x10; // the chronicle_judge_reservations id sequence
+pub const TELEMETRY_ACCESS_READ_LOG: u8 = 0x11; // access_read_log
 /// Family `jobs`, the `dream_synthesis_completions` archive (`jobs/synthesis_completions.rs`).
 pub const DREAM_SYNTHESIS_COMPLETION: u8 = b'f';
 /// Family `entity_identities` (`entity_identities.rs`).

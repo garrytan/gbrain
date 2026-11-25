@@ -1,177 +1,194 @@
-//! Context-volunteer events (volunteer_events.rs): the insert's page guard, the listings, and the scrubs of every hard
-//! delete: `deletePages`, `purgeDeletedPages` and a source delete remove the rows that name the page or source, a soft
-//! delete keeps them, and the purge probe finds a row that still carries a purged claim.
+//! `insertVolunteerEvents` and `readVolunteerUsage`: the page filter of an insert, the day window, the used count from
+//! the page's retrieval record, and the listing by byte of arm then channel; the retention delete, the slug scrub of a page
+//! purge and the receipt probe's count.
 
-mod common;
+mod memory_env;
 
-use common::{TempDir, open};
-use gbrain_store::Store;
-use gbrain_store::facts::purge_plan::{ProbeNeedle, PurgeProbeArgs};
-use gbrain_store::page_ops::{PurgeOptions, SourceOption};
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::volunteer_events::VolunteerEventInput;
-use serde_json::{Map, json};
+use memory_env::brain;
+use serde_json::{Value, json};
 
-fn put(store: &Store, source: &str, slug: &str) {
+const DAY: i64 = 86_400_000_000;
+
+fn put(b: &gbrain_store::Store, slug: &str) -> i64 {
     let input: PageInput = serde_json::from_value(
-        json!({"type": "note", "title": slug, "compiled_truth": format!("{slug} body"), "frontmatter": {}}),
+        json!({ "type": "note", "title": slug, "compiled_truth": format!("{slug} body") }),
     )
     .unwrap();
-    let options = PutPageOptions {
-        source_id: Some(source.to_owned()),
-        ..Default::default()
-    };
-    store.put_page(slug, &input, &options).unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({})).unwrap();
+    b.put_page(slug, &input, &options).unwrap()["id"]
+        .as_i64()
+        .unwrap()
 }
 
-fn event(source: &str, slug: &str, channel: &str, rationale: &str) -> VolunteerEventInput {
-    VolunteerEventInput {
-        source_id: source.into(),
-        slug: slug.into(),
-        confidence: 0.9,
-        match_arm: "exact".into(),
-        rationale: rationale.into(),
-        channel: channel.into(),
-        session_id: None,
-        turn: None,
-    }
+fn rows(v: Value) -> Vec<VolunteerEventInput> {
+    serde_json::from_value(v).unwrap()
 }
 
-fn count(store: &Store, source: &str, slug: &str) -> u64 {
-    store.count_volunteer_events_for_slug(source, slug).unwrap()
+fn row(slug: &str, arm: &str, channel: &str) -> Value {
+    json!({ "source_id": "default", "slug": slug, "confidence": 0.5, "match_arm": arm, "channel": channel })
 }
 
-/// Two sources with pages `notes/a` and `notes/b`, one event each.
-fn seed(store: &Store) {
-    for source in ["alpha", "beta"] {
-        store
-            .insert_source(source, source, None, &Map::new())
-            .unwrap();
-        put(store, source, "notes/a");
-        put(store, source, "notes/b");
-        store
-            .insert_volunteer_event_rows(&[
-                event(source, "notes/a", "op", "matched Secret Name"),
-                event(source, "notes/b", "hook", "matched other"),
-            ])
-            .unwrap();
-    }
-}
-
-fn probe(store: &Store, source: &str, needle: &str) -> i64 {
-    let args = PurgeProbeArgs {
-        table: "context_volunteer_events".into(),
-        source_id: source.into(),
-        columns: vec!["rationale".into()],
-        needles: vec![ProbeNeedle {
-            text: needle.into(),
-            lower: needle.to_lowercase(),
-            escaped: needle.to_lowercase(),
-        }],
-        scoped: true,
-        binary: false,
-        rows: Some(100),
-    };
-    store.count_purge_probe(&args).unwrap()
+fn ids(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
 }
 
 #[test]
-fn delete_pages_scrubs_the_rows_of_the_deleted_page_only() {
-    let dir = TempDir::new("volunteer-delete-pages");
-    let store = open(&dir);
-    seed(&store);
-    let options = SourceOption {
-        source_id: Some("alpha".into()),
-    };
-    let gone = store
-        .delete_pages(&["notes/a".to_owned()], &options)
+fn a_row_whose_page_is_gone_is_dropped() {
+    let b = brain("volunteer-filter");
+    put(&b, "p");
+    b.insert_volunteer_events(&rows(json!([row("p", "a", "op"), row("gone", "a", "op")])))
         .unwrap();
-    assert_eq!(gone, vec!["notes/a".to_owned()]);
-    assert_eq!(count(&store, "alpha", "notes/a"), 0);
-    assert_eq!(count(&store, "alpha", "notes/b"), 1);
-    assert_eq!(count(&store, "beta", "notes/a"), 1);
-    // A write that lands after the purge finds no page and writes nothing.
-    let wrote = store
-        .insert_volunteer_event_rows(&[event("alpha", "notes/a", "late", "again")])
-        .unwrap();
-    assert_eq!(wrote, 0);
-    assert_eq!(count(&store, "alpha", "notes/a"), 0);
-}
-
-#[test]
-fn a_soft_delete_keeps_the_rows_and_a_purge_removes_them() {
-    let dir = TempDir::new("volunteer-purge-deleted");
-    let store = open(&dir);
-    seed(&store);
-    store.soft_delete_page("notes/a", Some("alpha")).unwrap();
-    assert_eq!(count(&store, "alpha", "notes/a"), 1);
-    // A soft-deleted page still exists, so a write for it is kept.
+    let usage = b.read_volunteer_usage(&ids(&["default"]), 30).unwrap();
     assert_eq!(
-        store
-            .insert_volunteer_event_rows(&[event("alpha", "notes/a", "op", "again")])
-            .unwrap(),
+        usage,
+        json!([{ "match_arm": "a", "channel": "op", "volunteered": 1, "used": 0 }])
+    );
+}
+
+#[test]
+fn the_usage_lists_arms_and_channels_by_byte() {
+    let b = brain("volunteer-order");
+    put(&b, "p");
+    // en_US sorts `a0, ab, a-z`; bytes put `a-z` first.
+    let arms = ["ab", "a0", "a-z"];
+    let batch: Vec<Value> = arms.iter().map(|a| row("p", a, "op")).collect();
+    b.insert_volunteer_events(&rows(Value::Array(batch)))
+        .unwrap();
+    let batch: Vec<Value> = arms.iter().map(|c| row("p", "z-arm", c)).collect();
+    b.insert_volunteer_events(&rows(Value::Array(batch)))
+        .unwrap();
+    let usage = b.read_volunteer_usage(&ids(&["default"]), 30).unwrap();
+    let got: Vec<(String, String)> = usage
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["match_arm"].as_str().unwrap().to_string(),
+                r["channel"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let want: Vec<(&str, &str)> = vec![
+        ("a-z", "op"),
+        ("a0", "op"),
+        ("ab", "op"),
+        ("z-arm", "a-z"),
+        ("z-arm", "a0"),
+        ("z-arm", "ab"),
+    ];
+    assert_eq!(
+        got,
+        want.iter()
+            .map(|(a, c)| (a.to_string(), c.to_string()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_event_older_than_the_window_or_of_another_source_is_not_counted() {
+    let b = brain("volunteer-window");
+    put(&b, "p");
+    b.insert_volunteer_events(&rows(json!([row("p", "old", "op")])))
+        .unwrap();
+    b.clock.advance(31 * DAY);
+    b.insert_volunteer_events(&rows(json!([row("p", "new", "op")])))
+        .unwrap();
+    let usage = b.read_volunteer_usage(&ids(&["default"]), 30).unwrap();
+    assert_eq!(
+        usage,
+        json!([{ "match_arm": "new", "channel": "op", "volunteered": 1, "used": 0 }])
+    );
+    assert_eq!(
+        b.read_volunteer_usage(&ids(&["other"]), 30).unwrap(),
+        json!([])
+    );
+}
+
+#[test]
+fn a_page_retrieved_after_the_event_counts_as_used() {
+    let b = brain("volunteer-used");
+    let id = put(&b, "p");
+    b.insert_volunteer_events(&rows(json!([row("p", "a", "op")])))
+        .unwrap();
+    // The event's stamp and the bump share the clock: retrieve a minute later.
+    b.clock.advance(60_000_000);
+    b.bump_page_retrievals(&[id]).unwrap();
+    let usage = b.read_volunteer_usage(&ids(&["default"]), 30).unwrap();
+    assert_eq!(
+        usage,
+        json!([{ "match_arm": "a", "channel": "op", "volunteered": 1, "used": 1 }])
+    );
+}
+
+#[test]
+fn a_nul_byte_refuses() {
+    let b = brain("volunteer-nul");
+    put(&b, "p");
+    assert!(
+        b.insert_volunteer_events(&rows(json!([row("p", "a\u{0}b", "op")])))
+            .is_err()
+    );
+}
+
+#[test]
+fn the_retention_delete_removes_only_the_rows_older_than_its_window() {
+    let b = brain("volunteer-retention");
+    put(&b, "p");
+    b.insert_volunteer_events(&rows(json!([row("p", "old", "op")])))
+        .unwrap();
+    b.clock.advance(100 * DAY);
+    b.insert_volunteer_events(&rows(json!([row("p", "new", "op")])))
+        .unwrap();
+    assert_eq!(b.delete_volunteer_events_older_than(90.0).unwrap(), 1);
+    assert_eq!(b.delete_volunteer_events_older_than(90.0).unwrap(), 0);
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "p").unwrap(),
         1
     );
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    let purged = store
-        .purge_deleted_pages(0.0, &PurgeOptions::default())
-        .unwrap();
-    assert_eq!(purged["count"], 1);
-    assert_eq!(count(&store, "alpha", "notes/a"), 0);
-    assert_eq!(count(&store, "alpha", "notes/b"), 1);
-    assert_eq!(count(&store, "beta", "notes/a"), 1);
+    // A window in the past removes everything volunteered so far.
+    assert_eq!(b.delete_volunteer_events_older_than(-1.0).unwrap(), 1);
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "p").unwrap(),
+        0
+    );
+    let err = b.delete_volunteer_events_older_than(f64::NAN).unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::INVALID_ARGUMENT);
 }
 
 #[test]
-fn a_source_delete_removes_the_rows_of_the_source_only() {
-    let dir = TempDir::new("volunteer-source-delete");
-    let store = open(&dir);
-    seed(&store);
-    assert!(store.delete_source_record("alpha", false).unwrap());
-    assert_eq!(count(&store, "alpha", "notes/a"), 0);
-    assert_eq!(count(&store, "alpha", "notes/b"), 0);
-    assert_eq!(count(&store, "beta", "notes/a"), 1);
-    assert!(
-        store
-            .list_volunteer_channels(Some(&["alpha".to_owned()]))
-            .unwrap()
-            .is_empty()
+fn the_slug_scrub_counts_and_removes_the_rows_of_those_slugs_of_one_source() {
+    let b = brain("volunteer-scrub");
+    put(&b, "p");
+    put(&b, "q");
+    b.insert_volunteer_events(&rows(json!([
+        row("p", "a", "op"),
+        row("p", "a", "hook"),
+        row("q", "a", "op")
+    ])))
+    .unwrap();
+    assert_eq!(
+        b.delete_volunteer_events_for_slugs("default", &[]).unwrap(),
+        0
     );
     assert_eq!(
-        store
-            .list_volunteer_channels(Some(&["beta".to_owned()]))
-            .unwrap()
-            .len(),
+        b.delete_volunteer_events_for_slugs("other", &ids(&["p"]))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        b.delete_volunteer_events_for_slugs("default", &ids(&["p", "missing"]))
+            .unwrap(),
         2
     );
-}
-
-#[test]
-fn the_purge_probe_finds_a_rationale_that_still_carries_the_claim() {
-    let dir = TempDir::new("volunteer-probe");
-    let store = open(&dir);
-    seed(&store);
-    assert_eq!(probe(&store, "alpha", "secret name"), 1);
-    assert_eq!(probe(&store, "alpha", "no such text"), 0);
-    // The probe is scoped to the source it names.
-    store
-        .delete_volunteer_events_for_slugs("alpha", &["notes/a".to_owned()])
-        .unwrap();
-    assert_eq!(probe(&store, "alpha", "secret name"), 0);
-    assert_eq!(probe(&store, "beta", "secret name"), 1);
-}
-
-#[test]
-fn rows_survive_a_reopen() {
-    let dir = TempDir::new("volunteer-reopen");
-    {
-        let store = open(&dir);
-        seed(&store);
-    }
-    let store = open(&dir);
-    assert_eq!(count(&store, "alpha", "notes/a"), 1);
-    store
-        .insert_volunteer_event_rows(&[event("alpha", "notes/a", "op", "more")])
-        .unwrap();
-    assert_eq!(count(&store, "alpha", "notes/a"), 2);
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "p").unwrap(),
+        0
+    );
+    assert_eq!(
+        b.count_volunteer_events_for_slug("default", "q").unwrap(),
+        1
+    );
 }
