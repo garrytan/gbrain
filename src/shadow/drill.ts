@@ -23,6 +23,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statfsSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { BACKUP_ARCHIVE_MAX_BYTES } from '../core/backup/archive.ts';
+import { flushDirectory } from '../core/fs-durable.ts';
 import { withRequestSignal } from '../core/request-signal.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadedAddonPath, type RustEngineAddonLoad } from '../core/rust-engine/addon-loader.ts';
@@ -181,6 +182,13 @@ function takeLock(dir: string, now: number): (() => void) | null {
   } finally {
     try { unlinkSync(takeoverPath(dir)); } catch { /* ours; already gone */ }
   }
+}
+
+/** Removes `backup.json` and syncs the drills directory; false when the record is still there (or its removal cannot be confirmed). */
+function invalidateRecord(dir: string): boolean {
+  try { rmSync(backupRecordPath(dir), { force: true }); } catch { return false; } // silent-read-ok: a record that cannot be removed is the false return
+  try { flushDirectory(drillsDir(dir)); } catch { return false; } // silent-read-ok: a removal that cannot be synced is not durable: the caller refuses
+  return !existsSync(backupRecordPath(dir));
 }
 
 /** Removes the pending record only while it is still the one for `opId`: never another drill's. */
@@ -379,93 +387,100 @@ export async function runBackupDrill(dir: string, deps: DrillDeps = {}): Promise
   drillsId = dirIdentity(drillsDir(dir));
   const release = takeLock(dir, now());
   if (!release) return finish('drill_running', false);
-
-  const opId = `drill-${drillId}`;
-  const scratch = join(drillsDir(dir), `scratch-${drillId}`);
-  const restored = join(scratch, 'restored');
-  let owner: DrillOwner | null = null;
-  let reason: DrillReason | null = null;
-  let ended = true;
-  let wrotePending = false;
-  const waitMs = deps.endedWaitMs ?? 30_000;
-  const pollMs = deps.endedPollMs ?? 250;
+  // The lock is held through the whole drill, the write of its result and the removal of its pending marker, on every path:
+  // an older drill that is slow to publish must not be overtaken by a newer one and then overwrite its result.
   try {
-    owner = await (deps.openOwner ?? openRealOwner)(load.addon, storePath);
-    rec.via = owner.via;
-
-    // A copy an earlier drill left behind: its scratch goes only after the owner says that copy ended.
-    if (existsSync(pendingPath(dir))) {
-      const old = readPending(dir);
-      if (!old || !(await copyEnded(owner, old.op_id, 0, pollMs))) return finish('cleanup_pending', false);
-      if (ownScratch(dir, old.scratch)) rmSync(old.scratch, { recursive: true, force: true });
-      if (!existsSync(old.scratch)) removePendingIf(dir, old.op_id);
-      else return finish('cleanup_failed', false);
-    }
-    if (hadPending && freeSpace() < needBytes) return finish('disk_space', false);
-
-    // Phase 1 (immutable): the owner's copy at one generation, then the verifier on the closed copy.
-    rec.op_id = opId;
-    mkdirSync(scratch, { mode: 0o700 });
-    const pending: Pending = { version: 1, op_id: opId, drill_id: drillId, scratch, started_at: rec.started_at };
-    writeAtomic(pendingPath(dir), JSON.stringify(pending) + '\n');
-    wrotePending = true;
-    const t1 = now();
-    let manifest: StoreSnapshotManifest | null = null;
-    let keywordState: string | null = null;
+    const opId = `drill-${drillId}`;
+    const scratch = join(drillsDir(dir), `scratch-${drillId}`);
+    const restored = join(scratch, 'restored');
+    let owner: DrillOwner | null = null;
+    let reason: DrillReason | null = null;
+    let ended = true;
+    let wrotePending = false;
+    const waitMs = deps.endedWaitMs ?? 30_000;
+    const pollMs = deps.endedPollMs ?? 250;
     try {
-      const send = (): ReturnType<DrillOwner['snapshot']> => owner!.snapshot(restored, { opId, ...(deps.snapshotOptions ?? {}) });
-      const done = await (deps.signal ? withRequestSignal(deps.signal, send) : send());
-      manifest = done.manifest;
-      rec.free_bytes_initial = done.free_bytes.initial;
-      rec.free_bytes_low_water = done.free_bytes.low;
-    } catch (error) {
-      reason = snapshotReason(error);
-      ended = await copyEnded(owner, opId, waitMs, pollMs);
-    }
-    rec.snapshot_ms = now() - t1;
-    if (manifest) {
-      rec.generation = manifest.generation;
-      rec.engine_format_version = manifest.engine_format_version;
-      rec.snapshot_bytes = manifest.bytes;
-      const t2 = now();
-      try {
-        const report = await (deps.verify ?? verifyCopy)(load.addon, restored, manifest);
-        rec.compared = { tags: Object.keys(manifest.tags).length, relations: Object.keys(manifest.relations ?? {}).length };
-        rec.mismatches = report.mismatches;
-        if (report.verdict === 'integrity') reason = 'copy_integrity';
-        else if (report.verdict !== 'ok' || (report.keyword_index && !report.keyword_index.ok)) reason = 'copy_mismatch';
-        keywordState = report.keyword_index?.state ?? null;
-      } catch { reason = 'copy_unreadable'; } // silent-read-ok: the reason code is the record
-      // Phase 2 (open check): a normal open of the throwaway copy, kept apart from the evidence above.
-      if (reason === null) {
-        try {
-          const check = await (deps.openCopy ?? openCopyReal)(load.addon, restored, keywordState === 'complete');
-          if (check.pages > 0 && check.searchHits === null) throw Object.assign(new Error('no search ran on a populated copy'), { drillReason: 'no_probe_term' });
-          const after = await (deps.verifyAfter ?? verifyAfterOpen)(load.addon, restored);
-          rec.post_open = { generation_after: after?.generation ?? null, keyword_state: after?.keyword_index?.state ?? keywordState, pages: check.pages, search_hits: check.searchHits };
-        } catch (error) {
-          reason = (error as { drillReason?: DrillReason }).drillReason ?? 'open_failed';
-        }
+      owner = await (deps.openOwner ?? openRealOwner)(load.addon, storePath);
+      rec.via = owner.via;
+
+      // A copy an earlier drill left behind: its scratch goes only after the owner says that copy ended.
+      if (existsSync(pendingPath(dir))) {
+        const old = readPending(dir);
+        if (!old || !(await copyEnded(owner, old.op_id, 0, pollMs))) return finish('cleanup_pending', false);
+        if (ownScratch(dir, old.scratch)) rmSync(old.scratch, { recursive: true, force: true });
+        if (existsSync(old.scratch)) return finish('cleanup_failed', false);
+        // The old marker is the only thing that keeps an earlier pass from standing for a drill that never published (its
+        // write and its removal of the old record can both have failed): the old record goes first, durably, or the marker stays.
+        if (!invalidateRecord(dir)) return finish('cleanup_failed', false);
+        removePendingIf(dir, old.op_id);
       }
-      rec.restore_ms = now() - t2;
+      if (hadPending && freeSpace() < needBytes) return finish('disk_space', false);
+
+      // Phase 1 (immutable): the owner's copy at one generation, then the verifier on the closed copy.
+      rec.op_id = opId;
+      mkdirSync(scratch, { mode: 0o700 });
+      const pending: Pending = { version: 1, op_id: opId, drill_id: drillId, scratch, started_at: rec.started_at };
+      writeAtomic(pendingPath(dir), JSON.stringify(pending) + '\n');
+      wrotePending = true;
+      const t1 = now();
+      let manifest: StoreSnapshotManifest | null = null;
+      let keywordState: string | null = null;
+      try {
+        const send = (): ReturnType<DrillOwner['snapshot']> => owner!.snapshot(restored, { opId, ...(deps.snapshotOptions ?? {}) });
+        const done = await (deps.signal ? withRequestSignal(deps.signal, send) : send());
+        manifest = done.manifest;
+        rec.free_bytes_initial = done.free_bytes.initial;
+        rec.free_bytes_low_water = done.free_bytes.low;
+      } catch (error) {
+        reason = snapshotReason(error);
+        ended = await copyEnded(owner, opId, waitMs, pollMs);
+      }
+      rec.snapshot_ms = now() - t1;
+      if (manifest) {
+        rec.generation = manifest.generation;
+        rec.engine_format_version = manifest.engine_format_version;
+        rec.snapshot_bytes = manifest.bytes;
+        const t2 = now();
+        try {
+          const report = await (deps.verify ?? verifyCopy)(load.addon, restored, manifest);
+          rec.compared = { tags: Object.keys(manifest.tags).length, relations: Object.keys(manifest.relations ?? {}).length };
+          rec.mismatches = report.mismatches;
+          if (report.verdict === 'integrity') reason = 'copy_integrity';
+          else if (report.verdict !== 'ok' || (report.keyword_index && !report.keyword_index.ok)) reason = 'copy_mismatch';
+          keywordState = report.keyword_index?.state ?? null;
+        } catch { reason = 'copy_unreadable'; } // silent-read-ok: the reason code is the record
+        // Phase 2 (open check): a normal open of the throwaway copy, kept apart from the evidence above.
+        if (reason === null) {
+          try {
+            const check = await (deps.openCopy ?? openCopyReal)(load.addon, restored, keywordState === 'complete');
+            if (check.pages > 0 && check.searchHits === null) throw Object.assign(new Error('no search ran on a populated copy'), { drillReason: 'no_probe_term' });
+            const after = await (deps.verifyAfter ?? verifyAfterOpen)(load.addon, restored);
+            rec.post_open = { generation_after: after?.generation ?? null, keyword_state: after?.keyword_index?.state ?? keywordState, pages: check.pages, search_hits: check.searchHits };
+          } catch (error) {
+            reason = (error as { drillReason?: DrillReason }).drillReason ?? 'open_failed';
+          }
+        }
+        rec.restore_ms = now() - t2;
+      }
+    } catch { reason ??= 'drill_error'; } // silent-read-ok: the reason code is the record
+    finally {
+      if (owner) await owner.close().catch(() => undefined);
+      if (ended) {
+        try { rmSync(scratch, { recursive: true, force: true }); } catch { /* checked below */ }
+        rec.scratch_deleted = !existsSync(scratch);
+      } else {
+        rec.scratch_deleted = false;
+      }
     }
-  } catch { reason ??= 'drill_error'; } // silent-read-ok: the reason code is the record
-  finally {
-    if (owner) await owner.close().catch(() => undefined);
-    if (ended) {
-      try { rmSync(scratch, { recursive: true, force: true }); } catch { /* checked below */ }
-      rec.scratch_deleted = !existsSync(scratch);
-    } else {
-      rec.scratch_deleted = false;
-    }
+    if (!rec.scratch_deleted) reason ??= 'cleanup_failed';
+    const result = finish(reason, true);
+    // The pending marker goes only once the copy is gone AND this drill's result is durable (or the shadow itself is gone and
+    // nothing can be published): a failed write must not leave the earlier record as the one status reads.
+    if (rec.scratch_deleted && wrotePending && (published || result.reason === 'shadow_gone')) removePendingIf(dir, opId);
+    return result;
+  } finally {
     release();
   }
-  if (!rec.scratch_deleted) reason ??= 'cleanup_failed';
-  const result = finish(reason, true);
-  // The pending marker goes only once the copy is gone AND this drill's result is durable (or the shadow itself is gone and
-  // nothing can be published): a failed write must not leave the earlier record as the one status reads.
-  if (rec.scratch_deleted && wrotePending && (published || result.reason === 'shadow_gone')) removePendingIf(dir, opId);
-  return result;
 }
 
 async function verifyAfterOpen(addon: object, dir: string): Promise<StoreVerifyReport | null> {

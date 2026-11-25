@@ -686,6 +686,68 @@ describe('review of the third merge: a failed result write never leaves an earli
   });
 });
 
+describe('second fix round: recovery never revives an older pass, and the lock is held through publication', () => {
+  const criterion10 = (dir: string): string => evaluateReadiness({ drills: { ...buildDrillStatus(dir).drills, eval_gates_e1_e3: true } } as ShadowStatus).criteria.find(c => c.n === 10)!.state;
+  const lowDisk = { bavail: 1, bsize: 1 };
+
+  test('recovery of an unpublished failed drill cannot revive an older pass (the drill that wrote the marker could neither publish nor remove the old record)', async () => {
+    const { dir } = shadow();
+    const first = await runBackupDrill(dir, deps(fakeOwner()));
+    expect(first.pass).toBe(true);
+    expect(buildDrillStatus(dir).drills.backup_restore_passed).toBe(true);
+    // What a drill leaves when both its result write and its removal of the old record failed: the old pass, plus its own
+    // pending marker, with its scratch already gone.
+    writeFileSync(join(dir, 'drills', 'pending.json'), JSON.stringify({ version: 1, op_id: 'drill-lost', drill_id: 'lost', scratch: join(dir, 'drills', 'scratch-lost'), started_at: new Date().toISOString() }) + '\n');
+    expect(buildDrillStatus(dir).drills.backup_restore_passed).toBe(false);
+    // The next drill clears that marker and then refuses for lack of disk, publishing nothing: the old pass must not come back.
+    const refused = await runBackupDrill(dir, deps(fakeOwner(), { statfs: () => lowDisk }));
+    expect(refused.reason).toBe('disk_space');
+    expect(buildDrillStatus(dir).drills.backup_restore_passed).toBe(false);
+    expect(criterion10(dir)).toBe('fail');
+  });
+
+  test('recovery that cannot remove the old result refuses cleanup_failed and keeps the pending marker', async () => {
+    const { dir } = shadow();
+    expect((await runBackupDrill(dir, deps(fakeOwner()))).pass).toBe(true);
+    writeFileSync(join(dir, 'drills', 'pending.json'), JSON.stringify({ version: 1, op_id: 'drill-lost', drill_id: 'lost', scratch: join(dir, 'drills', 'scratch-lost'), started_at: new Date().toISOString() }) + '\n');
+    // A non-empty directory stands where backup.json was: removing it as a file fails.
+    rmSync(join(dir, 'drills', 'backup.json'));
+    mkdirSync(join(dir, 'drills', 'backup.json'));
+    writeFileSync(join(dir, 'drills', 'backup.json', 'x'), 'x');
+    const refused = await runBackupDrill(dir, deps(fakeOwner()));
+    expect(refused).toMatchObject({ pass: false, reason: 'cleanup_failed', op_id: null });
+    expect(existsSync(join(dir, 'drills', 'pending.json'))).toBe(true);
+    expect(buildDrillStatus(dir).drills.backup_restore_passed).toBe(false);
+  });
+
+  test('the drill lock is held while the result is published: a second process cannot take it between the end of one drill and its write', async () => {
+    const { dir } = shadow();
+    const lock = join(dir, 'drills', 'drill.lock');
+    const seen: boolean[] = [];
+    // Every clock read in the drill says whether another process could take the lock right now (an exclusive create, as the
+    // lock itself is made); the last read is the one `finish` makes just before it writes history.jsonl and backup.json.
+    const now = (): number => {
+      let acquirable = false;
+      try { writeFileSync(lock, '{"pid":1}', { flag: 'wx' }); acquirable = true; rmSync(lock); } catch { /* held, or no drills dir yet */ }
+      seen.push(acquirable);
+      return Date.now();
+    };
+    const rec = await runBackupDrill(dir, deps(fakeOwner(), { now }));
+    expect(rec.pass).toBe(true);
+    expect(seen.length).toBeGreaterThan(3);
+    expect(seen[seen.length - 1]).toBe(false);
+    expect(existsSync(lock)).toBe(false); // and it is released once the result is written
+  });
+
+  test('every path out of a drill that took the lock releases it, including a refusal before the copy', async () => {
+    const { dir } = shadow();
+    expect((await runBackupDrill(dir, deps(fakeOwner()))).pass).toBe(true);
+    writeFileSync(join(dir, 'drills', 'pending.json'), JSON.stringify({ version: 1, op_id: 'drill-lost', drill_id: 'lost', scratch: join(dir, 'drills', 'scratch-lost'), started_at: new Date().toISOString() }) + '\n');
+    expect((await runBackupDrill(dir, deps(fakeOwner(), { statfs: () => lowDisk }))).reason).toBe('disk_space');
+    expect(existsSync(join(dir, 'drills', 'drill.lock'))).toBe(false);
+  });
+});
+
 describe('the stop word list is the Rust engine list (review round 2)', () => {
   test('ENGLISH_STOPWORDS equals the list in rust/crates/gbrain-store/src/keyword/stem.rs, word for word and in order', () => {
     // test-reads-source-ok[structural]: the addon does not export its stop word list (src/shadow/english-stopwords.ts), so the hand copy is checked against the Rust source it must equal.
