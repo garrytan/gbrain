@@ -134,6 +134,18 @@ describe('request_tools {surface} on stdio', () => {
     }
   }, 90_000);
 
+  test('GST-3791: a Codex client asking for a tool it already lists is told to call it, with no reload note', async () => {
+    const s = await session(['--surface', 'full'], {}, 'codex-mcp-client');
+    try {
+      expect(await names(s)).toContain('get_page');
+      const res = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['get_page'] } })) as { listed: boolean; note: string };
+      expect(res.listed).toBe(true);
+      expect(res.note).toBe('`get_page` is already in your tool list; call it directly.');
+    } finally {
+      await s.close();
+    }
+  }, 90_000);
+
   test('GST-3791: an OpenClaw client revealing a tool on the verbs listing is told it is callable from the next run', async () => {
     const s = await session(['--surface', 'starter', '--advertise', 'verbs'], {}, 'openclaw-bundle-mcp');
     try {
@@ -151,6 +163,7 @@ describe('request_tools {surface} on stdio', () => {
       expect(mixed.note).toContain('OpenClaw builds its tool list when a run starts');
       expect(mixed.note).toContain('`get_health`');
       expect(mixed.note).not.toContain('then call them by name');
+      expect(mixed.note).not.toContain('get_page');
     } finally {
       await s.close();
     }

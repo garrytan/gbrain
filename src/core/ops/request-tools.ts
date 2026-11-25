@@ -305,8 +305,8 @@ const request_tools: Operation = {
         via: 'request_tools',
       });
       if (!ctx.notifyToolListChanged) return { persisted: true, surface: requested, note: 're-issue tools/list to see the new catalog' };
-      await ctx.notifyToolListChanged().catch(() => { /* best-effort: the next tools/list shows the persisted surface either way */ });
-      return { persisted: true, surface: requested, note: 'tools/list_changed was sent; re-issue tools/list to see the new catalog' };
+      const sent = await ctx.notifyToolListChanged().then(() => true, () => false);
+      return { persisted: true, surface: requested, note: sent ? 'tools/list_changed was sent; re-issue tools/list to see the new catalog' : 're-issue tools/list to see the new catalog' };
     }
 
     // A widenable stdio session lists what request_tools {surface} can add, not only what it serves now.
@@ -370,14 +370,30 @@ const request_tools: Operation = {
       if (ctx.revealTools) {
         // A widenable session's catalog reaches past what it serves; only tools it can call now are listed.
         const callable = catalogCeiling === ceiling ? visibleSet : new Set((await visibleOpsForCaller(ctx, ceiling)).map(o => o.name));
-        const reachable = picked.filter(o => callable.has(o.name)).map(o => o.name);
+        const reachableOps = picked.filter(o => callable.has(o.name));
+        const reachable = reachableOps.map(o => o.name);
         const outside = picked.filter(o => !callable.has(o.name)).map(o => `\`${o.name}\``);
-        if (reachable.length) ctx.revealTools(reachable);
         const reload = midTurnReloadNote(ctx);
-        if (!outside.length) return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: reload ? `These tools are now listed by this server (tools/list_changed was sent). ${reload}` : 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
+        if (reload) {
+          // Only a tool the client did not already list waits for its next turn; one listed at session start is callable now.
+          const isListed = ctx.toolAccess?.isListed;
+          const listedNow = new Set(isListed ? (await Promise.all(reachableOps.map(async o => (await isListed(o)) ? o.name : null))).filter((n): n is string => n !== null) : []);
+          if (reachable.length) ctx.revealTools(reachable);
+          const tick = (names: string[]) => names.map(n => `\`${n}\``).join(', ');
+          const fresh = reachable.filter(n => !listedNow.has(n)), already = reachable.filter(n => listedNow.has(n));
+          const parts = [
+            fresh.length ? `${tick(fresh)} ${fresh.length === 1 ? 'is' : 'are'} now listed by this server (tools/list_changed was sent).` : '',
+            already.length ? `${tick(already)} ${already.length === 1 ? 'is' : 'are'} already in your tool list; call ${already.length === 1 ? 'it' : 'them'} directly.` : '',
+            outside.length ? `${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} outside this session's '${ceiling}' surface, so ${outside.length === 1 ? 'it is' : 'they are'} not listed.` : '',
+            fresh.length || outside.length ? reload : '',
+          ];
+          return { tools: buildToolDefs(picked, { strictParams }), listed: !outside.length, note: parts.filter(Boolean).join(' ') };
+        }
+        if (reachable.length) ctx.revealTools(reachable);
+        if (!outside.length) return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
         return {
           tools: buildToolDefs(picked, { strictParams }), listed: false,
-          note: `${reachable.length ? `${reachable.map(n => `\`${n}\``).join(', ')} are now ${reload ? 'listed by this server' : 'in your tool list'} (tools/list_changed was sent). ${reload ? `${reload} ` : ''}` : ''}${outside.join(', ')} are outside this session's '${ceiling}' surface, so they are not listed and cannot be called yet: call request_tools {"surface":"full"} to add them to this session${reload ? '' : ', then call them by name'}.`,
+          note: `${reachable.length ? `${reachable.map(n => `\`${n}\``).join(', ')} are now in your tool list (tools/list_changed was sent). ` : ''}${outside.join(', ')} are outside this session's '${ceiling}' surface, so they are not listed and cannot be called yet: call request_tools {"surface":"full"} to add them to this session, then call them by name.`,
         };
       }
       return { tools: buildToolDefs(picked, { strictParams }) };

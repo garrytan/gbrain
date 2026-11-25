@@ -1276,10 +1276,11 @@ that call's own response stream). Harness support varies by version:
 | OpenClaw | 2026.11 drops its cached catalog on the notification, but a run's tools are built when the run starts, so a new tool is callable from the next user message, never in the run that asked |
 | other MCP clients | not measured |
 
-On stdio, `request_tools` tells Codex and OpenClaw (by their initialize client
-name) that the new tools cannot be called in this turn and names the lasting
-route (`--surface full` on the registration). On OAuth HTTP a surface the client
-widens is persisted, so its next session lists it.
+On a local `gbrain serve` stdio pipe (not the thin-client bridge), `request_tools`
+tells Codex and OpenClaw (by their initialize client name) that tools it newly
+lists cannot be called in this turn and names the lasting route (`--surface full`
+on the registration). On OAuth HTTP a widened surface is persisted for the
+client, so the next `tools/list` and every later session list it.
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
 
