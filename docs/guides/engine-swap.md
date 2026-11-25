@@ -79,8 +79,8 @@ never a pass. With no shadow running, every criterion is `missing`.
    outside the write's own footprint must be unchanged afterwards, no link may have appeared between the copied pages that
    the write did not add (a link counts as the write's own only when its from page, to page, type, source and origin page
    all match what the write named; a link that names no origin matches only a row with no origin), and a `putPage` must
-   read back the revision it returned; otherwise the sample is `uncomparable` (`moved`). PGLite skips the fence, because
-   its single-writer file lock means no other process can write. Open gaps: another process editing the very rows the
+   read back the revision it returned; otherwise the sample is `uncomparable` (`moved`). A PGLite brain samples no
+   writes (below), so the fence never runs there. Open gaps: another process editing the very rows the
    write changes is not seen, and would show as an unexplained difference (it can fail criterion 5, never pass it); and a
    link write that names no type, or no source, treats a link another process adds between the same two pages with any
    type or source as its own.
@@ -93,7 +93,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    **Only the owner child records.** Shadow mode runs one child per gbrain process, and only the child that owns the Rust store has a
    fixed evidence epoch; a client of another process's store has none. A client child records no write comparison at all: it adds no
    evidence and can never make criterion 5 pass (it drops its sampled writes and replays nothing), and `gbrain engine
-   shadow status` and the swap report say "client shadow children record no write comparisons". The cost is fewer comparable writes,
+   shadow status` and the swap plan say "client shadow children record no write comparisons". The cost is fewer comparable writes,
    so criterion 5 reaches 1,000 later. Because the owner's epoch never changes during its life, an epoch change while a replay is
    running cannot count that replay's result in the new epoch.
 
