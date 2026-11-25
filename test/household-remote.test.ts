@@ -440,6 +440,30 @@ describe('household privacy over remote MCP', () => {
     expect((await engine.getPage('people/vic-example'))!.frontmatter.household_role).toBe('child');
   });
 
+  test('a remote non-owner put_page cannot narrow a subject, with one refusal that counts no records (W1a put_page leak)', async () => {
+    for (const who of ['xena', 'yuri', 'zed']) await local('put_page', { slug: 'people/' + who + '-example', content: md({ type: 'person', title: who + '-example', household_role: 'adult' }, who + '.') });
+    const hidden = await local('household_add', { kind: 'supply', title: 'Xena snacks', cadence: '30d', about: ['people/xena-example'] });
+    const page = await engine.getPage(hidden.slug);
+    const { revision } = await local('get_page', { slug: hidden.slug });
+    await local('put_page', { slug: hidden.slug, expected_revision: revision, content: md({ title: page!.title, ...page!.frontmatter, readable_by: [HELPER] }, page!.compiled_truth) });
+    for (const title of ['Yuri snacks', 'Yuri paints']) await local('household_add', { kind: 'supply', title, cadence: '30d', about: ['people/yuri-example'] });
+    __resetPrivateVisibilityCacheForTests();
+    const strip = (out: { json: any }, who: string) => JSON.stringify({ code: out.json.code, message: out.json.message, fix: out.json.fix }).replaceAll(who + '-example', 'X');
+    const asChild = await Promise.all(['xena', 'yuri', 'zed'].map(async who => strip((await rewrite(ADULT, 'people/' + who + '-example', fm => ({ ...fm, household_role: 'child' }))), who)));
+    expect(asChild[0]).toContain('household_reclassify');
+    expect(asChild[0]).not.toMatch(/\d+ household record/);
+    expect(asChild[1]).toBe(asChild[0]);
+    expect(asChild[2]).toBe(asChild[0]);
+    const unrole = await Promise.all(['xena', 'zed'].map(async who => strip((await rewrite(ADULT, 'people/' + who + '-example', ({ household_role: _, ...fm }) => fm)), who)));
+    expect(unrole[0]).toContain('household_reclassify');
+    expect(unrole[0]).not.toMatch(/\d+ household record/);
+    expect(unrole[1]).toBe(unrole[0]);
+    for (const who of ['xena', 'yuri', 'zed']) expect((await engine.getPage('people/' + who + '-example'))!.frontmatter.household_role).toBe('adult');
+    const owner = await rewrite(OWNER, 'people/zed-example', fm => ({ ...fm, household_role: 'child' }));
+    expect(owner.isError).toBe(false);
+    expect((await engine.getPage('people/zed-example'))!.frontmatter.household_role).toBe('child');
+  });
+
   test('a subject the owner changes back to adult after the pre-check is not made a child by a non-owner (merged-head review #2)', async () => {
     await local('put_page', { slug: 'people/abe-example', content: md({ type: 'person', title: 'abe-example', household_role: 'adult' }, 'Abe.') });
     const read = PGLiteEngine.prototype.readPageSnapshot;

@@ -290,6 +290,8 @@ export async function importFromContent(
     remote?: boolean;
     /** GST-2891: with `remote`, the writer read the page without its held fence rows (worldOnlyFacts), so the merge restores them as stored. */
     restoreHeldRows?: boolean;
+    /** With `remote`: whether the stored write is the brain owner's own, for the household admission (the request's caller record is gone by preparation). */
+    householdOwner?: () => Promise<boolean>;
     /**
      * #1699/#6259: gate-owned markers (`quarantine`, `content_flag`, `embed_skip`,
      * `atoms_scan_hash`, `quarantine_override`) are stripped from incoming content
@@ -479,7 +481,7 @@ export async function importFromContent(
     // Sort tags in place first to preserve the pre-#3694 downstream behavior
     // (parsedPage.tags was sorted by the old inline `.sort()` mutation).
     const suppliedTrustMarker = parsed.frontmatter.trust_tier; // CEO-21: the no-op check also reads the caller's own marker
-    if (parsed.type === 'household' || existing?.type === 'household' || existing?.frontmatter?.household_role !== undefined || parsed.frontmatter.household_role !== undefined) await (await import('./household/placement.ts')).householdWriteAdmission(engine, sourceId ?? 'default', slug, parsed, existing, opts.remote !== false);
+    if (parsed.type === 'household' || existing?.type === 'household' || existing?.frontmatter?.household_role !== undefined || parsed.frontmatter.household_role !== undefined) await (await import('./household/placement.ts')).householdWriteAdmission(engine, sourceId ?? 'default', slug, parsed, existing, opts.remote !== false, opts.householdOwner);
     if (opts.prepare) opts.prepareFrontmatter?.(parsed);
     parsed.tags.sort();
     const hash = contentHash({
