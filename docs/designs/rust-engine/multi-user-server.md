@@ -337,6 +337,27 @@ pub struct WriteOrigin { pub host_id: String, pub incarnation: String, pub write
   `format_unknown`. A writable open of a log-stamped brain with the log off refuses (never writes unlogged).
 - Read API: `Store::read_commit_log(after: Option<CommitPosition>, max: usize) -> Result<LogPage>`, where `LogPage` is
   `{ records, oldest_retained, newest, snapshot_required: bool }`, all from one snapshot. Retention cap 64 MiB default.
+- **I-4.v2 (2026-11-25, replaces the v1 record layout).** Each commit record carries its commit time. Value layout:
+  `[version u8 = 2]` `[host_id]` `[incarnation]` `[writer_id]` (each a u32 big-endian length, then UTF-8 bytes)
+  `[commit_time i64 big-endian, signed, microseconds since the Unix epoch, UTC]` `[write_ids: u32 BE count, each
+  length-prefixed]` `[ops: u32 BE count, each: op u8, key length-prefixed, operand length-prefixed]`. Ops and operands
+  are unchanged from v1.
+  - `commit_time` strictly increases in commit-position order across the whole log, single-writer and optimistic
+    stores alike (each transaction in one group commit gets its own time): it is the larger of the store clock and the
+    previous commit's time plus 1 microsecond. The same commit writes the same value to the meta key `M\0ctime`, which
+    `Store::last_commit_time()` reads and which is the floor at open.
+  - `M\0ctime` is written only while the multi-user switch (I-0) is on, with the log on or off. With the switch off it
+    is never written, so records stay byte-identical to the base.
+  - Version 1 was never written outside test stores, so it is retired, not read: a v2 reader refuses a version-1
+    record, and any version other than 2, with `format_unknown` (an unknown version is not corruption, so not
+    `store_corrupt`). The log format number (`format::LOG_FORMAT_VERSION`) does not change, because no build that
+    writes v1 records has shipped. A build that only knows v1 refuses a v2 record the same way and never guesses
+    offsets.
+  - JSON form, wherever a record is decoded (wire, tests): adds `"commit_time_us": <integer>`; microseconds fit in a
+    JavaScript number until the year 2255. A wire frame that ships raw record bytes ships them unchanged.
+  - Order rules: fact order and every "what happened first" rule use the commit position `(sequence, index)`, never
+    `commit_time`. `commit_time` sets row times (`created_at` and the like) and the clock floor. A server that takes
+    over as primary starts its clock at the larger of its own `M\0ctime` and the last applied record's `commit_time`.
 
 ### I-5. Leases
 
