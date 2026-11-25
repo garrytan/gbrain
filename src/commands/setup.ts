@@ -783,8 +783,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       const steps: CodexSetupStep[] = [
         { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
         ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
-        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}` },
-        ...(found.grace.state === 'absent' ? [{ step: 'mcp' as const, action: 'write' as const, detail: `${CODEX_STARTUP_GRACE_KEY} = 0 in ${found.configPath} (Codex waits for gbrain to start)` }] : []),
+        { step: 'mcp', action: pluginOwner ? 'skip' : found.mcp.state === 'current' && found.grace.state !== 'absent' ? 'keep' : 'write', detail: `[mcp_servers.${flags.name}] in ${found.configPath}${plan.stdioMember ? ` (serve --stdio-member ${plan.stdioMember})` : ''}${found.grace.state === 'absent' ? `, and ${CODEX_STARTUP_GRACE_KEY} = 0 (Codex waits for gbrain to start)` : ''}` },
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.hooksPath}` : `no hooks (${found.hooksPath})` },
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
