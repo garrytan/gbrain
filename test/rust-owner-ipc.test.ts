@@ -773,7 +773,7 @@ describe('an owner that exits', () => {
   }
   /** A store with one config key, so a call this process serves itself is told apart from one the owner served. */
   // `open` resolves the store's open result, which promises serialized_transactions as the real store does.
-  class ConfigBrain { async open() { return { serialized_transactions: true }; } async close() {} async getConfig(key: string): Promise<string | null> { return key === 'who' ? 'this-process' : null; } }
+  class ConfigBrain { async open(): Promise<unknown> { return { serialized_transactions: true }; } async close() {} async getConfig(key: string): Promise<string | null> { return key === 'who' ? 'this-process' : null; } }
   const configAddon = { target: 'linux-x64-glibc', engine_abi: 1, Pool: class { async shutdown() {} }, Brain: ConfigBrain } as never;
 
   test('a client installed without rejoin: calls in flight end outcome_unknown and later calls fail fast with not_sent', async () => {
