@@ -33,9 +33,9 @@ export function holdExpired(a: ActionRecord, now: Date): boolean {
   return !!a.hold && (a.action.status === 'proposed' || a.action.status === 'approved') && Date.parse(a.hold.expires_at) <= now.getTime();
 }
 
-/** The actions that still count: done, and not superseded by a correction that is itself done. */
+/** The actions that still count: done, and not superseded by a correction that was applied (done, or done and then reversed). */
 export function countedActions(rows: readonly StoredAction[]): StoredAction[] {
-  const superseded = new Set(rows.filter(r => r.record.action.status === 'done').map(r => r.record.supersedes).filter((s): s is string => !!s));
+  const superseded = new Set(rows.filter(r => r.record.action.status === 'done' || r.record.action.status === 'reversed').map(r => r.record.supersedes).filter((s): s is string => !!s));
   return rows.filter(r => r.record.action.status === 'done' && !superseded.has(r.slug));
 }
 

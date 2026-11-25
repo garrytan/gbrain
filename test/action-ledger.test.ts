@@ -14,12 +14,14 @@
  * 2. Fails when: any of those leaks, double counts, or lets an agent label its own amount confirmed.
  * 3. Real seams: PGLite and Postgres engines, MCP dispatchToolCall with remote=true, the real page write path.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import * as pageMutations from '../src/core/persistence/page-mutations.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { opError } from '../src/core/ops/contract.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { applyPolicyChange } from '../src/core/policy/store.ts';
 import { checkPolicy } from '../src/core/policy/check.ts';
@@ -384,6 +386,46 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
   test('a member\'s evidence is any page it can read the ordinary way, not only one labelled for it', async () => {
     const out = await withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Bought ink', spent: 40, currency: 'USD', evidence: [{ ref: 'inbox/acme-example-receipt' }] }));
     expect(out.claim_basis).toBe('evidenced');
+    await submitPageMutation(ctxFor(engine, false), { operation: 'put_page', params: { slug: 'inbox/acme-example-secret', content: '---\ntitle: Secret\nvisibility: private\n---\n\nPrivate note\n' } });
+    await submitPageMutation(ctxFor(engine, false), { operation: 'put_page', params: { slug: 'inbox/acme-example-derived', content: '---\ntitle: Derived\nderived_from: [inbox/acme-example-secret]\n---\n\nOrder total 12.00 USD\n' } });
+    const hidden = await withCallerAccess(ALICE, () => dispatchToolCall(engine, 'get_page', { slug: 'inbox/acme-example-derived' }, REMOTE));
+    expect(JSON.stringify(hidden)).not.toContain('Order total 12.00');
+    const derived = await withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Bought more ink', spent: 12, currency: 'USD', estimated: true, evidence: [{ ref: 'inbox/acme-example-derived' }] }));
+    expect(derived).toMatchObject({ claim_basis: 'estimated', evidence: [{ ref: 'inbox/acme-example-derived', resolved: false }] });
+  });
+
+  test('a done correction that is later reversed still supersedes the action it corrected', async () => {
+    const ctx = ctxFor(engine, false);
+    const since = new Date(Date.now() - 3600_000);
+    const a = await logAction(ctx, { verb: 'spend', summary: 'Paid a roofer', spent: 100, currency: 'USD', estimated: true, counterparty: 'roofer-example' });
+    const fix = await logAction(ctx, { verb: 'spend', summary: 'Roofer, corrected', spent: 90, currency: 'USD', estimated: true, counterparty: 'roofer-example', supersedes: a.action_id });
+    await logAction(ctx, { verb: 'spend', action_id: fix.action_id, status: 'reversed' });
+    const report = await ledgerReport(engine, ledgerReader(false), { since, until: new Date(Date.now() + 1000), counterparty: 'roofer-example' });
+    if (report.state !== 'complete') throw new Error('partial');
+    expect(report.totals.spent.estimated).toEqual({});
+  });
+
+  test('a reserve that waited for a pending write reads its clock after the wait, so a hold made meanwhile counts', async () => {
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'tools-day', verb: 'spend', decision: 'allow', limit: { amount: 50, currency: 'USD' }, window: 'day', merchant: 'hardware-example' }, { id: 'spend', verb: 'spend', decision: 'ask' }], change: 'tools budget', probe: owner });
+    const ctx = ctxFor(engine, false);
+    const input = { verb: 'spend' as const, amount: { amount: 40, currency: 'USD' }, merchant: 'hardware-example', summary: 'A drill' };
+    const later = await policyReserve(ctx, input, new Date(Date.now() + 300));
+    expect(later.decision).toBe('allow');
+    await engine.executeRaw("UPDATE persistence_requests SET state='running', claim_expires_at=now() + interval '1 hour' WHERE slug=$1", [later.reservation!.action_id]);
+    const waiting = policyReserve(ctx, { ...input, summary: 'Another drill' });
+    await new Promise(r => setTimeout(r, 600));
+    await engine.executeRaw("UPDATE persistence_requests SET state='committed' WHERE slug=$1", [later.reservation!.action_id]);
+    expect((await waiting).decision).not.toBe('allow');
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'ask' }], change: 'restore', probe: owner });
+  });
+
+  test('a write still publishing names the request_id to retry with, even one gbrain made up', async () => {
+    const spy = spyOn(pageMutations, 'submitPageMutation').mockRejectedValueOnce(opError('write_pending', 'still writing', 'retry'));
+    try {
+      const pending = await caught(() => logAction(ctxFor(engine, false), { verb: 'send', summary: 'Sent flowers', estimated: true }));
+      expect((pending as { code: string }).code).toBe('write_pending');
+      expect((pending as { detail?: string }).detail).toMatch(/^request_id=[0-9a-f-]{36}$/);
+    } finally { spy.mockRestore(); }
   });
 
   test('a read past the scan bound returns state partial with no totals and the narrower call', async () => {

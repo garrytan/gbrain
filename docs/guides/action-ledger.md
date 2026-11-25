@@ -30,7 +30,7 @@ Each action is a private page at `actions/YYYY/MM/<id>` (type `agent_action`). I
 
 An amount logged as done needs evidence gbrain can read, or `estimated: true`; otherwise it is refused (`money_unevidenced`).
 
-Statuses move forward only: proposed, then approved, then done, failed or cancelled. A done action can become reversed, and is never edited. To correct one, log a new action with `supersedes` set to the old `action_id`; once the correction is done, totals count only the correction. A correction that is still proposed, or that failed or was cancelled, leaves the old action counted.
+Statuses move forward only: proposed, then approved, then done, failed or cancelled. A done action can become reversed, and is never edited. To correct one, log a new action with `supersedes` set to the old `action_id`; once the correction is done, totals count only the correction. A correction that is still proposed, or that failed or was cancelled, leaves the old action counted. A correction that was done and then reversed still replaces the old action, and counts nothing itself.
 
 ## Who reads what
 
@@ -85,7 +85,7 @@ The window holds more actions you can read than one read totals (5,000), or more
 
 ### ledger_busy
 
-Another reservation was being checked, or an earlier action was still being written. Retry `policy_reserve` in a few seconds with the same `request_id`. A running write whose writer stopped (its claim expired) is left to recovery and never holds up a reservation.
+Another reservation was being checked, or an earlier action was still being written. Retry `policy_reserve` in a few seconds with the same `request_id`. A running write whose writer stopped (its claim expired) is left to recovery and never holds up a reservation; a queued write still does, since it may commit. A `log_action` or `policy_reserve` call that answers `write_pending` names the `request_id` to retry with, including one gbrain generated.
 
 ### ledger_confirm_required
 

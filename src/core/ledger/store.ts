@@ -173,9 +173,11 @@ export interface EvidenceCheck { ref: string; resolved: boolean }
 async function checkEvidence(engine: BrainEngine, reader: LedgerReader, evidence: readonly ActionEvidence[]): Promise<EvidenceCheck[]> {
   return Promise.all(evidence.map(async e => {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e.ref)) return { ref: e.ref, resolved: false };
-    const page = await withoutCallerAccess(() => engine.getPage(e.ref.replace(/\.md$/, ''), { sourceId: ACTION_SOURCE }));
-    const resolved = !!page && (reader.kind === 'brain' || (reader.kind === 'member' && !isPrivatePageForCaller(page)));
-    return { ref: e.ref, resolved };
+    const slug = e.ref.replace(/\.md$/, '');
+    if (reader.kind === 'brain') return { ref: e.ref, resolved: !!await withoutCallerAccess(() => engine.getPage(slug, { sourceId: ACTION_SOURCE })) };
+    if (reader.kind !== 'member') return { ref: e.ref, resolved: false };
+    const page = await engine.getPage(slug, { sourceId: ACTION_SOURCE, excludePrivate: true });
+    return { ref: e.ref, resolved: !!page && !isPrivatePageForCaller(page) };
   }));
 }
 
@@ -219,17 +221,18 @@ async function memberReaders(engine: BrainEngine, actor: string): Promise<string
   return [...new Set([actor.slice('member:'.length), ...(ownerMember ? [ownerMember] : [])])];
 }
 
-function stillWriting(): OperationError {
-  return opError('write_pending', 'The earlier call with this request_id is still being written, so it was not repeated.', 'Retry in a few seconds with the same request_id; the retry returns the action once it is written.', { retryable: true });
+function stillWriting(requestId: string): OperationError {
+  return opError('write_pending', `The call with request_id ${requestId} is still being written, so it was not repeated.`,
+    `Retry in a few seconds with request_id ${requestId}; the retry returns the action once it is written.`, { retryable: true, detail: `request_id=${requestId}` });
 }
 
 /** A write still publishing answers write_pending: the retry with the same request_id is the caller's receipt, never the internal writer's. */
-async function writeAction(ctx: OperationContext, slug: string, fm: Record<string, unknown>, summary: string, requestId: string, expected?: string): Promise<void> {
+async function writeAction(ctx: OperationContext, slug: string, fm: Record<string, unknown>, summary: string, callerRequestId: string, requestId: string, expected?: string): Promise<void> {
   try {
     await withoutCallerAccess(() => submitPageMutation(trustedCtx(ctx), { operation: 'put_page', params: {
       slug, source_id: ACTION_SOURCE, content: renderActionPage(fm, summary), request_id: requestId, ...(expected ? { expected_revision: expected } : {}) } }));
   } catch (error) {
-    throw error instanceof OperationError && error.code === 'write_pending' ? stillWriting() : error;
+    throw error instanceof OperationError && error.code === 'write_pending' ? stillWriting(callerRequestId) : error;
   }
 }
 
@@ -259,7 +262,7 @@ export async function settleLedgerWrites(engine: BrainEngine, deadline: number):
   for (;;) {
     const pending = await engine.executeRaw<{ n: number }>(
       `SELECT 1 AS n FROM persistence_requests r JOIN sources s ON s.id = r.source_id AND s.incarnation = r.source_incarnation
-        WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'deferred', 'running', 'recovering')
+        WHERE r.source_id = $1 AND r.slug LIKE 'actions/____/__/%' AND r.state IN ('queued', 'running', 'recovering')
           AND NOT (r.state IN ('running', 'recovering') AND r.claim_expires_at IS NOT NULL AND r.claim_expires_at <= now()) LIMIT 1`, [ACTION_SOURCE]);
     if (!pending.length) return;
     if (Date.now() >= deadline) throw opError('ledger_busy', 'An earlier action is still being written, so this reservation was not checked or held.', 'Retry in a few seconds with the same request_id.', { retryable: true });
@@ -267,12 +270,12 @@ export async function settleLedgerWrites(engine: BrainEngine, deadline: number):
   }
 }
 
-async function priorWrite(ctx: OperationContext, id: string): Promise<string | null> {
+async function priorWrite(ctx: OperationContext, id: string, callerRequestId: string): Promise<string | null> {
   let prior: Awaited<ReturnType<typeof getWriteRequest>> = null;
   try {
     prior = await withoutCallerAccess(async () => getWriteRequest(ctx.engine as never, await requestPrincipalForContext(trustedCtx(ctx)), id));
   } catch { return null; } // silent-read-ok: no local writer registered yet means no earlier write of this request
-  if (prior && !isTerminal(prior)) throw stillWriting();
+  if (prior && !isTerminal(prior)) throw stillWriting(callerRequestId);
   if (prior && prior.state !== 'committed') {
     throw opError((prior.error_code ?? 'storage_error') as Parameters<typeof opError>[0], `The earlier call with this request_id did not change ${prior.slug}: ${prior.error_message ?? prior.state}.`,
       'A retry with the same request_id gets this same answer; fix the cause and send the call with a new request_id.');
@@ -296,7 +299,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
   const requestId = input.request_id ?? randomUUID();
   const wid = writeRequestId(actor, requestId);
   const hash = requestHash('log_action', input);
-  const replay = await priorWrite(ctx, wid);
+  const replay = await priorWrite(ctx, wid, requestId);
   if (replay) {
     const stored = await readStored(ctx.engine, replay);
     if (stored && ((input.action_id ?? replay) !== replay || (input.action_id === undefined) !== (stored.record.request_id === requestId))) {
@@ -370,7 +373,7 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
     }
   }
   const slug = input.action_id ?? actionSlug(new Date(at), actor, requestId);
-  await writeAction(ctx, slug, fm, summary, wid, existing?.revision);
+  await writeAction(ctx, slug, fm, summary, requestId, wid, existing?.revision);
   return { action_id: slug, status, claim_basis: claim, evidence: checks, replayed: false, ...(prior?.hold && !keepHold ? { settled_hold: true } : {}) };
 }
 
@@ -397,16 +400,17 @@ async function underReserveLock<T>(engine: BrainEngine, fn: () => Promise<T>): P
 }
 
 /** policy_reserve: check the policy with its budget windows and hold the amount, under one lock. A deny holds nothing. */
-export async function policyReserve(ctx: OperationContext, input: ReserveInput, now = new Date()): Promise<ReserveResult> {
+export async function policyReserve(ctx: OperationContext, input: ReserveInput, clock?: Date): Promise<ReserveResult> {
   const remote = ctx.remote !== false;
   assertLedgerWriteGrant(ctx, remote);
   const reader = ledgerReader(remote, ctx);
   await settleLedgerWrites(ctx.engine, Date.now() + RESERVE_WAIT_MS);
   return underReserveLock(ctx.engine, async () => {
     const actor = actorFor(remote);
+    let now = clock ?? new Date();
     const requestId = input.request_id ?? randomUUID();
     const hash = requestHash('policy_reserve', input);
-    const replay = await priorWrite(ctx, writeRequestId(actor, requestId));
+    const replay = await priorWrite(ctx, writeRequestId(actor, requestId), requestId);
     const stored = replay ? await readStored(ctx.engine, replay) : null;
     if (stored && stored.record.request_id === requestId) {
       const created = creatorHash(stored.record);
@@ -420,6 +424,7 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
       return { ...original, reservation: hold ? { action_id: replay!, amount: `${hold.amount} ${hold.currency}`, expires_at: hold.expires_at } : null, replayed: true };
     }
     await settleLedgerWrites(ctx.engine, Date.now() + RESERVE_WAIT_MS);
+    now = clock ?? new Date();
     const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote),
       { usage: usageLookup(ctx.engine, reader, now) });
     if (answer.decision === 'deny') return { ...answer, reservation: null };
@@ -439,7 +444,7 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
     const checked = validateActionFrontmatter(fm);
     if (!checked.ok) throw invalid(checked.field, checked.message);
     const slug = actionSlug(now, actor, requestId);
-    await writeAction(ctx, slug, fm, summary, writeRequestId(actor, requestId));
+    await writeAction(ctx, slug, fm, summary, requestId, writeRequestId(actor, requestId));
     return { ...answer, reservation: { action_id: slug, amount: `${hold.amount} ${hold.currency}`, expires_at: hold.expires_at } };
   });
 }
@@ -452,7 +457,8 @@ export async function confirmAction(ctx: OperationContext, slug: string): Promis
   if (stored.record.claim_basis === 'user_confirmed') return { action_id: slug, claim_basis: 'user_confirmed', unchanged: true };
   const fm: Record<string, unknown> = { ...stored.frontmatter, type: AGENT_ACTION_TYPE, claim_basis: 'user_confirmed' };
   for (const key of SERVER_STAMPED_KEYS) delete fm[key];
-  await writeAction(ctx, slug, fm, stored.record.action.summary, randomUUID(), stored.revision);
+  const confirmId = randomUUID();
+  await writeAction(ctx, slug, fm, stored.record.action.summary, confirmId, confirmId, stored.revision);
   return { action_id: slug, claim_basis: 'user_confirmed', unchanged: false };
 }
 
