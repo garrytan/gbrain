@@ -209,7 +209,7 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['acquireCycleLock', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'],
     storeTests: {
-      runnable: ['c06_stale_holder_data_write_refused_by_its_token', 'c06_old_holder_cannot_refresh_release_or_write_after_a_takeover'],
+      runnable: ['c06_stale_holder_data_write_refused_by_its_token', 'c06_old_holder_cannot_refresh_release_or_write_after_a_takeover', 'c06_partitioned_host_claims_and_leases_are_refused_by_reason'],
       pending: ['c06_stale_holder_data_write_refused_by_its_token_multi_writer', 'c06_partitioned_host_old_epoch_work_refused_multi_writer'],
     },
     cells: {
@@ -242,8 +242,8 @@ export const MW_CASES: readonly MwCase[] = [
     reference: 'compare',
     members: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow', 'readRequestEffects'],
     storeTests: {
-      runnable: ['c07_effect_claimed_once_rerun_after_owner_crash'],
-      pending: ['c07_effect_claimed_once_rerun_after_owner_crash_multi_writer'],
+      runnable: ['c07_effect_claimed_once_rerun_after_owner_crash', 'c07_effect_claimed_once_rerun_after_host_lease_expiry'],
+      pending: ['c07_effect_claimed_once_by_racing_hosts_multi_writer'],
     },
     cells: {
       pglite: RUNS, postgres: RUNS,

@@ -125,7 +125,7 @@
 # multi-writer C04 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C05 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C06 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
-# multi-writer C06.partition [compare]: pglite=runs postgres=runs rust=runs rust-mu=pending(L5 hosts) store-single=n/a store-optimistic=n/a
+# multi-writer C06.partition [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=n/a store-optimistic=n/a
 # multi-writer C07 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C08 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C09 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
