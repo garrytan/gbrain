@@ -151,11 +151,12 @@ and gives the harness's own load line; Codex lines also carry the SKILL.md path.
 The lane always exits 0 and prints nothing when it cannot deliver:
 
 - **Deadline:** 50 ms for the turn, counted from the moment the ranking
-  worker thread has loaded, plus at most 250 ms for that worker to load. A
-  cold machine can take most of 50 ms just to load it (measured: up to about
-  50 ms on an idle 4-core machine with an empty file cache, and up to about
-  105 ms with the CPU oversubscribed), so the turn's own clock starts once it
-  is ready. With the [model picker](#model-picker-opt-in) on, the turn also
+  worker thread has loaded and the hook's input has been read, plus at most
+  250 ms for both. A cold machine can take most of 50 ms just to load the
+  worker (measured: up to about 50 ms on an idle 4-core machine with an empty
+  file cache, and up to about 105 ms with the CPU oversubscribed), and Hermes
+  pipes its whole conversation history (measured: about 4 ms per MB on an
+  Apple M4), so the turn's own clock starts once both are done. With the [model picker](#model-picker-opt-in) on, the turn also
   gets the picker's wait (`router_timeout_ms`) plus 100 ms; with it off and a
   catalog built with [skill vectors](#skill-vectors), the turn also gets 1
   second for the message's vector plus 100 ms. At either limit
