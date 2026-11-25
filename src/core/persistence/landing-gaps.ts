@@ -15,6 +15,7 @@ import type { Action } from '../agent-output.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { embeddingStateFix, DELETED_PAGE_PURGE_WINDOW_HOURS, type EmbeddingState } from '../embedding-state.ts';
 import { readFreshnessTarget } from './sync-freshness.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export const LANDING_WINDOW_HOURS = 24;
 export const LANDING_RECEIPT_LIMIT = 2_000;
@@ -41,17 +42,11 @@ const ORDER: EmbeddingState[] = ['quarantined', 'chunkless_healable', 'pending']
 /** The landing gaps of one managed source; `not_applicable` without a binding (classic or connector sources keep no receipts). */
 export async function readLandingGaps(engine: BrainEngine, sourceId: string, opts: { afterSeconds?: number; limit?: number } = {}): Promise<LandingGaps> {
   const after = opts.afterSeconds ?? (await readFreshnessTarget(engine)).seconds;
-  const [binding] = await engine.executeRaw<{ worktree_id: string; incarnation: string }>(`SELECT b.worktree_id::text AS worktree_id, b.source_incarnation::text AS incarnation
-    FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE b.source_id=$1`, [sourceId]).catch(() => []);
+  const [binding] = await syncRows<{ worktree_id: string; incarnation: string }>(engine, 'landing_binding', [sourceId]).catch(() => []);
   if (!binding) return { status: 'not_applicable', reason: 'no_managed_binding' };
   let receipts: Array<{ slug: string; kind: string; completed_at: Date | string; age: number | string }>;
   try {
-    receipts = await engine.executeRaw(`SELECT DISTINCT ON (w.slug COLLATE "C") w.slug, w.kind, w.completed_at, extract(epoch FROM now() - w.completed_at)::float8 AS age FROM (
-        SELECT r.slug, r.sequence, r.completed_at, r.intent->>'kind' AS kind FROM persistence_requests r
-         WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
-           AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.slug IS NOT NULL
-         ORDER BY r.completed_at DESC, r.sequence DESC LIMIT ${LANDING_RECEIPT_LIMIT}) w
-      ORDER BY w.slug COLLATE "C", w.sequence DESC`, [binding.worktree_id, binding.incarnation, LANDING_WINDOW_HOURS], { timeoutMs: LANDING_PROBE_MS, signal: AbortSignal.timeout(LANDING_PROBE_MS + 500) });
+    receipts = await syncRows(engine, 'landing_receipts', [binding.worktree_id, binding.incarnation, LANDING_WINDOW_HOURS], { timeoutMs: LANDING_PROBE_MS, signal: AbortSignal.timeout(LANDING_PROBE_MS + 500) });
   } catch (error) {
     return { status: 'unknown', reason: `receipt read did not answer within ${LANDING_PROBE_MS / 1000} s: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}` };
   }
@@ -59,7 +54,7 @@ export async function readLandingGaps(engine: BrainEngine, sourceId: string, opt
   const base = { status: 'ok' as const, window_hours: LANDING_WINDOW_HOURS, after_seconds: after, checked: imports.length, complete: receipts.length < LANDING_RECEIPT_LIMIT };
   if (!imports.length) return { ...base, gaps: 0, by_state: {}, pages: [] };
   const slugs = imports.map(r => r.slug);
-  const live = new Set((await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, slugs])).map(p => p.slug));
+  const live = new Set((await syncRows<{ slug: string }>(engine, 'live_slugs', [sourceId, slugs])).map(p => p.slug));
   const disabled = await embeddingsDisabled(engine);
   const states = ORDER.filter(state => !(disabled && state === 'pending'));
   const rows = live.size ? await engine.listEmbeddingStateRows({ sourceIds: [sourceId], slugs: [...live], states, limit: live.size * states.length, purgeWindowHours: DELETED_PAGE_PURGE_WINDOW_HOURS }) : [];

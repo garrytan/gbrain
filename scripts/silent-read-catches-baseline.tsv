@@ -1119,8 +1119,6 @@ src/core/persistence/index-lock-reclaim.ts#readIndexLockReclaims	catch_empty	1
 src/core/persistence/journal.ts#writeHealthFacts	capability_refusal_swallowed	1
 src/core/persistence/journal.ts#writeHealthFacts	promise_catch_empty	1
 src/core/persistence/label-edit.ts#withStoredLabels	catch_empty	1
-src/core/persistence/landing-gaps.ts#readLandingGaps	capability_refusal_swallowed	2
-src/core/persistence/landing-gaps.ts#readLandingGaps	promise_catch_empty	1
 src/core/persistence/links-preparation.ts#prepareAutomaticLinks	promise_catch_empty	1
 src/core/persistence/local-edit-adoption.ts#adoptLocalEditsOn	promise_catch_empty	1
 src/core/persistence/local-edit-adoption.ts#landedAdoptionCommit	catch_empty	1
@@ -1150,8 +1148,6 @@ src/core/persistence/root-registry.ts#isGitDirectory	catch_empty	1
 src/core/persistence/schema-admission.ts#readSchemaBehind	catch_empty	1
 src/core/persistence/segmented-mirror-gate.ts#resumeGatedMirrors	catch_empty	1
 src/core/persistence/service.ts#awaitWrite	promise_catch_empty	3
-src/core/persistence/soak-counters.ts#recordSoakEvent	capability_refusal_swallowed	1
-src/core/persistence/soak-counters.ts#recordSoakEvent	promise_catch_empty	1
 src/core/persistence/sync-blobs.ts#pinnedWindow	catch_empty	1
 src/core/persistence/sync-blobs.ts#readPinnedBytes	catch_empty	1
 src/core/persistence/sync-discovery.ts#incomingId	catch_empty	1

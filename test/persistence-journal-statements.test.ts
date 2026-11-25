@@ -61,6 +61,9 @@ import { REFRESH_STORE_STATEMENTS } from '../src/core/engine-sql/refresh-store.t
 import { GROUP_PUBLISH_STORE_STATEMENTS } from '../src/core/engine-sql/group-publish-store.ts';
 import { MANUAL_LINK_STATEMENTS } from '../src/core/engine-sql/manual-links.ts';
 import { SYNC_STATEMENTS } from '../src/core/engine-sql/managed-sync-store.ts';
+import { syncKnockOnSql } from '../src/core/persistence/sync-knock-on.ts';
+import { chunkVisibleFilter, currentTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
+import { LANDING_RECEIPT_LIMIT } from '../src/core/persistence/landing-gaps.ts';
 import { databaseOnlyPageSql } from '../src/core/persistence/unbound-pages.ts';
 import { LINKS_FENCE_ORIGIN_FIELD } from '../src/core/links-fence.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
@@ -704,5 +707,26 @@ describe('the managed sync store sends the statements the sync built, fragments 
     const names = `r.page_id=ANY($2::int[]) OR r.intent->>'sourcePath'=ANY($3::text[]) OR r.intent->>'path'=ANY($3::text[])`;
     expect(SYNC_STATEMENTS.inflight_open_ids.sql as string).toBe(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering') AND (${names})`);
     expect(SYNC_STATEMENTS.inflight_open_work.sql.split(names).length).toBe(3);
+  });
+});
+
+describe('the managed sync store sends the status, page-fault and freshness statements (lane LM slice 2 part B), fragments written out', () => {
+  test('knock_on_requests is the composed knock-on predicate over the request alias r', () => {
+    expect(SYNC_STATEMENTS.knock_on_requests.sql as string).toBe(`SELECT request_id::text AS request_id FROM persistence_requests r
+    WHERE r.request_id::text = ANY($1::text[]) AND ${syncKnockOnSql('r')}`);
+  });
+  test('freshness_aggregate carries the visible-chunk predicate of its aliases and the sample predicate of listFreshnessTargets', () => {
+    const sql = SYNC_STATEMENTS.freshness_aggregate.sql as string;
+    expect(sql).toContain(`WHERE cc.page_id=s.page_id AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}) ch ON true)`);
+    expect(sql).toContain(`FROM persistence_requests r JOIN c ON c.target=r.intent->>'target' WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+    AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
+    AND COALESCE(r.intent->>'working','false') <> 'true'),`);
+  });
+  test('landing_receipts carries the receipt limit of landing-gaps.ts', () => {
+    expect((SYNC_STATEMENTS.landing_receipts.sql as string).includes(`ORDER BY r.completed_at DESC, r.sequence DESC LIMIT ${LANDING_RECEIPT_LIMIT}) w`)).toBe(true);
+  });
+  test('the page-fault statements keep the text of the typed members they sit beside', () => {
+    expect(SYNC_STATEMENTS.page_revision_writer.sql as string).toBe('SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2');
+    expect(SYNC_STATEMENTS.request_writer.sql as string).toBe(`SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`);
   });
 });

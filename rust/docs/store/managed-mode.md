@@ -99,6 +99,11 @@ Rust). One tagged read call (`syncStoreRows`) and one tagged write call (`syncSt
   the commit with `write_conflict`. Session settings (`set_config`, `SET TRANSACTION ISOLATION LEVEL`) change nothing.
 - No transaction ids: the proof-carrying confirm round (`sync-pass-confirm.ts`) reads `xmin`, `age` and the `txid_*` snapshot
   functions, so a Rust brain takes the whole read each round (`proveConfirm` answers `no_xids`; the pass skips the mark).
+- Page faults, status and freshness (`managed_sync_status.rs`): the page-fault proofs (`pageChangeProof`, `idempotentDeletionProof`), the older
+  cursor's manifest read and checkpoint publication, `gbrain sync status` (the failure's clock, the live cursors, the knock-on receipts, the
+  landing gaps), the dry run's writer state, the recorded stop, the hold sweep's soak counters and needs-human stamp, and the freshness
+  aggregate (commit to searchable and to embedded, from the visible chunks of each sampled page). The knock-on predicate's strings
+  (`sync-knock-on.ts`) go in as the statement's last parameter, as the doctor terminal reads send theirs.
 - Where it stops: statements the pass reaches only for a held cursor of an older release (`sync-run.ts` cursor saves, the legacy
-  waivers), `sync status`, `sync-pass-fold.ts`' refused-checkpoint read and the Postgres planner statistics still refuse on Rust
+  waivers), `sync-pass-fold.ts`' refused-checkpoint read and the Postgres planner statistics still refuse on Rust
   naming `executeRaw`. The managed hold stays: the member refuses while `managed_persistence` is held, as `executeRaw` did.

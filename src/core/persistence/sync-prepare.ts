@@ -392,8 +392,7 @@ async function resolveSyncOrigin(engine: BrainEngine, row: WriteRequest, p: Sync
   let working = p.working;
   if (p.kind === 'managed_sync_delete' && working === undefined && !p.passId) {
     enterClaimStep(clock, 'manifest_entry', undefined, 'db');
-    const [manifest] = await engine.executeRaw<{ entry: { path: string; sourcePath: string; action: string; working: boolean; pageId?: number | null } }>(
-      "SELECT completed_keys->$2::integer AS entry FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId, p.index]);
+    const [manifest] = await syncRows<{ entry: { path: string; sourcePath: string; action: string; working: boolean; pageId?: number | null } }>(engine, 'manifest_entry', [p.runId, p.index]);
     const entry = manifest?.entry;
     if (!entry || entry.path !== p.path || entry.sourcePath !== p.sourcePath || entry.action !== 'delete' ||
         typeof entry.working !== 'boolean' || (entry.pageId ?? null) !== row.page_id) {
@@ -661,8 +660,7 @@ export async function advanceManagedCheckpoint(tx: BrainEngine, input: { sourceI
 
 /** The checkpoint request's publication: the whole run committed, so `last_commit` (and the slug-root pin) advance under the guard. */
 async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p: SyncIntent, root: string, releaseHold: (tx: BrainEngine, path: string | null) => Promise<void>): Promise<Record<string, unknown>> {
-  const [cursor] = await tx.executeRaw<{ completed_keys: [{ runId: string; index: number; total: number }] }>(
-    "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE", [p.cursorKey]);
+  const [cursor] = await syncRows<{ completed_keys: [{ runId: string; index: number; total: number }] }>(tx, 'cursor_keys_locked', [p.cursorKey]);
   // #6513: validation passed under this run; a replacement that landed since is the same supersession, not an index lag.
   const replaced = checkpointCursorReplaced({ kind: p.kind, runId: p.runId ?? '' }, cursor?.completed_keys[0]?.runId, row.source_id);
   if (replaced) throw syncPublicationRefusal(replaced.code, replaced.message, row, p, replaced.cause);
@@ -670,7 +668,7 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
     throw syncPublicationRefusal('revision_conflict', 'The sync cursor is not fully committed.', row, p,
       `Not every page write of this sync run has committed, so the checkpoint of ${row.source_id} did not advance.`);
   }
-  const [manifest] = await tx.executeRaw<{ count: number }>("SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId]);
+  const [manifest] = await syncRows<{ count: number }>(tx, 'manifest_length', [p.runId]);
   if (!manifest || Number(manifest.count) !== p.total) throw syncPublicationRefusal('storage_error', 'The immutable sync manifest is incomplete.', row, p,
     `The immutable manifest of this sync run is incomplete, so the checkpoint of ${row.source_id} did not advance.`);
   const incomplete = await findIncompleteSyncReceipt(tx, row.worktree_id!, p.runId, p.supersededRequests ?? [], p.settled ?? null);
@@ -690,8 +688,8 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
   await recordSliceCursor(tx, row, p, settled);
   // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does. (A pass's
   // full episode stamps through its own checkpoint, above; the pages it admits without a reparse are already current.)
-  if (settled && (p.from === null || p.syncOptions?.full === true)) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
-  await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
+  if (settled && (p.from === null || p.syncOptions?.full === true)) await syncRows(tx, 'source_chunker_stamp', [row.source_id, chunkerStamp()]);
+  await syncRows(tx, 'cursor_mark_done', [p.cursorKey]);
   // #6712 PR 2 (L5): the tail (statistics, links) runs after the lease is released; it is owed from this commit on.
   await recordSyncTail(tx, row.source_id, p.cursorKey!, p.runId!);
   for (const path of p.releasedHolds ?? []) await releaseHold(tx, path);

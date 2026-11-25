@@ -22,7 +22,7 @@ import type { BrainEngine } from '../engine.ts';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { SYNC_FRESHNESS_TARGET_KEY } from '../sync-config-keys.ts';
-import { chunkVisibleFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export const FRESHNESS_WINDOW_HOURS = 24;
 /** The newest distinct targets dated per source; older ones in the window are left out of the sample. */
@@ -60,11 +60,6 @@ export type BehindReader = (root: string, from: string) => Promise<{ commits: nu
 export type CommitTimeReader = (root: string, shas: string[]) => Promise<Map<string, number>>;
 
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-/** Kept in step with engine-sql/sync-status-reads.ts FRESHNESS_TARGETS_SQL, which lists the same samples' targets. */
-const SAMPLE_WHERE = `r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
-    AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
-    AND COALESCE(r.intent->>'working','false') <> 'true'`;
-
 export const readGitCommitTimes: CommitTimeReader = async (root, shas) => {
   const out = new Map<string, number>();
   const run = (args: string[]) => execFileBounded('git', ['-C', root, ...args], { timeout: 10_000, env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0' }) });
@@ -134,23 +129,7 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
     const times = Object.fromEntries(targets.filter(t => dated.has(t)).map(t => [t, dated.get(t)!]));
     const commits = Object.keys(times).length;
     if (!commits) { out.push({ ...empty, unresolved_commits: targets.length }); continue; }
-    const [row] = await engine.executeRaw<AggregateRow>(`WITH c AS (SELECT key AS target, to_timestamp(value::double precision) AS committed_at FROM jsonb_each_text($4::text::jsonb)),
-      sample AS (SELECT r.source_id, r.slug, r.sequence, r.page_id, r.completed_at, c.committed_at
-        FROM persistence_requests r JOIN c ON c.target=r.intent->>'target' WHERE ${SAMPLE_WHERE}),
-      later AS MATERIALIZED (SELECT l.source_id, l.slug, max(l.sequence) AS sequence FROM persistence_requests l
-        WHERE l.state='committed' AND l.source_id IN (SELECT source_id FROM sample) AND l.sequence > (SELECT min(sequence) FROM sample) GROUP BY l.source_id, l.slug),
-      s AS (SELECT r.completed_at, r.committed_at, COALESCE(r.page_id, (SELECT p.id FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug LIMIT 1)) AS page_id,
-          COALESCE(later.sequence > r.sequence, false) AS superseded
-        FROM sample r LEFT JOIN later ON later.source_id=r.source_id AND later.slug=r.slug),
-      e AS (SELECT s.completed_at, s.committed_at, s.superseded, ch.n, ch.missing, ch.last_at FROM s
-        LEFT JOIN LATERAL (SELECT count(*) AS n, count(*) FILTER (WHERE cc.embedded_at IS NULL) AS missing, max(cc.embedded_at) AS last_at FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
-          WHERE cc.page_id=s.page_id AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}) ch ON true),
-      l AS (SELECT GREATEST(0, extract(epoch FROM completed_at - committed_at)) AS searchable,
-          CASE WHEN NOT superseded AND n > 0 AND missing = 0 AND last_at >= completed_at THEN GREATEST(0, extract(epoch FROM last_at - committed_at)) END AS embedded,
-          (NOT superseded AND n > 0 AND missing > 0) AS pending FROM e)
-      SELECT count(*) AS samples, percentile_cont(0.5) WITHIN GROUP (ORDER BY searchable) AS s50, percentile_cont(0.95) WITHIN GROUP (ORDER BY searchable) AS s95,
-        count(embedded) AS embedded, percentile_cont(0.5) WITHIN GROUP (ORDER BY embedded) AS e50, percentile_cont(0.95) WITHIN GROUP (ORDER BY embedded) AS e95,
-        count(*) FILTER (WHERE pending) AS pending FROM l`, [b.worktree_id, b.source_incarnation, FRESHNESS_WINDOW_HOURS, JSON.stringify(times)]);
+    const [row] = await syncRows<AggregateRow>(engine, 'freshness_aggregate', [b.worktree_id, b.source_incarnation, FRESHNESS_WINDOW_HOURS, JSON.stringify(times)]);
     out.push({ ...empty, commits, unresolved_commits: targets.length - commits,
       commit_to_searchable: { samples: Number(row?.samples ?? 0), p50_seconds: num(row?.s50), p95_seconds: num(row?.s95) },
       commit_to_embedded: { samples: Number(row?.embedded ?? 0), p50_seconds: num(row?.e50), p95_seconds: num(row?.e95), pending: Number(row?.pending ?? 0) } });
