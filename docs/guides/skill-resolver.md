@@ -58,6 +58,14 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
   `eligible: false` are never indexed. Dot-entries (harness-owned state such
   as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
   never read, so a harness writing them does not make the index stale.
+- A skill with `deprecated: true` in its SKILL.md frontmatter (a JSON entry:
+  `"deprecated": true`) is indexed but never suggested from a word match or
+  offered to the model picker. It still loads when the turn names it
+  (`use the reports skill`, `/reports`), and its reason then says so; add
+  `replaced_by: <skill>` and the reason reads `deprecated, use <skill>
+  instead`. It also leaves the trigger index that `gbrain check-resolvable`
+  and the routing eval read: its frontmatter triggers and its RESOLVER.md rows
+  are dropped, and it is not reported as unreachable.
 - `--routing <file>` adds the rows of one RESOLVER-style routing table to
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
@@ -574,8 +582,9 @@ The JSON Schemas are checked in under `docs/schemas/`:
   on a turn the model picker answered or was asked, which also carries `router`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
-  eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
-  folder has (`when_to_use`, `disable-model-invocation`), a JSON build gives
+  eligible?, disable_model_invocation?, deprecated?, replaced_by?}]`. With the
+  same fields a SKILL.md folder has (`when_to_use`, `disable-model-invocation`,
+  `deprecated`, `replaced_by`), a JSON build gives
   the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.
