@@ -881,7 +881,8 @@ impl Store {
                 }
             }
             // `E'\\n\\n'` in the SQL: two newlines between the title, the body and the timeline.
-            let body = shown.then(|| format!("{}\n\n{}\n\n{}", p.title, &*p.compiled_truth, &*p.timeline));
+            let body =
+                shown.then(|| format!("{}\n\n{}\n\n{}", p.title, &*p.compiled_truth, &*p.timeline));
             out.push(CandidatePageRow {
                 id: p.id,
                 slug: p.slug.clone(),
