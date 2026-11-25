@@ -244,6 +244,9 @@ describe('full CI on pull requests', () => {
       expect(download).toBeLessThan(steps.findIndex(s => s.name === 'Record the tested tree'));
       expect(step(w.jobs[job]!, 'Record the tested tree').env!.MANIFEST).toBe('${{ runner.temp }}/ci-manifest/ci-manifest.json');
       expect(step(w.jobs[job]!, 'Record the tested tree').env!.EXECUTED_RECEIPTS).toBe('${{ needs.executed-receipts.result }}');
+      const writers = Object.entries(w.jobs).filter(([, j]) => (j.steps ?? []).some(s => s.uses?.startsWith('actions/upload-artifact@') && String(s.with?.name ?? '').startsWith('receipts-'))).map(([id]) => id);
+      expect(writers.length).toBeGreaterThan(0);
+      expect(writers.filter(id => !w.jobs['executed-receipts']!.needs!.includes(id))).toEqual([]);
       const ledger = w.jobs['executed-receipts']!.steps!.find(s => s.run?.includes('scripts/ci-manifest.ts'))!;
       expect(ledger.run).toContain('--out "$RUNNER_TEMP/ci-manifest.json"');
     }

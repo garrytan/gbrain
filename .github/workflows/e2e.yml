@@ -1394,7 +1394,7 @@ jobs:
   # in e2e-status; baseline comparisons run locally with
   #   bun scripts/ci-executed-counts.ts --base-run <id> --head-run <id>
   executed-receipts:
-    needs: [prepare-e2e, jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e]
+    needs: [prepare-e2e, jsonb-parity, tier1, tier1-graduation, tier1-backend-matrix, postgres15-compat, tier2, selected-e2e, coverage-full-unit, coverage-full-serial, coverage-full-e2e, openclaw-skill-resolver]
     if: ${{ needs.prepare-e2e.outputs.reuse != 'true' && always() }}
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 10
