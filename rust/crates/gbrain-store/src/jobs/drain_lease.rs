@@ -85,7 +85,12 @@ impl Store {
                     .filter(|l| l.acquisition_token == lock_token.to_lowercase());
                 match held {
                     None => {
-                        return Err(lease_lost(LostReason::NotFound, &lock_id, fence.epoch, None));
+                        return Err(lease_lost(
+                            LostReason::NotFound,
+                            &lock_id,
+                            fence.epoch,
+                            None,
+                        ));
                     }
                     Some(l) if l.ttl_expires_at <= now => {
                         return Err(lease_lost(LostReason::Expired, &lock_id, fence.epoch, None));

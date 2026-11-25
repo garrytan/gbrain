@@ -1784,7 +1784,11 @@ impl Store {
 
     fn end_cycle_lock(&self, lock_id: &str, opts: &LockHolder, as_holder: bool) -> Result<bool> {
         self.write(|tx| {
-            let what = if as_holder { "release_cycle_lock" } else { "delete_cycle_lock" };
+            let what = if as_holder {
+                "release_cycle_lock"
+            } else {
+                "delete_cycle_lock"
+            };
             fence::begin(self, tx, opts.fence.as_ref(), what)?;
             if self.not_a_cycle_lock(lock_id) {
                 return Ok(false);

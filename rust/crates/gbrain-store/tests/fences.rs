@@ -124,7 +124,8 @@ impl Brain {
         self.lease_records()
             .iter()
             .filter(|(k, _)| {
-                k[keys::LEASES.len()] == 0x05 && k[keys::LEASES.len() + 1] == leases::CLAIM_DRAIN_LEASE
+                k[keys::LEASES.len()] == 0x05
+                    && k[keys::LEASES.len() + 1] == leases::CLAIM_DRAIN_LEASE
             })
             .count()
     }
@@ -704,9 +705,7 @@ fn the_drain_lease_holder_writes_refreshes_and_releases_under_its_fence() {
                 "fence_missing",
             );
             refused(
-                &b.store
-                    .refresh_drain_lease_holder(TOK_A, 10.0)
-                    .unwrap_err(),
+                &b.store.refresh_drain_lease_holder(TOK_A, 10.0).unwrap_err(),
                 "fence_missing",
             );
             refused(
