@@ -124,6 +124,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Typed claim period, e.g. monthly.",
         "fullSurfaceOnly": true
+      },
+      "facet": {
+        "type": "string",
+        "description": "Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile."
       }
     },
     "mutating": true,
@@ -6573,6 +6577,10 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Source to try first (thin clients send .gbrain-source here); never narrows.",
         "fullSurfaceOnly": true
+      },
+      "profile": {
+        "type": "boolean",
+        "description": "true: add your own profile (facets, constraints, relationships, preferences)."
       }
     },
     "scope": "read",

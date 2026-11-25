@@ -2470,7 +2470,7 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
 
   // These handlers already call their MCP twin on a thin client and never touch
   // the engine there; run them engine-free instead of opening one (#5102).
-  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder') &&
+  if ((command === 'salience' || command === 'anomalies' || command === 'graph-query' || command === 'whoknows' || command === 'founder' || command === 'profile') &&
     isThinClient(loadConfig())) {
     await dispatchConnectedCommand(command, null as never, args);
     return null;

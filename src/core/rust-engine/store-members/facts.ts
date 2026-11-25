@@ -272,7 +272,9 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
     limit: clampSearchLimit(o.limit, 100, 500),
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
-  return rows.map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
+  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL).
+  return rows.filter((row) => !String(row.metric ?? '').startsWith('profile.'))
+    .map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };
 
 export const getFactsHealth: Member<'getFactsHealth'> = (brain, sourceId) =>

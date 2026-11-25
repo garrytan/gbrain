@@ -51,6 +51,7 @@ import { computeEffectiveDate } from '../effective-date.ts';
  */
 export { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
+import { isProfileMetricLabel, profileMetricLabel } from '../profile/facets.ts';
 
 export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
 
@@ -211,6 +212,9 @@ export function normalizeMetricLabel(raw: string | undefined | null): string | u
   if (raw === undefined || raw === null) return undefined;
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed) return undefined;
+  // Lane 3 P1: a profile.<facet> metric is kept as written when its facet is valid (profile/facets.ts), else dropped.
+  const profile = profileMetricLabel(trimmed);
+  if (profile.profile) return profile.metric ?? undefined;
   const seed = METRIC_NORMALIZATION_MAP.get(trimmed);
   if (seed) return seed;
   // Collapse runs of whitespace to single underscore, strip non-alphanumeric
@@ -228,6 +232,7 @@ const RAISE_STEM = /^(?:(?:pre_)?seed|series_[a-z]|bridge|fundraise|fundraising|
  * share one tag. A valuation, price, cap, share, count, runway, loan, interest or target label never folds. A fence row's label is kept as written.
  */
 export function normalizeExtractedMetricLabel(raw: string | undefined | null): string | undefined {
+  if (isProfileMetricLabel(raw)) return undefined; // only remember's facet creates a profile row
   const label = normalizeMetricLabel(raw);
   if (!label || label === 'fundraise' || NOT_A_RAISE.test(label)) return label;
   return RAISE_STEM.test(label) ? 'fundraise' : label;
