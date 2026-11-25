@@ -140,7 +140,7 @@ export async function decideContacts(engine: BrainEngine, sourceId: string, choi
         if (page.type !== 'person') { refuse('not_a_person_page', `${text(cand)} is a ${page.type} page, not a person page.`); continue; }
         people = setOf(cand);
         const apartSet = apart.find(set => set.some(m => memberKey(m) === key) && set.some(m => people.some(x => memberKey(x) === memberKey(m))));
-        if (apartSet) { refuse('rejected_pair', `${line.contact_slug} and ${text(cand)} are recorded as different people (decision ${decisionId(apartSet)}).`); continue; }
+        if (apartSet) { refuse('rejected_pair', `${line.contact_slug} and ${text(cand)} are recorded as different people; undo that first: gbrain dedupe undo ${decisionId(apartSet)}`); continue; }
         person = people[0]!;
         let held: string | undefined;
         for (const m of [cand, ...people]) {

@@ -410,6 +410,7 @@ describe('a decide line that would quietly undo an earlier choice is refused', (
     expect(rejected.lines[0].status).toBe('recorded');
     const out = await h.json(['decide', '--source', 'gc', '--file', h.choices([{ contact_slug: 'people/c-hana', action: 'link', candidate: 'default:people/hana-a' }])]);
     expect([out.lines[0].status, out.lines[0].reason]).toEqual(['refused', 'rejected_pair']);
+    expect(out.lines[0].message).toContain(`gbrain dedupe undo ${pair}`);
     expect((await h.decisions()).map(r => [r.decision_id, r.verdict])).toEqual([[pair, 'different']]);
     expect(await h.linkOf('people/c-hana', 'gc')).toBeNull();
   });
