@@ -18,8 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
-import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
-import { withLiveConfigRead } from '../config-snapshot.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -67,18 +66,14 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'hasLabell
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
  * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
-export async function labelledOnlyFor(engine: Pick<BrainEngine, 'readAccessMembers' | 'getConfig'>, identities: readonly (readonly string[])[]): Promise<boolean> {
-  const members = new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)));
-  if (!members.size) return false;
+export async function labelledOnlyFor(engine: Pick<BrainEngine, 'hasLabelledOnlyMemberAmong'>, identities: readonly (readonly string[])[]): Promise<boolean> {
+  const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
+  if (!members.length) return false;
   try {
-    // Typed reads every engine serves (the Rust store included): every member row in one read, removed ones too, and
-    // the owner read live (never the request's config snapshot) before and after it. An owner that changed between
-    // the two reads may pair old flags with a new owner, so it counts as labelled-only (fail closed).
-    const owner = await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY));
-    const rows = await engine.readAccessMembers({ includeRemoved: true });
-    if ((await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY))) !== owner) return true;
-    return rows.some(r => r.labelled_only === true && members.has(r.id) && r.id !== owner?.trim());
-  } catch {
+    return await engine.hasLabelledOnlyMemberAmong(members);
+  } catch (e) {
+    // An engine that refuses the read is reported, never read as labelled-only for every member.
+    if (isEngineCapabilityRefusal(e)) throw e;
     return true;
   }
 }

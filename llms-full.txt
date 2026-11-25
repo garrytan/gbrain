@@ -5951,8 +5951,7 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
   (only the files on disk can say whether another page already holds that file, and the store cannot read them);
 - a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
-- a vector search with `where`, a date bound, `minTrust` or `suppressFlagged`, and a take vector search with
-  `eligibility.floor` or `eligibility.suppressFlagged` (`rust/docs/store/vectors.md`);
+- a vector search with a date bound in a shape other than an ISO date (`rust/docs/store/vectors.md`);
 - an input of a raw-data, page-operation, salience, facts, ontology, chronicle or code-edge read the store cannot
   reproduce, including a privacy policy wider than the store's (each `rust/docs/store/*.md` page lists them);
 - a keyword or title search with a CJK query, a text search configuration other than `english`, a truthy

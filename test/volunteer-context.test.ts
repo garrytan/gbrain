@@ -23,6 +23,8 @@ import {
 } from '../src/core/context/volunteer.ts';
 import type { PointerBlock } from '../src/core/context/retrieval-reflex.ts';
 import { insertVolunteerEvents } from '../src/core/context/volunteer-events.ts';
+import { capabilityMissing, isCapabilityMissing } from '../src/core/rust-engine/errors.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 
 let engine: PGLiteEngine;
@@ -323,6 +325,17 @@ describe('volunteerUsageStats', () => {
     expect(stats.total_volunteered).toBe(0);
     expect(stats.by_arm).toEqual([]);
   });
+
+  test('an engine that cannot serve the read refuses, not zeroed stats', async () => {
+    const refusing = { readVolunteerUsage: async () => { throw capabilityMissing('raw_sql', 'readVolunteerUsage'); } } as unknown as BrainEngine;
+    const err = await volunteerUsageStats(refusing, ['default'], 30).then(() => null, (e: unknown) => e);
+    expect(isCapabilityMissing(err)).toBe(true);
+    // Any other read failure surfaces too; only a brain from before the events table reads as zero events.
+    const broken = { readVolunteerUsage: async () => { throw Object.assign(new Error('connection reset'), { code: '08006' }); } } as unknown as BrainEngine;
+    expect(await volunteerUsageStats(broken, ['default'], 30).then(() => 'answered', (e: Error) => e.message)).toBe('connection reset');
+    const premigration = { readVolunteerUsage: async () => { throw Object.assign(new Error('relation "context_volunteer_events" does not exist'), { code: '42P01' }); } } as unknown as BrainEngine;
+    expect((await volunteerUsageStats(premigration, ['default'], 30)).by_arm).toEqual([]);
+  });
 });
 
 describe('resolveEntitiesToPointers — new provenance surface (back-compat)', () => {
@@ -525,8 +538,10 @@ describe('volunteer-events sink — timeout branch (long-lived process safety)',
       _peekPendingVolunteerEventWritesForTests,
     } = await import('../src/core/context/volunteer-events.ts');
     _resetPendingVolunteerEventWritesForTests();
+    // The batch insert is the typed insertVolunteerEvents member (engine-sql/volunteer-events.ts); it never settles here.
     const hangingEngine = {
       executeRaw: () => new Promise(() => { /* never settles */ }),
+      insertVolunteerEvents: () => new Promise(() => { /* never settles */ }),
     } as never;
     logVolunteerEventsFireAndForget(hangingEngine, [
       { source_id: 'default', slug: 'people/x', confidence: 0.9, match_arm: 'alias', rationale: 'r', channel: 'watch' },

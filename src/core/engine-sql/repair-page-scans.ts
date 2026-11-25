@@ -148,6 +148,23 @@ export async function listFileTombstones(exec: LegacyUnscopedRead, sourceId: str
   return rows.map(row => ({ ...row, id: Number(row.id), source_uri: row.source_uri ?? null, deleted_at: new Date(row.deleted_at).toISOString(), by_sync: row.by_sync === true }));
 }
 
+/** A tombstone a managed sync made that no live page of its source backs by content; `expired` when older than the cutoff. */
+export interface UnreviewedSyncTombstone { id: number; source_id: string; slug: string; expired: boolean }
+
+/**
+ * Every tombstone a managed sync made whose content no live page of its source holds, by deleted_at, then byte source
+ * id, then byte slug (persistence/sync-delete-tombstones.ts readUnreviewedSyncTombstones).
+ */
+export async function listUnreviewedSyncTombstones(exec: LegacyUnscopedRead, olderThanHours: number): Promise<UnreviewedSyncTombstone[]> {
+  const hours = String(Math.max(0, Math.floor(olderThanHours)));
+  const { text, params } = renderFragment(sqlFragment`SELECT p.id, p.source_id, p.slug, p.deleted_at < now() - (${hours} || ' hours')::interval AS expired FROM pages p
+      WHERE p.deleted_at IS NOT NULL AND ${trustedSql(syncDeleteOrigin('p'))}
+        AND NOT EXISTS (SELECT 1 FROM pages tw WHERE tw.source_id = p.source_id AND tw.deleted_at IS NULL AND tw.content_hash = p.content_hash)
+      ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`);
+  const rows = await exec.executeRaw<{ id: number | string; source_id: string; slug: string; expired: boolean }>(text, params);
+  return rows.map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug, expired: row.expired === true }));
+}
+
 /** The live pages of the source that record an origin; `nonBlank` skips a blank one. */
 export async function countLiveFileBackedPages(exec: LegacyUnscopedRead, sourceId: string, opts: { nonBlank?: boolean } = {}): Promise<number> {
   const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM pages WHERE source_id=${sourceId} AND deleted_at IS NULL AND ${trustedSql(opts.nonBlank ? `NOT ${BLANK_ORIGIN}` : 'source_path IS NOT NULL')}`);

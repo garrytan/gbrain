@@ -512,6 +512,31 @@ describe('engine parity: timeline entries', () => {
       return answers;
     },
   );
+
+  parityTest(
+    'insertCanonicalTimelineRows writes nothing when one row of the call has a date that is not a calendar date',
+    { methods: ['insertCanonicalTimelineRows', 'listStoredTimelineRows', 'addTimelineEntry', 'putPage', 'getPage'] },
+    async (engine) => {
+      // The case insertPageTimelineRows carried before the merge of main 8d2e667543 removed that member: one statement
+      // (or one store write) per call, so a bad row after a good one leaves the page's rows as they were.
+      await putPlain(engine, 'people/canonical-bad');
+      const pageId = Number((await engine.getPage('people/canonical-bad'))!.id);
+      await engine.addTimelineEntry('people/canonical-bad', { date: '2026-02-03', source: 'cal', summary: 'already here', detail: 'stored detail' });
+      const rows = async () => (await engine.listStoredTimelineRows('default', 'people/canonical-bad'))
+        .map((r) => `${r.date}|${r.source}|${r.summary}|${r.detail}`).sort();
+      const before = await rows();
+      const refused = (run: () => Promise<unknown>) => run().then(() => false, () => true);
+      const row = (date: string, summary: string) => ({ date, source: '', summary, detail: '' });
+      const answers = {
+        before,
+        badDate: await refused(() => engine.insertCanonicalTimelineRows(pageId, [row('2026-04-01', 'before the bad row'), row('2026-02-30', 'not a calendar date')])),
+        badFirst: await refused(() => engine.insertCanonicalTimelineRows(pageId, [row('not-a-date', 'bad first'), row('2026-04-02', 'after the bad row')])),
+        after: await rows(),
+      };
+      expect(answers).toEqual({ before: ['2026-02-03|cal|already here|stored detail'], badDate: true, badFirst: true, after: before });
+      return answers;
+    },
+  );
 });
 
 /**

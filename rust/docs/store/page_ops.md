@@ -34,6 +34,7 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.countPagesBy({ sourceId?, sourceIds?, since?, typeGroups? }?)` | `{ bySourceType, byTypeGroup, total }` over visible pages (live, source present and not archived) whose effective date (else `updated_at`) is at or after `since`, an ISO date or instant. `typeGroups` maps a type to its group; with it, only mapped types count in `byTypeGroup` and `total` | `countPagesBy` |
 | `brain.getAllSlugs({ sourceId? }?)` | every slug, deleted pages included, sorted and distinct; `''` means every source | `getAllSlugs` |
 | `brain.listAllPageRefs()` | `[{ source_id, slug, updated_at }]` of live pages, by source then slug | `listAllPageRefs` |
+| `brain.listMarkdownPageSlugs(sourceId)` | the slugs of the source's markdown pages, deleted pages included, in byte order | `listMarkdownPageSlugs` |
 | `brain.listPrefixSampledPages({ prefixes, excludeSlugs?, staleBias?, staleThresholdDays?, sourceId?, sourceIds? })` | one domain-bank row per prefix: the live inline page under it (segmented pages are left out) with the most inbound links, then the lowest slug. With `staleBias`, a page never retrieved ranks first, then one last retrieved before `staleThresholdDays` (default 90) ago, then the rest; links and slug break ties | `listPrefixSampledPages` |
 | `brain.listCorpusSample({ n, excludeSlugs?, seed?, sourceId?, sourceIds? })` | up to `n` domain-bank rows of live inline pages (segmented pages are left out), in a shuffle fixed by `seed` | `listCorpusSample` |
 | `brain.bumpPageRetrievals(ids)` | the number of records written. Records now as the last retrieval of each listed page that exists, once per id; it skips an id that is not a page, and a page whose record is less than 5 minutes old | `bumpPageRetrievals` (the throttled `page_retrievals` upsert of `src/core/engine-sql/pages.ts`) |
@@ -99,9 +100,11 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 - `countPagesBy` refuses a `since` that is not an ISO date or instant (Postgres also takes other
   `timestamptz` text).
 - `revertToVersion` writes no new version, as PGLite. The interface spec says it snapshots first.
-- After a hard delete PGLite also scrubs ratings, weights, the volunteer log, the
-  gazetteer, take proposals, open loops, core-edit notices and write-gate holds. The store keeps none
-  of those yet, so only eval candidates, retrieval records, page aliases, slug aliases and rename history change.
+- A hard delete (`deletePages`, `purgeDeletedPages`) scrubs, in the delete's write, the eval candidates, retrieval
+  records, the take proposals (with their idempotency entries and nudges) and open loops (with their dedupe keys) filed
+  under the slug in its source, and the page aliases, slug aliases and rename history, as PGLite's
+  `deletePurgedSlugStoreRows` does. PGLite also scrubs ratings, weights, the volunteer log, the gazetteer, core-edit
+  notices and write-gate holds, which this scrub does not touch.
 
 ## The purgeDeletedPages holds
 

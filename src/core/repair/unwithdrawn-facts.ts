@@ -102,12 +102,7 @@ export async function classifyUnwithdrawnFacts(db: BrainEngine, sourceIds: strin
     const key = `${row.source_id}\u0000${row.slug}`;
     if (evidence.has(key) || row.page_id === null) continue;
     const page = rows.filter(other => other.source_id === row.source_id && other.slug === row.slug);
-    // The page body and fence evidence reads are raw SQL (and the fence generation writer they follow is lane 7's), so a
-    // Rust brain stops here by name once a candidate has a page.
-    requireRawSql(db, 'repair unwithdrawn-facts fence evidence');
-    const [current] = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; body_storage: string | null }>(
-      `SELECT id, CASE WHEN body_storage = 'segmented' THEN NULL ELSE compiled_truth END AS compiled_truth,
-        CASE WHEN body_storage = 'segmented' THEN NULL ELSE timeline END AS timeline, body_storage FROM pages WHERE id = $1`, [row.page_id]);
+    const current = await db.readPageInlineBody(row.page_id);
     const prior = current ? await pageFenceRowKeys(db, current, row.slug, row.source_id) : null;
     const held = await factsFenceHeld(db, { sourceId: row.source_id, slug: row.slug, prior,
       rows: page.map(other => ({ id: Number(other.id), row_num: Number(other.preimage.row_num), fact: other.preimage.fact, visibility: other.preimage.visibility })) });

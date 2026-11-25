@@ -50,10 +50,18 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub mod derivation_sweep;
 mod page_spend;
+mod segment_rewrite;
 mod segmented_embedding;
 mod segmented_writes;
-pub use segmented_embedding::RetiredChunkVector;
-pub use segmented_writes::SegmentedProjectionPage;
+pub use segment_rewrite::{SegmentedGenerationLock, SegmentedRewritePage};
+pub use segmented_embedding::{
+    LiveEmbedSegment, RetiredChunkVector, SegmentChunkInputHash, SegmentChunkRow,
+    SegmentedEmbedCounts, SegmentedStaleRow, SegmentedStaleRowsOpts, SegmentedVectorInput,
+};
+pub use segmented_writes::{
+    OccurrenceChunkRow, RechunkCandidateScope, SegmentedLivePageRow, SegmentedProjectionPage,
+    SegmentedRechunkPage,
+};
 pub(crate) mod health;
 pub mod purge_probe;
 pub mod purge_record;
@@ -355,6 +363,12 @@ pub struct BodyFlipInput {
     pub retire_max_rows: i64,
     pub body: SegmentedBodyColumns,
     pub meta: SegmentedPageMeta,
+    /// The `gbrain.materializing_revision` transaction setting of the caller (the TypeScript store
+    /// member reads it from its transaction scope). When it names the page's revision and the flip
+    /// leaves the page's identity, type, kind, title, frontmatter and deletion as they were, the flip
+    /// keeps the revision and the seal, as Postgres's `gbrain_advance_page_revision` trigger does.
+    #[serde(default)]
+    pub keep_revision: Option<String>,
 }
 
 /// `BodyFlipResult`.
@@ -804,6 +818,20 @@ fn meta_chunker_version(meta: &SegmentedPageMeta) -> Option<i64> {
 }
 
 /// The page row's `chunker_version`, a SMALLINT column: Postgres refuses a value outside 16 bits.
+/// Postgres's `gbrain_advance_page_revision` exception: the revision stays when the
+/// `gbrain.materializing_revision` setting equals the old revision and source_id, slug, type,
+/// page_kind, title, frontmatter and deleted_at did not change.
+fn keeps_revision(setting: Option<&str>, before: &PageRecord, after: &PageRecord) -> bool {
+    setting.is_some_and(|s| !s.is_empty() && s == before.knowledge_revision)
+        && before.source_id == after.source_id
+        && before.slug == after.slug
+        && before.page_type == after.page_type
+        && before.page_kind == after.page_kind
+        && before.title == after.title
+        && before.frontmatter == after.frontmatter
+        && before.deleted_at_us == after.deleted_at_us
+}
+
 fn smallint_chunker_version(meta: &SegmentedPageMeta) -> Result<Option<i16>> {
     meta_chunker_version(meta)
         .map(|v| {
@@ -1651,6 +1679,7 @@ impl Store {
             }
             let meta = &input.meta;
             let body = &input.body;
+            let before = page.clone();
             page.page_type = page_type.clone();
             page.page_kind = meta_page_kind(meta);
             page.title = clean(&meta.title);
@@ -1671,9 +1700,12 @@ impl Store {
             if meta_ingested(meta) {
                 page.ingested_at_us = Some(now);
             }
-            // The body generation moved, so Postgres's revision trigger always advances it.
-            page.knowledge_revision = self.env.new_uuid();
-            page.text_projection_revision = None;
+            // The body generation moved, so Postgres's revision trigger advances the revision, unless the
+            // caller materializes the page's own revision and the flip changed none of its tracked columns.
+            if !keeps_revision(input.keep_revision.as_deref(), &before, &page) {
+                page.knowledge_revision = self.env.new_uuid();
+                page.text_projection_revision = None;
+            }
             let state = BodyState {
                 body_storage: "segmented".into(),
                 body_generation: input.new_generation,
@@ -2875,15 +2907,15 @@ mod segment_chunk_tests {
     use super::*;
     use crate::chunks::{SegmentChunkInput, visible_chunks};
 
-    const STAGING: &str = "11111111-1111-4111-8111-111111111111";
-    const STAGING_2: &str = "22222222-2222-4222-8222-222222222222";
+    pub(super) const STAGING: &str = "11111111-1111-4111-8111-111111111111";
+    pub(super) const STAGING_2: &str = "22222222-2222-4222-8222-222222222222";
 
     fn sha(text: &str) -> String {
         use sha2::{Digest, Sha256};
         to_hex(&Sha256::digest(text.as_bytes()))
     }
 
-    fn text(body: &str) -> SegmentTextInput {
+    pub(super) fn text(body: &str) -> SegmentTextInput {
         SegmentTextInput {
             sha256: sha(body),
             body: to_hex(body.as_bytes()),
@@ -2891,7 +2923,7 @@ mod segment_chunk_tests {
         }
     }
 
-    fn staging(id: &str, page_id: i64, client: &str) -> BodyStagingInput {
+    pub(super) fn staging(id: &str, page_id: i64, client: &str) -> BodyStagingInput {
         serde_json::from_value(json!({
             "id": id, "kind": "put", "principalKind": "local", "principalId": "cli",
             "clientRequestId": client, "sourceId": "default",
@@ -2909,7 +2941,7 @@ mod segment_chunk_tests {
         input
     }
 
-    fn row(
+    pub(super) fn row(
         page_id: i64,
         occurrence: i64,
         gen_from: i64,
@@ -2929,7 +2961,7 @@ mod segment_chunk_tests {
         .unwrap()
     }
 
-    fn flip(
+    pub(super) fn flip(
         page_id: i64,
         expected: i64,
         staging: &str,
@@ -2975,7 +3007,7 @@ mod segment_chunk_tests {
     }
 
     /// `published`, the flip's input changed by `extra` (as `flip` takes it).
-    fn published_with(store: &Store, extra: Value) -> i64 {
+    pub(super) fn published_with(store: &Store, extra: Value) -> i64 {
         let id = store
             .create_segmented_page_shell(
                 "notes/a",
@@ -4167,6 +4199,162 @@ mod segment_chunk_tests {
                 .body_generation,
             1
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fact purge statements (src/core/engine-sql/facts-purge.ts), served here because they read and
+// write this family's records. The TypeScript members are in store-members/facts-purge-tx.ts.
+// ---------------------------------------------------------------------------------------------
+
+/// `listSegmentedVersionsForPurge({ sourceId, needle, pageIds, after })`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SegmentedVersionsQuery {
+    pub source_id: String,
+    pub needle: String,
+    pub page_ids: Vec<i64>,
+    pub after: i64,
+}
+
+/// `deleteUnreferencedPurgedTexts({ sourceId, replaced, claim, fenced })`: `replaced` are hex digests; `claim` and
+/// `fenced` are already lowered (the plain claim and the claim as a fence cell stores it).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UnreferencedTextsArgs {
+    pub source_id: String,
+    pub replaced: Vec<String>,
+    pub claim: String,
+    pub fenced: String,
+}
+
+/// `strpos(lower(convert_from(body, 'UTF8')), needle) > 0` for a stored text (body as hex).
+fn text_holds(record: &TextRecord, needles: &[&str]) -> Result<bool> {
+    let bytes = from_hex(&record.body, "segment text")?;
+    let text = crate::cli_reads::pg_text::pg_lower(&String::from_utf8_lossy(&bytes));
+    Ok(needles.iter().any(|n| text.contains(n)))
+}
+
+impl Store {
+    /// `listSegmentedVersionsForPurge`: the next 5000 saved versions with `body_storage = 'segmented'` of the source's
+    /// pages after id `after`, in id order, whose page is one of `pageIds` or whose generation's published manifest
+    /// rows hold a text that contains `needle` (`SEGMENTED_VERSION_CARRIES`).
+    pub fn list_segmented_versions_for_purge(
+        &self,
+        q: &SegmentedVersionsQuery,
+    ) -> Result<Vec<Value>> {
+        no_nul(&q.source_id, "listSegmentedVersionsForPurge sourceId")?;
+        no_nul(&q.needle, "listSegmentedVersionsForPurge needle")?;
+        let named: std::collections::BTreeSet<i64> = q.page_ids.iter().copied().collect();
+        let read = self.read()?;
+        let mut versions: Vec<_> = crate::trust::tier_reads::all_versions(&*read)?
+            .into_iter()
+            .filter(|v| {
+                v.body_storage.as_deref() == Some("segmented")
+                    && i64::try_from(v.id).is_ok_and(|id| id > q.after)
+            })
+            .collect();
+        versions.sort_by_key(|v| v.id);
+        let mut out = Vec::new();
+        for v in versions {
+            let Some(page) = crate::pages::read_page_by_id(&*read, v.page_id)? else {
+                continue;
+            };
+            if page.source_id != q.source_id {
+                continue;
+            }
+            let generation = v.body_generation.unwrap_or_default();
+            let carries = || -> Result<bool> {
+                for (_, row) in manifest_rows(&*read, v.page_id)? {
+                    if !in_generation(&row, generation) {
+                        continue;
+                    }
+                    let sha = from_hex(&row.sha256, "manifest sha256")?;
+                    if let Some(text) =
+                        get_json::<TextRecord>(&*read, &text_key(&row.source_id, &sha))?
+                        && text_holds(&text, &[q.needle.as_str()])?
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            };
+            if !(i64::try_from(v.page_id).is_ok_and(|id| named.contains(&id)) || carries()?) {
+                continue;
+            }
+            let mut tags = v.tags.clone();
+            tags.sort();
+            out.push(json!({
+                "id": v.id, "page_id": v.page_id, "generation": v.body_generation, "slug": page.slug, "title": v.title,
+                "type": v.page_type, "frontmatter": crate::jsonb::order_map(v.frontmatter.clone()), "tags": tags,
+            }));
+            if out.len() == 5000 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// `abortPurgedStagings(stagingIds)`: sets every named staging that is not committed to `aborted`; the page id of
+    /// each it aborted that has one, in staging id order (the SQL's `RETURNING` has no order).
+    pub fn abort_purged_stagings(&self, ids: &[String]) -> Result<Vec<u64>> {
+        let ids: std::collections::BTreeSet<String> = ids
+            .iter()
+            .map(|id| staging_id_arg(id))
+            .collect::<Result<_>>()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut pages = Vec::new();
+            for id in &ids {
+                let Some(mut record) = get_json::<StagingRecord>(&*tx, &staging_key(id))? else {
+                    continue;
+                };
+                if record.state == "committed" {
+                    continue;
+                }
+                record.state = "aborted".into();
+                record.updated_at_us = now;
+                put_json(tx, &staging_key(id), &record)?;
+                pages.extend(record.page_id);
+            }
+            Ok(pages)
+        })
+    }
+
+    /// `deleteUnreferencedPurgedTexts`: deletes the source's segment texts that no manifest row references and whose
+    /// digest is in `replaced` or whose lowered text contains `claim` or `fenced`; how many.
+    pub fn delete_unreferenced_purged_texts(&self, a: &UnreferencedTextsArgs) -> Result<u64> {
+        no_nul(&a.source_id, "deleteUnreferencedPurgedTexts sourceId")?;
+        let replaced: std::collections::BTreeSet<Vec<u8>> = a
+            .replaced
+            .iter()
+            .map(|h| from_hex(h, "deleteUnreferencedPurgedTexts replaced"))
+            .collect::<Result<_>>()?;
+        self.write(|tx| {
+            let mut referenced = std::collections::BTreeSet::new();
+            for (_, row) in collect::<ManifestRow>(&*tx, &kind_key(MANIFEST))? {
+                if row.source_id == a.source_id {
+                    referenced.insert(from_hex(&row.sha256, "manifest sha256")?);
+                }
+            }
+            let mut prefix = kind_key(TEXT);
+            prefix.extend_from_slice(a.source_id.as_bytes());
+            prefix.push(0);
+            let mut deleted = 0;
+            for (key, text) in collect::<TextRecord>(&*tx, &prefix)? {
+                let sha = key[prefix.len()..].to_vec();
+                if referenced.contains(&sha) {
+                    continue;
+                }
+                if replaced.contains(&sha)
+                    || text_holds(&text, &[a.claim.as_str(), a.fenced.as_str()])?
+                {
+                    tx.delete(&key)?;
+                    deleted += 1;
+                }
+            }
+            Ok(deleted)
+        })
     }
 }
 

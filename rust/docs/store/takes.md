@@ -67,9 +67,9 @@ for byte (pinned by `test/engine-sql-held-take-rows-golden.test.ts`). Parity cas
 `test/engine-parity/take-held-rows.test.ts`.
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
-whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge
-writes `needs_rederive` and `executeRaw` refuses on Rust, so that clause never hides a row here. The
-members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
+whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. A purge marks rows in
+that queue through `markNeedsRederive` (`generations/needs_rederive.rs`). The members send `eligible_only: true` for
+any eligibility object and the store applies all three clauses.
 `listTakes`, `searchTakes` and `searchTakesVector` also take `min_trust` (`eligibility.floor`: `trustFloorSql`, the take's stamped
 tier at or above the floor) and `suppress_flagged` (`eligibility.suppressFlagged`: `activationSuppressedSql`
 over the take's tier and its write-gate receipts), through `trust::TrustPolicy`.
@@ -101,3 +101,39 @@ Differences from PGLite:
 The eight single-purpose reads of doctor, onboarding, the fact purge, the fence import, the MCP scorecard and the take repair
 (`countTakes`, `countOffGridTakeWeights`, `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`,
 `listTakeSupersessionCandidates`) are in [takes-reads.md](takes-reads.md).
+
+## The fence projection's statements (`takes/fence_projection.rs`)
+
+The take statements of a page publication's fence projection (`src/core/engine-sql/fence-projection.ts`), each the
+statement the projection sent through `executeRaw`. The writes join the engine's transaction and change no
+`updated_at`, as the statements set none; the trust stamp keeps the tier (no claim, kind or holder changes).
+
+- `listQuotedTakeRows(pageId, rowNums)`: `{ row_num, claim }` of the page's takes at those numbers, by row number.
+- `listPageTakeRowNums(pageId)`: the page's take row numbers.
+- `clearChangedTakeResolutions(pageId, claims)`: a resolved take at a record's row number whose claim differs from the
+  record's loses its seven `resolved_*` columns.
+- `writeFenceTakeResolutions(pageId, resolutions)`: a take at a record's row number takes the record's resolution
+  cells when one differs. `resolved_at` is read as Postgres reads `text::timestamptz` (DateStyle `ISO, MDY`,
+  TimeZone UTC; `takes/resolved_at.rs`): numeric and month-name dates in Postgres's orders, `YYYYMMDD`, times with
+  `am`/`pm`, an ISO `T` and `24:00`, `Z`/`UTC`/`GMT` and numeric offsets, and `epoch`/`now`/`today`/`tomorrow`/
+  `yesterday`. An input Postgres refuses gets its error (`date/time field value out of range`, `invalid input syntax`,
+  `time zone displacement out of range`). Zones: `Z`/`UTC`/`GMT`, numeric offsets, and the 145 fixed-offset
+  abbreviations of Postgres's `Default` abbreviation set (`PST`, `EST`, `CET`, `CEST`, `BST`, `IST`, `JST`, ...;
+  `takes/zone_abbreviations.rs`, generated from `share/timezonesets/Default`), the 50 date-dependent abbreviations
+  that set defines by a zone name (`MSK`, `SGT`, ...), and a zone name after the date (`America/New_York`,
+  `Etc/GMT+3`, `EST5EDT`) or an all-letter zone name anywhere (`Japan`). Both read the zone's transitions as
+  `DetermineTimeZoneOffset` and `DetermineTimeZoneAbbrevOffset` do (`takes/zone_offset.rs`): a local time a change
+  skips takes the offset before it, one it repeats takes the offset after it, and an abbreviation takes its last
+  meaning in the zone at or before the date, else its first after. The zones are generated from the tzdata of the
+  repository's PGLite (`takes/zone_transitions.rs`, `rust/scripts/gen-zone-transitions.ts`; checked by
+  `test/rust-zone-transitions-current.test.ts`); a Postgres server with a different tzdata release can differ for a
+  zone whose rules changed between the two. Any other form (a name the tzdata does not have, a zone followed by an
+  offset such as `PST+1`, an instant past the last listed transition (late 2037) of a zone whose daylight rules go on, BC dates,
+  infinities, Julian or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
+  naming the member and the text, before anything is written. `takes_resolution_consistency` and then
+  `takes_resolved_quality_values` refuse a bad pair or quality.
+
+`hasFenceAbsentHold(sourceId, kind, ownerKey)` (`generations.rs`) reads whether the key's held generation is held with
+`held_reason = 'fence_absent'`. The page write's link preparation reads its live aliases through `readLiveSlugAliases`
+(`links_preparation.rs`).
+

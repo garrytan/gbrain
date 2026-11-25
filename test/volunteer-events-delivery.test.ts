@@ -15,17 +15,22 @@ import {
 import { logDeliveredReflexPointers, type ReflexPointer } from '../src/core/context/retrieval-reflex.ts';
 import type { VolunteeredPage } from '../src/core/context/volunteer.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { insertVolunteerEvents as insertVolunteerEventRows } from '../src/core/engine-sql/volunteer-events.ts';
 
 interface CapturedInsert { sql: string; params: unknown[] }
 
 function stubEngine(captured: CapturedInsert[], fail = false): BrainEngine {
-  return {
+  const stub = {
     executeRaw: async (sql: string, params: unknown[]) => {
       if (fail) throw new Error('insert exploded');
       captured.push({ sql, params });
       return [];
     },
-  } as unknown as BrainEngine;
+    // The typed member the delivery log writes through; it sends its one statement through the stub's executeRaw,
+    // as both SQL engines do (engine-sql/volunteer-events.ts).
+    insertVolunteerEvents: (rows: Parameters<typeof insertVolunteerEventRows>[1]) => insertVolunteerEventRows(stub, rows),
+  };
+  return stub as unknown as BrainEngine;
 }
 
 const PAGE: VolunteeredPage = {

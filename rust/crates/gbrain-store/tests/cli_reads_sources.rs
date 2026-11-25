@@ -648,3 +648,61 @@ fn an_orphan_source_binding_lists_by_source_id_and_deletes_once_orphaned() {
     );
     assert_eq!(ids(store.list_orphan_bindings(None).unwrap()), vec!["a-z"]);
 }
+
+#[test]
+fn the_topology_reads_list_a_hosts_worktrees_and_a_worktrees_members_by_byte_source_id() {
+    use gbrain_store::persistence::{HostBindingInsert, SourceBindingInsert, WorktreeInsert};
+    let dir = TempDir::new("topology-reads");
+    let store = open(&dir);
+    let (wt, other, host) = (
+        "11111111-1111-4111-8111-111111111111",
+        "55555555-5555-4555-8555-555555555555",
+        "66666666-6666-4666-8666-666666666666",
+    );
+    for id in [wt, other] {
+        store
+            .insert_worktree(
+                &serde_json::from_value::<WorktreeInsert>(json!({"id": id, "ownerHostId": host, "ownerEpoch": 3, "topologyGeneration": 2}))
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    store
+        .insert_host_binding(
+            &serde_json::from_value::<HostBindingInsert>(json!({"worktreeId": wt, "hostId": host, "localPath": "/r", "coordinationPath": "/r.lock"}))
+                .unwrap(),
+        )
+        .unwrap();
+    for (id, inc, tree) in [
+        ("ab", "22222222-2222-4222-8222-222222222222", wt),
+        ("a-z", "33333333-3333-4333-8333-333333333333", wt),
+        ("zz", "44444444-4444-4444-8444-444444444444", other),
+    ] {
+        store
+            .insert_source_binding(
+                &serde_json::from_value::<SourceBindingInsert>(json!({"sourceId": id, "incarnation": inc, "worktreeId": tree, "relativePath": id}))
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        store.list_host_topology_rows(host).unwrap(),
+        vec![json!({
+            "worktree_id": wt, "owner_host_id": host, "owner_epoch": 3, "state": "active",
+            "topology_generation": 2, "local_path": "/r", "coordination_path": "/r.lock",
+        })]
+    );
+    assert!(
+        store
+            .list_host_topology_rows("77777777-7777-4777-8777-777777777777")
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store.list_worktree_members(wt).unwrap(),
+        vec![
+            json!({"source_id": "a-z", "relative_path": "a-z"}),
+            json!({"source_id": "ab", "relative_path": "ab"}),
+        ]
+    );
+}
