@@ -405,7 +405,7 @@ replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	40	yes	yes	yes	serves
+getLinks	links	yes	41	yes	yes	yes	serves
 getBacklinks	links	yes	15	yes	yes	yes	serves
 listLinkSources	links	yes	2	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -2195,13 +2195,13 @@ readStoredPageTier	write_guards	yes	1	no	yes	yes	serves
 readPageIndexingState	write_guards	yes	1	no	yes	yes	serves
 readPageHiddenFromCaller	page_visibility	yes	3	no	yes	yes	serves
 readCallerPageAccess	page_visibility	yes	3	no	yes	yes	serves
-readWriteVisibilityProbe	page_visibility	yes	7	no	yes	yes	serves
+readWriteVisibilityProbe	page_visibility	yes	8	no	yes	yes	serves
 readPagePrivacyHidden	page_visibility	yes	3	no	yes	yes	serves
 readWriterSlugFence	page_visibility	yes	2	no	yes	yes	serves
 setEffectTransactionLimits	remote_links	yes	1	no	yes	yes	serves
 readOwnedLinks	remote_links	yes	1	no	yes	yes	serves
 deleteOwnedLinks	remote_links	yes	1	no	yes	yes	serves
-readLinkTargetPages	remote_links	yes	5	no	yes	yes	serves
+readLinkTargetPages	remote_links	yes	6	no	yes	yes	serves
 rearmLinksEffects	remote_links	yes	1	no	yes	yes	serves
 hasPendingFactsExtraction	facts_backstop	yes	1	no	yes	yes	serves
 hasCompletedFactsExtraction	facts_backstop	yes	1	no	yes	yes	serves

@@ -12,6 +12,11 @@
  *    probe answered truly, the check's raw read of the owner id refused every remote writer on Rust (the owner and ordinary members
  *    too, also after the labelled-only member was disabled or removed), and the Rust store did not serve the labelled-only writer
  *    policy, so the rewrite ended on engine_capability_missing instead of page_not_found.
+ *  - Links: a successful rewrite whose body mentions other pages gets mention edges only to the pages the labelled-only writer can read (a page
+ *    that names the member or a group it is in, or sits under a folder rule that lists it), not to an open page or a page naming another member.
+ *  - Pending folder prefix: not pinned beyond the shapes case below. A page under a pending prefix is hidden by the member-access part of the
+ *    writer's policy before the labelled-only part is judged (private-visibility.ts folderRulesAllowedSql's coverageSql), so the labelled-only
+ *    judgement never meets a page under a pending prefix through a write.
  *  - Why existing coverage misses it: the labelled-only write cases (test/access-labelled-only-*.test.ts) run on PGLite and
  *    Postgres only; the parity cases of the grant set and read it, and the plain member's write case uses an unlabelled member
  *    on a brain with none.
@@ -29,6 +34,8 @@ import { setOwner } from '../../src/core/access/owner.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
+import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
+import { localHostId } from '../../src/core/persistence/identity.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import type { AuthInfo } from '../../src/core/ops/contract.ts';
 
@@ -56,14 +63,21 @@ async function seed(engine: BrainEngine, backend: ParityBackend): Promise<void> 
 /** What a remote write answered: 'written', or the whole error body it was refused with (code, message, fix). */
 type WriteOutcome = 'written' | Record<string, unknown>;
 
-/** `member`'s remote write through the MCP dispatch, on a token bound to it; a refusal is returned as a value. */
-async function memberWriteOutcome(engine: BrainEngine, member: string, operation: 'put_page' | 'capture', params: Record<string, unknown>): Promise<WriteOutcome> {
+/** `member`'s remote write through the MCP dispatch, on a token bound to it: the dispatch result, or the typed refusal it threw. */
+async function memberDispatch(engine: BrainEngine, member: string, operation: 'put_page' | 'capture', params: Record<string, unknown>, credential?: { id?: string }): Promise<Awaited<ReturnType<typeof dispatchToolCall>> | { code: string; thrown: true }> {
   const minted = await mintLegacyToken(engine, { name: `k-${member}-${String(params.slug)}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
   await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+  if (credential) credential.id = minted.id;
   const auth = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), engine }).verifyAccessToken(minted.token) as unknown as AuthInfo;
   return dispatchToolCall(engine, operation, params, { remote: true, transport: 'http', auth, sourceId: SRC, takesHoldersAllowList: ['world'] })
-    .then(out => out.isError ? JSON.parse(out.content.map(c => c.text).join('')) as Record<string, unknown> : 'written',
-      (e: { code?: string }) => ({ code: String(e.code), thrown: true }));
+    .catch((e: { code?: string }) => ({ code: String(e.code), thrown: true as const }));
+}
+
+/** `member`'s remote write through the MCP dispatch, on a token bound to it; a refusal is returned as a value. */
+async function memberWriteOutcome(engine: BrainEngine, member: string, operation: 'put_page' | 'capture', params: Record<string, unknown>): Promise<WriteOutcome> {
+  const out = await memberDispatch(engine, member, operation, params);
+  if ('thrown' in out) return out;
+  return out.isError ? JSON.parse(out.content.map(c => c.text).join('')) as Record<string, unknown> : 'written';
 }
 
 /** The outcome of the labelled-only member's remote write: 'written', or the error code it was refused with. */
@@ -190,6 +204,54 @@ describe('engine parity: an ordinary member\'s rewrite of a page under a folder 
       return { outcome, before, after };
     });
   }
+});
+
+describe('engine parity: the links a labelled-only member\'s rewrite creates', () => {
+  // A successful rewrite of a page that names the member, whose body mentions other pages: the remote links effect (persistence/effect-links.ts,
+  // writableTargets) reads each target under the writer's read policy (readLinkTargetPages), so an edge goes only to a page the labelled-only writer
+  // can read: one that names the member (or a group it is in), or sits under a folder rule that lists it. An open page, a page that names only another
+  // member, and a page under a rule that lists only another member get no edge, and read like an absent page. Every arm must leave the same edges.
+  const TEAM_RULE = { id: 'team-rule', prefix: 'team/', readable_by: [`member:${LABELLED}`] };
+  const OTHER_RULE = { id: 'other-rule', prefix: 'others/', readable_by: [`member:${OWNER}`] };
+  const MENTIONED = ['notes/named', 'notes/group-named', 'team/ruled', 'notes/open', 'notes/other-named', 'others/ruled', 'notes/ghost'];
+  parityTest('the rewrite of a page that names the member links only the pages the member can read, and not an open page or a page naming another member', { methods: ['readWriteVisibilityProbe', 'readLinkTargetPages', 'getLinks'], timeout: 240_000 }, async (engine, backend) => {
+    await seed(engine, backend);
+    await addGroup(engine, 'team', [LABELLED]);
+    await proposeRevision(engine, SRC, [TEAM_RULE, OTHER_RULE], { origin: 'cli', store: 'database' });
+    const page = (slug: string, frontmatter: Record<string, unknown>) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} fixture.`, timeline: '', frontmatter }, { sourceId: SRC });
+    await page('notes/mine', { readable_by: [`member:${LABELLED}`] });
+    await page('notes/named', { readable_by: [`member:${LABELLED}`] });
+    await page('notes/group-named', { readable_by: ['group:team'] });
+    await page('team/ruled', {});
+    await page('notes/open', {});
+    await page('notes/other-named', { readable_by: [`member:${OWNER}`] });
+    await page('others/ruled', {});
+    const revision = (await engine.getPage('notes/mine', { sourceId: SRC }))?.knowledge_revision;
+    const body = `Mentions ${MENTIONED.map(slug => `[[${slug}]]`).join(', ')}.`;
+    const credential: { id?: string } = {};
+    const dispatched = await memberDispatch(engine, LABELLED, 'put_page', { slug: 'notes/mine', content: `---\ntitle: Mine\nreadable_by: ["member:${LABELLED}"]\n---\n${body}`, expected_revision: revision }, credential);
+    expect('thrown' in dispatched || dispatched.isError === true).toBe(false);
+    // The receipt names the caller's request_id; the effects are filed under the journal row of that request (token, request_id).
+    const clientRequestId = (JSON.parse((dispatched as { content: Array<{ text: string }> }).content.map(c => c.text).join('')) as { request_id?: string }).request_id;
+    const request = await engine.readWriteRequest('legacy_token', credential.id!, clientRequestId!);
+    expect(request?.id).toBeTruthy();
+    const requestId = request!.id;
+    // The links effect runs after the write, not inside it: run passes until that request's links effect has finished.
+    const links = async () => (await engine.readRequestEffects(requestId!)).find(e => e.kind === 'links')?.outcome;
+    const settled = async () => (await links())?.links;
+    for (let pass = 0; pass < 100 && !await settled(); pass++) {
+      await runPersistenceEffects(engine, { engine: engine.kind }, { hostId: localHostId(), limit: 10 });
+      await Bun.sleep(50);
+    }
+    expect(await settled()).toBe('committed');
+    // What the effect reports: an unreadable page is skipped as `missing`, the reason an absent page gets.
+    const effect = await links() as { added: number; skipped_targets: Array<{ slug: string; reason: string }> };
+    const skipped = Object.fromEntries(effect.skipped_targets.map(t => [t.slug, t.reason]).sort());
+    expect({ added: effect.added, skipped }).toEqual({ added: 3, skipped: { 'notes/ghost': 'missing', 'notes/open': 'missing', 'notes/other-named': 'missing', 'others/ruled': 'missing' } });
+    const edges = (await engine.getLinks('notes/mine', { sourceId: SRC })).map(l => `${l.link_type}:${l.to_slug}`).sort();
+    expect(edges).toEqual(['notes/group-named', 'notes/named', 'team/ruled'].map(slug => `mentions:${slug}`));
+    return { edges, effect: { added: effect.added, skipped }, page: await pageState(engine, 'notes/mine') };
+  });
 });
 
 describe('engine parity: a labelled-only member\'s create of a page that names it', () => {
