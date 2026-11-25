@@ -276,6 +276,7 @@ import * as lostFenceReads from './engine-sql/lost-fence-reads.ts';
 import * as staleAtomReads from './engine-sql/stale-atom-reads.ts';
 import * as remirrorEffects from './engine-sql/segmented-mirror-effects.ts';
 import * as fenceRepairRecords from './engine-sql/fence-repair-records.ts';
+import * as soakCountersImpl from './engine-sql/soak-counters.ts';
 import * as budgetLedgerWrites from './engine-sql/budget-ledger-writes.ts';
 import * as secretStoreRows from './engine-sql/secret-store.ts';
 import * as secretSpansRows from './engine-sql/secret-spans-rows.ts';
@@ -2254,6 +2255,7 @@ export class PostgresEngine implements BrainEngine {
   insertOpCheckpointIfAbsent(op: string, fingerprint: string, completedKeys: readonly unknown[]) { return fenceRepairRecords.insertOpCheckpointIfAbsent(this, op, fingerprint, completedKeys); }
   replaceOpCheckpointAtVersion(op: string, fingerprint: string, completedKeys: readonly unknown[], expected: number) { return fenceRepairRecords.replaceOpCheckpointAtVersion(this, op, fingerprint, completedKeys, expected); }
   upsertFenceTrendRunRecord(op: string, fingerprint: string, record: unknown) { return fenceRepairRecords.upsertFenceTrendRunRecord(this, op, fingerprint, record); }
+  addSoakCounterEvent(op: string, day: string, kind: string, n: number) { return soakCountersImpl.addSoakCounterEvent(this, op, day, kind, n); }
   readOldestSyncHoldAt(code: string, sourceIds: readonly string[]) { return fenceRepairRecords.readOldestSyncHoldAt(this, code, sourceIds); }
   readLastFinishedJobAt(name: string) { return fenceRepairRecords.readLastFinishedJobAt(this, name); }
   reclaimBudgetReservations(key: budgetLedgerWrites.BudgetLedgerKey, nowIso: string) { return budgetLedgerWrites.reclaimBudgetReservations(this, key, nowIso); }

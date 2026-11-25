@@ -430,6 +430,13 @@ const PINS: Pin[] = [
     texts: ['UPDATE sources SET upstream_checked_at = CASE WHEN upstream_commit = $3 AND upstream_checked_at > $2::timestamptz THEN upstream_checked_at ELSE $2::timestamptz END,\n  upstream_commit=$3,upstream_behind=$4 WHERE id=$1'],
   },
   {
+    from: 'src/core/persistence/soak-counters.ts:40 recordSoakEvent',
+    case: { method: 'addSoakCounterEvent', variant: 'default', run: e => e.addSoakCounterEvent('sync-soak-counters', '2026-01-02', 'repair_apply', 1) },
+    texts: [`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,jsonb_build_array(jsonb_build_object('day',$2::text,$3::text,$4::int)))
+    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(op_checkpoints.completed_keys->0
+      || jsonb_build_object($3::text, COALESCE((op_checkpoints.completed_keys->0->>$3)::int,0)+$4::int)), updated_at=now()`],
+  },
+  {
     from: 'src/core/sync-rename-identity.ts:365 redecideHeldRename',
     case: { method: 'readPageIdentity', variant: 'default', run: e => e.readPageIdentity(1) },
     texts: [`SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`],

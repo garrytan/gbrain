@@ -466,6 +466,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   insertOpCheckpointIfAbsent: 'readOpCheckpointRecord for that operation',
   replaceOpCheckpointAtVersion: 'readOpCheckpointRecord for that operation',
   upsertFenceTrendRunRecord: 'readOpCheckpointRecord for that operation',
+  addSoakCounterEvent: 'readSoakCounterRows for that operation and day',
   reclaimBudgetReservations: 'readBudgetLedgerDay for that ledger day',
   reserveBudgetReservation: 'readBudgetLedgerDay for that ledger day',
   dispatchBudgetReservation: 'readBudgetLedgerDay for that ledger day',

@@ -230,7 +230,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // the batch 9 segmented-mirror effect members (engine-sql/segmented-mirror-effects.ts)
     'insertRemirrorEffects', 'readRemirrorEffects',
     // the batch 9 fence repair bookkeeping (engine-sql/fence-repair-records.ts)
-    'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'upsertFenceTrendRunRecord', 'readOldestSyncHoldAt',
+    'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'upsertFenceTrendRunRecord', 'addSoakCounterEvent', 'readOldestSyncHoldAt',
     // the batch 9 daily budget ledger writes (engine-sql/budget-ledger-writes.ts)
     'reclaimBudgetReservations', 'reserveBudgetReservation', 'dispatchBudgetReservation', 'settleBudgetReservation', 'releaseBudgetReservation',
     // the batch 6b twin-merge moves (engine-sql/twin-merge-moves.ts) and the rename alias (engine-sql/rename-alias-rows.ts)

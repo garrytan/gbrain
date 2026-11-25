@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2401/2425
+# covered: 2402/2426
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -32,7 +32,7 @@
 # sync_aliases: 10/10
 # config: 7/7
 # import_guards: 13/13
-# persistence_journal: 280/283
+# persistence_journal: 281/284
 # label_door: 6/6
 # page_purge: 46/46
 # mention_pass: 40/40
@@ -949,6 +949,7 @@ listSourceCheckpointRecords	persistence_journal	yes	3	no	yes	yes	serves
 insertOpCheckpointIfAbsent	persistence_journal	yes	3	no	yes	yes	serves
 replaceOpCheckpointAtVersion	persistence_journal	yes	1	no	yes	yes	serves
 upsertFenceTrendRunRecord	persistence_journal	yes	1	no	yes	yes	serves
+addSoakCounterEvent	persistence_journal	yes	2	no	yes	yes	serves
 readOldestSyncHoldAt	persistence_journal	yes	3	no	yes	yes	serves
 reclaimBudgetReservations	persistence_journal	yes	1	no	yes	yes	serves
 reserveBudgetReservation	persistence_journal	yes	2	no	yes	yes	serves
@@ -2477,7 +2478,7 @@ listVolunteerChannels	doctor_reads_acc	yes	4	no	yes	yes	serves
 listFenceCandidateRecords	doctor_checkpoints	yes	4	no	yes	yes	serves
 listDerivedOriginParks	doctor_checkpoints	yes	2	no	yes	yes	serves
 listPurgeParks	doctor_checkpoints	yes	1	no	yes	yes	serves
-readSoakCounterRows	doctor_checkpoints	yes	1	no	yes	yes	serves
+readSoakCounterRows	doctor_checkpoints	yes	3	no	yes	yes	serves
 listUnfinishedManagedSyncCursors	doctor_checkpoints	yes	1	no	yes	yes	serves
 listManagedSyncPassStops	doctor_checkpoints	yes	1	no	yes	yes	serves
 listManagedSyncBacklogHeaders	doctor_checkpoints	yes	1	no	yes	yes	serves

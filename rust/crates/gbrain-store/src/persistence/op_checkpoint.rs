@@ -405,6 +405,71 @@ pub(crate) fn upsert_fence_trend_run_record_in(
     )
 }
 
+/// `(text)::int`: Postgres's int4 input, which allows surrounding white space and a sign and refuses anything else.
+fn int4_text(text: &str) -> Result<i64> {
+    let trimmed = text.trim_matches(|c: char| c.is_ascii_whitespace());
+    trimmed.parse::<i32>().map(i64::from).map_err(|_| {
+        StoreError::invalid(format!("invalid input syntax for type integer: \"{text}\""))
+    })
+}
+
+/// `jsonb ->> key` of a soak counter: the value's text, or `None` for a missing key, a JSON null or a non-object.
+fn counter_text(first: &Value, kind: &str) -> Option<String> {
+    match first.as_object()?.get(kind)? {
+        Value::Null => None,
+        Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// `addSoakCounterEvent(op, day, kind, n)` (engine-sql/soak-counters.ts): the row `(op, day)` becomes
+/// `[{ day, kind: n }]` when new; otherwise its first record gets `kind` = `(first->>kind)::int` (0 when absent) + `n`.
+/// As in Postgres: `kind` = "day" overwrites the day in a new row, a first record that is NULL leaves `[null]`, an
+/// array or scalar first record concatenates (`||`), and a count that is not an int4 or overflows one refuses.
+pub(crate) fn add_soak_counter_event_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    day: &str,
+    kind: &str,
+    n: i64,
+) -> Result<()> {
+    let n = i32::try_from(n).map_err(|_| StoreError::invalid("integer out of range"))?;
+    let completed = match get_json::<HousekeepingRow>(&*tx, &parent_key(op, day)?)? {
+        None => {
+            let mut record = serde_json::Map::new();
+            record.insert("day".to_owned(), json!(day));
+            record.insert(kind.to_owned(), json!(n));
+            json!([Value::Object(record)])
+        }
+        Some(row) => {
+            let first = row.completed_keys.get(0).cloned().unwrap_or(Value::Null);
+            let old = match counter_text(&first, kind) {
+                Some(text) => int4_text(&text)?,
+                None => 0,
+            };
+            let sum = i32::try_from(old + i64::from(n))
+                .map_err(|_| StoreError::invalid("integer out of range"))?;
+            let mut add = serde_json::Map::new();
+            add.insert(kind.to_owned(), json!(sum));
+            let merged = match first {
+                Value::Null => Value::Null,
+                Value::Object(mut record) => {
+                    record.extend(add);
+                    Value::Object(record)
+                }
+                Value::Array(mut items) => {
+                    items.push(Value::Object(add));
+                    Value::Array(items)
+                }
+                scalar => json!([scalar, Value::Object(add)]),
+            };
+            json!([merged])
+        }
+    };
+    write_op_checkpoint_record_in(tx, env, op, day, Some(&completed))
+}
+
 /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: `UPDATE ... WHERE op=$1
 /// AND fingerprint=$2 AND (completed_keys->0->>'v')::int = $4 RETURNING 1`. True when the parent's
 /// first record held `v` = `expected` and this call replaced the records. A `v` that is not an
@@ -813,6 +878,11 @@ impl Store {
         record: &Value,
     ) -> Result<()> {
         self.write(|tx| upsert_fence_trend_run_record_in(tx, &*self.env, op, fingerprint, record))
+    }
+
+    /// `addSoakCounterEvent(op, day, kind, n)`.
+    pub fn add_soak_counter_event(&self, op: &str, day: &str, kind: &str, n: i64) -> Result<()> {
+        self.write(|tx| add_soak_counter_event_in(tx, &*self.env, op, day, kind, n))
     }
 
     /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`.

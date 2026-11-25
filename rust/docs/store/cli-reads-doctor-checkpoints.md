@@ -35,16 +35,20 @@ pass row's `set_at`; the store keeps no dating row for a config key, so `row_val
 ## Members with no writer on a Rust brain (answer empty)
 
 These read `op_checkpoints` rows that only the managed-sync (git) pass writes: per-source cursors, pass rows, stops, backlog headers,
-purge parks, soak counters, identity downgrades and held atoms; and the credential re-chunk holds,
+purge parks, identity downgrades and held atoms; and the credential re-chunk holds,
 which only the credential re-seal migration writes through `executeRaw`. A Rust brain has no such writer and no
 managed-sync writer (`persistence_journal` family in `members.ts`), so the true answer is none: a list member returns `[]`, a single-row
 member returns null. They are listed here so a later writer knows which reads it must feed:
 
-`readOpCheckpointKeys`, `listPurgeParks`, `readSoakCounterRows`,
+`readOpCheckpointKeys`, `listPurgeParks`,
 `listUnfinishedManagedSyncCursors`, `listManagedSyncPassStops`, `listManagedSyncBacklogHeaders`, `readManagedSyncPassRow`,
 `listLiveManagedSyncPassRows`, `listCheckpointBlockedSources`, `listOpenIdentityDowngrades`, `listHeldManagedAtomRows`, `listCredentialResealHoldRows`.
 
 `crates/gbrain-store/tests/cli_reads_doctor_checkpoints.rs` covers the three served stores. `test/engine-parity/doctor-checkpoints.test.ts`
 runs every member on PGLite, Postgres and Rust and compares them.
+
+`readSoakCounterRows` is served from the store now: it reads the day rows the typed `addSoakCounterEvent` writes after a
+`gbrain repair --apply`, `sync unblock --apply`, `sources retry-held`, a recovery-flag sync and the needs-human sweep
+(`readOpCheckpointRecords`, `completed_keys->0` of each found day; `test/engine-parity/soak-counter-writes.test.ts`).
 
 `listFenceCandidateRecords` is served from the store now: the fence census writes its candidate rows (see [cli-reads-doctor-fence.md](cli-reads-doctor-fence.md)).

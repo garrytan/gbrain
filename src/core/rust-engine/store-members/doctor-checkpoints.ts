@@ -5,7 +5,8 @@
  * Served from the store: the doctor last-known pair, the latest connector receipt and the facts-absorb failure groups
  * (`ingest_log`), the sync-admission setting's config value, the fence census candidate rows (written by the census,
  * rust/docs/store/cli-reads-doctor-fence.md), and the derived-origin parks whose page is a tombstone (the checkpoint and
- * page records, persistence/diagnostic_checkpoints.rs; any typed `writeOpCheckpointRecord(s)` writes a park).
+ * page records, persistence/diagnostic_checkpoints.rs; any typed `writeOpCheckpointRecord(s)` writes a park), and the
+ * soak counter rows (`readSoakCounterRows`, written by the typed `addSoakCounterEvent`).
  *
  * Empty, no writer: every other `op_checkpoints` operation is written only through `executeRaw`, which a Rust brain
  * refuses, so no row of it exists there. Those members answer the empty value without a store call: what the same read
@@ -21,7 +22,9 @@ export const listDerivedOriginParks: Member<'listDerivedOriginParks'> = async (b
   ((await storeCall({ member: 'listDerivedOriginParks' }, () => brain.listDerivedOriginParks(op))) as Array<{ park: unknown }>)
     .map(row => row.park) as Awaited<ReturnType<BrainEngine['listDerivedOriginParks']>>;
 export const listPurgeParks: Member<'listPurgeParks'> = async () => [];
-export const readSoakCounterRows: Member<'readSoakCounterRows'> = async () => [];
+/** The soak counter record of each named day (`completed_keys->0` of each found row; a day with none is absent), from the checkpoint records `addSoakCounterEvent` writes. */
+export const readSoakCounterRows: Member<'readSoakCounterRows'> = async (brain, op, days) =>
+  await storeCall({ member: 'readSoakCounterRows' }, () => brain.readOpCheckpointRecords(op, [...days])) as Array<Record<string, unknown>>;
 export const listUnfinishedManagedSyncCursors: Member<'listUnfinishedManagedSyncCursors'> = async () => [];
 export const listManagedSyncPassStops: Member<'listManagedSyncPassStops'> = async () => [];
 export const listManagedSyncBacklogHeaders: Member<'listManagedSyncBacklogHeaders'> = async () => [];
