@@ -124,6 +124,19 @@ async function sessionStart(source: string, sessionId = `sess-${source}-${random
 
 const lastOutcome = () => readFirstSessionOutcomes().at(-1);
 
+/** Codex's SessionStart stdout rule (codex-rs/hooks/src/engine/output_parser.rs): stdout that starts with `{` or `[`
+ *  must parse as a JSON object, or the hook fails and its context is dropped; context rides hookSpecificOutput. */
+function codexSessionStartContext(stdout: string): string {
+  const trimmed = stdout.trimStart();
+  if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return stdout;
+  const value = JSON.parse(stdout.trim()) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: unknown } };
+  expect(value !== null && typeof value === 'object' && !Array.isArray(value)).toBe(true);
+  expect(value.hookSpecificOutput?.hookEventName).toBe('SessionStart');
+  expect(typeof value.hookSpecificOutput?.additionalContext).toBe('string');
+  expect((value.hookSpecificOutput!.additionalContext as string).isWellFormed()).toBe(true);
+  return value.hookSpecificOutput!.additionalContext as string;
+}
+
 describe('SessionStart first-session section', () => {
   test('startup: the section is in the payload, counts after the receipt, and the outcome is delivered', async () => {
     const cfg = config();
@@ -141,9 +154,35 @@ describe('SessionStart first-session section', () => {
     const cfg = config();
     await serve(cfg);
     const out = await sessionStart('startup', 'codex-session-1', 'codex');
-    expect(out).toContain(SECTION_HEAD);
-    expect(out).toContain('gbrain setup codex --history 30');
+    const context = codexSessionStartContext(out);
+    expect(context).toContain(SECTION_HEAD);
+    expect(context).toContain('gbrain setup codex --history 30');
     expect(lastOutcome()).toMatchObject({ harness: 'codex', outcome: 'delivered' });
+  }, 20_000);
+
+  test('a fresh brain with no core: Codex gets a JSON envelope its parser accepts, Claude Code keeps plain text', async () => {
+    const cfg = config();
+    await serve(cfg);
+    const plain = await sessionStart('startup', 'claude-fresh-1');
+    expect(plain.trimStart().startsWith('[gbrain]')).toBe(true);
+    expect(plain).toContain(SECTION_HEAD);
+    const codex = await sessionStart('startup', 'codex-fresh-1', 'codex');
+    expect(JSON.parse(codex).hookSpecificOutput.hookEventName).toBe('SessionStart');
+    const context = codexSessionStartContext(codex);
+    expect(context.trimStart().startsWith('[gbrain]')).toBe(true);
+    expect(context).toContain(SECTION_HEAD);
+  }, 20_000);
+
+  test('a pack trimmed inside an emoji still gives Codex well-formed JSON (serde rejects a lone surrogate)', async () => {
+    for (const lead of ['', 'a']) {
+      const cfg = config();
+      const text = lead + '\u{1F600}'.repeat(6000);
+      await rawServe(cfg, () => JSON.stringify({ ok: true, protocol: 2, block: { text, pointers: [], factsCount: 0, mode: 'pack' } }));
+      const context = codexSessionStartContext(await sessionStart('resume', `codex-trim-${lead || 'even'}`, 'codex'));
+      expect(context).toContain('\u{1F600}');
+      await Promise.all(servers.map(s => new Promise<void>(done => s.close(() => done()))));
+      servers = [];
+    }
   }, 20_000);
 
   test('resume, clear and compact consume no slot', async () => {

@@ -1,0 +1,7 @@
+**Your local agent can get read-only Google tokens and make approved Google Workspace writes through a private socket, without ever holding your refresh token, client secret or a write-capable token.**
+
+### Added
+- `gbrain google mint serve` (or `gbrain serve --http` with `google.mint_socket` set) opens a Unix socket at `$GBRAIN_HOME/.gbrain/run/google.sock` that only your own user, and uids you list in `google.socket_peers`, can use. `mint` returns a short-lived read-only Google token; minted tokens are never written to the vault, so sync's own token is untouched. Guide: docs/guides/google-socket.md.
+- A write broker behind the socket's `call` op makes one allowlisted Google Workspace MCP call at a time with a write-capable token that never leaves gbrain's memory. Google's approval prompt is relayed, and answered only by the owner (a repeat with `owner_verdict` ALLOW_ONCE, or `gbrain google approvals`); calendar writes never email attendees, drafts are capped at 20 recipients, the second outside invite and the eleventh trash in one turn wait for the owner, and a write whose reply was lost is never resent. It is off until `google.broker_act` and its other preconditions hold (`gbrain google mint status` lists them); a root gateway needs the explicit `google.broker_allow_root_gateway` opt-in.
+- `gbrain google exec --account <email> -- gwscli …` runs gwscli with a read-only token and replaces the token in its output.
+- `gbrain google approvals` lists prompts held for the owner and answers one at a terminal.
