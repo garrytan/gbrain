@@ -1,4 +1,5 @@
 import { OperationError, opError } from '../ops/contract.ts';
+import { withLiveConfigRead } from '../config-snapshot.ts';
 import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readHonorAliases, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
 import { hostFix } from '../ops/op-fix.ts';
@@ -137,8 +138,8 @@ async function writerLabelledOnly(engine: MemberEngine, authority: WriteAuthorit
   const bound = attested ? [] : await memberIdentityFor(engine, authority);
   const actor = attested ? parseStoredActor(authority.actingFor) : null;
   const stored = actor ? [`member:${actor.member}`] : Array.isArray(authority.actingFor) ? authority.actingFor.filter(p => p.startsWith('member:')) : [];
-  const [owner] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [OWNER_MEMBER_KEY]);
-  const ownerId = owner?.value?.trim();
+  // The owner read live (a typed read every engine serves, never the request's config snapshot), as labelledOnlyFor does.
+  const ownerId = (await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY)))?.trim();
   const members = [...identities, bound, ...stored.map(p => [p])].filter(id => !(ownerId && id.includes(`member:${ownerId}`)));
   return labelledOnlyFor(engine, members);
 }
