@@ -48,14 +48,20 @@ describe('turn input', () => {
 });
 
 describe('build input (the --from-json catalog)', () => {
+  test('docs/schemas/skill-resolver.v1.build-input.json types the optional fields the reader checks', () => {
+    const props = (CATALOG as unknown as { $defs: { skill: { properties: Record<string, { type?: string }> } } }).$defs.skill.properties;
+    const fields = ['eligible', 'disable_model_invocation', 'deprecated', 'replaced_by', 'when_to_use'];
+    expect(Object.fromEntries(fields.map(f => [f, props[f]?.type]))).toEqual({ eligible: 'boolean', disable_model_invocation: 'boolean', deprecated: 'boolean', replaced_by: 'string', when_to_use: 'string' });
+  });
   test('accepted catalogs validate; refused ones do not', () => {
     const openclaw = { workspaceDir: '/work/acme-example', managedSkillsDir: '/work/acme-example/skills', skills: [{ name: 'deploy', description: 'Ship it', eligible: true, disabled: false, modelVisible: true, emoji: 'x' }] };
-    for (const g of [SKILLS, { skills: SKILLS }, [], openclaw]) { expect(validate(CATALOG, g)).toEqual([]); expect(() => readJsonSource(JSON.stringify(g))).not.toThrow(); }
+    const deprecated = [...SKILLS, { id: 'x:old', name: 'old', deprecated: true, replaced_by: 'gbrain:reports' }];
+    for (const g of [SKILLS, { skills: SKILLS }, [], openclaw, deprecated]) { expect(validate(CATALOG, g)).toEqual([]); expect(() => readJsonSource(JSON.stringify(g))).not.toThrow(); }
     for (const b of [{ workspaceDir: '/w', skills: [{ description: 'no name' }] }, { workspaceDir: '/w', skills: [{ name: 'a', disabled: 'yes' }] }]) {
       expect(validate(CATALOG, b).length).toBeGreaterThan(0);
       expect(() => readJsonSource(JSON.stringify(b))).toThrow();
     }
-    for (const b of [[{ id: 'a' }], [{ id: '', name: 'b' }], [{ id: 'a', name: 'b', triggers: 'x' }], [{ id: 'a', name: 'b', eligible: 'no' }], { list: [] }, 'x']) {
+    for (const b of [[{ id: 'a' }], [{ id: '', name: 'b' }], [{ id: 'a', name: 'b', triggers: 'x' }], [{ id: 'a', name: 'b', eligible: 'no' }], [{ id: 'a', name: 'b', deprecated: 'yes' }], [{ id: 'a', name: 'b', replaced_by: 3 }], { list: [] }, 'x']) {
       expect(validate(CATALOG, b).length).toBeGreaterThan(0);
       expect(() => readJsonSource(JSON.stringify(b))).toThrow();
     }
