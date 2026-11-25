@@ -63,6 +63,7 @@ while that stored job is at most 3 days old.
 
 Only the owner of the install: the trusted local CLI, a stdio MCP server bound to no member or to the owner, or a
 credential bound to the owner member. Any other connection gets `propose_owner_only` and nothing is read or changed.
-Over MCP the jobs read only the sources that connection is granted.
+Over MCP the jobs read only the sources that connection is granted, and a connection with a trust floor is refused,
+because the cited page slugs and counts would show what the floor hides.
 
 `gbrain onboard --propose` prints a pointer here, because `gbrain onboard` plans brain remediation.
