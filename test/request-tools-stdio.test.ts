@@ -158,6 +158,10 @@ describe('request_tools {surface} on stdio', () => {
       await waitFor(() => s.listChanged() > 0, { timeoutMs: 10_000 });
       expect(await names(s)).toContain('get_page');
 
+      const again = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['get_page'] } })) as { note: string };
+      expect(again.note).toContain('OpenClaw builds its tool list when a run starts');
+      expect(again.note).not.toContain('already in your tool list');
+
       const mixed = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['list_pages', 'get_health'] } })) as { listed: boolean; note: string };
       expect(mixed.listed).toBe(false);
       expect(mixed.note).toContain('OpenClaw builds its tool list when a run starts');

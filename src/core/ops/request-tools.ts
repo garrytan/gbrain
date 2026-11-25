@@ -131,7 +131,7 @@ const NO_MIDTURN_RELOAD: Readonly<Record<string, string>> = {
 
 function midTurnReloadNote(ctx: OperationContext): string | undefined {
   const client = ctx.mcpCaller?.client;
-  return client ? NO_MIDTURN_RELOAD[client] : undefined;
+  return client && Object.hasOwn(NO_MIDTURN_RELOAD, client) ? NO_MIDTURN_RELOAD[client] : undefined;
 }
 
 /**
@@ -375,8 +375,8 @@ const request_tools: Operation = {
         const outside = picked.filter(o => !callable.has(o.name)).map(o => `\`${o.name}\``);
         const reload = midTurnReloadNote(ctx);
         if (reload) {
-          // Only a tool the client did not already list waits for its next turn; one listed at session start is callable now.
-          const isListed = ctx.toolAccess?.isListed;
+          // Only a tool the session's first tools/list showed is callable now; a reveal or widen this session waits for the next turn.
+          const isListed = ctx.toolAccess?.isListedAtStart;
           const listedNow = new Set(isListed ? (await Promise.all(reachableOps.map(async o => (await isListed(o)) ? o.name : null))).filter((n): n is string => n !== null) : []);
           if (reachable.length) ctx.revealTools(reachable);
           const tick = (names: string[]) => names.map(n => `\`${n}\``).join(', ');

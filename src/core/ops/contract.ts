@@ -707,7 +707,7 @@ export interface OperationContext {
    */
   isCallable?: (opName: string, args?: Record<string, unknown>) => boolean;
   /** MCP dispatch only: this connection's hidden-tool route inputs and its tool-list test, so `capabilities` reports callable and listed separately. */
-  toolAccess?: { connection: () => import('../../mcp/hidden-tool-hint.ts').ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean> };
+  toolAccess?: { connection: () => import('../../mcp/hidden-tool-hint.ts').ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; isListedAtStart?: (op: OperationMeta) => Promise<boolean> };
   /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers

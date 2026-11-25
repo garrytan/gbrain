@@ -528,6 +528,10 @@ export function stdioToolListing(advertised: () => Promise<McpSurface | null>, s
       if (session.surface !== startSurface || revealed.has(op.name)) return true;
       return advertisedOps([op], session.surface, await advertised()).length > 0;
     },
+    /** Whether the session's first tools/list showed this tool: no reveal, no widen. */
+    async isListedAtStart(op: OperationMeta): Promise<boolean> {
+      return advertisedOps([op], startSurface, await advertised()).length > 0;
+    },
     reveal(names: string[]): void {
       const before = revealed.size;
       for (const name of names) revealed.add(name);

@@ -521,7 +521,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       surface: session.surface,
       // WP4 (D2): stdio has no per-client rows; its surface is the ceiling
       // request_tools bounds its catalog by; its {surface} call widens the session.
-      surfaceCeiling: session.surface, stdioSurface: session, revealTools: listing.reveal, isListed: listing.isListed,
+      surfaceCeiling: session.surface, stdioSurface: session, revealTools: listing.reveal, isListed: listing.isListed, isListedAtStart: listing.isListedAtStart,
       resultRows,
     }), dispatchRenderContext);
   })));
