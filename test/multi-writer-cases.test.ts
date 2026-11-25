@@ -20,7 +20,10 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
-import { acknowledgedWriteViolations, crashBody, crashKey, crashSlug, type CrashObservation } from './engine-parity/multi-writer-support.ts';
+import {
+  acknowledgedWriteViolations, crashBody, crashKey, crashSlug, stressBody, stressKey, stressSlug, stressViolations,
+  type CrashObservation, type StressObservation,
+} from './engine-parity/multi-writer-support.ts';
 import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './engine-parity/multi-writer-cases.ts';
 
 const REPO = join(import.meta.dir, '..');
@@ -120,7 +123,8 @@ describe('multi-writer support matrix', () => {
     }
     // C06.partition: the cycle-lock fence runs on the SQL arms and the single-writer Rust arm; the store lease fence waits for the hosts work.
     for (const arm of ['pglite', 'postgres', 'rust'] as const) expect(mwVariantCell('C06.partition', arm).status, arm).toBe('runs');
-    expect(mwVariantCell('C06.partition', 'rust-mu')).toMatchObject({ status: 'pending', owner: 'L5 hosts' });
+    // With the hosts work merged the host fence runs on rust-mu too (verified on both routes with the switch on).
+    expect(mwVariantCell('C06.partition', 'rust-mu').status).toBe('runs');
     expect(mwVariant('C06.partition').reference).toBe('compare');
   });
 
@@ -203,6 +207,44 @@ describe('multi-writer support matrix', () => {
     // A write that was never acknowledged may exist, but not twice.
     const doubleUnacked = seen(); doubleUnacked.jobRowsByKey = new Map([...doubleUnacked.jobRowsByKey, [crashKey(9), 2]]);
     expect(acknowledgedWriteViolations(doubleUnacked)).toEqual([`request key ${crashKey(9)} has 2 rows`]);
+  });
+
+  test('the C18 check rejects a run that did not overlap, a wrong page body, a missing page, stray claim ids and a doubled key, and accepts a whole run', () => {
+    type Mutable = { reports: StressObservation['reports'][number][]; pageBodies: Map<string, string>; jobIdsByKey: Map<string, number[]> };
+    const whole = (): Mutable => {
+      const reports = Array.from({ length: 8 }, (_, p) => ({
+        startedAt: 1_000 + p, finishedAt: 2_000 + p,
+        results: Array.from({ length: 8 }, (_, w) => { const id = p * 8 + w; return { id, pages: [stressSlug(id, 0), stressSlug(id, 1)], refused: [] as string[], job: 500 + id }; }),
+      }));
+      const pageBodies = new Map<string, string>();
+      for (let id = 0; id < 64; id++) for (let r = 0; r < 2; r++) pageBodies.set(stressSlug(id, r), stressBody(id, r));
+      const jobIdsByKey = new Map<string, number[]>(Array.from({ length: 64 }, (_, id) => [stressKey(id), [500 + id]] as const));
+      return { reports, pageBodies, jobIdsByKey };
+    };
+    expect(stressViolations(whole())).toEqual([]);
+    // The old check accepted each of these: pages only had to exist, claimed ids only had to be 64 distinct numbers.
+    const apart = whole(); apart.reports[0]!.finishedAt = 1_003; // the first process finished before the last one started
+    expect(stressViolations(apart)).toEqual(['the loads did not overlap: one process finished before another started']);
+    const wrongBody = whole(); wrongBody.pageBodies.set(stressSlug(7, 1), 'body of another writer');
+    expect(stressViolations(wrongBody)).toEqual([`${stressSlug(7, 1)}: its body is wrong`]);
+    const noPage = whole(); noPage.pageBodies.delete(stressSlug(63, 0));
+    expect(stressViolations(noPage)).toEqual([`${stressSlug(63, 0)}: the page is missing`]);
+    const strayClaims = whole(); strayClaims.reports[1]!.results[0]!.job = 9_999; // distinct, but not a stored job
+    expect(stressViolations(strayClaims)).toEqual(['the claimed ids are not the stored jobs\' ids']);
+    const twice = whole(); twice.reports[2]!.results[0]!.job = 500; // a job claimed by two writers
+    expect(stressViolations(twice)).toContain('a job was claimed twice');
+    const doubled = whole(); doubled.jobIdsByKey.set(stressKey(3), [503, 777]);
+    expect(stressViolations(doubled)).toEqual([`request key ${stressKey(3)} has 2 rows`, 'the claimed ids are not the stored jobs\' ids']);
+    const busy = whole(); busy.reports[3]!.results[1]!.refused = ['owner_busy'];
+    expect(stressViolations(busy)).toEqual([`writer ${3 * 8 + 1} was refused (owner_busy): a busy error`]);
+  });
+
+  test('C19 and C18 say what they do not prove, so a client-crash case is never read as a database-server crash test', () => {
+    expect(mwCase('C19').scope).toMatch(/not a database-server crash/);
+    expect(mwCase('C19').scope).toMatch(/Postgres durability \(WAL, fsync\) is not exercised/);
+    expect(mwCase('C18').scope).toMatch(/Postgres only/);
+    const header = read('test', 'engine-parity', 'multi-writer-conformance.test.ts');
+    expect(header).toMatch(/NOT a database-server crash test/);
   });
 
   test('a compared case has an SQL arm that runs it (or none runs it yet), and the standalone ones are the cases the arms cannot all run alike', () => {

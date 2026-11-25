@@ -39,8 +39,16 @@ export const admitKeyed = (engine: BrainEngine, key: string) => engine.admitJob(
 
 const codeOf = (e: unknown): string => (e as { code?: string } | null)?.code ?? 'threw';
 
+/** The page slug and body of round `round` of C18 writer `id`, and the job request key of writer `id`. */
+export const stressSlug = (id: number, round: number): string => `notes/c18-${id}-${round}`;
+export const stressBody = (id: number, round: number): string => `body ${id} ${round}`;
+export const stressKey = (id: number): string => `req-${id}`;
+
 /** What one of the eight concurrent writers of a process did. */
-export interface StressResult { pages: string[]; refused: string[]; job: number | null }
+export interface StressResult { id: number; pages: string[]; refused: string[]; job: number | null }
+
+/** What a stress process reports: its writers, and when its load started and ended (wall clock, ms), so the case can prove the loads overlapped. */
+export interface StressReport { results: StressResult[]; startedAt: number; finishedAt: number }
 
 /**
  * The C18 workload of one process: eight concurrent writers (writer ids `index * 8 + w`), each writing two pages, submitting a job
@@ -52,14 +60,56 @@ export async function runStressWriters(engine: BrainEngine, index: number): Prom
     const refused: string[] = [];
     const pages: string[] = [];
     for (let round = 0; round < 2; round++) {
-      const slug = `notes/c18-${id}-${round}`;
-      try { await engine.putPage(slug, { type: 'note', title: `W${id}`, compiled_truth: `body ${id} ${round}`, timeline: '' }); pages.push(slug); } catch (e) { refused.push(codeOf(e)); }
+      const slug = stressSlug(id, round);
+      try { await engine.putPage(slug, { type: 'note', title: `W${id}`, compiled_truth: stressBody(id, round), timeline: '' }); pages.push(slug); } catch (e) { refused.push(codeOf(e)); }
     }
-    try { await admitKeyed(engine, `req-${id}`); } catch (e) { refused.push(codeOf(e)); }
+    try { await admitKeyed(engine, stressKey(id)); } catch (e) { refused.push(codeOf(e)); }
     let job: number | null = null;
     try { const row = await engine.claimNextJob(claimSpec(`w${id}:a`)); job = row ? Number(row.id) : null; } catch (e) { refused.push(codeOf(e)); }
-    return { pages, refused, job };
+    return { id, pages, refused, job };
   }));
+}
+
+/** What the parent reads after the stress run: every process's report, the body of each page it found by slug, and the job ids stored under each request key. */
+export interface StressObservation {
+  reports: readonly StressReport[];
+  pageBodies: ReadonlyMap<string, string>;
+  jobIdsByKey: ReadonlyMap<string, readonly number[]>;
+}
+
+const BUSY = new Set(['store_locked', 'pglite_busy', 'owner_unavailable', 'owner_busy']);
+
+/**
+ * Every way the C18 run breaks "64 writers in 8 processes, no lost update, no double claim, no busy error", as messages; empty
+ * when it holds: the loads overlapped (every process started before any finished), the 64 writers are 0..63 once each, none was
+ * refused or got a busy error, every expected page slug has its exact body, the stored jobs are exactly the 64 request keys with one
+ * row each, and the claimed ids are distinct and are exactly the stored jobs' ids.
+ */
+export function stressViolations(seen: StressObservation): string[] {
+  const out: string[] = [];
+  const lastStart = Math.max(...seen.reports.map(r => r.startedAt));
+  const firstEnd = Math.min(...seen.reports.map(r => r.finishedAt));
+  if (!(lastStart < firstEnd)) out.push('the loads did not overlap: one process finished before another started');
+  const writers = seen.reports.flatMap(r => r.results);
+  const ids = writers.map(w => w.id).sort((x, y) => x - y);
+  if (ids.length !== 64 || ids.some((id, i) => id !== i)) out.push(`the writers are not 0..63 once each: ${ids.join(',')}`);
+  for (const w of writers) {
+    for (const code of w.refused) out.push(`writer ${w.id} was refused (${code})${BUSY.has(code) ? ': a busy error' : ''}`);
+    for (let round = 0; round < 2; round++) {
+      const body = seen.pageBodies.get(stressSlug(w.id, round));
+      if (body === undefined) out.push(`${stressSlug(w.id, round)}: the page is missing`);
+      else if (body !== stressBody(w.id, round)) out.push(`${stressSlug(w.id, round)}: its body is wrong`);
+    }
+  }
+  const expectedKeys = Array.from({ length: 64 }, (_, id) => stressKey(id)).sort();
+  const keys = [...seen.jobIdsByKey.keys()].sort();
+  if (keys.join('|') !== expectedKeys.join('|')) out.push('the stored jobs are not exactly the 64 request keys');
+  for (const [key, rows] of seen.jobIdsByKey) if (rows.length !== 1) out.push(`request key ${key} has ${rows.length} rows`);
+  const claimed = writers.map(w => w.job).filter((id): id is number => id !== null);
+  if (claimed.length !== new Set(claimed).size) out.push('a job was claimed twice');
+  const stored = [...seen.jobIdsByKey.values()].flat().sort((x, y) => x - y);
+  if (claimed.slice().sort((x, y) => x - y).join(',') !== stored.join(',')) out.push('the claimed ids are not the stored jobs\' ids');
+  return out;
 }
 
 // ---- C19: what a crash must leave behind --------------------------------------------------------------------------
@@ -116,15 +166,21 @@ export interface WriterConfig {
   /** crash: stop after this many acknowledged writes, or at the deadline. stress: this process's number. */
   max?: number;
   index?: number;
+  /** stress: after READY, wait for the parent's `GO` line on stdin before writing (the parent's start barrier). */
+  startOnGo?: boolean;
   deadlineMs: number;
 }
 
 export interface WriterProcess {
   /** The complete lines printed so far. */
   lines(): string[];
+  /** Tells a process that waits for the start barrier to begin. */
+  go(): void;
   /** Resolves when `predicate` holds for the lines printed so far, or rejects after `ms`. */
   until(predicate: (lines: string[]) => boolean, ms: number, what: string): Promise<void>;
   kill(): Promise<{ signal: string | null; exitCode: number | null }>;
+  /** Waits up to `ms` for the process to exit by itself, then kills it; always resolves once the process is gone. */
+  reap(ms: number): Promise<{ signal: string | null; exitCode: number | null }>;
   exited: Promise<{ signal: string | null; exitCode: number | null }>;
   stderr(): string;
 }
@@ -132,7 +188,7 @@ export interface WriterProcess {
 /** Starts the writer process; its stdout is read to the end, so lines printed before a kill are all seen. */
 export function startWriter(config: WriterConfig): WriterProcess {
   const proc = Bun.spawn([process.execPath, WRITER_SCRIPT], {
-    cwd: join(import.meta.dir, '..', '..'), stdout: 'pipe', stderr: 'pipe', stdin: 'ignore',
+    cwd: join(import.meta.dir, '..', '..'), stdout: 'pipe', stderr: 'pipe', stdin: 'pipe',
     env: { ...process.env, MW_WRITER: JSON.stringify(config) },
   });
   let text = '';
@@ -143,8 +199,16 @@ export function startWriter(config: WriterConfig): WriterProcess {
   };
   const reading = Promise.all([drain(proc.stdout, c => { text += c; }), drain(proc.stderr, c => { errors += c; })]);
   const complete = () => { const parts = text.split('\n'); parts.pop(); return parts; };
-  const exited = proc.exited.then(async () => { await reading; return { signal: proc.signalCode, exitCode: proc.exitCode }; });
+  const exited = proc.exited.then(async () => { await reading; clearTimeout(watchdog); return { signal: proc.signalCode, exitCode: proc.exitCode }; });
+  // A process never outlives its deadline by more than a grace: a hung disconnect cannot leave one behind.
+  const watchdog = setTimeout(() => proc.kill('SIGKILL'), config.deadlineMs + 15_000);
   return {
+    go() { proc.stdin.write('GO\n'); void proc.stdin.flush(); },
+    async reap(ms) {
+      const timer = Bun.sleep(ms).then(() => 'late' as const);
+      if ((await Promise.race([exited, timer])) === 'late') proc.kill('SIGKILL');
+      return exited;
+    },
     lines: complete,
     stderr: () => errors,
     exited,

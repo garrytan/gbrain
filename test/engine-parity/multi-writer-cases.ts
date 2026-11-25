@@ -63,6 +63,8 @@ export interface MwCase {
   reference: 'compare' | 'standalone';
   /** A capability the engine itself must report on an arm whose cell is `runs` (I-8 name), checked at runtime. */
   needs?: 'multi_writer';
+  /** What the case does NOT prove, where a reader could assume more (shown by the bar). */
+  scope?: string;
   /** The exact typed BrainEngine members the engine-level case calls (also its parityTest `methods`). */
   members: readonly string[];
   /** Cargo test names in multi_writer_conformance.rs: run on a `runs` store cell; listed (not run) when pending. */
@@ -227,7 +229,7 @@ export const MW_CASES: readonly MwCase[] = [
         cells: {
           pglite: RUNS, postgres: RUNS,
           rust: RUNS,
-          'rust-mu': pending('L5 hosts', 'store lease fence (rustLeases, host-fence) not yet on rust-engine/multiuser'),
+          'rust-mu': RUNS,
         },
       },
     ],
@@ -438,6 +440,7 @@ export const MW_CASES: readonly MwCase[] = [
     operation: 'all rows; the plan\'s stress cell',
     invariant: 'no lost update, no double claim, no busy error',
     reference: 'standalone',
+    scope: 'Postgres only: this process plus seven writer processes, 8 writers each, started together by a parent barrier. PGLite is in-memory (n/a); Rust waits for the server (a second Rust process is a client that refuses the job members today).',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'],
     storeTests: {
       runnable: ['c18_sixty_four_writers_no_busy_error'],
@@ -456,6 +459,7 @@ export const MW_CASES: readonly MwCase[] = [
     operation: 'crash robot',
     invariant: 'acknowledged writes present, none duplicated',
     reference: 'standalone',
+    scope: 'Postgres: a writer-process crash (SIGKILL after acknowledged writes), not a database-server crash: the reopening engine is the parent\'s connected pool, so Postgres durability (WAL, fsync) is not exercised; that guarantee is Postgres\'s own. Rust: the store\'s own recovery of a brain directory the killed writer owned. PGLite is in-memory (n/a).',
     members: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'],
     storeTests: {
       runnable: ['c19_crash_after_commit_keeps_acknowledged_writes'],

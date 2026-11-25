@@ -10,7 +10,7 @@
  * other engine has open, so this process is the owner).
  */
 import type { BrainEngine } from '../../../src/core/engine.ts';
-import { admitKeyed, crashBody, crashKey, crashSlug, runStressWriters, type WriterConfig } from '../multi-writer-support.ts';
+import { admitKeyed, crashBody, crashKey, crashSlug, runStressWriters, type StressReport, type WriterConfig } from '../multi-writer-support.ts';
 
 const config = JSON.parse(process.env.MW_WRITER ?? 'null') as WriterConfig | null;
 if (!config) throw new Error('mw-writer: MW_WRITER is not set');
@@ -24,8 +24,17 @@ async function connect(c: WriterConfig): Promise<BrainEngine> {
   }
   // The preload of a bun process strips GBRAIN_* from the environment, so the multi-user switch is set here, before the open.
   if (c.muRoute === 'env') process.env.GBRAIN_RUST_MULTIUSER = '1';
-  const { openRustBrainAt } = await import('../rust-arm.ts');
-  return (await openRustBrainAt(c.databasePath!)) as unknown as BrainEngine;
+  const { openRustBrainAt, resolvedMultiuser } = await import('../rust-arm.ts');
+  // With a route the open asserts, and fails on, a store that did not resolve multi-user mode (assertRustMultiuserResolved).
+  const engine = await openRustBrainAt(c.databasePath!, c.muRoute);
+  // Plain Rust: the writer's store must not be multi-user either.
+  const resolved = resolvedMultiuser(engine);
+  if (c.muRoute === undefined && resolved === true) {
+    await engine.disconnect().catch(() => undefined);
+    throw new Error('mw-writer: the store resolved multi-user mode for a plain Rust brain');
+  }
+  process.stdout.write(`RESOLVED ${String(resolved)}\n`);
+  return engine as unknown as BrainEngine;
 }
 
 const note = (title: string, body: string) => ({ type: 'note' as const, title, compiled_truth: body, timeline: '' });
@@ -40,12 +49,27 @@ async function crash(engine: BrainEngine, c: WriterConfig): Promise<void> {
 }
 
 async function stress(engine: BrainEngine, c: WriterConfig): Promise<void> {
-  process.stdout.write(`RESULT ${JSON.stringify(await runStressWriters(engine, c.index ?? 0))}\n`);
+  const startedAt = Date.now();
+  const results = await runStressWriters(engine, c.index ?? 0);
+  const report: StressReport = { results, startedAt, finishedAt: Date.now() };
+  process.stdout.write(`RESULT ${JSON.stringify(report)}\n`);
+}
+
+/** Waits for the parent's start barrier (`GO` on stdin). */
+async function awaitGo(): Promise<void> {
+  const reader = Bun.stdin.stream().getReader();
+  let seen = '';
+  while (!seen.includes('GO')) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error('mw-writer: stdin closed before GO');
+    seen += new TextDecoder().decode(value);
+  }
 }
 
 const engine = await connect(config);
 process.stdout.write('READY\n');
 try {
+  if (config.startOnGo) await awaitGo();
   if (config.role === 'crash') await crash(engine, config); else await stress(engine, config);
 } finally {
   await engine.disconnect().catch(() => undefined);

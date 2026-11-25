@@ -10,7 +10,7 @@
  *    with its owner. The harness skips both and holds a `runs` cell to strict acceptance (harness.ts).
  *  - Regression: an engine that loses a compare-and-set write, hands one job or write to two claimants, over-admits a
  *    counter, lets two holders into one key, deadlocks two writers that take two pages in opposite orders, or forgets
- *    an acknowledged write after its connection goes away. Each case asserts its invariant inside the scenario; the
+ *    an acknowledged write after its writer process is killed (a client crash: see C19 for what that does and does not prove). Each case asserts its invariant inside the scenario; the
  *    returned values are outcomes only, never the order an engine took, as in jobs.test.ts ("claimNextJob from eight
  *    workers at once").
  *  - Why existing coverage misses it: the parity files run one writer at a time. test/engine-parity/jobs.test.ts has
@@ -30,11 +30,15 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine, FactRow } from '../../src/core/engine.ts';
 import type { JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import type { PageInput } from '../../src/core/types.ts';
-import { parityArms, type ParityContext, rustMultiuserView } from './harness.ts';
+import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
+import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
+import { parityArms, type ParityBackend, type ParityContext, rustMultiuserView } from './harness.ts';
+import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
+import { resolvedMultiuser } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import {
-  JOB_POLICY, acknowledgedWriteViolations, claimSpec, crashBody, crashKey, crashSlug, jobValues, runStressWriters, startWriter,
-  type CrashObservation, type StressResult, type WriterConfig,
+  JOB_POLICY, acknowledgedWriteViolations, claimSpec, crashBody, crashKey, crashSlug, jobValues, runStressWriters, startWriter, stressSlug, stressViolations,
+  type CrashObservation, type StressReport, type WriterConfig,
 } from './multi-writer-support.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -81,6 +85,72 @@ async function connections(engine: BrainEngine, ctx: ParityContext, n: number): 
     }
   }
   return all;
+}
+
+/** The code and reason of a refusal (`lease_lost` and its reason), from the error itself; null for an attempt that was accepted. */
+function refusalOf(result: { ok: true } | { ok: false; error: unknown }): { code: string; reason: string | null } | null {
+  if (result.ok) return null;
+  const e = result.error as { code?: string; reason?: string; detail?: { reason?: string } };
+  return { code: e?.code ?? 'threw', reason: e?.reason ?? e?.detail?.reason ?? null };
+}
+
+/**
+ * The hosts of a case. On a Rust brain in multi-user mode (the `rust-mu` view) every protected cycle-lock call carries its
+ * host's fence, so `host(n)` registers host `n` (takes its lease) and answers `{ fence }`; on every other arm it answers `{}`.
+ * The view must be real: the case fails when the store did not resolve multi-user mode, and on plain Rust when it did.
+ */
+async function hostsOf(engine: BrainEngine, backend: ParityBackend, prefix = 'c06') {
+  const mu = backend === 'rust' && rustMultiuserView() !== 'off';
+  if (backend === 'rust') {
+    const resolved = resolvedMultiuser(engine);
+    if (mu) expect(resolved, 'the rust-mu arm ran a store that did not resolve multi-user mode').toBe(true);
+    else expect(resolved, 'the plain Rust arm ran a multi-user store').not.toBe(true);
+  }
+  const leases = (e: BrainEngine): RustLeases => rustLeases(e as never);
+  const origin = (n: number): WriteOrigin => ({ host_id: `${prefix}-host-${n}`, incarnation: `inc-${n}`, writer_id: `writer-${n}` });
+  return {
+    mu, leases, origin,
+    async host(n: number): Promise<FenceOpts> {
+      if (!mu) return {};
+      const fence = await leases(engine).acquire(hostLeaseName(`${prefix}-host-${n}`), origin(n), 10 * 60_000);
+      expect(fence, `host ${n} could not register`).not.toBeNull();
+      return { fence: fence! };
+    },
+  };
+}
+
+/**
+ * Runs `run` with the hosts of a case registered the way a real consumer does it. On a Rust brain in multi-user mode every
+ * protected call (job claims and their results, write claims, effect claims and results, the cycle lock) needs its host's
+ * fence, so: the engine's own host (`fence`, the registration `fenceOpts(engine)` reads) takes the lease
+ * `consumer:<host_id>` and is registered on the engine, cleared in `finally`; and `claimants(n)` registers `n` further hosts, one
+ * per claimant, where the case means "several hosts" (each claimant's calls carry its own fence). On every other arm all of
+ * these answer `{}`, so the calls are exactly what they were.
+ */
+async function withHosts<T>(engine: BrainEngine, backend: ParityBackend, prefix: string, run: (hosts: {
+  mu: boolean; fence: FenceOpts; claimants(n: number): Promise<FenceOpts[]>;
+}) => Promise<T>): Promise<T> {
+  const hosts = await hostsOf(engine, backend, prefix);
+  const own = await hosts.host(0);
+  let registration: Parameters<typeof clearHostRegistration>[1] | null = null;
+  if (own.fence) {
+    registration = { hostId: `${prefix}-host-0`, origin: hosts.origin(0), fence: own.fence };
+    setHostRegistration(engine, registration);
+  }
+  try {
+    return await run({
+      mu: hosts.mu, fence: fenceOpts(engine),
+      claimants: async (n) => Promise.all(Array.from({ length: n }, (_, i) => hosts.host(i + 1))),
+    });
+  } finally {
+    if (registration) clearHostRegistration(engine, registration);
+  }
+}
+
+/** Whether a call that may refuse (`lease_lost` on a fence that no longer matches its claim) still renewed or took what it asked for. */
+async function took(call: () => Promise<unknown>): Promise<boolean> {
+  const r = await attempt(call);
+  return r.ok && r.value === true;
 }
 
 // ---- jobs ---------------------------------------------------------------------------------------------------------
@@ -152,7 +222,7 @@ describe('engine parity: multi-writer conformance', () => {
   parityTest('C03 two claimers of one write never both claim', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'selectClaimableWrite', 'stampWriteClaim', 'renewWriteClaim'],
     mwCase: 'C03',
-  }, async (engine) => {
+  }, async (engine, backend) => withHosts(engine, backend, 'c03', async (hosts) => {
     const keys = ['principal:local_cli:parity-writer', 'brain'];
     const source = await engine.readSourceMembership(SRC);
     await engine.lockPersistenceCounters(keys);
@@ -165,35 +235,38 @@ describe('engine parity: multi-writer conformance', () => {
     });
     const token = (i: number) => `c0000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
     const claimers = 8;
+    // Each claimer is its own host: its calls carry its own fence (on a multi-user store a claim without one is refused).
+    const claimerHosts = await hosts.claimants(claimers);
     const claimed = await together(claimers, (i) => engine.transactionDirect(async (tx) => {
       const head = await tx.selectClaimableWrite<{ id: string }>({
         hostId: 'e0000000-0000-4000-8000-0000000000e1', excludeRoots: [], fifoRoots: [], laneRoots: [], nonce: `claimer-${i}`, syncSeen: {},
-        priority: null, leaseHolder: null,
+        priority: null, leaseHolder: null, ...claimerHosts[i],
       });
       if (!head) return null;
-      return (await tx.stampWriteClaim(head.id, token(i), 60_000, JSON.stringify({ phase: 'parity' }))) ? i : null;
+      return (await tx.stampWriteClaim(head.id, token(i), 60_000, JSON.stringify({ phase: 'parity' }), claimerHosts[i])) ? i : null;
     }));
     const winners = claimed.filter((i): i is number => i !== null);
     expect(winners, `request ${request.id} was claimed by more than one claimer`).toHaveLength(1);
     const renewing: number[] = [];
     for (let i = 0; i < claimers; i++) {
-      if (await engine.renewWriteClaim({ id: request.id, token: token(i), leaseMs: 60_000, phaseJson: null })) renewing.push(i);
+      if (await took(() => engine.renewWriteClaim({ id: request.id, token: token(i), leaseMs: 60_000, phaseJson: null, ...claimerHosts[i] }))) renewing.push(i);
     }
     expect(renewing, 'a token other than the winner\'s renewed the claim').toEqual(winners);
     return { claimedBy: winners.length, renewedBy: renewing.length };
-  });
+  }));
 
   // C04: `claimNextJob`. Eight workers claim a pile of jobs: each job is claimed once, none is lost.
-  parityTest('C04 eight workers claim each job once', { methods: ['admitJob', 'claimNextJob', 'getJob'], mwCase: 'C04' }, async (engine) => {
+  parityTest('C04 eight workers claim each job once', { methods: ['admitJob', 'claimNextJob', 'getJob'], mwCase: 'C04' }, async (engine, backend) => withHosts(engine, backend, 'c04', async (hosts) => {
     // The engines serialize this differently (row locks with SKIP LOCKED, one writer, or optimistic commits that rerun
     // on a conflict); what must match is the outcome: no job claimed twice, none lost, one claim each.
     const total = 48;
+    const workerHosts = await hosts.claimants(8);
     const first = await addJob(engine);
     for (let i = 1; i < total; i++) await addJob(engine, { priority: i % 3 });
     const claimed = await together(8, async (w) => {
       const mine: number[] = [];
       for (;;) {
-        const row = await engine.claimNextJob(claimSpec(`w${w}:a`));
+        const row = await engine.claimNextJob(claimSpec(`w${w}:a`, { ...workerHosts[w] }));
         if (!row) return mine;
         mine.push(Number(row.id) - first);
       }
@@ -205,153 +278,250 @@ describe('engine parity: multi-writer conformance', () => {
     expect(tally(rows.map(r => r?.status))).toEqual({ active: total });
     expect(tally(rows.map(r => Number(r?.claim_generation)))).toEqual({ '1': total });
     return { claimed: all.length, twice: 0, lost: 0, status: tally(rows.map(r => r?.status)), claimGeneration: tally(rows.map(r => Number(r?.claim_generation))) };
-  });
+  }));
 
   // C05: an expired claim is reclaimed once, and renewing it with the old token is refused. Eight sweeps run together.
-  parityTest('C05 expired claim is reclaimed once', { methods: ['admitJob', 'claimNextJob', 'reclaimStalledJobs', 'renewJobLease', 'getJob'], mwCase: 'C05' }, async (engine) => {
+  parityTest('C05 expired claim is reclaimed once', { methods: ['admitJob', 'claimNextJob', 'reclaimStalledJobs', 'renewJobLease', 'getJob'], mwCase: 'C05' }, async (engine, backend) => withHosts(engine, backend, 'c05', async (hosts) => {
+    // Host 0 of the claimants took the first claim; each sweep is its own host; host 1 takes the claim again.
+    const [first, ...sweepers] = await hosts.claimants(9);
     const id = await addJob(engine, { max_stalled: 3 });
-    expect((await engine.claimNextJob(claimSpec('w:1', { lockDurationMs: -60_000 })))?.id).toBeDefined();
-    const sweeps = await together(8, async () => (await engine.reclaimStalledJobs(0)).requeued.map(r => Number(r.id)));
+    expect((await engine.claimNextJob(claimSpec('w:1', { lockDurationMs: -60_000, ...first })))?.id).toBeDefined();
+    const sweeps = await together(8, async (i) => (await engine.reclaimStalledJobs(0, sweepers[i])).requeued.map(r => Number(r.id)));
     expect(sweeps.flat(), 'the expired claim was reclaimed other than once in total').toEqual([id]);
     const after = (await engine.getJob(id))!;
     expect({ status: after.status, stalled: after.stalled_counter }).toEqual({ status: 'waiting', stalled: 1 });
-    expect(await engine.renewJobLease(id, 'w:1', 30_000), 'the old token renewed').toBe(false);
-    const again = await engine.reclaimStalledJobs(0);
+    expect(await took(() => engine.renewJobLease(id, 'w:1', 30_000, { ...first })), 'the old token renewed').toBe(false);
+    const again = await engine.reclaimStalledJobs(0, sweepers[0]);
     expect({ requeued: again.requeued.length, dead: again.dead.length }).toEqual({ requeued: 0, dead: 0 });
     // The job is claimable again, and only the new claimant's token renews.
-    expect((await engine.claimNextJob(claimSpec('w:2')))?.id).toBeDefined();
-    expect(await engine.renewJobLease(id, 'w:1', 30_000)).toBe(false);
-    expect(await engine.renewJobLease(id, 'w:2', 30_000)).toBe(true);
+    expect((await engine.claimNextJob(claimSpec('w:2', { ...sweepers[0] })))?.id).toBeDefined();
+    expect(await took(() => engine.renewJobLease(id, 'w:1', 30_000, { ...first }))).toBe(false);
+    expect(await took(() => engine.renewJobLease(id, 'w:2', 30_000, { ...sweepers[0] }))).toBe(true);
     return { reclaimedTotal: 1, stalled: after.stalled_counter, oldTokenRenews: false, newTokenRenews: true };
-  });
+  }));
 
-  // C06: a stale lease holder's data write is refused by its token. Today the check is the caller's: the writing
-  // transaction asserts its lease (`assertCycleLease`, which on Postgres also holds the lease row until commit) and
-  // writes only while it holds it. A holder paused past its expiry resumes after a takeover and must write nothing.
+  // C06: a stale lease holder's data write is refused by its token. The check is the caller's: the writing transaction
+  // asserts its lease (`assertCycleLease`, which on Postgres also holds the lease row until commit) and writes only while it
+  // holds it. A holder paused past its expiry resumes after a takeover and must write nothing. On a Rust brain in
+  // multi-user mode the cycle lock carries the host fence: every protected call passes its host's lease token, and a call
+  // without one refuses `lease_lost` / `fence_missing` (so each holder here is a registered host with its own lease).
   parityTest('C06 stale holder\'s data write refused by its token', {
     methods: ['acquireCycleLock', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'], mwCase: 'C06',
-  }, async (engine) => {
+  }, async (engine, backend) => {
+    const hosts = await hostsOf(engine, backend);
+    const [fa, fb] = [await hosts.host(1), await hosts.host(2)];
     const [paused, taker] = ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000b2'];
     const lease = (pid: number, token: string, extra: { ttlMinutes?: number; stealGraceSeconds?: number } = {}) =>
       ({ holderPid: pid, holderHost: `host-${pid}`, acquisitionToken: token, ttlMinutes: 30, stealGraceSeconds: 0, ...extra });
-    expect(await engine.acquireCycleLock('gbrain-cycle:c06', lease(1, paused, { ttlMinutes: -1 }))).not.toBeNull();
+    expect(await engine.acquireCycleLock('gbrain-cycle:c06', { ...lease(1, paused, { ttlMinutes: -1 }), ...fa })).not.toBeNull();
     // A grace of -1 second: PGLite's clock ticks in milliseconds, so a zero grace may not have passed yet.
-    expect(await engine.acquireCycleLock('gbrain-cycle:c06', lease(2, taker, { stealGraceSeconds: -1 })), 'the takeover').not.toBeNull();
-    const guardedWrite = (token: string, body: string) => engine.transaction(async (tx) => {
-      if (!(await tx.assertCycleLease('gbrain-cycle:c06', token))) return false;
+    expect(await engine.acquireCycleLock('gbrain-cycle:c06', { ...lease(2, taker, { stealGraceSeconds: -1 }), ...fb }), 'the takeover').not.toBeNull();
+    const guardedWrite = (token: string, fence: FenceOpts, body: string) => engine.transaction(async (tx) => {
+      if (!(await tx.assertCycleLease('gbrain-cycle:c06', token, fence))) return false;
       await tx.putPage('notes/c06-protected', NOTE('C06', body));
       return true;
     });
-    const refused = await guardedWrite(paused, 'from the paused holder');
+    const refused = await guardedWrite(paused, fa, 'from the paused holder');
     expect(refused, 'the paused holder kept its lease').toBe(false);
     expect(await bodyOf(engine, 'notes/c06-protected'), 'the paused holder wrote protected data').toBeNull();
-    const accepted = await guardedWrite(taker, 'from the new holder');
+    const accepted = await guardedWrite(taker, fb, 'from the new holder');
     expect(accepted).toBe(true);
     expect(await bodyOf(engine, 'notes/c06-protected')).toBe('from the new holder');
     return { pausedHolderWrote: refused, newHolderWrote: accepted };
   });
 
-  // C06, variant `C06.partition`: a machine that comes back after a partition with old-epoch work is refused. Holder A
-  // takes a short lease and writes protected data; it is cut off and its lease lapses; B takes over (a new epoch); A comes
-  // back and its protected write with the old token is refused, it cannot renew or release, and no protected data of A's
-  // old epoch is written. A then gets in only by re-acquiring after B, under a new epoch.
-  // Postgres, PGLite and the single-writer Rust arm fence with the cycle lock members. On a Rust brain in multi-user mode
-  // the fence is the store lease (`rustLeases`, host-fence): that branch is pending on the hosts work and is written
-  // against the shape of src/core/rust-engine/store-members/leases.ts through a cast.
+  // C06, variant `C06.partition`: a machine that comes back after a partition with old-epoch work is refused.
+  //  1. Holder A takes the cycle lock and writes protected data; its hold is ended at a controlled moment (a refresh with a
+  //     negative lifetime, never a sleep); B takes over; A comes back and its protected write with the old token is refused,
+  //     it cannot renew or release, and no old-epoch data is written. A gets back in only by acquiring after B releases.
+  //  2. In flight: A asserts its lease and stages a protected write inside an open transaction, its lease lapses while the
+  //     transaction is open, and B tries to take over. Either B waits for A's transaction (Postgres: the assert holds the lease
+  //     row; PGLite and the single-writer Rust store: one writer) and A's write lands BEFORE the takeover, or B is granted and
+  //     A's commit is refused (`lease_lost`, or `write_conflict` on a store that checks at commit). Never A's write after B.
+  //  3. Rust in multi-user mode only: the host fence. The host's lease is expired at a controlled moment (renewed with a short
+  //     lifetime, then read until it is no longer live), every protected cycle-lock call with the old fence is refused
+  //     `lease_lost` / `expired`, the host registers again under a new epoch, the old fence is refused `epoch_moved`, and the
+  //     cycle lock A took under the old epoch cannot be refreshed under the new one (`claim_epoch_mismatch`).
   parityTest('C06 stale holder\'s data write refused by its token: a host back from a partition with old-epoch work is refused', {
     methods: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'transaction', 'assertCycleLease', 'putPage', 'readPageSnapshot'],
     mwCase: 'C06.partition',
   }, async (engine, backend) => {
+    const hosts = await hostsOf(engine, backend);
     const SLUG = 'notes/c06-partition-protected';
-    const outcome = { oldEpochWriteRefused: true, protectedDataUnchanged: true, newHolderWrote: true, oldTokenRenewed: false, oldTokenReleased: false, reacquiredUnderNewEpoch: true };
-    // The store lease path (interface I-5) is not BrainEngine members: `openStore('leases')` is the accessor `rustLeases(engine)`
-    // reads. The branch below calls only the members this case declares (`transaction`, `putPage`, `readPageSnapshot`) and that
-    // accessor; the cycle-lock members run first, on every arm, so every declared member is called on every arm that runs it.
-    const storeLeases = async () => {
-      type Holder = { host_id: string; incarnation: string; writer_id: string };
-      type Lease = { name: string; epoch: number; token: string };
-      type Leases = {
-        acquireLease(a: { name: string; holder: Holder; ttl_ms: number }): Promise<Lease | null>;
-        renewLease(a: { lease: Lease; ttl_ms: number }): Promise<void>;
-        releaseLease(lease: Lease): Promise<void>;
-        assertLease(lease: Lease): Promise<void>;
-      };
-      type Opens = { openStore(member: string): { brain: Leases } };
-      /** The code and reason of a refusal, from the error itself (the reason sits on the error, its detail or its envelope). */
-      const refusalOf = (result: { ok: true } | { ok: false; error: unknown }) => {
-        if (result.ok) return null;
-        const e = result.error as { code?: string; reason?: string; detail?: { reason?: string }; envelope?: { detail?: { reason?: string } } };
-        return { code: e?.code ?? 'threw', reason: e?.reason ?? e?.detail?.reason ?? e?.envelope?.detail?.reason ?? null };
-      };
-      const leasesOf = (e: BrainEngine) => (e as unknown as Opens).openStore('leases').brain;
-      const holder = (n: number): Holder => ({ host_id: `host-${n}`, incarnation: `inc-${n}`, writer_id: `writer-${n}` });
-      const NAME = 'consumer:c06-partition';
-      const SLUG_L = 'notes/c06-partition-lease-protected';
-      const ttlMs = 50;
-      const a = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(1), ttl_ms: ttlMs });
-      expect(a).not.toBeNull();
-      const guarded = (lease: Lease, body: string) => engine.transaction(async (tx) => {
-        await leasesOf(tx).assertLease(lease);
-        await tx.putPage(SLUG_L, NOTE('C06', body));
-      });
-      await guarded(a!, 'epoch A');
-      await Bun.sleep(ttlMs * 3);
-      // An expired lease cannot be renewed: its holder must acquire again, under a new epoch.
-      const renewed = await attempt(() => leasesOf(engine).renewLease({ lease: a!, ttl_ms: 60_000 }));
-      expect(refusalOf(renewed), 'the expired lease was renewed, or refused for another reason').toEqual({ code: 'lease_lost', reason: 'expired' });
-      const b = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(2), ttl_ms: 60_000 });
-      expect(b, 'the takeover').not.toBeNull();
-      expect(b!.epoch, 'a takeover raises the epoch').toBeGreaterThan(a!.epoch);
-      const stale = await attempt(() => guarded(a!, 'old-epoch work from A'));
-      expect(refusalOf(stale), 'the old epoch\'s write was not refused as epoch_moved').toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
-      expect(await bodyOf(engine, SLUG_L), 'old-epoch work was written').toBe('epoch A');
-      await guarded(b!, 'epoch B');
-      expect(await bodyOf(engine, SLUG_L)).toBe('epoch B');
-      await leasesOf(engine).releaseLease(b!);
-      const a2 = await leasesOf(engine).acquireLease({ name: NAME, holder: holder(1), ttl_ms: 60_000 });
-      expect(a2!.epoch, 'the holder that came back re-acquired under a new epoch').toBeGreaterThan(b!.epoch);
-      await guarded(a2!, 'epoch A again');
-      expect((await attempt(() => guarded(a!, 'old token again'))).ok).toBe(false);
-      expect(await bodyOf(engine, SLUG_L)).toBe('epoch A again');
-    };
     const LOCK = 'gbrain-cycle:c06-partition';
     const [tokenA, tokenB, tokenA2] = ['00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-0000000000a2'];
     const lease = (pid: number, token: string, ttlMinutes = 30) => ({ holderPid: pid, holderHost: `host-${pid}`, acquisitionToken: token, ttlMinutes, stealGraceSeconds: 0 });
     const holderToken = async () => (await engine.readCycleLocks({ by: 'id', lockId: LOCK }))[0]?.acquisition_token ?? null;
-    const guardedWrite = (token: string, body: string) => engine.transaction(async (tx) => {
-      if (!(await tx.assertCycleLease(LOCK, token))) return false;
-      await tx.putPage(SLUG, NOTE('C06', body));
+    const guardedWrite = (lockId: string, token: string, fence: FenceOpts, slug: string, body: string) => engine.transaction(async (tx) => {
+      if (!(await tx.assertCycleLease(lockId, token, fence))) return false;
+      await tx.putPage(slug, NOTE('C06', body));
       return true;
     });
-    // A holds a short lease (1.2 s) and writes while it holds it.
-    expect(await engine.acquireCycleLock(LOCK, lease(1, tokenA, 0.02))).not.toBeNull();
-    expect(await guardedWrite(tokenA, 'epoch A'), 'a live holder must be able to write').toBe(true);
-    // A is cut off and stops renewing. B takes the lease as soon as it has lapsed (bounded wait, no fixed sleep).
-    const deadline = Date.now() + 10_000;
-    let took = await engine.acquireCycleLock(LOCK, lease(2, tokenB));
-    while (took === null && Date.now() < deadline) { await Bun.sleep(25); took = await engine.acquireCycleLock(LOCK, lease(2, tokenB)); }
-    expect(took, 'B never took over the lapsed lease').not.toBeNull();
+
+    // 1. The partition.
+    const [fa, fb] = [await hosts.host(1), await hosts.host(2)];
+    expect(await engine.acquireCycleLock(LOCK, { ...lease(1, tokenA), ...fa }), 'A could not take the lock').not.toBeNull();
+    expect(await guardedWrite(LOCK, tokenA, fa, SLUG, 'epoch A'), 'a live holder must be able to write').toBe(true);
+    // A is cut off: its hold ends now (a negative lifetime), so B can take it without waiting for a clock.
+    expect(await engine.refreshCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA, ttlMinutes: -1, ...fa }), 'A\'s hold did not end').toBe(true);
+    // A grace of -1 second: a clock that ticks in milliseconds may not have passed a zero grace yet.
+    expect(await engine.acquireCycleLock(LOCK, { ...lease(2, tokenB), stealGraceSeconds: -1, ...fb }), 'B never took over the lapsed lock').not.toBeNull();
     expect(await holderToken()).toBe(tokenB);
-    // A comes back with work it began in the old epoch: refused, and nothing of it is written.
-    expect(await guardedWrite(tokenA, 'old-epoch work from A'), 'the old epoch\'s write was accepted').toBe(false);
+    expect(await guardedWrite(LOCK, tokenA, fa, SLUG, 'old-epoch work from A'), 'the old epoch\'s write was accepted').toBe(false);
     expect(await bodyOf(engine, SLUG), 'old-epoch work was written').toBe('epoch A');
-    // It cannot renew or release a lease that is no longer its own, and B keeps it.
-    expect(await engine.refreshCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA, ttlMinutes: 30 }), 'the old holder renewed').toBe(false);
-    expect(await engine.releaseCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA }), 'the old holder released B\'s lease').toBe(false);
+    expect(await engine.refreshCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA, ttlMinutes: 30, ...fa }), 'the old holder renewed').toBe(false);
+    expect(await engine.releaseCycleLock(LOCK, { holderPid: 1, acquisitionToken: tokenA, ...fa }), 'the old holder released B\'s lease').toBe(false);
     expect(await holderToken()).toBe(tokenB);
-    expect(await guardedWrite(tokenB, 'epoch B'), 'the new holder must be able to write').toBe(true);
-    expect(await guardedWrite(tokenA, 'old-epoch work again')).toBe(false);
+    expect(await guardedWrite(LOCK, tokenB, fb, SLUG, 'epoch B'), 'the new holder must be able to write').toBe(true);
+    expect(await guardedWrite(LOCK, tokenA, fa, SLUG, 'old-epoch work again')).toBe(false);
     expect(await bodyOf(engine, SLUG)).toBe('epoch B');
-    // Back in only by acquiring again: refused while B holds, granted after B releases, under a new token.
-    expect(await engine.acquireCycleLock(LOCK, lease(1, tokenA2)), 'the lease is exclusive while B holds it').toBeNull();
-    expect(await engine.releaseCycleLock(LOCK, { holderPid: 2, acquisitionToken: tokenB })).toBe(true);
-    expect(await engine.acquireCycleLock(LOCK, lease(1, tokenA2))).not.toBeNull();
-    expect(await guardedWrite(tokenA2, 'epoch A again')).toBe(true);
-    expect(await guardedWrite(tokenA, 'the first token again'), 'the first token works again').toBe(false);
+    expect(await engine.acquireCycleLock(LOCK, { ...lease(1, tokenA2), ...fa }), 'the lease is exclusive while B holds it').toBeNull();
+    expect(await engine.releaseCycleLock(LOCK, { holderPid: 2, acquisitionToken: tokenB, ...fb })).toBe(true);
+    expect(await engine.acquireCycleLock(LOCK, { ...lease(1, tokenA2), ...fa })).not.toBeNull();
+    expect(await guardedWrite(LOCK, tokenA2, fa, SLUG, 'epoch A again')).toBe(true);
+    expect(await guardedWrite(LOCK, tokenA, fa, SLUG, 'the first token again'), 'the first token works again').toBe(false);
     expect(await bodyOf(engine, SLUG)).toBe('epoch A again');
-    // Multi-user route: the store lease fence (rust-mu cell, pending until the hosts work lands on this branch).
-    if (backend === 'rust' && rustMultiuserView() !== 'off') await storeLeases();
-    return outcome;
+
+    // 2. In flight: A's lease lapses while its transaction is open.
+    const SLUG_IF = 'notes/c06-inflight-protected';
+    const inFlight = async (attemptNo: number, ttlMs: number) => {
+      const lockId = `gbrain-cycle:c06-inflight-${attemptNo}`;
+      const [tokA, tokB] = [`00000000-0000-4000-8000-0000000001a${attemptNo}`, `00000000-0000-4000-8000-0000000001b${attemptNo}`];
+      // A holder and its protected calls: the cycle lock on every arm but Rust in multi-user mode, where the host's lease is the fence.
+      type Side = { acquireA(): Promise<boolean>; assertA(tx: BrainEngine): Promise<boolean>; takeOver(): Promise<{ epoch: number | null } | null>; staleWrite(): Promise<boolean> };
+      let side: Side;
+      if (hosts.mu) {
+        // The host's lease is the fence; A's cycle lock is held under it, and the in-transaction check is the cycle-lock assert
+        // that carries it (the assert reads the host's lease record into the transaction). B takes over the HOST lease.
+        const name = `consumer:c06-inflight-${attemptNo}`;
+        let hostA: LeaseToken | null = null;
+        const checked = async (tx: BrainEngine) => {
+          const r = await attempt(() => tx.assertCycleLease(lockId, tokA, { fence: hostA! }));
+          if (r.ok) return r.value;
+          if (refusalOf(r)?.reason === 'expired') return false;
+          throw r.error;
+        };
+        side = {
+          acquireA: async () => {
+            hostA = await hosts.leases(engine).acquire(name, hosts.origin(1), ttlMs);
+            if (!hostA) return false;
+            const lock = await attempt(() => engine.acquireCycleLock(lockId, { ...lease(1, tokA, 30), fence: hostA! }));
+            if (lock.ok) return lock.value !== null;
+            if (refusalOf(lock)?.reason === 'expired') return false; // the host's lease lapsed before its first call: a stalled machine
+            throw lock.error;
+          },
+          assertA: checked,
+          takeOver: async () => { const t = await hosts.leases(engine).acquire(name, hosts.origin(2), 60_000); return t && { epoch: t.epoch }; },
+          staleWrite: async () => {
+            const r = await attempt(() => engine.transaction(async (tx) => {
+              if (!(await tx.assertCycleLease(lockId, tokA, { fence: hostA! }))) return false;
+              await tx.putPage(SLUG_IF, NOTE('C06', 'old token after the takeover'));
+              return true;
+            }));
+            return r.ok && r.value === true;
+          },
+        };
+      } else {
+        side = {
+          acquireA: async () => (await engine.acquireCycleLock(lockId, { ...lease(1, tokA, ttlMs / 60_000), ...fa })) !== null,
+          assertA: (tx) => tx.assertCycleLease(lockId, tokA, fa),
+          takeOver: async () => ((await engine.acquireCycleLock(lockId, { ...lease(2, tokB), stealGraceSeconds: -1, ...fb })) ? { epoch: null } : null),
+          staleWrite: () => guardedWrite(lockId, tokA, fa, SLUG_IF, 'old token after the takeover'),
+        };
+      }
+      if (!(await side.acquireA())) return null; // A's lease had lapsed before it could take the lock: a stalled machine.
+      const staged = Promise.withResolvers<boolean>();
+      const gate = Promise.withResolvers<void>();
+      const aTx = attempt(() => engine.transaction(async (tx) => {
+        let held: boolean;
+        try { held = await side.assertA(tx); } catch (error) { staged.resolve(false); throw error; }
+        if (!held) { staged.resolve(false); return 'lapsed before the assert'; }
+        await tx.putPage(SLUG_IF, NOTE('C06', 'in-flight from A'));
+        staged.resolve(true);
+        await gate.promise;
+        return 'staged';
+      }));
+      if (!(await staged.promise)) { gate.resolve(); const ended = await aTx; if (!ended.ok) throw ended.error; return null; }
+      await Bun.sleep(ttlMs + 100); // A's lease lapses while its transaction is open.
+      const takeover = side.takeOver().then((value) => ({ value }), (error: unknown) => ({ error }));
+      const settled = await Promise.race([takeover.then(() => 'granted' as const), Bun.sleep(400).then(() => 'waiting' as const)]);
+      gate.resolve();
+      return { a: await aTx, b: await takeover, waited: settled === 'waiting', side };
+    };
+    let flight: Awaited<ReturnType<typeof inFlight>> = null;
+    for (const [i, ttlMs] of [300, 1_500, 6_000].entries()) {
+      flight = await inFlight(i, ttlMs);
+      if (flight) break; // A's lease had lapsed before its first assert: a stalled machine; run it again with a longer lifetime.
+    }
+    expect(flight, 'A\'s lease lapsed before its first assert at every lifetime').not.toBeNull();
+    expect('error' in flight!.b ? flight!.b.error : null, 'the takeover errored').toBeNull();
+    if (flight!.waited) {
+      // Serial order: A's staged write landed before B was granted.
+      expect(flight!.a.ok, 'A\'s transaction, which B waited for, was refused').toBe(true);
+      expect(await bodyOf(engine, SLUG_IF), 'A\'s staged write is missing').toBe('in-flight from A');
+      expect('value' in flight!.b && flight!.b.value, 'B was never granted after A committed').not.toBeFalsy();
+    } else {
+      // B was granted while A's transaction was open: A's commit must be refused and nothing of it written.
+      expect(flight!.a.ok, 'B took the lease while A\'s transaction was open and A\'s commit still succeeded').toBe(false);
+      expect(['lease_lost', 'write_conflict'], 'A\'s commit was refused for another reason').toContain((flight!.a as { code: string }).code);
+      expect(await bodyOf(engine, SLUG_IF), 'A\'s refused transaction wrote protected data').toBeNull();
+    }
+    const before = await bodyOf(engine, SLUG_IF);
+    expect(await flight!.side.staleWrite(), 'the old token wrote after the takeover').toBe(false);
+    expect(await bodyOf(engine, SLUG_IF), 'old-token work landed after the takeover').toBe(before);
+
+    // 3. The host fence (Rust in multi-user mode).
+    if (hosts.mu) {
+      const leases = hosts.leases(engine);
+      const NAME = 'consumer:c06-partition-host';
+      const LOCK3 = 'gbrain-cycle:c06-host';
+      const tokenH = '00000000-0000-4000-8000-0000000002a1';
+      const SLUG3 = 'notes/c06-host-protected';
+      const f1 = (await leases.acquire(NAME, hosts.origin(1), 60_000))!;
+      expect(f1, 'the host could not register').not.toBeNull();
+      expect(await engine.acquireCycleLock(LOCK3, { ...lease(1, tokenH), fence: f1 })).not.toBeNull();
+      // A protected write: the cycle-lock assert carries the host's fence (and reads its lease into the transaction), then the data write.
+      const fencedWrite = (fence: LeaseToken, body: string, lockId = LOCK3, token = tokenH) => engine.transaction(async (tx) => {
+        if (!(await tx.assertCycleLease(lockId, token, { fence }))) throw new Error('the lock is not held');
+        await tx.putPage(SLUG3, NOTE('C06', body));
+      });
+      await fencedWrite(f1, 'epoch 1');
+      // The partition: the host's lease is renewed with a short lifetime, then read until it is no longer live.
+      await leases.renew(f1, 40);
+      const until = Date.now() + 10_000;
+      while ((await leases.read(NAME))?.live && Date.now() < until) await Bun.sleep(10);
+      expect((await leases.read(NAME))?.live, 'the host\'s lease never lapsed').toBe(false);
+      const old = { acquisition: '00000000-0000-4000-8000-0000000002b1' };
+      const refusedWith = async (reason: string, fence: LeaseToken) => {
+        const calls: Record<string, () => Promise<unknown>> = {
+          'acquire a lock': () => engine.acquireCycleLock('gbrain-cycle:c06-other', { ...lease(1, old.acquisition), fence }),
+          'refresh the lock': () => engine.refreshCycleLock(LOCK3, { holderPid: 1, acquisitionToken: tokenH, ttlMinutes: 30, fence }),
+          'release the lock': () => engine.releaseCycleLock(LOCK3, { holderPid: 1, acquisitionToken: tokenH, fence }),
+          'assert the lease': () => engine.assertCycleLease(LOCK3, tokenH, { fence }),
+          'write protected data': () => fencedWrite(fence, 'old-epoch work'),
+          'renew the host lease': () => leases.renew(fence, 60_000),
+        };
+        for (const [what, call] of Object.entries(calls)) {
+          const r = await attempt(call);
+          expect(r.ok ? 'accepted' : refusalOf(r), `the old fence was not refused (${reason}) when it tried to ${what}`).toEqual({ code: 'lease_lost', reason });
+        }
+      };
+      await refusedWith('expired', f1);
+      expect(await bodyOf(engine, SLUG3), 'old-epoch work was written').toBe('epoch 1');
+      // The host registers again under a new epoch; everything it began under the old one is refused.
+      const f2 = (await leases.acquire(NAME, hosts.origin(1), 60_000))!;
+      expect(f2.epoch, 'registering again did not raise the epoch').toBeGreaterThan(f1.epoch);
+      await refusedWith('epoch_moved', f1);
+      expect(await bodyOf(engine, SLUG3)).toBe('epoch 1');
+      const stale = await attempt(() => engine.refreshCycleLock(LOCK3, { holderPid: 1, acquisitionToken: tokenH, ttlMinutes: 30, fence: f2 }));
+      expect(stale.ok ? 'accepted' : refusalOf(stale), 'a lock taken in the old epoch was finished in the new one').toEqual({ code: 'lease_lost', reason: 'claim_epoch_mismatch' });
+      // Under the new epoch the host takes a lock of its own and writes.
+      const tokenH2 = '00000000-0000-4000-8000-0000000002a2';
+      expect(await engine.acquireCycleLock('gbrain-cycle:c06-host-2', { ...lease(1, tokenH2), fence: f2 })).not.toBeNull();
+      await fencedWrite(f2, 'epoch 2', 'gbrain-cycle:c06-host-2', tokenH2);
+      expect(await bodyOf(engine, SLUG3)).toBe('epoch 2');
+    }
+    return { oldEpochWriteRefused: true, protectedDataUnchanged: true, newHolderWrote: true, oldTokenRenewed: false, oldTokenReleased: false, reacquiredUnderNewEpoch: true, noOldEpochWriteAfterTakeover: true };
   });
 
   // C07: an effect is claimed once; if its owner dies between the action and recording it, the effect is claimed again,
@@ -360,7 +530,10 @@ describe('engine parity: multi-writer conformance', () => {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'transactionDirect', 'declarePersistence', 'insertPublicationEffects',
       'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow', 'readRequestEffects'],
     mwCase: 'C07',
-  }, async (engine) => {
+  }, async (engine, backend) => withHosts(engine, backend, 'c07', async (hosts) => {
+    // Each claimant is its own host (the eight racing claimants, then the one that finds the dead owner's effect): its calls carry its own fence.
+    const claimantHosts = await hosts.claimants(9);
+    const fenceOf = (i: number) => claimantHosts[i === 99 ? 8 : i]!;
     const host = 'd0000000-0000-4000-8000-0000000000d1';
     const keys = ['principal:local_cli:parity-writer', 'brain'];
     const source = await engine.readSourceMembership(SRC);
@@ -386,7 +559,7 @@ describe('engine parity: multi-writer conformance', () => {
       await tx.declarePersistence();
       const next = await tx.selectClaimableEffect<{ id: string | number }>(host, dead);
       if (!next?.id) return null;
-      return tx.stampEffectClaim<Claimed>({ id: next.id, token: token(i), ownerJson: owner(i) });
+      return tx.stampEffectClaim<Claimed>({ id: next.id, token: token(i), ownerJson: owner(i), ...fenceOf(i) });
     });
     const won = await together(8, (i) => claim(i, []));
     const winners = won.map((row, i) => (row ? i : -1)).filter(i => i >= 0);
@@ -396,15 +569,16 @@ describe('engine parity: multi-writer conformance', () => {
     // The owner dies after the action and before it records: its effect is claimable again and runs again.
     const rerun = await claim(99, [`7:n${first}:s`]);
     expect(rerun?.id, 'a dead owner\'s effect was not claimed again').toEqual(effect.id);
-    await engine.completeEffectRow({ id: effect.id, token: token(first), outcomeJson: '{}' });
+    // The dead owner's late record changes nothing: refused by its token, or by its fence's claim epoch on a multi-user store.
+    await attempt(() => engine.completeEffectRow({ id: effect.id, token: token(first), outcomeJson: '{}', ...fenceOf(first) }));
     const afterDead = await engine.readRequestEffects(request.id);
     expect(afterDead.map(e => e.state), 'the dead owner recorded the effect').toEqual(['running']);
-    await engine.completeEffectRow({ id: effect.id, token: token(99), outcomeJson: '{}' });
+    await engine.completeEffectRow({ id: effect.id, token: token(99), outcomeJson: '{}', ...fenceOf(99) });
     const effects = await engine.readRequestEffects(request.id);
     expect(effects, 'a duplicate effect row').toHaveLength(1);
     expect(effects[0]!.state).toBe('committed');
     return { claimants: winners.length, reclaimed: true, deadOwnerRecorded: false, effectRows: effects.length, state: effects[0]!.state };
-  });
+  }));
 
   // C08: a counter never over-admits. 24 callers ask a 24-hour daily cap of five judge slots at once: five are granted,
   // the count is five, and no update is lost.
@@ -638,41 +812,44 @@ describe('engine parity: multi-writer conformance', () => {
 
   // C18: many writers, every row family, no busy error: 64 writers in 8 processes. This process and seven writer processes
   // (test/engine-parity/fixtures/mw-writer.ts, each with its own pool on the arm's database) each run eight concurrent
-  // writers; every writer writes two pages, submits a job under its request key and claims a job. No lost update, no double
-  // claim, no busy error. Postgres only: PGLite is in-memory and one connection (n/a), and a Rust brain has one owner process
-  // (pending: a second Rust process is a client that refuses the job members today).
+  // writers; every writer writes two pages, submits a job under its request key and claims a job. The parent holds a start
+  // barrier: it sends `GO` only after all seven children reported READY, and the case proves the loads overlapped (every
+  // process started before any finished). It then checks every expected page slug and body, every request key once, and that the
+  // claimed ids are exactly the stored jobs' ids. No lost update, no double claim, no busy error. Postgres only: PGLite is
+  // in-memory and one connection (n/a), and a Rust brain has one owner process (pending: a second Rust process is a client
+  // that refuses the job members today).
   parityTest('C18 64 writers in 8 processes, no busy error', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'claimNextJob', 'listJobs'], mwCase: 'C18' }, async (engine, backend, ctx) => {
     if (backend !== 'postgres') throw new Error(`C18 runs its writer processes on Postgres only, not on ${backend}`);
     const databaseUrl = (ctx.unconnectedEngine().config as { database_url?: string }).database_url!;
-    const children = Array.from({ length: 7 }, (_, i) => startWriter({ role: 'stress', backend: 'postgres', databaseUrl, index: i + 1, deadlineMs: 60_000 }));
-    let own: StressResult[];
-    let results: StressResult[][];
+    const children: ReturnType<typeof startWriter>[] = [];
+    let reports: StressReport[];
     try {
-      // This process is the eighth: it writes while the seven others do (they are connecting; the load overlaps).
+      for (let i = 0; i < 7; i++) children.push(startWriter({ role: 'stress', backend: 'postgres', databaseUrl, index: i + 1, startOnGo: true, deadlineMs: 90_000 }));
       await Promise.all(children.map(c => c.until(lines => lines.includes('READY'), 30_000, 'connect')));
-      own = await runStressWriters(engine, 0);
+      // The barrier: everyone is connected; the children start on GO and this process starts at once.
+      for (const c of children) c.go();
+      const startedAt = Date.now();
+      const own = await runStressWriters(engine, 0);
+      const mine: StressReport = { results: own, startedAt, finishedAt: Date.now() };
       await Promise.all(children.map(c => c.until(lines => lines.some(l => l.startsWith('RESULT ')), 60_000, 'finish its writers')));
-      results = [own, ...children.map(c => JSON.parse(c.lines().find(l => l.startsWith('RESULT '))!.slice('RESULT '.length)) as StressResult[])];
-    } catch (error) {
-      await Promise.all(children.map(c => c.kill()));
-      throw error;
+      reports = [mine, ...children.map(c => JSON.parse(c.lines().find(l => l.startsWith('RESULT '))!.slice('RESULT '.length)) as StressReport)];
+      const exits = await Promise.all(children.map(c => c.reap(15_000)));
+      expect(exits.map(e => e.exitCode), 'a writer process did not exit cleanly').toEqual(children.map(() => 0));
+    } finally {
+      // Whatever happened, no child outlives the case.
+      await Promise.all(children.map(c => c.reap(0)));
     }
-    const exits = await Promise.all(children.map(c => c.exited));
-    expect(exits.map(e => e.exitCode), 'a writer process did not exit cleanly').toEqual(children.map(() => 0));
-    const writers = results.flat();
-    expect(writers, 'not 64 writers').toHaveLength(64);
-    const refused = writers.flatMap(o => o.refused);
-    expect(refused.filter(code => BUSY_CODES.has(code)), 'a writer got a busy error').toEqual([]);
-    expect(refused, 'a writer was refused').toEqual([]);
-    const pages = writers.flatMap(o => o.pages);
-    expect(pages).toHaveLength(64 * 2);
-    for (const slug of pages) expect(await bodyOf(engine, slug), `${slug}: a write is missing`).not.toBeNull();
-    const jobs = await engine.listJobs({ limit: 500 });
-    expect(jobs, 'a request key made more than one row, or a submission was lost').toHaveLength(64);
-    const claimedIds = writers.map(o => o.job).filter((id): id is number => id !== null);
-    expect(claimedIds.length - new Set(claimedIds).size, 'a job was claimed twice').toBe(0);
-    expect(claimedIds, 'a job was left unclaimed while writers were idle').toHaveLength(64);
-    return { processes: 8, writers: 64, pages: pages.length, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0 };
+    const pageBodies = new Map<string, string>();
+    for (let id = 0; id < 64; id++) for (let round = 0; round < 2; round++) {
+      const body = await bodyOf(engine, stressSlug(id, round));
+      if (body !== null) pageBodies.set(stressSlug(id, round), body);
+    }
+    const jobIdsByKey = new Map<string, number[]>();
+    for (const job of await engine.listJobs({ limit: 500 })) jobIdsByKey.set(String(job.idempotency_key), [...(jobIdsByKey.get(String(job.idempotency_key)) ?? []), Number(job.id)]);
+    expect(stressViolations({ reports, pageBodies, jobIdsByKey }), 'the stress run lost or duplicated work, or did not contend').toEqual([]);
+    const jobs = [...jobIdsByKey.values()].flat();
+    const claimedIds = reports.flatMap(r => r.results).map(o => o.job).filter((id): id is number => id !== null);
+    return { processes: 8, writers: 64, pages: 128, jobs: jobs.length, claimed: claimedIds.length, twice: 0, busy: 0, overlapped: true };
   });
 
   // C19: crash after commit keeps acknowledged writes. A writer process (test/engine-parity/fixtures/mw-writer.ts) writes a
@@ -680,8 +857,15 @@ describe('engine parity: multi-writer conformance', () => {
   // acknowledged it. This case SIGKILLs it mid-stream, then reads the brain through an engine of its own: every acknowledged write
   // has its page and exactly one job row, nothing is duplicated, and replaying each request key returns the stored row and
   // adds none. The check is `acknowledgedWriteViolations` (multi-writer-support.ts), proven with controls in
-  // test/multi-writer-cases.test.ts. Postgres: the writer's own pool on the arm's database. Rust: the writer owns a brain directory
-  // no engine here has open, and this case reopens it. PGLite is in-memory: no durable brain to crash (n/a).
+  // test/multi-writer-cases.test.ts.
+  //
+  // What this proves, exactly. Postgres: gbrain acknowledges a write only after the database committed it, so a writer that
+  // dies right after its acknowledgements loses none and its replays duplicate none. It is NOT a database-server crash test:
+  // the killed process is a client, and the reopening engine is the parent's connected pool, so the server never restarts and
+  // Postgres's own durability (WAL, fsync) is not exercised. That guarantee belongs to Postgres. Rust: the writer process owns a
+  // brain directory no engine here has open, and this case reopens that directory after the kill, so it is the store's own
+  // recovery of acknowledged commits; on the rust-mu view the writer and the reopened brain must both resolve multi-user mode.
+  // PGLite is in-memory: no durable brain to crash (n/a).
   parityTest('C19 crash after commit keeps acknowledged writes', { methods: ['putPage', 'readPageSnapshot', 'admitJob', 'listJobs'], mwCase: 'C19' }, async (engine, backend, ctx) => {
     const killAfter = 12;
     const { engine: spare, config } = ctx.unconnectedEngine();
@@ -694,17 +878,18 @@ describe('engine parity: multi-writer conformance', () => {
     } else if (backend === 'rust') {
       const route = rustMultiuserView();
       const brain = config as unknown as { database_path: string };
-      if (route === 'config') {
-        await spare.connect(config);
-        await spare.setConfig('engine.rust.multiuser', 'true');
-        await spare.disconnect();
-      }
+      // The config route's brain carries its own switch row: connecting the spare seeds it (and asserts it resolved), so the writer finds it on disk.
+      if (route === 'config') { await spare.connect(config); await spare.disconnect(); }
       writerConfig = { ...base, backend: 'rust', databasePath: brain.database_path, ...(route !== 'off' && { muRoute: route }) };
       reopen = async () => { await spare.connect(config); return spare; };
     } else {
       throw new Error(`C19 needs a durable brain to crash; ${backend} has none`);
     }
     const writer = startWriter(writerConfig);
+    const route = rustMultiuserView();
+    // On a Rust brain the writer process proves what mode its own store resolved (it fails to start otherwise).
+    if (backend === 'rust') await writer.until(lines => lines.some(l => l.startsWith('RESOLVED ')), 30_000, 'open its brain');
+    if (backend === 'rust') expect(writer.lines().includes('RESOLVED true'), `the writer's store resolved multi-user mode as ${writer.lines().find(l => l.startsWith('RESOLVED '))} on route ${route}`).toBe(route !== 'off');
     const acks = (lines: string[]) => lines.filter(l => l.startsWith('ACK ')).map(l => Number(l.slice(4)));
     await writer.until(lines => acks(lines).length >= killAfter, 60_000, `acknowledge ${killAfter} writes`);
     const ended = await writer.kill();
@@ -714,6 +899,8 @@ describe('engine parity: multi-writer conformance', () => {
     expect(acknowledged.length, 'the writer finished before the kill').toBeLessThan(base.max);
     // The brain after the crash, through an engine this process owns.
     const brain = await reopen();
+    if (backend === 'rust' && route !== 'off') expect(resolvedMultiuser(brain), 'the reopened brain did not resolve multi-user mode').toBe(true);
+    if (backend === 'rust' && route === 'off') expect(resolvedMultiuser(brain), 'the reopened plain brain resolved multi-user mode').not.toBe(true);
     type Seen = CrashObservation & { ids: Map<string, number> };
     const observe = async (): Promise<Seen> => {
       const jobRowsByKey = new Map<string, number>();
