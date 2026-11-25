@@ -17,7 +17,9 @@ import { join } from 'node:path';
 import { loadRustAddon, loadRustEngineAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { openRustEngine } from '../src/core/rust-engine.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+import { DEFAULT_HARD_EXCLUDES } from '../src/core/search/source-boost.ts';
 import { runBackupDrill } from '../src/shadow/drill.ts';
+import { ENGLISH_STOPWORDS } from '../src/shadow/english-stopwords.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { writeEpoch } from './helpers/shadow-drill-fixtures.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -166,5 +168,24 @@ const scratches = (dir: string): string[] => (existsSync(join(dir, 'drills')) ? 
     const record = await drill(dir);
     expect(record).toMatchObject({ pass: false, reason: 'addon_mismatch', addon_sha256: BUILT_SHA, op_id: null });
     expect(existsSync(join(dir, 'drills'))).toBe(false);
+  }, 90_000);
+
+  test('a healthy copy whose chunk starts with 30 stop words longer than its one real word still passes', async () => {
+    const stops = ENGLISH_STOPWORDS.filter(w => w.length >= 5).slice(0, 30);
+    const dir = await shadowWithPages([{ slug: 'notes/s', text: `${stops.join(' ')} cats` }]);
+    const record = await drill(dir);
+    expect(record).toMatchObject({ pass: true, reason: null });
+    expect(record.post_open!.search_hits).toBeGreaterThan(0);
+  }, 90_000);
+
+  test('20 newer pages under a search-excluded prefix do not hide the one older searchable page', async () => {
+    const prefix = DEFAULT_HARD_EXCLUDES[0]!;
+    const older = { slug: 'notes/older', text: 'harbor lanterns' };
+    const excluded = Array.from({ length: 21 }, (_, n) => ({ slug: `${prefix}p${n}`, text: `attached filler ${n}` }));
+    const dir = await shadowWithPages([older, ...excluded]);
+    const record = await drill(dir);
+    expect(record).toMatchObject({ pass: true, reason: null });
+    expect(record.post_open!.pages).toBe(22);
+    expect(record.post_open!.search_hits).toBeGreaterThan(0);
   }, 90_000);
 });

@@ -20,7 +20,7 @@
  * Anything missing, unreadable or different is a `false` whose reason names the cause.
  */
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { EpochManifest } from './evidence-epoch.ts';
 
@@ -251,36 +251,63 @@ function writeAtomic(path: string, body: string): void {
 
 export interface FetchResult { cached: boolean; reason: string | null; passed: boolean }
 
+/** `dev:ino:birth` of a directory, or null when it is gone: tells a shadow that was deleted (and maybe recreated) from the one a command started in. */
+export function dirIdentity(path: string): string | null {
+  try { const st = statSync(path); return `${st.dev}:${st.ino}:${st.birthtimeMs}`; } catch { return null; } // silent-read-ok: a missing directory is the answer
+}
+
 /**
  * Downloads the pin of the epoch's release and the file it names, checks the file's SHA-256 against the pin, and
  * replaces the cache (the file first, then the pin: an interrupted write leaves a pair that does not match, which the
  * verdict reads as `eval_gates_digest_mismatch`). A failure keeps the old cache and records the attempt.
+ *
+ * It needs the shadow directory and its epoch to exist already and never creates the shadow root: `drills/` is made
+ * without recursion, and every write checks that the shadow directory and `drills/` are still the ones it started in.
+ * A shadow deleted or replaced during the fetch (`stop --delete`) gets nothing written and the reason `shadow_gone`.
  */
 export async function fetchEvalGates(dir: string, epoch: EpochManifest | null, deps: FetchDeps): Promise<FetchResult> {
   const paths = cachePaths(dir);
   const now = deps.now ?? Date.now;
-  mkdirSync(join(dir, 'drills'), { recursive: true, mode: 0o700 });
-  const record = (reason: string | null): void => writeAtomic(paths.fetch, JSON.stringify({ at: new Date(now()).toISOString(), reason }) + '\n');
-  try {
-    const build = epoch?.build;
-    if (!epoch || !build || !build.gbrain_commit) throw new FetchRefused('eval_gates_build_unknown');
-    const tag = `v${build.gbrain_version}`;
-    if (!FINAL_TAG.test(tag)) throw new FetchRefused('eval_gates_provisional');
-    const pinText = await pinSource(tag, deps);
-    const pinned = pinProblem(pinText);
-    if ('reason' in pinned) throw new FetchRefused(pinned.reason);
-    const pin = pinned.pin;
-    if (pin.gbrain_tag !== tag || pin.gbrain_commit !== build.gbrain_commit) throw new FetchRefused('eval_gates_commit_mismatch');
-    const fileText = await boundedGet(pin.url, MAX_FILE_BYTES, deps);
-    if (sha256(fileText) !== pin.sha256) throw new FetchRefused('eval_gates_digest_mismatch');
-    writeAtomic(paths.file, fileText);
-    writeAtomic(paths.pin, pinText);
-    record(null);
-  } catch (error) {
-    if (!(error instanceof FetchRefused)) throw error;
-    record(error.message);
-    return { cached: false, reason: error.message, passed: false };
+  const gone: FetchResult = { cached: false, reason: 'shadow_gone', passed: false };
+  const rootId = dirIdentity(dir);
+  if (rootId === null) return gone;
+  if (!epoch) return { cached: false, reason: 'eval_gates_build_unknown', passed: false };
+  const drills = join(dir, 'drills');
+  try { mkdirSync(drills, { mode: 0o700 }); } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return gone;
+    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
   }
+  const drillsId = dirIdentity(drills);
+  const live = (): boolean => drillsId !== null && dirIdentity(dir) === rootId && dirIdentity(drills) === drillsId;
+  const write = (path: string, body: string): void => { if (!live()) throw new FetchRefused('shadow_gone'); writeAtomic(path, body); };
+  const record = (reason: string | null): void => write(paths.fetch, JSON.stringify({ at: new Date(now()).toISOString(), reason }) + '\n');
+  try {
+    try {
+      const build = epoch.build;
+      if (!build || !build.gbrain_commit) throw new FetchRefused('eval_gates_build_unknown');
+      const tag = `v${build.gbrain_version}`;
+      if (!FINAL_TAG.test(tag)) throw new FetchRefused('eval_gates_provisional');
+      const pinText = await pinSource(tag, deps);
+      const pinned = pinProblem(pinText);
+      if ('reason' in pinned) throw new FetchRefused(pinned.reason);
+      const pin = pinned.pin;
+      if (pin.gbrain_tag !== tag || pin.gbrain_commit !== build.gbrain_commit) throw new FetchRefused('eval_gates_commit_mismatch');
+      const fileText = await boundedGet(pin.url, MAX_FILE_BYTES, deps);
+      if (sha256(fileText) !== pin.sha256) throw new FetchRefused('eval_gates_digest_mismatch');
+      write(paths.file, fileText);
+      write(paths.pin, pinText);
+      record(null);
+    } catch (error) {
+      if (!(error instanceof FetchRefused) || error.message === 'shadow_gone') throw error;
+      record(error.message);
+      return { cached: false, reason: error.message, passed: false };
+    }
+  } catch (error) {
+    // A write that failed because the shadow went away is `shadow_gone`; any other failure is not hidden.
+    if ((error instanceof FetchRefused && error.message === 'shadow_gone') || !live()) return gone;
+    throw error;
+  }
+  if (!live()) return gone;
   const verdict = readEvalGatesVerdict(dir, epoch, deps.hostTarget);
   return { cached: true, reason: verdict.reason, passed: verdict.passed };
 }

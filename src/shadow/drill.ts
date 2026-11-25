@@ -31,6 +31,8 @@ import { resolveHardExcludes } from '../core/search/source-boost.ts';
 import type { SnapshotStatus, SnapshotStoreOptions } from '../core/rust-engine/store-snapshot.ts';
 import type { StoreSnapshotManifest, StoreVerifyReport } from '../core/rust-engine/store.ts';
 import { backupRecordPath, drillsDir, DRILL_METHOD, DRILL_VERSION, pendingPath } from './drill-status.ts';
+import { dirIdentity } from './eval-gates.ts';
+import { isEnglishStopword } from './english-stopwords.ts';
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord } from './seed.ts';
 
@@ -187,11 +189,6 @@ function removePendingIf(dir: string, opId: string): void {
   if (readPending(dir)?.op_id === opId) rmSync(pendingPath(dir), { force: true });
 }
 
-/** `dev:ino:birth` of a directory, or null when it is gone: tells a shadow that was deleted (and maybe recreated) from the one the drill started in. */
-function dirIdentity(path: string): string | null {
-  try { const st = statSync(path); return `${st.dev}:${st.ino}:${st.birthtimeMs}`; } catch { return null; } // silent-read-ok: a missing directory is the answer
-}
-
 /** SHA-256 of the addon file the loader opened, as the shadow child records it in the epoch (child.ts `addonFileSha256`). */
 export function addonFileSha256(addon: object): string | null {
   const a = addon as { engineBuild?: unknown; target?: unknown };
@@ -254,8 +251,8 @@ export type ProbeEngine = Pick<BrainEngine, 'getStats' | 'listPages' | 'getChunk
 /**
  * Phase 2's check on an opened copy: the page count, and one keyword search. The word comes from the copy's own stored
  * chunks, from pages the search can see (not under a hard-excluded slug prefix), read in the page's own source; the
- * longest letter-only words go first and the engine itself decides which one is indexed, so a stop word ('themselves')
- * or a word the tokenizer drops is skipped, never a failure of the copy. The first word with a hit passes. A copy with
+ * longest letter-only words that are not engine stop words go first (english-stopwords.ts, checked against the Rust list);
+ * the engine itself decides which one is indexed, so a word the tokenizer drops is skipped, never a failure of the copy. The first word with a hit passes. A copy with
  * pages and no word that answers (or no word at all) is `no_probe_term`: a named non-pass, because a populated copy that
  * ran no search proves nothing about its index. When the index is not complete a miss is allowed, but a query must run.
  */
@@ -264,12 +261,14 @@ export async function probeCopy(engine: ProbeEngine, expectKeywordHit: boolean):
   if (pages === 0) return { pages, searchHits: null };
   const excluded = resolveHardExcludes();
   const words = new Set<string>();
-  for (const page of await engine.listPages({ limit: PROBE_PAGES })) {
+  // The exclusion runs in the listing, before its limit: pages the search never shows cannot fill the page budget.
+  for (const page of await engine.listPages({ limit: PROBE_PAGES, excludeSlugPrefixes: excluded })) {
     if (excluded.some(prefix => page.slug.startsWith(prefix))) continue;
     for (const chunk of await engine.getChunks(page.slug, { sourceId: page.source_id })) {
-      for (const w of chunk.chunk_text.split(/[^\p{L}\p{N}]+/u)) if (/^\p{L}{4,24}$/u.test(w)) words.add(w.toLowerCase());
+      for (const w of chunk.chunk_text.split(/[^\p{L}\p{N}]+/u)) if (/^\p{L}{4,24}$/u.test(w) && !isEnglishStopword(w)) words.add(w.toLowerCase());
     }
   }
+  // Stop words are dropped before the budget, so they cannot use up the tries a word the engine indexes needs.
   const tries = [...words].sort((x, y) => y.length - x.length).slice(0, PROBE_TRIES);
   let last: number | null = null;
   for (const word of tries) {

@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { addonFileSha256, probeCopy, runBackupDrill, type DrillDeps, type DrillOwner, type ProbeEngine } from '../src/shadow/drill.ts';
 import { DEFAULT_HARD_EXCLUDES } from '../src/core/search/source-boost.ts';
+import { ENGLISH_STOPWORDS } from '../src/shadow/english-stopwords.ts';
 import { buildDrillStatus } from '../src/shadow/drill-status.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
@@ -530,7 +531,7 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
     test('a longest word that is a stop word is skipped: the next word that the engine answers is the probe', async () => {
       const e = engine([{ slug: 'notes/a', source_id: 'default', text: 'quasar themselves' }], w => (w === 'quasar' ? 2 : 0));
       expect(await probeCopy(e, true)).toEqual({ pages: 1, searchHits: 2 });
-      expect(e.seen.words).toEqual(['themselves', 'quasar']);
+      expect(e.seen.words).toEqual(['quasar']); // the stop word is never searched
     });
 
     test('a page of a named source is read in its own source', async () => {
@@ -555,6 +556,34 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
       expect(await probeCopy(engine([], () => 1), true)).toEqual({ pages: 0, searchHits: null });
     });
 
+    test('stop words are dropped before the budget: 30 stop words longer than the real word never use up its tries', async () => {
+      const stops = ENGLISH_STOPWORDS.filter(w => w.length >= 5).slice(0, 30);
+      expect(stops.length).toBe(30);
+      const e = engine([{ slug: 'notes/a', source_id: 'default', text: `${stops.join(' ')} cats` }], w => (w === 'cats' ? 1 : 0));
+      expect(await probeCopy(e, true)).toEqual({ pages: 1, searchHits: 1 });
+      expect(e.seen.words).toEqual(['cats']);
+    });
+
+    test('excluded pages cannot fill the page budget: the exclusion runs in the listing, before its limit', async () => {
+      const prefix = DEFAULT_HARD_EXCLUDES[0]!;
+      const newest = Array.from({ length: 25 }, (_, n) => ({ slug: `${prefix}p${n}`, source_id: 'default', text: 'attached filler words' }));
+      const pages = [...newest, { slug: 'notes/older', source_id: 'default', text: 'harbor lanterns' }];
+      const seen = { words: [] as string[], scopes: [] as unknown[] };
+      const base = engine(pages, w => (w === 'harbor' || w === 'lanterns' ? 1 : 0), seen);
+      const filters: unknown[] = [];
+      const e: ProbeEngine = {
+        ...base,
+        // Like the store: the exclusion and the limit are applied in this order.
+        listPages: async (f?: { limit?: number; excludeSlugPrefixes?: string[] }) => {
+          filters.push(f);
+          const kept = pages.filter(p => !(f?.excludeSlugPrefixes ?? []).some(x => p.slug.startsWith(x)));
+          return kept.slice(0, f?.limit ?? kept.length).map(p => ({ slug: p.slug, source_id: p.source_id })) as never;
+        },
+      };
+      expect(await probeCopy(e, true)).toEqual({ pages: 26, searchHits: 1 });
+      expect((filters[0] as { excludeSlugPrefixes: string[] }).excludeSlugPrefixes).toContain(prefix);
+    });
+
     test('the drill records no_probe_term, never a pass, for a populated copy that ran no search', async () => {
       const { dir } = shadow();
       const viaProbe = await runBackupDrill(dir, deps(fakeOwner(), { openCopy: (_a, _d, hit) => probeCopy(engine([{ slug: 'notes/a', source_id: 'default', text: 'Because cats' }], () => 0), hit) }));
@@ -563,5 +592,55 @@ describe('review round 1: the lock, the probe, persistence, the addon and the di
       expect(noSearch).toMatchObject({ pass: false, reason: 'no_probe_term' });
       expect(buildDrillStatus(dir).drills).toMatchObject({ backup_restore_passed: false, backup_reason: 'backup_drill_failed:no_probe_term' });
     });
+  });
+});
+
+describe('the stop word list is the Rust engine list (review round 2)', () => {
+  test('ENGLISH_STOPWORDS equals the list in rust/crates/gbrain-store/src/keyword/stem.rs, word for word and in order', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'rust', 'crates', 'gbrain-store', 'src', 'keyword', 'stem.rs'), 'utf8');
+    const block = /const ENGLISH_STOPWORDS: \[&str; (\d+)\] = \[([^\]]*)\];/.exec(source);
+    expect(block).not.toBeNull();
+    const rust = [...block![2]!.matchAll(/"([^"]*)"/g)].map(m => m[1]!);
+    expect(rust.length).toBe(Number(block![1]));
+    expect([...ENGLISH_STOPWORDS]).toEqual(rust);
+  });
+
+  test('the check reads the Rust file: a list that differs by one word is not equal', () => {
+    expect([...ENGLISH_STOPWORDS.slice(0, -1)]).not.toEqual([...ENGLISH_STOPWORDS]);
+    expect(ENGLISH_STOPWORDS).toContain('themselves');
+  });
+});
+
+describe('gbrain engine shadow drill: a shadow deleted by the backup half is not recreated by the eval half (review round 2)', () => {
+  test('the default drill reports shadow_gone for both halves and leaves nothing behind', async () => {
+    const CONFIG = { engine: 'postgres' as const, database_url: 'postgresql://postgres:postgres@127.0.0.1:55499/gbrain_test' };
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-drill-home-'));
+    dirs.push(home);
+    const fileText = JSON.stringify(gatesObject());
+    const routes: Record<string, string> = {
+      [`https://github.com/garrytan/gbrain/releases/download/${TAG}/gbrain-eval-gates.pin.json`]: JSON.stringify(pinFor(fileText)), [evalUrl()]: fileText,
+    };
+    const fetcher = (async (url: string) => (routes[url] ? new Response(routes[url]) : new Response('', { status: 404 }))) as unknown as typeof fetch;
+    const out: string[] = [];
+    let shadowDir = '';
+    const owner = fakeOwner({
+      snapshot: async (target, options) => {
+        mkdirSync(target, { mode: 0o700 });
+        writeFileSync(join(target, 'records.redb'), 'copy');
+        rmSync(shadowDir, { recursive: true, force: true }); // gbrain engine shadow stop --delete
+        return { op_id: options.opId, state: 'done', manifest: MANIFEST, free_bytes: { initial: 1, low: 1 } } as never;
+      },
+    });
+    const code = await withEnv({ GBRAIN_HOME: home }, async () => {
+      shadowDir = shadowDirFor(shadowBrainKey(CONFIG)!);
+      writeStoreFiles(shadowDir);
+      writeEpoch(shadowDir);
+      return runEngineShadow(['drill', '--json'], { config: () => CONFIG, out: l => out.push(l), err: () => undefined, drill: deps(owner), fetchEvals: { fetch: fetcher, hostTarget: TARGET } });
+    });
+    expect(code).toBe(1);
+    const result = JSON.parse(out.join('\n'));
+    expect(result.backup.reason).toBe('shadow_gone');
+    expect(result.evals).toEqual({ cached: false, reason: 'shadow_gone', passed: false });
+    expect(existsSync(shadowDir)).toBe(false);
   });
 });

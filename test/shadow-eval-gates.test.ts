@@ -10,7 +10,7 @@
  * directory and the real readiness evaluator; the fetch takes a fake `fetch` (no network).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
@@ -318,5 +318,53 @@ describe('fetchEvalGates (drill --evals)', () => {
     await fetchEvalGates(dir, epoch, { fetch: fakeFetch(goodRoutes()), hostTarget: TARGET });
     expect(sha256(readFileSync(cachePaths(dir).file, 'utf8'))).toBe(JSON.parse(readFileSync(cachePaths(dir).pin, 'utf8')).sha256);
     expect(ADDON_SHA).toHaveLength(64);
+  });
+});
+
+describe('fetchEvalGates never creates the shadow directory (review round 2)', () => {
+  const fileText = JSON.stringify(gatesObject());
+  const routes = (during: () => void = () => undefined): Record<string, () => Response> => ({
+    [pinUrl]: () => { during(); return new Response(JSON.stringify(pinFor(fileText))); },
+    [evalUrl()]: () => new Response(fileText),
+  });
+
+  test('a shadow that does not exist is not created, and nothing is fetched', async () => {
+    const { dir, epoch } = shadow();
+    rmSync(dir, { recursive: true, force: true });
+    const seen: string[] = [];
+    expect(await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes(), seen), hostTarget: TARGET })).toEqual({ cached: false, reason: 'shadow_gone', passed: false });
+    expect(existsSync(dir)).toBe(false);
+    expect(seen).toEqual([]);
+  });
+
+  test('without an epoch nothing is created or written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-eval-gates-bare-'));
+    dirs.push(dir);
+    expect(await fetchEvalGates(dir, null, { fetch: fakeFetch(routes()), hostTarget: TARGET })).toEqual({ cached: false, reason: 'eval_gates_build_unknown', passed: false });
+    expect(existsSync(join(dir, 'drills'))).toBe(false);
+  });
+
+  test('a shadow deleted while the files download is not recreated, and nothing is cached', async () => {
+    const { dir, epoch } = shadow();
+    const result = await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes(() => rmSync(dir, { recursive: true, force: true }))), hostTarget: TARGET });
+    expect(result).toEqual({ cached: false, reason: 'shadow_gone', passed: false });
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('a shadow replaced by a new one while the files download gets nothing from the old fetch', async () => {
+    const { dir, epoch } = shadow();
+    const replace = (): void => { rmSync(dir, { recursive: true, force: true }); mkdirSync(join(dir, 'drills'), { recursive: true }); };
+    const result = await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes(replace)), hostTarget: TARGET });
+    expect(result).toEqual({ cached: false, reason: 'shadow_gone', passed: false });
+    expect(existsSync(cachePaths(dir).file)).toBe(false);
+    expect(existsSync(cachePaths(dir).fetch)).toBe(false);
+  });
+
+  test('a drills directory replaced while the files download gets nothing either', async () => {
+    const { dir, epoch } = shadow();
+    const replace = (): void => { rmSync(join(dir, 'drills'), { recursive: true, force: true }); mkdirSync(join(dir, 'drills')); };
+    const result = await fetchEvalGates(dir, epoch, { fetch: fakeFetch(routes(replace)), hostTarget: TARGET });
+    expect(result.reason).toBe('shadow_gone');
+    expect(existsSync(cachePaths(dir).file)).toBe(false);
   });
 });
