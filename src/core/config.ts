@@ -1663,9 +1663,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #4702: per-pattern opt-out (JSON array or comma-separated names) —
   // finer than junk_patterns_enabled (all patterns) / disabled (kill-switch).
   'content_sanity.disabled_patterns',
-  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts.
+  // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts. orphan_sweep (default on) is read by write-gate-recheck.ts.
   'write_gate.external_mode',
-  'write_gate.agent_mode',
+  'write_gate.agent_mode', 'write_gate.orphan_sweep',
   // #5575 read side (local-only): label|filter and suppress|allow; read by eligibility/policy.ts.
   'trust.read_policy',
   'trust.agent_activation',

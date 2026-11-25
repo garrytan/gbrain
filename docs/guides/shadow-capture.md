@@ -1,9 +1,9 @@
 # Shadow capture: record your brain's real engine calls on your own machine
 
 Shadow capture records every call your brain makes to its storage engine, reads and writes, into private files on
-the brain's own machine. It is the first half of shadow replay: a later release replays each night's recording on
-private PGLite and Rust copies to find where the Rust engine answers differently. This release only records.
-Nothing leaves the machine, and nothing is replayed yet.
+the brain's own machine. It is the first half of [shadow replay](shadow-replay.md), which replays each night's
+recording on private PGLite and Rust copies to find where the Rust engine answers differently. Nothing leaves the
+machine. Capture alone replays nothing; run `gbrain engine shadow replay` for that.
 
 **Say to your agent:** *"Turn on shadow capture for my brain."*
 
