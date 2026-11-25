@@ -16,7 +16,7 @@
  */
 import type { RustEngine } from '../../rust-engine.ts';
 import type { LiveEmbedSegmentRow, OccurrenceChunkRow, RechunkCandidateScope, RetiredChunkVectorRow, SegmentChunkRowRow, SegmentedGenerationLock, SegmentedLivePageRow, SegmentedProjectionPage,
-  SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall } from '../../engine-sql/segmented-writes.ts';
+  SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts, SegmentedVectorInstall, SegmentedInstallClaim } from '../../engine-sql/segmented-writes.ts';
 import type { SegmentDerivationInput } from '../../page-body/derivations.ts';
 import type { ResolvedColumn } from '../../types.ts';
 import type { StoreBrain } from '../store.ts';
@@ -140,12 +140,13 @@ export const readSegmentChunkInputHashes: StoreMember<[pageId: number, chunkInde
   (brain, pageId, chunkIndexes) =>
     storeCall({ member: 'readSegmentChunkInputHashes' }, () => brain.readSegmentChunkInputHashes(pageId, [...chunkIndexes]));
 
-export const installSegmentedVectors: StoreMember<[pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly SegmentedVectorInstall[]], number> =
-  async (brain, pageId, column, model, vectors) => {
+export const installSegmentedVectors: StoreMember<[pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly SegmentedVectorInstall[], claim?: SegmentedInstallClaim], number> =
+  async (brain, pageId, column, model, vectors, claim) => {
     storeColumn('installSegmentedVectors', column.name);
     if (vectors.length === 0) return 0;
     const updates = vectors.map(v => ({ chunk_index: v.chunk_index, chunk_text: v.chunk_text, vector: Array.from(v.vector), hash: v.hash, expected: v.expected }));
-    return storeCall({ member: 'installSegmentedVectors' }, () => brain.installSegmentedVectors(pageId, model ?? undefined, updates));
+    return storeCall({ member: 'installSegmentedVectors' }, () => brain.installSegmentedVectors(pageId, model ?? undefined, updates,
+      claim ? { effectId: String(claim.effectId), token: claim.token, ...(claim.fence ? { fence: claim.fence } : {}) } : undefined));
   };
 
 export const listLiveEmbedSegments: StoreMember<[pageId: number], LiveEmbedSegmentRow[]> = async (brain, pageId) => {

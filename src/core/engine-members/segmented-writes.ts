@@ -8,6 +8,7 @@ import type {
   LiveEmbedSegmentRow, OccurrenceChunkRow, RechunkCandidateScope, SegmentChunkRowRow, SegmentedGenerationLock,
   SegmentedLivePageRow, SegmentedRechunkPageRow, SegmentedRewritePageRow, SegmentedStaleRowRow, SegmentedStaleRowsOpts,
   SegmentedVectorInstall,
+  SegmentedInstallClaim,
 } from '../engine-sql/segmented-writes.ts';
 
 export interface SegmentedWriteMembers {
@@ -46,7 +47,7 @@ export interface SegmentedWriteMembers {
   /** A segmented embed: the recorded embedding input of the page's live rows at `chunkIndexes` (engine-sql/segmented-writes.ts). */
   readSegmentChunkInputHashes(pageId: number, chunkIndexes: readonly number[]): Promise<Array<{ chunk_index: number; embedding_input_hash: string | null }>>;
   /** A segmented embed: install vectors on the live rows whose text and recorded input still match; returns how many took one (engine-sql/segmented-writes.ts). */
-  installSegmentedVectors(pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly SegmentedVectorInstall[]): Promise<number>;
+  installSegmentedVectors(pageId: number, column: ResolvedColumn, model: string | null, vectors: readonly SegmentedVectorInstall[], claim?: SegmentedInstallClaim): Promise<number>;
   /** A segmented embed: the page's live manifest rows, newest first (engine-sql/segmented-writes.ts). */
   listLiveEmbedSegments(pageId: number): Promise<LiveEmbedSegmentRow[]>;
   /** A segmented embed: a sealed page's live rows of one occurrence with their recorded inputs, in chunk_index order (engine-sql/segmented-writes.ts). */

@@ -124,6 +124,8 @@ export interface WriteCompletion {
   retainedBytes: number; terminalReservation: number; probePurges: boolean;
   /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it. */
   fence?: LeaseToken;
+  /** A successor settling a recovered publication on a multi-user Rust brain: the state and token it read. The SQL engines ignore it. */
+  recovered?: { state: string; executionToken: string | null };
 }
 
 /**

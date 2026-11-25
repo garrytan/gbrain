@@ -251,7 +251,7 @@ export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRe
 /** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
 export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
-import { fenceOpts } from './host-fence.ts';
+import { fenceFor, fenceOpts } from './host-fence.ts';
 export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   return engine.readWriteRequestProgress(id, { signal });
 }
@@ -960,7 +960,9 @@ export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leas
 export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersistenceCounters' | 'lockWriteRequest' | 'completeWriteRow' | 'declarePersistence' | 'requireSynchronousCommit' | 'compactTerminalIntent'>, row: WriteRequest, state: 'committed' | 'conflict' | 'failed' | 'cancelled',
   outcome: Record<string, unknown>, error?: { code: string; message: string; detail?: unknown },
   /** #5984: the caller's transaction already declared the protocol, set synchronous_commit, locked these counters and this row FOR UPDATE. */
-  locked?: WriteRequest): Promise<WriteRequest> {
+  locked?: WriteRequest,
+  /** L5 (G8): the successor settling a recovered publication. On a multi-user Rust brain the engine checks the current host fence and this recovery state, then retires the predecessor's claim epoch. */
+  recovered?: true): Promise<WriteRequest> {
   // Every acknowledged terminal state survives a crash, including cancellation
   // and pre-publication failures that do not enter the file coordinator.
   let current = locked;
@@ -975,7 +977,8 @@ export async function completeWrite(tx: SqlEngine & Pick<BrainEngine, 'lockPersi
     { fix: ownerStatusFix(row.source_id) });
   if (isTerminal(current)) return current;
   const completion = terminalCompletion(tx, row, current, state, outcome, error);
-  const terminal = await tx.completeWriteRow({ ...completion, ...fenceOpts(tx) });
+  const recovery = recovered && fenceFor(tx) ? { recovered: { state: current.state, executionToken: current.execution_token ?? null } } : {};
+  const terminal = await tx.completeWriteRow({ ...completion, ...fenceOpts(tx), ...recovery });
   if (!terminal) throw capacityError('terminal result and effects exceed their reserved bounded encoding');
   return finishTerminal(tx, row, current, terminal, error);
 }

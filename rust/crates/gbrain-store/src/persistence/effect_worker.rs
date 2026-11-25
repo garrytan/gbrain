@@ -17,7 +17,7 @@ use crate::env::Env;
 use crate::error::{Result, StoreError};
 use crate::fence;
 use crate::kv::{KvRead, KvWrite};
-use crate::leases::{CLAIM_EFFECT, LeaseToken};
+use crate::leases::{CLAIM_EFFECT, LeaseToken, LostReason, lease_lost};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
@@ -214,6 +214,23 @@ pub struct EffectClaim {
     /// The caller's host registration (lane L5). The claim records its lease name and epoch.
     #[serde(default)]
     pub fence: Option<LeaseToken>,
+    /// The owner keys the caller proved dead (as `select_claimable_effect` takes them): a multi-user stamp may take
+    /// a running effect held by one of them before its lease runs out.
+    #[serde(default)]
+    pub dead_owners: Vec<String>,
+}
+
+/// Whether a stamp may take effect `e` now (multi-user): queued, or running with a lapsed lease or a dead owner's
+/// claim, and no recovery record (a recovering effect keeps its own path). A finished or failed effect is not.
+fn effect_claimable_now(e: &EffectRecord, now: i64, dead_owners: &[String]) -> bool {
+    e.recovery.is_none()
+        && match e.state.as_str() {
+            "queued" => true,
+            "running" => {
+                e.claim_expires_at_us.is_some_and(|t| t < now) || dead_owner_claim(e, dead_owners)
+            }
+            _ => false,
+        }
 }
 
 pub(crate) fn stamp_effect_claim_in(
@@ -237,6 +254,51 @@ pub(crate) fn stamp_effect_claim_in(
     e.updated_at_us = now;
     write_effect(tx, &e)?;
     Ok(Some(e.to_row()))
+}
+
+/// The effect claim a vector install runs under (lane L5, G2): the install's own write asserts the host fence and the
+/// claim's epoch, so a worker whose host lease was taken over during its provider call installs nothing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallClaim {
+    pub effect_id: String,
+    /// The execution token the worker's claim minted.
+    pub token: String,
+    /// The caller's host registration.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
+}
+
+impl Store {
+    /// Inside the install's write transaction, on a multi-user store: the host's lease is held now, the effect is
+    /// still `running` under `claim.token`, and the claim was taken under this fence's lease name and epoch. Refuses
+    /// `lease_lost` (nothing written) otherwise. A plain store never calls it.
+    pub(crate) fn assert_install_claim(
+        &self,
+        tx: &mut dyn KvWrite,
+        claim: &InstallClaim,
+    ) -> Result<()> {
+        let fence = claim.fence.as_ref();
+        fence::begin(self, tx, fence, "install_vectors")?;
+        let id = effect_id(&claim.effect_id)?;
+        let token = pg_uuid(&claim.token)?;
+        let Some(fence) = fence else {
+            return Ok(());
+        };
+        fence::claim_held(tx, CLAIM_EFFECT, &id.to_string(), Some(fence))?;
+        let live = effect_by_id(&*tx, id)?.is_some_and(|e| {
+            e.state == "running" && e.execution_token.as_deref() == Some(token.as_str())
+        });
+        if !live {
+            return Err(lease_lost(
+                LostReason::ClaimEpochMismatch,
+                &fence.name,
+                fence.epoch,
+                None,
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One claimed effect a settle statement names: its id and its claim's execution token.
@@ -498,6 +560,13 @@ impl Store {
     pub fn stamp_effect_claim(&self, claim: &EffectClaim) -> Result<Option<Value>> {
         self.write(|tx| {
             fence::begin(self, tx, claim.fence.as_ref(), "stamp_effect_claim")?;
+            // Multi-user: only an effect that is claimable now, read in this same write (see `effect_claimable_now`).
+            if self.multiuser()
+                && let Some(e) = effect_by_id(&*tx, effect_id(&claim.id)?)?
+                && !effect_claimable_now(&e, self.env.now_micros(), &claim.dead_owners)
+            {
+                return Ok(None);
+            }
             let row = stamp_effect_claim_in(tx, &*self.env, claim)?;
             if row.is_some() {
                 let id = effect_id(&claim.id)?.to_string();

@@ -11,6 +11,7 @@
  * in the page's live body generation. It never reads a segment.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { SegmentedInstallClaim } from '../engine-sql/segmented-writes.ts';
 import type { ChunkInput } from '../types.ts';
 import { wrapChunkTextsForStoredMode } from '../embedding-context.ts';
 import { embeddingInputHash, plainEmbeddingTier } from '../embedding-input-hash.ts';
@@ -37,6 +38,8 @@ export interface SegmentedEmbedOpts {
   approvedCapUsd?: number;
   /** Runs inside the install transaction after the page guard (ownership, effect claim); throwing installs nothing. */
   beforeInstall?: (tx: BrainEngine) => Promise<void>;
+  /** An effect's claim: a multi-user Rust install checks it, with the host fence, in the install's own write (L5). */
+  effectClaim?: SegmentedInstallClaim;
   /** Runs before each wait for the page's embedding lease (page-embedding-lease.ts); an effect renews its claim there. */
   whileWaiting?: () => Promise<void>;
 }
@@ -109,7 +112,7 @@ export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmb
   const provenance = embeddingInputContext(target, page.title, null, []);
   return { pending: rows.length, installed: await installSegmentedVectors(engine, page, target, chunks.map((chunk, i) => ({ chunk_index: chunk.chunk_index,
     chunk_text: chunk.chunk_text, vector: vectors[i]!, hash: embeddingInputHash(provenance, tier, chunk), expected: asRead.get(chunk.chunk_index) ?? null })),
-    async tx => { await lease.assertHeld(tx); await opts.beforeInstall?.(tx); }) };
+    async tx => { await lease.assertHeld(tx); await opts.beforeInstall?.(tx); }, opts.effectClaim) };
 }
 
 /** The recorded embedding input of a segmented page's live rows at `chunkIndexes`, as read now (null: none recorded). */
@@ -132,7 +135,7 @@ export interface SegmentedVectorUpdate { chunk_index: number; chunk_text: string
  * the lock; throwing or returning false installs nothing. Returns the rows that took a vector.
  */
 export async function installSegmentedVectors(engine: BrainEngine, page: SegmentedEmbedPage, target: Awaited<ReturnType<typeof embeddingWriteTarget>>,
-  vectors: readonly SegmentedVectorUpdate[], beforeInstall?: (tx: BrainEngine) => Promise<void | boolean>): Promise<number> {
+  vectors: readonly SegmentedVectorUpdate[], beforeInstall?: (tx: BrainEngine) => Promise<void | boolean>, claim?: SegmentedInstallClaim): Promise<number> {
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
     if (await beforeInstall?.(tx) === false) return 0;
@@ -141,7 +144,7 @@ export async function installSegmentedVectors(engine: BrainEngine, page: Segment
     if (!current || current.slug !== page.slug || current.title !== page.title
       || current.contextual_retrieval_mode !== page.contextual_retrieval_mode
       || now.column.name !== target.column.name || now.provenanceModel !== target.provenanceModel) return 0;
-    return tx.installSegmentedVectors(page.id, target.column, target.model, vectors);
+    return tx.installSegmentedVectors(page.id, target.column, target.model, vectors, claim);
   });
 }
 

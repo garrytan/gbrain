@@ -268,6 +268,13 @@ export interface SegmentedStaleRowsOpts { beforeChunkIndex: number | null; limit
 /** One vector to install: the row's chunk_index and text, the vector, its recorded input and the input read before. */
 export interface SegmentedVectorInstall { chunk_index: number; chunk_text: string; vector: Float32Array; hash: string; expected: string | null }
 
+/**
+ * The effect claim an embedding effect's install runs under (L5): on a multi-user Rust brain the install's own write
+ * checks the host fence and the claim's epoch, so a worker whose host lease was taken over during its provider call
+ * installs nothing. The SQL engines and a plain Rust brain ignore it (they check the claim row under its lock).
+ */
+export interface SegmentedInstallClaim { effectId: number | string; token: string; fence?: import('./lease-token.ts').LeaseToken }
+
 /** A live manifest row of a segmented page, as an embed walks its segments. */
 export interface LiveEmbedSegmentRow { occurrence_id: number | string; sha256: Uint8Array; entry_state: unknown }
 
