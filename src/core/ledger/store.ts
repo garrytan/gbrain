@@ -18,6 +18,7 @@ import { opError } from '../ops/contract.ts';
 import type { AgentVerb, RecipientClass, SpendPurpose } from '../agent-verbs.ts';
 import { submitPageMutation, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
+import { isTerminal } from '../persistence/model.ts';
 import { grantedWriteSource, writeGrantRefusal } from '../persistence/write-grant.ts';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
@@ -35,6 +36,8 @@ import type { Action } from '../agent-output.ts';
 export const HOLD_TTL_MS = 24 * 3600 * 1000;
 /** Actions one ledger read scans at most; past it the read is partial and names the narrowing filters. */
 export const LEDGER_SCAN_MAX = 5000;
+/** The earliest a ledger read reaches back, in days; an older since is clamped to it. */
+export const MAX_SINCE_DAYS = 3660;
 const RESERVE_LOCK_ID = 'gbrain-ledger-reserve';
 const RESERVE_WAIT_MS = 10_000;
 
@@ -114,15 +117,20 @@ export async function scanActions(engine: BrainEngine, reader: LedgerReader, sin
 }
 
 /** Budget usage for windowed rules, from one scan of the caller's readable actions. null: the scan was partial. */
-export function usageLookup(engine: BrainEngine, reader: LedgerReader, now: Date) {
+export function usageLookup(engine: BrainEngine, reader: LedgerReader, now: Date, excludeSlug?: string) {
   return async (rules: readonly PolicyRule[], q: { verb: AgentVerb }): Promise<Map<string, WindowUsage | null>> => {
     const out = new Map<string, WindowUsage | null>();
     const windowed = rules.filter(r => r.limit && r.window && r.window !== 'per_action');
     if (!windowed.length) return out;
+    if (reader.kind === 'none') {
+      for (const r of windowed) out.set(r.id, null);
+      return out;
+    }
     const earliest = new Date(Math.min(...windowed.map(r => windowStart(r.window as BudgetWindow, now).getTime())));
     const scan = await scanActions(engine, reader, earliest, new Date(now.getTime() + 1));
+    const rows = excludeSlug ? scan.rows.filter(row => row.slug !== excludeSlug) : scan.rows;
     for (const r of windowed) {
-      out.set(r.id, scan.partial ? null : windowUsage(scan.rows, { verb: q.verb, merchant: r.merchant, currency: r.limit!.currency, since: windowStart(r.window as BudgetWindow, now) }, now));
+      out.set(r.id, scan.partial ? null : windowUsage(rows, { verb: q.verb, merchant: r.merchant, currency: r.limit!.currency, since: windowStart(r.window as BudgetWindow, now) }, now));
     }
     return out;
   };
@@ -185,10 +193,14 @@ async function writeAction(ctx: OperationContext, slug: string, fm: Record<strin
 }
 
 async function priorWrite(ctx: OperationContext, id: string): Promise<string | null> {
+  let prior: Awaited<ReturnType<typeof getWriteRequest>> = null;
   try {
-    const prior = await withoutCallerAccess(async () => getWriteRequest(ctx.engine as never, await requestPrincipalForContext(trustedCtx(ctx)), id));
-    return prior?.slug ?? null;
+    prior = await withoutCallerAccess(async () => getWriteRequest(ctx.engine as never, await requestPrincipalForContext(trustedCtx(ctx)), id));
   } catch { return null; } // silent-read-ok: no local writer registered yet means no earlier write of this request
+  if (prior && !isTerminal(prior)) {
+    throw opError('write_pending', 'The earlier call with this request_id is still being written, so it was not repeated.', 'Retry in a few seconds with the same request_id.', { retryable: true });
+  }
+  return prior?.slug ?? null;
 }
 
 function moneyOf(input: LogActionInput): ActionRecord['money'] | undefined {
@@ -209,6 +221,10 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
   const replay = await priorWrite(ctx, wid);
   if (replay) {
     const stored = await readStored(ctx.engine, replay);
+    if (stored && ((input.action_id ?? replay) !== replay || (input.action_id === undefined) !== (stored.record.request_id === requestId))) {
+      throw opError('idempotency_conflict', `request_id ${requestId} already ${stored.record.request_id === requestId ? 'created' : 'moved'} ${replay}, so this different call was not applied.`,
+        'Use a new request_id for each new call; settle a reservation with its action_id and a request_id of its own.');
+    }
     if (stored) return { action_id: replay, status: stored.record.action.status, claim_basis: stored.record.claim_basis, evidence: (stored.record.evidence ?? []).map(e => ({ ref: e.ref, resolved: stored.record.claim_basis === 'evidenced' })), replayed: true };
   }
   const existing = input.action_id ? await readStored(ctx.engine, input.action_id) : null;
@@ -259,7 +275,12 @@ export async function logAction(ctx: OperationContext, input: LogActionInput, no
   };
   const checked = validateActionFrontmatter(fm);
   if (!checked.ok) throw invalid(checked.field, checked.message);
-  if (input.supersedes && !(await readStored(ctx.engine, input.supersedes))) throw invalid('supersedes', `supersedes names ${input.supersedes}, which is not an action page`);
+  if (input.supersedes) {
+    const target = await readStored(ctx.engine, input.supersedes);
+    if (!target || !readable(reader, target.frontmatter) || (reader.kind !== 'brain' && target.record.action.actor !== actor)) {
+      throw opError('action_not_found', `No action ${input.supersedes} that you logged was found, so nothing was logged.`, 'Set supersedes to the action_id of an action you logged.');
+    }
+  }
   const slug = input.action_id ?? actionSlug(new Date(at), actor, requestId);
   await writeAction(ctx, slug, fm, summary, wid, existing?.revision);
   return { action_id: slug, status, claim_basis: claim, evidence: checks, replayed: false, ...(prior?.hold && !keepHold ? { settled_hold: true } : {}) };
@@ -293,15 +314,14 @@ export async function policyReserve(ctx: OperationContext, input: ReserveInput, 
   assertLedgerWriteGrant(ctx, remote);
   const reader = ledgerReader(remote);
   return underReserveLock(ctx.engine, async () => {
-    const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote), { usage: usageLookup(ctx.engine, reader, now) });
-    if (answer.decision === 'deny') return { ...answer, reservation: null };
     const actor = actorFor(remote);
     const requestId = input.request_id ?? randomUUID();
     const replay = await priorWrite(ctx, writeRequestId(actor, requestId));
-    if (replay) {
-      const stored = await readStored(ctx.engine, replay);
-      if (stored?.record.hold) return { ...answer, reservation: { action_id: replay, amount: `${stored.record.hold.amount} ${stored.record.hold.currency}`, expires_at: stored.record.hold.expires_at }, replayed: true };
-    }
+    const stored = replay ? await readStored(ctx.engine, replay) : null;
+    const answer = await checkPolicy(ctx.engine, { verb: input.verb, amount: input.amount, merchant: input.merchant, to: input.to }, callerScopes(remote),
+      { usage: usageLookup(ctx.engine, reader, now, stored ? replay! : undefined) });
+    if (stored?.record.hold) return { ...answer, reservation: { action_id: replay!, amount: `${stored.record.hold.amount} ${stored.record.hold.currency}`, expires_at: stored.record.hold.expires_at }, replayed: true };
+    if (answer.decision === 'deny') return { ...answer, reservation: null };
     const summary = input.summary.trim();
     if (!summary || summary.length > MAX_SUMMARY) throw invalid('summary', `summary is required, at most ${MAX_SUMMARY} characters`);
     const at = now.toISOString();
@@ -364,9 +384,10 @@ export async function ledgerReport(engine: BrainEngine, reader: LedgerReader, q:
 export function parseSince(raw: unknown, now: Date): Date | null {
   if (raw === undefined || raw === null || raw === '') return new Date(now.getTime() - 30 * 86_400_000);
   if (typeof raw !== 'string') return null;
+  const earliest = now.getTime() - MAX_SINCE_DAYS * 86_400_000;
   const days = /^(\d{1,4})d$/.exec(raw.trim());
-  if (days) return new Date(now.getTime() - Number(days[1]) * 86_400_000);
+  if (days) return new Date(Math.max(earliest, now.getTime() - Number(days[1]) * 86_400_000));
   const t = Date.parse(raw);
-  return Number.isNaN(t) || !/^\d{4}-\d{2}-\d{2}/.test(raw) ? null : new Date(t);
+  return Number.isNaN(t) || !/^\d{4}-\d{2}-\d{2}/.test(raw) ? null : new Date(Math.max(earliest, t));
 }
 

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 318119,
-    "stdoutSha256": "4229a6764f0aedd324e49cc649d0ac1960691e25e995b7c4ce917ab0f6b9400a",
+    "stdoutBytes": 318143,
+    "stdoutSha256": "6d31a583fb60710197bccd9b56e38bfe2752da39e56c31afb5c6d53128a26977",
     "toolNames": [
       "remember",
       "entity",
@@ -5100,7 +5100,7 @@
               "type": "string"
             },
             "since": {
-              "description": "Start: <n>d (default 30d) or an ISO date.",
+              "description": "Start: <n>d (default 30d) or an ISO date, at most 3660 days back.",
               "type": "string"
             },
             "verb": {

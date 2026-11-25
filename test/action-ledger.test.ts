@@ -24,7 +24,7 @@ import { parsePolicyFence, renderPolicyFence, type PolicyRule } from '../src/cor
 import type { TerminalProbe } from '../src/core/policy/authority.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { actionSlug, validateActionFrontmatter } from '../src/core/ledger/action.ts';
-import { HOLD_TTL_MS, confirmAction, ledgerReader, ledgerReport, logAction, policyReserve, usageLookup } from '../src/core/ledger/store.ts';
+import { HOLD_TTL_MS, MAX_SINCE_DAYS, confirmAction, ledgerReader, ledgerReport, logAction, parseSince, policyReserve, usageLookup } from '../src/core/ledger/store.ts';
 import { ledgerTotals, renderDigest, windowStart, type StoredAction } from '../src/core/ledger/totals.ts';
 import { runLedger } from '../src/commands/ledger.ts';
 import { ruleFromArgs } from '../src/commands/policy.ts';
@@ -68,6 +68,18 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect(page!.frontmatter.visibility).toBe('private');
     expect((page!.frontmatter.action as Record<string, unknown>).actor).not.toBe('');
     expect(page!.frontmatter.claim_basis).toBe('evidenced');
+  });
+
+  test('a retry while the first write is still pending answers write_pending, never a second, different write', async () => {
+    const ctx = ctxFor(engine, false);
+    const request_id = randomUUID();
+    const input = { verb: 'book' as const, summary: 'Booked a court', estimated: true, request_id };
+    const first = await logAction(ctx, input);
+    await engine.executeRaw("UPDATE persistence_requests SET state='running' WHERE slug=$1", [first.action_id]);
+    const pending = await caught(() => logAction(ctx, input));
+    expect((pending as { code: string }).code).toBe('write_pending');
+    await engine.executeRaw("UPDATE persistence_requests SET state='committed' WHERE slug=$1", [first.action_id]);
+    expect(await logAction(ctx, input)).toMatchObject({ action_id: first.action_id, replayed: true });
   });
 
   test('an amount with no readable evidence and no estimated: true is refused (money_unevidenced); a URL is not evidence', async () => {
@@ -142,6 +154,21 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect((steal as { code: string }).code).toBe('action_not_found');
   });
 
+  test('a member cannot supersede, and so hide, an action it did not log', async () => {
+    const owned = await logAction(ctxFor(engine, false), { verb: 'spend', summary: 'Paid the rent', counterparty: 'bank-example', spent: 900, currency: 'USD', estimated: true });
+    const hide = await caught(() => withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Nothing', spent: 0, currency: 'USD', estimated: true, supersedes: owned.action_id })));
+    expect((hide as { code: string }).code).toBe('action_not_found');
+    const own = await withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Lunch', spent: 12, currency: 'USD', estimated: true }));
+    const fixed = await withCallerAccess(ALICE, () => logAction(ctxFor(engine, true), { verb: 'spend', summary: 'Lunch, corrected', spent: 10, currency: 'USD', estimated: true, supersedes: own.action_id }));
+    expect(fixed.status).toBe('done');
+  });
+
+  test('a caller that reads no actions gets ask on a budget, never allow', async () => {
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'coffee-day', verb: 'spend', decision: 'allow', limit: { amount: 50, currency: 'USD' }, window: 'day' }], change: 'test budget', probe: owner });
+    const answer = await withCallerAccess(GUEST, () => checkPolicy(engine, { verb: 'spend', amount: { amount: 5, currency: 'USD' } }, ['owner'], { usage: usageLookup(engine, ledgerReader(true), new Date()) }));
+    expect(answer.decision).toBe('ask');
+  });
+
   test('a connection whose write grant is another source records nothing', async () => {
     const elsewhere = { ...ctxFor(engine, true), auth: { sourceId: 'source-a' } } as unknown as OperationContext;
     const before = (await engine.listPages({ type: 'agent_action' as never, sourceId: 'default' })).length;
@@ -172,6 +199,29 @@ for (const kind of testBackends()) describe(`action ledger (L2, ${kind}, repo-le
     expect(settled.settled_hold).toBe(true);
     const after = await checkPolicy(engine, { verb: 'spend', amount: { amount: 10, currency: 'USD' }, merchant: 'grocer-example' }, ['owner'], { usage: usageLookup(engine, ledgerReader(false), new Date()) });
     expect(after.budgets?.[0]).toMatchObject({ spent: 28, held: 30 });
+    for (const status of ['cancelled', 'failed'] as const) {
+      const r = await policyReserve(ctx, { verb: 'spend', amount: { amount: 5, currency: 'USD' }, merchant: 'grocer-example', summary: 'Bread' });
+      const released = await logAction(ctx, { verb: 'spend', action_id: r.reservation!.action_id, status });
+      expect(released.settled_hold).toBe(true);
+    }
+    const released = await checkPolicy(engine, { verb: 'spend', amount: { amount: 10, currency: 'USD' }, merchant: 'grocer-example' }, ['owner'], { usage: usageLookup(engine, ledgerReader(false), new Date()) });
+    expect(released.budgets?.[0]).toMatchObject({ spent: 28, held: 30 });
+  });
+
+  test('a reserve retry returns the same reservation even when its own hold fills the budget; settling with its request_id is refused', async () => {
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'books-day', verb: 'spend', decision: 'allow', limit: { amount: 50, currency: 'USD' }, window: 'day', merchant: 'bookshop-example' }, { id: 'spend', verb: 'spend', decision: 'deny' }], change: 'test budget', probe: owner });
+    const ctx = ctxFor(engine, false);
+    const rid = randomUUID();
+    const input = { verb: 'spend' as const, amount: { amount: 40, currency: 'USD' }, merchant: 'bookshop-example', summary: 'A book', request_id: rid };
+    const first = await policyReserve(ctx, input);
+    expect(first.decision).toBe('allow');
+    const again = await policyReserve(ctx, input);
+    expect(again).toMatchObject({ decision: 'allow', replayed: true, reservation: { action_id: first.reservation!.action_id } });
+    const misuse = await caught(() => logAction(ctx, { verb: 'spend', action_id: first.reservation!.action_id, status: 'done', spent: 40, currency: 'USD', estimated: true, request_id: rid }));
+    expect((misuse as { code: string }).code).toBe('idempotency_conflict');
+    const settled = await logAction(ctx, { verb: 'spend', action_id: first.reservation!.action_id, status: 'done', spent: 40, currency: 'USD', estimated: true });
+    expect(settled.settled_hold).toBe(true);
+    await applyPolicyChange(engine, { scope: 'owner', rules: [{ id: 'spend', verb: 'spend', decision: 'ask' }], change: 'restore', probe: owner });
   });
 
   test('policy_reserve over MCP returns the decision, requires_approval and a reservation that log_action settles', async () => {
@@ -219,6 +269,14 @@ describe('budget windows', () => {
     expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 5, currency: 'USD' } }).decision).toBe('ask');
     expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 5, currency: 'USD' } }, new Map([['b', { spent: 40, held: 0 }]])).decision).toBe('allow');
     expect(evaluatePolicy(rules, { verb: 'spend', amount: { amount: 15, currency: 'USD' } }, new Map([['b', { spent: 40, held: 0 }]])).decision).toBe('ask');
+  });
+
+  test('a ledger read reaches back at most MAX_SINCE_DAYS, so one call runs a bounded number of month queries', () => {
+    const now = new Date('2026-11-25T12:00:00Z');
+    const earliest = now.getTime() - MAX_SINCE_DAYS * 86_400_000;
+    expect(parseSince('9999d', now)!.getTime()).toBe(earliest);
+    expect(parseSince('0001-01-01', now)!.getTime()).toBe(earliest);
+    expect(parseSince('7d', now)!.getTime()).toBe(now.getTime() - 7 * 86_400_000);
   });
 
   test('weeks start Monday UTC and months on the first', () => {

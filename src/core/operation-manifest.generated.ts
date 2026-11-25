@@ -4399,7 +4399,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "params": {
       "since": {
         "type": "string",
-        "description": "Start: <n>d (default 30d) or an ISO date."
+        "description": "Start: <n>d (default 30d) or an ISO date, at most 3660 days back."
       },
       "verb": {
         "type": "string",

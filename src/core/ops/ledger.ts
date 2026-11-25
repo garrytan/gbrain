@@ -70,7 +70,7 @@ const ledger: Operation = {
   name: 'ledger',
   description: 'Totals of the outside actions you can read for a window: spent and saved per currency, split by evidenced, user_confirmed and estimated, by verb and by counterparty, plus live budget holds. Computed by gbrain; a window too large to read returns state partial and the narrower call.',
   params: {
-    since: { type: 'string', description: 'Start: <n>d (default 30d) or an ISO date.' },
+    since: { type: 'string', description: 'Start: <n>d (default 30d) or an ISO date, at most 3660 days back.' },
     verb: { type: 'string', enum: [...AGENT_VERBS], description: 'Only this verb.' },
     counterparty: { type: 'string', description: 'Only this counterparty.' },
   },

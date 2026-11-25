@@ -38,7 +38,9 @@ The owner, local commands and the owner's own agents read every action. A member
 
 ## Budget holds
 
-`policy_reserve` checks the [agent policy](agent-policy.md#budgets), including its day, week and month budgets, and holds the amount for 24 hours in one step, so two agents cannot both be allowed the last of a budget. It returns the `policy_check` answer and a reservation. After acting, the agent calls `log_action` with the reservation's `action_id` and `status: "done"`, which settles the hold. A hold that expires without a result counts toward nothing and is listed in the weekly digest as unconfirmed. A deny holds nothing.
+`policy_reserve` checks the [agent policy](agent-policy.md#budgets), including its day, week and month budgets, and holds the amount for 24 hours in one step, so two agents cannot both be allowed the last of a budget. It returns the `policy_check` answer and a reservation. After acting, the agent calls `log_action` with the reservation's `action_id` and `status: "done"`, which settles the hold. A hold that expires without a result counts toward nothing and is listed in the weekly digest as unconfirmed. A deny holds nothing. A retry with the same `request_id` returns the same reservation.
+
+A budget counts the actions its caller can read: a member's own, or every action for the owner. A caller that reads no actions, such as a guest, gets `ask` on every budget.
 
 Budgets are advice. The harness, for example gskills' guard, stays the place that enforces a money cap.
 
@@ -46,7 +48,7 @@ Budgets are advice. The harness, for example gskills' guard, stays the place tha
 
 | Command | What it does |
 |---|---|
-| `gbrain ledger [--since 30d] [--verb <verb>] [--counterparty <name>] [--json]` | Totals: spent and saved per currency, split into with evidence, confirmed by you and estimated; counts by verb and counterparty; live and expired holds. |
+| `gbrain ledger [--since 30d] [--verb <verb>] [--counterparty <name>] [--json]` | Totals: spent and saved per currency (`--since` reaches back at most 3660 days), split into with evidence, confirmed by you and estimated; counts by verb and counterparty; live and expired holds. |
 | `gbrain ledger add <verb> --summary <text> [options]` | Records an action yourself. Options: `--spent <n>` or `--saved <n> --period one_time\|monthly\|yearly`, `--currency USD`, `--estimated`, `--evidence <slug>` (repeatable), `--counterparty <name>`, `--status`, `--at <iso>`. |
 | `gbrain ledger confirm <action_id>` | Marks a done action's amounts as confirmed by you. Runs only in your own terminal, never from an agent session. |
 | `gbrain ledger digest --week [--save]` | The last 7 days as text, with no model call; `--save` keeps it as a private page under `actions/weekly/`. |
