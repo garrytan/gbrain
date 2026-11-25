@@ -29,7 +29,7 @@ async function currentRevision(brain: StoreBrain, slug: string, sourceId: string
 }
 
 export const putPage: StoreMember<[slug: string, page: PageInput, opts?: PageWriteOptions], Page> = async (brain, slug, page, opts) => {
-  const options = takeOptions('putPage', opts, ['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force'], ['inline']);
+  const options = takeOptions('putPage', opts, ['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'contextualRetrieval'], ['inline']);
   const sourceId = options.sourceId as string | undefined;
   // The store refuses a second live page of the source that records `source_path` (page_identity_changed), comparing
   // paths as written. A source-root source below its repository root also has the legacy repository-root spelling of
