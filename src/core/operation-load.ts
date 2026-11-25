@@ -121,7 +121,9 @@ const OP_AREAS: Record<string, string> = {
   schema_explain_type: 'schema', schema_review_orphans: 'schema',
   schema_apply_mutations: 'schema', reload_schema_pack: 'schema',
   // discovery
-  request_tools: 'discovery',
+  request_tools: 'discovery', capabilities: 'discovery',
+  // agent policy (advisory rules for outside actions)
+  policy_check: 'agent-policy', agent_policy: 'agent-policy',
 };
 
 const finalized = new WeakSet<Operation>();

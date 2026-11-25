@@ -552,6 +552,25 @@
     {
       "handlers": [
         "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/policy",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/policy/accept",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
         "express.json()",
         "<inline>"
       ],

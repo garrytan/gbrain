@@ -159,6 +159,9 @@
       "pages": [
         "./commands/pages.ts"
       ],
+      "policy": [
+        "./commands/policy.ts"
+      ],
       "pricing": [
         "./commands/pricing.ts"
       ],

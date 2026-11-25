@@ -2948,6 +2948,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
+          "name": "policy_valid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "conversation": null,
             "fix": "preview links: gbrain facts relink --dry-run",
@@ -4512,7 +4519,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+bd981792 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

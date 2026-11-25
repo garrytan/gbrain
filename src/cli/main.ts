@@ -154,6 +154,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
   'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
+  policy: async () => (await import('../commands/policy.ts')).runPolicy as never, // usage prints before the engine
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
   // runSources's `--help`/`-h`/undefined-subcommand branch calls printHelp()

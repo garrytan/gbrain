@@ -3143,6 +3143,7 @@
           "azure_openai_use_entra?: string | undefined",
           "backup?: { check_enabled?: boolean | string; check_interval_days?: number | string; } | undefined",
           "brain?: { audience?: string; } | undefined",
+          "brain_first?: { policy_line?: string; } | undefined",
           "chat_fallback_chain?: string[] | undefined",
           "chat_fallback_on_refusal?: boolean | undefined",
           "chat_model?: string | undefined",
@@ -7488,6 +7489,7 @@
           "surfaceCeiling?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "takesHoldersAllowList?: string[] | undefined",
           "thinClient?: boolean | undefined",
+          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; } | undefined",
           "transport?: \"stdio\" | \"http\" | undefined",
           "viaSubagent?: boolean | undefined",
           "writeWaitMs?: number | undefined"

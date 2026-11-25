@@ -1059,6 +1059,10 @@
       },
       {
         "category": "brain",
+        "name": "policy_valid"
+      },
+      {
+        "category": "brain",
         "name": "unlinked_facts"
       },
       {

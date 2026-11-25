@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 316192,
-    "stdoutSha256": "21a97af9629febdf6e3510ffeb059577e5d67e31b8f4b8ac93fe1feafe86b3a1",
+    "stdoutBytes": 319035,
+    "stdoutSha256": "a9c2f3679e865850c1064bd5a7c36be68224afd85fad14d7df686780ea91ae8d",
     "toolNames": [
       "remember",
       "entity",
@@ -100,6 +100,9 @@
       "storage_register",
       "storage_update",
       "reveal_secret",
+      "policy_check",
+      "agent_policy",
+      "capabilities",
       "submit_job",
       "get_job",
       "wait_job",
@@ -4792,6 +4795,113 @@
           "required": [
             "id"
           ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy).",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "policy_check",
+        "parameters": {
+          "amount": "number?",
+          "currency": "string?",
+          "merchant": "string?",
+          "to": "string?",
+          "verb": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "amount": {
+              "description": "Money involved, with currency.",
+              "type": "number"
+            },
+            "currency": {
+              "description": "Three-letter currency code for amount, like USD.",
+              "type": "string"
+            },
+            "merchant": {
+              "description": "Merchant or service, when a rule may name it.",
+              "type": "string"
+            },
+            "to": {
+              "description": "Who it reaches: self, household, known or new.",
+              "enum": [
+                "self",
+                "household",
+                "known",
+                "new"
+              ],
+              "type": "string"
+            },
+            "verb": {
+              "description": "The outside action.",
+              "enum": [
+                "send",
+                "publish",
+                "spend",
+                "delete",
+                "sign_up",
+                "call",
+                "book",
+                "cancel",
+                "dispute",
+                "submit",
+                "return",
+                "use",
+                "renew",
+                "remind",
+                "other"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "verb"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "The user's agent policy rules that apply to you, as rows, with its state and revision. Advisory; call policy_check for one action.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "agent_policy",
+        "parameters": {},
+        "required_scopes": [],
+        "schema": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Which gbrain ops this installation serves and this connection can call now, listed or not, with the fix for each one that is not callable.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "capabilities",
+        "parameters": {
+          "ops": "array?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "ops": {
+              "description": "Op names to check (default: policy_check, agent_policy, capabilities).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [],
           "type": "object"
         },
         "scope": "read"

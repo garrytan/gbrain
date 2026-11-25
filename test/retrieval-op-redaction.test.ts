@@ -205,6 +205,7 @@ const SWEEP: Record<string, Row> = {
   takes_scorecard: { args: {} },
   takes_calibration: { args: {} },
   whoami: { args: {} },
+  capabilities: { args: {} },
   sources_list: { args: {} },
   sources_status: { args: { id: SRC } },
   sources_resolve_path: { skip: 'needs a Git checkout of the source; returns paths, slugs, states and counts, never page text; test/sources-resolve-path.test.ts owns it' },
