@@ -121,6 +121,7 @@ describe('request_tools {surface} on stdio', () => {
   test('GST-3791: a Codex client is told the widened tools cannot be called this turn, with the lasting route', async () => {
     const s = await session(['--surface', 'starter'], {}, 'codex-mcp-client');
     try {
+      expect(await names(s)).not.toContain('get_health');
       const widened = parsed(await s.client.callTool({ name: 'request_tools', arguments: { surface: 'full' } })) as { surface: string; tools: Array<{ name: string }>; note: string };
       expect(widened.surface).toBe('full');
       expect(widened.tools.map(t => t.name)).toContain('get_health');
@@ -128,7 +129,10 @@ describe('request_tools {surface} on stdio', () => {
       expect(widened.note).toContain('gbrain setup codex --surface full');
       expect(widened.note).not.toContain('Call the new tools by name now');
       await waitFor(() => s.listChanged() > 0, { timeoutMs: 10_000 });
-      expect(await names(s)).toContain('get_health');
+      const described = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['get_health', 'search'] } })) as { note: string };
+      expect(described.note).toContain('`get_health` is now listed by this server.');
+      expect(described.note).toContain('`search` is already in your tool list; call it directly.');
+      expect(described.note).toContain('Codex does not reload its tool list');
     } finally {
       await s.close();
     }
@@ -156,11 +160,18 @@ describe('request_tools {surface} on stdio', () => {
       expect(res.note).toContain('OpenClaw builds its tool list when a run starts');
       expect(res.note).not.toContain('call them directly');
       await waitFor(() => s.listChanged() > 0, { timeoutMs: 10_000 });
-      expect(await names(s)).toContain('get_page');
+      const sentBefore = s.listChanged();
 
       const again = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['get_page'] } })) as { note: string };
       expect(again.note).toContain('OpenClaw builds its tool list when a run starts');
       expect(again.note).not.toContain('already in your tool list');
+      expect(again.note).not.toContain('tools/list_changed was sent');
+      expect(s.listChanged()).toBe(sentBefore);
+
+      // The next run re-reads the list; from then on the tool is the client's own.
+      expect(await names(s)).toContain('get_page');
+      const relisted = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['get_page'] } })) as { note: string };
+      expect(relisted.note).toBe('`get_page` is already in your tool list; call it directly.');
 
       const mixed = parsed(await s.client.callTool({ name: 'request_tools', arguments: { tools: ['list_pages', 'get_health'] } })) as { listed: boolean; note: string };
       expect(mixed.listed).toBe(false);

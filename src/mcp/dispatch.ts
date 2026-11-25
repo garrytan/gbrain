@@ -344,8 +344,8 @@ export interface DispatchOpts {
    * every callable tool counts as listed.
    */
   isListed?: (op: OperationMeta) => Promise<boolean>;
-  /** stdio: whether the session's first tools/list showed this tool (before any reveal or widen). */
-  isListedAtStart?: (op: OperationMeta) => Promise<boolean>;
+  /** stdio: whether the latest tools/list answer served this tool (the list the client last read). */
+  servedToClient?: (name: string) => boolean;
   /** #5232: commit wait for coordinated writes (OperationContext.writeWaitMs); unset = agent default. */
   writeWaitMs?: number;
   /** PR B: the owner socket answers a write deferred behind a refresh as the write_pending error, so its CLI exits 10 and polls. */
@@ -985,7 +985,7 @@ export function buildOperationContext(
     ...(opts.thinClient ? { thinClient: true } : {}),
     ...(opts.mcpCaller ? { mcpCaller: opts.mcpCaller } : {}),
     isCallable: (opName: string, args?: Record<string, unknown>) => (render ??= dispatchRenderContext(opts)).isCallable(opName, args),
-    toolAccess: { connection: () => toolConnection(opts), ...(opts.isListed ? { isListed: opts.isListed } : {}), ...(opts.isListedAtStart ? { isListedAtStart: opts.isListedAtStart } : {}) },
+    toolAccess: { connection: () => toolConnection(opts), ...(opts.isListed ? { isListed: opts.isListed } : {}), ...(opts.servedToClient ? { servedToClient: opts.servedToClient } : {}) },
     auth: opts.auth,
   };
 }

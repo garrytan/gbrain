@@ -440,11 +440,12 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // subtraction happens per request (stdioVisibleTools) — no caching, so a
   // `gbrain config set mcp.publish_skills true` takes effect on the next
   // tools/list without a serve restart (matches the HTTP transports).
-  server.setRequestHandler(ListToolsRequestSchema, async () => trackStdioRpc(() => gate.list(async () => ({
-    tools: statusMode && isEngineDegraded(engine)
-      ? [STATUS_TOOL_DEF]
-      : buildToolDefs(await listing.listed(await stdioVisibleTools(engine, session.surfacedOps)), { strictParams }),
-  }))));
+  server.setRequestHandler(ListToolsRequestSchema, async () => trackStdioRpc(() => gate.list(async () => {
+    if (statusMode && isEngineDegraded(engine)) return { tools: [STATUS_TOOL_DEF] };
+    const tools = buildToolDefs(await listing.listed(await stdioVisibleTools(engine, session.surfacedOps)), { strictParams });
+    listing.noteServed(tools.map(t => t.name));
+    return { tools };
+  })));
 
   // #4583 (fixes #4564's misrouted-write symptom): once-per-process advisory
   // for unscoped default writes on a multi-source brain; latch semantics live
@@ -521,7 +522,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       surface: session.surface,
       // WP4 (D2): stdio has no per-client rows; its surface is the ceiling
       // request_tools bounds its catalog by; its {surface} call widens the session.
-      surfaceCeiling: session.surface, stdioSurface: session, revealTools: listing.reveal, isListed: listing.isListed, isListedAtStart: listing.isListedAtStart,
+      surfaceCeiling: session.surface, stdioSurface: session, revealTools: listing.reveal, isListed: listing.isListed, servedToClient: listing.servedToClient,
       resultRows,
     }), dispatchRenderContext);
   })));

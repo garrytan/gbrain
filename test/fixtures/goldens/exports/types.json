@@ -7490,7 +7490,7 @@
           "surfaceCeiling?: \"verbs\" | \"starter\" | \"full\" | undefined",
           "takesHoldersAllowList?: string[] | undefined",
           "thinClient?: boolean | undefined",
-          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; isListedAtStart?: (op: OperationMeta) => Promise<boolean>; } | undefined",
+          "toolAccess?: { connection: () => ToolConnection; isListed?: (op: OperationMeta) => Promise<boolean>; servedToClient?: (name: string) => boolean; } | undefined",
           "transport?: \"stdio\" | \"http\" | undefined",
           "viaSubagent?: boolean | undefined",
           "writeWaitMs?: number | undefined"

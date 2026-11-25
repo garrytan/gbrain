@@ -375,14 +375,14 @@ const request_tools: Operation = {
         const outside = picked.filter(o => !callable.has(o.name)).map(o => `\`${o.name}\``);
         const reload = midTurnReloadNote(ctx);
         if (reload) {
-          // Only a tool the session's first tools/list showed is callable now; a reveal or widen this session waits for the next turn.
-          const isListed = ctx.toolAccess?.isListedAtStart;
-          const listedNow = new Set(isListed ? (await Promise.all(reachableOps.map(async o => (await isListed(o)) ? o.name : null))).filter((n): n is string => n !== null) : []);
+          // Only a tool the client's latest tools/list answer carried is callable now; anything else waits for its next tool list.
+          const served = ctx.toolAccess?.servedToClient, isListed = ctx.toolAccess?.isListed;
+          const grows = isListed ? (await Promise.all(reachableOps.map(o => isListed(o)))).some(listed => !listed) : reachable.length > 0;
           if (reachable.length) ctx.revealTools(reachable);
           const tick = (names: string[]) => names.map(n => `\`${n}\``).join(', ');
-          const fresh = reachable.filter(n => !listedNow.has(n)), already = reachable.filter(n => listedNow.has(n));
+          const fresh = reachable.filter(n => !served?.(n)), already = reachable.filter(n => served?.(n) === true);
           const parts = [
-            fresh.length ? `${tick(fresh)} ${fresh.length === 1 ? 'is' : 'are'} now listed by this server (tools/list_changed was sent).` : '',
+            fresh.length ? `${tick(fresh)} ${fresh.length === 1 ? 'is' : 'are'} now listed by this server${grows ? ' (tools/list_changed was sent)' : ''}.` : '',
             already.length ? `${tick(already)} ${already.length === 1 ? 'is' : 'are'} already in your tool list; call ${already.length === 1 ? 'it' : 'them'} directly.` : '',
             outside.length ? `${outside.join(', ')} ${outside.length === 1 ? 'is' : 'are'} outside this session's '${ceiling}' surface, so ${outside.length === 1 ? 'it is' : 'they are'} not listed; request_tools {"surface":"full"} adds ${outside.length === 1 ? 'it' : 'them'} to this session.` : '',
             fresh.length || outside.length ? reload : '',
