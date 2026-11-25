@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 319933,
-    "stdoutSha256": "fbd2d529ffbc1809bce4183aac31f18e0d97e33ec7c9a2b0b87cdff939bd4f31",
+    "stdoutBytes": 319976,
+    "stdoutSha256": "9d099af10a67cc63abe97a4456a56007d65d50a73511cc3eda7b60407e15f800",
     "toolNames": [
       "remember",
       "entity",
@@ -578,7 +578,7 @@
               "type": "boolean"
             },
             "grep": {
-              "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.",
+              "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner \"a|b\" also matches either side), with line numbers and total_matches.",
               "type": "string"
             },
             "include_content": {

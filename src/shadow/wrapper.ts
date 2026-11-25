@@ -25,6 +25,7 @@ import { followRaw, followScope, followWrite, type FollowContext, type FollowOpt
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
+import type { WriteSampler } from './write-capture.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
 export interface ShadowSink {
@@ -56,6 +57,8 @@ export interface ShadowWrapperOptions {
    * outermost transaction that wrote resolves. Independent of `follow` and of the sink's health.
    */
   onCommittedWrite?: () => void;
+  /** Write comparisons (write-capture.ts): sampled writes are copied, counted and replayed on a scratch store. Left out when the brain was never seeded. */
+  writes?: WriteSampler;
 }
 
 /** Whether the outermost transaction saw a write; shared by the transaction engine proxies it hands out. */
@@ -224,6 +227,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
       else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
       else wrapped = value.bind(target);
+      if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite });
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
       cache.set(prop, { original: value, wrapped });
       return wrapped;

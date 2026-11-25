@@ -336,6 +336,14 @@ jobs:
           GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
         run: bash scripts/run-with-receipt.sh rust-store drill-addon -- bun test --timeout=60000 test/shadow-drill-addon.test.ts
+      # The write comparison pilot (src/shadow/write-compare*.ts, write-capture.ts) replays sampled page and link writes on a real scratch Rust
+      # store. Same ownership rule as above: a missing addon is an error here, and the next step fails the lane when no test ran.
+      - name: The write comparison pilot replays page and link writes on a real scratch store
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store write-compare -- bun test --timeout=60000 test/shadow-write-compare.test.ts
       - name: Fail the withdrawn-lead lane when no test ran
         shell: bash
         run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-store
