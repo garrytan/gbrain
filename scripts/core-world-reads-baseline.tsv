@@ -700,6 +700,7 @@ src/core/persistence/graduation-target.ts	process_env	5	W6: settings plane out o
 src/core/persistence/group-publish.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/head-blocker.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/held-reads.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/persistence/host-fence.ts	module_collection	1	Multi-user Rust host registration: a WeakMap keyed by engine object holds the full consumer's host lease (its fence), set and cleared only by that consumer, entries die with the engine; stays until engine state moves per engine (W6)
 src/core/persistence/hosted-repo.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/hosted-repo.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/housekeeping-turn.ts	process_env	1	W6: settings plane out of the core

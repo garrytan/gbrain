@@ -218,16 +218,36 @@ fn load(read: &dyn KvRead, name: &str) -> Result<Option<LeaseRecord>> {
 /// header), so the check holds at commit.
 pub fn assert_held(read: &dyn KvRead, token: &LeaseToken, now: i64) -> Result<()> {
     let Some(rec) = load(read, &token.name)? else {
-        return Err(lease_lost(LostReason::NotFound, &token.name, token.epoch, None));
+        return Err(lease_lost(
+            LostReason::NotFound,
+            &token.name,
+            token.epoch,
+            None,
+        ));
     };
     if rec.epoch != token.epoch || rec.token != token.token {
-        return Err(lease_lost(LostReason::EpochMoved, &token.name, token.epoch, Some(rec.epoch)));
+        return Err(lease_lost(
+            LostReason::EpochMoved,
+            &token.name,
+            token.epoch,
+            Some(rec.epoch),
+        ));
     }
     if rec.released {
-        return Err(lease_lost(LostReason::Released, &token.name, token.epoch, Some(rec.epoch)));
+        return Err(lease_lost(
+            LostReason::Released,
+            &token.name,
+            token.epoch,
+            Some(rec.epoch),
+        ));
     }
     if rec.expires_at_us <= now {
-        return Err(lease_lost(LostReason::Expired, &token.name, token.epoch, Some(rec.epoch)));
+        return Err(lease_lost(
+            LostReason::Expired,
+            &token.name,
+            token.epoch,
+            Some(rec.epoch),
+        ));
     }
     Ok(())
 }
@@ -235,7 +255,12 @@ pub fn assert_held(read: &dyn KvRead, token: &LeaseToken, now: i64) -> Result<()
 /// The fence of a protected entry point, checked inside its writing transaction. `Some` asserts it
 /// ([`assert_held`]); `None` refuses `lease_lost` / `fence_missing` on a multi-user store and passes otherwise
 /// (today's behavior).
-pub fn check_fence(store: &Store, read: &dyn KvRead, fence: Option<&LeaseToken>, what: &str) -> Result<()> {
+pub fn check_fence(
+    store: &Store,
+    read: &dyn KvRead,
+    fence: Option<&LeaseToken>,
+    what: &str,
+) -> Result<()> {
     match fence {
         Some(token) => assert_held(read, token, store.env.clock_micros()),
         None if store.multiuser() => Err(lease_lost(LostReason::FenceMissing, what, 0, None)),
@@ -250,17 +275,30 @@ struct ClaimEpoch {
 }
 
 /// Records that claim `id` of `family` was taken under `fence` (in the claim's own write).
-pub fn record_claim_epoch(tx: &mut dyn KvWrite, family: u8, id: &str, fence: &LeaseToken) -> Result<()> {
+pub fn record_claim_epoch(
+    tx: &mut dyn KvWrite,
+    family: u8,
+    id: &str,
+    fence: &LeaseToken,
+) -> Result<()> {
     put_json(
         tx,
         &claim_epoch_key(family, id),
-        &ClaimEpoch { lease: fence.name.clone(), epoch: fence.epoch },
+        &ClaimEpoch {
+            lease: fence.name.clone(),
+            epoch: fence.epoch,
+        },
     )
 }
 
 /// Fails `lease_lost` / `claim_epoch_mismatch` unless claim `id` of `family` was taken under `fence`'s lease name and
 /// epoch. A claim with no record (taken without a fence) refuses too: a fenced write never finishes an unfenced claim.
-pub fn check_claim_epoch(read: &dyn KvRead, family: u8, id: &str, fence: &LeaseToken) -> Result<()> {
+pub fn check_claim_epoch(
+    read: &dyn KvRead,
+    family: u8,
+    id: &str,
+    fence: &LeaseToken,
+) -> Result<()> {
     let recorded: Option<ClaimEpoch> = get_json(read, &claim_epoch_key(family, id))?;
     match recorded {
         Some(c) if c.lease == fence.name && c.epoch == fence.epoch => Ok(()),
@@ -298,12 +336,22 @@ impl Store {
         self.write(|tx| {
             let now = self.env.clock_micros();
             let old = load(tx, name)?;
-            if old.as_ref().is_some_and(|r| !r.released && r.expires_at_us > now) {
+            if old
+                .as_ref()
+                .is_some_and(|r| !r.released && r.expires_at_us > now)
+            {
                 return Ok(None);
             }
-            let epoch = old.as_ref().map_or(0, |r| r.epoch).checked_add(1).ok_or_else(|| {
-                StoreError::new(crate::error::INVALID_STATE, "the lease epoch cannot grow further")
-            })?;
+            let epoch = old
+                .as_ref()
+                .map_or(0, |r| r.epoch)
+                .checked_add(1)
+                .ok_or_else(|| {
+                    StoreError::new(
+                        crate::error::INVALID_STATE,
+                        "the lease epoch cannot grow further",
+                    )
+                })?;
             let rec = LeaseRecord {
                 name: name.to_owned(),
                 epoch,
@@ -315,7 +363,11 @@ impl Store {
                 released: false,
             };
             put_json(tx, &lease_key(name), &rec)?;
-            Ok(Some(LeaseToken { name: rec.name, epoch: rec.epoch, token: rec.token }))
+            Ok(Some(LeaseToken {
+                name: rec.name,
+                epoch: rec.epoch,
+                token: rec.token,
+            }))
         })
     }
 
@@ -329,16 +381,36 @@ impl Store {
         self.write(|tx| {
             let now = self.env.clock_micros();
             let Some(mut rec) = load(tx, &token.name)? else {
-                return Err(lease_lost(LostReason::NotFound, &token.name, token.epoch, None));
+                return Err(lease_lost(
+                    LostReason::NotFound,
+                    &token.name,
+                    token.epoch,
+                    None,
+                ));
             };
             if rec.epoch != token.epoch || rec.token != token.token {
-                return Err(lease_lost(LostReason::EpochMoved, &token.name, token.epoch, Some(rec.epoch)));
+                return Err(lease_lost(
+                    LostReason::EpochMoved,
+                    &token.name,
+                    token.epoch,
+                    Some(rec.epoch),
+                ));
             }
             if rec.released {
-                return Err(lease_lost(LostReason::Released, &token.name, token.epoch, Some(rec.epoch)));
+                return Err(lease_lost(
+                    LostReason::Released,
+                    &token.name,
+                    token.epoch,
+                    Some(rec.epoch),
+                ));
             }
             if rec.expires_at_us <= now {
-                return Err(lease_lost(LostReason::Expired, &token.name, token.epoch, Some(rec.epoch)));
+                return Err(lease_lost(
+                    LostReason::Expired,
+                    &token.name,
+                    token.epoch,
+                    Some(rec.epoch),
+                ));
             }
             rec.renewed_at_us = now;
             rec.expires_at_us = now.saturating_add(ttl_us);
@@ -412,7 +484,10 @@ mod tests {
         let id = uuid_v7(&FixedEnv(1_795_619_334_140_229));
         assert_eq!(id.len(), 36);
         let hex: String = id.chars().filter(|c| *c != '-').collect();
-        assert_eq!(u64::from_str_radix(&hex[..12], 16).unwrap(), 1_795_619_334_140);
+        assert_eq!(
+            u64::from_str_radix(&hex[..12], 16).unwrap(),
+            1_795_619_334_140
+        );
         assert_eq!(&hex[12..13], "7");
         assert!(matches!(&hex[16..17], "8" | "9" | "a" | "b"));
         assert!(crate::env::is_uuid(&id));

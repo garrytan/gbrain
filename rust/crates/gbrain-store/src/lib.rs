@@ -19,7 +19,9 @@ mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod clock_floor;
 pub mod config;
+pub mod consumers;
 pub mod env;
 pub mod error;
 #[cfg(test)]
@@ -29,11 +31,11 @@ pub mod fjall_kv;
 pub mod format;
 pub mod git_gap_census;
 pub mod journal;
-pub mod leases;
 pub(crate) mod jsonb;
 pub mod keys;
 pub mod keyspaces;
 pub mod kv;
+pub mod leases;
 pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
@@ -370,9 +372,16 @@ impl Store {
         // Multi-user mode from the brain's own config row picks the concurrent store at open; read without opening the
         // file for writing. A file redb must repair first reads as off here; the open below still reads the row.
         let config_on = multiuser_config_on(
-            redb_kv::peek(&dir.join(format::RECORDS_FILE), &config::config_key(MULTIUSER_CONFIG_KEY)?).as_deref(),
+            redb_kv::peek(
+                &dir.join(format::RECORDS_FILE),
+                &config::config_key(MULTIUSER_CONFIG_KEY)?,
+            )
+            .as_deref(),
         );
-        let kv = open_records(dir, options.concurrent_writes || options.multiuser || config_on)?;
+        let kv = open_records(
+            dir,
+            options.concurrent_writes || options.multiuser || config_on,
+        )?;
         let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
         store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
@@ -477,8 +486,17 @@ impl Store {
         // Multi-user mode: the caller's resolved switch, or the brain's own config row.
         let multiuser = options.multiuser
             || multiuser_config_on(
-                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?.as_deref().map(str::as_bytes),
+                config::read_config(&*kv.snapshot()?, MULTIUSER_CONFIG_KEY)?
+                    .as_deref()
+                    .map(str::as_bytes),
             );
+        // Multi-user mode: the store's clock never runs below the last committed time (`clock_floor.rs`).
+        let env: Arc<dyn Env> = if multiuser {
+            let floor = clock_floor::read_high_water(&*kv.snapshot()?)?;
+            Arc::new(clock_floor::ClockFloor::new(env, floor))
+        } else {
+            env
+        };
         Ok(Store {
             kv,
             env,
@@ -680,7 +698,13 @@ impl Store {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
             let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
-            return tx.statement(|w| write_chain(w, &mut f));
+            return tx.statement(|w| {
+                let value = write_chain(w, &mut f)?;
+                if self.multiuser {
+                    clock_floor::raise_high_water(w, self.env.now_micros())?;
+                }
+                Ok(value)
+            });
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
@@ -694,6 +718,12 @@ impl Store {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
+                    Ok(value) if self.multiuser => {
+                        match clock_floor::raise_high_water(&mut *tx, self.env.now_micros()) {
+                            Ok(()) => tx.commit().map(|_| value),
+                            Err(e) => Err(e),
+                        }
+                    }
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
                 }
