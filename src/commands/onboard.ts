@@ -31,6 +31,11 @@ function parseInt10(args: string[], flag: string): number | null {
 }
 
 export async function runOnboard(engine: BrainEngine, args: string[]): Promise<void> {
+  if (args.includes('--propose')) {
+    // onboard means remediation; job proposals live in their own command (lane 5, O2).
+    console.log('Job proposals are their own command: gbrain propose [--days 7] (agents: MCP propose_jobs). gbrain onboard plans brain remediation.');
+    return;
+  }
   const check = args.includes('--check') || (!args.includes('--auto') && !args.includes('--history'));
   const auto = args.includes('--auto');
   const history = args.includes('--history');

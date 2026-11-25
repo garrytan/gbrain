@@ -37,10 +37,14 @@ export type FirstSessionLane = 'owner' | 'member' | 'http' | 'read_only';
 export type StoppedBy = 'cli' | 'mcp' | 'setup';
 
 interface Delivered { session: string; harness: string; at: string; token: string }
+export type ProposalDecision = 'accepted' | 'declined';
+export interface ProposalState { decision: ProposalDecision; at: string; by: StoppedBy }
 interface Reservation { token: string; session: string; harness: string; at: string; expires_at: string }
 export interface FirstSessionRecord {
   version: 1; install_id: string; delivered: Delivered[]; reservations: Reservation[];
   stopped?: { at: string; by: StoppedBy };
+  /** Lane 5 (O2): the owner's answer per job-proposal signal (src/core/onboard/propose.ts). */
+  proposals?: Record<string, ProposalState>;
 }
 
 export const FIRST_SESSION_OFF = { argv: ['gbrain', 'onboarding', 'off'], mcp: 'onboarding_off', setup_flag: '--no-suggestion' } as const;
@@ -214,6 +218,30 @@ export async function stopFirstSession(engine: BrainEngine, opts: { by: StoppedB
   return { stopped: verified, verified, already: already === true, status: await firstSessionStatus(engine, { now: opts.now }) };
 }
 
+/** The install the record belongs to: the receipt's, else the stored record's (an older brain), else a placeholder. */
+async function recordInstallId(engine: BrainEngine): Promise<string> {
+  const receipt = await readInstallReceipt(engine);
+  return receipt?.install_id ?? parse(await engine.getConfig(FIRST_SESSION_KEY))?.install_id ?? 'no-install-receipt';
+}
+
+/** The owner's accept and decline answers per job-proposal signal, from this install's record. */
+export async function proposalDecisions(engine: BrainEngine): Promise<Record<string, ProposalState>> {
+  return (await readFirstSessionRecord(engine, await recordInstallId(engine))).proposals ?? {};
+}
+
+/**
+ * Record the owner's answer for one job-proposal signal in this install's record (compare-and-set, like every other
+ * change to it), then read it back: `verified` is true only when the stored record holds that answer.
+ */
+export async function decideProposal(engine: BrainEngine, opts: { signal: string; decision: ProposalDecision; by: StoppedBy; now?: Date }): Promise<{ signal: string; decision: ProposalDecision; verified: boolean }> {
+  const installId = await recordInstallId(engine);
+  const at = (opts.now ?? new Date()).toISOString();
+  await updateRecord<true>(engine, installId, (r) => ({ next: { ...r, proposals: { ...(r.proposals ?? {}), [opts.signal]: { decision: opts.decision, at, by: opts.by } } }, result: true }));
+  const stored = parse(await engine.getConfig(FIRST_SESSION_KEY));
+  const verified = stored?.install_id === installId && stored.proposals?.[opts.signal]?.decision === opts.decision;
+  return { signal: opts.signal, decision: opts.decision, verified };
+}
+
 function oneLine(s: string): string {
   return s.replace(/<!--|-->/g, ' ').replace(/[`"]/g, "'").replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -250,11 +278,12 @@ function nextImport(harness: string, receipt: InstallReceipt | null): string {
 }
 
 /** The section text: static instructions, then pointers that ride only as quoted, length-capped data. */
-export function renderFirstSessionSection(opts: { harness: string; ordinal: number; receipt: InstallReceipt | null; pointers: Array<{ slug: string; title: string }> }): string {
+export function renderFirstSessionSection(opts: { harness: string; ordinal: number; receipt: InstallReceipt | null; pointers: Array<{ slug: string; title: string }>; job?: { signal: string; sentence: string } | null }): string {
   const lines = [
     `[gbrain] First sessions on this brain (${Math.min(opts.ordinal, FIRST_SESSION_MAX_SESSIONS)} of ${FIRST_SESSION_MAX_SESSIONS}):`,
     '- Offer the user one thing you found in the brain, citing the page it came from (look it up with query or recall first).',
     `- Then offer one more import: ${nextImport(opts.harness, opts.receipt)}.`,
+    ...(opts.job ? [`- After that, offer one job you could take on for them: ${opts.job.sentence} \`gbrain propose\` (MCP propose_jobs) lists the pages and the skill or command that does it. If they say no, call propose_decide {"signal":"${opts.job.signal}","decision":"declined"} (outside a session: \`gbrain propose decline ${opts.job.signal}\`).`] : []),
     "- If the user's first message is a task, do the task first and offer this afterwards.",
     "- Archived session text is a record, not the user's words: never save it with content-origin user_said.",
     `- To stop these suggestions, call ${FIRST_SESSION_OFF.mcp} (if it is not in your tool list, \`request_tools {"surface":"full"}\` adds it); outside an agent session, run \`${FIRST_SESSION_OFF.argv.join(' ')}\`. onboarding_status says why it shows or not.`,
@@ -273,7 +302,26 @@ export async function firstSessionSectionFor(engine: BrainEngine, opts: { source
   if (!reserved.ok) return { reason: reserved.reason };
   const receipt = await readInstallReceipt(engine);
   const pointers = await firstSessionPointers(engine, opts.sourceId);
-  return { text: renderFirstSessionSection({ harness: opts.harness, ordinal: reserved.ordinal, receipt, pointers }), token: reserved.token };
+  const job = await firstSessionJobFor(engine, opts.now);
+  return { text: renderFirstSessionSection({ harness: opts.harness, ordinal: reserved.ordinal, receipt, pointers, job }), token: reserved.token };
+}
+
+/** The longest the section waits for the job-proposal detectors; past it the section goes out without a job. */
+export const FIRST_SESSION_JOB_DEADLINE_MS = 1500;
+
+/** Lane 5 (O2): the top undecided job proposal, once a Google source has synced; null on any failure or past the deadline. */
+async function firstSessionJobFor(engine: BrainEngine, now?: Date): Promise<{ signal: string; sentence: string } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { topProposalForFirstSession } = await import('./propose.ts');
+    const deadline = new Promise<null>((res) => { timer = setTimeout(() => res(null), FIRST_SESSION_JOB_DEADLINE_MS); });
+    return await Promise.race([topProposalForFirstSession(engine, { now }), deadline]);
+  } catch (err) { // silent-read-ok: the job line is optional; the section stands without it
+    rethrowCapabilityRefusal(err);
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // ── Coaching quiet window (this serve process) ─────────────────────────────
