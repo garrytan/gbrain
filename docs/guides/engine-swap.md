@@ -87,7 +87,18 @@ never a pass. With no shadow running, every criterion is `missing`.
    yet", and when every open row is a gap in the evidence it says "Rust not shown to be no worse (rows not measured)"
    instead of "Rust slower".
 9. Zero panics and zero child faults in the shadow.
-10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release.
+10. A passed backup and restore drill on the shadow store, and eval gates E1 to E3 in the release. Run both from
+    the shadow's host with `gbrain engine shadow drill`: the drill copies the shadow's own store at one moment while
+    the shadow keeps following, checks the copy, opens it once, runs a keyword search on it and deletes it (a store
+    over 8 GiB needs the separate physical-copy proof); `--evals` downloads the final eval file pinned to the release
+    the shadow's evidence started on. `gbrain engine shadow status` and the swap read only what those commands kept
+    (they never fetch), so a drill from an earlier evidence epoch, a drill whose scratch copy was not seen deleted or whose pending marker is still there, a
+    file for another platform or another build, and a provisional or unfinished eval file all stay NOT READY; the swap
+    prints the reason and `status --json` carries it under `drills`. The drill refuses (`addon_mismatch`) when the
+    addon it loads is not the one the evidence started on. A copy that has pages passes only after a keyword search ran on it; while the copy's keyword index is complete
+    that search must get a hit (`no_probe_term` otherwise). What each half checks and keeps:
+    [engine-shadow-drill](engine-shadow-drill.md). **Say to your agent:** *"Run the shadow restore drill and
+    fetch the eval gates."*
 11. Eligibility: exactly one observed writer host in the last 7 days with no unknown write path (zero observed hosts
     is no evidence, `writer_coverage_unknown`, never "one host"), a personal brain (not a mounted team brain), and a
     shadow host on a preview target.
